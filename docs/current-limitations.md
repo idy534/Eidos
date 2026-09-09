@@ -22,9 +22,9 @@
 
 ### Run 并发与资源模型
 
-- 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。等待 Approval 的 Run 不占用跨 Run 的副作用门。
+- 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
-- Workspace 写入、Shell、MCP、external 和 Eidos-state 的实际副作用窗口跨 Run 全局独占。安全只读的 `parallel_safe` 批次保留自身的有界并行。
+- Workspace 写入、Shell、MCP、external 和 Eidos-state 的实际副作用窗口只在各自 Run 内独占。不同 Session 的 Run 可以并行，即使共享同一个 Workspace。安全只读的 `parallel_safe` 批次保留自身的有界并行。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
 - 当前没有用户可配置的统一 Run 成本、模型步数或有效时长上限。现有 step、segment 和 effective time 字段主要用于 telemetry 和 operational lifecycle。
 
 ### Workspace 与工具
@@ -51,12 +51,12 @@
 
 ### Agent Shell
 
-- Agent `run_shell` 不提供 PTY、stdin、interactive session 或 persistent/background process manager。
+- Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 会阻止该 Run 启动新的副作用。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Shell cwd 必须解析到 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。Workspace 外的 absolute cwd 会返回 Tool Error。
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
-- Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的接收顺序，并把 ANSI/OSC 控制序列按纯文本处理。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
+- Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流安全片段的释放顺序，并把 ANSI/OSC 控制序列按纯文本处理。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
 - `read_tool_output` 只读取当前 Session 中已持久化的终态 `run_shell` 输出，过去 Run 可以读取。它要求 provider tool call ID，默认 stdout，也支持 stderr；运行中、跨 Session、缺失或歧义 ID 会拒绝。请求的 `maxBytes` 范围是 4 字节至 16 KiB，实际页可能更小。分页结果按 UTF-8 边界返回 `startByte`、`endByte` 和 `nextOffset`，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell，也不会清除 reconciliation。
 - Desktop Terminal 是另一条 Main-owned PTY 路径。Agent Shell 的限制不会改变 Desktop Terminal 的现有说明。
@@ -140,6 +140,6 @@
 
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
-- 新 Run 的 `run_shell` 使用 ToolSpec 中的 3600 秒执行预算。预算包括内部轮询和同一次 ToolCall 的所有 attempt，Approval 等待不计入预算。`yieldTimeMs` 只控制首次等待窗口。已固定的历史 Tool Snapshot 保留原预算。
+- 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
 - 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验、输出限额和敏感扫描。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
 - Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。

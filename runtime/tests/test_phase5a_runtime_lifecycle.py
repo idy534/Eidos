@@ -25,6 +25,11 @@ from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RuntimeShutdownTimeout,
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
+from eidos_runtime.runtime.tool_execution import (  # noqa: E402
+    ManagedShellBusy,
+    ToolConcurrencyGate,
+)
+from eidos_runtime.tools.registry import ToolConcurrencyPolicy  # noqa: E402
 
 
 class RuntimeStateConsistencyTests(unittest.TestCase):
@@ -502,6 +507,22 @@ class _BlockingEngine:
         self.release.wait(2)
 
 
+class _GateCapturingEngine:
+    entered = threading.Event()
+    release = threading.Event()
+    gates: list[ToolConcurrencyGate] = []
+
+    def __init__(self, *_args, **kwargs) -> None:
+        self.tool_concurrency_gate = kwargs.pop(
+            "tool_concurrency_gate", ToolConcurrencyGate()
+        )
+        self.__class__.gates.append(self.tool_concurrency_gate)
+
+    def run(self, _run_id: str, _cancel: threading.Event) -> None:
+        self.entered.set()
+        self.release.wait(2)
+
+
 class _ApprovalWaitingEngine:
     entered = threading.Event()
 
@@ -576,6 +597,9 @@ class RunHandleTests(unittest.TestCase):
         self.session = self.store.create_session(str(workspace))
         _BlockingEngine.entered = threading.Event()
         _BlockingEngine.release = threading.Event()
+        _GateCapturingEngine.entered = threading.Event()
+        _GateCapturingEngine.release = threading.Event()
+        _GateCapturingEngine.gates = []
         _ApprovalWaitingEngine.entered = threading.Event()
         _ApprovalResumeEngine.entered = threading.Event()
         _ApprovalResumeEngine.resumed = threading.Event()
@@ -629,6 +653,41 @@ class RunHandleTests(unittest.TestCase):
         self.assertEqual(set(supervisor._handles), {first["id"], second["id"]})
         _BlockingEngine.release.set()
         supervisor.wait(1)
+
+    def test_different_sessions_get_independent_shell_gates_in_same_workspace(
+        self,
+    ) -> None:
+        second_session = self.store.create_session(
+            str(self.session["workspaceRoot"])
+        )
+        first, _ = self.store.enqueue_run(self.session["id"], "first shell")
+        second, _ = self.store.enqueue_run(second_session["id"], "second shell")
+        supervisor = self._supervisor(_GateCapturingEngine)
+
+        supervisor.schedule_next()
+        try:
+            self.assertTrue(_GateCapturingEngine.entered.wait(1))
+            self.assertEqual(
+                set(supervisor._handles), {first["id"], second["id"]}
+            )
+            self.assertTrue(
+                _wait_until(lambda: len(_GateCapturingEngine.gates) == 2)
+            )
+            first_gate, second_gate = _GateCapturingEngine.gates
+            self.assertIsNot(first_gate, second_gate)
+
+            policy = ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1)
+            first_gate.retain_shell("first-shell")
+            try:
+                with second_gate.acquire(policy, threading.Event()):
+                    pass
+                with self.assertRaises(ManagedShellBusy):
+                    first_gate.acquire(policy, threading.Event())
+            finally:
+                first_gate.release_shell("first-shell")
+        finally:
+            _GateCapturingEngine.release.set()
+            supervisor.wait(1)
 
     def test_waiting_approval_worker_remains_active(self) -> None:
         run, _ = self.store.enqueue_run(self.session["id"], "approve")

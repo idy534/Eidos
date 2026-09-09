@@ -106,6 +106,10 @@ class ToolInfrastructureError(RuntimeError):
     pass
 
 
+class ManagedShellBusy(RuntimeError):
+    """A managed command still owns the exclusive side-effect window."""
+
+
 class ToolConcurrencyGate:
     """Small cancellation-aware gate for immutable descriptor policies."""
 
@@ -114,6 +118,21 @@ class ToolConcurrencyGate:
         self._active = 0
         self._exclusive = False
         self._keys: set[str] = set()
+        self._managed_shells: set[str] = set()
+
+    def retain_shell(self, session_id: str) -> None:
+        with self._condition:
+            self._managed_shells.add(session_id)
+
+    def release_shell(self, session_id: str) -> None:
+        with self._condition:
+            self._managed_shells.discard(session_id)
+            self._condition.notify_all()
+
+    @property
+    def has_managed_shell(self) -> bool:
+        with self._condition:
+            return bool(self._managed_shells)
 
     def acquire(
         self,
@@ -122,6 +141,8 @@ class ToolConcurrencyGate:
     ) -> "_ToolPermit":
         keys = set((*policy.resource_keys, *policy.exclusive_keys))
         with self._condition:
+            if self._managed_shells:
+                raise ManagedShellBusy
             while (
                 self._exclusive
                 or policy.mode == "exclusive" and self._active > 0
@@ -131,6 +152,8 @@ class ToolConcurrencyGate:
                 if cancel.is_set():
                     raise RuntimeCancelled
                 self._condition.wait(0.05)
+                if self._managed_shells:
+                    raise ManagedShellBusy
             if cancel.is_set():
                 raise RuntimeCancelled
             self._active += 1
@@ -525,6 +548,11 @@ class ToolExecutionController:
                     "failed",
                     "failed",
                 )
+            elif plan.side_effect != "none" and self.concurrency.has_managed_shell:
+                outcome = HandlerOutcome(
+                    tool_error(call.name, "shell_session_busy", "A command is still running; wait for or stop it before another side effect"),
+                    "failed", "failed",
+                )
             elif not self.dispatcher.validate_execution(call, plan):
                 argument_validation = getattr(
                     self.dispatcher, "argument_validation", None
@@ -597,6 +625,11 @@ class ToolExecutionController:
                                 "failed",
                                 "failed",
                             )
+                    except ManagedShellBusy:
+                        outcome = HandlerOutcome(
+                            tool_error(call.name, "shell_session_busy", "A command is still running; wait for or stop it before another side effect"),
+                            "failed", "failed",
+                        )
                     except RuntimeCancelled:
                         raise_after_commit = True
                         outcome = self._interrupted(
@@ -634,10 +667,10 @@ class ToolExecutionController:
                                     else "Tool execution failed"
                                 ),
                                 side_effects_may_exist=(
-                                    plan.side_effect != "none"
+                                    plan.side_effect != "none" or self._execution_state.intent_started
                                 ),
                                 reconciliation_required=(
-                                    plan.side_effect != "none"
+                                    plan.side_effect != "none" or self._execution_state.intent_started
                                 ),
                             ),
                             "failed",
@@ -844,6 +877,11 @@ class ToolExecutionController:
                 mutation,
                 item=mutation.value,
             )
+            if call.name == "run_shell":
+                manager = getattr(self.runtime_context, "shell_process_manager", None)
+                data = outcome.result.get("data")
+                if manager is not None and isinstance(data, dict) and data.get("executionStatus") == "running":
+                    manager.commit(str(data["sessionId"]))
             self._execution_state.phase = (
                 ToolExecutionPhase.COMPLETED
                 if outcome.tool_status == "completed"

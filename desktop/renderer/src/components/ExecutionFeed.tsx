@@ -255,9 +255,15 @@ function RunSegment({
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
+  // Hidden observations still determine which assistant messages are progress.
+  const visibleProcess = segment.process.filter((item) => {
+    if (item.toolCall?.toolName !== "write_stdin") return true;
+    const data = objectField(parseObject(item.toolCall.resultJson), "data");
+    return item.status === "failed" && !stringField(data, "executionStatus");
+  });
   const showThinking = isLast
     && ACTIVE_RUN_STATUSES.has(run.status)
-    && segment.process.length === 0
+    && visibleProcess.length === 0
     && segment.response.length === 0;
 
   return (
@@ -271,11 +277,11 @@ function RunSegment({
           onEditResend={onEditResend}
         />
       )}
-      {segment.process.length > 0 && (
+      {visibleProcess.length > 0 && (
         <ProcessGroup
           run={run}
         >
-          {segment.process.map((item) => (
+          {visibleProcess.map((item) => (
             <ProcessItem
               key={item.id}
               item={item}
@@ -303,6 +309,7 @@ function RunSegment({
           feedback={feedbackByItemId.get(item.id)}
           feedbackPending={pendingFeedbackItemIds.has(item.id)}
           canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
+          isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
           onFeedback={onFeedback}
           onRegenerate={onRegenerate}
         />
@@ -473,6 +480,7 @@ function AssistantMessage({
   feedback,
   feedbackPending,
   canRegenerate,
+  isFinal,
   onFeedback,
   onRegenerate,
 }: {
@@ -483,6 +491,7 @@ function AssistantMessage({
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
+  isFinal: boolean;
   onFeedback: FeedbackHandler;
   onRegenerate: RegenerateHandler;
 }) {
@@ -505,7 +514,7 @@ function AssistantMessage({
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent content={item.content || ""} />
-      {item.content && (
+      {isFinal && item.content && (
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
             <CopyButton content={item.content} />
@@ -720,6 +729,10 @@ function ProcessItem({
   }
   if (!item.toolCall) return null;
 
+  if (item.toolCall.toolName === "write_stdin") {
+    return item.status === "failed" ? <p className="shell-error-summary">命令跟进失败 · {stringField(parseObject(item.toolCall.resultJson), "code") || "暂时无法读取命令状态"}</p> : null;
+  }
+
   const toolItem = item.toolCall.toolName === "run_shell"
     ? <ShellItem item={item} toolCall={item.toolCall} />
     : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} />;
@@ -770,6 +783,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
   const data = objectField(result, "data");
+  const running = item.status === "in_progress" || stringField(data, "executionStatus") === "running";
   const command = stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令";
   const stdout = stringField(data, "stdout");
   const stderr = stringField(data, "stderr");
@@ -787,18 +801,19 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
     || item.status === "failed"
     || (exitCode !== undefined && exitCode !== 0);
   const success = !gateRejected
+    && !running
     && item.status === "completed"
     && result.outcome !== "error"
     && !pendingVerification
     && (exitCode === undefined || exitCode === 0);
-  const statusTone = item.status === "in_progress"
+  const statusTone = running
     ? "neutral"
     : pendingVerification
       ? "warning"
       : success
         ? "success"
         : "error";
-  const statusText = item.status === "in_progress"
+  const statusText = running
     ? "运行中"
     : gateRejected
       ? "未执行"
@@ -817,7 +832,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         <span className="tool-icon tool-icon--terminal" aria-hidden="true">
           <ShellIcon />
         </span>
-        <span>{shellSummary(item.status, command)}</span>
+        <span>{shellSummary(running ? "in_progress" : item.status, command)}</span>
       </summary>
       <div className="shell-result">
         <p className="shell-label">Shell</p>
@@ -831,8 +846,8 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           </pre>
         ))}
         {gateRejected && <p className="shell-error-code">未执行，等待只读核验</p>}
-        {!gateRejected && !pendingVerification && !success && code && <p className="shell-error-code">失败 · {code}</p>}
-        {!success && !pendingVerification && summary && <p className="shell-error-summary">{summary}</p>}
+        {!running && !gateRejected && !pendingVerification && !success && code && <p className="shell-error-code">失败 · {code}</p>}
+        {!running && !success && !pendingVerification && summary && <p className="shell-error-summary">{summary}</p>}
         {truncated && (
           <p className="shell-diagnostic">
             输出已截断{truncationReason ? ` · ${truncationReason}` : ""}
@@ -841,8 +856,8 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         {reconciliationRequired && !gateRejected && (
           <p className="shell-diagnostic shell-diagnostic--warning">结果需要只读核验</p>
         )}
-        {!hasOutput && item.status === "in_progress" && <p className="shell-empty">尚未输出</p>}
-        {!hasOutput && item.status !== "in_progress" && !pendingVerification && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
+        {!hasOutput && running && <p className="shell-empty">尚未输出</p>}
+        {!hasOutput && !running && !pendingVerification && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
         <p className={`shell-status shell-status--${statusTone}`}>{statusText}</p>
       </div>
     </details>

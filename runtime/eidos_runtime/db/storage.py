@@ -966,11 +966,12 @@ class SessionStore:
         )
 
     def complete_assistant_and_run_committed(
-        self, item_id: str, run_id: str
+        self, item_id: str, run_id: str, *, shell_stopped: bool = False,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         return self._repository(self._execution).complete_assistant_and_run_committed(
             item_id,
             run_id,
+            shell_stopped=shell_stopped,
         )
 
     def create_tool_item(
@@ -1075,6 +1076,15 @@ class SessionStore:
             workspace_changed=workspace_changed,
             diff_hash=diff_hash,
             duration_ms=duration_ms,
+        )
+
+    def complete_shell_session_committed(
+        self, item_id: str, session_id: str, result_json: str, ui_result_json: str,
+        *, workspace_changed: bool = False, diff_hash: str | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(self._execution).complete_shell_session_committed(
+            item_id, session_id, result_json, ui_result_json,
+            workspace_changed=workspace_changed, diff_hash=diff_hash,
         )
 
     def complete_tool_item_once_committed(

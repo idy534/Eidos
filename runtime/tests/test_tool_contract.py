@@ -312,21 +312,21 @@ class ToolContractTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
 
-    def test_run_shell_uses_3600_budget_and_legacy_specs_remain_valid(self) -> None:
+    def test_shell_observation_budget_preserves_legacy_specs(self) -> None:
         run_shell = next(spec for spec in TOOL_SPECS if spec.name == "run_shell")
 
-        self.assertEqual(run_shell.timeout_seconds, 3_600)
+        self.assertEqual(run_shell.timeout_seconds, 600)
         self.assertEqual(
             ToolSpec.model_validate(
                 run_shell.model_dump(mode="json", by_alias=True)
-                | {"timeoutSeconds": 600}
+                | {"timeoutSeconds": 3600}
             ).timeout_seconds,
-            600,
+            3600,
         )
 
-    def test_write_stdin_is_not_model_visible(self) -> None:
-        self.assertNotIn("write_stdin", {spec.name for spec in TOOL_SPECS})
-        self.assertNotIn(
+    def test_write_stdin_is_model_visible(self) -> None:
+        self.assertIn("write_stdin", {spec.name for spec in TOOL_SPECS})
+        self.assertIn(
             "write_stdin",
             {
                 definition["function"]["name"]
@@ -343,7 +343,9 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn("justification", description)
         self.assertIn("macOS Seatbelt", description)
         self.assertIn("sandboxPermissions", description)
-        self.assertIn("waits for the process to exit", description)
+        self.assertIn("returns after yieldTimeMs", description)
+        self.assertIn("shell_running", description)
+        self.assertIn("write_stdin", description)
         self.assertNotIn("timeoutSeconds", description)
         self.assertIn("pipefail", description)
         self.assertIn("glob", description)

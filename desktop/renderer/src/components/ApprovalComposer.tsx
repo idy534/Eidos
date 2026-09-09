@@ -95,7 +95,7 @@ function commandApprovalDetails(
     `$ ${approval.command}`,
     `cwd: ${approval.cwd}`,
     `network: ${approval.networkEnabled ? "enabled" : "disabled"}`,
-    `timeout: ${approval.timeoutSeconds}s`,
+    `Tool observation watchdog: ${approval.timeoutSeconds}s; command lifetime has no default deadline`,
     `additional read: ${(approval.additionalReadAccess ?? []).join(", ") || "none"}`,
     `additional write: ${(approval.additionalWriteAccess ?? []).join(", ") || "none"}`,
     `additional execute: ${(approval.additionalExecutableAccess ?? []).join(", ") || "none"}`,

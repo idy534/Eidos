@@ -42,6 +42,7 @@ from eidos_runtime.runtime.shell_process_manager import (  # noqa: E402
 )
 from eidos_runtime.sandbox.permissions import BasePermissionProfile  # noqa: E402
 from eidos_runtime.sandbox.sensitive import (  # noqa: E402
+    SensitiveScanError,
     StreamingSensitiveScanner,
     default_scanner,
 )
@@ -361,11 +362,21 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             "shell-call", "run_shell", effective_arguments,
         )
 
-        def fake_shell(launch, **_kwargs):
+        def fake_shell(launch, **kwargs):
             if attempts is not None:
                 attempts.append(launch)
             if mutate is not None:
                 mutate()
+            if output and callable(kwargs.get("on_output")):
+                scanner = FixtureStreamingSensitiveScanner(
+                    kwargs["sensitive"], kwargs["on_output"]
+                )
+                try:
+                    scanner.feed("".join(output))
+                    if cancel is None or not cancel.is_set():
+                        scanner.finish()
+                except SensitiveScanError:
+                    pass
             normalized = dict(result)
             data = dict(result.get("data", {}))
             if output:
@@ -389,6 +400,8 @@ class ShellManifestIntegrationTests(unittest.TestCase):
                 else:
                     chunks = (chunk,)
                 for index, part in enumerate(chunks):
+                    if cancel is not None and cancel.is_set():
+                        break
                     super().feed(part)
                     if observe is not None and part:
                         observe()
@@ -399,10 +412,6 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             patch(
                 "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
                 side_effect=fake_shell,
-            ),
-            patch(
-                "eidos_runtime.runtime.tool_runtime.StreamingSensitiveScanner",
-                new=FixtureStreamingSensitiveScanner,
             ),
         ):
             return self.controller.execute(

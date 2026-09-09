@@ -795,7 +795,34 @@ class ShellProcessManagerTests(unittest.TestCase):
     def _python_launch(self, code: str) -> ShellLaunchSpec:
         return self._launch((sys.executable, "-c", code))
 
-    def test_short_command_exits_without_a_session(self) -> None:
+    def test_exit_observer_runs_after_commit_without_another_poll(self) -> None:
+        completed = threading.Event()
+        results = []
+        result = self.manager.start(self._python_launch("import time; print('ready', flush=True); time.sleep(0.8); print('done', flush=True)"), yield_time_ms=250)
+        session_id = result["data"]["sessionId"]
+
+        def record(terminal):
+            results.append(terminal)
+            completed.set()
+            return terminal
+
+        self.manager.observe_exit(session_id, record)
+        self.assertEqual(results, [])
+        self.manager.commit(session_id)
+        self.assertTrue(completed.wait(3))
+        self.assertEqual(results[0]["data"]["stdout"], "ready\ndone\n")
+        self.manager.commit(session_id)
+        self.assertEqual(len(results), 1)
+
+    def test_scanner_keeps_incomplete_lines_across_observations(self) -> None:
+        from eidos_runtime.sandbox.sensitive import default_scanner
+
+        result = self.manager.start(self._python_launch("import sys, time; sys.stdout.write('pending'); sys.stdout.flush(); time.sleep(0.8); print('-complete', flush=True)"), yield_time_ms=250, sensitive=default_scanner())
+        self.assertEqual(result["data"]["stdout"], "")
+        completed = self.manager.write_stdin(result["data"]["sessionId"], yield_time_ms=3_000)
+        self.assertEqual(completed["data"]["stdout"], "pending-complete\n")
+
+    def test_short_command_exits_with_a_terminal_session_identity(self) -> None:
         result = self.manager.start(
             self._shell_launch("printf short"),
             yield_time_ms=1_000,
@@ -807,7 +834,7 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertEqual(data["executionStatus"], "exited")
         self.assertEqual(data["exitCode"], 0)
         self.assertEqual(data["stdout"], "short")
-        self.assertNotIn("sessionId", data)
+        self.assertIsInstance(data["sessionId"], str)
         self.resources.ensure_empty()
 
     def test_host_owned_wait_returns_complete_output_without_a_poll_tool_call(self) -> None:
@@ -828,7 +855,7 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertEqual(data["exitCode"], 0)
         self.assertEqual(data["stdout"], "ready\ndone\n")
         self.assertEqual("".join(deltas), "ready\ndone\n")
-        self.assertNotIn("sessionId", data)
+        self.assertIsInstance(data["sessionId"], str)
 
     def test_host_owned_wait_terminates_when_cancel_is_set(self) -> None:
         cancel = threading.Event()
@@ -848,7 +875,7 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertEqual(result["code"], "canceled")
         self.assertEqual(data["executionStatus"], "exited")
         self.assertEqual(data["termination"], "canceled")
-        self.assertNotIn("sessionId", data)
+        self.assertIsInstance(data["sessionId"], str)
 
     def test_long_command_returns_running_then_write_stdin_poll_returns_done(self) -> None:
         result = self.manager.start(
@@ -878,7 +905,7 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertEqual(completed_data["executionStatus"], "exited")
         self.assertEqual(completed_data["exitCode"], 0)
         self.assertIn("done", completed_data["stdout"])
-        self.assertNotIn("sessionId", completed_data)
+        self.assertEqual(completed_data["sessionId"], session_id)
 
     def test_silent_long_command_stays_running_with_a_session(self) -> None:
         result = self.manager.start(
@@ -905,7 +932,7 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertFalse(result["reconciliationRequired"])
         self.assertEqual(data["executionStatus"], "exited")
         self.assertEqual(data["exitCode"], 7)
-        self.assertNotIn("sessionId", data)
+        self.assertIsInstance(data["sessionId"], str)
 
     def test_ctrl_c_exits_process_group_and_quiesces_resource_registry(self) -> None:
         result = self.manager.start(
@@ -947,7 +974,7 @@ class ShellProcessManagerTests(unittest.TestCase):
         self.assertEqual(data["originalBytes"], original_bytes)
         self.assertEqual(data["omittedBytes"], original_bytes - accepted_bytes)
         self.assertEqual(len(data["stdout"].encode("utf-8")), accepted_bytes)
-        self.assertNotIn("sessionId", data)
+        self.assertIsInstance(data["sessionId"], str)
 
     def test_subsequent_poll_returns_only_new_output(self) -> None:
         result = self.manager.start(

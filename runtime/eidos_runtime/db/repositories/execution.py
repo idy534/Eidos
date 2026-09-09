@@ -249,6 +249,8 @@ class ExecutionRepository(Repository):
         except (TypeError, json.JSONDecodeError):
             raise ToolOutputReadError("output_unavailable") from None
         data = result.get("data") if isinstance(result, dict) else None
+        if isinstance(data, dict) and data.get("executionStatus") == "running":
+            raise ToolOutputReadError("tool_output_not_available")
         content = data.get(stream) if isinstance(data, dict) else None
         if not isinstance(content, str):
             raise ToolOutputReadError("output_unavailable")
@@ -1059,7 +1061,12 @@ class ExecutionRepository(Repository):
             raise ValueError("at least one delta is required")
         with self.lock, self._connection() as connection:
             fact = connection.execute(
-                "SELECT session_id, run_id FROM items WHERE id = ? AND status = 'in_progress'",
+                """SELECT session_id, run_id FROM items WHERE id = ? AND (
+                    status = 'in_progress' OR EXISTS (
+                        SELECT 1 FROM tool_calls t WHERE t.item_id = items.id
+                        AND t.tool_name = 'run_shell'
+                        AND json_extract(t.result_json, '$.data.executionStatus') = 'running'
+                    ))""",
                 (item_id,),
             ).fetchone()
             if fact is None:
@@ -1067,7 +1074,7 @@ class ExecutionRepository(Repository):
             updated = connection.execute(
                 """
                 UPDATE items SET content = COALESCE(content, '') || ?
-                WHERE id = ? AND status = 'in_progress'
+                WHERE id = ?
                 """,
                 ("".join(deltas), item_id),
             )
@@ -1148,7 +1155,7 @@ class ExecutionRepository(Repository):
         return self.complete_assistant_and_run_committed(item_id, run_id).value
 
     def complete_assistant_and_run_committed(
-        self, item_id: str, run_id: str
+        self, item_id: str, run_id: str, *, shell_stopped: bool = False,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
             now = _now_ms()
@@ -1158,7 +1165,8 @@ class ExecutionRepository(Repository):
             ).fetchone()
             if run_state is None:
                 raise ResourceNotFoundError("run not found")
-            interrupted = bool(run_state["reconciliation_required"])
+            interrupted = bool(run_state["reconciliation_required"]) or shell_stopped
+            reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else None
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -1174,7 +1182,7 @@ class ExecutionRepository(Repository):
                 frozenset({SegmentStatus.RUNNING}),
                 SegmentStatus.FAILED if interrupted else SegmentStatus.COMPLETED,
                 now,
-                "side_effect_reconciliation_required" if interrupted else "run_succeeded",
+                reason or "run_succeeded",
             )
             item_event = append_event(
                 connection,
@@ -1191,7 +1199,7 @@ class ExecutionRepository(Repository):
                 run_id,
                 frozenset({RunStatus.RUNNING}),
                 RunStatus.INTERRUPTED if interrupted else RunStatus.SUCCEEDED,
-                "side_effect_reconciliation_required" if interrupted else None,
+                reason,
             )
         item = self.read_item(item_id)
         return CommittedMutation(
@@ -1429,13 +1437,18 @@ class ExecutionRepository(Repository):
             reconciliation_required = _result_reconciliation_required(
                 result, tool_name=fact["tool_name"]
             )
-            intent_status = "uncertain" if reconciliation_required else "completed"
+            managed_running = (
+                fact["tool_name"] == "run_shell"
+                and result.get("data", {}).get("executionStatus") == "running"
+                and not reconciliation_required
+            )
+            intent_status = "running" if managed_running else "uncertain" if reconciliation_required else "completed"
             connection.execute(
                 """
                 UPDATE durable_intents SET status = ?, reconciled_at = ?
                 WHERE tool_call_id = ? AND status = 'running'
                 """,
-                (intent_status, now, fact["tool_call_id"]),
+                (intent_status, None if managed_running else now, fact["tool_call_id"]),
             )
             events.append(append_event(
                 connection, EventType.TOOL_CALL_COMPLETED, now,
@@ -1471,6 +1484,59 @@ class ExecutionRepository(Repository):
                     {"epoch": epoch, "reason": str(result.get("code", "outcome_unknown"))},
                     session_id=fact["session_id"], run_id=fact["run_id"],
                 ))
+        return CommittedMutation(self.read_item(item_id), tuple(events))
+
+    def complete_shell_session_committed(
+        self, item_id: str, session_id: str, result_json: str, ui_result_json: str,
+        *, workspace_changed: bool = False, diff_hash: str | None = None,
+    ) -> CommittedMutation[dict[str, object]]:
+        """Finish the command without rewriting the model's earlier observation."""
+        result = json.loads(result_json)
+        data = result.get("data", {})
+        if data.get("executionStatus") != "exited" or data.get("sessionId") != session_id:
+            raise ValueError("invalid shell completion")
+        now = _now_ms()
+        events: list[dict[str, object]] = []
+        with self.lock, self._connection() as connection:
+            fact = connection.execute(
+                """SELECT t.id, t.result_json, i.run_id, i.session_id
+                   FROM tool_calls t JOIN items i ON i.id = t.item_id
+                   WHERE i.id = ? AND t.tool_name = 'run_shell'""", (item_id,),
+            ).fetchone()
+            if fact is None:
+                raise InvalidRunStateError("shell item is unavailable")
+            previous = json.loads(fact["result_json"] or "{}").get("data", {})
+            if previous.get("sessionId") == session_id and previous.get("executionStatus") == "exited":
+                return CommittedMutation(self.read_item(item_id), ())
+            if previous.get("sessionId") != session_id or previous.get("executionStatus") != "running":
+                raise InvalidRunStateError("shell session is not active")
+            uncertain = _result_reconciliation_required(result, tool_name="run_shell")
+            status = "completed" if result.get("outcome") == "success" else "failed"
+            connection.execute(
+                "UPDATE tool_calls SET result_json = ?, ui_result_json = ?, duration_ms = ? WHERE id = ?",
+                (result_json, ui_result_json, result.get("data", {}).get("durationMs"), fact["id"]),
+            )
+            connection.execute("UPDATE items SET status = ?, completed_at = ? WHERE id = ?", (status, now, item_id))
+            connection.execute(
+                "UPDATE durable_intents SET status = ?, reconciled_at = ? WHERE tool_call_id = ? AND status = 'running'",
+                ("uncertain" if uncertain else "completed", now, fact["id"]),
+            )
+            if workspace_changed:
+                connection.execute(
+                    "UPDATE runs SET workspace_version = workspace_version + 1, last_diff_hash = ?, updated_at = ? WHERE id = ?",
+                    (diff_hash, now, fact["run_id"]),
+                )
+            if uncertain:
+                connection.execute(
+                    "UPDATE runs SET reconciliation_required = 1, reconciliation_epoch = reconciliation_epoch + 1, side_effects_may_exist = 1, updated_at = ? WHERE id = ?",
+                    (now, fact["run_id"]),
+                )
+                epoch = connection.execute("SELECT reconciliation_epoch FROM runs WHERE id = ?", (fact["run_id"],)).fetchone()[0]
+                events.append(append_event(connection, EventType.RECONCILIATION_REQUIRED, now,
+                    {"epoch": epoch, "reason": result.get("code", "outcome_unknown")},
+                    session_id=fact["session_id"], run_id=fact["run_id"]))
+            events.append(append_event(connection, EventType.ITEM_COMPLETED, now, {"item_id": item_id},
+                session_id=fact["session_id"], run_id=fact["run_id"]))
         return CommittedMutation(self.read_item(item_id), tuple(events))
 
     def complete_tool_item_once_committed(

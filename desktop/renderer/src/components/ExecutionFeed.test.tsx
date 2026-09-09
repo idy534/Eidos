@@ -1028,3 +1028,75 @@ test("renders in-progress read_file as an expandable details element", () => {
   assert.match(html, /<details class="tool-item"/);
   assert.match(html, /正在读取 src\/utils\/generate_sunset\.js/);
 });
+
+test("keeps a managed command running and hides normal Shell followups", () => {
+  const command = item({ id: "managed", ordinal: 1, kind: "command_execution", content: "progress\n", toolCall: {
+    id: "managed-tool", itemId: "managed", modelStepIndex: 1, batchOrder: 0,
+    providerCallId: "start", toolName: "run_shell", status: "completed", startedAt: 1_000,
+    argumentsJson: JSON.stringify({ command: "pnpm test" }),
+    resultJson: JSON.stringify({ outcome: "success", code: "shell_running", data: { executionStatus: "running", sessionId: "shell-1" } }),
+  } });
+  const followup = item({ id: "followup", ordinal: 2, kind: "tool_call", toolCall: {
+    id: "followup-tool", itemId: "followup", modelStepIndex: 2, batchOrder: 0,
+    providerCallId: "poll", toolName: "write_stdin", status: "completed", startedAt: 2_000,
+    argumentsJson: JSON.stringify({ sessionId: "shell-1" }), resultJson: JSON.stringify({ code: "shell_running" }),
+  } });
+  const html = renderToStaticMarkup(<ExecutionFeed items={[command, followup]} runs={[{ ...run, status: "running" }]} approvals={[]} respondingApprovalIds={new Set()} onApprove={() => {}} onReject={() => {}} />);
+  assert.match(html, /正在运行 pnpm test/);
+  assert.match(html, /progress/);
+  assert.doesNotMatch(html, /write_stdin|✓ 成功|失败 · shell_running/);
+  assert.equal((html.match(/tool-item--shell/g) ?? []).length, 1);
+});
+
+function pollingFeedItems(): Item[] {
+  const tool = (id: string, ordinal: number, name: string) => item({
+    id, ordinal, kind: name === "run_shell" ? "command_execution" : "tool_call",
+    toolCall: {
+      id: `${id}-tool`, itemId: id, modelStepIndex: ordinal, batchOrder: 0,
+      providerCallId: id, toolName: name, status: "completed", startedAt: 1_000,
+      argumentsJson: JSON.stringify(name === "run_shell" ? { command: "pnpm test" } : { sessionId: "shell-1" }),
+      resultJson: JSON.stringify({ outcome: "success", code: "shell_running", data: { executionStatus: "running", sessionId: "shell-1" } }),
+    },
+  });
+  return [
+    tool("start", 1, "run_shell"),
+    item({ id: "progress-one", ordinal: 2, kind: "assistant_message", content: "第一次等待" }),
+    tool("poll-one", 3, "write_stdin"),
+    item({ id: "progress-two", ordinal: 4, kind: "assistant_message", content: "第二次等待" }),
+    tool("poll-two", 5, "write_stdin"),
+    item({ id: "answer", ordinal: 6, kind: "assistant_message", content: "最后的回复" }),
+  ];
+}
+
+function renderPollingFeed(items: Item[], status: Run["status"]): string {
+  return renderToStaticMarkup(<ExecutionFeed items={items} runs={[{ ...run, status }]} approvals={[]} respondingApprovalIds={new Set()} onApprove={() => {}} onReject={() => {}} />);
+}
+
+test("classifies progress before hiding repeated Shell observations", () => {
+  const html = renderPollingFeed(pollingFeedItems(), "succeeded");
+  assert.equal((html.match(/class="process-text"/g) ?? []).length, 2);
+  assert.equal((html.match(/feed-item--assistant/g) ?? []).length, 1);
+  assert.equal((html.match(/response-footer/g) ?? []).length, 1);
+  assert.match(html, /第一次等待/);
+  assert.match(html, /第二次等待/);
+  assert.match(html, /最后的回复/);
+  assert.doesNotMatch(html, /write_stdin/);
+});
+
+test("does not show final response actions while the Run is active", () => {
+  const html = renderPollingFeed(pollingFeedItems(), "running");
+  assert.match(html, /最后的回复/);
+  assert.doesNotMatch(html, /response-footer|重新回答|write_stdin/);
+});
+
+test("keeps followup failures visible without promoting progress to a final reply", () => {
+  const items = pollingFeedItems();
+  const poll = items[4]!;
+  poll.status = "failed";
+  poll.toolCall = { ...poll.toolCall!, status: "failed", resultJson: JSON.stringify({ outcome: "error", code: "shell_session_not_found", data: {} }) };
+  const html = renderPollingFeed(items, "failed");
+  assert.match(html, /命令跟进失败/);
+  assert.equal((html.match(/class="process-text"/g) ?? []).length, 2);
+  assert.equal((html.match(/response-footer/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /write_stdin/);
+});

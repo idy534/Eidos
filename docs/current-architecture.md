@@ -91,7 +91,7 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 
 ## 5. Run Orchestration
 
-RunSupervisor 负责按 Session 维护持久 FIFO、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。等待 Approval 的 Run 会停放，但不占用跨 Run 的副作用门。
+RunSupervisor 负责按 Session 维护持久 FIFO、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 独立持有 `ToolConcurrencyGate` 和 `ShellProcessManager`。不同 Session 的 Run 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 
 RunSupervisor 把同步 Durable Runtime Core 与进程级 `RuntimeAsyncKernel` 连接起来。RuntimeAsyncKernel 持有一个 AnyIO Blocking Portal。Model 异步 I/O、MCP Connection、Managed Task 和安全只读并行批次通过这个 Kernel 执行。Run Worker 仍是当前 Run 的同步控制边界。
 
@@ -179,7 +179,7 @@ Validate → Prepare → Permission Decision → Durable Intent
 → Execute → Verify → canonical ToolResult → Event / Context projection
 ```
 
-ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在同一个 `run_shell` ToolCall 内保留进程和有界 output drain。它在工具宿主层继续轮询，直到命令退出、Run 取消或 Run cleanup。模型不会创建 Shell 轮询 ToolCall。
+ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
 
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
 
@@ -193,7 +193,7 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。敏感扫描或结果超限导致 projection 重建时，Runtime 仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。
 
-Shell ToolCall 会在 Runtime 内部继续等待进程。Shell 输出会在等待期间追加到同一个 Item。命令退出后，`run_shell` 返回完整的 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
+Shell 每次 ToolCall 只等待一个窗口。Shell 输出会持续追加到原命令 Item。命令退出后，Runtime 更新原命令的完整 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
 
 只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Reconciliation 默认把 Run 置为 `CONTINUE_READ_ONLY`，而不是直接 interrupt。Barrier 只允许安全只读 Tool。其他副作用 Tool 会得到普通的 `reconciliation_required` Tool Error。Workspace refresh 只会清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
 
@@ -205,7 +205,7 @@ Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKI
 
 现有文件的原子替换会保留 mode、扩展属性和 ACL。Runtime 使用已验证的文件描述符和 macOS `fcopyfile` 复制这些元数据。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
 
-只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以在自身的有界范围内并发执行。Workspace write、Shell、Eidos-state、MCP 和 external Tool 的实际副作用窗口跨 Run 使用全局独占门。Approval 等待不占用该门。并发结果最终按模型声明顺序提交。
+只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以在自身的有界范围内并发执行。每个 Run 的 Workspace write、Shell、Eidos-state、MCP 和 external Tool 实际副作用窗口使用该 Run 自己的独占门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使它们共享同一个 Workspace。Approval 等待不占用该 Run 的副作用门。并发结果最终按模型声明顺序提交。
 
 ## 9. Sandbox & Approval
 
@@ -223,7 +223,7 @@ ShellEnvironmentSnapshotProvider 使用 resolved shell 的 `-lc` 做一次 bound
 
 Shell 的 effective environment 保留真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Runtime 只把 bundled `rg` 的目录去重后追加到 `PATH` 末尾。Provider 在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。`run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户的 Git 配置。`HardenedGitRunner` 仍是独立的 Git 执行路径。
 
-Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 按接收顺序把安全片段追加到同一个 Item content，并保留每个片段的顺序事实。Runtime 在工具宿主层轮询进程，直到进程退出或被取消。模型不会看到进程 session，也不会创建额外的轮询 Item。
+Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 按安全扫描器释放顺序把安全片段追加到同一个 Item content，并保留每个片段的顺序事实。Runtime 在每次等待窗口结束后把进程 session 和增量输出交给模型。模型通过 `write_stdin` 继续等待或停止命令。内部跟进 Item 保留审计记录；Renderer 把正常跟进隐藏，原命令卡片按 `executionStatus` 显示运行状态。
 
 Desktop `ExecutionFeed` 的 Shell Item 默认折叠。用户展开后，Feed 在 Shell 运行中和终态都渲染累计的 Item content。它在已有累计内容时不再追加结果中的最终 stdout/stderr，因此不会重复输出，也不会丢失 stdout/stderr 的接收顺序。旧 Item 缺少或为空的 `content` 时，Renderer 使用结果中的 stdout 和 stderr 作为兼容回退。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 
@@ -370,7 +370,7 @@ WorktreeManager 保留 Eidos 的 Project、Worktree、Session、Run、operationI
 
 `session/gitStatus` 返回文件列表和兼容 count。`session/gitDiff` 接受可选的 workspace-relative `path` 和 `compareRef`。显式 `compareRef` 会先解析为 commit。无效 ref 返回 `GIT_COMPARE_REF_INVALID`。Managed Worktree 的 baseline 使用创建时冻结的 `base_commit`，并返回保存的 `base_ref` 标签。Local Session 的 baseline 默认使用当前 upstream remote-tracking ref；本地没有可解析 upstream 时回退当前 HEAD。响应还返回 native Git `--numstat` 得到的 additions、deletions 和 `statsIncomplete`。二进制文件会把统计标为不完整。行数统计不依赖有界 unified patch 是否截断。这些 file API 使用 `GIT_LITERAL_PATHSPECS=1`，所以合法文件名中的 `:`、`*`、`?` 和 `[]` 不会变成 Git pathspec expression。`session/gitStage`、`session/gitUnstage`、`session/gitDiscard` 和 `session/gitCommit` 只在没有 active Run 时修改当前 execution root。四个 mutation 都接收 `operationId`。Runtime 先完成无副作用 preflight，再在现有 `operations` 表提交 `in_progress`。Git 在 SQLite transaction 外执行。Runtime 随后重新观察 Git，并在第二个短事务中保存 completed result。Completed retry 直接 replay。相同 id 和不同 request 返回 `OPERATION_ID_REUSED`。未完成 operation 返回 `OPERATION_IN_PROGRESS`，Runtime 不盲目重做 Git。Discard 只处理 structured status 已确认的 tracked unstaged 或 untracked file。它不会隐式 Unstage，也不会处理 conflict。Stage 和 Commit 是独立动作。Commit 只提交当前 Index 中的 staged changes。Detached managed Worktree 返回 `GIT_BRANCH_REQUIRED`，用户必须先调用 `session/createBranch`。Commit 后 Managed Worktree 的 `base_commit` 保持不变，所以它的 baseline diff 继续表示整个任务从创建基线开始的改动。
 
-Local Git Session 还提供 `session/gitSwitchBranch` 和 `session/gitCreateBranch`。Runtime 从当前 Project workspace 读取 local branches。Runtime 只允许 clean、没有进行中 Git operation、且整个 workspace 没有 active Run 时切换或创建分支。`gitCreateBranch` 从当前 HEAD 创建分支并立即切换到新分支。两个方法都使用现有 `operations` 表和 `operationId` replay。当前分支仍以 Git HEAD 为事实，不新增 Session 或 SQLite 分支字段。Local Session 共用真实 workspace，所以不同 Local Session 也共用这条 workspace 锁。分支变化完成后，Runtime 会使 RepositoryWorkspaceRuntime 失效，下一次读取会重新观察 branch 和 HEAD。
+Local Git Session 还提供 `session/gitSwitchBranch` 和 `session/gitCreateBranch`。Runtime 从当前 Project workspace 读取 local branches。Runtime 只允许 clean、没有进行中 Git operation、且整个 workspace 没有 active Run 时切换或创建分支。`gitCreateBranch` 从当前 HEAD 创建分支并立即切换到新分支。两个方法都使用现有 `operations` 表和 `operationId` replay。当前分支仍以 Git HEAD 为事实，不新增 Session 或 SQLite 分支字段。Local Session 共用真实 workspace，所以不同 Local Session 在 Git 分支切换操作上共用这条 workspace 锁；这条操作锁不限制不同 Session 的 Run、Shell 或普通副作用并行。分支变化完成后，Runtime 会使 RepositoryWorkspaceRuntime 失效，下一次读取会重新观察 branch 和 HEAD。
 
 Desktop Review 不解析 Git status，也不把 repository-wide patch 拆成文件。Renderer 使用 structured status 和 baseline `changedFiles` 建立文件手风琴。全仓响应只用于列表、比较信息和总行数。文件展开时，Renderer 才调用 `session/gitDiff(path)`。展开全部会按顺序读取文件 Diff，避免同时发起无界请求。`react-diff-view` 负责解析和显示 unified patch。Stage、Unstage 和 Discard 仍通过 Runtime 修改 Git Index。Main 的 Open in Editor handler 从 Session 解析 execution root，再用 canonical path 和 regular-file 检查阻止相对路径与 symlink 越界。Commit、Push 和已有高级 Git 操作复用原 typed Runtime API，并放在同一个提交弹层中。
 
@@ -494,6 +494,17 @@ Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替�
 
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
-- 新 Run 的 `run_shell` 使用 ToolSpec 中的 3600 秒执行预算。预算包括内部轮询和同一次 ToolCall 的所有 attempt，Approval 等待不计入预算。`yieldTimeMs` 只控制首次等待窗口。已固定的历史 Tool Snapshot 保留原预算。
+- 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
 - 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验、输出限额和敏感扫描。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
 - Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。
+
+
+### Shell 会话收尾
+
+`ShellProcessManager` 继续使用现有 Run 资源和输出读取线程。每条输出流持有同一个敏感扫描器，轮询不会结束扫描器，也不会释放尚未完整的行。输出上限继续由原始字节计数控制。模型轮询只读取尚未交付的安全输出。
+
+启动 ToolCall 可以完成一次 `shell_running` 观察，但原 Durable Intent 保持 `running`。Runtime 在初次结果提交后才启用退出回调。退出回调更新原命令的 canonical/UI 结果、Workspace diff 和 Intent，并在同一 SQLite 事务中产生事件。Runtime 不会改写模型已经收到的历史结果。`read_tool_output` 在命令退出后读取原命令累计输出。
+
+当前 Run 的 `ToolConcurrencyGate` 在命令仍然运行或退出结果尚未提交时保留 Shell 占用。这个 Run 的其他副作用调用返回 `shell_session_busy`，模型可以继续只读工作、使用 `write_stdin` 管理原 Shell 或等待原命令。其他 Session 的 Run 使用各自的 gate，可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。空输入观察不会新建 Intent，也不会重复获取该 Run 的 gate；非空输入先核对 Run 内会话，再创建输入 Intent。输入沿用原进程权限，不能借此扩权。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。权限、Sandbox、Durable Intent、取消和进程组清理仍按各自 Run 独立记录和收敛。
+
+模型直接提交最终答复时，Runtime 先停止活跃命令并完成退出记录。Runtime 保留答复，但把提前停止命令的 Run 记为 `interrupted`。其他最终化和取消路径也会清理会话。已知退出与副作用未知分别记录；Runtime 不会把正常等待写成 reconciliation。运行中的 Intent 在重启后继续走原有恢复流程，Runtime 不会根据 PID 重连或自动重放命令。LoopGuard 仅对当前 Run 中仍运行且参数有效的空输入观察跳过重复判断。
