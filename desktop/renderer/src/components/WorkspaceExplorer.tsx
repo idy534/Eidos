@@ -433,7 +433,7 @@ export function WorkspaceExplorer({
     const current = splitSizes[targetLayout];
     if (current !== undefined) return current;
     const rect = explorerRef.current?.getBoundingClientRect();
-    if (targetLayout === "side") return Math.round((rect?.height || 600) * 0.34);
+    if (targetLayout === "side") return SIDE_SPLIT_MIN;
     return 18 * 16;
   }
 

@@ -26,7 +26,7 @@ describe("interactive color tokens", () => {
   it("keeps a narrow dock beside the session and aligns its header controls", () => {
     expect(dockStyles).toMatch(/\.workspace-body--with-dock\s*\{[^}]*grid-template-columns: minmax\(16rem, 1fr\) 0\.5rem var\(--workspace-dock-width\);/s);
     expect(dockStyles).not.toMatch(/\.workspace-body--with-dock:not\(\.workspace-body--expanded\)\s*\.workspace-dock\s*\{[^}]*position: absolute;/s);
-    expect(dockStyles).toMatch(/\.workspace-body__actions\s*\{[^}]*top: 0\.5rem;/s);
+    expect(dockStyles).toMatch(/\.workspace-body__actions\s*\{[^}]*top: 0\.25rem;/s);
     expect(dockStyles).toMatch(/\.workspace-dock__add \.dropdown-trigger,\s*\.workspace-dock__actions \.icon-button\s*\{[^}]*width: 2\.25rem;[^}]*height: 2\.25rem;[^}]*min-height: 2\.25rem;/s);
     expect(dockStyles).toMatch(/\.workspace-dock__add \.dropdown-trigger > span\[aria-hidden\]\s*\{[^}]*font-size: 1\.25rem;[^}]*line-height: 1;/s);
   });
@@ -34,8 +34,10 @@ describe("interactive color tokens", () => {
   it("flows open dock controls in one fixed-size header group", () => {
     expect(dockStyles).toMatch(/\.workspace-body\s*\{[^}]*--workspace-action-rail-width: 5rem;/s);
     expect(dockStyles).toMatch(/\.workspace-body__actions\s*\{[^}]*width: var\(--workspace-action-rail-width\);/s);
-    expect(dockStyles).toMatch(/\.workspace-dock__header\s*\{[^}]*padding: 0\.45rem 0\.65rem;/s);
+    expect(dockStyles).toMatch(/\.workspace-dock__header\s*\{[^}]*padding: 0\.25rem 0\.65rem;/s);
     expect(dockStyles).toMatch(/\.workspace-dock__actions\s*\{[^}]*flex: none;[^}]*gap: 0\.35rem;/s);
+    expect(dockStyles).toMatch(/\.workspace-dock-toggle svg,\s*\.workspace-header-tools svg,\s*\.workspace-dock__actions svg,\s*\.workspace-dock__add svg\s*\{[^}]*width: 1\.25rem;[^}]*height: 1\.25rem;/s);
+    expect(dockStyles).toMatch(/\.workspace-dock__add \.dropdown-trigger:hover,[^}]*\.workspace-dock__actions \.icon-button:hover\s*\{[^}]*background: var\(--surface-selected\);/s);
   });
 
   it("renders compact single-column diff colors", () => {
@@ -49,5 +51,19 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/@container git-review \(max-width: 30rem\)\s*\{[\s\S]*\.git-changes-toolbar\s*\{[^}]*display: grid;/s);
     expect(styles).toMatch(/@container git-review \(max-width: 30rem\)\s*\{[\s\S]*\.git-scope-tabs\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s);
     expect(styles).toMatch(/\.git-scope-tab\s*\{[^}]*white-space: nowrap;/s);
+  });
+
+  it("supports collapsible sidebar and top-level navigation controls", () => {
+    expect(styles).toMatch(/\.workbench--sidebar-collapsed\s*\{[^}]*grid-template-columns:\s*1fr;/s);
+    expect(styles).toMatch(/\.workbench--sidebar-collapsed\s*\.sidebar\s*\{[^}]*display:\s*none;/s);
+    expect(styles).toMatch(/\.sidebar-top-bar\s*\{[^}]*height:\s*2\.75rem;/s);
+    expect(styles).toMatch(/\.collapsed-navigation-bar\s*\{[^}]*position:\s*absolute;/s);
+    expect(styles).toMatch(/\.window-traffic-spacer\s*\{[^}]*width:\s*86px;/s);
+    expect(styles).toMatch(/\.nav-icon-btn\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
+    expect(styles).toMatch(/\.workbench--sidebar-collapsed\s*\.workspace-header::before\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
+    expect(styles).toMatch(/\.workspace-body--session-centered,\s*\.workbench--sidebar-collapsed\s*\.workspace-body--session-centered\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
+    expect(styles).toMatch(/\.workspace-header--empty\s*\{[^}]*position:\s*absolute;[^}]*-webkit-app-region:\s*drag;/s);
+    expect(styles).toMatch(/\.settings-page-header\s*\{[^}]*-webkit-app-region:\s*drag;/s);
+    expect(dockStyles).toMatch(/\.workspace-body__actions\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
   });
 });

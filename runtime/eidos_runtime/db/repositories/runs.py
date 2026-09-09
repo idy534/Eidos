@@ -883,9 +883,10 @@ class RunRepository(Repository):
                 "waiting_approval",
                 "finalizing",
                 "canceled",
+                "interrupted",
             }:
                 raise InvalidRunStateError("run cannot be canceled")
-            if row["status"] == "canceled":
+            if row["status"] in {"canceled", "interrupted"}:
                 return CommittedMutation(_run_from_row(row), ())
             now = _now_ms()
             connection.execute(
@@ -954,7 +955,7 @@ class RunRepository(Repository):
             ).fetchone()
             if row is None:
                 raise ResourceNotFoundError("run not found")
-            if row["status"] == RunStatus.CANCELED.value:
+            if row["status"] in {RunStatus.CANCELED.value, RunStatus.INTERRUPTED.value}:
                 return CommittedMutation(_run_from_row(row), ())
             if row["cancel_requested_at"] is None:
                 raise InvalidRunStateError("cancel was not requested")
@@ -980,17 +981,6 @@ class RunRepository(Repository):
                     "side_effect_reconciliation_required",
                 )
                 events.append(event)
-                connection.execute(
-                    """
-                    UPDATE runs
-                    SET cancel_failure_code = 'RECONCILIATION_REQUIRED'
-                    WHERE id = ?
-                    """,
-                    (run_id,),
-                )
-                run = _run_from_row(connection.execute(
-                    "SELECT * FROM runs WHERE id = ?", (run_id,)
-                ).fetchone())
                 return CommittedMutation(run, tuple(events))
             events = list(settle_run_children(
                 connection, run_id, RunStatus.CANCELED, now
@@ -1042,11 +1032,11 @@ class RunRepository(Repository):
         expected: frozenset[RunStatus] | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         row = connection.execute(
-            "SELECT status FROM runs WHERE id = ?", (run_id,)
+            "SELECT status, reconciliation_required FROM runs WHERE id = ?", (run_id,)
         ).fetchone()
         if row is None:
             raise ResourceNotFoundError("run not found")
-        if row["status"] == RunStatus.CANCELED.value:
+        if row["status"] in {RunStatus.CANCELED.value, RunStatus.INTERRUPTED.value}:
             run = _run_from_row(connection.execute(
                 "SELECT * FROM runs WHERE id = ?", (run_id,)
             ).fetchone())
@@ -1069,11 +1059,14 @@ class RunRepository(Repository):
             """,
             (now, run_id),
         )
+        target = (
+            RunStatus.INTERRUPTED if row["reconciliation_required"] else RunStatus.CANCELED
+        )
         events = list(settle_run_children(
-            connection, run_id, RunStatus.CANCELED, now
+            connection, run_id, target, now
         ))
         run, event = transition_run(
-            connection, run_id, expected, RunStatus.CANCELED, "user_cancel"
+            connection, run_id, expected, target, "user_cancel"
         )
         events.append(event)
         return CommittedMutation(run, tuple(events))

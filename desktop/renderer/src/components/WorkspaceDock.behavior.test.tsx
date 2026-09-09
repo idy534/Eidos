@@ -152,4 +152,14 @@ describe("WorkspaceDock", () => {
     expect(screen.getByRole("button", { name: "文件" }).querySelector("path"))
       .toHaveAttribute("d", "M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15");
   });
+
+  it("uses an SVG plus glyph for add window trigger", () => {
+    render(<Harness />);
+
+    const addButton = screen.getByRole("button", { name: "添加窗口" });
+    const svg = addButton.querySelector("svg");
+    expect(svg).toBeInTheDocument();
+    expect(svg).toHaveAttribute("viewBox", "0 0 20 20");
+    expect(svg?.querySelector("path")).toHaveAttribute("d", "M10 4.5v11M4.5 10h11");
+  });
 });

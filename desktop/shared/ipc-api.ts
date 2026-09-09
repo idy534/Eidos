@@ -78,6 +78,7 @@ export interface EidosRuntimeAPI {
     path: string,
   ): Promise<WorkspaceFilePreview>;
   openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
+  showItemInFolder(path: string): Promise<void>;
 
   // User terminal
   createTerminal(sessionId: string): Promise<TerminalSessionInfo>;

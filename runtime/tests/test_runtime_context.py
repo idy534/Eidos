@@ -18,6 +18,7 @@ from eidos_runtime.context.budget import (  # noqa: E402
 )
 from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.context.compactor import ContextCompactor  # noqa: E402
+from eidos_runtime.context.facts import ContextFacts, ContextItemFact  # noqa: E402
 from eidos_runtime.db.storage import (  # noqa: E402
     RECENT_CONTEXT_STEPS,
     SessionStore,
@@ -39,7 +40,10 @@ from eidos_runtime.runtime.contracts import (  # noqa: E402
 from eidos_runtime.runtime.decision import LoopDecisionEngine  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import ReadOnlyToolHandler  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
-from eidos_runtime.runtime.loop_guard import LoopGuard  # noqa: E402
+from eidos_runtime.runtime.loop_guard import (  # noqa: E402
+    LoopGuard,
+    context_fact_frontier_hash,
+)
 
 
 class ContextRejectingModel:
@@ -185,6 +189,91 @@ class ContextBudgetTests(unittest.TestCase):
 
 
 class LoopGuardTests(unittest.TestCase):
+    @staticmethod
+    def _facts(*items: ContextItemFact) -> ContextFacts:
+        return ContextFacts(run_id="run", session_id="session", items=items)
+
+    def test_assistant_narrative_does_not_change_context_frontier(self) -> None:
+        tool = ContextItemFact(
+            item_id="tool-1",
+            run_id="run",
+            kind="tool_call",
+            status="completed",
+            tool_name="read_file",
+            result_json='{"code":"ok"}',
+        )
+        first = self._facts(
+            tool,
+            ContextItemFact(
+                item_id="assistant-1",
+                run_id="run",
+                kind="assistant_message",
+                status="completed",
+                content="The file is ready.",
+            ),
+        )
+        second = self._facts(
+            tool,
+            ContextItemFact(
+                item_id="assistant-2",
+                run_id="run",
+                kind="assistant_message",
+                status="completed",
+                content="I inspected the file and can continue.",
+            ),
+        )
+
+        self.assertEqual(
+            context_fact_frontier_hash(first), context_fact_frontier_hash(second)
+        )
+
+    def test_tool_user_and_permission_facts_change_context_frontier(self) -> None:
+        base = self._facts(ContextItemFact(
+            item_id="fact-1",
+            run_id="run",
+            kind="user_message",
+            status="completed",
+            content="Inspect the workspace",
+        ))
+        tool_change = self._facts(ContextItemFact(
+            item_id="fact-1",
+            run_id="run",
+            kind="user_message",
+            status="completed",
+            content="Inspect the workspace",
+        ), ContextItemFact(
+            item_id="tool-1",
+            run_id="run",
+            kind="tool_call",
+            status="completed",
+            tool_name="read_file",
+            result_json='{"code":"ok"}',
+        ))
+        permission_change = self._facts(ContextItemFact(
+            item_id="fact-1",
+            run_id="run",
+            kind="user_message",
+            status="completed",
+            content="Inspect the workspace",
+        ), ContextItemFact(
+            item_id="permission-1",
+            run_id="run",
+            kind="permission",
+            status="approved",
+            content="network",
+        ))
+        user_change = self._facts(ContextItemFact(
+            item_id="fact-1",
+            run_id="run",
+            kind="user_message",
+            status="completed",
+            content="Inspect the repository",
+        ))
+
+        self.assertNotEqual(context_fact_frontier_hash(base), context_fact_frontier_hash(tool_change))
+        self.assertNotEqual(context_fact_frontier_hash(base), context_fact_frontier_hash(permission_change))
+        self.assertNotEqual(context_fact_frontier_hash(base), context_fact_frontier_hash(user_change))
+
     def test_exact_duplicate_tool_state_recovers_on_first_repeat(self) -> None:
         guard = LoopGuard()
         call = ModelToolCall("call", "read_file", {"path": "a.txt"})
@@ -296,6 +385,27 @@ class LoopGuardTests(unittest.TestCase):
         self.assertEqual(guard.observe_progress(signature), "recover_no_progress")
         guard.mark_recovery_attempted()
         self.assertEqual(guard.observe_progress(signature), "no_progress")
+
+    def test_error_disappearance_alone_is_not_progress(self) -> None:
+        guard = LoopGuard()
+        with_error = ProgressSignature(
+            workspace_version=0,
+            diff_hash=None,
+            successful_tool_result_hashes=(),
+            new_context_fact_ids=(),
+            error_fingerprints=("same-error",),
+            resolved_error_fingerprints=(),
+            reconciliation_epoch=0,
+        )
+        without_error = with_error.model_copy(update={"error_fingerprints": ()})
+
+        self.assertIsNone(guard.observe_progress(with_error))
+        self.assertIsNone(guard.observe_progress(without_error))
+        self.assertEqual(
+            guard.observe_progress(without_error), "recover_no_progress"
+        )
+        guard.mark_recovery_attempted()
+        self.assertEqual(guard.observe_progress(without_error), "no_progress")
 
     def test_workspace_change_is_progress_even_with_unchanged_diff_hash(self) -> None:
         guard = LoopGuard()
@@ -712,8 +822,15 @@ class ContextPersistenceTests(unittest.TestCase):
 
         built = ContextBuilder(self.store).build(run["id"])
 
-        self.assertIn("error-a", str(built.model_context))
-        self.assertIn('"reconciliationRequired":true', str(built.model_context))
+        state = next(
+            item for item in built.model_context
+            if item.get("type") == "user"
+            and "recentToolErrorFingerprints" in item.get("content", "")
+        )
+        self.assertIn("error-a", state["content"])
+        self.assertIn('"recentToolErrorFingerprints":["error-a"]', state["content"])
+        self.assertIn('"reconciliationRequired":true', state["content"])
+        self.assertNotIn("unresolvedErrorFingerprints", state["content"])
 
     def test_projection_overflow_compacts_all_eligible_history_without_loss(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")

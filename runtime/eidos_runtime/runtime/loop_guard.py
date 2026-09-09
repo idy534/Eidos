@@ -136,7 +136,6 @@ class LoopGuard:
             not unchanged
             or signature.successful_tool_result_hashes
             or signature.new_context_fact_ids
-            or signature.resolved_error_fingerprints
             or signature.new_user_input_ids
         )
         self._last_progress = signature
@@ -217,6 +216,7 @@ def context_fact_frontier_hash(facts: ContextFacts) -> str:
             "result": _json_value(item.model_result_json or item.result_json),
         })
         for item in facts.items
+        if item.kind != "assistant_message"
     }
     return _hash({
         "facts": sorted(semantic_facts),

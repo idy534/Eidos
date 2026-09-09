@@ -447,9 +447,8 @@ class ShellToolHandler:
         command = shell_input.command
         cwd_value = shell_input.cwd
         yield_time_ms = shell_input.yieldTimeMs
-        # This remains the ToolExecutionController watchdog. It does not limit
-        # the lifetime of a managed Shell process.
-        timeout = 600
+        # One execution budget covers all attempts; approval waits pause it.
+        timeout = runtime.spec.timeout_seconds
         try:
             cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
                 cwd_value, cancel

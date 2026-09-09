@@ -648,7 +648,7 @@ class ToolExecutionController:
                         reason is not None
                         and not _already_interrupted(outcome.result, reason)
                     ):
-                        outcome = self._interrupted(
+                        interrupted = self._interrupted(
                             call,
                             plan,
                             reason,
@@ -659,6 +659,16 @@ class ToolExecutionController:
                                     "sideEffectsMayExist"
                                 ) is True
                             ),
+                        )
+                        if call.name == "run_shell":
+                            # The normal validation, bounds and sensitive scan below
+                            # still apply to partial output and termination evidence.
+                            interrupted.result["data"] = outcome.result.get("data", {})
+                        outcome = replace(
+                            outcome,
+                            result=interrupted.result,
+                            item_status=interrupted.item_status,
+                            tool_status=interrupted.tool_status,
                         )
             if outcome.workspace_changed or outcome.diff_hash is not None:
                 enriched = dict(outcome.result)

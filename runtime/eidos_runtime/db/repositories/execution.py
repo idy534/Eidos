@@ -18,7 +18,6 @@ from eidos_runtime.db.database import (
 )
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
-    ReconciliationRequiredError,
     ResourceNotFoundError,
     StorageError,
 )
@@ -1159,8 +1158,7 @@ class ExecutionRepository(Repository):
             ).fetchone()
             if run_state is None:
                 raise ResourceNotFoundError("run not found")
-            if run_state["reconciliation_required"]:
-                raise ReconciliationRequiredError("reconciliation_required")
+            interrupted = bool(run_state["reconciliation_required"])
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -1174,9 +1172,9 @@ class ExecutionRepository(Repository):
                 connection,
                 run_id,
                 frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.COMPLETED,
+                SegmentStatus.FAILED if interrupted else SegmentStatus.COMPLETED,
                 now,
-                "run_succeeded",
+                "side_effect_reconciliation_required" if interrupted else "run_succeeded",
             )
             item_event = append_event(
                 connection,
@@ -1192,8 +1190,8 @@ class ExecutionRepository(Repository):
                 connection,
                 run_id,
                 frozenset({RunStatus.RUNNING}),
-                RunStatus.SUCCEEDED,
-                None,
+                RunStatus.INTERRUPTED if interrupted else RunStatus.SUCCEEDED,
+                "side_effect_reconciliation_required" if interrupted else None,
             )
         item = self.read_item(item_id)
         return CommittedMutation(

@@ -1,13 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
-import type { RuntimePresentation } from "../session-state.js";
+import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
 import { groupSessionsByProject, taskStatusPresentation } from "../session-state.js";
 import { ContextMenu } from "./DropdownMenu.js";
 import { EidosMark } from "./EidosMark.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
 import settingsIcon from "./settings.svg";
 
+export const COLLAPSED_PROJECTS_KEY = "eidos.sidebarCollapsedProjects";
+
+export function loadCollapsedProjects(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_PROJECTS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((key): key is string => typeof key === "string") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveCollapsedProjects(collapsed: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // localStorage failure is non-critical
+  }
+}
 
 interface Props {
   sessions: Session[];
@@ -26,7 +48,9 @@ interface Props {
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
   onDeleteProject: (project: Project) => void;
+  onShowInFinder?: (project: Project) => void;
   onOpenSettings: () => void;
+  navigationSlot?: React.ReactNode;
 }
 
 type ContextMenuState =
@@ -49,15 +73,49 @@ type ContextMenuState =
 export function SessionSidebar({
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
-  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onOpenSettings,
+  onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
+  navigationSlot,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
   );
   const projects = groupSessionsByProject(visibleSessions, catalogProjects);
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
-  const [recentExpanded, setRecentExpanded] = useState(true);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(loadCollapsedProjects);
+  const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
+
+  const toggleProject = (projectKey: string) => {
+    setCollapsedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(projectKey)) {
+        next.delete(projectKey);
+      } else {
+        next.add(projectKey);
+      }
+      saveCollapsedProjects(next);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (selectedId && selectedId !== prevSelectedIdRef.current) {
+      prevSelectedIdRef.current = selectedId;
+      const activeProject = projects.find((project) =>
+        project.sessions.some((session) => session.id === selectedId),
+      );
+      if (activeProject && collapsedProjects.has(activeProject.key)) {
+        setCollapsedProjects((current) => {
+          if (!current.has(activeProject.key)) return current;
+          const next = new Set(current);
+          next.delete(activeProject.key);
+          saveCollapsedProjects(next);
+          return next;
+        });
+      }
+    } else {
+      prevSelectedIdRef.current = selectedId;
+    }
+  }, [selectedId, projects, collapsedProjects]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -73,6 +131,7 @@ export function SessionSidebar({
 
   return (
     <aside className="sidebar" aria-label="任务导航">
+      {navigationSlot && <div className="sidebar-top-bar">{navigationSlot}</div>}
       <div className="brand-row">
         <span className="brand-mark" aria-hidden="true">
           <EidosMark />
@@ -95,170 +154,112 @@ export function SessionSidebar({
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
         ) : (
           <ul className="workspace-list">
-            {projects.map((project) => (
-              <li key={project.key}>
-                <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
-                  <div className="workspace-title-row" title={project.workspaceRoot}>
-                    {project.projectless ? (
-                      <button
-                        className="workspace-toggle workspace-toggle--recent"
-                        aria-expanded={recentExpanded}
-                        onClick={() => setRecentExpanded((current) => !current)}
-                      >
-                        <span className="workspace-name">{project.displayName}</span>
-                        <ChevronIcon open={recentExpanded} />
-                      </button>
-                    ) : (
-                      <button
-                        className="workspace-toggle"
-                        aria-expanded={!collapsedProjects.has(project.key)}
-                        aria-haspopup={project.project ? "menu" : undefined}
-                        onClick={() => setCollapsedProjects((current) => {
-                          const next = new Set(current);
-                          if (next.has(project.key)) {
-                            next.delete(project.key);
-                          } else {
-                            next.add(project.key);
-                          }
-                          return next;
-                        })}
-                        onContextMenu={(event) => {
-                          if (!project.project) return;
-                          event.preventDefault();
-                          const hasSessions = project.sessions.length > 0
-                            || sessions.some((session) => session.project?.id === project.project?.id);
-                          setContextMenu({
-                            kind: "project",
-                            project: project.project,
-                            hasSessions,
-                            x: event.clientX,
-                            y: event.clientY,
-                            element: event.currentTarget,
-                          });
-                        }}
-                        onKeyDown={(event) => {
-                          if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
-                            return;
-                          }
-                          event.preventDefault();
-                          const bounds = event.currentTarget.getBoundingClientRect();
-                          const hasSessions = project.sessions.length > 0
-                            || sessions.some((session) => session.project?.id === project.project?.id);
-                          setContextMenu({
-                            kind: "project",
-                            project: project.project,
-                            hasSessions,
-                            x: bounds.left,
-                            y: bounds.bottom,
-                            element: event.currentTarget,
-                          });
-                        }}
-                      >
-                        <FolderIcon open={!collapsedProjects.has(project.key)} />
-                        <span className="workspace-name">{project.displayName}</span>
-                      </button>
-                    )}
-                    {!project.projectless && (
-                      <button
-                        className="workspace-add"
-                        aria-label={`在 ${project.displayName} 中新建会话`}
-                        disabled={disabled}
-                        onClick={() => {
-                          setCollapsedProjects((current) => {
-                            const next = new Set(current);
-                            next.delete(project.key);
-                            return next;
-                          });
-                          onCreateInProject(project.workspaceRoot);
-                        }}
-                      >＋</button>
-                    )}
-                  </div>
-                  {(project.projectless ? recentExpanded : !collapsedProjects.has(project.key)) && (
-                    <ul className="session-list">
-                      {project.sessions.map((session) => {
-                        const status = taskStatusPresentation(
-                          session.taskStatus,
-                          readCompletedSessions.has(session.id),
-                          session.activeRunStatus,
-                        );
-                        const isSelected = session.id === selectedId;
-                        const isLoading = session.id === isSelectingSessionId;
-                        const gitStatus = gitStatusBySessionId.get(session.id);
-                        return (
-                          <li className="session-item" key={session.id}>
-                            <button
-                              className={isSelected ? "selected" : ""}
-                              aria-current={isSelected ? "page" : undefined}
-                              aria-busy={isLoading}
-                              aria-haspopup="menu"
-                              disabled={disabled}
-                              onClick={() => {
-                                setContextMenu(undefined);
-                                onSelect(session);
-                              }}
-                              onContextMenu={(event) => {
-                                event.preventDefault();
-                                setContextMenu({
-                                  kind: "session",
-                                  session,
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                  element: event.currentTarget,
-                                });
-                              }}
-                              onKeyDown={(event) => {
-                                if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
-                                  event.preventDefault();
-                                  const bounds = event.currentTarget.getBoundingClientRect();
-                                  setContextMenu({
-                                    kind: "session",
-                                    session,
-                                    x: bounds.left,
-                                    y: bounds.bottom,
-                                    element: event.currentTarget,
-                                  });
-                                }
-                              }}
-                            >
-                              <span className="session-labels">
-                                <span className="session-title">{session.title ?? "新任务"}</span>
-                                {project.gitAvailable && session.worktree && (
-                                  <span className="session-branch">
-                                    {session.worktree.branch ?? "Detached HEAD"}
-                                  </span>
-                                )}
-                              </span>
-                              {(isLoading || (project.gitAvailable && gitStatus?.dirty) || status) && (
-                                <span className="session-indicators">
-                                  {isLoading && (
-                                    <span className="session-loading-dot" aria-label="加载中" />
-                                  )}
-                                  {project.gitAvailable && gitStatus?.dirty && !isLoading && (
-                                    <span
-                                      className="git-dirty-indicator"
-                                      aria-label="有未提交改动"
-                                      title="有未提交改动"
-                                    />
-                                  )}
-                                  {status && !isLoading && (
-                                    <span
-                                      className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
-                                      title={status.label}
-                                      aria-label={status.label}
-                                    />
-                                  )}
-                                </span>
-                              )}
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </section>
-              </li>
-            ))}
+            {projects.map((project) => {
+              const isExpanded = !collapsedProjects.has(project.key);
+              return (
+                <li key={project.key}>
+                  <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
+                    <div className="workspace-title-row" title={project.workspaceRoot}>
+                      {project.projectless ? (
+                        <button
+                          className="workspace-toggle workspace-toggle--recent"
+                          aria-expanded={isExpanded}
+                          onClick={() => toggleProject(project.key)}
+                        >
+                          <span className="workspace-name">{project.displayName}</span>
+                          <ChevronIcon open={isExpanded} />
+                        </button>
+                      ) : (
+                        <button
+                          className="workspace-toggle"
+                          aria-expanded={isExpanded}
+                          aria-haspopup={project.project ? "menu" : undefined}
+                          onClick={() => toggleProject(project.key)}
+                          onContextMenu={(event) => {
+                            if (!project.project) return;
+                            event.preventDefault();
+                            const hasSessions = project.sessions.length > 0
+                              || sessions.some((session) => session.project?.id === project.project?.id);
+                            setContextMenu({
+                              kind: "project",
+                              project: project.project,
+                              hasSessions,
+                              x: event.clientX,
+                              y: event.clientY,
+                              element: event.currentTarget,
+                            });
+                          }}
+                          onKeyDown={(event) => {
+                            if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                              return;
+                            }
+                            event.preventDefault();
+                            const bounds = event.currentTarget.getBoundingClientRect();
+                            const hasSessions = project.sessions.length > 0
+                              || sessions.some((session) => session.project?.id === project.project?.id);
+                            setContextMenu({
+                              kind: "project",
+                              project: project.project,
+                              hasSessions,
+                              x: bounds.left,
+                              y: bounds.bottom,
+                              element: event.currentTarget,
+                            });
+                          }}
+                        >
+                          <FolderIcon open={isExpanded} />
+                          <span className="workspace-name">{project.displayName}</span>
+                        </button>
+                      )}
+                      {!project.projectless && (
+                        <button
+                          className="workspace-add"
+                          aria-label={`在 ${project.displayName} 中新建会话`}
+                          disabled={disabled}
+                          onClick={() => {
+                            setCollapsedProjects((current) => {
+                              const next = new Set(current);
+                              next.delete(project.key);
+                              saveCollapsedProjects(next);
+                              return next;
+                            });
+                            onCreateInProject(project.workspaceRoot);
+                          }}
+                        >＋</button>
+                      )}
+                    </div>
+                    <div
+                      className={`workspace-collapse ${isExpanded ? "workspace-collapse--expanded" : ""}`}
+                      aria-hidden={!isExpanded}
+                      style={{ visibility: isExpanded ? "visible" : "hidden" }}
+                    >
+                      <div className="workspace-collapse-inner">
+                        <ProjectSessionList
+                          project={project}
+                          isExpanded={isExpanded}
+                          selectedId={selectedId}
+                          disabled={disabled}
+                          readCompletedSessions={readCompletedSessions}
+                          isSelectingSessionId={isSelectingSessionId}
+                          gitStatusBySessionId={gitStatusBySessionId}
+                          onSelect={onSelect}
+                          onDismissContextMenu={() => setContextMenu(undefined)}
+                          onOpenSessionContextMenu={(session, coords, element) => {
+                            setContextMenu({
+                              kind: "session",
+                              session,
+                              x: coords.x,
+                              y: coords.y,
+                              element,
+                            });
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </section>
+                </li>
+              );
+            })}
           </ul>
         )}
       </nav>
@@ -313,6 +314,14 @@ export function SessionSidebar({
           onClose={() => setContextMenu(undefined)}
           items={[
             {
+              key: "show-in-finder",
+              label: "在 Finder 中显示",
+              onClick: () => {
+                setContextMenu(undefined);
+                onShowInFinder?.(contextMenu.project);
+              },
+            },
+            {
               key: "delete-project",
               label: "删除项目",
               danger: true,
@@ -326,6 +335,147 @@ export function SessionSidebar({
         />
       )}
     </aside>
+  );
+}
+
+export const DEFAULT_VISIBLE_SESSION_COUNT = 6;
+
+interface ProjectSessionListProps {
+  project: ProjectSessionGroup;
+  isExpanded: boolean;
+  selectedId: string | undefined;
+  disabled: boolean;
+  readCompletedSessions: ReadonlySet<string>;
+  isSelectingSessionId?: string | undefined;
+  gitStatusBySessionId: ReadonlyMap<string, SessionGitStatus>;
+  onSelect: (session: Session) => void;
+  onDismissContextMenu: () => void;
+  onOpenSessionContextMenu: (
+    session: Session,
+    coords: { x: number; y: number },
+    element: HTMLElement,
+  ) => void;
+}
+
+function ProjectSessionList({
+  project,
+  isExpanded,
+  selectedId,
+  disabled,
+  readCompletedSessions,
+  isSelectingSessionId,
+  gitStatusBySessionId,
+  onSelect,
+  onDismissContextMenu,
+  onOpenSessionContextMenu,
+}: ProjectSessionListProps) {
+  const [showAll, setShowAll] = useState(false);
+  const [prevExpanded, setPrevExpanded] = useState(isExpanded);
+
+  if (prevExpanded !== isExpanded) {
+    setPrevExpanded(isExpanded);
+    if (!isExpanded) {
+      setShowAll(false);
+    }
+  }
+
+  if (project.sessions.length === 0) {
+    return <p className="session-empty">暂无会话</p>;
+  }
+
+  const hasMore = project.sessions.length > DEFAULT_VISIBLE_SESSION_COUNT;
+  const visibleSessions = hasMore && !showAll
+    ? project.sessions.slice(0, DEFAULT_VISIBLE_SESSION_COUNT)
+    : project.sessions;
+
+  return (
+    <>
+      <ul className="session-list">
+        {visibleSessions.map((session) => {
+          const status = taskStatusPresentation(
+            session.taskStatus,
+            readCompletedSessions.has(session.id),
+            session.activeRunStatus,
+          );
+          const isSelected = session.id === selectedId;
+          const isLoading = session.id === isSelectingSessionId;
+          const gitStatus = gitStatusBySessionId.get(session.id);
+          return (
+            <li className="session-item" key={session.id}>
+              <button
+                className={isSelected ? "selected" : ""}
+                aria-current={isSelected ? "page" : undefined}
+                aria-busy={isLoading}
+                aria-haspopup="menu"
+                disabled={disabled}
+                onClick={() => {
+                  onDismissContextMenu();
+                  onSelect(session);
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  onOpenSessionContextMenu(
+                    session,
+                    { x: event.clientX, y: event.clientY },
+                    event.currentTarget,
+                  );
+                }}
+                onKeyDown={(event) => {
+                  if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+                    event.preventDefault();
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    onOpenSessionContextMenu(
+                      session,
+                      { x: bounds.left, y: bounds.bottom },
+                      event.currentTarget,
+                    );
+                  }
+                }}
+              >
+                <span className="session-labels">
+                  <span className="session-title">{session.title ?? "新任务"}</span>
+                  {project.gitAvailable && session.worktree && (
+                    <span className="session-branch">
+                      {session.worktree.branch ?? "Detached HEAD"}
+                    </span>
+                  )}
+                </span>
+                {(isLoading || (project.gitAvailable && gitStatus?.dirty) || status) && (
+                  <span className="session-indicators">
+                    {isLoading && (
+                      <span className="session-loading-dot" aria-label="加载中" />
+                    )}
+                    {project.gitAvailable && gitStatus?.dirty && !isLoading && (
+                      <span
+                        className="git-dirty-indicator"
+                        aria-label="有未提交改动"
+                        title="有未提交改动"
+                      />
+                    )}
+                    {status && !isLoading && (
+                      <span
+                        className={`task-indicator task-indicator--${status.tone}${status.spinning ? " task-indicator--spinning" : ""}`}
+                        title={status.label}
+                        aria-label={status.label}
+                      />
+                    )}
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {hasMore && !showAll && (
+        <button
+          type="button"
+          className="session-expand-all"
+          onClick={() => setShowAll(true)}
+        >
+          展开全部
+        </button>
+      )}
+    </>
   );
 }
 

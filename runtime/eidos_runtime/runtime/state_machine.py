@@ -101,7 +101,9 @@ class EventType(StrEnum):
 
 TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
     RunStatus: {
-        RunStatus.QUEUED: frozenset({RunStatus.RUNNING, RunStatus.CANCELED}),
+        RunStatus.QUEUED: frozenset({
+            RunStatus.RUNNING, RunStatus.CANCELED, RunStatus.INTERRUPTED,
+        }),
         RunStatus.RUNNING: frozenset({
             RunStatus.WAITING_APPROVAL, RunStatus.FINALIZING, RunStatus.SUCCEEDED, RunStatus.FAILED,
             RunStatus.CANCELED, RunStatus.INTERRUPTED, RunStatus.QUEUED,

@@ -210,11 +210,14 @@ class ContextBuilder:
         if facts.reconciliation_required or facts.active_error_fingerprints:
             context.append({
                 "type": "user",
-                "content": "Runtime state: " + json.dumps(
+                "content": (
+                    "Runtime state (recent tool errors do not describe "
+                    "unresolved side effects): "
+                ) + json.dumps(
                     {
                         "reconciliationRequired": facts.reconciliation_required,
                         "reconciliationEpoch": facts.reconciliation_epoch,
-                        "unresolvedErrorFingerprints": facts.active_error_fingerprints,
+                        "recentToolErrorFingerprints": facts.active_error_fingerprints,
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),

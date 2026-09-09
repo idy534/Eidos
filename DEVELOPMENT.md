@@ -335,3 +335,5 @@ fi
 命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
 
 PTY 和后台进程 follow-up：Agent `run_shell` 不提供 PTY、stdin、interactive session 或 persistent/background process manager。测试者应使用 Desktop Terminal 验证交互式 PTY。测试者还应验证 Agent Shell 会检测并清理 background child。
+
+Agent `run_shell` 的执行预算来自 ToolSpec，新 Run 使用 3600 秒。Runtime 在同一 ToolCall 内持续轮询，`yieldTimeMs` 不是命令总期限。Approval 等待会暂停预算，多个 attempt 共用预算。长测试仍可由用户取消；超时会触发进程清理，并保留已取得且通过安全校验的输出。测试者应同时验证超时后模型可以提交报告并结束 Run，未确认的副作用仍在 `interrupted` 终态中可见。

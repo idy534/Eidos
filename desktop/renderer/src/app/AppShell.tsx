@@ -42,12 +42,25 @@ import { useExtensionController } from "./useExtensionController.js";
 import { useGitReviewController } from "./useGitReviewController.js";
 import { applyNotification, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
+import { NavigationControls } from "../components/NavigationControls.js";
+import { useNavigationHistory } from "./useNavigationHistory.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
 }
 
 type CreateBranchMode = "local" | "worktree";
+
+const SIDEBAR_OPEN_KEY = "eidos.sidebarOpen";
+
+function loadSidebarOpen(): boolean {
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_OPEN_KEY);
+    return raw !== null ? raw === "true" : true;
+  } catch {
+    return true;
+  }
+}
 
 const DOCK_MIN_WIDTH = 22 * 16;
 const MAIN_MIN_WIDTH = 16 * 16;
@@ -118,6 +131,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [createBranchSessionId, setCreateBranchSessionId] = useState<string | undefined>(undefined);
   const [createBranchMode, setCreateBranchMode] = useState<CreateBranchMode>("worktree");
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(loadSidebarOpen);
   const [dockOpen, setDockOpen] = useState(false);
   const [dockExpanded, setDockExpanded] = useState(false);
   const [dockWidth, setDockWidth] = useState<number>();
@@ -274,14 +288,85 @@ export function AppShell({ runtime }: AppShellProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen, runtimeStatus.state, isStorageReady]);
 
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SIDEBAR_OPEN_KEY, String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isCmdOrCtrl = event.metaKey || event.ctrlKey;
+      if (isCmdOrCtrl && (event.key === "b" || event.key === "B")) {
+        event.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleSidebar]);
+
   // -----------------------------------------------------------------------
   // Session Selection & Creation with Model re-eval
-  // -----------------------------------------------------------------------
+  const handleNavigateToSession = useCallback((target: string) => {
+    if (target === "draft") {
+      sessionActions.startDraft();
+      return;
+    }
+    const targetSession = sessionState.sessions.find((s) => s.id === target);
+    if (targetSession) {
+      void sessionActions.selectSession(targetSession);
+    } else {
+      void sessionActions.selectSession({
+        id: target,
+        workspaceRoot: "",
+        executionMode: "local",
+        taskStatus: "in_progress",
+        createdAt: 0,
+        updatedAt: 0,
+      });
+    }
+  }, [sessionState.sessions, sessionActions]);
+
+  const [navHistoryState, navHistoryActions] = useNavigationHistory(handleNavigateToSession);
+
+  // Initialize history with initial session or draft once
+  useEffect(() => {
+    if (navHistoryState.history.length === 0) {
+      if (sessionState.snapshot?.session.id) {
+        navHistoryActions.init(sessionState.snapshot.session.id);
+      } else if (sessionState.draft) {
+        navHistoryActions.init("draft");
+      }
+    }
+  }, [sessionState.snapshot?.session.id, sessionState.draft, navHistoryState.history.length, navHistoryActions]);
+
+  const canGoBack = settingsOpen || navHistoryState.canGoBack;
+  const canGoForward = !settingsOpen && navHistoryState.canGoForward;
+  const handleGoBack = useCallback(() => {
+    if (settingsOpen) {
+      setSettingsOpen(false);
+    } else {
+      void navHistoryActions.goBack();
+    }
+  }, [settingsOpen, navHistoryActions]);
+  const handleGoForward = useCallback(() => {
+    if (!settingsOpen) {
+      void navHistoryActions.goForward();
+    }
+  }, [settingsOpen, navHistoryActions]);
+
   async function handleSelectSession(session: Session) {
+    navHistoryActions.navigateTo(session.id);
     return sessionActions.selectSession(session);
   }
 
   function handleCreateSession(project?: Project | null): void {
+    navHistoryActions.navigateTo("draft");
     sessionActions.startDraft(project);
   }
 
@@ -426,6 +511,7 @@ export function AppShell({ runtime }: AppShellProps) {
     const result = await sessionActions.deleteSession(sessionToDelete);
     setDeleteBusy(false);
     if (result.confirmed) {
+      navHistoryActions.removeSession(sessionToDelete.id);
       setSessionToDelete(undefined);
     } else {
       setDeleteError(result.error);
@@ -461,6 +547,7 @@ export function AppShell({ runtime }: AppShellProps) {
       if (!draftInput.trim()) return;
       const materialized = await sessionActions.materializeDraft();
       if (!materialized) return;
+      navHistoryActions.replaceCurrent(materialized.session.id);
       const started = await runActions.submitInput({
         snapshot: materialized,
         selectedModelId: modelState.selectedModelId,
@@ -592,7 +679,7 @@ export function AppShell({ runtime }: AppShellProps) {
     if (dockWidth !== undefined) return dockWidth;
     const dock = workspaceBodyRef.current?.querySelector<HTMLElement>(".workspace-dock");
     const measured = dock?.getBoundingClientRect().width ?? 0;
-    return clampDockWidth(measured || window.innerWidth * 0.42);
+    return clampDockWidth(measured || DOCK_MIN_WIDTH);
   }
 
   function adjustDockWidth(delta: number): void {
@@ -773,7 +860,7 @@ export function AppShell({ runtime }: AppShellProps) {
   ) : null;
 
   return (
-    <main className="workbench">
+    <main className={`workbench${sidebarOpen ? "" : " workbench--sidebar-collapsed"}`}>
       <SessionSidebar
         sessions={sessionState.sessions}
         projects={sessionState.projects}
@@ -789,12 +876,26 @@ export function AppShell({ runtime }: AppShellProps) {
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
         onDeleteProject={(project) => requestDeleteProject(project)}
+        onShowInFinder={(project) => {
+          void window.eidosRuntime.showItemInFolder(project.workspaceRoot).catch(() => undefined);
+        }}
         onOpenSettings={() => {
           setSettingsOpen(true);
           setDockOpen(false);
           setDockExpanded(false);
           setRenamingSessionId(undefined);
         }}
+        navigationSlot={
+          <NavigationControls
+            sidebarOpen={sidebarOpen}
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            onToggleSidebar={toggleSidebar}
+            onGoBack={handleGoBack}
+            onGoForward={handleGoForward}
+            showTrafficSpacer={true}
+          />
+        }
       />
 
       <section ref={workspaceRef} className="workspace" aria-label="Agent 工作区" tabIndex={-1}>
@@ -1084,7 +1185,9 @@ export function AppShell({ runtime }: AppShellProps) {
             </div>
           </>
         ) : (
-          <div className="empty-state">
+          <>
+            <header className="workspace-header workspace-header--empty" aria-hidden="true" />
+            <div className="empty-state">
             <div className="empty-hero">
               <EidosMark className="empty-logo" variant="hero" />
             </div>
@@ -1109,8 +1212,23 @@ export function AppShell({ runtime }: AppShellProps) {
               />
             </div>
           </div>
-        )}
+        </>
+      )}
       </section>
+
+      {!sidebarOpen && (
+        <div className="collapsed-navigation-bar">
+          <NavigationControls
+            sidebarOpen={sidebarOpen}
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            onToggleSidebar={toggleSidebar}
+            onGoBack={handleGoBack}
+            onGoForward={handleGoForward}
+            showTrafficSpacer={true}
+          />
+        </div>
+      )}
 
       <ProjectPicker
         open={projectPickerOpen}
