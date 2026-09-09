@@ -241,7 +241,7 @@ describe("WorkspaceExplorer", () => {
     const sideSplitter = screen.getByRole("separator", { name: "调整文件树大小" });
     expect(sideSplitter).toHaveAttribute("aria-valuemin", "88");
     expect(sideSplitter).toHaveAttribute("aria-valuemax", "512");
-    expect(sideSplitter).toHaveAttribute("aria-valuenow", "204");
+    expect(sideSplitter).toHaveAttribute("aria-valuenow", "88");
     fireEvent.pointerDown(sideSplitter, { clientY: 100, pointerId: 1 });
     fireEvent.pointerMove(sideSplitter, { clientY: 120, pointerId: 1 });
     fireEvent.pointerUp(sideSplitter, { clientY: 120, pointerId: 1 });

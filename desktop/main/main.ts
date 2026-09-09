@@ -277,6 +277,8 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: "#f4f2ed",
     title: "Eidos",
+    titleBarStyle: "hidden",
+    trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
       preload: path.join(currentDirectory, "preload.cjs"),
       contextIsolation: true,

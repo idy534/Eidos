@@ -50,6 +50,7 @@ interface Props {
   onDeleteProject: (project: Project) => void;
   onShowInFinder?: (project: Project) => void;
   onOpenSettings: () => void;
+  navigationSlot?: React.ReactNode;
 }
 
 type ContextMenuState =
@@ -73,6 +74,7 @@ export function SessionSidebar({
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
+  navigationSlot,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
@@ -129,6 +131,7 @@ export function SessionSidebar({
 
   return (
     <aside className="sidebar" aria-label="任务导航">
+      {navigationSlot && <div className="sidebar-top-bar">{navigationSlot}</div>}
       <div className="brand-row">
         <span className="brand-mark" aria-hidden="true">
           <EidosMark />

@@ -131,7 +131,16 @@ export function WorkspaceDock({
 
         <DropdownMenu
           className="workspace-dock__add"
-          trigger={<><span aria-hidden="true">＋</span><span className="sr-only">添加窗口</span></>}
+          trigger={(
+            <>
+              <span aria-hidden="true">
+                <svg viewBox="0 0 20 20" aria-hidden="true" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 4.5v11M4.5 10h11" />
+                </svg>
+              </span>
+              <span className="sr-only">添加窗口</span>
+            </>
+          )}
           label="添加窗口"
           items={addableTools.length > 0
             ? addableTools.map((tool) => ({
