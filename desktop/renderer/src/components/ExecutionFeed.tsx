@@ -321,6 +321,15 @@ function RunSegment({
 function ProcessGroup({ run, children }: { run: Run; children: ReactNode }) {
   const terminal = TERMINAL_RUN_STATUSES.has(run.status);
   const [open, setOpen] = useState(!terminal);
+  const prevTerminalRef = useRef(terminal);
+
+  useEffect(() => {
+    if (!prevTerminalRef.current && terminal) {
+      setOpen(false);
+    }
+    prevTerminalRef.current = terminal;
+  }, [terminal]);
+
   return (
     <details className="process-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary><ProcessLabel run={run} /></summary>
