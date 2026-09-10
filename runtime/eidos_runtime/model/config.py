@@ -160,18 +160,8 @@ MODEL_PROVIDERS = (
         vendor="DeepSeek",
         models=(
             CatalogModel(
-                id="deepseek-v4-pro",
-                name="DeepSeek-V4 Pro",
-                url="https://api.deepseek.com/chat/completions",
-                supportsToolCall=True,
-                supportsImages=False,
-                supportsReasoning=True,
-                reasoning=_REASONING,
-                contextWindowTokens=802_816,
-            ),
-            CatalogModel(
-                id="deepseek-v4-flash",
-                name="DeepSeek-V4 Flash",
+                id="deepseek-flash",
+                name="DeepSeek-V4.1 Flash",
                 url="https://api.deepseek.com/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
@@ -322,6 +312,12 @@ MODEL_PROVIDERS = (
 )
 
 
+LEGACY_MODEL_ID_ALIASES = {
+    "deepseek-v4-flash": "deepseek-flash",
+    "deepseek-v4-pro": "deepseek-flash",
+}
+
+
 class ModelCatalog:
     def __init__(self) -> None:
         self.providers = MODEL_PROVIDERS
@@ -344,16 +340,20 @@ class ModelCatalog:
             "apiKey": api_key,
         })
 
+    @staticmethod
+    def canonical_id(model_id: str) -> str:
+        return LEGACY_MODEL_ID_ALIASES.get(model_id, model_id)
+
     def lookup(
         self, provider_id: str, model_id: str
     ) -> tuple[CatalogProvider, CatalogModel]:
-        selected = self._models.get(model_id)
+        selected = self._models.get(self.canonical_id(model_id))
         if selected is None or selected[0].id != provider_id:
             raise ModelConfigError("model is unsupported")
         return selected
 
     def provider_id_for(self, model_id: str) -> str:
-        selected = self._models.get(model_id)
+        selected = self._models.get(self.canonical_id(model_id))
         if selected is None:
             raise ModelConfigError("model is unsupported")
         return selected[0].id
@@ -362,7 +362,7 @@ class ModelCatalog:
         provider, model = self.lookup(self.provider_id_for(model_id), model_id)
         return ModelProfileSpec(
             provider_id=provider.id,
-            model_id=model.id,
+            model_id=model_id,
             context_window_tokens=model.context_window_tokens,
             max_output_tokens=model.max_output_tokens,
             request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -402,7 +402,7 @@ MODEL_CATALOG = ModelCatalog()
 SUPPORTED_MODELS = tuple(
     model.id for provider in MODEL_PROVIDERS for model in provider.models
 )
-DEFAULT_MODEL_ID = "deepseek-v4-flash"
+DEFAULT_MODEL_ID = "deepseek-flash"
 
 
 class ModelConfigError(RuntimeError):
@@ -426,7 +426,35 @@ class ModelConfigStore:
         self.path = directory / CONFIG_NAME
         if self.path.exists():
             self._validate_file(self.path)
+            self._migrate_legacy_configs()
             self.list()
+
+    def _migrate_legacy_configs(self) -> None:
+        assert self.path is not None
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(payload, list):
+                return
+            values = [ModelConfig.model_validate(value) for value in payload]
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return
+
+        if not any(value.id in LEGACY_MODEL_ID_ALIASES for value in values):
+            return
+
+        migrated: list[ModelConfig] = []
+        seen: set[str] = set()
+        for value in values:
+            model_id = MODEL_CATALOG.canonical_id(value.id)
+            if model_id in seen:
+                raise ModelConfigError("model configuration migration conflict")
+            seen.add(model_id)
+            if model_id == value.id:
+                migrated.append(value)
+                continue
+            provider_id = MODEL_CATALOG.provider_id_for(model_id)
+            migrated.append(MODEL_CATALOG.materialize(provider_id, model_id, value.api_key))
+        self._write(migrated)
 
     def list(self) -> list[ModelConfig]:
         path = self._path()
@@ -451,12 +479,14 @@ class ModelConfigStore:
         return values
 
     def get(self, model_id: str) -> ModelConfig | None:
+        model_id = MODEL_CATALOG.canonical_id(model_id)
         return next((model for model in self.list() if model.id == model_id), None)
 
     def create(
         self, *, provider_id: str, model_id: str, api_key: str
     ) -> ModelConfig:
         values = self.list()
+        model_id = MODEL_CATALOG.canonical_id(model_id)
         if any(value.id == model_id for value in values):
             raise ModelConfigError("model ID already exists")
         try:
@@ -475,6 +505,8 @@ class ModelConfigStore:
         api_key: str | None,
     ) -> ModelConfig:
         values = self.list()
+        existing_id = MODEL_CATALOG.canonical_id(existing_id)
+        model_id = MODEL_CATALOG.canonical_id(model_id)
         index = next(
             (position for position, value in enumerate(values) if value.id == existing_id),
             None,
@@ -498,6 +530,7 @@ class ModelConfigStore:
 
     def delete(self, model_id: str) -> ModelConfig:
         values = self.list()
+        model_id = MODEL_CATALOG.canonical_id(model_id)
         deleted = next((value for value in values if value.id == model_id), None)
         if deleted is None:
             raise ModelConfigError("model was not found")

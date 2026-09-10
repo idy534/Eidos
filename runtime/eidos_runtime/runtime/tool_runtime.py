@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import ExitStack
 import errno
 import hashlib
 import json
@@ -9,6 +10,7 @@ import threading
 from typing import Callable, cast
 
 import anyio
+from pydantic import ValidationError
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skill_access import (
@@ -65,8 +67,10 @@ from eidos_runtime.runtime.tool_execution import (
 )
 from eidos_runtime.runtime.tool_fingerprints import tool_payload_fingerprint_value
 from eidos_runtime.runtime.permission_requests import PermissionRequests, network_permission_result
+from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator, PermissionDisposition
 from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, NetworkPermissions
 from eidos_runtime.tools.request_permissions import RequestPermissionsInput
+from eidos_runtime.workspace.codex_patch import PatchError
 from eidos_runtime.runtime.shell_orchestration import (
     ShellOrchestrationRequest,
     ShellOrchestrationRuntime,
@@ -83,6 +87,12 @@ from eidos_runtime.sandbox.denial import (
 )
 from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
+    EffectivePermissionProfile,
+    FileSystemAccessMode,
+    FileSystemPermissionEntry,
+    materialize_effective_profile,
+    merge_permissions,
+    unsandboxed_execution_allowed,
     SandboxAttempt,
     SandboxPermissions,
     SandboxType,
@@ -281,6 +291,130 @@ class FileChangeToolHandler:
         self.dependencies = dependencies
 
     def execute(
+        self, run_id: str, item: dict[str, object], call: ModelToolCall,
+        cancel: threading.Event, runtime: WorkspaceMutationRuntime,
+    ) -> HandlerOutcome:
+        executor = runtime.implementation.executor  # type: ignore[attr-defined]
+        try:
+            paths = executor.external_patch_paths(_tool_payload_value(call)) if call.name == "apply_patch" else ()
+            base = self.dependencies.base_permissions
+            if base is None:
+                if paths:
+                    return HandlerOutcome(tool_error(call.name, "permission_not_requestable", "File permissions are unavailable"), "failed", "failed")
+                base = BasePermissionProfile.for_workspace(workspace_root=executor.workspace.path)
+            if self.dependencies.skill_access is not None:
+                base = base.model_copy(update={"active_skill_roots": tuple(
+                    str(path) for path in self.dependencies.skill_access.active_roots()
+                )})
+            entries = []
+            for path in paths:
+                permission_path = path
+                while not permission_path.exists():
+                    permission_path = permission_path.parent
+                entries.append(FileSystemPermissionEntry(
+                    path=str(permission_path), access=FileSystemAccessMode.WRITE,
+                    recursive=permission_path != path,
+                ))
+            additional = AdditionalPermissionProfile(fileSystem=tuple(
+                {entry.path: entry for entry in entries}.values()
+            ))
+            granted = self.dependencies.store.run_permission_grants(run_id)
+            decision = PermissionPolicyEvaluator().evaluate(base, granted, additional)
+            if decision.disposition is PermissionDisposition.DENY:
+                return HandlerOutcome(tool_error(call.name, decision.reason_code, "This path cannot be authorized for writing"), "failed", "failed")
+            effective = materialize_effective_profile(base, merge_permissions(granted, additional))
+
+            def revalidate_permissions() -> EffectivePermissionProfile:
+                return materialize_effective_profile(base, merge_permissions(
+                    self.dependencies.store.run_permission_grants(run_id), additional,
+                ))
+
+            scope = ExitStack()
+            scope.enter_context(executor.external_write_scope(paths, effective, revalidate_permissions))
+            executor.external_write_approved = decision.disposition is PermissionDisposition.ALLOW
+        except (WorkspacePathError, PatchError, ValidationError, OSError, ValueError) as error:
+            return HandlerOutcome(tool_error(
+                call.name, getattr(error, "code", "file_prepare_failed"),
+                "File paths or permissions could not be prepared",
+            ), "failed", "failed")
+        with scope:
+            return self._execute(run_id, item, call, cancel, runtime)
+
+    def _execute_file_effect(
+        self, run_id: str, item: dict[str, object], prepared: PreparedToolExecution,
+        cancel: threading.Event, runtime: WorkspaceMutationRuntime,
+        execute: Callable[[], dict[str, object]],
+    ) -> VerifiedToolExecutionResult:
+        executor = runtime.implementation.executor  # type: ignore[attr-defined]
+        external = bool(executor._external_writers)
+        unsandboxed = not is_seatbelt_ready()
+        permissions = executor.write_permissions
+        if unsandboxed and (permissions is None or not unsandboxed_execution_allowed(permissions)):
+            return VerifiedToolExecutionResult(result=tool_error(
+                runtime.spec.name, "sandbox_unavailable", "File sandbox is unavailable and escalation is forbidden",
+            ))
+        if (not external or executor.external_write_approved) and not unsandboxed:
+            if external:
+                prepared = prepared.model_copy(update={"intent_preconditions": {
+                    **prepared.intent_preconditions, "authorization": "run_grant",
+                    "mutationScope": "external_file",
+                    "effectivePermissions": permissions.summary() if permissions is not None else {},
+                }})
+            return self.dependencies.execute_workspace_side_effect(
+                item=item, prepared=prepared, cancel=cancel, execute=execute,
+            )
+        request = {
+            "kind": "file_change",
+            "sandboxPermissions": "require_escalated" if unsandboxed else "with_additional_permissions",
+            "effectivePermissions": permissions.summary() if permissions is not None else {},
+            "profileHash": permissions.profile_hash if permissions is not None else None,
+            "additionalPermissions": AdditionalPermissionProfile(fileSystem=tuple(
+                FileSystemPermissionEntry(
+                    path=entry.resolved_path, access=entry.access, recursive=entry.recursive,
+                ) for entry in permissions.entries if entry.source == "additional"
+            )).model_dump(mode="json", by_alias=True, exclude_none=True) if permissions is not None else None,
+            "paths": prepared.approval_description.get("paths", []),
+            "workspaceIdentity": {
+                "path": str(executor.workspace.path), "device": executor.workspace.device,
+                "inode": executor.workspace.inode, "owner": executor.workspace.owner,
+            },
+        }
+        approved_prepared = prepared.model_copy(update={
+            "approval_description": {
+                **prepared.approval_description,
+                "summary": ("Write files without the sandbox" if unsandboxed else "Write files outside the workspace"),
+                **request,
+            },
+            "approval_request": request,
+            "approval_kind": "escalated" if unsandboxed else "additional_permissions",
+            "transition_reason": "file_write_permission_requested",
+            "intent_preconditions": {
+                **prepared.intent_preconditions, "authorization": "approval",
+                "mutationScope": "external_file" if external else "workspace", **request,
+            },
+        })
+
+        def authorized_write() -> dict[str, object]:
+            try:
+                executor.verify_write_scope()
+            except (WorkspacePathError, OSError, ValueError):
+                return tool_error(runtime.spec.name, "workspace_identity_changed", "Approved file paths changed before execution")
+            executor.external_write_approved = True
+            executor.unsandboxed_write = unsandboxed
+            return execute()
+
+        approval, verified = self.dependencies.execute_side_effect(
+            run_id=run_id, item=item, prepared=approved_prepared,
+            cancel=cancel, execute=authorized_write,
+        )
+        if verified is not None:
+            return verified
+        return VerifiedToolExecutionResult(result=tool_error(
+            runtime.spec.name, "user_rejected" if approval.decision != "approve" else "file_write_failed",
+            APPROVAL_REJECTION_GUIDANCE,
+        ))
+
+    def _execute(
         self,
         run_id: str,
         item: dict[str, object],
@@ -307,7 +441,10 @@ class FileChangeToolHandler:
                     ),
                     "completed",
                 )
-            paths = [change.path for change in prepared.changes]
+            paths = list(dict.fromkeys(
+                path for change in prepared.changes
+                for path in (change.path, change.new_path) if path is not None
+            ))
             committed_delta = AppliedPatchDelta()
             prepared_execution = PreparedToolExecution(
                 approval_description={
@@ -340,7 +477,8 @@ class FileChangeToolHandler:
                 )
                 return result
 
-            verified = self.dependencies.execute_workspace_side_effect(
+            verified = self._execute_file_effect(
+                run_id=run_id, runtime=runtime,
                 item=item,
                 prepared=prepared_execution,
                 cancel=cancel,
@@ -349,7 +487,7 @@ class FileChangeToolHandler:
             result = verified.result
             if result["outcome"] == "success":
                 self.dependencies.store.clear_rejects(run_id)
-            changed = bool(committed_delta.changes)
+            changed = bool(committed_delta.changes) or result.get("sideEffectsMayExist") is True
             status = "completed" if result["outcome"] == "success" else "failed"
             return HandlerOutcome(
                 result,
@@ -376,8 +514,10 @@ class FileChangeToolHandler:
             approval_description={
                 "kind": "file_change",
                 "summary": f"Modify {prepared.path}",
+                "paths": [prepared.path],
                 "diff": prepared.diff,
             },
+            approval_diff=prepared.diff,
             base_sha256=prepared.base_sha256,
             transition_reason="workspace_file_authorized",
             intent_preconditions={
@@ -391,7 +531,8 @@ class FileChangeToolHandler:
             diff=prepared.diff,
             base_sha256=prepared.base_sha256,
         )
-        verified = self.dependencies.execute_workspace_side_effect(
+        verified = self._execute_file_effect(
+            run_id=run_id, runtime=runtime,
             item=item,
             prepared=prepared_execution,
             cancel=cancel,
@@ -403,7 +544,7 @@ class FileChangeToolHandler:
         if result["outcome"] == "success" and result.get("code") != "no_changes":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
-        changed = result["outcome"] == "success" and result.get("code") != "no_changes"
+        changed = (result["outcome"] == "success" and result.get("code") != "no_changes") or result.get("sideEffectsMayExist") is True
         return HandlerOutcome(
             result,
             status,

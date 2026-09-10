@@ -346,3 +346,7 @@ PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 
 ### Shell 分段等待验收
 
 测试者应先得到本次修改的测试授权，再运行验证。测试者应覆盖短命令、超过首次窗口的静默命令、持续输出、空输入轮询、stdin、Ctrl-C 及忽略中断的进程组清理。测试者应检查命令运行期间的排他副作用限制、只读工具可用、有效轮询不会触发 LoopGuard，以及退出结果在模型没有继续轮询时也会持久化。测试者应检查原命令卡片持续更新且没有 `write_stdin` 名称或正常轮询卡片。测试者还应覆盖审批重试、跨 Run session 拒绝、跨输出片段敏感扫描、取消竞争、存储失败和 Runtime 重启后的不确定 Intent。
+
+## 文件编辑提交验证
+
+已有文件使用原地写入，新文件使用排他创建。相关定向用例位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_runtime_loop.py` 和 `runtime/tests/test_seatbelt.py`。macOS 验收必须覆盖 inode 不变、ACL 拒绝、写前版本冲突、部分写入、取消、外部路径拒批/批准和无沙盒审批。Runtime Bundle 必须重新构建并执行 bundled smoke；源码检查不能代表已安装 App 的行为。

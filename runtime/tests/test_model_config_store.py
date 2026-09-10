@@ -36,8 +36,7 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         for provider in presets["providers"]
         for model in provider["models"]
     ] == [
-        "deepseek-v4-pro",
-        "deepseek-v4-flash",
+        "deepseek-flash",
         "MiniMax-M3",
         "kimi-k3",
         "kimi-k2.7-code-highspeed",
@@ -56,6 +55,48 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         for provider in presets["providers"]
         for model in provider["models"]
     )
+
+
+@pytest.mark.parametrize(
+    ("legacy_id", "legacy_name"),
+    [
+        ("deepseek-v4-flash", "DeepSeek-V4 Flash"),
+        ("deepseek-v4-pro", "DeepSeek-V4 Pro"),
+    ],
+)
+def test_legacy_deepseek_model_id_is_migrated_to_the_current_id(
+    tmp_path: Path,
+    legacy_id: str,
+    legacy_name: str,
+) -> None:
+    store = _store(tmp_path)
+    store.path.write_text(
+        json.dumps([
+            {
+                "id": legacy_id,
+                "name": legacy_name,
+                "vendor": "DeepSeek",
+                "url": "https://api.deepseek.com/chat/completions",
+                "apiKey": "sk-deepseek-secret-value",
+                "supportsToolCall": True,
+                "supportsImages": False,
+                "supportsReasoning": True,
+                "reasoning": {
+                    "defaultEffort": "high",
+                    "supportedEfforts": ["high", "max"],
+                },
+            }
+        ]),
+        encoding="utf-8",
+    )
+    store.path.chmod(0o600)
+
+    store.initialize()
+
+    assert [model.id for model in store.list()] == ["deepseek-flash"]
+    assert store.get(legacy_id) is not None
+    assert store.get(legacy_id).id == "deepseek-flash"
+    assert json.loads(store.path.read_text(encoding="utf-8"))[0]["id"] == "deepseek-flash"
 
 
 def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits() -> None:
@@ -115,12 +156,12 @@ def test_create_update_delete_round_trip_uses_the_documented_json_array(
 
     created = store.create(
         provider_id="deepseek",
-        model_id="deepseek-v4-flash",
+        model_id="deepseek-flash",
         api_key="sk-deepseek-secret-value",
     )
 
-    assert created.id == "deepseek-v4-flash"
-    assert created.name == "DeepSeek-V4 Flash"
+    assert created.id == "deepseek-flash"
+    assert created.name == "DeepSeek-V4.1 Flash"
     assert created.vendor == "DeepSeek"
     assert created.url == "https://api.deepseek.com/chat/completions"
     assert created.supports_tool_call is True
@@ -133,8 +174,8 @@ def test_create_update_delete_round_trip_uses_the_documented_json_array(
     payload = json.loads(store.path.read_text(encoding="utf-8"))
     assert payload == [
         {
-            "id": "deepseek-v4-flash",
-            "name": "DeepSeek-V4 Flash",
+            "id": "deepseek-flash",
+            "name": "DeepSeek-V4.1 Flash",
             "vendor": "DeepSeek",
             "url": "https://api.deepseek.com/chat/completions",
             "apiKey": "sk-deepseek-secret-value",
@@ -152,16 +193,15 @@ def test_create_update_delete_round_trip_uses_the_documented_json_array(
     unchanged_key = store.update(
         "deepseek-v4-flash",
         provider_id="deepseek",
-        model_id="deepseek-v4-pro",
+        model_id="deepseek-v4-flash",
         api_key=None,
     )
-    assert unchanged_key.id == "deepseek-v4-pro"
+    assert unchanged_key.id == "deepseek-flash"
     assert unchanged_key.api_key == "sk-deepseek-secret-value"
-    assert store.get("deepseek-v4-flash") is None
-    assert store.get("deepseek-v4-pro") == unchanged_key
+    assert store.get("deepseek-v4-flash") == unchanged_key
 
     deleted = store.delete("deepseek-v4-pro")
-    assert deleted.id == "deepseek-v4-pro"
+    assert deleted.id == "deepseek-flash"
     assert store.list() == []
     assert json.loads(store.path.read_text(encoding="utf-8")) == []
 
@@ -205,7 +245,7 @@ def test_api_key_is_an_opaque_nonempty_local_value(tmp_path: Path) -> None:
 
     created = store.create(
         provider_id="deepseek",
-        model_id="deepseek-v4-flash",
+        model_id="deepseek-flash",
         api_key="sk-xxx",
     )
 

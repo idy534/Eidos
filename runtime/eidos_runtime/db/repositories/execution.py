@@ -111,7 +111,7 @@ def _result_reconciliation_required(
 
 
 def _reconciliation_intent_scope(
-    tool_name: object, provenance_json: object
+    tool_name: object, provenance_json: object, preconditions_json: object = None,
 ) -> str:
     """Classify an unresolved intent using persisted tool metadata.
 
@@ -131,6 +131,17 @@ def _reconciliation_intent_scope(
     if provenance_kind == "mcp":
         return "external"
     if tool_name in _WORKSPACE_REFRESH_WORKSPACE_TOOLS:
+        if isinstance(preconditions_json, str):
+            try:
+                preconditions = json.loads(preconditions_json)
+            except (TypeError, json.JSONDecodeError):
+                return "unknown"
+            if not isinstance(preconditions, dict):
+                return "unknown"
+            if preconditions.get("mutationScope") == "external_file":
+                return "external"
+            if preconditions.get("mutationScope") not in {None, "workspace"}:
+                return "unknown"
         return "workspace"
     if provenance_kind == "skill" or tool_name in _EIDOS_STATE_TOOLS:
         return "eidos_state"
@@ -758,6 +769,23 @@ class ExecutionRepository(Repository):
                 or current["reconciliation_epoch"] != expected_epoch
             ):
                 return None
+            unresolved = connection.execute(
+                """
+                SELECT tool_calls.tool_name, tool_calls.provenance_json,
+                       durable_intents.preconditions_json
+                FROM durable_intents
+                JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
+                WHERE durable_intents.run_id = ?
+                  AND durable_intents.status IN (?, ?, ?)
+                """,
+                (run_id, *_RECONCILIATION_INTENT_STATUSES),
+            ).fetchall()
+            if any(
+                _reconciliation_intent_scope(
+                    row["tool_name"], row["provenance_json"], row["preconditions_json"],
+                ) != "workspace" for row in unresolved
+            ):
+                return None
             changed = connection.execute(
                 """
                 UPDATE runs
@@ -811,7 +839,8 @@ class ExecutionRepository(Repository):
         with self.lock:
             rows = self._connection().execute(
                 """
-                SELECT tool_calls.tool_name, tool_calls.provenance_json
+                SELECT tool_calls.tool_name, tool_calls.provenance_json,
+                       durable_intents.preconditions_json
                 FROM durable_intents
                 JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
                 WHERE durable_intents.run_id = ?
@@ -821,7 +850,7 @@ class ExecutionRepository(Repository):
             ).fetchall()
         return frozenset(
             _reconciliation_intent_scope(
-                row["tool_name"], row["provenance_json"]
+                row["tool_name"], row["provenance_json"], row["preconditions_json"],
             )
             for row in rows
         )

@@ -1856,11 +1856,11 @@ class ToolExecutorTests(unittest.TestCase):
         assert not isinstance(prepared, dict)
         moved = self.workspace.parent / f"moved-{self.workspace.name}"
 
-        def move_parent_then_attempt(workspace, source, destination, expected):
+        def move_parent_then_attempt(workspace, source, destination, expected, **kwargs):
             subdirectory.rename(moved)
             from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
-            return secure_workspace_move(workspace, source, destination, expected)
+            return secure_workspace_move(workspace, source, destination, expected, **kwargs)
 
         try:
             with mock_patch(
@@ -1877,7 +1877,30 @@ class ToolExecutorTests(unittest.TestCase):
             if moved.exists():
                 moved.rename(subdirectory)
 
-    def test_cancel_after_atomic_move_reports_committed_result(self) -> None:
+    def test_existing_file_write_never_creates_candidate_temporary_file(self) -> None:
+        target = self.workspace / "existing.txt"
+        target.write_text("base\n", encoding="utf-8")
+        prepared = self.executor.prepare_file_change(
+            "write_file", {"path": target.name, "content": "updated\n"}, threading.Event(),
+        )
+        assert not isinstance(prepared, dict)
+        real_open = os.open
+
+        def reject_candidate_creation(path, flags, *args, **kwargs):
+            name = os.fsdecode(path)
+            if flags & os.O_CREAT and Path(name).name.startswith(".eidos-"):
+                raise AssertionError("Existing file writes must not stage temporary candidates")
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock_patch("eidos_runtime.tools.workspace.os.open", side_effect=reject_candidate_creation):
+            result = self.executor.commit_file_change("write_file", prepared, threading.Event())
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(target.read_text(encoding="utf-8"), "updated\n")
+
+    def test_cancel_after_in_place_write_reports_committed_result(self) -> None:
+        target = self.workspace / "committed.txt"
+        target.write_text("original\n", encoding="utf-8")
+        inode = target.stat().st_ino
         prepared = self.executor.prepare_file_change(
             "write_file",
             {"path": "committed.txt", "content": "committed\n"},
@@ -1888,8 +1911,8 @@ class ToolExecutorTests(unittest.TestCase):
 
         from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
-        def move_then_cancel(workspace, source, destination, expected):
-            moved = secure_workspace_move(workspace, source, destination, expected)
+        def move_then_cancel(workspace, source, destination, expected, **kwargs):
+            moved = secure_workspace_move(workspace, source, destination, expected, **kwargs)
             cancel.set()
             return moved
 
@@ -1903,6 +1926,8 @@ class ToolExecutorTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "success")
         self.assertEqual((self.workspace / "committed.txt").read_text(), "committed\n")
+
+        self.assertEqual(target.stat().st_ino, inode)
 
     def test_control_characters_in_paths_are_rejected(self) -> None:
         result = self.executor.prepare_file_change(
@@ -2001,7 +2026,7 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertEqual(prepared["code"], "unsupported_workspace_hardlink")
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
-    def test_extended_attribute_is_preserved_by_atomic_update(self) -> None:
+    def test_extended_attribute_is_preserved_by_in_place_update(self) -> None:
         target = self.workspace / "xattr.txt"
         target.write_text("base\n", encoding="utf-8")
         completed = subprocess.run(
@@ -2035,7 +2060,7 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertEqual(read_back.stdout.rstrip("\n"), "value")
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
-    def test_apple_provenance_attribute_is_preserved_by_atomic_update(self) -> None:
+    def test_apple_provenance_attribute_is_preserved_by_in_place_update(self) -> None:
         target = self.workspace / "provenance.txt"
         target.write_text("base\n", encoding="utf-8")
         completed = subprocess.run(
@@ -2121,9 +2146,22 @@ class ToolExecutorTests(unittest.TestCase):
         def reject_legacy_copy(source_fd: int, target_fd: int) -> None:
             raise OSError("simulated provenance copy failure")
 
-        with mock_patch(
-            "eidos_runtime.tools.workspace.copy_replace_metadata",
-            side_effect=reject_legacy_copy,
+        with (
+            mock_patch(
+                "eidos_runtime.tools.workspace.copy_replace_metadata",
+                side_effect=reject_legacy_copy,
+                create=True,
+            ),
+            mock_patch(
+                "eidos_runtime.tools.workspace.clone_file_with_metadata",
+                side_effect=AssertionError("existing edits must not clone metadata"),
+                create=True,
+            ),
+            mock_patch(
+                "eidos_runtime.tools.workspace.copy_file_acl",
+                side_effect=AssertionError("existing edits must not copy ACLs"),
+                create=True,
+            ),
         ):
             result = self.executor.commit_file_change(
                 "write_file", prepared, threading.Event()
@@ -2141,7 +2179,7 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertEqual(after.stdout, before.stdout)
 
     @unittest.skipUnless(sys.platform == "darwin", "requires macOS file metadata")
-    def test_access_control_list_is_preserved_by_atomic_update(self) -> None:
+    def test_access_control_list_denial_preserves_original_file(self) -> None:
         target = self.workspace / "acl.txt"
         target.write_text("base\n", encoding="utf-8")
         completed = subprocess.run(
@@ -2164,7 +2202,9 @@ class ToolExecutorTests(unittest.TestCase):
             "write_file", prepared, threading.Event()
         )
 
-        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["outcome"], "error")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "base\n")
         listing = subprocess.run(
             ["/bin/ls", "-le", str(target)],
             check=False,
@@ -2174,7 +2214,7 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertEqual(listing.returncode, 0)
         self.assertIn("group:everyone deny write", listing.stdout)
 
-    def test_atomic_swap_rolls_back_a_precommit_external_edit(self) -> None:
+    def test_in_place_write_rejects_a_precommit_external_edit(self) -> None:
         target = self.workspace / "cas.txt"
         target.write_text("base\n", encoding="utf-8")
         prepared = self.executor.prepare_file_change(
@@ -2185,9 +2225,9 @@ class ToolExecutorTests(unittest.TestCase):
         assert not isinstance(prepared, dict)
         from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
-        def edit_then_swap(workspace, source, destination, expected):
+        def edit_then_swap(workspace, source, destination, expected, **kwargs):
             target.write_text("external\n", encoding="utf-8")
-            return secure_workspace_move(workspace, source, destination, expected)
+            return secure_workspace_move(workspace, source, destination, expected, **kwargs)
 
         with mock_patch(
             "eidos_runtime.tools.workspace.secure_workspace_move",
@@ -2206,7 +2246,8 @@ class ToolExecutorTests(unittest.TestCase):
 
         for move_status, expected_code in (
             ("conflict", "file_version_conflict"),
-            ("failed", "sandbox_unavailable"),
+            ("failed", "file_write_failed"),
+            ("unavailable", "sandbox_unavailable"),
         ):
             with self.subTest(move_status=move_status):
                 target.write_text("base\n", encoding="utf-8")
@@ -2218,7 +2259,7 @@ class ToolExecutorTests(unittest.TestCase):
                 assert not isinstance(prepared, dict)
 
                 def external_candidate_then_report_status(
-                    _workspace, _source, _destination, _expected
+                    _workspace, _source, _destination, _expected, **_kwargs
                 ):
                     target.write_text("candidate\n", encoding="utf-8")
                     return move_status
@@ -2245,9 +2286,9 @@ class ToolExecutorTests(unittest.TestCase):
         assert not isinstance(prepared, dict)
         from eidos_runtime.sandbox.seatbelt import secure_workspace_move
 
-        def commit_then_report_uncertain(workspace, source, destination, expected):
+        def commit_then_report_uncertain(workspace, source, destination, expected, **kwargs):
             self.assertEqual(
-                secure_workspace_move(workspace, source, destination, expected),
+                secure_workspace_move(workspace, source, destination, expected, **kwargs),
                 "committed",
             )
             return "uncertain"

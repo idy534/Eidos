@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import difflib
 import errno
 import fcntl
@@ -22,14 +22,8 @@ from pydantic import BaseModel, ValidationError
 from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
-from eidos_runtime.sandbox.file_metadata import (
-    FileMetadataCloneUnavailable,
-    FileMetadataError,
-    clone_file_with_metadata,
-    copy_file_acl,
-    copy_replace_metadata,
-)
 from eidos_runtime.sandbox.seatbelt import secure_workspace_move
+from eidos_runtime.sandbox.permissions import EffectivePermissionProfile
 from eidos_runtime.sandbox.workspace_index import (
     WorkspaceIndex,
     WorkspaceIndexIncomplete,
@@ -204,7 +198,7 @@ _BUILTIN_CONTRACTS = (
     ("read_file", "Read one bounded UTF-8 file from the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
-    ("apply_patch", "Apply structured Add, Update, Delete, and Move changes to workspace files. Paths, base hashes, and final contents are verified before commit.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
+    ("apply_patch", "Apply structured Add, Update, Delete, and Move changes. Use workspace-relative paths or canonical absolute paths. Writes outside the workspace require approval or an existing run grant. Existing files are updated in place; paths, base hashes, and final contents are verified.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run one shell command in the macOS workspace sandbox. The Runtime returns after yieldTimeMs with either an exit result or shell_running and sessionId. For a running command, use write_stdin with empty chars to wait and read progress, or chars=\\u0003 to interrupt. Choose whether to keep waiting from the output and user intent. The command has no default lifetime deadline. Finish or stop the command before a final answer; another side effect cannot start while it runs. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
     ("write_stdin", "Continue an existing Shell session in this Run. Empty chars waits and reads new output; chars=\\u0003 interrupts the command. Other chars send stdin under the original command permissions. yieldTimeMs bounds this wait, not the command lifetime. Repeated waiting is valid while the process is running. Stop waiting after executionStatus=exited. Read persisted terminal output with read_tool_output using the original run_shell outputCallId, never sessionId.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
@@ -246,11 +240,12 @@ def _tool_specs(
     return tuple(
         spec.model_copy(update={
             "description": (
-                "Apply a Codex Patch to workspace files. This is a FREEFORM "
+                "Apply a Codex Patch to files. This is a FREEFORM "
                 "tool, so do not wrap the patch in JSON. Input must be raw "
                 "Codex Patch text beginning with `*** Begin Patch` and ending "
-                "with `*** End Patch`. Paths, base hashes, and final contents "
-                "are verified before commit."
+                "with `*** End Patch`. Use workspace-relative or canonical absolute paths. "
+                "Writes outside the workspace require approval or an existing run grant. "
+                "Existing files are updated in place; paths, base hashes, and final contents are verified."
             ),
             "input_kind": "custom",
             "input_schema": None,
@@ -429,6 +424,11 @@ class ToolExecutor:
             os.close(root_fd)
             raise WorkspacePathError("workspace_identity_changed")
 
+        self._external_writers: dict[str, WorkspaceIdentity] = {}
+        self.write_permissions: EffectivePermissionProfile | None = None
+        self._revalidate_write_permissions: Callable[[], EffectivePermissionProfile] | None = None
+        self.unsandboxed_write = False
+        self.external_write_approved = False
         self.workspace = identity
         self.root_fd = root_fd
         self.reader = WorkspaceReader(identity)
@@ -442,6 +442,79 @@ class ToolExecutor:
             supports_custom_tools=supports_custom_tools,
             supports_tool_grammar=supports_tool_grammar,
         )
+
+    def external_patch_paths(self, arguments: object) -> tuple[Path, ...]:
+        raw = arguments if isinstance(arguments, str) else encode_patch(
+            ApplyPatchInput.model_validate(arguments, strict=False)
+        )
+        paths = []
+        for hunk in parse_patch(raw):
+            for value in (hunk.path, getattr(hunk, "move_to", None)):
+                if value is None:
+                    continue
+                path = Path(value)
+                if not path.is_absolute():
+                    continue
+                if ".." in path.parts or path.resolve(strict=False) != path:
+                    raise WorkspacePathError("workspace_boundary_violation")
+                if not path.is_relative_to(self.workspace.path):
+                    # Validate the entire external path, including protected names.
+                    _validate_relative_path(str(path).lstrip("/"))
+                    paths.append(path)
+        return tuple(dict.fromkeys(paths))
+
+    @contextmanager
+    def external_write_scope(
+        self, paths: tuple[Path, ...], permissions: EffectivePermissionProfile,
+        revalidate: Callable[[], EffectivePermissionProfile] | None = None,
+    ) -> Iterator[None]:
+        # This scope only permits preparation. The approval callback enables commit.
+        identities = {}
+        for path in paths:
+            parent = path.parent
+            while not parent.exists():
+                parent = parent.parent
+            with ToolExecutor(parent) as writer:
+                if writer.workspace.path != parent:
+                    raise WorkspacePathError("workspace_identity_changed")
+                identities[str(path)] = writer.workspace
+        self._external_writers = identities
+        self.write_permissions = permissions
+        self._revalidate_write_permissions = revalidate
+        try:
+            yield
+        finally:
+            self._external_writers = {}
+            self.write_permissions = None
+            self._revalidate_write_permissions = None
+            self.external_write_approved = False
+            self.unsandboxed_write = False
+
+    def _resolve_write_path(self, value: str) -> str:
+        resolved = value if value in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
+        target = self.workspace.path / resolved
+        if self.write_permissions is not None and not self.write_permissions.allows_file_write(target):
+            raise WorkspacePathError("permission_not_requestable")
+        return resolved
+
+    def verify_write_scope(self) -> None:
+        self._verify_root()
+        if self._revalidate_write_permissions is not None:
+            try:
+                current_permissions = self._revalidate_write_permissions()
+            except (OSError, ValueError, RuntimeError):
+                raise WorkspacePathError("workspace_identity_changed") from None
+            if current_permissions != self.write_permissions:
+                raise WorkspacePathError("workspace_identity_changed")
+        for identity in self._external_writers.values():
+            with ToolExecutor(identity) as writer:
+                writer._verify_root()
+        if self.write_permissions is not None:
+            for entry in self.write_permissions.entries:
+                if entry.source == "additional" and (
+                    str(Path(entry.requested_path).resolve(strict=True)) != entry.resolved_path
+                ):
+                    raise WorkspacePathError("workspace_identity_changed")
 
     def __enter__(self) -> ToolExecutor:
         return self
@@ -743,7 +816,7 @@ class ToolExecutor:
                         "patch_format_error", "Patch format error: unknown file hunk"
                     )
                 path_value = hunk.path
-                path = resolve_workspace_write_path(path_value, self.workspace.path)
+                path = self._resolve_write_path(path_value)
                 existing = planned.get(path, _MISSING)
                 if existing is _MISSING:
                     existing = self._read_existing_for_change(
@@ -806,9 +879,7 @@ class ToolExecutor:
                             "patch_format_error",
                             f"Patch format error in Update File hunk for {path}: move destination is invalid",
                         )
-                    destination = resolve_workspace_write_path(
-                        move_value, self.workspace.path
-                    )
+                    destination = self._resolve_write_path(move_value)
                     destination_existing = planned.get(destination, _MISSING)
                     if destination_existing is _MISSING:
                         destination_existing = self._read_existing_for_change(
@@ -881,97 +952,78 @@ class ToolExecutor:
         change: FileChange,
         cancel: threading.Event,
     ) -> dict[str, object]:
+        external = self._external_writers.get(change.path)
+        if external is not None:
+            if not self.external_write_approved:
+                return _error(tool_name, "approval_required", "External file write requires approval")
+            try:
+                self.verify_write_scope()
+            except (WorkspacePathError, OSError, ValueError):
+                return _error(tool_name, "workspace_identity_changed", "Approved paths or permissions changed")
+            local = replace(change, path=str(Path(change.path).relative_to(external.path)))
+            try:
+                with ToolExecutor(external) as writer:
+                    writer.write_permissions = self.write_permissions
+                    writer.unsandboxed_write = self.unsandboxed_write
+                    result = writer.commit_file_change(tool_name, local, cancel)
+            except WorkspacePathError as error:
+                return _error(tool_name, error.code, "Approved file directory changed")
+            data = result.get("data")
+            if isinstance(data, dict) and "path" in data:
+                data["path"] = change.path
+            return result
         temporary_name: str | None = None
         preserve_temporary = False
         parent_fd = -1
         source_fd = -1
         try:
-            self._verify_root()
+            self.verify_write_scope()
             _check_cancel(cancel)
             parts = _validate_relative_path(change.path)
+            if self.write_permissions is not None and not self.write_permissions.allows_file_write(self.workspace.path / change.path):
+                raise WorkspacePathError("permission_not_requestable")
             parent_fd = self._open_parent(
-                parts, create_missing=change.create_missing_parent
+                parts, create_missing=change.create_missing_parent and change.base_sha256 is None
             )
             source_fd = self._open_verified_base(
                 parent_fd, parts[-1], change.base_sha256, cancel
             )
             if change.delete:
-                if source_fd >= 0:
-                    os.close(source_fd)
-                    source_fd = -1
-                os.unlink(parts[-1], dir_fd=parent_fd)
-                try:
-                    os.fsync(parent_fd)
-                    os.fsync(self.root_fd)
-                except OSError:
-                    return _commit_error(
-                        tool_name, "file_commit_uncertain",
-                        "File was deleted but durability could not be confirmed",
-                        side_effects=True,
-                    )
-                return _success(tool_name, "File deleted", {"path": change.path})
-            temporary_name = f".eidos-{uuid.uuid4().hex}.tmp"
-            cloned_metadata = False
-            if source_fd >= 0:
-                try:
-                    clone_file_with_metadata(
-                        source_fd,
-                        self.root_fd,
-                        temporary_name,
-                    )
-                    cloned_metadata = True
-                except FileMetadataCloneUnavailable:
-                    try:
-                        os.unlink(temporary_name, dir_fd=self.root_fd)
-                    except FileNotFoundError:
-                        pass
-                except FileMetadataError as error:
-                    raise WorkspacePathError(
-                        "file_metadata_preservation_failed"
-                    ) from error
-            if cloned_metadata:
-                descriptor = _open_cloned_file_for_write(
-                    self.root_fd,
-                    temporary_name,
+                final_move_started = True
+                status = secure_workspace_move(
+                    self.workspace.path, self.workspace.path / change.path,
+                    self.workspace.path / change.path, change.base_sha256,
+                    effective_permissions=self.write_permissions,
+                    unsandboxed=self.unsandboxed_write, delete=True,
                 )
-            else:
-                flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
-                if hasattr(os, "O_NOFOLLOW"):
-                    flags |= os.O_NOFOLLOW
+                if status == "committed":
+                    return _success(tool_name, "File deleted", {"path": change.path})
+                return _commit_error(
+                    tool_name,
+                    "file_commit_uncertain" if status == "uncertain" else
+                    "file_version_conflict" if status == "conflict" else
+                    "sandbox_unavailable" if status == "unavailable" else "file_write_failed",
+                    "File deletion could not be confirmed" if status == "uncertain" else "File was not deleted",
+                    side_effects=status == "uncertain",
+                )
+            if change.base_sha256 is None:
+                temporary_name = f".eidos-{uuid.uuid4().hex}.tmp"
+                flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
                 descriptor = os.open(
-                    temporary_name,
-                    flags,
-                    change.mode,
-                    dir_fd=self.root_fd,
+                    temporary_name, flags, change.mode, dir_fd=self.root_fd,
                 )
-            try:
-                if cloned_metadata:
-                    os.ftruncate(descriptor, 0)
-                if source_fd >= 0 and not cloned_metadata:
-                    try:
-                        copy_replace_metadata(source_fd, descriptor)
-                    except FileMetadataError as error:
-                        raise WorkspacePathError(
-                            "file_metadata_preservation_failed"
-                        ) from error
-                offset = 0
-                while offset < len(change.content):
-                    _check_cancel(cancel)
-                    written = os.write(descriptor, change.content[offset:])
-                    if written <= 0:
-                        raise WorkspacePathError("file_write_failed")
-                    offset += written
-                os.fchmod(descriptor, change.mode)
-                if source_fd >= 0 and cloned_metadata:
-                    try:
-                        copy_file_acl(source_fd, descriptor)
-                    except FileMetadataError as error:
-                        raise WorkspacePathError(
-                            "file_metadata_preservation_failed"
-                        ) from error
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+                try:
+                    offset = 0
+                    while offset < len(change.content):
+                        _check_cancel(cancel)
+                        written = os.write(descriptor, change.content[offset:])
+                        if written <= 0:
+                            raise WorkspacePathError("file_write_failed")
+                        offset += written
+                    os.fchmod(descriptor, change.mode)
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
             if source_fd >= 0:
                 os.close(source_fd)
                 source_fd = -1
@@ -980,15 +1032,19 @@ class ToolExecutor:
             workspace_path = Path(_fd_path(self.root_fd))
             if workspace_path != self.workspace.path:
                 raise WorkspacePathError("workspace_identity_changed")
-            source_path = workspace_path / temporary_name
+            source_path = workspace_path / temporary_name if temporary_name else workspace_path.joinpath(*parts)
             target_path = workspace_path.joinpath(*parts)
+            final_move_started = True
             move_status = secure_workspace_move(
                 workspace_path,
                 source_path,
                 target_path,
                 change.base_sha256,
+                effective_permissions=self.write_permissions,
+                unsandboxed=self.unsandboxed_write,
+                candidate_sha256=hashlib.sha256(change.content).hexdigest(),
+                content=change.content if change.base_sha256 is not None else None,
             )
-            final_move_started = True
             if move_status == "uncertain":
                 preserve_temporary = True
                 return _commit_error(
@@ -996,38 +1052,26 @@ class ToolExecutor:
                     "file_commit_uncertain",
                     "File change outcome could not be verified",
                     side_effects=True,
+                    path=change.path,
                 )
-            if move_status in {"conflict", "failed"}:
+            if move_status in {"conflict", "failed", "unavailable"}:
                 return _commit_error(
                     tool_name,
                     (
                         "file_version_conflict"
                         if move_status == "conflict"
-                        else "sandbox_unavailable"
+                        else "sandbox_unavailable" if move_status == "unavailable"
+                        else "file_write_failed"
                     ),
                     "Secure file commit did not change the target",
                     side_effects=False,
                 )
             current_parent_fd = self._open_parent(
-                parts, create_missing=change.create_missing_parent
+                parts, create_missing=False
             )
             os.close(parent_fd)
             parent_fd = current_parent_fd
-            try:
-                committed_fd = self._open_file_at(parent_fd, parts[-1])
-            except WorkspacePathError as error:
-                if move_status in {"failed", "conflict"} and error.code == "file_unavailable":
-                    return _commit_error(
-                        tool_name,
-                        (
-                            "file_version_conflict"
-                            if move_status == "conflict"
-                            else "sandbox_unavailable"
-                        ),
-                        "Secure file commit did not change the target",
-                        side_effects=False,
-                    )
-                raise
+            committed_fd = self._open_file_at(parent_fd, parts[-1])
             try:
                 committed, _metadata = _read_regular_file(
                     committed_fd, threading.Event()
@@ -1035,47 +1079,25 @@ class ToolExecutor:
             finally:
                 os.close(committed_fd)
             if committed != change.content:
-                current_sha256 = hashlib.sha256(committed).hexdigest()
-                unchanged = (
-                    change.base_sha256 is not None
-                    and current_sha256 == change.base_sha256
+                return _commit_error(
+                    tool_name, "file_write_verification_failed",
+                    "File change outcome is uncertain", side_effects=True,
+                    path=change.path,
                 )
-                if move_status == "conflict":
+            if change.base_sha256 is None:
+                temporary_name = None
+                try:
+                    os.fsync(parent_fd)
+                    os.fsync(self.root_fd)
+                except OSError:
                     return _commit_error(
                         tool_name,
-                        "file_version_conflict",
-                        "File changed before commit; the candidate was rolled back",
-                        side_effects=False,
+                        "file_commit_uncertain",
+                        "File changed but durability could not be confirmed",
+                        side_effects=True,
+                        path=change.path,
+                        sha256=hashlib.sha256(committed).hexdigest(),
                     )
-                return _commit_error(
-                    tool_name,
-                    (
-                        "file_version_conflict"
-                        if move_status == "conflict" and unchanged
-                        else "file_write_failed"
-                        if unchanged
-                        else "file_write_verification_failed"
-                    ),
-                    (
-                        "Secure file commit failed"
-                        if unchanged
-                        else "File change outcome is uncertain"
-                    ),
-                    side_effects=not unchanged,
-                )
-            temporary_name = None
-            try:
-                os.fsync(parent_fd)
-                os.fsync(self.root_fd)
-            except OSError:
-                return _commit_error(
-                    tool_name,
-                    "file_commit_uncertain",
-                    "File changed but durability could not be confirmed",
-                    side_effects=True,
-                    path=change.path,
-                    sha256=hashlib.sha256(committed).hexdigest(),
-                )
             return _success(
                 tool_name,
                 "File change committed",
@@ -1092,7 +1114,7 @@ class ToolExecutor:
                 return _commit_error(
                     tool_name,
                     "file_version_conflict",
-                    "File changed before commit; the candidate was rolled back",
+                    "File changed before commit; the target was not written",
                     side_effects=False,
                 )
             if locals().get("final_move_started", False):
@@ -1108,7 +1130,7 @@ class ToolExecutor:
                 return _commit_error(
                     tool_name,
                     "file_version_conflict",
-                    "File changed before commit; the candidate was rolled back",
+                    "File changed before commit; the target was not written",
                     side_effects=False,
                 )
             if locals().get("final_move_started", False):
@@ -1139,7 +1161,10 @@ class ToolExecutor:
         """Commit patch changes in order through the existing file primitive."""
         delta = AppliedPatchDelta()
         for change in prepared.changes:
-            _check_cancel(cancel)
+            if cancel.is_set():
+                return _patch_failure_with_delta(
+                    _error(tool_name, "canceled", "Patch stopped before the next file"), delta,
+                ), delta
             if change.kind != "move":
                 result = self.commit_file_change(tool_name, change, cancel)
                 if _file_change_committed(result):
@@ -1515,6 +1540,13 @@ class ToolExecutor:
         *,
         allow_missing_parents: bool = False,
     ) -> tuple[bytes, int] | None:
+        external = self._external_writers.get(path)
+        if external is not None:
+            with ToolExecutor(external) as reader:
+                return reader._read_existing_for_change(
+                    str(Path(path).relative_to(external.path)), cancel,
+                    allow_missing_parents=allow_missing_parents,
+                )
         try:
             descriptor, _normalized = self._open_file(path)
         except WorkspacePathError as error:
@@ -1719,28 +1751,6 @@ def _read_regular_file(
     ) or len(content) != before.st_size:
         raise WorkspacePathError("workspace_changed")
     return content, after
-
-
-def _open_cloned_file_for_write(root_fd: int, name: str) -> int:
-    flags = os.O_RDWR | os.O_NONBLOCK
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        return os.open(name, flags, dir_fd=root_fd)
-    except PermissionError:
-        # A cloned regular file can retain a read-only mode. The temporary
-        # inode is not user-visible, so grant it a private write mode before
-        # reopening it for the candidate bytes. The final mode is restored by
-        # commit_file_change after the write completes.
-        read_flags = os.O_RDONLY | os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            read_flags |= os.O_NOFOLLOW
-        descriptor = os.open(name, read_flags, dir_fd=root_fd)
-        try:
-            os.fchmod(descriptor, 0o600)
-        finally:
-            os.close(descriptor)
-        return os.open(name, flags, dir_fd=root_fd)
 
 
 def _stat_relative_path(root_fd: int, relative: str) -> os.stat_result:

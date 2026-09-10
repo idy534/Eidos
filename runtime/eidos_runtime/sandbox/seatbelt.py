@@ -309,37 +309,58 @@ def secure_workspace_move(
     source: Path,
     target: Path,
     expected_sha256: str | None,
+    *,
+    effective_permissions: EffectivePermissionProfile | None = None,
+    unsandboxed: bool = False,
+    delete: bool = False,
+    candidate_sha256: str | None = None,
+    content: bytes | None = None,
 ) -> str:
-    """Perform the final rename under Seatbelt."""
+    """Commit one file in the approved execution environment."""
     workspace = workspace_root.resolve()
-    source_path = source.resolve()
-    target_path = target.resolve(strict=False)
     try:
-        source_path.relative_to(workspace)
-        target_path.relative_to(workspace)
+        source_relative = source.relative_to(workspace_root)
+        target_relative = target.relative_to(workspace_root)
+        if ".." in source_relative.parts or ".." in target_relative.parts:
+            return "failed"
+        source_path = workspace / source_relative
+        target_path = workspace / target_relative
+        if source_path.resolve(strict=False) != source_path or target_path.resolve(strict=False) != target_path:
+            return "failed"
     except ValueError:
+        return "failed"
+    if effective_permissions is not None and (
+        not effective_permissions.workspace_roots
+        or not effective_permissions.allows_file_write(target_path)
+        or not effective_permissions.allows_file_write(source_path)
+    ):
         return "failed"
 
     python_executable = runtime_python_executable()
     if (
         sys.platform != "darwin"
-        or not is_seatbelt_ready()
+        or (not unsandboxed and not is_seatbelt_ready())
         or not os.access(python_executable, os.X_OK)
     ):
-        return "failed"
-    git_marker = workspace / ".git"
+        return "unavailable"
+    # External target directories are not additional implicit workspace roots.
+    policy_workspace = (
+        Path(effective_permissions.workspace_roots[0])
+        if effective_permissions is not None else workspace
+    )
+    git_marker = policy_workspace / ".git"
     git_enabled = git_marker.exists() and not git_marker.is_symlink()
     git_definition = (
         git_marker.resolve(strict=False)
         if git_enabled
-        else workspace / ".git"
+        else policy_workspace / ".git"
     )
     profile_path = PROFILE_PATH if git_enabled else DIRECT_PROFILE_PATH
     command = [
         SANDBOX_EXECUTABLE,
         "-f",
         str(profile_path),
-        f"-DWORKSPACE_ROOT={workspace}",
+        f"-DWORKSPACE_ROOT={policy_workspace}",
         f"-DGIT_DIR={git_definition}",
         f"-DSANDBOX_HOME={workspace / '.eidos-sandbox-home-unavailable'}",
         f"-DSANDBOX_TMP={workspace / '.eidos-sandbox-tmp-unavailable'}",
@@ -350,16 +371,38 @@ def secure_workspace_move(
         str(python_executable),
         "-B",
         str(FILE_COMMIT_HELPER),
-        str(source_path),
+        "-" if content is not None else str(source_path),
         str(target_path),
         expected_sha256 or "new",
     ]
+    if delete:
+        command.append("delete")
+    elif candidate_sha256 is not None and expected_sha256 is not None:
+        command.extend(("write", candidate_sha256))
     if git_enabled:
         insertion = command.index(f"-DGIT_DIR={git_definition}")
         command[insertion:insertion] = [
             f"-DGIT_WORKTREE_DIR={git_definition}",
             f"-DGIT_COMMON_DIR={git_definition}",
         ]
+    if effective_permissions is not None and not unsandboxed:
+        try:
+            compiled = SeatbeltPolicyCompiler(base_policy_path=profile_path).compile(
+                effective_permissions
+            )
+        except ValueError:
+            return "failed"
+        command[1:3] = ["-p", compiled.policy]
+        separator = command.index("--")
+        command[separator:separator] = [
+            f"-D{key}={value}" for key, value in compiled.parameters.items()
+        ]
+    if unsandboxed:
+        from eidos_runtime.sandbox.permissions import unsandboxed_execution_allowed
+
+        if effective_permissions is None or not unsandboxed_execution_allowed(effective_permissions):
+            return "failed"
+        command = command[command.index("--") + 1:]
     try:
         completed = subprocess.run(
             command,
@@ -371,7 +414,7 @@ def secure_workspace_move(
                 "LANG": "en_US.UTF-8",
                 "LC_ALL": "en_US.UTF-8",
             },
-            stdin=subprocess.DEVNULL,
+            **({"stdin": subprocess.DEVNULL} if content is None else {"input": content}),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=5,
@@ -387,7 +430,7 @@ def secure_workspace_move(
         10: "conflict",
         11: "uncertain",
         12: "failed",
-    }.get(completed.returncode, "failed")
+    }.get(completed.returncode, "uncertain")
 
 
 def run_seatbelt_self_test() -> SeatbeltSelfTestResult:

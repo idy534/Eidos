@@ -697,6 +697,30 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertTrue(outcome.result["reconciliationRequired"])
 
+    def test_cancel_after_verified_file_write_preserves_changes_without_reconciliation(self) -> None:
+        data = {"path": "a.txt", "changes": [{"path": "a.txt", "kind": "update"}]}
+        result = self._result("apply_patch", data)
+
+        class RuntimeContext:
+            def invoke_workspace_mutation(inner, _runtime, _run_id, _item, _call, cancel):
+                cancel.set()
+                return HandlerOutcome(result, "completed", workspace_changed=True)
+
+        controller = ToolExecutionController(
+            self.store, self.dispatcher, RuntimeContext(), self.events, default_scanner(),
+        )
+        call = ModelToolCall("call-patch", "apply_patch", {
+            "changes": [{"type": "add", "path": "a.txt", "content": "hello\n"}],
+        })
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item("apply_patch", call.arguments),
+            call=call, plan=self.dispatcher.plan(call), cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(outcome.result["data"], data)
+        self.assertTrue(outcome.result["sideEffectsMayExist"])
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertTrue(outcome.workspace_changed)
+
 
 if __name__ == "__main__":
     unittest.main()

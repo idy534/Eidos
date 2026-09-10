@@ -682,11 +682,15 @@ class ToolExecutionController:
                         reason is not None
                         and not _already_interrupted(outcome.result, reason)
                     ):
+                        known_file_result = (
+                            plan.side_effect == "workspace"
+                            and _explicit_reconciliation_required(outcome.result) is False
+                        )
                         interrupted = self._interrupted(
                             call,
                             plan,
                             reason,
-                            uncertain=(
+                            uncertain=not known_file_result and (
                                 plan.side_effect != "none"
                                 or bool(self._execution_state.intent_started)
                                 or outcome.result.get(
@@ -694,10 +698,12 @@ class ToolExecutionController:
                                 ) is True
                             ),
                         )
-                        if call.name == "run_shell":
+                        if call.name == "run_shell" or plan.side_effect == "workspace":
                             # The normal validation, bounds and sensitive scan below
                             # still apply to partial output and termination evidence.
                             interrupted.result["data"] = outcome.result.get("data", {})
+                        if known_file_result:
+                            interrupted.result["sideEffectsMayExist"] = outcome.workspace_changed
                         outcome = replace(
                             outcome,
                             result=interrupted.result,

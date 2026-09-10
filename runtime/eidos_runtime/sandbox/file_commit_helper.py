@@ -8,8 +8,6 @@ import stat
 import sys
 
 
-AT_FDCWD = -2
-RENAME_SWAP = 0x00000002
 RENAME_EXCL = 0x00000004
 EXIT_CONFLICT = 10
 EXIT_UNCERTAIN = 11
@@ -18,30 +16,159 @@ MAX_FILE_BYTES = 256 * 1024
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in {4, 5, 6}:
         return EXIT_FAILED
-    source = Path(sys.argv[1])
+    source = None if sys.argv[1] == "-" else Path(sys.argv[1])
     target = Path(sys.argv[2])
     expected = sys.argv[3]
-    if not source.is_absolute() or not target.is_absolute():
+    if (source is not None and not source.is_absolute()) or not target.is_absolute():
         return EXIT_FAILED
+    if len(sys.argv) == 5 and sys.argv[4] != "delete":
+        return EXIT_FAILED
+    if len(sys.argv) == 5:
+        return _delete_existing(target, expected)
+    candidate_hash = None
+    if len(sys.argv) == 6:
+        if sys.argv[4] != "write":
+            return EXIT_FAILED
+        candidate_hash = sys.argv[5]
     if expected == "new":
+        if source is None:
+            return EXIT_FAILED
         return 0 if _rename(source, target, RENAME_EXCL) else EXIT_CONFLICT
     if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
         return EXIT_FAILED
-    if not _rename(source, target, RENAME_SWAP):
-        return EXIT_CONFLICT
+    return _write_existing(source, target, expected, candidate_hash)
+
+
+def _open_parent(path: Path) -> int:
+    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        previous_hash = _regular_file_hash(source)
-    except OSError:
-        return EXIT_UNCERTAIN
-    if previous_hash != expected:
-        return EXIT_CONFLICT if _rename(source, target, RENAME_SWAP) else EXIT_UNCERTAIN
+        for part in path.parts[1:-1]:
+            next_fd = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = next_fd
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _delete_existing(target: Path, expected: str) -> int:
+    parent_fd = descriptor = -1
+    mutation_started = False
     try:
-        source.unlink()
+        parent_fd = _open_parent(target)
+        descriptor = os.open(
+            target.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=parent_fd,
+        )
+        if hashlib.sha256(_checked_contents(descriptor)).hexdigest() != expected:
+            return EXIT_CONFLICT
+        before = os.fstat(descriptor)
+        current = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino):
+            return EXIT_CONFLICT
+        mutation_started = True
+        os.unlink(target.name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        return 0
     except OSError:
-        return EXIT_UNCERTAIN
-    return 0
+        return EXIT_UNCERTAIN if mutation_started else EXIT_FAILED
+    finally:
+        for opened in (descriptor, parent_fd):
+            if opened >= 0:
+                os.close(opened)
+
+
+def _checked_contents(descriptor: int) -> bytes:
+    before = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_size > MAX_FILE_BYTES
+        or before.st_nlink != 1
+        or before.st_uid != os.getuid()
+        or stat.S_IMODE(before.st_mode) & 0o7000
+        or getattr(before, "st_flags", 0)
+    ):
+        raise OSError("unsupported file")
+    chunks = []
+    remaining = MAX_FILE_BYTES + 1
+    while remaining:
+        chunk = os.read(descriptor, min(remaining, 64 * 1024))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    after = os.fstat(descriptor)
+    if not remaining or sum(map(len, chunks)) != before.st_size or (
+        before.st_size, before.st_mtime_ns, before.st_ctime_ns,
+        before.st_nlink, before.st_mode, before.st_uid,
+    ) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns,
+          after.st_nlink, after.st_mode, after.st_uid):
+        raise OSError("file changed during read")
+    return b"".join(chunks)
+
+
+def _write_existing(
+    source: Path | None, target: Path, expected: str,
+    candidate_hash: str | None = None,
+) -> int:
+    parent_fd = source_parent_fd = descriptor = candidate_fd = -1
+    mutation_started = False
+    try:
+        if source is None:
+            contents = sys.stdin.buffer.read(MAX_FILE_BYTES + 1)
+            if len(contents) > MAX_FILE_BYTES:
+                return EXIT_FAILED
+        else:
+            source_parent_fd = _open_parent(source)
+            candidate_fd = os.open(
+                source.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=source_parent_fd,
+            )
+            contents = _checked_contents(candidate_fd)
+        if candidate_hash is not None and hashlib.sha256(contents).hexdigest() != candidate_hash:
+            return EXIT_FAILED
+        parent_fd = _open_parent(target)
+        descriptor = os.open(
+            target.name, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=parent_fd,
+        )
+        original = _checked_contents(descriptor)
+        if hashlib.sha256(original).hexdigest() != expected:
+            return EXIT_CONFLICT
+        identity = os.fstat(descriptor)
+        current = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+            return EXIT_CONFLICT
+        # No cancellation point after this boundary: finish this bounded file.
+        mutation_started = True
+        os.ftruncate(descriptor, 0)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        offset = 0
+        while offset < len(contents):
+            written = os.write(descriptor, contents[offset:])
+            if written <= 0:
+                raise OSError("short write")
+            offset += written
+        os.fsync(descriptor)
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        if _checked_contents(descriptor) != contents:
+            return EXIT_UNCERTAIN
+        current = os.stat(target, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+            return EXIT_UNCERTAIN
+        return 0
+    except OSError:
+        return EXIT_UNCERTAIN if mutation_started else EXIT_FAILED
+    finally:
+        for opened in (descriptor, candidate_fd, parent_fd, source_parent_fd):
+            if opened >= 0:
+                os.close(opened)
 
 
 def _rename(source: Path, target: Path, flags: int) -> bool:
@@ -55,38 +182,20 @@ def _rename(source: Path, target: Path, flags: int) -> bool:
         ctypes.c_uint,
     ]
     renameatx_np.restype = ctypes.c_int
-    result = renameatx_np(
-        AT_FDCWD,
-        os.fsencode(source),
-        AT_FDCWD,
-        os.fsencode(target),
-        flags,
-    )
-    return result == 0
-
-
-def _regular_file_hash(path: Path) -> str:
-    flags = os.O_RDONLY | os.O_NONBLOCK
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
+    source_parent = target_parent = -1
     try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_FILE_BYTES:
-            raise OSError("unsupported prior target")
-        digest = hashlib.sha256()
-        remaining = MAX_FILE_BYTES + 1
-        while remaining > 0:
-            chunk = os.read(descriptor, min(64 * 1024, remaining))
-            if not chunk:
-                break
-            digest.update(chunk)
-            remaining -= len(chunk)
-        if remaining <= 0:
-            raise OSError("prior target too large")
-        return digest.hexdigest()
+        source_parent = _open_parent(source)
+        target_parent = _open_parent(target)
+        return renameatx_np(
+            source_parent, os.fsencode(source.name),
+            target_parent, os.fsencode(target.name), flags,
+        ) == 0
+    except OSError:
+        return False
     finally:
-        os.close(descriptor)
+        for opened in (source_parent, target_parent):
+            if opened >= 0:
+                os.close(opened)
 
 
 if __name__ == "__main__":

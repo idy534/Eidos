@@ -194,15 +194,68 @@ class SeatbeltProfileTests(unittest.TestCase):
             expected = hashlib.sha256(b"base\n").hexdigest()
 
             with (
-                patch("eidos_runtime.sandbox.seatbelt.is_seatbelt_usable", return_value=False),
+                patch("eidos_runtime.sandbox.seatbelt.is_seatbelt_ready", return_value=False),
+                patch("eidos_runtime.sandbox.seatbelt.subprocess.run") as run,
                 patch("eidos_runtime.sandbox.seatbelt.os.replace") as replace,
             ):
-                status = secure_workspace_move(workspace, source, target, expected)
+                status = secure_workspace_move(workspace, source, target, expected, unsandboxed=False)
 
-            self.assertEqual(status, "failed")
+            self.assertEqual(status, "unavailable")
+            run.assert_not_called()
             replace.assert_not_called()
             self.assertEqual(target.read_text(encoding="utf-8"), "base\n")
             self.assertEqual(source.read_text(encoding="utf-8"), "candidate\n")
+
+    def test_unknown_file_helper_exit_reports_uncertain(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory).resolve()
+            target = workspace / "target.txt"
+            target.write_text("base\n", encoding="utf-8")
+            source = workspace / ".candidate.tmp"
+            source.write_text("candidate\n", encoding="utf-8")
+            expected = hashlib.sha256(b"base\n").hexdigest()
+            with (
+                patch("eidos_runtime.sandbox.seatbelt.sys.platform", "darwin"),
+                patch("eidos_runtime.sandbox.seatbelt.is_seatbelt_ready", return_value=True),
+                patch("eidos_runtime.sandbox.seatbelt.os.access", return_value=True),
+                patch("eidos_runtime.sandbox.seatbelt.python_runtime_policy_arguments", return_value=[]),
+                patch("eidos_runtime.sandbox.seatbelt.subprocess.run", return_value=subprocess.CompletedProcess([], 73)) as run,
+            ):
+                status = secure_workspace_move(workspace, source, target, expected, unsandboxed=False)
+            self.assertEqual(status, "uncertain")
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0][0], SANDBOX_EXECUTABLE)
+
+    def test_external_file_permission_does_not_expand_policy_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory).resolve()
+            workspace, external = root / "workspace", root / "external"
+            workspace.mkdir()
+            external.mkdir()
+            target = external / "target.txt"
+            target.write_bytes(b"base\n")
+            permissions = materialize_effective_profile(
+                BasePermissionProfile.for_workspace(workspace_root=workspace),
+                AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+                    path=str(target), access=FileSystemAccessMode.WRITE, recursive=False,
+                ),)),
+            )
+            with (
+                patch("eidos_runtime.sandbox.seatbelt.sys.platform", "darwin"),
+                patch("eidos_runtime.sandbox.seatbelt.is_seatbelt_ready", return_value=True),
+                patch("eidos_runtime.sandbox.seatbelt.os.access", return_value=True),
+                patch("eidos_runtime.sandbox.seatbelt.python_runtime_policy_arguments", return_value=[]),
+                patch("eidos_runtime.sandbox.seatbelt.subprocess.run", return_value=subprocess.CompletedProcess([], 0)) as run,
+            ):
+                status = secure_workspace_move(
+                    external, target, target, hashlib.sha256(b"base\n").hexdigest(),
+                    effective_permissions=permissions, content=b"candidate\n",
+                )
+            self.assertEqual(status, "committed")
+            command = run.call_args.args[0]
+            self.assertIn(f"-DWORKSPACE_ROOT={workspace}", command)
+            self.assertNotIn(f"-DWORKSPACE_ROOT={external}", command)
+            self.assertEqual(command[0], SANDBOX_EXECUTABLE)
 
     def test_profile_does_not_require_a_sensitive_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

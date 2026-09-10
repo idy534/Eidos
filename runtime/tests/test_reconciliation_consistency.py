@@ -1548,7 +1548,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
             self.run["id"], expected_epoch
         )
-        self.assertIsNotNone(mutation)
+        self.assertIsNone(mutation)
 
         connection = self.store.connection
         assert connection is not None
@@ -1568,8 +1568,27 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         }
         for tool_name, intent_status in intent_statuses.items():
             status, reconciled_at = actual[tool_name]
-            if tool_name in {"apply_patch", "write_file", "delete_file"}:
-                self.assertEqual(status, "completed")
-                self.assertIsNotNone(reconciled_at)
-            else:
-                self.assertEqual(status, intent_status)
+            self.assertEqual(status, intent_status)
+
+    def test_workspace_refresh_cannot_clear_external_file_intent(self) -> None:
+        item = self.store.create_tool_item(
+            self.run["id"], 0, 0, "external-patch", "apply_patch", "{}",
+        )
+        self.store.begin_durable_intent(
+            item["id"], preconditions={"mutationScope": "external_file"}, approval_required=False,
+        )
+        self.store.complete_tool_item(
+            item["id"], json.dumps({
+                "outcome": "error", "code": "outcome_unknown", "summary": "External write is uncertain",
+                "data": {}, "sideEffectsMayExist": True, "reconciliationRequired": True,
+            }), item_status="failed", tool_status="failed",
+        )
+        epoch = self.store.context_projection_facts(self.run["id"]).reconciliation_epoch
+        self.assertIsNone(self.store.clear_reconciliation_after_workspace_refresh_committed(self.run["id"], epoch))
+        connection = self.store.connection
+        assert connection is not None
+        row = connection.execute(
+            "SELECT status FROM durable_intents WHERE tool_call_id = ?", (item["toolCall"]["id"],),
+        ).fetchone()
+        self.assertEqual(row["status"], "uncertain")
+        self.assertTrue(self.store.read_run(self.run["id"])["reconciliationRequired"])

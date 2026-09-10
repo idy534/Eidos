@@ -239,6 +239,33 @@ class EffectivePermissionProfile(ClosedModel):
             "networkEnabled": self.network_enabled,
         }
 
+    def allows_file_write(self, path: Path) -> bool:
+        """Check a canonical file target, including unsandboxed helper targets."""
+        if ".git" in path.parts or any(
+            path.is_relative_to(Path(root))
+            for root in (*self.protected_write_paths, *self.active_skill_roots)
+        ):
+            return False
+        for entry in (*self.permanent_denies, *self.hard_confidentiality_denies):
+            blocked = Path(entry.resolved_path)
+            if path == blocked or (entry.recursive and path.is_relative_to(blocked)):
+                # The compiler also permits managed workspaces inside Eidos data.
+                if any(
+                    Path(root) != blocked
+                    and Path(root).is_relative_to(blocked)
+                    and path.is_relative_to(Path(root))
+                    for root in self.workspace_roots
+                ):
+                    continue
+                return False
+        return any(
+            entry.access is FileSystemAccessMode.WRITE
+            and (path == Path(entry.resolved_path) or (
+                entry.recursive and path.is_relative_to(Path(entry.resolved_path))
+            ))
+            for entry in self.entries
+        )
+
 
 class SandboxType(StrEnum):
     MACOS_SEATBELT = "macos_seatbelt"

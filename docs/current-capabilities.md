@@ -148,13 +148,14 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
 - 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。这些 Tool 接受 Workspace-relative path，或接受 Workspace 与当前 active Skill root 内的 canonical absolute path。
 - Workspace mutation Tool 只向模型暴露 `apply_patch`。`write_file` 和 `delete_file` 不在模型 Tool Registry 中。
-- `apply_patch` 支持两种模型输入。具备 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 的 ModelProfile 会收到 native Custom / FREEFORM Tool。该路径直接接收 Codex Patch 原文，不使用 JSON wrapper。其他 ModelProfile 继续收到结构化 JSON Function 参数 `{ "changes": [...] }`。每个 change 使用 `add`、`update` 或 `delete` 类型。`update` 可以继续使用 `moveTo` 和 `chunks`。两条路径都在当前 Workspace Permission 内直接执行，不逐次请求 Approval。
-- Function 和 Custom 的 payload 类型来自 Provider protocol 和持久化的 `payload_kind` discriminator。Runtime 不根据 Function arguments 的 JSON 内容推断 Custom。两条路径在同一个 Patch AST、Workspace prepare、CAS、Durable Intent、atomic commit、final validation 和 canonical Tool Result pipeline 汇合。
+- `apply_patch` 支持两种模型输入。具备 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 的 ModelProfile 会收到 native Custom / FREEFORM Tool。该路径直接接收 Codex Patch 原文，不使用 JSON wrapper。其他 ModelProfile 继续收到结构化 JSON Function 参数 `{ "changes": [...] }`。每个 change 使用 `add`、`update` 或 `delete` 类型。`update` 可以继续使用 `moveTo` 和 `chunks`。两条路径的普通 Workspace 写入都使用当前 Workspace Permission，不逐次请求 Approval；外部路径或无沙盒执行使用明确的扩权审批。
+- Function 和 Custom 的 payload 类型来自 Provider protocol 和持久化的 `payload_kind` discriminator。Runtime 不根据 Function arguments 的 JSON 内容推断 Custom。两条路径在同一个 Patch AST、Workspace prepare、写前版本检查、Durable Intent、受控文件提交、final validation 和 canonical Tool Result pipeline 汇合。
 - Runtime 的 Custom 路径直接把 raw Patch 交给 `parse_patch`。Function compatibility 路径仍由 `CodexPatchEncoder` 把结构化 changes 确定性编码为 Codex Patch 文本。Runtime 自动生成 `*** Begin Patch`、`*** End Patch`、`+`、`-`、`@@` 和 `*** End of File`。Add 内容统一使用 LF 行尾语义。`apply_patch.lark` 以 `openai/codex` 的 grammar 为来源，Lark 负责语法解析。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。Lark 不能直接加载上游的零宽文本正则，所以本地 grammar 也对这些 token 做了兼容适配。Parser 可以接受 CRLF 和外层空白，但不会自动补齐 envelope、marker 或行前缀。
-- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、Workspace boundary、Seatbelt、原子替换和最终内容校验。
+- 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、路径授权、Seatbelt 和最终内容校验。
 - `workspace_dependencies` 返回 Eidos 自带并经过 owner、类型、可执行位和 SHA-256 校验的 Python 与 ripgrep，但不会在响应中回显校验哈希。它也返回 Python import roots 和受支持包版本。model projection 只保留 `code` 和 `data`，canonical result 仍保留 Runtime 状态字段。当前 Runtime 随包提供 `python-docx`。成功结果的 `data` 可以返回 `defaultDependencyBindingId` 和 `activeSkillDependencyBindings`。模型不需要依赖用户全局 Python 或临时安装包。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
-- macOS 原子替换会先用 fd-relative `fclonefileat` 保留普通文件的扩展属性（包括 `com.apple.provenance`），再写入候选内容并单独应用、验证 ACL。clonefile 不可用时会安全回退到受校验的 `fcopyfile` 路径。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
+- 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
+- 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；永久拒绝路径不能扩权。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
@@ -192,7 +193,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Approval / Sandbox
 
-- 普通 File change 使用 Workspace Permission。Runtime 会先保存完整 diff 和 Durable Intent，再重新验证版本并原子提交，最后验证内容和元数据。
+- 普通 File change 使用 Workspace Permission。Runtime 会先保存完整 diff 和 Durable Intent，再重新验证版本，提交并验证最终内容。已有文件原地写入；新文件继续排他创建。写入中断可能留下部分内容，Runtime 会如实记录不确定结果。
 - 自动执行后的完整 diff 会显示在 Execution Feed。普通 File change 不创建假的 Approval 或用户 decision。
 - Command Execution Approval 展示 command、cwd、timeout、network 和 effective sandbox permissions。
 - MCP external Tool 使用同一 Approval、Sandbox、Tool Result 和 reconciliation 语义。

@@ -179,13 +179,13 @@ Validate → Prepare → Permission Decision → Durable Intent
 → Execute → Verify → canonical ToolResult → Event / Context projection
 ```
 
-ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并原子提交。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
+ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并受控提交已有文件的原地写入或新文件的排他创建。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
 
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
 
 `list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。结果投影也遵循这个 authority：Workspace 结果保持 Workspace-relative，active Skill 结果返回 canonical absolute path，目录结果保留末尾 `/`，因此只读 Tool 结果可以直接 round-trip 到下一次只读 Tool。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 使用 Workspace-relative 路径；`run_shell.cwd` 还接受 Workspace 内的 canonical absolute path，并在 shell launch boundary 归一化为 Workspace-relative 路径。active Skill root 和 Workspace 外路径不能成为 Shell cwd。
 
-`apply_patch` 有 Function 和 Custom 两条模型输入路径。Function compatibility 路径接收结构化 `ApplyPatchInput.changes`。Custom 路径接收 native Custom Tool 的 raw Codex Patch。`add`、`update`、`delete` 是可区分的 change 类型，`update` 还可以包含 `moveTo` 和有序 `chunks`。只有 Function 路径使用 `CodexPatchEncoder`。Custom 路径把原文直接交给 `parse_patch`。Parser 不读取 Workspace，也不执行匹配或写入；它把文本转换为 Eidos 的 Add、Update、Delete AST。统一的 Workspace write resolver 把 Workspace canonical absolute path 归一化为内部 relative path，并同时处理 source 与 move destination。Workspace 外的路径在 Durable Intent 前返回 Tool Error。现有 Workspace prepare、CAS、边界、原子提交和最终校验继续负责语义和安全事实。
+`apply_patch` 有 Function 和 Custom 两条模型输入路径。Function compatibility 路径接收结构化 `ApplyPatchInput.changes`。Custom 路径接收 native Custom Tool 的 raw Codex Patch。`add`、`update`、`delete` 是可区分的 change 类型，`update` 还可以包含 `moveTo` 和有序 `chunks`。只有 Function 路径使用 `CodexPatchEncoder`。Custom 路径把原文直接交给 `parse_patch`。Parser 不读取 Workspace，也不执行匹配或写入；它把文本转换为 Eidos 的 Add、Update、Delete AST。统一的 Workspace write resolver 把 Workspace canonical absolute path 归一化为内部 relative path，并同时处理 source 与 move destination。Workspace 外的 canonical absolute path 会先经过现有 PermissionPolicyEvaluator 和权限物化检查，再准备完整 Diff。现有 ApprovalCoordinator 为本次路径、Diff、版本和权限请求建立持久审批；有效 Run Grant 可复用。审批通过后，作用域重新验证目录身份，提交 helper 再核验 Base Hash。现有 Workspace prepare、写前版本检查、边界和最终校验继续负责语义和安全事实。
 
 `ModelToolCall` 的裸 `dict` 永远表示 Function payload。Custom payload 必须显式使用 `CustomToolPayload`。`tool_calls.payload_kind` 是 SQLite 中独立且受约束的类型 authority。ContextBuilder、DB mapper 和下一次 Provider projection 都读取这个字段，不再从 `arguments_json` 猜测类型。历史 Custom call/result 在 Responses 中继续投影为 native Custom item，在 Chat Completions 中投影为有界的普通历史信息。当前 Step 固化的 Tool Definition 仍然是当前输入 contract 的唯一 authority。v7 到 v8 migration 只在迁移边界兼容旧的 native `apply_patch` envelope。
 
@@ -203,7 +203,9 @@ Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKI
 
 `runtime.json` 只描述随 App 发布的系统依赖。Python 依赖位于 Bundle 的 `dependencies/python`，Node 依赖位于 Bundle 的 `dependencies/node`。Skill 的 `agents/eidos.yaml` 只保存 typed declaration。Skill 目录不承载依赖包。Node loader 使用 Bundle 的 Node 和 `node_modules`，并为 CJS 与 ESM 保留各自的相对导入语义。普通没有 binding 的 Shell 仍走既有 `run_shell`、Host shell snapshot、Approval 和 Seatbelt 链路。
 
-现有文件的原子替换会保留 mode、扩展属性和 ACL。Runtime 使用已验证的文件描述符和 macOS `fcopyfile` 复制这些元数据。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
+已有普通文件的候选内容通过 stdin 有界传入受控 helper，不生成临时文件。helper 使用 `O_NOFOLLOW` 打开并核验目标，检查当前内容哈希后执行 `ftruncate`、完整写入、`fsync` 和内容/路径身份核验。Runtime 不再克隆已有文件，也不再复制或逐字节比较 xattr/ACL。文件保留原 inode，系统管理现有元数据。真实 ACL 或 mode 拒绝写入时，Runtime 不会通过替换 inode 或 chmod 绕过限制。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
+
+文件提交仍使用现有 Seatbelt helper；外部路径使用物化后的附加权限，Sandbox 的 Workspace Root 仍是原工作区。已有外部文件只申请该文件的写权限；创建新文件时才申请最近的已有父目录。沙盒不可用时，Runtime 只在现有策略允许且用户明确批准后启动无沙盒 helper。审批不提供系统管理员权限，也不覆盖永久拒绝路径。新文件继续使用排他 rename 提交；Add 覆盖已有文件、Move 覆盖已有目标都走原地写入。多文件不提供整体事务。截断后没有普通取消点，helper 完成当前有界文件后再停止后续修改；异常、超时或非约定 helper 退出进入不确定结果。Runtime 保留已提交的前缀变化和取消后的文件结果，不会自动回滚或重放。写前哈希检查不提供跨外部编辑器的原子 CAS 保证。外部文件的 Durable Intent 使用 `mutationScope=external_file`。Workspace 刷新不能解除外部文件的不确定状态；Repository 在事务内重新检查意图范围，避免把外部修改误标为已核实。
 
 只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以在自身的有界范围内并发执行。每个 Run 的 Workspace write、Shell、Eidos-state、MCP 和 external Tool 实际副作用窗口使用该 Run 自己的独占门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使它们共享同一个 Workspace。Approval 等待不占用该 Run 的副作用门。并发结果最终按模型声明顺序提交。
 

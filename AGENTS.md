@@ -209,13 +209,13 @@ Validate → Prepare → Resolve Permission → Commit Durable Intent
 → Execute → Verify → Commit Result → Reconcile when uncertain
 ```
 不得绕过任何已存在阶段。
-文件写入必须在 Workspace 内。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本，原子写入，验证最终内容，并在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。扩权和受保护路径不能复用这个授权。
+文件工具默认只能写入 Workspace。Workspace 外的普通路径必须经明确审批或已有有效 Run Grant 授权。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本。已有普通文件使用受控的原地写入：先打开并核验 fd，再截断、完整写入、fsync 和验证最终内容；新文件保留排他创建提交。Runtime 在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。无沙盒写入必须单独获得明确审批。永久拒绝路径不能通过审批放开。截断后的失败可能已改变文件，必须报告真实副作用；不确定结果进入 Reconciliation，不自动重试或回滚。
 Shell 必须每次受控执行、默认禁网、不继承敏感环境变量、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网、附加路径和 unsandboxed 执行必须走明确扩权和 Approval。
 普通只读工具仅在完整批次满足 `parallel_safe` 时并行。
 写入、Shell、MCP 和外部副作用工具默认独占。
 副作用结果不确定时必须进入 Reconciliation，不得猜测成功或失败。
 ## 15. Sandbox
-以下继续自研并保持 fail closed：Seatbelt Policy Compiler、Base/Additional/Effective Permission、永久拒绝路径、`.git` 保护、Eidos 数据目录保护、Runtime 代码目录保护、Workspace 根校验、inode/device/owner 校验、`O_NOFOLLOW`、fd-relative 访问、特殊文件检查、多硬链接检查、原子替换和 Sandbox Denial 分类。
+以下继续自研并保持 fail closed：Seatbelt Policy Compiler、Base/Additional/Effective Permission、永久拒绝路径、`.git` 保护、Eidos 数据目录保护、Runtime 代码目录保护、Workspace 根校验、inode/device/owner 校验、`O_NOFOLLOW`、fd-relative 访问、特殊文件检查、多硬链接检查、受控文件提交和 Sandbox Denial 分类。
 不得用 `.gitignore` 跳过安全扫描。
 不得把 `watchfiles` 事件当作安全事实。
 不得因为开发便利默认 unsandboxed。
@@ -269,7 +269,7 @@ Tool 参数标准校验使用 `jsonschema` 和 `referencing`。
 Eidos 只保留 Schema 大小、值大小、深度、节点数、关键字范围、禁用远程 `$ref`、无网络解析和稳定错误码。
 不得继续扩展手写 JSON Schema 解释器。
 Unified Diff 解析优先使用 `unidiff`，展示可继续使用 `difflib`。
-第三方库只负责解析；Read Evidence、Base Hash、Approval、权限、原子写入、版本冲突和最终验证仍由 Eidos 负责。
+第三方库只负责解析；Read Evidence、Base Hash、Approval、权限、受控文件提交、版本冲突和最终验证仍由 Eidos 负责。
 ## 20. MCP, Plugin and Skill
 MCP Transport 和 Session 使用官方 Python MCP SDK。
 Eidos 继续负责 Server 配置、授权、进程限制、Tool Catalog 映射、Tool Result Contract、Extension Snapshot、生命周期、恢复和 Sandbox。
