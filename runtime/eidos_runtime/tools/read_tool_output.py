@@ -65,6 +65,7 @@ class ReadToolOutputResultData(StrictToolModel):
     hasMoreBefore: bool | None = None
     hasMoreAfter: bool | None = None
     rawTruncated: bool | None = None
+    outputComplete: bool | None = None
     rawOmittedBytes: StrictInt | None = Field(
         default=None, ge=0, le=_JSON_SAFE_INTEGER_MAX
     )
@@ -170,7 +171,8 @@ def read_tool_output_entry(
         "name": "read_tool_output",
         "description": (
             "Read a bounded stdout or stderr page from a completed or failed "
-            "run_shell call in the current Session. Use the prior model callId. "
+            "run_shell call in the current Session. Pass its outputCallId as callId "
+            "(the original provider callId, never a Shell sessionId). "
             "Set fromEnd=true for the tail; raw bytes omitted by the Shell output "
             "limit are not recoverable."
         ),
@@ -220,6 +222,7 @@ def _page_result(
             "hasMoreAfter": page.has_more_after,
             "rawTruncated": page.raw_truncated,
             "rawOmittedBytes": page.raw_omitted_bytes,
+            "outputComplete": page.output_complete,
         },
         "sideEffectsMayExist": False,
         "reconciliationRequired": False,
@@ -246,7 +249,11 @@ def _summary_for_code(code: str) -> str:
     if code == "invalid_output_offset":
         return "The output offset is not at a UTF-8 character boundary"
     if code == "tool_output_not_available":
-        return "The persisted shell output is unavailable"
+        return (
+            "No terminal run_shell output matches this provider callId in the current Session. "
+            "Use the original run_shell outputCallId, not its Shell sessionId. "
+            "For a running command, use write_stdin to wait."
+        )
     return "The persisted shell output could not be read"
 
 

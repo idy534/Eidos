@@ -176,6 +176,7 @@ class ToolOutputPage(EidosFrozenStrictModel):
     has_more_after: bool
     raw_truncated: bool | None
     raw_omitted_bytes: int | None
+    output_complete: bool | None = None
 
 
 class ToolOutputReadError(LookupError):
@@ -254,6 +255,9 @@ class ExecutionRepository(Repository):
         content = data.get(stream) if isinstance(data, dict) else None
         if not isinstance(content, str):
             raise ToolOutputReadError("output_unavailable")
+        output_complete = data.get("outputComplete") if isinstance(data, dict) else None
+        if output_complete is not None and not isinstance(output_complete, bool):
+            raise ToolOutputReadError("output_unavailable")
         raw_truncated = data.get("truncated") if isinstance(data, dict) else None
         if raw_truncated is not None and not isinstance(raw_truncated, bool):
             raise ToolOutputReadError("output_unavailable")
@@ -301,6 +305,7 @@ class ExecutionRepository(Repository):
             has_more_after=end_byte < total_bytes,
             raw_truncated=raw_truncated,
             raw_omitted_bytes=raw_omitted_bytes,
+            output_complete=output_complete,
         )
 
     def get_user_item(self, run_id: str) -> dict[str, object]:
@@ -1463,7 +1468,24 @@ class ExecutionRepository(Repository):
                 session_id=fact["session_id"],
                 run_id=fact["run_id"],
             ))
-            if reconciliation_required:
+            # An empty poll observes the original Shell intent; it does not
+            # create a second uncertainty epoch for that same terminal result.
+            observed_shell_origin = False
+            if reconciliation_required and fact["tool_name"] == "write_stdin":
+                observed_shell_origin = connection.execute(
+                    """SELECT 1 FROM tool_calls origin
+                       JOIN durable_intents d ON d.tool_call_id = origin.id
+                       JOIN tool_calls poll ON poll.id = ?
+                       WHERE d.run_id = ? AND d.status = 'uncertain'
+                         AND origin.tool_name = 'run_shell'
+                         AND COALESCE(json_extract(poll.arguments_json, '$.chars'), '') = ''
+                         AND json_extract(origin.result_json, '$.data.executionStatus') = 'exited'
+                         AND json_extract(origin.result_json, '$.data.sessionId') = json_extract(poll.arguments_json, '$.sessionId')
+                         AND json_extract(origin.result_json, '$.code') = ?
+                       LIMIT 1""",
+                    (fact["tool_call_id"], fact["run_id"], result.get("code")),
+                ).fetchone() is not None
+            if reconciliation_required and not observed_shell_origin:
                 connection.execute(
                     """
                     UPDATE runs

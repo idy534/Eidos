@@ -753,6 +753,13 @@ class RunShellResultData(WorkspaceResultData):
     )
     sessionId: StrictStr | None = None
     executionStatus: Literal["running", "exited"] | None = None
+    outputCallId: StrictStr | None = Field(default=None, max_length=256)
+    outputComplete: bool | None = None
+    outputCaptureError: Literal[
+        "output_read_failed", "process_drain_failed", "process_termination_failed",
+        "sensitive_content_rejected", "output_persistence_failed",
+        "output_projection_failed",
+    ] | None = None
     exitCode: StrictInt | None = None
     stdout: StrictStr | None = None
     stderr: StrictStr | None = None
@@ -1041,6 +1048,7 @@ _MODEL_MAX_NODES = 1_000
 _MODEL_MAX_KEYS = 256
 _MODEL_MAX_LIST_ITEMS = 100
 _SHELL_MODEL_FACT_FIELDS = frozenset({
+    "outputCallId", "outputComplete", "outputCaptureError",
     "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
     "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
     "modelProjectionTruncated", "modelProjectionContinuation",
@@ -1190,6 +1198,7 @@ def _project_shell_data(
     model_projection_truncated = False
 
     for key in (
+        "outputCallId", "outputComplete", "outputCaptureError",
         "sessionId", "executionStatus", "exitCode", "termination", "truncated", "truncationReason",
         "originalBytes", "omittedBytes", "attemptCount", "escalated", "sandboxed",
     ):

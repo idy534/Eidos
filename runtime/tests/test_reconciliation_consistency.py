@@ -190,6 +190,24 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(self.store.connection.execute("SELECT status FROM durable_intents WHERE tool_call_id = ?", (item["toolCall"]["id"],)).fetchone()[0], "completed")
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
+    def test_shell_exit_and_poll_share_one_reconciliation_origin(self) -> None:
+        index = self.store.increment_model_step(self.run["id"])
+        item = self.store.create_tool_item(self.run["id"], index, 0, "original", "run_shell", "{}")
+        self.store.begin_durable_intent(item["id"], preconditions={}, approval_required=False)
+        running = {"outcome": "success", "code": "shell_running", "data": {"sessionId": "managed", "executionStatus": "running"}, "reconciliationRequired": False}
+        self.store.complete_tool_item(item["id"], json.dumps(running))
+        terminal = {"outcome": "error", "code": "output_capture_failed", "data": {"sessionId": "managed", "executionStatus": "exited", "outputCaptureError": "sensitive_content_rejected"}, "reconciliationRequired": True}
+        self.store.complete_shell_session_committed(item["id"], "managed", json.dumps(terminal), json.dumps(terminal))
+        poll = self.store.create_tool_item(self.run["id"], index, 1, "poll", "write_stdin", json.dumps({"sessionId": "managed", "chars": ""}))
+        self.store.complete_tool_item(poll["id"], json.dumps(terminal), item_status="failed")
+        facts = self.store.context_projection_facts(self.run["id"])
+        self.assertEqual(facts.reconciliation_epoch, 1)
+        self.assertEqual(len(facts.reconciliation_origins), 1)
+        origin = facts.reconciliation_origins[0]
+        self.assertEqual(origin.call_id, "original")
+        self.assertEqual(origin.reason, "output_capture_failed")
+        self.assertEqual(origin.output_capture_error, "sensitive_content_rejected")
+
     def test_restart_marks_managed_shell_unknown_without_requeue(self) -> None:
         index = self.store.increment_model_step(self.run["id"])
         item = self.store.create_tool_item(self.run["id"], index, 0, "shell-call", "run_shell", "{}")

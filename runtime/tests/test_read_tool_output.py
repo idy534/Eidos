@@ -49,6 +49,7 @@ class ReadToolOutputTests(unittest.TestCase):
         stderr: str = "",
         status: str = "completed",
         include_raw_metadata: bool = True,
+        output_complete: bool | None = None,
     ) -> dict[str, object]:
         item = self.store.create_tool_item(
             self.run["id"], 1, 0, provider_call_id, "run_shell", "{}"
@@ -62,6 +63,8 @@ class ReadToolOutputTests(unittest.TestCase):
         }
         if include_raw_metadata:
             data.update({"truncated": True, "omittedBytes": 17})
+        if output_complete is not None:
+            data["outputComplete"] = output_complete
         result = {
             "schemaVersion": 1,
             "toolContractVersion": 1,
@@ -125,6 +128,36 @@ class ReadToolOutputTests(unittest.TestCase):
         self.assertTrue(tail["data"]["hasMoreBefore"])
         self.assertFalse(tail["data"]["hasMoreAfter"])
 
+    def test_shell_session_id_error_explains_the_required_identifier(self) -> None:
+        self._shell_item("original-call", stdout="persisted")
+        entry = read_tool_output_entry(self.store, self.run["id"])
+        result = entry.adapter.execute({"callId": "shell-session-id"}, threading.Event())
+        self.assertEqual(result["code"], "tool_output_not_available")
+        self.assertIn("provider callId", result["summary"])
+        self.assertIn("sessionId", result["summary"])
+
+    def test_last_page_does_not_claim_the_original_output_was_complete(self) -> None:
+        self._shell_item("partial-call", stdout="partial", output_complete=False)
+        entry = read_tool_output_entry(self.store, self.run["id"])
+        result = entry.adapter.execute({"callId": "partial-call", "fromEnd": True}, threading.Event())
+        self.assertEqual(result["outcome"], "success")
+        self.assertFalse(result["data"]["hasMoreAfter"])
+        self.assertFalse(result["data"]["outputComplete"])
+
+    def test_shell_projection_keeps_output_diagnostics_and_read_identifier(self) -> None:
+        result = canonical_tool_result("run_shell", {
+            "outcome": "error", "code": "output_capture_failed", "summary": "Partial output",
+            "data": {"stdout": "x" * 20000, "stderr": "", "exitCode": 1,
+                     "termination": "exit", "workspaceChanged": False, "truncated": False,
+                     "outputComplete": False, "outputCaptureError": "output_read_failed",
+                     "outputCallId": "original-call"},
+            "reconciliationRequired": False,
+        })
+        projected = project_tool_result("run_shell", result).model_result
+        self.assertEqual(projected["data"]["outputCallId"], "original-call")
+        self.assertEqual(projected["data"]["outputCaptureError"], "output_read_failed")
+        self.assertFalse(projected["data"]["outputComplete"])
+
     def test_tail_adjusts_to_utf8_boundary_and_reports_actual_start(self) -> None:
         self._shell_item("utf8-call", stdout="a😀z")
         entry = read_tool_output_entry(self.store, self.run["id"])
@@ -181,6 +214,7 @@ class ReadToolOutputTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "success")
         self.assertIsNone(result["data"]["rawTruncated"])
         self.assertIsNone(result["data"]["rawOmittedBytes"])
+        self.assertIsNone(result["data"]["outputComplete"])
 
     def test_only_current_session_terminal_shell_results_are_readable(self) -> None:
         self._shell_item("failed-call", stdout="failed", status="failed")

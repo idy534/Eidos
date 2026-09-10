@@ -501,6 +501,10 @@ Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替�
 
 ### Shell 会话收尾
 
+Shell 结果使用可选字段 `outputComplete` 和 `outputCaptureError` 分别记录输出完整性与安全原因码。`truncated`、`omittedBytes` 继续只描述原始输出上限。进程明确正常退出后的 `output_read_failed` 不单独建立对账屏障；扫描拒绝、持久化失败、进程读取循环异常和未知退出继续保留对账。结果携带原命令的 `outputCallId`，模型用它读取持久化输出，不能把 Shell `sessionId` 当成该 ID。`read_tool_output` 的分页结果保留 `outputComplete`；读取到保留内容的末尾不代表原始输出完整，旧结果的该字段保持 NULL。
+
+Context 从未决 Durable Intent 投影最多 16 条 `reconciliationOrigins`，包含原工具、provider call ID、原因码和输出捕获原因，不注入原始命令或异常正文。空列表不代表对账已完成。LoopGuard 在同一 epoch 下最多接受三轮带有未解除对账的工具结果；新的普通读取结果不重置计数。Step 进度签名保存对账与有效 Shell poll 标记，旧签名默认没有该标记。正常 Run 不受该计数限制，有效空输入 Shell poll 不计数。达到限制后，Runtime 使用现有 Finalizer 汇报阻塞，保留未决 Intent 和对账事实。原 Shell 退出回调已经记录的不确定结果，不会因空输入轮询再次返回而重复增加 epoch。
+
 `ShellProcessManager` 继续使用现有 Run 资源和输出读取线程。每条输出流持有同一个敏感扫描器，轮询不会结束扫描器，也不会释放尚未完整的行。输出上限继续由原始字节计数控制。模型轮询只读取尚未交付的安全输出。
 
 启动 ToolCall 可以完成一次 `shell_running` 观察，但原 Durable Intent 保持 `running`。Runtime 在初次结果提交后才启用退出回调。退出回调更新原命令的 canonical/UI 结果、Workspace diff 和 Intent，并在同一 SQLite 事务中产生事件。Runtime 不会改写模型已经收到的历史结果。`read_tool_output` 在命令退出后读取原命令累计输出。

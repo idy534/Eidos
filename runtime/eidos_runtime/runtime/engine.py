@@ -854,7 +854,7 @@ class RuntimeEngine:
                     dispatcher.plan(validation.tool_calls[0], step.tool_snapshot.binding("write_stdin") or "missing"),
                 )
             )
-            repeated = None if managed_poll else guard.observe_tool_calls(
+            repeated = None if managed_poll or built.facts.reconciliation_required else guard.observe_tool_calls(
                 validation.tool_calls,
                 step.workspace_version,
                 step.reconciliation_epoch,
@@ -870,6 +870,7 @@ class RuntimeEngine:
                     context_fact_ids=(),
                     error_fingerprints=built.facts.active_error_fingerprints,
                     reconciliation_epoch=step.reconciliation_epoch,
+                    reconciliation_required=built.facts.reconciliation_required,
                     new_user_input_ids=step.new_user_input_ids,
                     tool_call_fingerprint=tool_call_fingerprint(
                         validation.tool_calls
@@ -920,6 +921,8 @@ class RuntimeEngine:
                     context_fact_ids=outcome.context_fact_ids,
                     error_fingerprints=outcome.error_fingerprints,
                     reconciliation_epoch=outcome.reconciliation_epoch,
+                    reconciliation_required=post_facts.reconciliation_required,
+                    managed_shell_poll=managed_poll,
                     new_user_input_ids=step.new_user_input_ids,
                     tool_call_fingerprint=tool_call_fingerprint(
                         validation.tool_calls

@@ -65,7 +65,7 @@
 - 确定的 Tool Error 会作为 ToolResult 进入 Context，并触发下一次模型决策。模型可以修正参数或选择替代 Tool。一次失败不会单独终止 Run。
 - 已明确 `termination = exit` 且有 `exitCode` 的 Shell 会把退出事实、stdout 和 stderr 返回给模型。非 0 退出会让 Item 为 `failed`，但会让 ToolCall 为 `completed`。Workspace manifest 或 index observation 不完整只会标记 observation metadata，不会建立只读 reconciliation barrier，也不会阻止后续 Shell 或其他 ToolCall。Runtime 不自动重放原 Shell。
 - Cancellation、Approval、Reconciliation 和 operational segment rollover 都在安全点处理。
-- LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。它负责 semantic convergence，不是固定步数限制。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。
+- LoopGuard 使用 ToolCall、Workspace version、reconciliation epoch、Context fact frontier 和 active error 的 semantic fingerprint。普通 Run 没有固定步数限制。首次重复会注入恢复信息，恢复后再次回到同一状态才会以 `repeated_tool_call` 或 `no_progress` 停止。未解除对账的同一 epoch 另有三轮工具恢复上限，成功读取普通文件不会重置该上限。
 - Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。Runtime 没有固定的模型步数、Run 时长或 repeated-call counter 生命周期规则。
 
 ## Context
@@ -163,6 +163,9 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 只有安全只读的 `parallel_safe` Tool 批次可以在自身的有界范围内并发。每个 Run 的 Workspace write、Shell、MCP、external 和 Eidos-state Tool 使用自己的独占副作用门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使共享同一个 Workspace。等待 Approval 不占用该 Run 的门。结果按模型声明顺序提交。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
 
 ## Shell
+
+- Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；安全扫描拒绝和持久化失败仍保留屏障。
+- Runtime 会投影未决 Intent 的对账来源。同一 epoch 下的工具恢复最多三轮，普通 Run 和有效 Shell 空输入等待不受该限制。系统不会通过删除缓存、申请新权限或换一条命令解除未知 Shell Intent。
 
 - `HostShellResolver` 先使用账户 login shell，再使用 `SHELL`，最后使用 `/bin/zsh`、`/bin/bash`、`/bin/sh`。Resolver 只接受有效的绝对可执行 shell 路径。
 - `ShellEnvironmentSnapshotProvider` 对每个 shell executable、canonical cwd 和 capture launch identity 做一次 `-lc` 环境捕获。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。

@@ -22,6 +22,8 @@ class LoopGuard:
         self._recovered_states: set[str] = set()
         self._last_loop_state: str | None = None
         self._empty_responses = 0
+        self._reconciliation_epoch: int | None = None
+        self._reconciliation_rounds = 0
 
     @classmethod
     def from_signatures(
@@ -43,6 +45,8 @@ class LoopGuard:
         context_fact_ids: tuple[str, ...],
         error_fingerprints: tuple[str, ...],
         reconciliation_epoch: int,
+        reconciliation_required: bool = False,
+        managed_shell_poll: bool = False,
         new_user_input_ids: tuple[str, ...] = (),
         tool_call_fingerprint: str | None = None,
         loop_state_fingerprint: str | None = None,
@@ -64,6 +68,8 @@ class LoopGuard:
                 self._active_errors - set(unique_errors)
             )),
             reconciliation_epoch=reconciliation_epoch,
+            reconciliation_required=reconciliation_required,
+            managed_shell_poll=managed_shell_poll,
             new_user_input_ids=tuple(
                 value for value in new_user_input_ids
                 if value not in self._seen_user_inputs
@@ -123,6 +129,11 @@ class LoopGuard:
         return self._last_loop_state
 
     def observe_progress(self, signature: ProgressSignature) -> str | None:
+        if not signature.reconciliation_required or signature.reconciliation_epoch != self._reconciliation_epoch:
+            self._reconciliation_rounds = 0
+        self._reconciliation_epoch = signature.reconciliation_epoch
+        if signature.reconciliation_required and not signature.managed_shell_poll:
+            self._reconciliation_rounds += 1
         unchanged = (
             self._last_progress is None
             or (
@@ -157,6 +168,8 @@ class LoopGuard:
         self._last_loop_state = state
         if signature.recovery_state_fingerprint is not None:
             self._recovered_states.add(signature.recovery_state_fingerprint)
+        if self._reconciliation_rounds >= 3:
+            return "reconciliation_required"
         if progressed:
             self._observed_states.add(state)
             return None

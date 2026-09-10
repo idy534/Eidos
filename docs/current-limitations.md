@@ -51,6 +51,9 @@
 
 ### Agent Shell
 
+- `outputComplete=false` 表示输出尚未完整获得，原因可能是仍在运行、捕获失败或原始输出截断。旧结果缺少该字段时，系统不能推断输出完整。`outputCaptureError` 只保存安全原因码，不能恢复已经丢失或被安全扫描拒绝的内容。本次历史 Run 的具体捕获子原因不会被新代码补写。
+- 同一对账 epoch 最多允许三轮工具恢复，随后现有 Finalizer 收尾并保留对账事实。系统不自动重放未知操作。模型的测试报告指引要求区分收集数与完成数，也要求标明缺失汇总和未执行阶段；这项指引不等于系统能够自动证明任意测试结论。
+
 - Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 会阻止该 Run 启动新的副作用。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。

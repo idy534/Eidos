@@ -29,6 +29,36 @@ class LoopRecoveryTests(unittest.TestCase):
         self.store.close()
         self.temporary.cleanup()
 
+    def test_unresolved_shell_stops_after_three_distinct_read_rounds(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Inspect failed test evidence")
+        original = self.store.create_tool_item(run["id"], 0, 0, "original-shell", "run_shell", "{}")
+        self.store.begin_durable_intent(original["id"], preconditions={}, approval_required=False)
+        self.store.complete_tool_item(original["id"], json.dumps({
+            "outcome": "error", "code": "output_capture_failed",
+            "summary": "Output scan failed", "data": {},
+            "sideEffectsMayExist": True, "reconciliationRequired": True,
+        }), item_status="failed", tool_status="completed")
+        workspace = Path(self.temporary.name) / "workspace"
+        for index in range(3):
+            (workspace / f"evidence-{index}.txt").write_text(f"evidence {index}\n")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall(
+                f"read-{index}", "read_file", {"path": f"evidence-{index}.txt"}
+            ),)) for index in range(3)
+        ] + [ModelResponse(text="The output remains incomplete; test totals are unverified.")])
+
+        RuntimeLoop(self.store, model, lambda _message: None).run(run["id"], threading.Event())
+
+        stopped = self.store.read_run(run["id"])
+        self.assertEqual(stopped["stopReason"], "reconciliation_required")
+        self.assertTrue(stopped["reconciliationRequired"])
+        self.assertEqual(stopped["modelStepCount"], 3)
+        self.assertEqual(len(model.contexts), 4)
+        state = " ".join(str(part.get("content", "")) for part in model.contexts[0])
+        self.assertIn("original-shell", state)
+        self.assertIn("output_capture_failed", state)
+        self.assertIn("cannot clear Shell", state)
+
     def test_exact_duplicate_read_gets_generic_recovery_and_can_continue(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect startup flow")
         model = ScriptedModel([

@@ -217,11 +217,25 @@ class ContextBuilder:
                     {
                         "reconciliationRequired": facts.reconciliation_required,
                         "reconciliationEpoch": facts.reconciliation_epoch,
+                        "reconciliationOrigins": [origin.model_dump() for origin in facts.reconciliation_origins],
                         "recentToolErrorFingerprints": facts.active_error_fingerprints,
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
                     sort_keys=True,
+                ),
+            })
+        if facts.reconciliation_required:
+            context.append({
+                "type": "user",
+                "content": (
+                    "Recovery is limited to three tool rounds for this reconciliation epoch. "
+                    "The listed origins come from unresolved durable intents, not from cache directories. "
+                    "Workspace reads can only reconcile verifiable Workspace file mutations. "
+                    "They cannot clear Shell, MCP, external or unknown intents. Deleting caches or "
+                    "requesting permissions cannot clear those intents either. Read existing evidence "
+                    "and report the blocker if no supported recovery is available; do not vary commands "
+                    "or tools to retry blocked side effects. An empty origin list does not prove resolution."
                 ),
             })
         provider_usage = self.store.latest_model_usage(run_id)

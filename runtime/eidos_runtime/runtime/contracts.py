@@ -112,6 +112,8 @@ class ProgressSignature(_FrozenModel):
     error_fingerprints: tuple[str, ...]
     resolved_error_fingerprints: tuple[str, ...]
     reconciliation_epoch: int
+    reconciliation_required: bool = False
+    managed_shell_poll: bool = False
     new_user_input_ids: tuple[str, ...] = ()
     tool_call_fingerprint: str | None = None
     loop_state_fingerprint: str | None = None

@@ -39,6 +39,14 @@ class CompactSummary(_Fact):
     uncertain_side_effects: tuple[str, ...] = ()
 
 
+class ReconciliationOrigin(_Fact):
+    intent_id: str
+    call_id: str
+    tool_name: str
+    reason: str
+    output_capture_error: str | None = None
+
+
 class ContextFacts(_Fact):
     run_id: str
     session_id: str
@@ -55,6 +63,7 @@ class ContextFacts(_Fact):
     projection_omitted_bytes: int = 0
     current_user_goal_id: str | None = None
     reconciliation_required: bool = False
+    reconciliation_origins: tuple[ReconciliationOrigin, ...] = ()
     active_error_fingerprints: tuple[str, ...] = ()
     pending_approval_ids: tuple[str, ...] = ()
     side_effects_may_exist: bool = False

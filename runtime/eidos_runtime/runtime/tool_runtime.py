@@ -1013,6 +1013,8 @@ class ShellToolHandler:
             record_attempt=record_attempt,
         )
         result = orchestration.result
+        if isinstance(result.get("data"), dict):
+            result["data"]["outputCallId"] = call.provider_call_id
         if result.get("data", {}).get("executionStatus") == "running":
             manager = self.dependencies.shell_process_manager
             gate = self.dependencies.concurrency
@@ -1043,6 +1045,8 @@ class ShellToolHandler:
                         "Shell output was withheld",
                         {"sessionId": session_id, "executionStatus": "exited",
                          "exitCode": exit_data.get("exitCode"), "termination": exit_data.get("termination"),
+                         "outputCallId": call.provider_call_id, "outputComplete": False,
+                         "outputCaptureError": "output_projection_failed",
                          "stdout": "", "stderr": "", "truncated": True, "workspaceChanged": changed},
                         side_effects_may_exist=True, reconciliation_required=True,
                     )

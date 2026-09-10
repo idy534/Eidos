@@ -543,7 +543,8 @@ class ToolExecutionController:
                     tool_error(
                         call.name,
                         "reconciliation_required",
-                        "A previous side effect must be reconciled",
+                        "A previous side effect must be reconciled. Consult Runtime reconciliationOrigins. "
+                        "Changing the command, deleting caches or requesting permissions cannot clear an uncertain Shell intent.",
                     ),
                     "failed",
                     "failed",

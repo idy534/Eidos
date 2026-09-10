@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact
+from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact, ReconciliationOrigin
 from eidos_runtime.db.database import Repository
 from eidos_runtime.db.errors import (
     ContextLimitExceeded,
@@ -289,6 +289,15 @@ class ContextRepository(Repository):
                 (run_id,),
             ).fetchall()
             pending_approval_ids = tuple(str(row["id"]) for row in pending_approval_rows)
+            origin_rows = connection.execute(
+                """SELECT d.id, t.provider_call_id, t.tool_name,
+                          substr(json_extract(t.result_json, '$.code'), 1, 128) AS reason,
+                          substr(json_extract(t.result_json, '$.data.outputCaptureError'), 1, 128) AS capture_error
+                   FROM durable_intents d JOIN tool_calls t ON t.id = d.tool_call_id
+                   WHERE d.run_id = ? AND d.status IN ('running', 'uncertain', 'interrupted')
+                   ORDER BY d.created_at, d.id LIMIT 16""",
+                (run_id,),
+            ).fetchall() if run["reconciliation_required"] else ()
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         items: list[ContextItemFact] = []
         serialized_bytes = 2
@@ -364,6 +373,13 @@ class ContextRepository(Repository):
                 str(goal_row["id"]) if goal_row is not None else None
             ),
             reconciliation_required=bool(run["reconciliation_required"]),
+            reconciliation_origins=tuple(
+                ReconciliationOrigin(
+                    intent_id=str(row["id"]), call_id=str(row["provider_call_id"]),
+                    tool_name=str(row["tool_name"]), reason=str(row["reason"] or "outcome_unknown"),
+                    output_capture_error=row["capture_error"],
+                ) for row in origin_rows
+            ),
             active_error_fingerprints=tuple(active_errors),
             pending_approval_ids=pending_approval_ids,
             side_effects_may_exist=bool(run["side_effects_may_exist"]),

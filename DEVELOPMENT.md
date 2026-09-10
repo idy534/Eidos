@@ -59,6 +59,10 @@ Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr�
 
 ## 4. Test
 
+Agent 在 Eidos Shell 内执行本仓库测试时，应先核对实际执行权限。部分集成测试需要启动原生 Seatbelt，外层沙箱可能阻止嵌套启动。测试者不能仅凭 `sandbox_unavailable` 排除代码回归。需要原生执行时，Agent 应使用系统提供的明确审批入口；文件路径授权不等于 unsandboxed 授权。
+
+uv 缓存写入失败时，Agent 应选择已有可写缓存或临时目录，或申请具体路径权限。Agent 不应默认放开整个 HOME。缓存清理不能解除未知 Shell Intent。测试报告应记录退出码、实际完成的阶段和最终汇总；输出不完整时，测试者必须把总数和未核验结论标为未验证。
+
 开发过程中优先运行受影响测试：
 
 ```bash

@@ -355,6 +355,8 @@ class ShellProcessManager:
                 ),
                 "originalBytes": session.original_bytes,
                 "omittedBytes": session.omitted_bytes,
+                "outputComplete": not running and session.drain_error is None and not session.truncated,
+                "outputCaptureError": session.drain_error,
                 "sessionId": session.session_id,
                 "workspaceChanged": False,
                 "workspaceChangeState": "unknown",
@@ -383,7 +385,14 @@ class ShellProcessManager:
                 else f"Command did not succeed (termination={session.termination})",
                 "data": data,
                 "sideEffectsMayExist": True,
-                "reconciliationRequired": session.drain_error is not None or (not running and session.exit_code is None),
+                "reconciliationRequired": (
+                    session.drain_error is not None
+                    and not (
+                        session.drain_error == "output_read_failed"
+                        and not running and session.exit_code is not None
+                        and session.termination == "exit"
+                    )
+                ) or (not running and session.exit_code is None),
             }
 
     def _wait_until_exit(
@@ -489,9 +498,10 @@ class ShellProcessManager:
                 for key, _mask in ready:
                     try:
                         chunk = os.read(key.fileobj.fileno(), 64 * 1024)
-                    except OSError as error:
+                    except OSError:
                         with session.lock:
-                            session.drain_error = type(error).__name__
+                            if session.drain_error is None:
+                                session.drain_error = "output_read_failed"
                         chunk = b""
                     if not chunk:
                         try:
@@ -531,9 +541,9 @@ class ShellProcessManager:
             except subprocess.TimeoutExpired:
                 _terminate_group(session.process_group_id)
                 session.process.wait(timeout=1)
-        except Exception as error:
+        except Exception:
             with session.lock:
-                session.drain_error = type(error).__name__
+                session.drain_error = "process_drain_failed"
             _terminate_group(session.process_group_id)
             try:
                 session.process.wait(timeout=1)
