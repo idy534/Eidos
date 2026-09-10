@@ -7,6 +7,7 @@ from eidos_runtime.sandbox.permissions import (
     EffectivePermissionProfile,
     FileSystemAccessMode,
     MaterializedFileSystemPermissionEntry,
+    is_approval_write_exception,
 )
 
 
@@ -32,6 +33,7 @@ class SeatbeltPolicyCompiler:
             raise ValueError("seatbelt base policy is unavailable") from error
         sections = [base.rstrip()]
         parameters: dict[str, str] = {}
+        approved_writes: list[tuple[MaterializedFileSystemPermissionEntry, str]] = []
         for index, entry in enumerate(
             item for item in profile.entries if item.source == "additional"
         ):
@@ -39,6 +41,8 @@ class SeatbeltPolicyCompiler:
             parameters[key] = entry.resolved_path
             sections.append(_metadata_rule(key))
             sections.append(_allow_rule(entry, key))
+            if entry.access is FileSystemAccessMode.WRITE:
+                approved_writes.append((entry, key))
         skill_root_keys: tuple[str, ...] = ()
         for index, root in enumerate(profile.active_skill_roots):
             key = f"SKILL_ROOT_{index}"
@@ -48,16 +52,22 @@ class SeatbeltPolicyCompiler:
             sections.append(
                 "(allow file-read* file-test-existence "
                 f'(subpath (param "{key}")))\n'
-                f'(allow file-map-executable (subpath (param "{key}")))\n'
-                f'(deny file-write* (subpath (param "{key}")))'
+                f'(allow file-map-executable (subpath (param "{key}")))'
             )
+        for index, root in enumerate(dict.fromkeys((
+            *profile.active_skill_roots, *profile.approval_write_roots,
+        ))):
+            key = f"APPROVAL_WRITE_ROOT_{index}"
+            parameters[key] = root
+            write_filter = _exclude_filters(
+                f'(subpath (param "{key}"))',
+                tuple(_filter(entry, entry_key) for entry, entry_key in approved_writes),
+            )
+            sections.append(f'(deny file-write* {write_filter})')
         workspace_exceptions: dict[str, str] = {}
         for index, workspace_root in enumerate(profile.workspace_roots):
             workspace = Path(workspace_root).resolve(strict=False)
-            for entry in (
-                *profile.permanent_denies,
-                *profile.hard_confidentiality_denies,
-            ):
+            for entry in profile.permanent_denies:
                 protected = Path(entry.resolved_path)
                 if protected != workspace and protected in workspace.parents:
                     key = f"WORKSPACE_ROOT_{index}"
@@ -72,7 +82,8 @@ class SeatbeltPolicyCompiler:
                 _deny_rule(
                     entry,
                     key,
-                    exception_key=workspace_exceptions.get(entry.resolved_path),
+                    exception_key=(workspace_exceptions.get(entry.resolved_path)
+                                   if entry.source == "permanent_deny" else None),
                     exception_keys=(
                         tuple(
                             key
@@ -84,6 +95,20 @@ class SeatbeltPolicyCompiler:
                         )
                         if entry.source == "permanent_deny"
                         else ()
+                    ),
+                    exception_filters=tuple(
+                        _filter(allowed, allowed_key)
+                        for allowed, allowed_key in approved_writes
+                        if entry.source == "permanent_deny" and is_approval_write_exception(
+                            Path(allowed.resolved_path), Path(entry.resolved_path), profile.approval_write_roots,
+                        )
+                    ),
+                    metadata_exceptions=tuple(
+                        f'(path-ancestors (param "{allowed_key}"))'
+                        for allowed, allowed_key in approved_writes
+                        if entry.source == "permanent_deny" and is_approval_write_exception(
+                            Path(allowed.resolved_path), Path(entry.resolved_path), profile.approval_write_roots,
+                        )
                     ),
                 )
             )
@@ -151,20 +176,33 @@ def _deny_rule(
     *,
     exception_key: str | None = None,
     exception_keys: tuple[str, ...] = (),
+    exception_filters: tuple[str, ...] = (),
+    metadata_exceptions: tuple[str, ...] = (),
 ) -> str:
     path_filter = _filter(entry, key)
     keys = tuple(dict.fromkeys((*exception_keys, *(
         (exception_key,) if exception_key is not None else ()
     ))))
-    if keys:
-        exceptions = " ".join(
-            f'(require-not (subpath (param "{value}")))'
-            for value in keys
-        )
-        path_filter = (
-            f'(require-all {path_filter} {exceptions})'
+    path_filter = _exclude_filters(path_filter, (
+        *(f'(subpath (param "{value}"))' for value in keys),
+        *exception_filters,
+    ))
+    if metadata_exceptions:
+        # An inherited directory fd still needs identity checks. Allow ancestor
+        # metadata, never ancestor contents, enumeration, xattrs or writes.
+        metadata_filter = _exclude_filters(path_filter, metadata_exceptions)
+        return (
+            f"(deny file-read-data file-read-xattr file-write* file-map-executable {path_filter})\n"
+            f"(deny file-read-metadata file-test-existence {metadata_filter})"
         )
     return (
         f"(deny file-read* file-write* file-map-executable "
         f"file-test-existence {path_filter})"
     )
+
+
+def _exclude_filters(path_filter: str, exceptions: tuple[str, ...]) -> str:
+    if not exceptions:
+        return path_filter
+    excluded = " ".join(f"(require-not {value})" for value in exceptions)
+    return f"(require-all {path_filter} {excluded})"

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import signal
+import stat
 import socket
 import subprocess
 import sys
@@ -28,6 +30,7 @@ SANDBOX_EXECUTABLE = "/usr/bin/sandbox-exec"
 PROFILE_PATH = Path(__file__).with_name("seatbelt.sbpl")
 DIRECT_PROFILE_PATH = Path(__file__).with_name("seatbelt-direct.sbpl")
 FILE_COMMIT_HELPER = Path(__file__).with_name("file_commit_helper.py")
+logger = logging.getLogger("eidos.runtime.file_commit")
 
 
 def runtime_python_executable() -> Path:
@@ -315,6 +318,7 @@ def secure_workspace_move(
     delete: bool = False,
     candidate_sha256: str | None = None,
     content: bytes | None = None,
+    root_fd: int | None = None,
 ) -> str:
     """Commit one file in the approved execution environment."""
     workspace = workspace_root.resolve()
@@ -400,10 +404,20 @@ def secure_workspace_move(
     if unsandboxed:
         from eidos_runtime.sandbox.permissions import unsandboxed_execution_allowed
 
-        if effective_permissions is None or not unsandboxed_execution_allowed(effective_permissions):
+        if effective_permissions is None or not unsandboxed_execution_allowed(effective_permissions, controlled_file_write=True):
             return "failed"
         command = command[command.index("--") + 1:]
+    owned_root_fd = -1
     try:
+        if root_fd is None:
+            owned_root_fd = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            root_fd = owned_root_fd
+        opened_root = os.fstat(root_fd)
+        current_root = os.stat(workspace, follow_symlinks=False)
+        if not stat.S_ISDIR(opened_root.st_mode) or opened_root.st_uid != os.getuid() or (
+            opened_root.st_dev, opened_root.st_ino
+        ) != (current_root.st_dev, current_root.st_ino):
+            return "failed"
         completed = subprocess.run(
             command,
             cwd=workspace,
@@ -413,10 +427,13 @@ def secure_workspace_move(
                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
                 "LANG": "en_US.UTF-8",
                 "LC_ALL": "en_US.UTF-8",
+                "EIDOS_FILE_ROOT": str(workspace),
+                "EIDOS_FILE_ROOT_FD": str(root_fd),
             },
+            pass_fds=(root_fd,),
             **({"stdin": subprocess.DEVNULL} if content is None else {"input": content}),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             timeout=5,
             check=False,
             start_new_session=False,
@@ -425,6 +442,17 @@ def secure_workspace_move(
         return "failed"
     except subprocess.TimeoutExpired:
         return "uncertain"
+    finally:
+        if owned_root_fd >= 0:
+            os.close(owned_root_fd)
+    if completed.returncode != 0:
+        # The trusted helper emits one fixed-size numeric diagnostic only.
+        diagnostic = completed.stderr or b""
+        if isinstance(diagnostic, bytes):
+            diagnostic = diagnostic[:160].decode("ascii", errors="replace").strip()
+        if not isinstance(diagnostic, str) or not diagnostic.startswith("file_commit stage="):
+            diagnostic = "helper diagnostic unavailable"
+        logger.warning("File commit failed exit_code=%s %s", completed.returncode, diagnostic)
     return {
         0: "committed",
         10: "conflict",

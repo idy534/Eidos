@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import hashlib
 import os
 from pathlib import Path
@@ -35,16 +36,40 @@ def main() -> int:
     if expected == "new":
         if source is None:
             return EXIT_FAILED
-        return 0 if _rename(source, target, RENAME_EXCL) else EXIT_CONFLICT
+        try:
+            return 0 if _rename(source, target, RENAME_EXCL) else EXIT_FAILED
+        except OSError as error:
+            _report_error("create", error)
+            return EXIT_CONFLICT if error.errno in {errno.EEXIST, errno.ENOTEMPTY} else EXIT_FAILED
     if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
         return EXIT_FAILED
     return _write_existing(source, target, expected, candidate_hash)
 
 
 def _open_parent(path: Path) -> int:
-    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    root = os.environ.get("EIDOS_FILE_ROOT")
+    inherited_fd = os.environ.get("EIDOS_FILE_ROOT_FD")
+    if root is not None and inherited_fd is not None:
+        relative = path.relative_to(root)
+        if ".." in relative.parts or not relative.parts:
+            raise OSError(errno.EINVAL, "invalid relative target")
+        descriptor = os.dup(int(inherited_fd))
+        parts = relative.parts[:-1]
+    elif root is not None or inherited_fd is not None:
+        raise OSError(errno.EINVAL, "incomplete file root")
+    else:
+        # Legacy direct helper callers do not inherit a Runtime directory fd.
+        descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        parts = path.parts[1:-1]
     try:
-        for part in path.parts[1:-1]:
+        if root is not None:
+            opened = os.fstat(descriptor)
+            current = os.stat(root, follow_symlinks=False)
+            if not stat.S_ISDIR(opened.st_mode) or opened.st_uid != os.getuid() or (
+                opened.st_dev, opened.st_ino
+            ) != (current.st_dev, current.st_ino):
+                raise OSError(errno.ESTALE, "file root changed")
+        for part in parts:
             next_fd = os.open(
                 part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=descriptor,
@@ -55,6 +80,11 @@ def _open_parent(path: Path) -> int:
     except BaseException:
         os.close(descriptor)
         raise
+
+
+def _report_error(stage: str, error: OSError) -> None:
+    # Keep diagnostics bounded and free of paths, contents and exception text.
+    print(f"file_commit stage={stage} errno={error.errno}", file=sys.stderr)
 
 
 def _delete_existing(target: Path, expected: str) -> int:
@@ -76,7 +106,8 @@ def _delete_existing(target: Path, expected: str) -> int:
         os.unlink(target.name, dir_fd=parent_fd)
         os.fsync(parent_fd)
         return 0
-    except OSError:
+    except OSError as error:
+        _report_error("delete_after_mutation" if mutation_started else "delete_prepare", error)
         return EXIT_UNCERTAIN if mutation_started else EXIT_FAILED
     finally:
         for opened in (descriptor, parent_fd):
@@ -163,7 +194,8 @@ def _write_existing(
         if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
             return EXIT_UNCERTAIN
         return 0
-    except OSError:
+    except OSError as error:
+        _report_error("write_after_mutation" if mutation_started else "write_prepare", error)
         return EXIT_UNCERTAIN if mutation_started else EXIT_FAILED
     finally:
         for opened in (descriptor, candidate_fd, parent_fd, source_parent_fd):
@@ -186,16 +218,21 @@ def _rename(source: Path, target: Path, flags: int) -> bool:
     try:
         source_parent = _open_parent(source)
         target_parent = _open_parent(target)
-        return renameatx_np(
+        result = renameatx_np(
             source_parent, os.fsencode(source.name),
             target_parent, os.fsencode(target.name), flags,
-        ) == 0
-    except OSError:
-        return False
+        )
+        if result != 0:
+            raise OSError(ctypes.get_errno(), "exclusive rename failed")
+        return True
     finally:
         for opened in (source_parent, target_parent):
             if opened >= 0:
-                os.close(opened)
+                try:
+                    os.close(opened)
+                except OSError as error:
+                    # Closing a directory fd does not undo a completed rename.
+                    _report_error("create_cleanup", error)
 
 
 if __name__ == "__main__":

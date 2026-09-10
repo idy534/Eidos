@@ -15,6 +15,7 @@ from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     FileSystemAccessMode,
     FileSystemPermissionEntry,
+    base_permission_profile_for_workspace,
     materialize_effective_profile,
 )
 from eidos_runtime.tools.workspace import ToolExecutor
@@ -197,3 +198,113 @@ class FileWriteApprovalTests(unittest.TestCase):
             patch.object(self.handler, "_execute", side_effect=inspect_scope),
         ):
             self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
+
+    def test_projectless_workspace_uses_existing_permission_without_approval(self) -> None:
+        data = self.workspace.parent / ".eidos"
+        workspace = data / "..eidos-projectless" / "session"
+        workspace.mkdir(parents=True)
+        with ToolExecutor(workspace) as executor:
+            self.executor = executor
+            self.runtime.implementation.executor = executor
+            self.dependencies.base_permissions = base_permission_profile_for_workspace(workspace, data)
+            execute = Mock(return_value={"outcome": "success"})
+            self.dependencies.execute_workspace_side_effect.side_effect = lambda **kwargs: VerifiedToolExecutionResult(
+                result=kwargs["execute"](),
+            )
+            call = ModelToolCall("call", "apply_patch", {"changes": []})
+            with (
+                patch.object(executor, "external_patch_paths", return_value=()),
+                patch.object(self.handler, "_execute", side_effect=lambda *_args: self.effect(execute)),
+                patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+            ):
+                self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
+            execute.assert_called_once_with()
+            self.dependencies.execute_side_effect.assert_not_called()
+
+    def test_active_user_skill_routes_through_approval_and_reuses_run_grant(self) -> None:
+        data = self.workspace.parent / ".eidos"
+        skill = data / "skills" / "review"
+        skill.mkdir(parents=True)
+        target = skill / "SKILL.md"
+        target.write_text("old skill\n")
+        self.dependencies.base_permissions = base_permission_profile_for_workspace(self.workspace, data)
+        self.dependencies.skill_access = SimpleNamespace(active_roots=lambda: (skill,))
+        grant = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+            path=str(target), access=FileSystemAccessMode.WRITE, recursive=False,
+        ),))
+        call = ModelToolCall("call", "apply_patch", {"changes": []})
+
+        for approved in (False, True):
+            with self.subTest(existing_grant=approved):
+                self.dependencies.execute_side_effect.reset_mock()
+                self.dependencies.execute_workspace_side_effect.reset_mock()
+                self.dependencies.store.run_permission_grants.return_value = grant if approved else None
+                execute = Mock(return_value={"outcome": "success"})
+                self.dependencies.execute_workspace_side_effect.side_effect = lambda **kwargs: VerifiedToolExecutionResult(
+                    result=kwargs["execute"](),
+                )
+                self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
+                with (
+                    patch.object(self.executor, "external_patch_paths", return_value=(target,)),
+                    patch.object(self.handler, "_execute", side_effect=lambda *_args: self.effect(execute)),
+                    patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+                ):
+                    result = self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
+                if approved:
+                    execute.assert_called_once_with()
+                    self.dependencies.execute_side_effect.assert_not_called()
+                else:
+                    execute.assert_not_called()
+                    self.dependencies.execute_side_effect.assert_called_once()
+                    self.assertEqual(result.result["code"], "user_rejected")
+                    self.dependencies.execute_workspace_side_effect.assert_not_called()
+                self.assertEqual(target.read_text(), "old skill\n")
+
+    def test_system_skill_never_reaches_approval_even_with_active_skill_and_grant(self) -> None:
+        data = self.workspace.parent / ".eidos"
+        system = data / "skills" / ".system"
+        system.mkdir(parents=True)
+        target = system / "SKILL.md"
+        target.write_text("system skill\n")
+        self.dependencies.base_permissions = base_permission_profile_for_workspace(self.workspace, data)
+        self.dependencies.skill_access = SimpleNamespace(active_roots=lambda: (system,))
+        self.dependencies.store.run_permission_grants.return_value = AdditionalPermissionProfile(
+            fileSystem=(FileSystemPermissionEntry(
+                path=str(target), access=FileSystemAccessMode.WRITE, recursive=False,
+            ),),
+        )
+        call = ModelToolCall("call", "apply_patch", {"changes": []})
+        with (
+            patch.object(self.executor, "external_patch_paths", return_value=(target,)),
+            patch.object(self.handler, "_execute") as prepare,
+        ):
+            self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
+        prepare.assert_not_called()
+        self.dependencies.execute_side_effect.assert_not_called()
+        self.dependencies.execute_workspace_side_effect.assert_not_called()
+        self.assertEqual(target.read_text(), "system skill\n")
+
+    def test_relative_active_workspace_skill_also_requests_approval(self) -> None:
+        skill = self.workspace / "skills" / "review"
+        skill.mkdir(parents=True)
+        target = skill / "SKILL.md"
+        target.write_text("old skill\n")
+        self.dependencies.skill_access = SimpleNamespace(active_roots=lambda: (skill,))
+        self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
+        execute = Mock()
+        call = ModelToolCall("call", "apply_patch", {"changes": [{
+            "type": "update", "path": "skills/review/SKILL.md",
+            "chunks": [{"oldLines": ["old skill"], "newLines": ["new skill"]}],
+        }]})
+        with (
+            patch.object(self.handler, "_execute", side_effect=lambda *_args: self.effect(execute)),
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+        ):
+            result = self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
+        self.assertEqual(result.result["code"], "user_rejected")
+        self.dependencies.execute_side_effect.assert_called_once()
+        self.dependencies.execute_workspace_side_effect.assert_not_called()
+        execute.assert_not_called()
+        request = self.dependencies.execute_side_effect.call_args.kwargs["prepared"].approval_request
+        self.assertEqual(request["additionalPermissions"]["fileSystem"][0]["path"], str(target))
+        self.assertEqual(target.read_text(), "old skill\n")

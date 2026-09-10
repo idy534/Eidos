@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import ctypes
+import errno
 import io
 import os
 from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from eidos_runtime.sandbox import file_commit_helper as helper
 
@@ -169,3 +171,81 @@ class FileCommitHelperTests(unittest.TestCase):
         expected_candidate = hashlib.sha256(b"approved content\n").hexdigest()
         self.assertEqual(self.commit_stdin(b"changed content\n", expected_candidate), helper.EXIT_FAILED)
         self.assertEqual(self.target.read_bytes(), b"original contents\n")
+
+    def test_new_file_rename_distinguishes_conflict_from_permission_failure(self) -> None:
+        self.target.unlink()
+        for error, expected in (
+            (errno.EEXIST, helper.EXIT_CONFLICT),
+            (errno.ENOTEMPTY, helper.EXIT_CONFLICT),
+            (errno.EACCES, helper.EXIT_FAILED),
+            (errno.EPERM, helper.EXIT_FAILED),
+            (errno.ENOSPC, helper.EXIT_FAILED),
+        ):
+            with self.subTest(errno=error):
+                def rejected_rename(*_args):
+                    ctypes.set_errno(error)
+                    return -1
+
+                libc = SimpleNamespace(renameatx_np=Mock(side_effect=rejected_rename))
+                with (
+                    patch.object(helper.ctypes, "CDLL", return_value=libc),
+                    patch.object(helper.sys, "argv", [
+                        "file_commit_helper", str(self.source), str(self.target), "new",
+                    ]),
+                ):
+                    self.assertEqual(helper.main(), expected)
+                self.assertFalse(self.target.exists())
+                self.assertEqual(self.source.read_bytes(), b"replacement\n")
+
+    def test_parent_permission_failure_is_not_a_new_file_version_conflict(self) -> None:
+        self.target.unlink()
+        libc = SimpleNamespace(renameatx_np=Mock())
+        diagnostics = io.StringIO()
+        with (
+            patch.object(helper.ctypes, "CDLL", return_value=libc),
+            patch.object(helper, "_open_parent", side_effect=PermissionError(errno.EACCES, str(self.target))),
+            patch.object(helper.sys, "stderr", diagnostics),
+            patch.object(helper.sys, "argv", [
+                "file_commit_helper", str(self.source), str(self.target), "new",
+            ]),
+        ):
+            self.assertEqual(helper.main(), helper.EXIT_FAILED)
+        libc.renameatx_np.assert_not_called()
+        self.assertFalse(self.target.exists())
+        self.assertIn(f"errno={errno.EACCES}", diagnostics.getvalue())
+        self.assertNotIn(str(self.target), diagnostics.getvalue())
+        self.assertLess(len(diagnostics.getvalue()), 256)
+
+    def test_inherited_root_can_write_without_opening_protected_ancestors(self) -> None:
+        root = self.target.parent
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        self.addCleanup(os.close, descriptor)
+        real_open = os.open
+
+        def deny_ancestor_open(path, flags, *args, **kwargs):
+            if str(path) in {"/", *(str(parent) for parent in root.parents)}:
+                raise PermissionError(errno.EACCES, "ancestor is protected")
+            return real_open(path, flags, *args, **kwargs)
+
+        with (
+            patch.dict(os.environ, {"EIDOS_FILE_ROOT": str(root), "EIDOS_FILE_ROOT_FD": str(descriptor)}),
+            patch.object(helper.os, "open", side_effect=deny_ancestor_open),
+        ):
+            self.assertEqual(self.commit_stdin(b"approved contents\n"), 0)
+        self.assertEqual(self.target.read_bytes(), b"approved contents\n")
+        self.assertEqual(os.fstat(descriptor).st_ino, root.stat().st_ino)
+
+    def test_inherited_root_replacement_is_rejected_before_truncation(self) -> None:
+        root = self.target.parent
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        self.addCleanup(os.close, descriptor)
+        replacement = root / "replacement"
+        replacement.mkdir()
+        (replacement / self.target.name).write_bytes(b"original contents\n")
+        with patch.dict(os.environ, {
+            "EIDOS_FILE_ROOT": str(replacement), "EIDOS_FILE_ROOT_FD": str(descriptor),
+        }):
+            self.target = replacement / self.target.name
+            self.assertEqual(self.commit_stdin(b"must not write\n"), helper.EXIT_FAILED)
+        self.assertEqual(self.target.read_bytes(), b"original contents\n")
+        self.assertEqual((root / self.target.name).read_bytes(), b"original contents\n")

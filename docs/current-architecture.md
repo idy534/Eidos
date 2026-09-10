@@ -418,7 +418,7 @@ Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md`
 
 `agents/eidos.yaml` 是可选的 Skill metadata 文件。Runtime 使用统一 YAML loader 读取其中的 interface、asset、tool dependency、policy 和 `runtimeDependencies` metadata。`runtimeDependencies` 使用严格的 `RuntimeRequirements` discriminated union。它只接受有界的 Python package、Node package 和 executable 声明。文件有大小、owner、regular-file、路径和字段边界。无效的可选 runtime declaration 会保留固定 error code，不会清除旧的 interface、MCP dependency 或 policy metadata。无效的整个可选 YAML 会保留现有 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活该 Skill，但不会阻止显式选择或 `skill_read` 激活。`dependencies.tools` 不会安装 Python、pip、npm、系统命令或其他运行时依赖，也不会改变 Eidos 的 Permission、Approval 或 Sandbox。
 
-`run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 只读，并额外允许脚本所需的 executable mapping。Seatbelt 明确拒绝 active Skill root 的写入。带 runtime declaration 的 Skill consumer 必须从 `workspace_dependencies` 的 `activeSkillDependencyBindings` 中选择匹配 `skillQualifiedId` 且状态为 `ready` 的 binding，再把其 `dependencyBindingId` 传给 `run_shell`。模型不能使用顶层默认 binding 替代不匹配的 active Skill binding。无效或非 ready 声明不能按无依赖处理。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
+`run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 默认只读，并额外允许脚本所需的 executable mapping。用户对普通 Skill 的具体写入授权可以成为这个只读规则的例外，系统 Skill 永久禁写。带 runtime declaration 的 Skill consumer 必须从 `workspace_dependencies` 的 `activeSkillDependencyBindings` 中选择匹配 `skillQualifiedId` 且状态为 `ready` 的 binding，再把其 `dependencyBindingId` 传给 `run_shell`。模型不能使用顶层默认 binding 替代不匹配的 active Skill binding。无效或非 ready 声明不能按无依赖处理。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
 
 Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 从 Workspace root 或 active Skill root 读取受信任的 PNG/JPEG，并把经 hash 和 size 复核的 binary content 投影为 Pydantic AI 的 multimodal `BinaryContent`。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
 
@@ -514,3 +514,11 @@ Context 从未决 Durable Intent 投影最多 16 条 `reconciliationOrigins`，�
 当前 Run 的 `ToolConcurrencyGate` 在命令仍然运行或退出结果尚未提交时保留 Shell 占用。这个 Run 的其他副作用调用返回 `shell_session_busy`，模型可以继续只读工作、使用 `write_stdin` 管理原 Shell 或等待原命令。其他 Session 的 Run 使用各自的 gate，可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。空输入观察不会新建 Intent，也不会重复获取该 Run 的 gate；非空输入先核对 Run 内会话，再创建输入 Intent。输入沿用原进程权限，不能借此扩权。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。权限、Sandbox、Durable Intent、取消和进程组清理仍按各自 Run 独立记录和收敛。
 
 模型直接提交最终答复时，Runtime 先停止活跃命令并完成退出记录。Runtime 保留答复，但把提前停止命令的 Run 记为 `interrupted`。其他最终化和取消路径也会清理会话。已知退出与副作用未知分别记录；Runtime 不会把正常等待写成 reconciliation。运行中的 Intent 在重启后继续走原有恢复流程，Runtime 不会根据 PID 重连或自动重放命令。LoopGuard 仅对当前 Run 中仍运行且参数有效的空输入观察跳过重复判断。
+
+### Projectless 文件提交与 Skill 写入权限
+
+`secure_workspace_move` 向受控 helper 传递已核验的 Workspace 目录 fd。helper 核对目录身份，并从该 fd 向下使用 `O_NOFOLLOW` 访问目标。它不再从 `/` 逐级打开 `.eidos` 等受保护祖先。当前 Projectless Workspace 的普通文件沿原有 Workspace Permission 执行，不逐次审批；其他会话和数据文件仍受数据目录 deny 保护。helper 的新建提交按 errno 区分目标已存在与其他失败，诊断只记录固定阶段和数字 errno。
+
+Base/Effective Permission 的 `approvalWriteRoots` 标记用户 Skill 存储目录。字段默认空，旧权限快照仍可读取；新 Run 的产品权限工厂填入数据目录的 `skills`。Skill 激活只提供读权限，普通 Skill 的写入必须来自明确的附加授权。Runtime、PermissionPolicyEvaluator 和 Seatbelt 使用同一授权范围；精确文件授权不会开放同目录其他文件。Seatbelt 只允许获批目标祖先的 metadata 检查，不开放祖先目录内容。`skills/.system` 作为独立 protected write path 永久禁写，即使它被选作 Workspace 也不能修改。
+
+Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受控文件 helper 可在明确审批后不使用 Seatbelt，但 Runtime 会继续核验每个目标的保护范围、身份和版本。权限等待后的重物化、Durable Intent、最终内容验证和 Reconciliation 规则保持不变。Skill 文件修改不重写当前 Turn 的 Catalog Snapshot；后续 Turn 重新发现修改后的内容。

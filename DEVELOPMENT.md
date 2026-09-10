@@ -350,3 +350,5 @@ PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 
 ## 文件编辑提交验证
 
 已有文件使用原地写入，新文件使用排他创建。相关定向用例位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_runtime_loop.py` 和 `runtime/tests/test_seatbelt.py`。macOS 验收必须覆盖 inode 不变、ACL 拒绝、写前版本冲突、部分写入、取消、外部路径拒批/批准和无沙盒审批。Runtime Bundle 必须重新构建并执行 bundled smoke；源码检查不能代表已安装 App 的行为。
+
+Projectless 文件提交和 Skill 写入权限的定向回归位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_permission_policy.py` 和 `runtime/tests/test_seatbelt.py`。验证者需要执行真实 macOS Seatbelt 用例，覆盖受保护数据目录内的 Projectless 新建、更新、删除，普通 Skill 的精确写入授权，以及系统 Skill 和相邻数据文件的拒写；mock 通过不能替代这些原生结果。

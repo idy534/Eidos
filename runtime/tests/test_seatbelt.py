@@ -32,6 +32,7 @@ from eidos_runtime.sandbox.permissions import (  # noqa: E402
     FileSystemAccessMode,
     FileSystemPermissionEntry,
     NetworkPermissions,
+    base_permission_profile_for_workspace,
     materialize_effective_profile,
 )
 from eidos_runtime.workspace.search_driver import (  # noqa: E402
@@ -41,6 +42,120 @@ from eidos_runtime.workspace.search_driver import (  # noqa: E402
 
 
 class SeatbeltProfileTests(unittest.TestCase):
+    def test_projectless_file_commits_work_inside_protected_data(self) -> None:
+        if not is_seatbelt_usable():
+            self.skipTest("macOS Seatbelt is unavailable")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data = Path(temporary_directory).resolve() / ".eidos"
+            workspace = data / "..eidos-projectless" / "session"
+            workspace.mkdir(parents=True)
+            state = data / "state.sqlite"
+            state.write_bytes(b"protected state\n")
+            effective = materialize_effective_profile(
+                base_permission_profile_for_workspace(workspace, data)
+            )
+            target = workspace / "page.html"
+            candidate = workspace / ".candidate.tmp"
+            candidate.write_bytes(b"first\n")
+
+            self.assertEqual(secure_workspace_move(
+                workspace, candidate, target, None, effective_permissions=effective,
+            ), "committed")
+            self.assertEqual(target.read_bytes(), b"first\n")
+            inode = target.stat().st_ino
+            self.assertEqual(secure_workspace_move(
+                workspace, target, target, hashlib.sha256(b"first\n").hexdigest(),
+                content=b"second\n", effective_permissions=effective,
+            ), "committed")
+            self.assertEqual(target.read_bytes(), b"second\n")
+            self.assertEqual(target.stat().st_ino, inode)
+            self.assertEqual(secure_workspace_move(
+                workspace, target, target, hashlib.sha256(b"second\n").hexdigest(),
+                delete=True, effective_permissions=effective,
+            ), "committed")
+            self.assertFalse(target.exists())
+            self.assertFalse(effective.allows_file_write(state))
+            self.assertEqual(state.read_bytes(), b"protected state\n")
+            (workspace / "home").mkdir()
+            (workspace / "tmp").mkdir()
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace, sandbox_home=workspace / "home",
+                sandbox_tmp=workspace / "tmp", effective_permissions=effective,
+            )
+            self.assertNotEqual(run_sandboxed(profile, ["/bin/cat", str(state)]).returncode, 0)
+            self.assertNotEqual(run_sandboxed(profile, ["/bin/ls", str(data)]).returncode, 0)
+
+    def test_approved_active_skill_write_keeps_system_skills_and_state_protected(self) -> None:
+        if not is_seatbelt_usable():
+            self.skipTest("macOS Seatbelt is unavailable")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory).resolve()
+            data = root / ".eidos"
+            workspace = data / "..eidos-projectless" / "session"
+            skill = data / "skills" / "review"
+            system = data / "skills" / ".system"
+            for directory in (workspace, skill, system, root / "home", root / "tmp"):
+                directory.mkdir(parents=True)
+            target = skill / "SKILL.md"
+            target.write_bytes(b"old skill\n")
+            system_target = system / "SKILL.md"
+            system_target.write_bytes(b"system skill\n")
+            state = data / "state.sqlite"
+            state.write_bytes(b"state\n")
+            base = base_permission_profile_for_workspace(workspace, data).model_copy(
+                update={"active_skill_roots": (str(skill), str(system))},
+            )
+            effective = materialize_effective_profile(base, AdditionalPermissionProfile(
+                fileSystem=(FileSystemPermissionEntry(
+                    path=str(target), access=FileSystemAccessMode.WRITE, recursive=False,
+                ),),
+            ))
+            self.assertEqual(secure_workspace_move(
+                skill, target, target, hashlib.sha256(b"old skill\n").hexdigest(),
+                content=b"approved skill\n", effective_permissions=effective,
+            ), "committed")
+            self.assertEqual(target.read_bytes(), b"approved skill\n")
+
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace, sandbox_home=root / "home", sandbox_tmp=root / "tmp",
+                effective_permissions=effective,
+            )
+            for forbidden in (system_target, state, skill / "sibling.txt"):
+                with self.subTest(path=forbidden):
+                    result = run_sandboxed(profile, ["/usr/bin/touch", str(forbidden)])
+                    self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(system_target.read_bytes(), b"system skill\n")
+            self.assertEqual(state.read_bytes(), b"state\n")
+            self.assertFalse((skill / "sibling.txt").exists())
+            system_profile = SeatbeltProfile.create(
+                workspace_root=system, sandbox_home=root / "home", sandbox_tmp=root / "tmp",
+                effective_permissions=materialize_effective_profile(
+                    base_permission_profile_for_workspace(system, data),
+                ),
+            )
+            self.assertNotEqual(run_sandboxed(
+                system_profile, ["/usr/bin/touch", str(system_target)],
+            ).returncode, 0)
+            inactive_effective = materialize_effective_profile(
+                base.model_copy(update={"active_skill_roots": ()}),
+                AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+                    path=str(target), access=FileSystemAccessMode.WRITE, recursive=False,
+                ),)),
+            )
+            self.assertEqual(secure_workspace_move(
+                skill, target, target, hashlib.sha256(b"approved skill\n").hexdigest(),
+                content=b"approved inactive skill\n", effective_permissions=inactive_effective,
+            ), "committed")
+            self.assertEqual(target.read_bytes(), b"approved inactive skill\n")
+            inactive_profile = SeatbeltProfile.create(
+                workspace_root=workspace, sandbox_home=root / "home", sandbox_tmp=root / "tmp",
+                effective_permissions=inactive_effective,
+            )
+            for ancestor in (skill, data / "skills", data):
+                self.assertNotEqual(run_sandboxed(
+                    inactive_profile, ["/bin/ls", str(ancestor)],
+                ).returncode, 0)
+
     def test_profile_path_includes_verified_bundled_ripgrep(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

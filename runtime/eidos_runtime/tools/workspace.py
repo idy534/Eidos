@@ -443,7 +443,9 @@ class ToolExecutor:
             supports_tool_grammar=supports_tool_grammar,
         )
 
-    def external_patch_paths(self, arguments: object) -> tuple[Path, ...]:
+    def external_patch_paths(
+        self, arguments: object, *, approval_roots: tuple[str, ...] = (),
+    ) -> tuple[Path, ...]:
         raw = arguments if isinstance(arguments, str) else encode_patch(
             ApplyPatchInput.model_validate(arguments, strict=False)
         )
@@ -452,12 +454,12 @@ class ToolExecutor:
             for value in (hunk.path, getattr(hunk, "move_to", None)):
                 if value is None:
                     continue
-                path = Path(value)
-                if not path.is_absolute():
-                    continue
+                path = self.workspace.path / value
                 if ".." in path.parts or path.resolve(strict=False) != path:
                     raise WorkspacePathError("workspace_boundary_violation")
-                if not path.is_relative_to(self.workspace.path):
+                if not path.is_relative_to(self.workspace.path) or any(
+                    path.is_relative_to(root) for root in approval_roots
+                ):
                     # Validate the entire external path, including protected names.
                     _validate_relative_path(str(path).lstrip("/"))
                     paths.append(path)
@@ -491,7 +493,8 @@ class ToolExecutor:
             self.unsandboxed_write = False
 
     def _resolve_write_path(self, value: str) -> str:
-        resolved = value if value in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
+        absolute = str(self.workspace.path / value)
+        resolved = absolute if absolute in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
         target = self.workspace.path / resolved
         if self.write_permissions is not None and not self.write_permissions.allows_file_write(target):
             raise WorkspacePathError("permission_not_requestable")
@@ -995,6 +998,7 @@ class ToolExecutor:
                     self.workspace.path / change.path, change.base_sha256,
                     effective_permissions=self.write_permissions,
                     unsandboxed=self.unsandboxed_write, delete=True,
+                    root_fd=self.root_fd,
                 )
                 if status == "committed":
                     return _success(tool_name, "File deleted", {"path": change.path})
@@ -1044,6 +1048,7 @@ class ToolExecutor:
                 unsandboxed=self.unsandboxed_write,
                 candidate_sha256=hashlib.sha256(change.content).hexdigest(),
                 content=change.content if change.base_sha256 is not None else None,
+                root_fd=self.root_fd,
             )
             if move_status == "uncertain":
                 preserve_temporary = True

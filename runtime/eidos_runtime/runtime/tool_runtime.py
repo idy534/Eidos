@@ -296,16 +296,19 @@ class FileChangeToolHandler:
     ) -> HandlerOutcome:
         executor = runtime.implementation.executor  # type: ignore[attr-defined]
         try:
-            paths = executor.external_patch_paths(_tool_payload_value(call)) if call.name == "apply_patch" else ()
             base = self.dependencies.base_permissions
             if base is None:
-                if paths:
-                    return HandlerOutcome(tool_error(call.name, "permission_not_requestable", "File permissions are unavailable"), "failed", "failed")
                 base = BasePermissionProfile.for_workspace(workspace_root=executor.workspace.path)
             if self.dependencies.skill_access is not None:
                 base = base.model_copy(update={"active_skill_roots": tuple(
                     str(path) for path in self.dependencies.skill_access.active_roots()
                 )})
+            paths = executor.external_patch_paths(
+                _tool_payload_value(call),
+                approval_roots=(*base.approval_write_roots, *base.active_skill_roots),
+            ) if call.name == "apply_patch" else ()
+            if paths and self.dependencies.base_permissions is None:
+                return HandlerOutcome(tool_error(call.name, "permission_not_requestable", "File permissions are unavailable"), "failed", "failed")
             entries = []
             for path in paths:
                 permission_path = path
@@ -349,7 +352,7 @@ class FileChangeToolHandler:
         external = bool(executor._external_writers)
         unsandboxed = not is_seatbelt_ready()
         permissions = executor.write_permissions
-        if unsandboxed and (permissions is None or not unsandboxed_execution_allowed(permissions)):
+        if unsandboxed and (permissions is None or not unsandboxed_execution_allowed(permissions, controlled_file_write=True)):
             return VerifiedToolExecutionResult(result=tool_error(
                 runtime.spec.name, "sandbox_unavailable", "File sandbox is unavailable and escalation is forbidden",
             ))
@@ -382,7 +385,7 @@ class FileChangeToolHandler:
         approved_prepared = prepared.model_copy(update={
             "approval_description": {
                 **prepared.approval_description,
-                "summary": ("Write files without the sandbox" if unsandboxed else "Write files outside the workspace"),
+                "summary": ("Write files without the sandbox" if unsandboxed else "Write files in the requested permission scope"),
                 **request,
             },
             "approval_request": request,

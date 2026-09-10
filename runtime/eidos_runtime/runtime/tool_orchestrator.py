@@ -132,7 +132,7 @@ class ToolOrchestrator:
             return OrchestratorResult(
                 _error_result(
                     "unsandboxed_execution_forbidden",
-                    "Unsandboxed execution would discard a hard confidentiality deny",
+                    "Unsandboxed execution would discard protected filesystem restrictions",
                 ),
                 0,
                 False,

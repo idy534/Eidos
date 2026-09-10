@@ -209,8 +209,8 @@ Validate → Prepare → Resolve Permission → Commit Durable Intent
 → Execute → Verify → Commit Result → Reconcile when uncertain
 ```
 不得绕过任何已存在阶段。
-文件工具默认只能写入 Workspace。Workspace 外的普通路径必须经明确审批或已有有效 Run Grant 授权。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本。已有普通文件使用受控的原地写入：先打开并核验 fd，再截断、完整写入、fsync 和验证最终内容；新文件保留排他创建提交。Runtime 在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。无沙盒写入必须单独获得明确审批。永久拒绝路径不能通过审批放开。截断后的失败可能已改变文件，必须报告真实副作用；不确定结果进入 Reconciliation，不自动重试或回滚。
-Shell 必须每次受控执行、默认禁网、不继承敏感环境变量、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网、附加路径和 unsandboxed 执行必须走明确扩权和 Approval。
+文件工具默认只能写入 Workspace。Workspace 外的普通路径必须经明确审批或已有有效 Run Grant 授权。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本。已有普通文件使用受控的原地写入：先打开并核验 fd，再截断、完整写入、fsync 和验证最终内容；新文件保留排他创建提交。Runtime 在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。无沙盒写入必须单独获得明确审批。普通 Skill 写入需要明确审批或有效 Run Grant；数据目录下 `skills/.system` 永久禁止工具修改。Projectless 当前 Workspace 的普通文件无需额外审批；不得开放整个数据目录或其他会话目录。永久拒绝路径不能通过审批放开。截断后的失败可能已改变文件，必须报告真实副作用；不确定结果进入 Reconciliation，不自动重试或回滚。
+Shell 必须每次受控执行、默认禁网、不继承敏感环境变量、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网和附加路径必须走明确扩权和 Approval。存在永久写入保护或 hard confidentiality deny 时，不得启动会丢失这些保护的裸 Shell 无沙盒执行；受控文件 helper 的无沙盒写入仍需独立审批和逐目标核验。
 普通只读工具仅在完整批次满足 `parallel_safe` 时并行。
 写入、Shell、MCP 和外部副作用工具默认独占。
 副作用结果不确定时必须进入 Reconciliation，不得猜测成功或失败。

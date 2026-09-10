@@ -4,7 +4,7 @@ from enum import StrEnum
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 import stat
 from typing import Literal
 
@@ -116,6 +116,9 @@ class BasePermissionProfile(ClosedModel):
     active_skill_roots: tuple[StrictStr, ...] = Field(
         default=(), alias="activeSkillRoots"
     )
+    approval_write_roots: tuple[StrictStr, ...] = Field(
+        default=(), alias="approvalWriteRoots"
+    )
 
     @classmethod
     def for_workspace(
@@ -127,6 +130,7 @@ class BasePermissionProfile(ClosedModel):
         hard_confidentiality_paths: tuple[Path, ...] = (),
         runtime_roots: tuple[Path, ...] = (),
         active_skill_roots: tuple[Path, ...] = (),
+        approval_write_roots: tuple[Path, ...] = (),
     ) -> "BasePermissionProfile":
         workspace = workspace_root.resolve(strict=True)
         protected = tuple(path.resolve(strict=False) for path in protected_paths)
@@ -168,6 +172,7 @@ class BasePermissionProfile(ClosedModel):
             activeSkillRoots=tuple(
                 str(path.resolve(strict=True)) for path in active_skill_roots
             ),
+            approvalWriteRoots=tuple(str(path.resolve(strict=False)) for path in approval_write_roots),
         )
 
 
@@ -178,7 +183,10 @@ def base_permission_profile_for_workspace(
     return BasePermissionProfile.for_workspace(
         workspace_root=workspace_root,
         protected_paths=(data_directory,) if data_directory is not None else (),
-        protected_write_paths=(Path(__file__).resolve().parents[1],),
+        protected_write_paths=(Path(__file__).resolve().parents[1], *(
+            (data_directory / "skills" / ".system",) if data_directory is not None else ()
+        )),
+        approval_write_roots=(data_directory / "skills",) if data_directory is not None else (),
         runtime_roots=(_RUNTIME_RESOURCE_ROOT,),
     )
 
@@ -202,6 +210,9 @@ class EffectivePermissionProfile(ClosedModel):
     )
     active_skill_roots: tuple[StrictStr, ...] = Field(
         default=(), alias="activeSkillRoots"
+    )
+    approval_write_roots: tuple[StrictStr, ...] = Field(
+        default=(), alias="approvalWriteRoots"
     )
     profile_hash: StrictStr = Field(alias="profileHash")
 
@@ -243,19 +254,29 @@ class EffectivePermissionProfile(ClosedModel):
         """Check a canonical file target, including unsandboxed helper targets."""
         if ".git" in path.parts or any(
             path.is_relative_to(Path(root))
-            for root in (*self.protected_write_paths, *self.active_skill_roots)
+            for root in self.protected_write_paths
         ):
+            return False
+        approved = any(
+            entry.source == "additional" and entry.access is FileSystemAccessMode.WRITE
+            and (path == Path(entry.resolved_path) or (
+                entry.recursive and path.is_relative_to(Path(entry.resolved_path))
+            )) for entry in self.entries
+        )
+        if any(path.is_relative_to(Path(root)) for root in (
+            *self.approval_write_roots, *self.active_skill_roots,
+        )) and not approved:
             return False
         for entry in (*self.permanent_denies, *self.hard_confidentiality_denies):
             blocked = Path(entry.resolved_path)
             if path == blocked or (entry.recursive and path.is_relative_to(blocked)):
                 # The compiler also permits managed workspaces inside Eidos data.
-                if any(
+                if entry.source == "permanent_deny" and (any(
                     Path(root) != blocked
                     and Path(root).is_relative_to(blocked)
                     and path.is_relative_to(Path(root))
                     for root in self.workspace_roots
-                ):
+                ) or (approved and is_approval_write_exception(path, blocked, self.approval_write_roots))):
                     continue
                 return False
         return any(
@@ -307,7 +328,15 @@ def materialize_effective_profile(
         for requested in additional.file_system:
             resolved = Path(requested.path).resolve(strict=True)
             if requested.access is not FileSystemAccessMode.DENY and any(
-                _paths_overlap(resolved, path) for path in protected
+                _paths_overlap(resolved, Path(entry.path).resolve(strict=False))
+                for entry in base.hard_confidentiality_denies
+            ):
+                raise ValueError("additional permission targets a hard confidentiality deny")
+            if requested.access is not FileSystemAccessMode.DENY and any(
+                _paths_overlap(resolved, path) and not (
+                    requested.access is FileSystemAccessMode.WRITE
+                    and is_approval_write_exception(resolved, path, base.approval_write_roots)
+                ) for path in protected
             ):
                 raise ValueError("additional permission targets protected Eidos state")
             if requested.access is FileSystemAccessMode.WRITE and any(
@@ -351,6 +380,7 @@ def materialize_effective_profile(
         "protectedMetadataPaths": base.protected_metadata_paths,
         "protectedWritePaths": base.protected_write_paths,
         "activeSkillRoots": active_skill_roots,
+        "approvalWriteRoots": base.approval_write_roots,
     }
     profile_hash = hashlib.sha256(
         json.dumps(
@@ -370,14 +400,32 @@ def materialize_effective_profile(
         protectedMetadataPaths=base.protected_metadata_paths,
         protectedWritePaths=base.protected_write_paths,
         activeSkillRoots=active_skill_roots,
+        approvalWriteRoots=base.approval_write_roots,
         profileHash=profile_hash,
     )
 
 
 def unsandboxed_execution_allowed(
     effective_profile: EffectivePermissionProfile,
+    *, controlled_file_write: bool = False,
 ) -> bool:
-    return not effective_profile.hard_confidentiality_denies
+    # Arbitrary processes cannot enforce permanent write protection without an
+    # OS sandbox. The bounded file helper separately validates every target.
+    return not effective_profile.hard_confidentiality_denies and (
+        controlled_file_write or not effective_profile.protected_write_paths
+    )
+
+
+def is_approval_write_exception(
+    path: PurePath, protected: PurePath, roots: tuple[str, ...],
+) -> bool:
+    """Only explicit writes inside configured user Skill storage may bypass its data deny."""
+    return any(
+        PurePath(root) != protected
+        and PurePath(root).is_relative_to(protected)
+        and path.is_relative_to(PurePath(root))
+        for root in roots
+    )
 
 
 def _materialize_entries(
@@ -413,9 +461,9 @@ def _deduplicate(
 ) -> tuple[MaterializedFileSystemPermissionEntry, ...]:
     unique: dict[tuple[str, FileSystemAccessMode, bool], MaterializedFileSystemPermissionEntry] = {}
     for entry in entries:
-        unique.setdefault(
-            (entry.resolved_path, entry.access, entry.recursive), entry
-        )
+        key = (entry.resolved_path, entry.access, entry.recursive)
+        if key not in unique or entry.source == "additional":
+            unique[key] = entry
     return tuple(
         sorted(
             unique.values(),
