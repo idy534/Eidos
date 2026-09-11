@@ -296,7 +296,9 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(await screen.findByRole("complementary", { name: "工作区工具" })).toBeInTheDocument();
     const dockHeader = container.querySelector(".workspace-dock__header");
     expect(container.querySelector(".workspace-body__actions")).not.toBeInTheDocument();
-    expect(dockHeader).toContainElement(screen.getByRole("button", { name: "环境信息" }));
+    const environmentButton = screen.getByRole("button", { name: "环境信息" });
+    expect(container.querySelector(".session-header")).toContainElement(environmentButton);
+    expect(dockHeader).not.toContainElement(environmentButton);
     expect(dockHeader).toContainElement(screen.getByRole("button", { name: "关闭工作区工具" }));
     fireEvent.click(screen.getByRole("button", { name: "添加窗口" }));
     expect(screen.getByRole("menu", { name: "添加窗口" })).toBeVisible();
@@ -317,6 +319,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开工作区" }));
     expect(container.querySelector(".workspace-body")).toHaveClass("workspace-body--expanded");
     expect(container.querySelector(".workspace-main-column")).toHaveClass("workspace-main-column--hidden");
+    expect(dockHeader).toContainElement(screen.getByRole("button", { name: "环境信息" }));
 
     fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
     fireEvent.pointerDown(document.body);

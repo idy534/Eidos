@@ -69,7 +69,7 @@ function loadSidebarOpen(): boolean {
   }
 }
 
-const DOCK_MIN_WIDTH = 22 * 16;
+const DOCK_MIN_WIDTH = 20 * 16;
 const MAIN_MIN_WIDTH = 16 * 16;
 
 const TerminalPanel = lazy(() => import("../components/TerminalPanel.js").then((module) => ({
@@ -836,9 +836,8 @@ export function AppShell({ runtime }: AppShellProps) {
     || handoffBusy
     || !isStorageReady;
 
-  const workspaceActions = currentSnapshot && !isDraft && availableTools.length > 0 ? (
-    <>
-      <div className="workspace-header-tools">
+  const workspaceEnvironment = currentSnapshot && !isDraft && availableTools.length > 0 ? (
+    <div className="workspace-header-tools">
         <details
           ref={environmentPopoverRef}
           className="environment-popover"
@@ -914,14 +913,16 @@ export function AppShell({ runtime }: AppShellProps) {
             )}
           </section>
         </details>
-      </div>
-      <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
-    </>
-  ) : currentSnapshot && !isDraft ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} /> : null;
+    </div>
+  ) : null;
 
-  const workspaceDockActions = openTabs.find((tab) => tab.id === activeTabId)?.kind === "browser"
+  const workspaceToggle = currentSnapshot && !isDraft
     ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
-    : workspaceActions;
+    : null;
+
+  const workspaceDockActions = dockExpanded
+    ? <>{workspaceEnvironment}{workspaceToggle}</>
+    : workspaceToggle;
 
   return (
     <ArtifactProvider value={currentSnapshot ? {
@@ -1082,6 +1083,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   )}
                 </div>
               )}
+              {!dockExpanded && workspaceEnvironment && (
+                <div className="session-header-actions">{workspaceEnvironment}</div>
+              )}
             </header>
 
             <div className="workspace-content">
@@ -1170,8 +1174,8 @@ export function AppShell({ runtime }: AppShellProps) {
             </div>
             </div>
 
-            {!dockOpen && workspaceActions && (
-              <div className="workspace-body__actions">{workspaceActions}</div>
+            {!dockOpen && workspaceToggle && (
+              <div className="workspace-body__actions">{workspaceToggle}</div>
             )}
 
             {dockOpen && !dockExpanded && (

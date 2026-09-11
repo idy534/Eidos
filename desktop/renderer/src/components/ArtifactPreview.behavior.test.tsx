@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EidosRuntimeAPI, Item, WorkspaceFilePreview } from "../contracts.js";
@@ -238,21 +238,38 @@ describe("artifact previews and feedback", () => {
     expect(resolveBrowserTarget("https://example.com/docs")).toBe("https://example.com/docs");
     expect(resolveBrowserTarget("example.com/docs")).toBe("https://example.com/docs");
     expect(resolveBrowserTarget("localhost:3000")).toBe("http://localhost:3000");
+    expect(resolveBrowserTarget("123")).toBe("https://www.google.com/search?q=123");
     expect(resolveBrowserTarget("设计系统")).toBe("https://www.google.com/search?q=%E8%AE%BE%E8%AE%A1%E7%B3%BB%E7%BB%9F");
   });
 
   it("opens a page in its own browser tab and removes unsupported controls", async () => {
+    const pollers: Array<() => void> = [];
+    vi.spyOn(window, "setInterval").mockImplementation((handler) => {
+      if (typeof handler === "function") pollers.push(handler as () => void);
+      return 1;
+    });
     const { unmount } = render(
       <BrowserPanel
         browserId="browser-1"
         sessionId="session-a"
         executionKey="local:/workspace"
-        active={false}
+        active
         request={{ url: "localhost:3000", id: 1 }}
       />,
     );
 
     await waitFor(() => expect(api.openBrowser).toHaveBeenCalledWith("session-a", "browser-1", "http://localhost:3000"));
+    const address = screen.getByRole("textbox", { name: "网页地址" });
+    fireEvent.change(address, { target: { value: "" } });
+    expect(address).toHaveValue("");
+    fireEvent.change(address, { target: { value: "example.com/docs" } });
+    const poll = pollers.at(-1);
+    expect(poll).toBeDefined();
+    await act(async () => {
+      (poll as () => void)();
+      await Promise.resolve();
+    });
+    expect(address).toHaveValue("example.com/docs");
     expect(screen.queryByRole("button", { name: "标注" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "开发终端" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "网页菜单" })).not.toBeInTheDocument();

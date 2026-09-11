@@ -20,10 +20,18 @@ describe("interactive color tokens", () => {
     expect(dockStyles).toMatch(/\.workspace-body--session-centered \.workspace-main-column\s*\{[^}]*grid-column: 2;[^}]*width: 100%;[^}]*margin: 0;/s);
     expect(dockStyles).toMatch(/\.workspace-main\s*\{[^}]*flex: 1 1 auto;/s);
     expect(dockStyles).toMatch(/\.workspace-body__actions\s*\{[^}]*display: flex;[^}]*align-items: center;/s);
-    expect(dockStyles).toMatch(/\.workspace-body--session-centered \.workspace-main-column > \.session-header\s*\{[^}]*padding-right: calc\(var\(--workspace-action-rail-width\) \+ 1\.5rem\);/s);
+    expect(dockStyles).toMatch(/\.workspace-body--session-centered \.workspace-main-column > \.session-header\s*\{[^}]*padding-right: 1\.5rem;/s);
+  });
+
+  it("keeps the feed and composer on one fixed centered content frame", () => {
+      expect(dockStyles).toMatch(/\.workspace-main\s*\{[^}]*--session-content-width: 49rem;/s);
+    expect(styles).toMatch(/\.feed\s*\{[^}]*padding: 1\.25rem max\(1\.75rem, calc\(\(100% - var\(--session-content-width\)\) \/ 2\)\);/s);
+    expect(styles).toMatch(/\.feed-item--assistant\s*\{[^}]*width: min\(100%, var\(--session-content-width\)\);[^}]*max-width: var\(--session-content-width\);[^}]*margin-inline: auto;[^}]*padding-left: 0\.75rem;/s);
+    expect(styles).toMatch(/\.composer\s*\{[^}]*width: min\(calc\(100% - 3\.5rem\), var\(--session-content-width\)\);/s);
   });
 
   it("keeps a narrow dock beside the session and aligns its header controls", () => {
+    expect(dockStyles).toMatch(/\.workspace-body--with-dock\s*\{[^}]*--workspace-dock-width: 20rem;/s);
     expect(dockStyles).toMatch(/\.workspace-body--with-dock\s*\{[^}]*grid-template-columns: minmax\(16rem, 1fr\) 0\.5rem var\(--workspace-dock-width\);/s);
     expect(dockStyles).not.toMatch(/\.workspace-body--with-dock:not\(\.workspace-body--expanded\)\s*\.workspace-dock\s*\{[^}]*position: absolute;/s);
     expect(dockStyles).toMatch(/\.workspace-body__actions\s*\{[^}]*top: 0\.25rem;/s);

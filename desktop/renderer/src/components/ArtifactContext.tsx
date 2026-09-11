@@ -41,7 +41,7 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
   const actions = useArtifacts();
   const [revision, setRevision] = useState(0);
   useEffect(() => {
-    if (!actions || !path || version) return;
+    if (!actions || !path || version || typeof window.eidosRuntime?.onNotification !== "function") return;
     return window.eidosRuntime.onNotification((event) => {
       if (event.method === "workspace/changed" && event.params.sessionId === actions.sessionId && event.params.paths.some((changed) => changed === path || path.startsWith(changed + "/"))) setRevision((value) => value + 1);
     });
@@ -51,13 +51,18 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
     let current = true;
     let created: string | undefined;
     setState({});
-    if (!actions || !path) return;
+    if (!actions || !path || typeof window.eidosRuntime?.prepareWorkspacePreview !== "function") return;
     void window.eidosRuntime.prepareWorkspacePreview(actions.sessionId, path, version).then((url) => {
       created = url;
       if (current) setState({ url });
-      else void window.eidosRuntime.releaseWorkspacePreview(url).catch(() => {});
+      else if (typeof window.eidosRuntime?.releaseWorkspacePreview === "function") void window.eidosRuntime.releaseWorkspacePreview(url).catch(() => {});
     }).catch(() => { if (current) setState({ error: "预览不可用，请刷新文件。" }); });
-    return () => { current = false; if (created) void window.eidosRuntime.releaseWorkspacePreview(created).catch(() => {}); };
+    return () => {
+      current = false;
+      if (created && typeof window.eidosRuntime?.releaseWorkspacePreview === "function") {
+        void window.eidosRuntime.releaseWorkspacePreview(created).catch(() => {});
+      }
+    };
   }, [actions?.sessionId, actions?.executionRoot, path, version, revision]);
   return state;
 }

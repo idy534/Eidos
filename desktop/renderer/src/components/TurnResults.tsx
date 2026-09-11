@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { parseDiff } from "react-diff-view";
+import { createPortal } from "react-dom";
 import type { Item, Run } from "../contracts.js";
-import { useArtifacts } from "./ArtifactContext.js";
+import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
@@ -10,6 +11,7 @@ type ChangeState = "committed" | "partial" | "planned";
 type ArtifactKind = "docx" | "pdf" | "image" | "html";
 
 export interface TurnTextChange {
+  cumulative?: boolean;
   path: string;
   additions: number | undefined;
   deletions: number | undefined;
@@ -226,8 +228,9 @@ export function projectTurnResults(items: Item[], runId: string): TurnResultProj
       } else {
         changes.set(change.path, {
           ...current,
-          additions: undefined,
-          deletions: undefined,
+          additions: current.additions === undefined || change.additions === undefined ? undefined : current.additions + change.additions,
+          deletions: current.deletions === undefined || change.deletions === undefined ? undefined : current.deletions + change.deletions,
+          cumulative: true,
           state: current.state === "partial" || state === "partial" ? "partial" : state,
           deleted: change.deleted,
           itemId: item.id,
@@ -361,13 +364,17 @@ function useHtmlArtifactTitle(artifact: TurnArtifact): string | undefined {
   return title;
 }
 
-function artifactOpenItems(artifact: TurnArtifact, actions: ReturnType<typeof useArtifacts>): DropdownMenuItem[] {
+function artifactOpenItems(
+  artifact: TurnArtifact,
+  actions: ReturnType<typeof useArtifacts>,
+  openBuiltInPreview: () => void,
+): DropdownMenuItem[] {
   const items: DropdownMenuItem[] = [];
   if (artifact.kind !== "docx" && actions?.openFile) {
     items.push({
       key: "preview",
       label: "内置预览",
-      onClick: () => actions.openFile(artifact.path),
+      onClick: openBuiltInPreview,
     });
   }
   if (actions?.openExternal) {
@@ -384,36 +391,90 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
   const actions = useArtifacts();
   const title = useHtmlArtifactTitle(artifact);
   const displayName = artifact.kind === "html" ? (title || "正在读取页面标题…") : fileName(artifact.path);
-  const openItems = artifactOpenItems(artifact, actions);
+  const [imageOpen, setImageOpen] = useState(false);
+  const [htmlOpenPending, setHtmlOpenPending] = useState(false);
+  const [htmlOpenHandled, setHtmlOpenHandled] = useState(false);
+  const previewPath = (artifact.kind === "image" && imageOpen) || (artifact.kind === "html" && htmlOpenPending)
+    ? artifact.path
+    : undefined;
+  const { url: previewUrl, error: previewError } = usePreviewUrl(previewPath);
+
+  useEffect(() => {
+    if (!htmlOpenPending || htmlOpenHandled || artifact.kind !== "html" || !actions) return;
+    if (previewUrl) {
+      setHtmlOpenHandled(true);
+      actions.openBrowser(previewUrl);
+    } else if (previewError) {
+      setHtmlOpenPending(false);
+    }
+  }, [actions, artifact.kind, htmlOpenPending, previewError, previewUrl]);
+
+  useEffect(() => {
+    if (!imageOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setImageOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [imageOpen]);
+
+  const openBuiltInPreview = () => {
+    if (artifact.kind === "image") {
+      setImageOpen(true);
+    } else if (artifact.kind === "html") {
+      setHtmlOpenHandled(false);
+      setHtmlOpenPending(true);
+    } else {
+      actions?.openFile(artifact.path);
+    }
+  };
+  const openItems = artifactOpenItems(artifact, actions, openBuiltInPreview);
   const open = () => {
     if (artifact.kind === "docx") actions?.openExternal?.(artifact.path);
-    else actions?.openFile(artifact.path);
+    else openBuiltInPreview();
   };
   return (
-    <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>
-      <button type="button" className="artifact-result-card__main" onClick={open} title={`打开 ${displayName}`} aria-label={`打开 ${displayName}`}>
-        <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
-        <span className="artifact-result-card__copy">
-          <strong>{displayName}</strong>
-          <small>{ArtifactLabel({ artifact })}</small>
-        </span>
-      </button>
-      {!compact && openItems.length > 0 && (
-        <DropdownMenu
-          trigger="打开方式"
-          label={`${fileName(artifact.path)} 的打开方式`}
-          className="artifact-result-card__menu"
-          items={openItems}
-        />
+    <>
+      <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>
+        <button type="button" className="artifact-result-card__main" onClick={open} title={`打开 ${displayName}`} aria-label={`打开 ${displayName}`}>
+          <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
+          <span className="artifact-result-card__copy">
+            <strong>{displayName}</strong>
+            <small>{ArtifactLabel({ artifact })}</small>
+          </span>
+        </button>
+        {!compact && openItems.length > 0 && (
+          <DropdownMenu
+            trigger="打开方式"
+            label={`${fileName(artifact.path)} 的打开方式`}
+            className="artifact-result-card__menu"
+            items={openItems}
+          />
+        )}
+      </article>
+      {imageOpen && typeof document !== "undefined" && createPortal(
+        <div
+          className="artifact-image-preview"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${displayName} 图片预览`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setImageOpen(false);
+          }}
+        >
+          <button type="button" className="artifact-image-preview__close" aria-label="关闭图片预览" autoFocus onClick={() => setImageOpen(false)}>×</button>
+          {previewUrl ? <img src={previewUrl} alt={displayName} /> : <p role={previewError ? "alert" : "status"}>{previewError || "正在读取图片预览…"}</p>}
+        </div>,
+        document.body,
       )}
-    </article>
+    </>
   );
 }
 
-function ChangeStats({ additions, deletions }: { additions: number | undefined; deletions: number | undefined }) {
+function ChangeStats({ additions, deletions, cumulative = false }: { additions: number | undefined; deletions: number | undefined; cumulative?: boolean }) {
   return additions === undefined || deletions === undefined
     ? <span className="turn-result__stats turn-result__stats--unknown">行数未完整统计</span>
-    : <span className="turn-result__stats"><ins>+{additions}</ins><del>-{deletions}</del></span>;
+    : <span className="turn-result__stats" title={cumulative ? "本轮各次补丁的累计增删，包含重复编辑，不是最终净差异。" : undefined}>{cumulative && <span className="turn-result__stats-label">累计</span>}<ins>+{additions}</ins><del>-{deletions}</del></span>;
 }
 
 function ChangePath({ path }: { path: string }) {
@@ -442,7 +503,7 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
         <span className="turn-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={first.path} /></span>
         <div className="turn-result-card__title">
           <strong>{title}</strong>
-          <ChangeStats additions={projection.additions} deletions={projection.deletions} />
+          <ChangeStats additions={projection.additions} deletions={projection.deletions} cumulative={projection.textChanges.some((change) => change.cumulative)} />
         </div>
         <div className="turn-result-card__actions">
           <Button variant="ghost" size="small" className="turn-result-card__undo" disabled title={undoReason}>撤销</Button>
@@ -464,7 +525,7 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
             {files.map((change) => (
               <button type="button" className="turn-result-file" key={`${change.path}:${change.itemId}`} onClick={() => review(change)} title={`审核 ${change.path}`} aria-label={`审核 ${change.path}`}>
                 <ChangePath path={change.path} />
-                <ChangeStats additions={change.additions} deletions={change.deletions} />
+                <ChangeStats additions={change.additions} deletions={change.deletions} cumulative={change.cumulative === true} />
               </button>
             ))}
           </div>

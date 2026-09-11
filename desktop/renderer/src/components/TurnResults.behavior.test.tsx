@@ -70,6 +70,63 @@ function PaginatedOutput({ items }: { items: Item[] }) {
 }
 
 describe("TurnResults", () => {
+  it("opens image artifacts in a fullscreen preview and HTML artifacts in the browser", async () => {
+    const openFile = vi.fn();
+    const openBrowser = vi.fn();
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        onNotification: vi.fn().mockReturnValue(vi.fn()),
+        prepareWorkspacePreview: vi.fn().mockImplementation(async (_sessionId: string, path: string) => `eidos-preview://preview/${path}`),
+        releaseWorkspacePreview: vi.fn().mockResolvedValue(undefined),
+        readWorkspaceFilePreview: vi.fn().mockResolvedValue({
+          path: "page.html",
+          kind: "html",
+          sizeBytes: 20,
+          truncated: false,
+          content: "<title>产品预览</title>",
+        }),
+      },
+    });
+    const items = [
+      changeItem("item-1", "diagram.png", { changeDiff: "", resultJson: JSON.stringify({ data: { created: ["diagram.png"] } }) }),
+      changeItem("item-2", "page.html", { changeDiff: "", resultJson: JSON.stringify({ data: { created: ["page.html"] } }) }),
+    ];
+
+    try {
+      render(
+        <ArtifactProvider
+          value={{
+            sessionId: run.sessionId,
+            executionRoot: "/workspace",
+            openFile,
+            openBrowser,
+          }}
+        >
+          <TurnResults run={run} items={items} />
+        </ArtifactProvider>,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "打开 diagram.png" }));
+      expect(await screen.findByRole("dialog", { name: "diagram.png 图片预览" })).toBeInTheDocument();
+      expect(openFile).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "关闭图片预览" }));
+
+      fireEvent.click(screen.getAllByRole("button", { name: "打开方式" })[0]!);
+      fireEvent.click(screen.getByRole("menuitem", { name: "内置预览" }));
+      expect(await screen.findByRole("dialog", { name: "diagram.png 图片预览" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "关闭图片预览" }));
+
+      const htmlButton = await screen.findByRole("button", { name: "打开 产品预览" });
+      fireEvent.click(htmlButton);
+      await waitFor(() => expect(openBrowser).toHaveBeenCalledWith("eidos-preview://preview/page.html"));
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
   it("keeps repeated paths honest and exposes persisted artifacts", () => {
     const items = [
       changeItem("item-1", "src/index.ts"),
@@ -88,8 +145,9 @@ describe("TurnResults", () => {
     expect(projection.textChanges.map((change) => change.path)).toEqual(["gone.txt", "index.html", "src/index.ts"]);
     expect(projection.statsKnown).toBe(false);
     expect(projection.textChanges.find((change) => change.path === "src/index.ts")).toMatchObject({
-      additions: undefined,
-      deletions: undefined,
+      additions: 2,
+      deletions: 2,
+      cumulative: true,
     });
     expect(projection.artifacts).toMatchObject([
       { path: "docs/report.docx", kind: "docx", itemId: "item-3" },
@@ -160,7 +218,7 @@ describe("TurnResults", () => {
     expect(screen.getByText("网页 · HTML")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "审核 index.html" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开 正在读取页面标题…" }));
-    expect(openFile).toHaveBeenCalledWith("index.html");
+    expect(openFile).not.toHaveBeenCalledWith("index.html");
   });
 
   it("keeps the latest output record and removes deleted paths", () => {

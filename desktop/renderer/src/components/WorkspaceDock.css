@@ -10,7 +10,7 @@
 }
 
 .workspace-body--with-dock {
-  --workspace-dock-width: 22rem;
+  --workspace-dock-width: 20rem;
   grid-template-columns: minmax(16rem, 1fr) 0.5rem var(--workspace-dock-width);
 }
 
@@ -43,6 +43,7 @@
 }
 
 .workspace-main {
+  --session-content-width: 49rem;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
@@ -64,7 +65,7 @@
 }
 
 .workspace-body--session-centered .workspace-main-column > .session-header {
-  padding-right: calc(var(--workspace-action-rail-width) + 1.5rem);
+  padding-right: 1.5rem;
 }
 
 .workspace-dock-resize-handle {

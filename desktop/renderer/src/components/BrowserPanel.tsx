@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { parse as parseDomain } from "tldts";
 import type { BrowserPageState } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import "./ArtifactPreview.css";
@@ -31,8 +32,10 @@ export function resolveBrowserTarget(input: string): string | undefined {
     try {
       const candidate = new URL(`https://${value}`);
       const host = candidate.hostname;
-      if (!candidate.username && !candidate.password && (host.includes(".") || isIpv4(host) || isLocalHost(host))) {
-        return `${isLocalHost(host) ? "http" : "https"}://${value}`;
+      const domain = parseDomain(value, { allowPrivateDomains: true });
+      const local = isLocalHost(host);
+      if (!candidate.username && !candidate.password && (domain.isIp || Boolean(domain.domain) || local)) {
+        return `${local ? "http" : "https"}://${value}`;
       }
     } catch {
       // Non-address input is sent to Google search.
@@ -47,6 +50,7 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
+  const addressDirty = useRef(false);
   const [address, setAddress] = useState("");
   const [page, setPage] = useState<BrowserPageState>({ url: "", title: "", loading: false });
   const [error, setError] = useState("");
@@ -54,6 +58,7 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
   useEffect(() => {
     generation.current++;
     setPage({ url: "", title: "", loading: false });
+    addressDirty.current = false;
     setAddress("");
     return () => { generation.current++; void window.eidosRuntime.closeBrowser(sessionId, browserId); };
   }, [browserId, sessionId, executionKey]);
@@ -65,7 +70,11 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
     setError(""); setPage((current) => ({ ...current, loading: true }));
     try {
       const next = await window.eidosRuntime.openBrowser(sessionId, browserId, target);
-      if (token === generation.current) { setPage(next); setAddress(next.url || target); }
+      if (token === generation.current) {
+        addressDirty.current = false;
+        setPage(next);
+        setAddress(next.url || target);
+      }
     } catch (cause) { if (token === generation.current) { setError(userFacingError(cause)); setPage((current) => ({ ...current, loading: false })); } }
   }
   useEffect(() => { if (request) void open(request.url); }, [request?.id, executionKey]);
@@ -90,7 +99,7 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
       void window.eidosRuntime.readBrowserState(sessionId, browserId).then((next) => {
         if (!current) return;
         setPage(next);
-        if (next.url) setAddress(next.url);
+        if (!addressDirty.current && next.url) setAddress(next.url);
       }).catch(() => {});
     }, 1000);
     return () => { current = false; clearInterval(timer); };
@@ -105,15 +114,15 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
         <button type="button" className="browser-navigation__button" aria-label="前进" title="前进" disabled>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
         </button>
-        <button type="button" className="browser-navigation__button" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={() => void open(page.url)}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.76-4.24" /><path d="M16 4v4h-4" /></svg>
+        <button type="button" className="browser-navigation__button browser-navigation__button--refresh" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={() => void open(page.url)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.7 6.1A6.5 6.5 0 0 0 4 9.3" /><path d="M4 5.5v3.8h3.8" /><path d="M3.3 13.9A6.5 6.5 0 0 0 16 10.7" /><path d="M16 14.5v-3.8h-3.8" /></svg>
         </button>
       </div>
       <input
         aria-label="网页地址"
         className="browser-navigation__address"
         value={address}
-        onChange={(event) => setAddress(event.target.value)}
+        onChange={(event) => { addressDirty.current = true; setAddress(event.target.value); }}
         placeholder="搜索或输入网址"
       />
     </form>
