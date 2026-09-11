@@ -751,7 +751,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         run, _ = self.store.create_run(
             self.session["id"],
             "x" * 20_000,
-            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+            model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                 update={"context_window_tokens": 8_000, "max_output_tokens": 1_000}
             ),
         )

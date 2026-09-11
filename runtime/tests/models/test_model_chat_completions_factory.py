@@ -17,7 +17,7 @@ from eidos_runtime.model_gateway.pydantic_factory import build_model, build_prov
     [
         (
             "deepseek",
-            "deepseek-v4-flash",
+            "deepseek-flash",
             DeepSeekProvider,
             "https://api.deepseek.com",
         ),

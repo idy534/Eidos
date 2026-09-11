@@ -48,7 +48,7 @@ from eidos_runtime.runtime.loop_guard import (  # noqa: E402
 
 class ContextRejectingModel:
     def __init__(self, *, reject_count: int, success: ModelResponse) -> None:
-        self.profile_snapshot = default_profile_snapshot("deepseek-v4-flash")
+        self.profile_snapshot = default_profile_snapshot("deepseek-flash")
         self.reject_count = reject_count
         self.success = success
         self.calls = 0
@@ -856,7 +856,7 @@ class ContextPersistenceTests(unittest.TestCase):
         current, _ = self.store.create_run(
             self.session["id"],
             "continue",
-            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+            model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                 update={"context_window_tokens": 258_000, "max_output_tokens": 8_192}
             ),
         )
@@ -1006,7 +1006,7 @@ class ContextPersistenceTests(unittest.TestCase):
         current, _ = self.store.create_run(
             self.session["id"],
             "continue",
-            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+            model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                 # System instructions have grown (~6.2K chars of layered
                 # instructions + tools), so a 9.4K window no longer holds
                 # the compacted payload. 11K still proves that compaction
@@ -1034,7 +1034,7 @@ class ContextPersistenceTests(unittest.TestCase):
         current, _ = self.store.create_run(
             self.session["id"],
             "continue",
-            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+            model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                 update={"context_window_tokens": 20_000, "max_output_tokens": 1_000}
             ),
         )
@@ -1054,7 +1054,7 @@ class ContextPersistenceTests(unittest.TestCase):
         run, _ = self.store.create_run(
             self.session["id"],
             "read the large file",
-            model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+            model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                 update={"context_window_tokens": 25_000, "max_output_tokens": 1_000}
             ),
         )

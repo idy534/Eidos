@@ -30,7 +30,7 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                 "model/create",
                 {
                     "provider": "deepseek",
-                    "modelId": "deepseek-v4-flash",
+                    "modelId": "deepseek-flash",
                     "apiKey": "sk-deepseek-secret-value",
                 },
                 "create-flash",
@@ -72,7 +72,7 @@ class ModelGatewayProtocolTests(unittest.TestCase):
             self.assertEqual(
                 [model["id"] for model in results["list"]["result"]["models"]],
                 [
-                    "deepseek-v4-flash",
+                    "deepseek-flash",
                     "MiniMax-M3",
                     "kimi-k2.7-code-highspeed",
                     "deepseek-v4-flash-ga-260731",
@@ -94,7 +94,7 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                 {
                     "sessionId": session["id"],
                     "userInput": "legacy selector",
-                    "modelId": "deepseek-v4-flash",
+                    "modelId": "deepseek-flash",
                     "profileId": "legacy-profile",
                 },
                 "run-profile-id",
@@ -107,7 +107,7 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                 {
                     "sessionId": session["id"],
                     "userInput": "first turn",
-                    "modelId": "deepseek-v4-flash",
+                    "modelId": "deepseek-flash",
                 },
                 "run-one",
             ))
@@ -124,7 +124,7 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                 "run-two",
             ))
             second = messages(output)["run-two"]["result"]
-            self.assertEqual(first["modelId"], "deepseek-v4-flash")
+            self.assertEqual(first["modelId"], "deepseek-flash")
             self.assertEqual(second["modelId"], "MiniMax-M3")
             self.assertNotIn("profileId", first)
             self.assertNotIn("profileId", second)

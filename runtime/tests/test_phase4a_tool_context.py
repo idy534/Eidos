@@ -699,24 +699,59 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
 
     def test_cancel_after_verified_file_write_preserves_changes_without_reconciliation(self) -> None:
         data = {"path": "a.txt", "changes": [{"path": "a.txt", "kind": "update"}]}
-        result = self._result("apply_patch", data)
+        cancel_event = threading.Event()
+
+        class Handler:
+            execute_side_effect = None
+
+            def execute(inner, run_id, item, _call, cancel):
+                approval, verified = inner.execute_side_effect(
+                    run_id=run_id,
+                    item=item,
+                    prepared=PreparedToolExecution(
+                        approval_description={
+                            "kind": "file_change",
+                            "summary": "Modify a.txt",
+                            "diff": "",
+                        },
+                        intent_preconditions={"path": "a.txt"},
+                        transition_reason="file_approval",
+                    ),
+                    cancel=cancel,
+                    execute=lambda: self._result(
+                        "apply_patch",
+                        data,
+                    ),
+                )
+                cancel_event.set()
+                assert verified is not None
+                return HandlerOutcome(verified.result, "completed", workspace_changed=True)
+
+        handler = Handler()
 
         class RuntimeContext:
-            def invoke_workspace_mutation(inner, _runtime, _run_id, _item, _call, cancel):
-                cancel.set()
-                return HandlerOutcome(result, "completed", workspace_changed=True)
+            def invoke_workspace_mutation(
+                inner, _runtime, run_id, item, call, cancel
+            ):
+                return handler.execute(run_id, item, call, cancel)
 
         controller = ToolExecutionController(
-            self.store, self.dispatcher, RuntimeContext(), self.events, default_scanner(),
+            self.store,
+            self.dispatcher,
+            RuntimeContext(),
+            self.events,
+            default_scanner(),
+            approval=self.approval,
         )
+        handler.execute_side_effect = controller.execute_side_effect
         call = ModelToolCall("call-patch", "apply_patch", {
             "changes": [{"type": "add", "path": "a.txt", "content": "hello\n"}],
         })
         outcome = controller.execute(
             run_id=self.run["id"], item=self._item("apply_patch", call.arguments),
-            call=call, plan=self.dispatcher.plan(call), cancel=threading.Event(), deadline=None,
+            call=call, plan=self.dispatcher.plan(call), cancel=cancel_event, deadline=None,
         )
-        self.assertEqual(outcome.result["data"], data)
+        self.assertEqual(outcome.result["data"], {**data, "workspaceChanged": True})
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
         self.assertTrue(outcome.workspace_changed)

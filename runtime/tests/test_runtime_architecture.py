@@ -167,7 +167,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
 
         with self.runtime() as (store, session, _workspace):
             image_profile = default_profile_snapshot(
-                "deepseek-v4-flash"
+                "deepseek-flash"
             ).model_copy(update={"supports_images": True})
             image_run, _ = store.create_run(
                 session["id"],
@@ -483,8 +483,8 @@ class RuntimeArchitectureTests(unittest.TestCase):
             context = RunContext(
                 run_id=run["id"],
                 session_id=session["id"],
-                model_id="deepseek-v4-flash",
-                model_profile=default_profile_snapshot("deepseek-v4-flash"),
+                model_id="deepseek-flash",
+                model_profile=default_profile_snapshot("deepseek-flash"),
                 model_context=(),
                 extension_snapshot=run["extensionSnapshot"],
                 extension_snapshot_hash=resolution.extension_snapshot_hash,

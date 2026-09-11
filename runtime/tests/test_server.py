@@ -985,7 +985,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                             "method": "model/create",
                             "params": {
                                 "provider": "deepseek",
-                                "modelId": "deepseek-v4-flash",
+                                "modelId": "deepseek-flash",
                                 "apiKey": "sk-example-key-for-tests",
                             },
                         }
@@ -995,7 +995,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                 Path(data_directory),
             )
             configured_response = json.loads(configured.stdout.splitlines()[1])
-            self.assertEqual(configured_response["result"]["id"], "deepseek-v4-flash")
+            self.assertEqual(configured_response["result"]["id"], "deepseek-flash")
             self.assertNotIn("apiKey", configured_response["result"])
             self.assertNotIn("sk-example", configured.stdout)
             self.assertTrue((Path(data_directory) / "models.json").is_file())

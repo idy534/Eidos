@@ -29,6 +29,10 @@ from eidos_runtime.runtime.reconciliation import (  # noqa: E402
     ReconciliationDisposition,
     classify_shell_reconciliation,
 )
+from eidos_runtime.runtime.permission_policy import (  # noqa: E402
+    PermissionDecision,
+    PermissionDisposition,
+)
 from eidos_runtime.runtime.tool_orchestrator import OrchestratorResult  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import ToolCallRuntime  # noqa: E402
 from eidos_runtime.sandbox.workspace_manifest import (  # noqa: E402
@@ -1031,15 +1035,28 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(calls, 1)
 
     def test_escalated_shell_reconciliation_fails_closed_after_list_files(self) -> None:
-        self._assert_permissioned_shell_fails_closed_after_list_files(
-            {
-                "command": "false",
-                "yieldTimeMs": 5000,
-                "sandboxPermissions": "require_escalated",
-                "justification": "The fixture needs an explicit unsandboxed attempt.",
-            },
-            "require_escalated",
-        )
+        with (
+            patch(
+                "eidos_runtime.runtime.tool_orchestrator.unsandboxed_execution_allowed",
+                return_value=True,
+            ),
+            patch(
+                "eidos_runtime.runtime.permission_policy.PermissionPolicyEvaluator.evaluate",
+                return_value=PermissionDecision(
+                    disposition=PermissionDisposition.ASK,
+                    reason_code="approval_required",
+                ),
+            ),
+        ):
+            self._assert_permissioned_shell_fails_closed_after_list_files(
+                {
+                    "command": "false",
+                    "yieldTimeMs": 5000,
+                    "sandboxPermissions": "require_escalated",
+                    "justification": "The fixture needs an explicit unsandboxed attempt.",
+                },
+                "require_escalated",
+            )
 
     def test_additional_permission_shell_reconciliation_fails_closed_after_list_files(
         self,

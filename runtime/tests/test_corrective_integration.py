@@ -46,7 +46,7 @@ def test_projection_recovery_preserves_scoped_discovery_and_deduplicates_reads()
             current, _ = store.create_run(
                 session["id"],
                 "Analyze startup flow with scoped discovery.",
-                model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                     update={"context_window_tokens": 258_000, "max_output_tokens": 8_192}
                 ),
             )
@@ -132,7 +132,7 @@ def test_recent_bounded_projection_can_exceed_soft_ceiling_without_being_dropped
             run, _ = store.create_run(
                 session["id"],
                 "Keep recent tool evidence",
-                model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                     update={"context_window_tokens": 2_000_000, "max_output_tokens": 8_192}
                 ),
             )
@@ -177,7 +177,7 @@ def test_context_projection_uses_bounded_result_instead_of_full_canonical_payloa
             run, _ = store.create_run(
                 session["id"],
                 "Keep bounded model results",
-                model_profile=default_profile_snapshot("deepseek-v4-flash").model_copy(
+                model_profile=default_profile_snapshot("deepseek-flash").model_copy(
                     update={"context_window_tokens": 2_000_000, "max_output_tokens": 8_192}
                 ),
             )

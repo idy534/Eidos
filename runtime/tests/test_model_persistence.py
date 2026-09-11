@@ -45,7 +45,7 @@ class ModelPersistenceTests(unittest.TestCase):
     def profile(self, *, context: int = 4_096, output: int = 512) -> ModelProfileSnapshot:
         return ModelProfileSnapshot(
             provider_id="deepseek",
-            model_id="deepseek-v4-flash",
+            model_id="deepseek-flash",
             context_window_tokens=context,
             max_output_tokens=output,
             request_timeout_seconds=120.0,
@@ -93,7 +93,7 @@ class ModelPersistenceTests(unittest.TestCase):
             phase=AssistantMessagePhase.FINAL_ANSWER,
             usage=ModelUsage(input_tokens=12, output_tokens=3),
             provider_name="deepseek",
-            resolved_model_name="deepseek-v4-flash",
+            resolved_model_name="deepseek-flash",
             finish_reason="stop",
             provider_response_id="response-1",
             response_state="complete",
@@ -167,7 +167,7 @@ class ModelPersistenceTests(unittest.TestCase):
                     text="done",
                     usage=ModelUsage(input_tokens=8, output_tokens=2),
                     provider_name="deepseek",
-                    resolved_model_name="deepseek-v4-flash",
+                    resolved_model_name="deepseek-flash",
                     finish_reason="stop",
                     response_state="complete",
                 )
@@ -269,7 +269,7 @@ class ModelPersistenceTests(unittest.TestCase):
                 return ModelResponse(
                     text="done",
                     provider_name="deepseek",
-                    resolved_model_name="deepseek-v4-flash",
+                    resolved_model_name="deepseek-flash",
                     finish_reason="stop",
                     response_state="complete",
                 )

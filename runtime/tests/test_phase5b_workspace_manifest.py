@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -795,6 +796,13 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
 
     def test_unsandboxed_shell_still_scans_sensitive_output(self) -> None:
+        handler = self.controller.runtime_context.handler  # type: ignore[attr-defined]
+        assert handler is not None
+        assert handler.dependencies.base_permissions is not None
+        base = handler.dependencies.base_permissions.model_copy(
+            update={"protected_write_paths": ()}
+        )
+        handler.dependencies = replace(handler.dependencies, base_permissions=base)
         attempts = []
         outcome = self._execute(
             {

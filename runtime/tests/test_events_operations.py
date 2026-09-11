@@ -172,11 +172,11 @@ class EventAndOperationTests(unittest.TestCase):
         self.assertEqual(self.store.list_sessions()["items"][0]["taskStatus"], "new")
 
         run, _ = self.store.enqueue_run(
-            session["id"], "first", model_id="deepseek-v4-pro"
+            session["id"], "first", model_id="deepseek-flash"
         )
         listed = self.store.list_sessions()["items"][0]
         self.assertEqual(listed["taskStatus"], "in_progress")
-        self.assertEqual(self.store.read_run(run["id"])["modelId"], "deepseek-v4-pro")
+        self.assertEqual(self.store.read_run(run["id"])["modelId"], "deepseek-flash")
 
         self.store.cancel_run(run["id"])
         self.assertEqual(self.store.list_sessions()["items"][0]["taskStatus"], "canceled")
