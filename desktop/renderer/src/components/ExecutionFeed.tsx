@@ -31,6 +31,7 @@ type EditResendHandler = (run: Run, editedInput: string) => Promise<void>;
 interface Props {
   items: Item[];
   resultItems?: Item[];
+  projectless?: boolean;
   runs: Run[];
   models?: ModelOption[];
   workspaceRoot?: string;
@@ -81,6 +82,7 @@ const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
 export function ExecutionFeed({
   items,
   resultItems = items,
+  projectless = false,
   runs,
   models = [],
   workspaceRoot = "",
@@ -173,6 +175,7 @@ export function ExecutionFeed({
                   segment={segment}
                   run={run}
                   resultItems={resultItems}
+                  projectless={projectless}
                   modelName={modelName}
                   workspaceRoot={workspaceRoot}
                   isLast={index === segments.length - 1}
@@ -221,6 +224,7 @@ function RunSegment({
   segment,
   run,
   resultItems,
+  projectless,
   modelName,
   workspaceRoot,
   isLast,
@@ -243,6 +247,7 @@ function RunSegment({
   segment: Segment;
   run: Run;
   resultItems: Item[];
+  projectless: boolean;
   modelName: string;
   workspaceRoot?: string | undefined;
   isLast: boolean;
@@ -317,13 +322,20 @@ function RunSegment({
           feedbackPending={pendingFeedbackItemIds.has(item.id)}
           canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
           isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
+          showTurnResults={isLast
+            && index === segment.response.length - 1
+            && TERMINAL_RUN_STATUSES.has(run.status)
+            && segment.response.every((responseItem) => responseItem.status !== "in_progress")}
+          resultItems={resultItems}
+          showTextChanges={!projectless}
           onFeedback={onFeedback}
           onRegenerate={onRegenerate}
         />
       ))}
-      {isLast && TERMINAL_RUN_STATUSES.has(run.status)
-        && segment.response.every((item) => item.status !== "in_progress")
-        && <TurnResults run={run} items={resultItems} />}
+      {isLast
+        && segment.response.length === 0
+        && TERMINAL_RUN_STATUSES.has(run.status)
+        && <TurnResults run={run} items={resultItems} showTextChanges={!projectless} />}
     </>
   );
 }
@@ -500,6 +512,9 @@ function AssistantMessage({
   feedbackPending,
   canRegenerate,
   isFinal,
+  showTurnResults,
+  resultItems,
+  showTextChanges,
   onFeedback,
   onRegenerate,
 }: {
@@ -511,6 +526,9 @@ function AssistantMessage({
   feedbackPending: boolean;
   canRegenerate: boolean;
   isFinal: boolean;
+  showTurnResults: boolean;
+  resultItems: Item[];
+  showTextChanges: boolean;
   onFeedback: FeedbackHandler;
   onRegenerate: RegenerateHandler;
 }) {
@@ -533,6 +551,7 @@ function AssistantMessage({
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent content={item.content || ""} />
+      {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
       {isFinal && item.content && (
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">

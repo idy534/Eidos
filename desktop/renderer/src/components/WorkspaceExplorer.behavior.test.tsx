@@ -83,6 +83,9 @@ describe("WorkspaceExplorer", () => {
     expect(await screen.findByRole("tab", { name: "tests/sample.test.js" })).toBeInTheDocument();
     expect(screen.queryByText("tests/sample.test.js")).not.toBeInTheDocument();
     expect(screen.queryByText("143 B")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "刷新" })).not.toBeInTheDocument();
+    expect(screen.queryByText("当前文件 · 143 bytes")).not.toBeInTheDocument();
+    expect(screen.queryByText("提出修改意见")).not.toBeInTheDocument();
     expect(screen.queryByText("Files")).not.toBeInTheDocument();
     expect(container.querySelector(".workspace-preview-bar")).toBeInTheDocument();
     expect(container.querySelector(".workspace-preview-header")).not.toBeInTheDocument();

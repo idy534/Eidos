@@ -31,6 +31,7 @@
 
 .turn-result-card__header {
   display: flex;
+  height: 4rem;
   min-height: 4rem;
   align-items: center;
   gap: 0.75rem;
@@ -133,7 +134,7 @@
   font-weight: 400;
 }
 
-.turn-result-file:hover { background: var(--surface-hover); }
+.turn-result-file:hover:not(:disabled) { background: var(--surface-hover); }
 
 .turn-result__path {
   display: flex;
@@ -170,16 +171,22 @@
 .artifact-result-card {
   display: flex;
   align-items: center;
+  height: 4rem;
   min-height: 4rem;
   gap: 0.5rem;
   padding: 0.75rem;
+  transition: background-color 120ms ease;
 }
+
+.artifact-result-card:hover,
+.artifact-result-card:focus-within { background: var(--surface-hover); }
 
 .artifact-result-card__main {
   display: flex;
   min-width: 0;
   flex: 1;
   align-items: center;
+  justify-content: flex-start;
   gap: 0.75rem;
   border: 0;
   border-radius: var(--radius-sm);
@@ -190,11 +197,13 @@
   font-weight: 400;
 }
 
-.artifact-result-card__main:hover { background: transparent; box-shadow: none; }
+.artifact-result-card__main:hover:not(:disabled) { background: transparent; box-shadow: none; }
 .artifact-result-card__copy small { color: var(--result-muted); font-size: var(--font-size-sidebar); }
-.artifact-result-card__menu { margin-left: auto; }
+.artifact-result-card__menu { flex: 0 0 auto; margin-left: auto; }
+.artifact-result-card__menu > button:hover:not(:disabled) { background: transparent; box-shadow: none; }
 
 .artifact-result-card--compact {
+  height: 2.25rem;
   min-height: 2.25rem;
   border: 0;
   border-radius: var(--radius-sm);
@@ -236,5 +245,5 @@
   .turn-result-card__actions button { flex: 1; }
 }
 
-.turn-result-card__more:hover { background: var(--surface-hover); }
+.turn-result-card__more:hover:not(:disabled) { background: var(--surface-hover); }
 .artifact-result-card--compact { background: transparent; }

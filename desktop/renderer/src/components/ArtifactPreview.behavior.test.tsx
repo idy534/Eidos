@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EidosRuntimeAPI, Item, WorkspaceFilePreview } from "../contracts.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
-import { BrowserPanel } from "./BrowserPanel.js";
+import { BrowserPanel, resolveBrowserTarget } from "./BrowserPanel.js";
 import { HunkActions } from "./HunkActions.js";
 import { LastTurnChanges } from "./LastTurnChanges.js";
 import { MarkdownContent } from "./MarkdownContent.js";
@@ -184,7 +184,7 @@ describe("artifact previews and feedback", () => {
     fireEvent.click(screen.getByText("manual.pdf"));
     expect(await screen.findByTitle("manual.pdf")).toBeInTheDocument();
     fireEvent.click(screen.getByText("page.html"));
-    expect(await screen.findByText("你可以在网页面板中操作页面、检查效果和留下标注。")).toBeInTheDocument();
+    expect(await screen.findByText("你可以在网页面板中操作页面并检查效果。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开交互预览" }));
     expect(value.openBrowser).toHaveBeenLastCalledWith("eidos-preview://preview/page.html");
   });
@@ -234,33 +234,29 @@ describe("artifact previews and feedback", () => {
     expect(onChanged).toHaveBeenCalledOnce();
   });
 
-  it("opens a page, captures an annotation, and forwards bounded feedback", async () => {
-    const onFeedback = vi.fn().mockResolvedValue(undefined);
-    const onTerminal = vi.fn();
+  it("resolves addresses and search terms for the browser", () => {
+    expect(resolveBrowserTarget("https://example.com/docs")).toBe("https://example.com/docs");
+    expect(resolveBrowserTarget("example.com/docs")).toBe("https://example.com/docs");
+    expect(resolveBrowserTarget("localhost:3000")).toBe("http://localhost:3000");
+    expect(resolveBrowserTarget("设计系统")).toBe("https://www.google.com/search?q=%E8%AE%BE%E8%AE%A1%E7%B3%BB%E7%BB%9F");
+  });
+
+  it("opens a page in its own browser tab and removes unsupported controls", async () => {
     const { unmount } = render(
       <BrowserPanel
+        browserId="browser-1"
         sessionId="session-a"
         executionKey="local:/workspace"
         active={false}
-        request={{ url: "http://localhost:3000", id: 1 }}
-        onFeedback={onFeedback}
-        feedbackDisabled={false}
-        onTerminal={onTerminal}
-        terminalAvailable
+        request={{ url: "localhost:3000", id: 1 }}
       />,
     );
 
-    await waitFor(() => expect(api.openBrowser).toHaveBeenCalledWith("session-a", "http://localhost:3000"));
-    fireEvent.click(await screen.findByRole("button", { name: "标注" }));
-    fireEvent.change(await screen.findByRole("textbox", { name: "页面反馈" }), { target: { value: "按钮太小" } });
-    fireEvent.click(screen.getByRole("button", { name: "发送反馈" }));
-
-    await waitFor(() => expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("docs/index.html")));
-    expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("selected text"));
-    expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("按钮太小"));
-    fireEvent.click(screen.getByRole("button", { name: "开发终端" }));
-    expect(onTerminal).toHaveBeenCalledOnce();
+    await waitFor(() => expect(api.openBrowser).toHaveBeenCalledWith("session-a", "browser-1", "http://localhost:3000"));
+    expect(screen.queryByRole("button", { name: "标注" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开发终端" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "网页菜单" })).not.toBeInTheDocument();
     unmount();
-    expect(api.closeBrowser).toHaveBeenCalledWith("session-a");
+    expect(api.closeBrowser).toHaveBeenCalledWith("session-a", "browser-1");
   });
 });

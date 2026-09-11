@@ -6,7 +6,7 @@ import type { BrowserAnnotation, BrowserBounds, BrowserPageState } from "../shar
 protocol.registerSchemesAsPrivileged([{ scheme: "eidos-preview", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 interface PreviewGrant { owner: number; sessionId: string; root: string; path: string; workspaceVersion: string; version?: string }
-interface BrowserEntry { owner: number; sessionId: string; root: string; view: WebContentsView; error?: string | undefined; token?: string | undefined }
+interface BrowserEntry { owner: number; sessionId: string; browserId: string; root: string; view: WebContentsView; error?: string | undefined; token?: string | undefined }
 
 /** Desktop views own no file authority: every resource is read through Runtime. */
 export class ArtifactPreviewManager {
@@ -77,7 +77,7 @@ export class ArtifactPreviewManager {
     } catch { return new Response("文件已变化、不可用或超出预览限制，请刷新。", { status: 409 }); }
   }
 
-  private key(owner: WebContents, sessionId: string): string { return `${owner.id}:${sessionId}`; }
+  private key(owner: WebContents, sessionId: string, browserId: string): string { return `${owner.id}\0${sessionId}\0${browserId}`; }
 
   private configure(ses: Session, entry: BrowserEntry): void {
     ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -93,14 +93,14 @@ export class ArtifactPreviewManager {
     });
   }
 
-  async open(owner: WebContents, sessionId: string, target: string): Promise<BrowserPageState> {
-    const key = this.key(owner, sessionId);
+  async open(owner: WebContents, sessionId: string, browserId: string, target: string): Promise<BrowserPageState> {
+    const key = this.key(owner, sessionId, browserId);
     const generation = (this.generation.get(key) ?? 0) + 1;
     this.generation.set(key, generation);
     const root = await this.root(sessionId);
     if (owner.isDestroyed() || this.generation.get(key) !== generation) throw new Error("页面请求已取消。");
     let entry = this.browsers.get(key);
-    if (entry && entry.root !== root) { this.close(owner, sessionId); this.generation.set(key, generation); entry = undefined; }
+    if (entry && entry.root !== root) { this.close(owner, sessionId, browserId); this.generation.set(key, generation); entry = undefined; }
     const parsed = new URL(target);
     if (!["http:", "https:", "eidos-preview:"].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error("仅支持网页地址或当前文件预览。");
     if (parsed.protocol === "eidos-preview:") {
@@ -112,7 +112,7 @@ export class ArtifactPreviewManager {
       const window = BrowserWindow.fromWebContents(owner);
       if (!window) throw new Error("窗口已关闭。");
       const view = new WebContentsView({ webPreferences: { partition: `eidos-preview-${randomUUID()}`, nodeIntegration: false, contextIsolation: true, sandbox: true, plugins: true } });
-      entry = { owner: owner.id, sessionId, root, view };
+      entry = { owner: owner.id, sessionId, browserId, root, view };
       this.configure(view.webContents.session, entry);
       const current = entry;
       view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -143,17 +143,17 @@ export class ArtifactPreviewManager {
     }
     entry.error = undefined;
     try { await entry.view.webContents.loadURL(target); } catch { entry.error = "页面未能加载，请确认地址和开发服务状态。"; }
-    return this.state(owner, sessionId);
+    return this.state(owner, sessionId, browserId);
   }
 
-  state(owner: WebContents, sessionId: string): BrowserPageState {
-    const entry = this.browsers.get(this.key(owner, sessionId));
+  state(owner: WebContents, sessionId: string, browserId: string): BrowserPageState {
+    const entry = this.browsers.get(this.key(owner, sessionId, browserId));
     if (!entry) return { url: "", title: "", loading: false };
     return { url: entry.view.webContents.getURL(), title: entry.view.webContents.getTitle(), loading: entry.view.webContents.isLoading(), ...(entry.error ? { error: entry.error } : {}) };
   }
 
-  bounds(owner: WebContents, sessionId: string, bounds: BrowserBounds | null): void {
-    const entry = this.browsers.get(this.key(owner, sessionId));
+  bounds(owner: WebContents, sessionId: string, browserId: string, bounds: BrowserBounds | null): void {
+    const entry = this.browsers.get(this.key(owner, sessionId, browserId));
     if (!entry) return;
     if (!bounds) { entry.view.setVisible(false); return; }
     const window = BrowserWindow.fromWebContents(owner);
@@ -167,8 +167,8 @@ export class ArtifactPreviewManager {
     entry.view.setVisible(bounds.width > 0 && bounds.height > 0);
   }
 
-  async annotate(owner: WebContents, sessionId: string): Promise<BrowserAnnotation> {
-    const entry = this.browsers.get(this.key(owner, sessionId));
+  async annotate(owner: WebContents, sessionId: string, browserId: string): Promise<BrowserAnnotation> {
+    const entry = this.browsers.get(this.key(owner, sessionId, browserId));
     if (!entry || await this.root(sessionId) !== entry.root) throw new Error("页面已失效。");
     const wc = entry.view.webContents;
     const url = wc.getURL();
@@ -179,8 +179,8 @@ export class ArtifactPreviewManager {
     return { elements: Array.isArray(elements) ? elements.filter(isAnnotationElement).slice(0, 100) : [], url, title: wc.getTitle().slice(0, 512), selection: typeof selection === "string" ? selection : "", screenshot, capturedAt: Date.now() };
   }
 
-  close(owner: WebContents, sessionId: string): void {
-    const key = this.key(owner, sessionId);
+  close(owner: WebContents, sessionId: string, browserId: string): void {
+    const key = this.key(owner, sessionId, browserId);
     this.generation.set(key, (this.generation.get(key) ?? 0) + 1);
     const entry = this.browsers.get(key);
     if (!entry) return;
@@ -190,15 +190,15 @@ export class ArtifactPreviewManager {
     entry.view.webContents.close();
   }
   closeSession(sessionId: string): void {
-    for (const [key, generation] of this.generation) if (key.endsWith(`:${sessionId}`)) this.generation.set(key, generation + 1);
-    for (const entry of this.browsers.values()) {
+    for (const [key, generation] of this.generation) if (key.split("\0")[1] === sessionId) this.generation.set(key, generation + 1);
+    for (const entry of [...this.browsers.values()]) {
       const owner = webContents.fromId(entry.owner);
-      if (entry.sessionId === sessionId && owner) this.close(owner, sessionId);
+      if (entry.sessionId === sessionId && owner) this.close(owner, sessionId, entry.browserId);
     }
     for (const [token, grant] of this.grants) if (grant.sessionId === sessionId) this.grants.delete(token);
   }
   closeOwner(owner: WebContents): void {
-    for (const entry of this.browsers.values()) if (entry.owner === owner.id) this.close(owner, entry.sessionId);
+    for (const entry of [...this.browsers.values()]) if (entry.owner === owner.id) this.close(owner, entry.sessionId, entry.browserId);
     for (const [token, grant] of this.grants) if (grant.owner === owner.id) this.grants.delete(token);
   }
   closeAll(): void {

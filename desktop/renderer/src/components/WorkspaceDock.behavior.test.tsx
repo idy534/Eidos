@@ -17,10 +17,13 @@ function Harness({ initialTabs = [
   const [expanded, setExpanded] = useState(false);
 
   function addTool(tool: WorkspaceToolKind) {
+    const browserIndex = tabs.filter((item) => item.kind === "browser").length + 1;
     const tab = tool === "terminal"
       ? { id: `terminal-${tabs.length + 1}`, kind: tool, title: `终端 ${tabs.length + 1}` }
-      : { id: tool, kind: tool };
-    setTabs((current) => current.some((item) => item.kind === tool && tool !== "terminal")
+      : tool === "browser"
+        ? { id: `browser-${browserIndex}`, kind: tool, title: browserIndex === 1 ? "新标签页" : `新标签页 ${browserIndex}` }
+        : { id: tool, kind: tool };
+    setTabs((current) => current.some((item) => item.kind === tool && tool !== "terminal" && tool !== "browser")
       ? current
       : [...current, tab]);
     setActive(tab.id);
@@ -38,14 +41,14 @@ function Harness({ initialTabs = [
   return (
       <WorkspaceDock
       activeTabId={active}
-      availableTools={["review", "terminal", "files"]}
+      availableTools={["review", "terminal", "files", "browser"]}
       expanded={expanded}
       openTabs={tabs}
       onAddTool={addTool}
       onCloseTab={closeTab}
       onSelectTab={setActive}
       onToggleExpanded={() => setExpanded((current) => !current)}
-      renderTab={(tab) => <div>{tab.kind === "review" ? "审阅内容" : tab.kind === "terminal" ? "终端内容" : "文件内容"}</div>}
+      renderTab={(tab) => <div>{tab.kind === "review" ? "审阅内容" : tab.kind === "terminal" ? "终端内容" : tab.kind === "browser" ? "网页内容" : "文件内容"}</div>}
     />
   );
 }
@@ -58,6 +61,7 @@ describe("WorkspaceDock", () => {
     expect(screen.getByRole("button", { name: "审阅" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "终端" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "文件" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "网页" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     expect(screen.getByRole("tab", { name: "终端 1" })).toHaveAttribute("aria-selected", "true");
@@ -101,6 +105,19 @@ describe("WorkspaceDock", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(4);
     expect(screen.getByRole("tab", { name: "终端 3" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "终端 4" })).toBeInTheDocument();
+  });
+
+  it("allows multiple browser tabs while keeping each tab addressable", () => {
+    render(<Harness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "添加窗口" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "网页" }));
+    fireEvent.click(screen.getByRole("button", { name: "添加窗口" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "网页" }));
+
+    expect(screen.getByRole("tab", { name: "新标签页" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "新标签页 2" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByText("网页内容")).toHaveLength(2);
   });
 
   it("supports workspace expansion and closing a tool window", () => {

@@ -161,7 +161,7 @@
 .workspace-header-tools .icon-button:hover,
 .workspace-header-tools details[open] > .icon-button {
   color: var(--text);
-  background: var(--surface-selected);
+  background: var(--surface-hover);
 }
 
 .workspace-header-tools svg,
@@ -244,7 +244,7 @@
   text-align: left;
 }
 
-button.environment-popover__row:hover {
+button.environment-popover__row:hover:not(:disabled) {
   background: var(--surface-hover);
 }
 

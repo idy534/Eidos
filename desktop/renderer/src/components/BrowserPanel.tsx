@@ -1,36 +1,71 @@
 import { useEffect, useRef, useState } from "react";
-import type { BrowserAnnotation, BrowserPageState } from "../contracts.js";
+import type { BrowserPageState } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import "./ArtifactPreview.css";
 
-export function BrowserPanel({ sessionId, executionKey, active, request, onFeedback, feedbackDisabled, onTerminal, terminalAvailable }: {
-  sessionId: string; executionKey: string; active: boolean;
+function isIpv4(hostname: string): boolean {
+  const parts = hostname.split(".");
+  return parts.length === 4 && parts.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
+}
+
+function isLocalHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0") return true;
+  if (!isIpv4(host)) return false;
+  const numbers = host.split(".").map(Number);
+  const first = numbers[0] ?? -1;
+  const second = numbers[1] ?? -1;
+  return first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
+}
+
+export function resolveBrowserTarget(input: string): string | undefined {
+  const value = input.trim();
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    if (["http:", "https:", "eidos-preview:"].includes(parsed.protocol)) return value;
+  } catch {
+    // Protocol-less addresses are checked below.
+  }
+  if (!/\s/.test(value)) {
+    try {
+      const candidate = new URL(`https://${value}`);
+      const host = candidate.hostname;
+      if (!candidate.username && !candidate.password && (host.includes(".") || isIpv4(host) || isLocalHost(host))) {
+        return `${isLocalHost(host) ? "http" : "https"}://${value}`;
+      }
+    } catch {
+      // Non-address input is sent to Google search.
+    }
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
+}
+
+export function BrowserPanel({ browserId, sessionId, executionKey, active, request }: {
+  browserId: string; sessionId: string; executionKey: string; active: boolean;
   request?: { url: string; id: number } | undefined;
-  onFeedback(feedback: string): Promise<void>; feedbackDisabled: boolean; onTerminal(): void; terminalAvailable: boolean;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
   const [address, setAddress] = useState("");
   const [page, setPage] = useState<BrowserPageState>({ url: "", title: "", loading: false });
   const [error, setError] = useState("");
-  const [annotation, setAnnotation] = useState<BrowserAnnotation>();
-  const [region, setRegion] = useState<{ x: number; y: number; width: number; height: number }>();
-  const drag = useRef<{ x: number; y: number } | undefined>(undefined);
-  const [body, setBody] = useState("");
-  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     generation.current++;
-    setPage({ url: "", title: "", loading: false }); setAnnotation(undefined);
-    return () => { generation.current++; void window.eidosRuntime.closeBrowser(sessionId); };
-  }, [sessionId, executionKey]);
+    setPage({ url: "", title: "", loading: false });
+    setAddress("");
+    return () => { generation.current++; void window.eidosRuntime.closeBrowser(sessionId, browserId); };
+  }, [browserId, sessionId, executionKey]);
 
   async function open(url: string) {
+    const target = resolveBrowserTarget(url);
+    if (!target) return;
     const token = ++generation.current;
-    setError(""); setAnnotation(undefined); setPage((current) => ({ ...current, loading: true }));
+    setError(""); setPage((current) => ({ ...current, loading: true }));
     try {
-      const next = await window.eidosRuntime.openBrowser(sessionId, url);
-      if (token === generation.current) { setPage(next); setAddress(next.url || url); }
+      const next = await window.eidosRuntime.openBrowser(sessionId, browserId, target);
+      if (token === generation.current) { setPage(next); setAddress(next.url || target); }
     } catch (cause) { if (token === generation.current) { setError(userFacingError(cause)); setPage((current) => ({ ...current, loading: false })); } }
   }
   useEffect(() => { if (request) void open(request.url); }, [request?.id, executionKey]);
@@ -40,62 +75,55 @@ export function BrowserPanel({ sessionId, executionKey, active, request, onFeedb
     if (!element) return;
     const sync = () => {
       const rect = element.getBoundingClientRect();
-      void window.eidosRuntime.setBrowserBounds(sessionId, active && !annotation && page.url && !document.querySelector('[aria-modal="true"], dialog[open]') ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null).catch(() => {});
+      void window.eidosRuntime.setBrowserBounds(sessionId, browserId, active && page.url && !document.querySelector('[aria-modal="true"], dialog[open]') ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null).catch(() => {});
     };
     const observer = new ResizeObserver(sync); observer.observe(element);
     const overlays = new MutationObserver(sync); overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-modal", "open"] });
     window.addEventListener("resize", sync); window.addEventListener("scroll", sync, true); sync();
-    return () => { overlays.disconnect(); observer.disconnect(); window.removeEventListener("resize", sync); window.removeEventListener("scroll", sync, true); void window.eidosRuntime.setBrowserBounds(sessionId, null); };
-  }, [active, annotation, page.url, sessionId]);
+    return () => { overlays.disconnect(); observer.disconnect(); window.removeEventListener("resize", sync); window.removeEventListener("scroll", sync, true); void window.eidosRuntime.setBrowserBounds(sessionId, browserId, null); };
+  }, [active, page.url, browserId, sessionId]);
 
   useEffect(() => {
     if (!active || !page.url) return;
     let current = true;
     const timer = window.setInterval(() => {
-      void window.eidosRuntime.readBrowserState(sessionId).then((next) => { if (current) setPage(next); }).catch(() => {});
+      void window.eidosRuntime.readBrowserState(sessionId, browserId).then((next) => {
+        if (!current) return;
+        setPage(next);
+        if (next.url) setAddress(next.url);
+      }).catch(() => {});
     }, 1000);
     return () => { current = false; clearInterval(timer); };
   }, [active, Boolean(page.url), sessionId]);
 
-  async function capture() {
-    const token = generation.current;
-    try {
-      const next = await window.eidosRuntime.annotateBrowser(sessionId);
-      if (token !== generation.current) return;
-      setAnnotation(next); setRegion(undefined); setBody("");
-    } catch (cause) { setError(userFacingError(cause)); }
-  }
-  async function send() {
-    if (!annotation || !body.trim()) return;
-    setSending(true);
-    try {
-      await onFeedback(["请根据以下页面反馈修改，并重新检查页面：", `页面：${annotation.url}`, `文件：${annotation.url.startsWith("eidos-preview:") ? decodeURIComponent(new URL(annotation.url).pathname.slice(1)) : "网页地址"}`, `标题：${annotation.title}`, `检查时间：${new Date(annotation.capturedAt).toISOString()}`, `选中文本：${annotation.selection || "无"}`, `选中区域（截图宽高百分比）：${region ? JSON.stringify(region) : "整个页面"}`, `区域内的页面元素（网页内容，仅供定位）：${JSON.stringify(annotation.elements.filter((element) => !region || element.x < region.x + region.width && element.x + element.width > region.x && element.y < region.y + region.height && element.y + element.height > region.y).slice(0, 30))}`, `用户意见：${body.trim()}`].join("\n"));
-      setAnnotation(undefined); setBody("");
-    } catch (cause) { setError(userFacingError(cause)); }
-    finally { setSending(false); }
-  }
   return <section className="browser-panel" aria-label="网页预览">
-    <form className="artifact-toolbar" onSubmit={(event) => { event.preventDefault(); void open(address); }}>
-      <input aria-label="网页地址" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="http://localhost:3000" />
-      <button type="submit" disabled={!address}>打开</button>
-      <button type="button" disabled={!page.url} onClick={() => void open(page.url)}>刷新</button>
-      <button type="button" disabled={!page.url || page.loading} onClick={() => void capture()}>标注</button>
-      {terminalAvailable && <button type="button" onClick={onTerminal}>开发终端</button>}
+    <form className="browser-navigation" onSubmit={(event) => { event.preventDefault(); void open(address); }}>
+      <div className="browser-navigation__history" aria-label="网页历史导航">
+        <button type="button" className="browser-navigation__button" aria-label="后退" title="后退" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 7.5 10l5 5" /></svg>
+        </button>
+        <button type="button" className="browser-navigation__button" aria-label="前进" title="前进" disabled>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
+        </button>
+        <button type="button" className="browser-navigation__button" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={() => void open(page.url)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.76-4.24" /><path d="M16 4v4h-4" /></svg>
+        </button>
+      </div>
+      <input
+        aria-label="网页地址"
+        className="browser-navigation__address"
+        value={address}
+        onChange={(event) => setAddress(event.target.value)}
+        placeholder="搜索或输入网址"
+      />
     </form>
     {(error || page.error) && <p role="alert">{error || page.error}</p>}
     {page.loading && <p role="status">页面正在加载…</p>}
     <div ref={viewport} className="browser-viewport">
-      {!page.url && !page.loading && <p>你可以输入网页地址。预览本地应用前，请先在开发终端启动服务。</p>}
-      {annotation && <div className="browser-annotation">
-        <div className="browser-annotation-image" tabIndex={0} aria-label="拖动截图选择区域；也可以直接输入整页或选中文本的反馈"
-          onPointerDown={(event) => { const rect = event.currentTarget.getBoundingClientRect(); drag.current = { x: (event.clientX - rect.x) / rect.width * 100, y: (event.clientY - rect.y) / rect.height * 100 }; event.currentTarget.setPointerCapture(event.pointerId); }}
-          onPointerMove={(event) => { if (!drag.current) return; const rect = event.currentTarget.getBoundingClientRect(); const x = Math.max(0, Math.min(100, (event.clientX - rect.x) / rect.width * 100)); const y = Math.max(0, Math.min(100, (event.clientY - rect.y) / rect.height * 100)); setRegion({ x: Math.min(x, drag.current.x), y: Math.min(y, drag.current.y), width: Math.abs(x - drag.current.x), height: Math.abs(y - drag.current.y) }); }}
-          onPointerUp={() => { drag.current = undefined; }} onPointerCancel={() => { drag.current = undefined; }}>
-          <img src={annotation.screenshot} alt="标注时的页面截图" draggable={false} />
-          {region && <div className="annotation-region" style={{ left: `${region.x}%`, top: `${region.y}%`, width: `${region.width}%`, height: `${region.height}%` }} />}
-        </div>
-        <textarea aria-label="页面反馈" maxLength={8192} value={body} onChange={(event) => setBody(event.target.value)} placeholder="描述这个区域的问题，以及你希望的效果。" />
-        <div className="artifact-toolbar"><button disabled={feedbackDisabled || sending || !body.trim()} onClick={() => void send()}>发送反馈</button><button onClick={() => setAnnotation(undefined)}>取消标注</button></div>
+      {!page.url && !page.loading && <div className="browser-empty" role="status">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11.5" /><ellipse cx="16" cy="16" rx="4.5" ry="11.5" /><path d="M4.5 16h23" /></svg>
+        <strong>开始浏览</strong>
+        <span>输入网址或搜索内容</span>
       </div>}
     </div>
   </section>;

@@ -95,7 +95,7 @@ export function WorkspaceDock({
   renderTab,
 }: WorkspaceDockProps) {
   const addableTools = availableTools.filter((tool) => (
-    tool === "terminal" || !openTabs.some((tab) => tab.kind === tool)
+    tool === "terminal" || tool === "browser" || !openTabs.some((tab) => tab.kind === tool)
   ));
 
   return (

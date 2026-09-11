@@ -3,7 +3,7 @@ import { parseDiff } from "react-diff-view";
 import type { Item, Run } from "../contracts.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
-import { DropdownMenu } from "./DropdownMenu.js";
+import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 
 type ChangeState = "committed" | "partial" | "planned";
@@ -326,43 +326,84 @@ function ArtifactLabel({ artifact }: { artifact: TurnArtifact }): string {
   }
 }
 
-function artifactOpenItems(artifact: TurnArtifact, actions: ReturnType<typeof useArtifacts>) {
-  if (artifact.kind === "docx") {
-    return [{
+function htmlTitle(content: string | undefined): string | undefined {
+  if (!content) return undefined;
+  try {
+    return new DOMParser().parseFromString(content, "text/html").title.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function useHtmlArtifactTitle(artifact: TurnArtifact): string | undefined {
+  const actions = useArtifacts();
+  const [title, setTitle] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    setTitle(undefined);
+    if (
+      artifact.kind !== "html"
+      || !actions
+      || typeof window.eidosRuntime?.readWorkspaceFilePreview !== "function"
+    ) return () => { active = false; };
+
+    void window.eidosRuntime.readWorkspaceFilePreview(actions.sessionId, artifact.path)
+      .then((preview) => {
+        if (active) setTitle(htmlTitle(preview.content) || "未命名网页");
+      })
+      .catch(() => {
+        if (active) setTitle("未命名网页");
+      });
+    return () => { active = false; };
+  }, [actions?.sessionId, artifact.kind, artifact.itemId, artifact.path]);
+
+  return title;
+}
+
+function artifactOpenItems(artifact: TurnArtifact, actions: ReturnType<typeof useArtifacts>): DropdownMenuItem[] {
+  const items: DropdownMenuItem[] = [];
+  if (artifact.kind !== "docx" && actions?.openFile) {
+    items.push({
+      key: "preview",
+      label: "内置预览",
+      onClick: () => actions.openFile(artifact.path),
+    });
+  }
+  if (actions?.openExternal) {
+    items.push({
       key: "external",
       label: "系统应用打开",
-      disabled: !actions?.openExternal,
-      onClick: () => actions?.openExternal?.(artifact.path),
-    }];
+      onClick: () => actions.openExternal?.(artifact.path),
+    });
   }
-  return [{
-    key: "preview",
-    label: "内置预览",
-    onClick: () => actions?.openFile(artifact.path),
-  }];
+  return items;
 }
 
 function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; compact?: boolean }) {
   const actions = useArtifacts();
+  const title = useHtmlArtifactTitle(artifact);
+  const displayName = artifact.kind === "html" ? (title || "正在读取页面标题…") : fileName(artifact.path);
+  const openItems = artifactOpenItems(artifact, actions);
   const open = () => {
     if (artifact.kind === "docx") actions?.openExternal?.(artifact.path);
     else actions?.openFile(artifact.path);
   };
   return (
     <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>
-      <button type="button" className="artifact-result-card__main" onClick={open} title={`打开 ${artifact.path}`} aria-label={`打开 ${fileName(artifact.path)}`}>
+      <button type="button" className="artifact-result-card__main" onClick={open} title={`打开 ${displayName}`} aria-label={`打开 ${displayName}`}>
         <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
         <span className="artifact-result-card__copy">
-          <strong>{fileName(artifact.path)}</strong>
+          <strong>{displayName}</strong>
           <small>{ArtifactLabel({ artifact })}</small>
         </span>
       </button>
-      {!compact && (
+      {!compact && openItems.length > 0 && (
         <DropdownMenu
           trigger="打开方式"
           label={`${fileName(artifact.path)} 的打开方式`}
           className="artifact-result-card__menu"
-          items={artifactOpenItems(artifact, actions)}
+          items={openItems}
         />
       )}
     </article>
@@ -441,13 +482,13 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
   );
 }
 
-export function TurnResults({ run, items }: { run: Run; items: Item[] }) {
+export function TurnResults({ run, items, showTextChanges = true }: { run: Run; items: Item[]; showTextChanges?: boolean }) {
   const projection = useMemo(() => projectTurnResults(items, run.id), [items, run.id]);
-  if (!projection.textChanges.length && !projection.artifacts.length) return null;
+  if (!projection.artifacts.length && (!showTextChanges || !projection.textChanges.length)) return null;
   return (
     <section className="turn-results" aria-label="本轮结果">
       {projection.artifacts.map((artifact) => <ArtifactCard artifact={artifact} key={artifact.path} />)}
-      {projection.textChanges.length > 0 && <TextChangeCard projection={projection} />}
+      {showTextChanges && projection.textChanges.length > 0 && <TextChangeCard projection={projection} />}
     </section>
   );
 }

@@ -696,13 +696,13 @@ ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (event, id: unknown, path: unknown, ve
   return artifactPreview.prepare(previewOwner(event), previewString(id), previewString(path), version as string | undefined);
 });
 ipcMain.handle(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
-ipcMain.handle(IPC.BROWSER_OPEN, (event, id: unknown, url: unknown) => artifactPreview.open(previewOwner(event), previewString(id), previewString(url)));
-ipcMain.handle(IPC.BROWSER_CLOSE, (event, id: unknown) => artifactPreview.close(previewOwner(event), previewString(id)));
-ipcMain.handle(IPC.BROWSER_STATE, (event, id: unknown) => artifactPreview.state(previewOwner(event), previewString(id)));
-ipcMain.handle(IPC.BROWSER_ANNOTATE, (event, id: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id)));
-ipcMain.handle(IPC.BROWSER_BOUNDS, (event, id: unknown, bounds: unknown) => {
+ipcMain.handle(IPC.BROWSER_OPEN, (event, id: unknown, browserId: unknown, url: unknown) => artifactPreview.open(previewOwner(event), previewString(id), previewString(browserId), previewString(url)));
+ipcMain.handle(IPC.BROWSER_CLOSE, (event, id: unknown, browserId: unknown) => artifactPreview.close(previewOwner(event), previewString(id), previewString(browserId)));
+ipcMain.handle(IPC.BROWSER_STATE, (event, id: unknown, browserId: unknown) => artifactPreview.state(previewOwner(event), previewString(id), previewString(browserId)));
+ipcMain.handle(IPC.BROWSER_ANNOTATE, (event, id: unknown, browserId: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id), previewString(browserId)));
+ipcMain.handle(IPC.BROWSER_BOUNDS, (event, id: unknown, browserId: unknown, bounds: unknown) => {
   if (bounds !== null && (typeof bounds !== "object" || !bounds || !["x", "y", "width", "height"].every((key) => typeof Reflect.get(bounds, key) === "number" && Number.isFinite(Reflect.get(bounds, key))))) throw new Error("页面位置无效。");
-  artifactPreview.bounds(previewOwner(event), previewString(id), bounds as import("../shared/index.js").BrowserBounds | null);
+  artifactPreview.bounds(previewOwner(event), previewString(id), previewString(browserId), bounds as import("../shared/index.js").BrowserBounds | null);
 });
 
 ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (

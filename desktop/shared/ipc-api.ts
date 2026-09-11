@@ -75,11 +75,11 @@ export interface EidosRuntimeAPI {
   ): Promise<WorkspaceDirectoryListing>;
   prepareWorkspacePreview(sessionId: string, path: string, version?: string): Promise<string>;
   releaseWorkspacePreview(url: string): Promise<void>;
-  openBrowser(sessionId: string, url: string): Promise<import("./domain-contracts.js").BrowserPageState>;
-  setBrowserBounds(sessionId: string, bounds: import("./domain-contracts.js").BrowserBounds | null): Promise<void>;
-  closeBrowser(sessionId: string): Promise<void>;
-  readBrowserState(sessionId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
-  annotateBrowser(sessionId: string): Promise<import("./domain-contracts.js").BrowserAnnotation>;
+  openBrowser(sessionId: string, browserId: string, url: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  setBrowserBounds(sessionId: string, browserId: string, bounds: import("./domain-contracts.js").BrowserBounds | null): Promise<void>;
+  closeBrowser(sessionId: string, browserId: string): Promise<void>;
+  readBrowserState(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  annotateBrowser(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserAnnotation>;
   readWorkspaceFilePreview(
     sessionId: string,
     path: string,

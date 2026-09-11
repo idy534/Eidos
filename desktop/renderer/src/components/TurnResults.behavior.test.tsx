@@ -159,7 +159,7 @@ describe("TurnResults", () => {
     expect(screen.getByText("文档 · DOCX")).toBeInTheDocument();
     expect(screen.getByText("网页 · HTML")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "审核 index.html" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "打开 index.html" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开 正在读取页面标题…" }));
     expect(openFile).toHaveBeenCalledWith("index.html");
   });
 

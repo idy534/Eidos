@@ -139,7 +139,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [createBranchMode, setCreateBranchMode] = useState<CreateBranchMode>("worktree");
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(loadSidebarOpen);
-  const [browserRequest, setBrowserRequest] = useState<{ url: string; id: number }>();
+  const [browserRequest, setBrowserRequest] = useState<{ browserId: string; url: string; id: number }>();
   const [reviewRequest, setReviewRequest] = useState<{
     runId: string;
     path?: string;
@@ -164,6 +164,7 @@ export function AppShell({ runtime }: AppShellProps) {
     startWidth: number;
   } | undefined>(undefined);
   const terminalSequenceRef = useRef(0);
+  const browserSequenceRef = useRef(0);
   const fileOpenSequenceRef = useRef(0);
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
   const getDialogFallbackFocus = useCallback((): HTMLElement | null => {
@@ -215,6 +216,7 @@ export function AppShell({ runtime }: AppShellProps) {
     setBrowserRequest(undefined);
     setActiveTabId(undefined);
     terminalSequenceRef.current = 0;
+    browserSequenceRef.current = 0;
   }, [
     sessionState.snapshot?.session.id,
     sessionState.snapshot?.session.executionMode,
@@ -749,28 +751,33 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }
 
-  function openTool(tool: WorkspaceToolKind): void {
+  function openTool(tool: WorkspaceToolKind): string | undefined {
     if (!availableTools.includes(tool)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
-    const existing = tool === "terminal"
+    const existing = tool === "terminal" || tool === "browser"
       ? undefined
       : openTabs.find((tab) => tab.kind === tool);
-    const tab = existing ?? {
-      id: tool === "terminal" ? `terminal-${++terminalSequenceRef.current}` : tool,
-      kind: tool,
-      ...(tool === "terminal"
-        ? { title: `终端 ${terminalSequenceRef.current}` }
-        : {}),
-    } satisfies WorkspaceTab;
+    let tab = existing;
+    if (!tab && tool === "terminal") {
+      const index = ++terminalSequenceRef.current;
+      tab = { id: `terminal-${index}`, kind: tool, title: `终端 ${index}` };
+    } else if (!tab && tool === "browser") {
+      const index = ++browserSequenceRef.current;
+      tab = { id: `browser-${index}`, kind: tool, title: index === 1 ? "新标签页" : `新标签页 ${index}` };
+    } else if (!tab) {
+      tab = { id: tool, kind: tool };
+    }
     if (!existing) setOpenTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
     setDockOpen(true);
+    return tab.id;
   }
 
   function handleOpenBrowser(url: string): void {
-    openTool("browser");
-    setBrowserRequest({ url, id: ++fileOpenSequenceRef.current });
+    const browserId = openTool("browser");
+    if (!browserId) return;
+    setBrowserRequest({ browserId, url, id: ++fileOpenSequenceRef.current });
   }
 
   function handleOpenReview(request: { runId: string; path?: string; itemId?: string }): void {
@@ -806,6 +813,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function closeTab(tabId: string): void {
+    if (browserRequest?.browserId === tabId) setBrowserRequest(undefined);
     setOpenTabs((current) => {
       const index = current.findIndex((tab) => tab.id === tabId);
       const next = current.filter((tab) => tab.id !== tabId);
@@ -910,6 +918,10 @@ export function AppShell({ runtime }: AppShellProps) {
       <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
     </>
   ) : currentSnapshot && !isDraft ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} /> : null;
+
+  const workspaceDockActions = openTabs.find((tab) => tab.id === activeTabId)?.kind === "browser"
+    ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
+    : workspaceActions;
 
   return (
     <ArtifactProvider value={currentSnapshot ? {
@@ -1083,6 +1095,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 <ExecutionFeed
                   items={currentSnapshot.items}
                   resultItems={completeSessionItems.items}
+                  projectless={currentSnapshot.session.projectless === true}
                   runs={currentSnapshot.runs}
                   models={modelState.list?.models ?? []}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
@@ -1181,7 +1194,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
             {dockOpen && availableTools.length > 0 && (
               <WorkspaceDock
-                actions={workspaceActions}
+                actions={workspaceDockActions}
                 activeTabId={activeTabId}
                 availableTools={availableTools}
                 expanded={dockExpanded}
@@ -1237,17 +1250,14 @@ export function AppShell({ runtime }: AppShellProps) {
                     );
                   }
                   if (tab.kind === "browser") return <BrowserPanel
-                    key={executionKey} sessionId={currentSnapshot.session.id} executionKey={executionKey}
-                    active={dockOpen && activeTabId === tab.id} request={browserRequest}
-                    onFeedback={handleReviewFeedback} feedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
-                    terminalAvailable={sessionHasProject} onTerminal={() => openTool("terminal")}
+                    key={executionKey} browserId={tab.id} sessionId={currentSnapshot.session.id} executionKey={executionKey}
+                    active={dockOpen && activeTabId === tab.id}
+                    request={browserRequest?.browserId === tab.id ? { url: browserRequest.url, id: browserRequest.id } : undefined}
                   />;
                   return (
-                    <WorkspaceExplorer
+                  <WorkspaceExplorer
                       sessionId={currentSnapshot.session.id}
                       executionKey={executionKey}
-                      onFeedback={handleReviewFeedback}
-                      feedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
                       layout={dockExpanded ? "expanded" : "side"}
                       openRequest={explorerOpenRequest}
                     />
