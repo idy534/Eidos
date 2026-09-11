@@ -527,7 +527,7 @@ Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受�
 
 本轮实现沿用 `Renderer → typed preload IPC → Main → RuntimeClient → WorkspaceExplorerApplication → WorkspaceReader`。Main 的 `ArtifactPreviewManager` 只保存短期资源授权和原生网页视图。文件权限、Workspace 身份和有界读取仍由 Runtime 判定；Renderer 和网页不直接使用 Node 文件 API。资源授权绑定 WebContents、Session、execution root、Workspace 身份和所选文件版本。每个资源块都重新检查版本。文本资源完整扫描后才释放原始字节；扫描产生脱敏替换时，原始资源会被拒绝。
 
-图片/PDF 在主 Renderer 中作为被动资源加载。可运行的 HTML 使用没有 preload 的 sandboxed `WebContentsView`，并使用独立临时 Session。该视图不共享主应用的 IPC 或 Cookie。Main 注册资源协议、拒绝额外权限和下载，并在生命周期结束时清理视图及授权。Browser 的网页和滚动状态不是持久业务事实。网页地址识别在 Renderer 边界使用直接依赖的 `tldts`；不能识别为地址的无空格输入转为 Google 搜索。当前网页面板不渲染标注入口。
+图片/PDF 在主 Renderer 中作为被动资源加载。可运行的 HTML 使用没有 preload 的 sandboxed `WebContentsView`，并使用独立临时 Session。该视图不共享主应用的 IPC 或 Cookie。Main 注册资源协议、拒绝额外权限和下载，并在生命周期结束时清理视图及授权。Browser 的网页和滚动状态不是持久业务事实。网页地址识别在 Renderer 边界使用直接依赖的 `tldts`；不能识别为地址的无空格输入转为 Google 搜索。刷新通过 Renderer 状态触发一次逆时针半圈图标动画，不显示独立加载提示。当前网页面板不渲染标注入口。
 
 `record_workspace_change` 在同一 SQLite 事务内记录准备后的 Diff 和 `item.updated` Event。Event/Outbox 将更新后的 Item 投影为 `item/updated`。Desktop 的“最近一轮”从已有 Item/ToolCall 读取，不维护另一个 Run 成功状态。准备中、完成和失败仍使用原 ToolCall 状态。原始模型参数流不作为可执行补丁展示。
 

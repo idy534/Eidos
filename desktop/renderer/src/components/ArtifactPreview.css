@@ -52,9 +52,20 @@
   background: transparent;
 }
 .browser-navigation__button--refresh svg {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.1rem;
+  height: 1.1rem;
   stroke-width: 1.45;
+}
+.browser-navigation__refresh-icon--refreshing {
+  transform-origin: center;
+  animation: browser-refresh-half-turn 260ms ease-out;
+}
+@keyframes browser-refresh-half-turn {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-180deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .browser-navigation__refresh-icon--refreshing { animation: none; }
 }
 .browser-navigation__address {
   width: 100%;

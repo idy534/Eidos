@@ -270,6 +270,10 @@ describe("artifact previews and feedback", () => {
       await Promise.resolve();
     });
     expect(address).toHaveValue("example.com/docs");
+    expect(screen.queryByText("页面正在加载…")).not.toBeInTheDocument();
+    const refresh = screen.getByRole("button", { name: "刷新" });
+    fireEvent.click(refresh);
+    expect(refresh.querySelector("svg")).toHaveClass("browser-navigation__refresh-icon--refreshing");
     expect(screen.queryByRole("button", { name: "标注" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "开发终端" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "网页菜单" })).not.toBeInTheDocument();

@@ -54,6 +54,7 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
   const [address, setAddress] = useState("");
   const [page, setPage] = useState<BrowserPageState>({ url: "", title: "", loading: false });
   const [error, setError] = useState("");
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     generation.current++;
@@ -76,6 +77,10 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
         setAddress(next.url || target);
       }
     } catch (cause) { if (token === generation.current) { setError(userFacingError(cause)); setPage((current) => ({ ...current, loading: false })); } }
+  }
+  function refresh(): void {
+    setRefreshVersion((version) => version + 1);
+    void open(page.url);
   }
   useEffect(() => { if (request) void open(request.url); }, [request?.id, executionKey]);
 
@@ -114,8 +119,8 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
         <button type="button" className="browser-navigation__button" aria-label="前进" title="前进" disabled>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
         </button>
-        <button type="button" className="browser-navigation__button browser-navigation__button--refresh" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={() => void open(page.url)}>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 10.5a8.5 8.5 0 0 0-15.2-4L3 8" /><path d="M3 4.5V8h3.5" /><path d="M3.5 13.5a8.5 8.5 0 0 0 15.2 4L21 16" /><path d="M21 19.5V16h-3.5" /></svg>
+        <button type="button" className="browser-navigation__button browser-navigation__button--refresh" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={refresh}>
+          <svg key={refreshVersion} className={refreshVersion > 0 ? "browser-navigation__refresh-icon--refreshing" : undefined} viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 10.5a8.5 8.5 0 0 0-15.2-4L3 8" /><path d="M3 4.5V8h3.5" /><path d="M3.5 13.5a8.5 8.5 0 0 0 15.2 4L21 16" /><path d="M21 19.5V16h-3.5" /></svg>
         </button>
       </div>
       <input
@@ -127,7 +132,6 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
       />
     </form>
     {(error || page.error) && <p role="alert">{error || page.error}</p>}
-    {page.loading && <p role="status">页面正在加载…</p>}
     <div ref={viewport} className="browser-viewport">
       {!page.url && !page.loading && <div className="browser-empty" role="status">
         <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11.5" /><ellipse cx="16" cy="16" rx="4.5" ry="11.5" /><path d="M4.5 16h23" /></svg>
