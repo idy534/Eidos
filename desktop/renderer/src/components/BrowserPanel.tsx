@@ -115,7 +115,7 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
         </button>
         <button type="button" className="browser-navigation__button browser-navigation__button--refresh" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={() => void open(page.url)}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.7 6.1A6.5 6.5 0 0 0 4 9.3" /><path d="M4 5.5v3.8h3.8" /><path d="M3.3 13.9A6.5 6.5 0 0 0 16 10.7" /><path d="M16 14.5v-3.8h-3.8" /></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 10.5a8.5 8.5 0 0 0-15.2-4L3 8" /><path d="M3 4.5V8h3.5" /><path d="M3.5 13.5a8.5 8.5 0 0 0 15.2 4L21 16" /><path d="M21 19.5V16h-3.5" /></svg>
         </button>
       </div>
       <input

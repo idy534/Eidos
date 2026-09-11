@@ -1,5 +1,4 @@
 .workspace-body {
-  --workspace-action-rail-width: 5rem;
   position: relative;
   display: grid;
   flex: 1 1 auto;
@@ -88,11 +87,12 @@
 .workspace-dock-toggle {
   position: static;
   display: grid;
+  flex: 0 0 2.25rem;
   width: 2.25rem;
   height: 2.25rem;
   place-items: center;
   border: 0;
-  border-radius: 0.8rem;
+  border-radius: var(--radius);
   padding: 0;
   color: var(--muted);
   background: transparent;
@@ -100,23 +100,10 @@
   -webkit-app-region: no-drag !important;
 }
 
-.workspace-body__actions {
-  position: absolute;
-  top: 0.25rem;
-  right: 0.75rem;
-  z-index: 31;
-  display: flex;
-  width: var(--workspace-action-rail-width);
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.35rem;
-  -webkit-app-region: no-drag !important;
-}
-
 .workspace-dock-toggle:hover:not(:disabled),
 .workspace-dock-toggle[aria-expanded="true"] {
   color: var(--text);
-  background: var(--surface-selected);
+  background: var(--surface-hover);
 }
 
 .workspace-dock-toggle svg {
@@ -145,12 +132,13 @@
 
 .workspace-header-tools .icon-button {
   display: grid;
+  flex: 0 0 2.25rem;
   width: 2.25rem;
   height: 2.25rem;
   min-height: 2.25rem;
   place-items: center;
   border: 0;
-  border-radius: 0.8rem;
+  border-radius: var(--radius);
   padding: 0;
   color: var(--muted);
   background: transparent;
@@ -389,12 +377,13 @@ button.environment-popover__row:hover:not(:disabled) {
 .workspace-dock__add .dropdown-trigger,
 .workspace-dock__actions .icon-button {
   display: grid;
+  flex: 0 0 2.25rem;
   width: 2.25rem;
   height: 2.25rem;
   min-height: 2.25rem;
   place-items: center;
   border: 0;
-  border-radius: 0.8rem;
+  border-radius: var(--radius);
   padding: 0;
   color: var(--muted);
   background: transparent;
@@ -525,3 +514,56 @@ button.environment-popover__row:hover:not(:disabled) {
     border-color: var(--text);
   }
 }
+
+.session-header .session-header-actions { width: auto; flex: 0 0 auto; gap: 0.35rem; }
+.workspace-header-tools { flex: 0 0 auto; }
+
+/* Both drawers stay in layout while moving; flex width pushes the session aside. */
+.workspace-body {
+  display: flex;
+  --workspace-dock-width: 20rem;
+}
+.workspace-body .workspace-main-column {
+  flex: 1 1 0;
+  width: 0;
+  margin: 0;
+  transition: transform 280ms var(--apple-spring);
+}
+.workspace-body .workspace-main-column--hidden {
+  display: flex;
+  transform: translateX(-100%);
+  pointer-events: none;
+}
+.workspace-drawer {
+  flex: 0 0 auto;
+  width: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  transform: translateX(100%);
+  transition: width 280ms var(--apple-spring), transform 280ms var(--apple-spring);
+}
+.workspace-body--with-dock .workspace-drawer {
+  width: min(var(--workspace-dock-width), calc(100% - 16rem));
+  transform: translateX(0);
+}
+.workspace-body--expanded .workspace-drawer { width: 100%; }
+.workspace-drawer > .workspace-dock { width: 100%; height: 100%; }
+.workspace-dock-resize-handle { flex: 0 0 0.5rem; }
+.workspace-body--resizing .workspace-drawer { transition: none; }
+.workspace-body .session-header,
+.workspace-dock__header {
+  height: 3.5rem;
+  min-height: 3.5rem;
+  max-height: 3.5rem;
+  box-sizing: border-box;
+  flex-wrap: nowrap;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .workbench, .sidebar, .workspace-drawer, .workspace-body .workspace-main-column { transition: none; }
+}
+
+/* Each pane owns its header; the drawer remains flush with the session top. */
+.workspace-main-column > .session-header { flex: 0 0 3.5rem; }

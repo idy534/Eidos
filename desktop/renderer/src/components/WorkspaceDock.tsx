@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { DropdownMenu } from "./DropdownMenu.js";
 import "./WorkspaceDock.css";
 
-export type WorkspaceToolKind = "review" | "terminal" | "files" | "browser";
+export type WorkspaceToolKind = "text-review" | "review" | "terminal" | "files" | "browser";
 
 export interface WorkspaceTab {
   id: string;
@@ -24,7 +24,8 @@ interface WorkspaceDockProps {
 }
 
 const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
-  review: "审阅",
+  "text-review": "文本审查",
+  review: "Git",
   terminal: "终端",
   files: "文件",
   browser: "网页",

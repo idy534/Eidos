@@ -502,7 +502,7 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
       <header className="turn-result-card__header">
         <span className="turn-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={first.path} /></span>
         <div className="turn-result-card__title">
-          <strong>{title}</strong>
+          <button type="button" className="turn-result-card__title-link" disabled={!canReview} onClick={() => review(projection.textChanges.length === 1 ? first : undefined)} title="打开文本修改审查"><strong>{title}</strong></button>
           <ChangeStats additions={projection.additions} deletions={projection.deletions} cumulative={projection.textChanges.some((change) => change.cumulative)} />
         </div>
         <div className="turn-result-card__actions">
@@ -512,7 +512,7 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
             size="small"
             className="turn-result-card__review"
             disabled={!canReview}
-            title={canReview ? "在右侧打开本轮修改" : "当前环境没有可用的 Git 审查面板。"}
+            title={canReview ? "在右侧打开本轮修改" : "当前会话没有可用的文本审查面板。"}
             onClick={() => review()}
           >
             审核

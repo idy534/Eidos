@@ -44,25 +44,17 @@
   stroke-linejoin: round;
 }
 .browser-navigation__button--refresh {
-  width: 2.15rem;
-  height: 2.15rem;
-  min-height: 2.15rem;
-  border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
-  border-radius: 50%;
-  background: var(--surface);
-  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+  width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+  border: 0;
+  border-radius: .6rem;
+  background: transparent;
 }
-.browser-navigation__button--refresh:hover:not(:disabled) {
-  border-color: var(--line);
-  background: var(--surface-hover);
-  transform: translateY(-1px);
-}
-.browser-navigation__button--refresh:active:not(:disabled) { transform: scale(.94); }
-.browser-navigation__button--refresh:disabled { opacity: .45; }
 .browser-navigation__button--refresh svg {
-  width: 1.15rem;
-  height: 1.15rem;
-  stroke-width: 1.7;
+  width: 1.25rem;
+  height: 1.25rem;
+  stroke-width: 1.45;
 }
 .browser-navigation__address {
   width: 100%;

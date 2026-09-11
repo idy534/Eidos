@@ -32,6 +32,7 @@ export function saveCollapsedProjects(collapsed: ReadonlySet<string>): void {
 }
 
 interface Props {
+  collapsed?: boolean;
   sessions: Session[];
   projects: Project[];
   selectedId: string | undefined;
@@ -71,6 +72,7 @@ type ContextMenuState =
     };
 
 export function SessionSidebar({
+  collapsed = false,
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
@@ -130,7 +132,7 @@ export function SessionSidebar({
   const dotClass = `runtime-pulse-dot runtime-pulse-dot--${runtimePresentation.tone}${runtimePresentation.animated ? " runtime-pulse-dot--animated" : ""}`;
 
   return (
-    <aside className="sidebar" aria-label="任务导航">
+    <aside className="sidebar" aria-label="任务导航" inert={collapsed} aria-hidden={collapsed}>
       {navigationSlot && <div className="sidebar-top-bar">{navigationSlot}</div>}
       <div className="brand-row">
         <span className="brand-mark" aria-hidden="true">

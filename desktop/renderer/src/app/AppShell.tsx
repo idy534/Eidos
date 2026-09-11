@@ -19,6 +19,7 @@ import { ProjectPicker } from "../components/ProjectPicker.js";
 import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
 import { ComposerSlot } from "../components/ComposerSlot.js";
 import { Composer } from "../components/Composer.js";
+import { TextReviewPanel } from "../components/TextReviewPanel.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import {
   WorkspaceExplorer,
@@ -147,6 +148,13 @@ export function AppShell({ runtime }: AppShellProps) {
     requestId: number;
   }>();
   const [dockOpen, setDockOpen] = useState(false);
+  const [dockRetained, setDockRetained] = useState(false);
+  useEffect(() => {
+    if (dockOpen) { setDockRetained(true); return; }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { setDockRetained(false); return; }
+    const timer = window.setTimeout(() => setDockRetained(false), 280);
+    return () => window.clearTimeout(timer);
+  }, [dockOpen]);
   const [dockExpanded, setDockExpanded] = useState(false);
   const [dockWidth, setDockWidth] = useState<number>();
   const [environmentPopoverOpen, setEnvironmentPopoverOpen] = useState(false);
@@ -656,7 +664,7 @@ export function AppShell({ runtime }: AppShellProps) {
     : "empty";
   const availableTools: WorkspaceToolKind[] = sessionHasProject
     ? sessionHasGit
-      ? ["review", "terminal", "files", "browser"]
+      ? ["terminal", "files", "browser"]
       : ["terminal", "files", "browser"]
     : currentSnapshot && !isDraft ? ["files", "browser"] : [];
 
@@ -716,6 +724,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   function handleDockResizePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     if (dockExpanded) return;
+    workspaceBodyRef.current?.classList.add("workspace-body--resizing");
     dockResizeRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -732,7 +741,10 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function finishDockResize(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (dockResizeRef.current?.pointerId === event.pointerId) dockResizeRef.current = undefined;
+    if (dockResizeRef.current?.pointerId === event.pointerId) {
+      dockResizeRef.current = undefined;
+      workspaceBodyRef.current?.classList.remove("workspace-body--resizing");
+    }
   }
 
   function handleDockResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
@@ -752,7 +764,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function openTool(tool: WorkspaceToolKind): string | undefined {
-    if (!availableTools.includes(tool)) return;
+    if (!availableTools.includes(tool) && !(tool === "review" && sessionHasGit)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
     const existing = tool === "terminal" || tool === "browser"
@@ -781,8 +793,10 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function handleOpenReview(request: { runId: string; path?: string; itemId?: string }): void {
-    if (!sessionHasGit) return;
-    openTool("review");
+    if (!currentSnapshot) return;
+    setOpenTabs((tabs) => tabs.some((tab) => tab.kind === "text-review") ? tabs : [...tabs, { id: "text-review", kind: "text-review" }]);
+    setActiveTabId("text-review");
+    setDockOpen(true);
     setReviewRequest({ ...request, requestId: ++fileOpenSequenceRef.current });
   }
 
@@ -873,15 +887,6 @@ export function AppShell({ runtime }: AppShellProps) {
               loading={completeSessionItems.loading}
               error={completeSessionItems.error}
             />
-            {sessionHasGit && (
-              <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
-                <span>变更</span>
-                <span className="git-line-summary" aria-label="修改行数">
-                  <ins>+{gitReviewState.summary?.additions ?? 0}</ins>
-                  <del>-{gitReviewState.summary?.deletions ?? 0}</del>
-                </span>
-              </button>
-            )}
             <div className="environment-popover__row">
               <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
               {sessionHasGit && (
@@ -920,9 +925,6 @@ export function AppShell({ runtime }: AppShellProps) {
     ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
     : null;
 
-  const workspaceDockActions = dockExpanded
-    ? <>{workspaceEnvironment}{workspaceToggle}</>
-    : workspaceToggle;
 
   return (
     <ArtifactProvider value={currentSnapshot ? {
@@ -931,10 +933,11 @@ export function AppShell({ runtime }: AppShellProps) {
       openFile: handleOpenFileInDock,
       openBrowser: handleOpenBrowser,
       openExternal: handleOpenExternal,
-      openReview: sessionHasGit ? handleOpenReview : undefined,
+      openReview: handleOpenReview,
     } : undefined}>
     <main className={`workbench${sidebarOpen ? "" : " workbench--sidebar-collapsed"}`}>
       <SessionSidebar
+        collapsed={!sidebarOpen}
         sessions={sessionState.sessions}
         projects={sessionState.projects}
         selectedId={sessionState.navigationSessionId ?? currentSnapshot?.session.id}
@@ -1016,6 +1019,7 @@ export function AppShell({ runtime }: AppShellProps) {
           />
         ) : currentSnapshot ? (
           <>
+
             <div
               ref={workspaceBodyRef}
               className={`workspace-body${dockOpen ? " workspace-body--with-dock" : " workspace-body--session-centered"}${dockExpanded ? " workspace-body--expanded" : ""}`}
@@ -1023,7 +1027,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 "--workspace-dock-width": `${dockWidth}px`,
               } as CSSProperties}
             >
-            <div className={`workspace-main-column${dockExpanded ? " workspace-main-column--hidden" : ""}`}>
+            <div className={`workspace-main-column${dockExpanded ? " workspace-main-column--hidden" : ""}`} inert={dockExpanded}>
             <header className="workspace-header session-header">
               {isRenamingThisSession ? (
                 <form
@@ -1083,10 +1087,11 @@ export function AppShell({ runtime }: AppShellProps) {
                   )}
                 </div>
               )}
-              {!dockExpanded && workspaceEnvironment && (
-                <div className="session-header-actions">{workspaceEnvironment}</div>
+              {workspaceToggle && (
+                <div className="session-header-actions">{workspaceEnvironment}{!dockOpen && workspaceToggle}</div>
               )}
             </header>
+
 
             <div className="workspace-content">
               <div className="workspace-main">
@@ -1174,9 +1179,7 @@ export function AppShell({ runtime }: AppShellProps) {
             </div>
             </div>
 
-            {!dockOpen && workspaceToggle && (
-              <div className="workspace-body__actions">{workspaceToggle}</div>
-            )}
+
 
             {dockOpen && !dockExpanded && (
               <div
@@ -1196,9 +1199,10 @@ export function AppShell({ runtime }: AppShellProps) {
               />
             )}
 
-            {dockOpen && availableTools.length > 0 && (
+            <div className="workspace-drawer" inert={!dockOpen} aria-hidden={!dockOpen}>
+            {(dockOpen || dockRetained) && availableTools.length > 0 && (
               <WorkspaceDock
-                actions={workspaceDockActions}
+                actions={workspaceToggle}
                 activeTabId={activeTabId}
                 availableTools={availableTools}
                 expanded={dockExpanded}
@@ -1208,6 +1212,11 @@ export function AppShell({ runtime }: AppShellProps) {
                 onSelectTab={setActiveTabId}
                 onToggleExpanded={() => setDockExpanded((expanded) => !expanded)}
                 renderTab={(tab) => {
+                  if (tab.kind === "text-review" && reviewRequest) return <TextReviewPanel
+                    key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}
+                    runId={reviewRequest.runId} path={reviewRequest.path} items={completeSessionItems.items}
+                    loading={completeSessionItems.loading} error={completeSessionItems.error}
+                    onFeedback={handleReviewFeedback} disabled={Boolean(activeRun) || runState.isSubmitting} />;
                   if (tab.kind === "review") {
                     return sessionHasGit ? (
                       <GitChangesPanel
@@ -1269,6 +1278,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 }}
               />
             )}
+            </div>
             </div>
           </>
         ) : (

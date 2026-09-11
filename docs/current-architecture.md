@@ -531,7 +531,7 @@ Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受�
 
 `record_workspace_change` 在同一 SQLite 事务内记录准备后的 Diff 和 `item.updated` Event。Event/Outbox 将更新后的 Item 投影为 `item/updated`。Desktop 的“最近一轮”从已有 Item/ToolCall 读取，不维护另一个 Run 成功状态。准备中、完成和失败仍使用原 ToolCall 状态。原始模型参数流不作为可执行补丁展示。
 
-Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和格式化产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 只投影产物卡，不投影文本修改卡。文本修改按路径归组；重复路径保留各次完整补丁的累计增删，并显示“累计”及非净差异说明。任一次缺少补丁时，统计保持未知。HTML 卡片通过现有受控文件预览读取当前 `<title>`，不把文件名作为正文标题。`OutputContent` 在环境信息中按路径保留当前 Session 最新产物记录。Files 只负责文件树和预览，不再负责结果列表。
+Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和格式化产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组；重复路径保留各次完整补丁的累计增删，并显示“累计”及非净差异说明。任一次缺少补丁时，统计保持未知。HTML 卡片通过现有受控文件预览读取当前 `<title>`，不把文件名作为正文标题。`OutputContent` 在环境信息中按路径保留当前 Session 最新产物记录。Files 只负责文件树和预览，不再负责结果列表。
 
 修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览和 Main 的受控系统应用打开入口；DOCX 没有内置预览时只展示系统应用打开。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
 

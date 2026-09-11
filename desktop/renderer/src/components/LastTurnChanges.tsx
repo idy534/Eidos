@@ -4,14 +4,14 @@ import type { Item } from "../contracts.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { userFacingError } from "../session-state.js";
 
-export function LastTurnChanges({ sessionId, previousItemId, items, runId, focusPath, onFeedback, disabled }: {
-  sessionId: string; previousItemId?: string | undefined; items: Item[]; runId?: string | undefined; focusPath?: string | undefined; onFeedback?: ((text: string) => Promise<void>) | undefined; disabled: boolean;
+export function LastTurnChanges({ sessionId, previousItemId, items, runId, focusPath, onFeedback, disabled, entireTask = false }: {
+  entireTask?: boolean; sessionId: string; previousItemId?: string | undefined; items: Item[]; runId?: string | undefined; focusPath?: string | undefined; onFeedback?: ((text: string) => Promise<void>) | undefined; disabled: boolean;
 }) {
   const actions = useArtifacts();
   const [older, setOlder] = useState<Item[]>([]);
   const [cursor, setCursor] = useState(previousItemId);
   const [loading, setLoading] = useState(false);
-  const currentItems = [...new Map([...older, ...items].map((item) => [item.id, item])).values()].filter((item) => item.runId === runId).sort((a, b) => a.ordinal - b.ordinal);
+  const currentItems = [...new Map([...older, ...items].map((item) => [item.id, item])).values()].filter((item) => entireTask || item.runId === runId).sort((a, b) => a.createdAt - b.createdAt || a.ordinal - b.ordinal);
   const changes = currentItems.filter((item) => item.toolCall?.changeDiff);
   const matchesFocus = (file: { oldPath: string; newPath: string }): boolean => (
     !focusPath || file.oldPath === focusPath || file.newPath === focusPath
@@ -36,12 +36,12 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   async function send() {
     if (!onFeedback) return;
     setBusy(true); setError("");
-    try { await onFeedback(`请处理最近一轮的修改反馈。以下位置属于工具执行时的 Diff，请先核对当前文件。\n${anchor}\n用户意见：${body}`); setBody(""); setAnchor(""); }
+    try { await onFeedback(`请处理以下文本修改反馈。以下位置属于工具执行时的 Diff，请先核对当前文件。\n${anchor}\n用户意见：${body}`); setBody(""); setAnchor(""); }
     catch (cause) { setError(userFacingError(cause)); }
     finally { setBusy(false); }
   }
-  return <section className="last-turn-changes" aria-label="最近一轮修改">
-    <p>这里按工具执行顺序展示本轮文件修改。准备中的补丁不代表已经写入，失败的工具可能只完成部分写入。Shell 产生的其他改动请查看仓库范围。</p>
+  return <section className="last-turn-changes" aria-label={entireTask ? "整个任务修改记录" : "最近一轮修改"}>
+    <p>这里按工具执行顺序展示文件修改记录。准备中的补丁不代表已经写入，失败的工具可能只完成部分写入。只有路径而没有补丁的记录无法展示历史差异。</p>
     {cursor && <button disabled={loading} onClick={() => void loadOlder()}>加载本轮更早的记录</button>}
     {error && <p role="alert">{error}</p>}
     {changes.map((item) => {
@@ -49,12 +49,12 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
       try {
         const files = parseDiff(call.changeDiff!).filter(matchesFocus);
         if (!files.length) return null;
-        return <article key={item.id}><strong>{call.status === "running" ? "准备或执行中" : call.status === "completed" ? "执行完成" : "未完整完成"}</strong>
+        return <article key={item.id}>{entireTask && <p>轮次：{item.runId}</p>}<strong>{call.status === "running" ? "准备或执行中" : call.status === "completed" ? "执行完成" : "未完整完成"}</strong>
           {files.map((file) => <div key={`${file.oldPath}:${file.newPath}`}><button title="打开当前文件，历史内容以此处 Diff 为准" onClick={() => actions?.openFile(file.newPath === "/dev/null" ? file.oldPath : file.newPath)}>{file.newPath === "/dev/null" ? file.oldPath : file.newPath}</button>
             <Diff viewType="unified" diffType={file.type} hunks={file.hunks} gutterEvents={{ onClick: ({ change, side }) => {
               if (!change) return;
               const line = change.type === "normal" ? side === "old" ? change.oldLineNumber : change.newLineNumber : change.lineNumber;
-              setAnchor(`Run: ${runId}\nToolCall: ${call.id}\n文件: ${side === "old" ? file.oldPath : file.newPath}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`);
+              setAnchor(`Run: ${item.runId}\nToolCall: ${call.id}\n文件: ${side === "old" ? file.oldPath : file.newPath}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`);
             } }}>{(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}</Diff>
           </div>)}
         </article>;

@@ -327,7 +327,7 @@ function RunSegment({
             && TERMINAL_RUN_STATUSES.has(run.status)
             && segment.response.every((responseItem) => responseItem.status !== "in_progress")}
           resultItems={resultItems}
-          showTextChanges={!projectless}
+          showTextChanges={true}
           onFeedback={onFeedback}
           onRegenerate={onRegenerate}
         />
@@ -335,7 +335,7 @@ function RunSegment({
       {isLast
         && segment.response.length === 0
         && TERMINAL_RUN_STATUSES.has(run.status)
-        && <TurnResults run={run} items={resultItems} showTextChanges={!projectless} />}
+        && <TurnResults run={run} items={resultItems} showTextChanges={true} />}
     </>
   );
 }

@@ -152,15 +152,16 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   min-height: 0;
   overflow: hidden;
   background: var(--surface);
-  transition: grid-template-columns 200ms ease;
+  transition: grid-template-columns 280ms var(--apple-spring);
 }
 
 .workbench--sidebar-collapsed {
-  grid-template-columns: 1fr;
+  grid-template-columns: 0rem minmax(0, 1fr);
 }
 
 .workbench--sidebar-collapsed .sidebar {
-  display: none;
+  transform: translateX(-100%);
+  visibility: hidden;
 }
 
 .workspace-body--session-centered,
@@ -174,6 +175,10 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .sidebar {
+  width: 16rem;
+  min-width: 0;
+  overflow: hidden;
+  transition: transform 280ms var(--apple-spring), visibility 280ms;
   position: sticky;
   top: 0;
   display: flex;
@@ -4469,11 +4474,10 @@ button.composer-context-project--empty:hover:not(:disabled) {
 }
 
 @media (max-width: 760px) {
-  .workbench { grid-template-columns: 1fr; height: auto; min-height: 100vh; overflow: visible; }
-  .sidebar { position: static; height: auto; padding: 0.75rem; border-right: 0; border-bottom: 1px solid var(--line); }
-  .brand-row, .sidebar nav, .settings-entry { display: none; }
+  .workbench { grid-template-columns: 16rem minmax(0, 1fr); }
+  .workbench--sidebar-collapsed { grid-template-columns: 0rem minmax(0, 1fr); }
   .primary-action-btn--compact { width: auto; margin: 0; }
-  .workspace { height: calc(100vh - 4rem); min-height: calc(100vh - 4rem); }
+  .workspace { height: 100vh; min-height: 0; }
   .workspace-header { padding: 1rem; }
   .session-header { flex-wrap: wrap; }
   .session-header-actions { width: 100%; justify-content: space-between; }
