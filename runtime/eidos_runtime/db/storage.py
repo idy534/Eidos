@@ -1235,8 +1235,8 @@ class SessionStore:
         *,
         diff: str,
         base_sha256: str | None,
-    ) -> None:
-        self._repository(self._execution).record_workspace_change(
+    ) -> CommittedMutation[dict[str, object]]:
+        return self._repository(self._execution).record_workspace_change(
             item_id,
             diff=diff,
             base_sha256=base_sha256,

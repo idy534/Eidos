@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import heapq
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -49,11 +50,13 @@ class WorkspaceDirectoryListing:
 @dataclass(frozen=True)
 class WorkspaceFilePreview:
     path: str
-    kind: Literal["text", "markdown", "code", "unavailable"]
+    kind: Literal["text", "markdown", "code", "image", "pdf", "html", "unavailable"]
     size_bytes: int
     truncated: bool
     content: str | None = None
     language: str | None = None
+    version: str | None = None
+    mime_type: str | None = None
     reason: Literal["binary", "unsupported"] | None = None
 
 
@@ -73,6 +76,24 @@ _CODE_LANGUAGES = {
     ".ts": "typescript", ".tsx": "tsx", ".xml": "xml",
     ".yaml": "yaml", ".yml": "yaml", ".zsh": "zsh",
 }
+
+
+_ASSET_MIMES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif", ".svg": "image/svg+xml",
+    ".pdf": "application/pdf", ".html": "text/html", ".htm": "text/html",
+    ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript",
+    ".json": "application/json", ".woff": "font/woff", ".woff2": "font/woff2",
+}
+
+
+def preview_mime(suffix: str) -> str | None:
+    return _ASSET_MIMES.get(suffix.lower())
+
+
+def file_version(metadata: os.stat_result) -> str:
+    return hashlib.sha256(str((metadata.st_dev, metadata.st_ino, metadata.st_size,
+                              metadata.st_mtime_ns, metadata.st_ctime_ns)).encode()).hexdigest()
 
 
 def capture_workspace_identity(path: Path | str) -> WorkspaceIdentity:
@@ -169,6 +190,7 @@ class WorkspaceReader:
         *,
         limit: int,
         allow_truncation: bool = False,
+        offset: int = 0,
         cancel: threading.Event | None = None,
     ) -> tuple[bytes, os.stat_result, str, bool]:
         self._verify_root()
@@ -187,7 +209,10 @@ class WorkspaceReader:
                 raise WorkspacePathError("unsupported_file_hardlink")
             if before.st_size > limit and not allow_truncation:
                 raise WorkspacePathError("file_too_large")
-            remaining = min(before.st_size, limit)
+            if offset < 0 or offset > before.st_size:
+                raise WorkspacePathError("invalid_offset")
+            os.lseek(descriptor, offset, os.SEEK_SET)
+            remaining = min(before.st_size - offset, limit)
             chunks: list[bytes] = []
             while remaining > 0:
                 if cancel.is_set():
@@ -201,13 +226,13 @@ class WorkspaceReader:
             after = os.fstat(descriptor)
             if (
                 before.st_dev, before.st_ino, before.st_size,
-                before.st_mtime_ns, before.st_nlink,
+                before.st_mtime_ns, before.st_ctime_ns, before.st_nlink,
             ) != (
                 after.st_dev, after.st_ino, after.st_size,
-                after.st_mtime_ns, after.st_nlink,
+                after.st_mtime_ns, after.st_ctime_ns, after.st_nlink,
             ):
                 raise WorkspacePathError("workspace_changed")
-            if before.st_size <= limit and len(content) != before.st_size:
+            if len(content) != min(before.st_size - offset, limit):
                 raise WorkspacePathError("workspace_changed")
             return content, after, "/".join(parts), before.st_size > limit
         finally:
@@ -220,6 +245,13 @@ class WorkspaceReader:
             allow_truncation=True,
         )
         suffix = Path(normalized).suffix.lower()
+        version = file_version(metadata)
+        mime = preview_mime(suffix)
+        if mime and (mime.startswith("image/") or mime == "application/pdf"):
+            return WorkspaceFilePreview(
+                path=normalized, kind="pdf" if mime == "application/pdf" else "image",
+                size_bytes=metadata.st_size, truncated=False, version=version, mime_type=mime,
+            )
         if suffix in _UNSUPPORTED_SUFFIXES:
             return WorkspaceFilePreview(
                 path=normalized, kind="unavailable", size_bytes=metadata.st_size,
@@ -245,8 +277,11 @@ class WorkspaceReader:
                 truncated=truncated, reason="binary",
             )
         if suffix in _MARKDOWN_SUFFIXES:
-            kind: Literal["text", "markdown", "code"] = "markdown"
+            kind: Literal["text", "markdown", "code", "html"] = "markdown"
             language = None
+        elif suffix in {".html", ".htm"}:
+            kind = "html"
+            language = "html"
         elif suffix in _CODE_LANGUAGES:
             kind = "code"
             language = _CODE_LANGUAGES[suffix]
@@ -255,7 +290,7 @@ class WorkspaceReader:
             language = None
         return WorkspaceFilePreview(
             path=normalized, kind=kind, size_bytes=metadata.st_size,
-            truncated=truncated, content=content, language=language,
+            truncated=truncated, content=content, language=language, version=version, mime_type=mime,
         )
 
     def _iter_entries(

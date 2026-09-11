@@ -24,6 +24,7 @@ from eidos_runtime.application.git_workflow import (
     GitFetchPlan,
     GitMergePlan,
     GitMutationPlan,
+    GitHunkPlan,
     GitPullPlan,
     GitPushPlan,
     GitRebasePlan,
@@ -76,6 +77,9 @@ from eidos_runtime.protocol.methods import (
     SessionRestoreWorktreeRequestDto,
     SessionRestoreWorktreeResponseDto,
     SessionGitDiffRequestDto,
+    SessionGitReadPatchRequestDto,
+    SessionGitReadPatchResponseDto,
+    SessionGitApplyHunkRequestDto,
     SessionGitDiffResponseDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
@@ -154,7 +158,7 @@ MAX_SESSION_TITLE_BYTES = 120
 ResultT = TypeVar("ResultT", bound=MethodResultDto)
 BranchResultT = TypeVar("BranchResultT", bound=SessionGitMutationResponseDto)
 GitPlanT = TypeVar(
-    "GitPlanT", GitMutationPlan, GitBranchPlan, GitMergePlan, GitRebasePlan
+    "GitPlanT", GitMutationPlan, GitBranchPlan, GitMergePlan, GitRebasePlan, GitHunkPlan
 )
 
 
@@ -1310,6 +1314,20 @@ class SessionApplication:
             },
         )
 
+    def git_read_patch(self, request: SessionGitReadPatchRequestDto) -> SessionGitReadPatchResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._git_workflow.read_patch(request)
+
+    def git_apply_hunk(self, request: SessionGitApplyHunkRequestDto) -> SessionGitStageResponseDto:
+        if self._git_workflow is None:
+            raise ApplicationError("INTERNAL_ERROR")
+        return self._execute_git_mutation(
+            request, scope="session/gitApplyHunk", result_type=SessionGitStageResponseDto,
+            preflight=lambda: self._git_workflow.preflight_hunk(request),
+            execute=self._git_workflow.apply_hunk,
+        )
+
     def git_stage(
         self, request: SessionGitStageRequestDto
     ) -> SessionGitStageResponseDto:
@@ -1740,6 +1758,7 @@ class SessionApplication:
             | SessionGitUnstageRequestDto
             | SessionGitCommitRequestDto
             | SessionGitDiscardRequestDto
+            | SessionGitApplyHunkRequestDto
             | SessionGitMergeRequestDto
             | SessionGitMergeAbortRequestDto
             | SessionGitRebaseRequestDto

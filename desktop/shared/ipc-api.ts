@@ -73,6 +73,13 @@ export interface EidosRuntimeAPI {
     path: string,
     limit?: number,
   ): Promise<WorkspaceDirectoryListing>;
+  prepareWorkspacePreview(sessionId: string, path: string, version?: string): Promise<string>;
+  releaseWorkspacePreview(url: string): Promise<void>;
+  openBrowser(sessionId: string, url: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  setBrowserBounds(sessionId: string, bounds: import("./domain-contracts.js").BrowserBounds | null): Promise<void>;
+  closeBrowser(sessionId: string): Promise<void>;
+  readBrowserState(sessionId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  annotateBrowser(sessionId: string): Promise<import("./domain-contracts.js").BrowserAnnotation>;
   readWorkspaceFilePreview(
     sessionId: string,
     path: string,
@@ -93,7 +100,7 @@ export interface EidosRuntimeAPI {
   listProjects(): Promise<ProjectListResult>;
   deleteProject(projectId: string): Promise<DeleteProjectResult>;
   listSessions(): Promise<SessionListResult>;
-  readSession(sessionId: string): Promise<SessionSnapshot>;
+  readSession(sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;
   createSession(
     workspaceRoot: string | null,
@@ -134,6 +141,8 @@ export interface EidosRuntimeAPI {
     branch: string,
     operationId: string,
   ): Promise<SessionGitMutationResult>;
+  readGitReviewPatch(sessionId: string, path: string, layer: "staged" | "unstaged"): Promise<import("./domain-contracts.js").GitReviewPatch>;
+  applyGitHunk(sessionId: string, input: import("./domain-contracts.js").GitHunkInput): Promise<SessionGitMutationResult>;
   stageSessionGit(
     sessionId: string,
     paths: string[],

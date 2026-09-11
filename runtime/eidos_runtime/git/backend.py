@@ -74,6 +74,10 @@ class GitBackend(Protocol):
         path: str | None = None,
     ) -> GitDiffObservation: ...
 
+    def review_patch(self, cwd: Path, path: str, *, staged: bool) -> str: ...
+
+    def apply_review_hunk(self, cwd: Path, patch: str, *, action: str) -> None: ...
+
     def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
 
     def unstage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation: ...
@@ -316,6 +320,17 @@ class DulwichGitBackend:
                 for stat in captured.file_stats
             ),
         )
+
+    def review_patch(self, cwd: Path, path: str, *, staged: bool) -> str:
+        _validate_relative_path(path)
+        self._open_repository(cwd, "review-patch")
+        return self._git_cli.review_patch(cwd, path, staged=staged).decode("utf-8", errors="strict")
+
+    def apply_review_hunk(self, cwd: Path, patch: str, *, action: str) -> None:
+        self._open_repository(cwd, "review-hunk")
+        if action not in {"stage", "unstage", "discard"}:
+            raise ValueError("invalid hunk action")
+        self._git_cli.apply_review_hunk(cwd, patch.encode("utf-8"), action=action)
 
     def stage(self, cwd: Path, paths: tuple[str, ...]) -> GitStatusObservation:
         for path in paths:

@@ -82,6 +82,10 @@ class EventProjector:
             return (self._notification(method, {
                 "sessionId": run["sessionId"], "run": run,
             }),)
+        if event_type == "item.updated" and item is not None:
+            return (self._notification("item/updated", {
+                "sessionId": item["sessionId"], "runId": item["runId"], "item": item,
+            }),)
         if event_type == "item.started" and item is not None:
             started_item = (
                 item

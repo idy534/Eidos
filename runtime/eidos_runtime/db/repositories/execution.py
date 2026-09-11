@@ -1919,7 +1919,7 @@ class ExecutionRepository(Repository):
         *,
         diff: str,
         base_sha256: str | None,
-    ) -> None:
+    ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
             updated = connection.execute(
                 """
@@ -1931,6 +1931,10 @@ class ExecutionRepository(Repository):
             )
             if updated.rowcount != 1:
                 raise InvalidRunStateError("workspace change is unavailable")
+            item = connection.execute("SELECT session_id, run_id FROM items WHERE id = ?", (item_id,)).fetchone()
+            event = append_event(connection, EventType.ITEM_UPDATED, _now_ms(), {"item_id": item_id},
+                                 session_id=item["session_id"], run_id=item["run_id"])
+        return CommittedMutation(self.read_item(item_id), (event,))
 
     def enqueue_input(self, run_id: str, content: str) -> str:
         if not content or len(content.encode("utf-8")) > 64 * 1024:

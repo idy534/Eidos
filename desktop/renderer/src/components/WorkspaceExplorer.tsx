@@ -1,3 +1,4 @@
+import { ResultFiles } from "./ResultFiles.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
@@ -8,6 +9,8 @@ import type {
   WorkspaceFilePreview,
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
+import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
+import "./ArtifactPreview.css";
 import { MarkdownContent } from "./MarkdownContent.js";
 
 
@@ -23,7 +26,11 @@ export interface WorkspaceFileOpenRequest {
 }
 
 interface WorkspaceExplorerProps {
+  items?: import("../contracts.js").Item[];
+  resultsIncomplete?: boolean;
   sessionId: string;
+  onFeedback?: ((feedback: string) => Promise<void>) | undefined;
+  feedbackDisabled?: boolean;
   executionKey?: string;
   layout?: "side" | "expanded";
   openRequest?: WorkspaceFileOpenRequest | undefined;
@@ -217,7 +224,11 @@ function previewReadError(cause: unknown): string {
 }
 
 export function WorkspaceExplorer({
+  items = [],
+  resultsIncomplete = false,
   sessionId,
+  onFeedback,
+  feedbackDisabled = false,
   executionKey = sessionId,
   layout = "expanded",
   openRequest,
@@ -338,26 +349,31 @@ export function WorkspaceExplorer({
       });
   }, [listDirectory, loadingPath, nodes, sessionId]);
 
+  const previewSequences = useRef(new Map<string, number>());
   const openFile = useCallback((path: string, refresh = false) => {
     setOpenPreviewPaths((current) => current.includes(path) ? current : [...current, path]);
     setActivePreviewPath(path);
     if (!refresh && previewsRef.current[path]) return;
+    if (refresh) setPreviews((current) => { const next = { ...current }; delete next[path]; return next; });
     setPreviewLoadingPath(path);
     setError(undefined);
     selectedFileCallbackRef.current?.(path);
     const version = requestVersion.current;
+    const sequence = (previewSequences.current.get(path) ?? 0) + 1;
+    previewSequences.current.set(path, sequence);
     void readPreview(sessionId, path)
       .then((nextPreview) => {
-        if (requestVersion.current === version) {
+        if (requestVersion.current === version && previewSequences.current.get(path) === sequence) {
           setPreviews((current) => ({ ...current, [path]: nextPreview }));
         }
       })
       .catch((cause: unknown) => {
-        if (requestVersion.current !== version) return;
+        if (requestVersion.current !== version || previewSequences.current.get(path) !== sequence) return;
+        setPreviews((current) => { const next = { ...current }; delete next[path]; return next; });
         setError(previewReadError(cause));
       })
       .finally(() => {
-        if (requestVersion.current === version) {
+        if (requestVersion.current === version && previewSequences.current.get(path) === sequence) {
           setPreviewLoadingPath((current) => current === path ? undefined : current);
         }
       });
@@ -498,7 +514,7 @@ export function WorkspaceExplorer({
       }
     }
     for (const path of openPreviewPathsRef.current) {
-      if (paths.includes(path)) openFileRef.current(path, true);
+      if (paths.some((changed) => changed === path || path.startsWith(changed + "/"))) openFileRef.current(path, true);
     }
   }), [executionKey, sessionId, subscribeChanges]);
 
@@ -527,6 +543,7 @@ export function WorkspaceExplorer({
       aria-label="Workspace 文件浏览器"
     >
       <aside className="workspace-tree-pane" aria-label="文件树">
+        <ResultFiles items={items} incomplete={resultsIncomplete} />
         {error && <p className="workspace-explorer-error" role="alert">{error}</p>}
         {rootTruncated && <p className="workspace-tree-note">目录内容已截断</p>}
         {loadingRoot ? (
@@ -603,9 +620,12 @@ export function WorkspaceExplorer({
         {previewLoadingPath === activePreviewPath && !activePreview ? (
           <p className="workspace-preview-placeholder" role="status">正在读取文件…</p>
         ) : activePreview ? (
-          <WorkspacePreview preview={activePreview} />
+          <>
+            <div className="artifact-toolbar"><button type="button" onClick={() => openFile(activePreview.path, true)}>刷新</button><span className="artifact-version">当前文件 · {activePreview.sizeBytes} bytes</span></div>
+            <WorkspacePreview key={`${executionKey}:${activePreview.path}:${activePreview.version ?? ""}`} preview={activePreview} onFeedback={onFeedback} feedbackDisabled={feedbackDisabled} />
+          </>
         ) : (
-          <p className="workspace-preview-placeholder">选择文件以查看预览</p>
+          <div className="workspace-preview-placeholder">{activePreviewPath ? <button onClick={() => openFile(activePreviewPath, true)}>重新读取文件</button> : "选择文件以查看预览"}</div>
         )}
       </div>
     </section>
@@ -696,20 +716,42 @@ function WorkspaceFileIcon({ name }: { name: string }) {
   );
 }
 
-function WorkspacePreview({ preview }: { preview: WorkspaceFilePreview }) {
+function WorkspacePreview({ preview, onFeedback, feedbackDisabled }: { preview: WorkspaceFilePreview; onFeedback?: ((feedback: string) => Promise<void>) | undefined; feedbackDisabled: boolean }) {
+  const actions = useArtifacts();
+  const { url, error } = usePreviewUrl(["image", "pdf", "html"].includes(preview.kind) ? preview.path : undefined, preview.version);
+  const [source, setSource] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [feedbackError, setFeedbackError] = useState("");
+  const [sending, setSending] = useState(false);
+  const [location, setLocation] = useState("");
+  async function sendFeedback() {
+    if (!onFeedback || !feedback.trim()) return;
+    setSending(true); setFeedbackError("");
+    try {
+      await onFeedback(`请修改文件 ${preview.path}。\n预览版本：${preview.version ?? "未知"}。修改前请重新读取文件，确认版本。\n位置：${location || "整个文件"}\n用户意见：${feedback.trim()}`);
+      setFeedback("");
+    } catch (cause) { setFeedbackError(userFacingError(cause)); }
+    finally { setSending(false); }
+  }
   return (
     <article className="workspace-preview">
       {preview.truncated && <p className="workspace-preview-notice">预览已截断</p>}
-      {preview.kind === "unavailable" ? (
+      {(error || loadError) && <p role="alert">{error || loadError}</p>}
+      {preview.kind === "html" && <div className="artifact-toolbar"><button onClick={() => setSource(!source)}>{source ? "查看预览入口" : "查看源码"}</button><button disabled={!url || preview.truncated} onClick={() => { if (url) actions?.openBrowser(url); }}>打开交互预览</button></div>}
+      {preview.kind === "image" ? (url ? <img className="artifact-preview-image" src={url} alt={preview.path} onError={() => setLoadError("图片无法加载，请刷新或检查文件格式。")} /> : <p role="status">正在加载图片…</p>)
+      : preview.kind === "pdf" ? (url ? <iframe className="artifact-pdf" title={preview.path} src={url} onError={() => setLoadError("PDF 无法加载，请刷新或检查文件格式。")} /> : <p role="status">正在加载 PDF…</p>)
+      : preview.kind === "html" && !source ? <p>你可以在网页面板中操作页面、检查效果和留下标注。</p>
+      : preview.kind === "unavailable" ? (
         <div className="workspace-preview-unavailable">
           <strong>{preview.reason === "binary" ? "二进制文件无法预览" : "此文件类型暂不支持预览"}</strong>
           <span>请在外部编辑器中打开该文件。</span>
         </div>
       ) : preview.kind === "markdown" ? (
         <div className="workspace-markdown-preview">
-          <MarkdownContent content={preview.content ?? ""} />
+          <MarkdownContent content={preview.content ?? ""} documentPath={preview.path} />
         </div>
-      ) : preview.kind === "code" ? (
+      ) : preview.kind === "code" || preview.kind === "html" ? (
         <ShikiPreview
           code={preview.content ?? ""}
           {...(preview.language === undefined ? {} : { language: preview.language })}
@@ -717,6 +759,12 @@ function WorkspacePreview({ preview }: { preview: WorkspaceFilePreview }) {
       ) : (
         <pre className="workspace-text-preview"><code>{preview.content}</code></pre>
       )}
+      {onFeedback && preview.kind !== "unavailable" && <details className="artifact-feedback"><summary>提出修改意见</summary>
+        <input aria-label="文件反馈位置" placeholder="页码、标题或代码行" value={location} onChange={(event) => setLocation(event.target.value)} maxLength={1024} />
+        <textarea aria-label="文件反馈" maxLength={8192} value={feedback} onChange={(event) => setFeedback(event.target.value)} />
+        <button disabled={feedbackDisabled || sending || !feedback.trim()} onClick={() => void sendFeedback()}>发送反馈</button>
+        {feedbackError && <p role="alert">{feedbackError}</p>}
+      </details>}
     </article>
   );
 }

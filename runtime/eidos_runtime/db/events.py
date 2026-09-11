@@ -150,6 +150,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SEGMENT_STATUS_CHANGED: EntityStatusChangedPayload,
     EventType.STEP_STATUS_CHANGED: EntityStatusChangedPayload,
     EventType.ITEM_STARTED: ItemEventPayload,
+    EventType.ITEM_UPDATED: ItemEventPayload,
     EventType.ITEM_DELTA: ItemDeltaEventPayload,
     EventType.ITEM_COMPLETED: ItemEventPayload,
     EventType.APPROVAL_STATUS_CHANGED: EntityStatusChangedPayload,

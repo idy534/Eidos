@@ -31,13 +31,13 @@
 
 - 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件。写入工具支持普通 Workspace 写入和经审批的外部普通文件写入；普通 Skill 需要明确写入授权，`skills/.system` 始终禁写。已有文件使用受控原地写入，新文件使用排他提交；工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
 - `apply_patch` 的输入取决于当前 Run 的 ModelProfile capability。`supports_custom_tools=true` 且 `supports_tool_grammar=true` 时，模型收到 native Custom / FREEFORM Tool，并直接提交 Codex Patch 原文。其他 Provider 继续接受结构化 `{ "changes": [...] }` Function 参数。Function compatibility 路径仍使用 `CodexPatchEncoder`，模型提交旧的 raw `{ "patch": "..." }` 输入不会兼容。
-- Custom Tool 的 input delta 已在 Responses adapter 内部完成原文重组，但当前没有 patch preview event 或 Desktop live diff。完整 ToolCall 结束后，Runtime 才会解析、校验和提交 Workspace 变更。
+- Custom Tool 的 input delta 在 Responses adapter 内部重组。Desktop 在完整参数通过解析并完成 Prepare 后显示持久补丁更新；它不展示尚未校验的逐 token 补丁。Prepare 完成不代表文件提交成功。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
 - 本地 grammar 将上游 `add_line+` 改为 `add_line*`，以对齐 Codex Rust streaming parser 的空 Add 行为。Lark 对上游零宽文本正则的写法也使用了兼容 token。其他 Workspace 边界和文件安全限制不变。
 - `apply_patch` 支持 Add、Update、Delete、Move 和多文件 Patch，但不提供通用二进制编辑、浏览器自动化或 Artifact 发布工具。
 - Desktop Terminal 是用户直接操作的临时 PTY。它不属于 Agent Tool，不经过 Runtime Approval 或 Seatbelt，也不会写入 SQLite、Checkpoint、Conversation 或恢复状态。关闭 Terminal Tab、切换 Session execution binding、删除 Session、关闭窗口或退出应用都会终止对应 PTY。Review 和 Files 各只打开一个工具 Tab；Terminal 可以打开多个 Tab，Files 可以同时预览多个文件。
-- Projectless Conversation 不创建 Project，也不提供 Workspace Explorer、Git status、Git diff 或 Repository Intelligence。它使用系统私有锚点作为 workspace，并提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Desktop 不显示 Files 和文件树。它只支持 Local execution。
-- Workspace Explorer 当前只预览有界 UTF-8 text/code 和 Markdown。二进制、图片、PDF、Office、archive 和 database 文件不做内嵌预览。Explorer 不提供编辑、搜索、文件拖放、重命名或删除。当前的拖动交互只用于调整文件树与预览区的宽高。
+- Projectless Conversation 不创建 Project，也不提供 Git status、Git diff 或 Repository Intelligence。它使用系统私有锚点作为 workspace，并提供文件工具、Shell、Skill、MCP、Plugin、Files 和网页预览。它只支持 Local execution。
+- Workspace Explorer 支持有界 UTF-8 text/code、Markdown、常见图片、PDF 和 HTML。其他二进制、Office、archive 和 database 文件不做内嵌预览。Explorer 不提供编辑、搜索、文件拖放、重命名或删除。当前的拖动交互只用于调整文件树与预览区的宽高。
 - Non-Git Project 已经支持 Local Execution Session。Non-Git Project 不支持 Git status、Git diff、Managed Worktree 或 Git-based Fork。Local Checkpoint Fork 共享真实 workspace，不提供 directory snapshot、copy-on-write 或 filesystem rewind。
 - Git Project 可以创建 Local 或 Worktree Execution Session，也可以在同一个 Session 中执行 Local ↔ Managed Worktree Handoff。Local Session 支持切换 local branch，也支持基于当前 branch 创建并切换到新 branch。该操作要求 workspace clean 且没有任何共享该 workspace 的 active Run。Managed Worktree 默认是 detached HEAD。Runtime 已提供 structured status、compare ref、精确文本行统计、file-scoped diff、stage、unstage、discard、commit、fetch、fast-forward-only pull、push、merge、rebase 和对应 continue/abort typed API。Desktop Review 已提供文件手风琴、展开或折叠全部、Stage、Unstage、tracked/untracked Discard、Open in Editor、inline Review Comment，以及 Commit、Fetch、Pull、Push、Merge、Rebase 和 Local branch 控制。二进制文件没有可用的文本行统计，`statsIncomplete` 会明确标记。Stash 尚未实现。
 - Desktop Remote Git 不提供 credential 配置或 PAT 输入。它只复用系统 Git credential helper 和 SSH Agent。Advanced Git target 当前只列出已观察到的 local branch。它不接受任意 revision 文本，也不提供 remote ref browser。
@@ -154,3 +154,13 @@
 
 - 普通 Skill 的授权不能覆盖整个数据目录或包含 `.system` 的 Skill 容器。新文件的最近已存在父目录如果包含系统 Skill，工具会拒绝该宽泛授权；新建 Skill 可以使用已有的 `skill_create` 审批流程。
 - 系统 Skill 的永久写入保护需要保留在执行环境中。因此任意 Shell 的无沙盒提权在存在永久写入保护时不可用；审批过的受控文件 helper 仍可对允许的具体目标进行无沙盒写入。
+
+## 本轮产物实现的边界
+
+- 本轮代码、当前能力文档已经修订，但测试代码、协议 Fixture、类型检查、构建、自动测试和 Desktop 人工验收尚未进行。用户确认后才进入这些步骤。
+- 文件链接打开当前 Workspace 内容。历史 ToolCall 保留执行时的 Diff；预览不提供历史文件字节快照。文件变化会使资源版本失效，用户需要刷新。结果列表只反映已加载的工具记录，不代表完整目录或工具成功清单。
+- “最近一轮”展示文件工具记录的补丁。Shell 的文件观察只能给出路径变化，不能证明每条变化都由该 Shell 独占造成；完整仓库差异仍在仓库范围查看。
+- hunk 操作只支持普通文本修改。补丁最大 128 KiB，版本变化或 Git 校验失败会拒绝操作。新文件、删除、重命名、文件权限变化、二进制和冲突需要整文件处理。
+- Browser 是用户可操作的预览面板，尚未向 Agent 注册浏览器自动化 Tool。用户标注会发送位置、页面元素和文字意见，截图仅供界面定位，尚未作为多模态输入发送给模型。标注草稿不持久化。
+- 本地 HTML 禁止外部网络资源、嵌套 frame 和表单提交。依赖外部资源或开发框架的页面应通过用户启动的 HTTP 开发服务预览。HTTP 页面可以按浏览器语义联网，但不能读取本地预览授权。页面权限申请、新窗口和下载尚未开放。
+- 图片/PDF 的实际 Chromium 渲染、本地网页 CSP、开发服务热更新、原生视图遮挡和生命周期仍待 Desktop 验收。Office 预览和高级发布不属于本轮前四阶段。

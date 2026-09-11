@@ -4,6 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+import base64
+import hashlib
 from typing import Protocol
 
 from eidos_runtime.application.errors import ApplicationError
@@ -11,6 +13,8 @@ from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.domain.session import SessionExecutionMode, SessionProjection
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.protocol.methods import (
+    WorkspaceReadAssetRequestDto,
+    WorkspaceReadAssetResponseDto,
     WorkspaceListDirectoryRequestDto,
     WorkspaceListDirectoryResponseDto,
     WorkspaceReadFilePreviewRequestDto,
@@ -21,6 +25,8 @@ from eidos_runtime.workspace.reader import (
     WorkspacePathError,
     WorkspaceReader,
     capture_workspace_identity,
+    file_version,
+    preview_mime,
     is_workspace_discoverable_path,
 )
 from eidos_runtime.repo_intelligence.watcher import (
@@ -106,6 +112,8 @@ class WorkspaceExplorerApplication:
                 "kind": preview.kind,
                 "sizeBytes": preview.size_bytes,
                 "truncated": preview.truncated,
+                "version": preview.version,
+                "mimeType": preview.mime_type,
                 **({"content": content} if content is not None else {}),
                 **({"language": preview.language} if preview.language is not None else {}),
                 **({"reason": preview.reason} if preview.reason is not None else {}),
@@ -115,12 +123,52 @@ class WorkspaceExplorerApplication:
         except (WorkspacePathError, DiscoveryScopeError) as error:
             raise ApplicationError(_workspace_error_code(error)) from error
 
+    def read_asset(self, request: WorkspaceReadAssetRequestDto) -> WorkspaceReadAssetResponseDto:
+        try:
+            identity = self._execution_identity(request.session_id)
+            if str(identity.path) != request.execution_root:
+                raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
+            workspace_version = hashlib.sha256(str((identity.device, identity.inode, identity.owner)).encode()).hexdigest()
+            if request.workspace_version is not None and request.workspace_version != workspace_version:
+                raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
+            self._ensure_watch(request.session_id, identity.path)
+            mime = preview_mime(Path(request.path).suffix)
+            if mime is None:
+                raise ApplicationError("WORKSPACE_PREVIEW_UNSUPPORTED")
+            with WorkspaceReader(identity) as reader:
+                data, metadata, _, _ = reader.read_file_bytes(
+                    request.path, limit=192 * 1024, allow_truncation=True, offset=request.offset,
+                )
+                if metadata.st_size > 32 * 1024 * 1024:
+                    raise ApplicationError("WORKSPACE_FILE_TOO_LARGE")
+                version = file_version(metadata)
+                if request.version is not None and request.version != version:
+                    raise ApplicationError("WORKSPACE_FILE_CHANGED")
+                if mime.startswith("text/") or mime in {"application/json", "image/svg+xml"}:
+                    # Scan the complete text before releasing any chunk of executable content.
+                    full, checked, _, _ = reader.read_file_bytes(request.path, limit=2 * 1024 * 1024)
+                    if file_version(checked) != version:
+                        raise ApplicationError("WORKSPACE_FILE_CHANGED")
+                    text = full.decode("utf-8-sig", errors="strict")
+                    if self._scan_text(text) != text:
+                        raise ApplicationError("WORKSPACE_SENSITIVE_CONTENT")
+            return WorkspaceReadAssetResponseDto(
+                data=base64.b64encode(data).decode("ascii"), version=version, workspaceVersion=workspace_version,
+                mimeType=mime, sizeBytes=metadata.st_size,
+                nextOffset=request.offset + len(data),
+                complete=request.offset + len(data) == metadata.st_size,
+            )
+        except SensitiveScanError as error:
+            raise ApplicationError("WORKSPACE_SENSITIVE_CONTENT") from error
+        except UnicodeDecodeError as error:
+            raise ApplicationError("WORKSPACE_PREVIEW_UNSUPPORTED") from error
+        except (WorkspacePathError, DiscoveryScopeError) as error:
+            raise ApplicationError(_workspace_error_code(error)) from error
+
     def _execution_identity(self, session_id: str) -> WorkspaceIdentity:
         projection = self._sessions.read_session_projection(session_id)
         if projection is None:
             raise ApplicationError("RESOURCE_NOT_FOUND")
-        if projection.project is None:
-            raise ApplicationError("PROJECT_REQUIRED")
         if projection.session.execution_mode is SessionExecutionMode.WORKTREE:
             if projection.worktree is None:
                 raise ApplicationError("WORKTREE_INVALID")

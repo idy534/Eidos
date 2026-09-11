@@ -1,3 +1,4 @@
+import { toolFilePaths } from "./ResultFiles.js";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import stripAnsi from "strip-ansi";
@@ -921,9 +922,10 @@ function ToolItem({ item, toolCall, onOpenFile }: {
       </summary>
       <div className="tool-body">
         <p>{safeToolSummary(toolCall.resultJson, item.status)}</p>
+        {onOpenFile && toolFilePaths(toolCall).map((path) => <button type="button" className="tool-file-link" key={path} title={`打开当前文件：${path}`} onClick={() => onOpenFile(path)}>{path}</button>)}
         {item.kind === "file_change" && toolCall.changeDiff && (
           <>
-            <p className="feed-label">已应用的变更</p>
+            <p className="feed-label">{toolCall.status === "completed" ? "已完成的变更" : toolCall.status === "running" ? "准备或执行中的变更" : "计划变更（可能只完成部分写入）"}</p>
             <pre className="diff-view">{toolCall.changeDiff}</pre>
           </>
         )}

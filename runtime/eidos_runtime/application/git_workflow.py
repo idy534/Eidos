@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import threading
+import hashlib
+from unidiff import PatchSet
+from unidiff.errors import UnidiffParseError
 from typing import Protocol, TypeVar
 
 from eidos_runtime.application.errors import ApplicationError
@@ -28,6 +31,9 @@ from eidos_runtime.git.models import GitOperationState, GitRemoteObservation
 from eidos_runtime.git.refs import GitRefValidator
 from eidos_runtime.protocol.methods import (
     MethodResultDto,
+    SessionGitReadPatchRequestDto,
+    SessionGitReadPatchResponseDto,
+    SessionGitApplyHunkRequestDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
     SessionGitCreateBranchRequestDto,
@@ -70,6 +76,16 @@ class GitMutationPlan:
     paths: tuple[str, ...] = ()
     message: str | None = None
     discard_untracked: bool = False
+
+
+@dataclass(frozen=True)
+class GitHunkPlan:
+    session: Session
+    root: Path
+    path: str
+    action: str
+    diff_hash: str
+    patch: str
 
 
 @dataclass(frozen=True)
@@ -148,6 +164,56 @@ class GitWorkflowApplication:
     ) -> None:
         self._repository = repository
         self._worktrees = worktrees
+
+    def read_patch(self, request: SessionGitReadPatchRequestDto) -> SessionGitReadPatchResponseDto:
+        session = self._read_session(request.session_id)
+        status = self._status(session)
+        root = Path(status.worktree_root)
+        path = _validated_paths(root, [request.path])[0]
+        if path in status.conflict_files:
+            raise ApplicationError("GIT_CONFLICT")
+        try:
+            patch = self._worktrees.git.review_patch(root, path, staged=request.layer == "staged")
+        except (GitError, UnicodeDecodeError) as error:
+            raise ApplicationError("GIT_PATCH_UNAVAILABLE") from error
+        return SessionGitReadPatchResponseDto(patch=patch, diffHash=hashlib.sha256(patch.encode()).hexdigest(), head=status.head)
+
+    def preflight_hunk(self, request: SessionGitApplyHunkRequestDto) -> GitHunkPlan:
+        session, status = self._prepare_mutation(request.session_id)
+        if self._repository.has_active_run_for_workspace(session.workspace_root):
+            raise ApplicationError("GIT_WORKFLOW_BUSY")
+        observed = self.read_patch(SessionGitReadPatchRequestDto(
+            sessionId=request.session_id, path=request.path,
+            layer="staged" if request.action == "unstage" else "unstaged",
+        ))
+        if observed.diff_hash != request.diff_hash:
+            raise ApplicationError("GIT_DIFF_CHANGED")
+        try:
+            if "\nold mode " in observed.patch or "\nnew mode " in observed.patch:
+                raise ValueError("whole file action required")
+            files = PatchSet(observed.patch)
+            if len(files) != 1 or files[0].is_binary_file or request.hunk_index >= len(files[0]):
+                raise ValueError("hunk unavailable")
+            file = files[0]
+            # Partial add/delete would change file identity; use the existing whole-file action.
+            if file.is_added_file or file.is_removed_file or file.is_rename:
+                raise ValueError("whole file action required")
+            selected = file[request.hunk_index]
+            file[:] = [selected]
+            patch = str(files)
+        except (UnidiffParseError, ValueError) as error:
+            raise ApplicationError("GIT_HUNK_UNAVAILABLE") from error
+        return GitHunkPlan(session, Path(status.worktree_root), request.path, request.action, request.diff_hash, patch)
+
+    def apply_hunk(self, plan: GitHunkPlan) -> SessionGitStageResponseDto:
+        try:
+            current = self._worktrees.git.review_patch(plan.root, plan.path, staged=plan.action == "unstage")
+            if hashlib.sha256(current.encode()).hexdigest() != plan.diff_hash:
+                raise ApplicationError("GIT_DIFF_CHANGED")
+            self._worktrees.git.apply_review_hunk(plan.root, plan.patch, action=plan.action)
+        except GitError as error:
+            raise _workflow_error(error) from error
+        return _mutation_result(SessionGitStageResponseDto, self._status(plan.session))
 
     def preflight_stage(self, request: SessionGitStageRequestDto) -> GitMutationPlan:
         session, before = self._prepare_mutation(request.session_id)

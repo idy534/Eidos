@@ -16,6 +16,8 @@ import type {
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
+import { HunkActions } from "./HunkActions.js";
+import { LastTurnChanges } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
 
 
@@ -41,6 +43,9 @@ interface ReviewFileState {
 
 interface GitChangesPanelProps {
   sessionId: string;
+  latestRunId?: string | undefined;
+  previousItemId?: string | undefined;
+  items?: import("../contracts.js").Item[] | undefined;
   workspaceRoot: string;
   scope: GitDiffScope;
   status: SessionGitStatus | undefined;
@@ -156,6 +161,7 @@ function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
 }
 
 export function GitChangesPanel(props: GitChangesPanelProps) {
+  const [lastTurn, setLastTurn] = useState(false);
   const summaryControlled = Object.prototype.hasOwnProperty.call(props, "summary");
   const {
     sessionId,
@@ -272,7 +278,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           ...(nextError === undefined ? {} : { error: nextError }),
         },
       }));
-    }).finally(() => loadingKeys.current.delete(key));
+    }).finally(() => { if (requestVersion.current === version) loadingKeys.current.delete(key); });
   }, [listComments, readDiff, scope, sessionId]);
 
   const toggleFile = (selection: FileSelection): void => {
@@ -292,6 +298,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     setLocalError(undefined);
     try {
       await operation();
+      requestVersion.current++;
+      loadingKeys.current.clear(); loadedKeys.current.clear(); setFileStates({});
+      for (const selection of selections) if (expandedKeys.has(selectionKey(selection))) void loadFile(selection);
       onRefresh();
     } catch (cause: unknown) {
       setLocalError(userFacingError(cause));
@@ -391,21 +400,22 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       )}
       <header className="git-changes-toolbar">
         <div className="git-scope-tabs" role="tablist" aria-label="Diff 范围">
+          <button type="button" role="tab" aria-selected={lastTurn} className="git-scope-tab" onClick={() => setLastTurn(true)}>最近一轮</button>
           <button
             type="button"
             role="tab"
-            aria-selected={scope === "head"}
+            aria-selected={!lastTurn && scope === "head"}
             className="git-scope-tab"
-            onClick={() => onScopeChange("head")}
+            onClick={() => { setLastTurn(false); onScopeChange("head"); }}
           >
             未提交
           </button>
           <button
             type="button"
             role="tab"
-            aria-selected={scope === "baseline"}
+            aria-selected={!lastTurn && scope === "baseline"}
             className="git-scope-tab"
-            onClick={() => onScopeChange("baseline")}
+            onClick={() => { setLastTurn(false); onScopeChange("baseline"); }}
           >
             整个任务
           </button>
@@ -458,7 +468,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         </div>
       </header>
 
-      {status && (
+      {status && !lastTurn && (
         <div className="git-review-summary" aria-label="Git 状态">
           <div className="git-review-stats">
             <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
@@ -483,7 +493,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         </p>
       )}
 
-      <div className="git-review-files" aria-label="所有修改文件">
+      {lastTurn && <LastTurnChanges key={`${sessionId}:${props.latestRunId}`} sessionId={sessionId} previousItemId={props.previousItemId} items={props.items ?? []} runId={props.latestRunId} onFeedback={onSendReviewFeedback} disabled={reviewFeedbackDisabled} />}
+      <div className="git-review-files" hidden={lastTurn}>
         {visibleGroups.map((group) => (
           <section className="git-file-group" key={group.id} aria-label={group.label}>
             <h2>{group.label} <span>{group.paths.length}</span></h2>
@@ -570,6 +581,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       id={`git-review-diff-${encodeURIComponent(key)}`}
                       className="git-file-diff-scroll"
                     >
+                      {(selection.group === "staged" || selection.group === "changes") && <HunkActions sessionId={sessionId} path={path} layer={selection.group === "staged" ? "staged" : "unstaged"} disabled={workflowDisabled || actionLoading} onChanged={() => { requestVersion.current++; loadingKeys.current.clear(); loadedKeys.current.clear(); setFileStates({}); onRefresh(); void loadFile(selection); }} />}
                       {state?.error && <p className="approval-error" role="alert">{state.error}</p>}
                       {state?.diff?.truncated && (
                         <p className="git-diff-truncated" role="status">Diff 已截断</p>

@@ -193,6 +193,23 @@ class WorkspaceReadFilePreviewRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
+class WorkspaceReadAssetRequestDto(WorkspaceReadFilePreviewRequestDto):
+    offset: StrictInt = Field(default=0, ge=0, le=32 * 1024 * 1024)
+    version: StrictStr | None = Field(default=None, min_length=64, max_length=64)
+    execution_root: StrictStr = Field(alias="executionRoot", min_length=1, max_length=4096)
+    workspace_version: StrictStr | None = Field(default=None, alias="workspaceVersion", pattern="^[a-f0-9]{64}$")
+
+
+class WorkspaceReadAssetResponseDto(MethodResultDto):
+    workspace_version: StrictStr = Field(alias="workspaceVersion")
+    data: StrictStr
+    version: StrictStr
+    mime_type: StrictStr = Field(alias="mimeType")
+    size_bytes: StrictInt = Field(alias="sizeBytes", ge=0)
+    next_offset: StrictInt = Field(alias="nextOffset", ge=0)
+    complete: bool
+
+
 class _SessionGitPathsRequest(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     paths: list[StrictStr] = Field(min_length=1, max_length=512)
@@ -208,6 +225,39 @@ class _SessionGitPathsRequest(_OperationRequest):
         if len(set(normalized)) != len(normalized):
             raise ValueError("Git paths must be unique")
         return normalized
+
+
+class SessionGitReadPatchRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(min_length=1, max_length=4096)
+    layer: Literal["staged", "unstaged"]
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        return _git_relative_path(value)
+
+
+class SessionGitReadPatchResponseDto(MethodResultDto):
+    patch: StrictStr
+    diff_hash: StrictStr = Field(alias="diffHash")
+    head: StrictStr
+
+
+class SessionGitApplyHunkRequestDto(_OperationRequest):
+    operation_id: StrictStr = Field(alias="operationId")
+    session_id: StrictStr = Field(alias="sessionId")
+    path: StrictStr = Field(min_length=1, max_length=4096)
+    action: Literal["stage", "unstage", "discard"]
+    hunk_index: StrictInt = Field(alias="hunkIndex", ge=0, le=10000)
+    diff_hash: StrictStr = Field(alias="diffHash", pattern="^[a-f0-9]{64}$")
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "session_id")
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        return _git_relative_path(value)
 
 
 class SessionGitStageRequestDto(_SessionGitPathsRequest):
@@ -680,12 +730,14 @@ class WorkspaceListDirectoryResponseDto(MethodResultDto):
 
 class WorkspaceReadFilePreviewResponseDto(MethodResultDto):
     path: StrictStr
-    kind: Literal["text", "markdown", "code", "unavailable"]
+    kind: Literal["text", "markdown", "code", "image", "pdf", "html", "unavailable"]
     size_bytes: StrictInt = Field(alias="sizeBytes", ge=0)
     truncated: bool
     content: StrictStr | None = None
     language: StrictStr | None = None
     reason: Literal["binary", "unsupported"] | None = None
+    version: StrictStr | None = None
+    mime_type: StrictStr | None = Field(default=None, alias="mimeType")
 
     def to_json_value(self) -> dict[str, JsonValue]:
         return self.model_dump(

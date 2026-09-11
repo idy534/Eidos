@@ -467,11 +467,13 @@ class FileChangeToolHandler:
                     ],
                 },
             )
-            self.dependencies.store.record_workspace_change(
+            change = self.dependencies.store.record_workspace_change(
                 str(item["id"]),
                 diff=prepared.diff,
                 base_sha256=prepared.base_sha256,
             )
+
+            self.dependencies.events.publish(change, item=change.value)
 
             def execute_patch() -> dict[str, object]:
                 nonlocal committed_delta
@@ -529,11 +531,12 @@ class FileChangeToolHandler:
                 "baseSha256": prepared.base_sha256,
             },
         )
-        self.dependencies.store.record_workspace_change(
+        change = self.dependencies.store.record_workspace_change(
             str(item["id"]),
             diff=prepared.diff,
             base_sha256=prepared.base_sha256,
         )
+        self.dependencies.events.publish(change, item=change.value)
         verified = self._execute_file_effect(
             run_id=run_id, runtime=runtime,
             item=item,

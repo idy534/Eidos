@@ -80,6 +80,13 @@ const api: EidosRuntimeAPI = {
     limit?: number,
   ): Promise<WorkspaceDirectoryListing> =>
     ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit),
+  prepareWorkspacePreview: (sessionId: string, path: string, version?: string) => ipcRenderer.invoke(IPC.WORKSPACE_PREVIEW_URL, sessionId, path, version),
+  releaseWorkspacePreview: (url: string) => ipcRenderer.invoke(IPC.WORKSPACE_RELEASE_PREVIEW, url),
+  openBrowser: (sessionId: string, url: string) => ipcRenderer.invoke(IPC.BROWSER_OPEN, sessionId, url),
+  setBrowserBounds: (sessionId: string, bounds: import("../shared/domain-contracts.js").BrowserBounds | null) => ipcRenderer.invoke(IPC.BROWSER_BOUNDS, sessionId, bounds),
+  closeBrowser: (sessionId: string) => ipcRenderer.invoke(IPC.BROWSER_CLOSE, sessionId),
+  readBrowserState: (sessionId: string) => ipcRenderer.invoke(IPC.BROWSER_STATE, sessionId),
+  annotateBrowser: (sessionId: string) => ipcRenderer.invoke(IPC.BROWSER_ANNOTATE, sessionId),
   readWorkspaceFilePreview: (
     sessionId: string,
     path: string,
@@ -119,7 +126,7 @@ const api: EidosRuntimeAPI = {
   deleteProject: (projectId: string): Promise<DeleteProjectResult> =>
     ipcRenderer.invoke(IPC.PROJECT_DELETE, projectId),
   listSessions: (): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST),
-  readSession: (sessionId: string): Promise<SessionSnapshot> => ipcRenderer.invoke(IPC.SESSION_READ, sessionId),
+  readSession: (sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot> => ipcRenderer.invoke(IPC.SESSION_READ, sessionId, options),
   listEvents: (sessionId: string, afterEventId: number): Promise<EventListResult> =>
     ipcRenderer.invoke(IPC.EVENT_LIST, sessionId, afterEventId),
   createSession: (
@@ -171,6 +178,8 @@ const api: EidosRuntimeAPI = {
     operationId: string,
   ): Promise<SessionGitMutationResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_CREATE_BRANCH, sessionId, branch, operationId),
+  readGitReviewPatch: (sessionId: string, path: string, layer: "staged" | "unstaged") => ipcRenderer.invoke(IPC.SESSION_GIT_READ_PATCH, sessionId, path, layer),
+  applyGitHunk: (sessionId: string, input: import("../shared/domain-contracts.js").GitHunkInput) => ipcRenderer.invoke(IPC.SESSION_GIT_APPLY_HUNK, sessionId, input),
   stageSessionGit: (
     sessionId: string,
     paths: string[],

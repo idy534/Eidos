@@ -24,6 +24,8 @@ import {
   WorkspaceExplorer,
   type WorkspaceFileOpenRequest,
 } from "../components/WorkspaceExplorer.js";
+import { ArtifactProvider, artifactPath } from "../components/ArtifactContext.js";
+import { BrowserPanel } from "../components/BrowserPanel.js";
 import {
   WorkspaceDock,
   WorkspaceDockToggle,
@@ -132,6 +134,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const [createBranchMode, setCreateBranchMode] = useState<CreateBranchMode>("worktree");
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(loadSidebarOpen);
+  const [browserRequest, setBrowserRequest] = useState<{ url: string; id: number }>();
   const [dockOpen, setDockOpen] = useState(false);
   const [dockExpanded, setDockExpanded] = useState(false);
   const [dockWidth, setDockWidth] = useState<number>();
@@ -198,6 +201,7 @@ export function AppShell({ runtime }: AppShellProps) {
     setDockExpanded(false);
     setDockWidth(undefined);
     setOpenTabs([]);
+    setBrowserRequest(undefined);
     setActiveTabId(undefined);
     terminalSequenceRef.current = 0;
   }, [
@@ -628,13 +632,14 @@ export function AppShell({ runtime }: AppShellProps) {
         currentSnapshot.session.executionMode ?? "local",
         currentSnapshot.session.associatedWorktreeId ?? "workspace",
         currentSnapshot.session.worktree?.state ?? "available",
+        currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
       ].join(":")
     : "empty";
   const availableTools: WorkspaceToolKind[] = sessionHasProject
     ? sessionHasGit
-      ? ["review", "terminal", "files"]
-      : ["terminal", "files"]
-    : [];
+      ? ["review", "terminal", "files", "browser"]
+      : ["terminal", "files", "browser"]
+    : currentSnapshot && !isDraft ? ["files", "browser"] : [];
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -742,11 +747,18 @@ export function AppShell({ runtime }: AppShellProps) {
     setDockOpen(true);
   }
 
+  function handleOpenBrowser(url: string): void {
+    openTool("browser");
+    setBrowserRequest({ url, id: ++fileOpenSequenceRef.current });
+  }
+
   function handleOpenFileInDock(path: string): void {
-    // Ensure the files panel is open and active
+    if (!currentSnapshot) return;
+    const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
+    const resolved = artifactPath(path, root);
+    if (!resolved) return;
     openTool("files");
-    // Dispatch file open request to WorkspaceExplorer declaratively
-    setExplorerOpenRequest({ path, requestId: ++fileOpenSequenceRef.current });
+    setExplorerOpenRequest({ path: resolved, requestId: ++fileOpenSequenceRef.current });
   }
 
   function toggleDock(): void {
@@ -857,9 +869,10 @@ export function AppShell({ runtime }: AppShellProps) {
       </div>
       <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
     </>
-  ) : null;
+  ) : currentSnapshot && !isDraft ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} /> : null;
 
   return (
+    <ArtifactProvider value={currentSnapshot ? { sessionId: currentSnapshot.session.id, executionRoot: currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot, openFile: handleOpenFileInDock, openBrowser: handleOpenBrowser } : undefined}>
     <main className={`workbench${sidebarOpen ? "" : " workbench--sidebar-collapsed"}`}>
       <SessionSidebar
         sessions={sessionState.sessions}
@@ -1043,7 +1056,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     responseActionActions.setFeedback(currentSnapshot.session.id, itemId, feedback)}
                   onRegenerate={(run) => reviseLatestRun(run)}
                   onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
-                  onOpenFile={sessionHasProject ? handleOpenFileInDock : undefined}
+                  onOpenFile={handleOpenFileInDock}
                 />
 
                 <ComposerSlot
@@ -1135,6 +1148,9 @@ export function AppShell({ runtime }: AppShellProps) {
                       <GitChangesPanel
                         sessionId={currentSnapshot.session.id}
                         workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
+                        items={currentSnapshot.items}
+                        latestRunId={currentSnapshot.runs.at(-1)?.id}
+                        previousItemId={currentSnapshot.previousItemId}
                         scope={gitReviewState.scope}
                         status={gitReviewState.status}
                         summary={gitReviewState.summary}
@@ -1171,14 +1187,24 @@ export function AppShell({ runtime }: AppShellProps) {
                       </Suspense>
                     );
                   }
-                  return sessionHasProject ? (
+                  if (tab.kind === "browser") return <BrowserPanel
+                    key={executionKey} sessionId={currentSnapshot.session.id} executionKey={executionKey}
+                    active={dockOpen && activeTabId === tab.id} request={browserRequest}
+                    onFeedback={handleReviewFeedback} feedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
+                    terminalAvailable={sessionHasProject} onTerminal={() => openTool("terminal")}
+                  />;
+                  return (
                     <WorkspaceExplorer
+                      items={currentSnapshot.items}
+                      resultsIncomplete={Boolean(currentSnapshot.previousItemId)}
                       sessionId={currentSnapshot.session.id}
                       executionKey={executionKey}
+                      onFeedback={handleReviewFeedback}
+                      feedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
                       layout={dockExpanded ? "expanded" : "side"}
                       openRequest={explorerOpenRequest}
                     />
-                  ) : null;
+                  );
                 }}
               />
             )}
@@ -1311,5 +1337,6 @@ export function AppShell({ runtime }: AppShellProps) {
         onCancel={() => { setProjectToDelete(undefined); setProjectDeleteError(undefined); }}
       />
     </main>
+    </ArtifactProvider>
   );
 }

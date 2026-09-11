@@ -800,6 +800,22 @@ class GitCli:
             file_stats=file_stats,
         )
 
+    def review_patch(self, cwd: Path, path: str, *, staged: bool) -> bytes:
+        return self._runner.run(
+            ("diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+             *(("--cached",) if staged else ()), "--", path),
+            cwd=cwd, operation="review-patch", output_limit_bytes=128 * 1024,
+            config_overrides=filter_config_overrides(self._runner, cwd),
+        ).stdout
+
+    def apply_review_hunk(self, cwd: Path, patch: bytes, *, action: str) -> None:
+        options = (("--cached",) if action in {"stage", "unstage"} else ()) + (("--reverse",) if action != "stage" else ())
+        overrides = filter_config_overrides(self._runner, cwd)
+        self._runner.run(("apply", "--check", *options, "--"), cwd=cwd,
+                         operation="review-hunk-check", stdin=patch, config_overrides=overrides)
+        self._runner.run(("apply", *options, "--"), cwd=cwd,
+                         operation="review-hunk-apply", stdin=patch, config_overrides=overrides)
+
     def apply_working_tree_patch(
         self,
         cwd: Path,

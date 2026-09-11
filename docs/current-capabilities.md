@@ -11,7 +11,7 @@
 - Desktop 可以列出、读取、重命名和删除 Session。Session 删除不会删除所属 Project。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
 - 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
-- 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Projectless Session 不显示 Files，也不支持查看文件树。
+- 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Projectless Session 提供 Files 和文件树，读取范围是当前 Session 的私有 Workspace。
 - Desktop 的“更改工作环境”弹窗使用中文展示“本地”和“新建本地工作树”。当前环境是本地时，用户也可以在弹窗中切换本地分支。切换到本地工作树时，Runtime 会创建或复用这个 Session 已关联的工作树；切换回本地时，Runtime 会安全迁移当前 Git 状态。整个过程不会创建新 Session。环境切换期间，Desktop 会禁用输入、创建分支、删除和 Session 导航；完成后只刷新当前 Session 的执行绑定和 Git 审阅状态。
 - Desktop 的 Review Dock 会按 Dock 自身宽度切换布局。窄 Dock 会把分支观察、Git 操作、Diff 范围和审阅操作分成稳定的行。分支与比较目标保持单行省略。空范围只显示一个可读空状态，不再显示零文件分组。
 - Review 的 Git status、diff 和 project context 刷新会合并进行中的请求，并只保留最新的后续刷新，避免同一个 Git 观察周期长期堆积 RPC。
@@ -31,7 +31,7 @@
 - `session/create` 的协议默认 `executionMode` 是 `local`。Desktop 只在首次提交时调用它。Worktree 请求会先解析可选 `baseRef` 为 immutable `baseCommit`，并接受显式的 `includeLocalChanges`。缺省 `baseRef` 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。不存在的 ref 返回 `BASE_REF_NOT_FOUND`。
 - `session/create` 允许省略或传入空的 `workspaceRoot` 来创建 projectless Session。Projectless Session 只接受 `executionMode = local`，不创建 Project 或 Worktree binding。
 - Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录都位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
-- Projectless Run 使用系统私有锚点作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 仍不显示 Files 和文件树。
+- Projectless Run 使用系统私有锚点作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 提供当前 Session 私有 Workspace 的 Files、结果列表和文件预览。
 - Local Session 和 Worktree Session 都是正式 Session projection。Worktree Session 默认使用 detached HEAD，`worktree.branch` 为 NULL。Git Project 的 Local Session 通过当前 Local checkout 提供 Git status 和 Git diff。
 - Worktree 创建只会从 source repository root 的 `.worktreeinclude` 复制同时命中 `pathspec.GitIgnoreSpec` 且由 Git ignore 判定为 ignored 的 local files。Tracked files 和 untracked non-ignored files 不由 `.worktreeinclude` 复制。Runtime 只在 matched concrete path 上执行 `.git`、target boundary、source symlink、target parent、atomic replacement、fsync 和 permission safety；Runtime 不重新限制 Git pattern grammar。Managed Worktree 内的 `.worktreeinclude` 不具有 authority。Ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md` 会自动 materialize；tracked override 只使用 Git checkout 内容。
 - `includeLocalChanges = true` 要求 source `HEAD == baseCommit`。Runtime 使用 hardened Git CLI capture/apply full patch 和 staged patch，覆盖 tracked modified/deleted、staged、unstaged、binary、symlink、mode 和 untracked state。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Local-change state conflict、source change 和 materialization failure 会 rollback Worktree，无法安全清理时进入 `cleanup_required`。Dirty submodule checkout 不属于当前 transfer contract，Runtime 返回 `worktree_gitlink_unsupported`。
@@ -92,9 +92,9 @@
 - `list_files` 和 `search_text` 可以使用 Workspace-relative path，或使用 Workspace 与当前 active Skill root 内的 canonical absolute path，执行有界文件发现和文本搜索。`read_file` 和 `read_file_range` 也支持这两种只读路径形式。Workspace authority 的结果路径保持 Workspace-relative；active Skill authority 的结果路径返回 canonical absolute path，目录结果保留末尾 `/`，所以发现结果可以直接作为下一次只读 Tool 输入。Skill 激活本身不授予写权限；普通 Skill 的写权限需要单独审批。未授权 absolute path 返回普通 Tool Error。
 - `apply_patch` 的 Function 和 Custom 输入都接受 Workspace-relative path 和 Workspace 内的 canonical absolute path。Runtime 会在统一的 Workspace write resolver 中把模型 absolute path 归一化为内部 relative path。Move 的 source 和 destination 分别参与路径授权。Workspace 外普通路径及普通 Skill 路径可以经审批或有效 Run Grant 授权写入。数据目录内 `skills/.system` 始终禁止工具修改。
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
-- Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。打开文件的 Tab、当前路径和文件大小显示在同一条紧凑预览栏中。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。二进制、PDF、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
+- Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。打开文件的 Tab、当前路径和文件大小显示在同一条紧凑预览栏中。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。图片和 PDF 使用有界资源预览，HTML 可以在隔离网页面板中运行或查看源码；其他二进制、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
-- Desktop 的 Conversation 会保持挂载。Session header 的环境信息入口展示当前执行方式、分支、对比分支和增删行数。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal 和 Files Tab。Review 和 Files 各只有一个工具 Tab，Terminal 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
+- Desktop 的 Conversation 会保持挂载。Session header 的环境信息入口展示当前执行方式、分支、对比分支和增删行数。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab。Review、Files 和 Browser 各只有一个工具 Tab，Terminal 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
 - Desktop Review 使用 baseline `changedFiles` 和 `session/gitStatus` 建立文件手风琴。它包含已提交和未提交的任务改动。Renderer 在文件展开时才请求 `session/gitDiff(path)`，并用 `react-diff-view` 显示 native Git patch。Review 支持展开全部差异和折叠全部差异。Stage、Unstage 和 Discard 分别调用现有 typed API。Open in Editor 只把相对路径交给 Main，Main 会按当前 Session execution root 重新验证真实路径。
 - Review 支持在 Diff gutter 上创建行级 Review Comment。Comment 绑定 Session、path、scope、old/new side、line、观察到的 HEAD 和 Diff hash。Diff 变化后，Runtime 会把无法精确证明仍有效的 Comment 标成 stale。用户点击 Send Review Feedback 后，Desktop 只把 active Comment 格式化成普通用户输入，并复用现有 Run 启动链路。创建 Comment 本身不会启动 Agent。
 - Review 的提交弹层展示 branch、upstream 和 ahead/behind。它可以先 Stage 未暂存文件，再执行 Commit，也可以顺序执行 Commit 和 Push。弹层继续提供 Fetch、fast-forward-only Pull、Push、Merge、Rebase 和对应 abort/continue。每个操作复用现有 typed Runtime API 和 `operationId` 语义。Detached managed Worktree 可以继续使用 Create Branch Here。Advanced Git target 只来自 typed local branch observation。
@@ -324,3 +324,15 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。
 
 - Projectless 文件提交从 Runtime 已核验的 Workspace 目录 fd 开始，helper 只向下进行 fd-relative 访问。当前 Session 的 Workspace 默认可新建、更新和删除普通文件，不开放整个 `.eidos` 或其他 Session 目录。新建提交只把目标已存在的错误归为版本冲突；其他系统错误保留失败分类，并记录不含路径和内容的阶段与 errno。
+
+## 产物入口与预览（本轮代码，待集中验证）
+
+本节描述本轮代码修订。用户要求先完成代码，确认后再补测试并集中验证。因此本节不表示测试、构建或打包验收已经通过。
+
+- 最终回复中的 Workspace 文件链接、工具卡片中的文件名和 Files 结果列表共用文件打开入口。结果列表从已加载的工具补丁和 Shell 文件观察记录提取路径，不建立第二套执行状态。列表会提示历史记录不完整，并说明点击后打开当前文件。Projectless 也提供这些入口。
+- Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供刷新、加载失败提示和带文件版本的反馈。预览版本来自文件身份、大小和修改时间，不是内容快照。
+- `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
+- Review 提供“最近一轮”范围，按持久化 ToolCall 顺序显示准备中或已结束的文件补丁。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
+- Review 对普通文本文件提供 hunk stage、unstage 和 discard。Runtime 从当前 Git 读取补丁，核对 Diff hash，再使用现有 Git operation 持久记录和原生 `git apply --check` / `git apply`。新增、删除、重命名、mode change、二进制和冲突文件继续使用整文件操作。最近一轮反馈包含 Run、ToolCall、文件、行位置和已有 Base SHA。
+- Browser 使用 Electron `WebContentsView`，支持本地 HTML、HTTP/HTTPS 页面和开发服务。用户可以操作网页、刷新、捕获页面截图、拖选区域，并将页面地址、时间、选中文本、区域元素和意见发回会话。开发终端复用现有 PTY；Projectless 仍不提供手动 Terminal。
+- 本地 HTML 资源仅来自当前 Workspace，页面不能访问 Eidos preload、Node 或其他文件协议。Browser 使用临时隔离分区，拒绝权限申请、新窗口和下载。窗口关闭、Session 删除、Handoff 和 Worktree Restore 会清理对应网页和预览授权。

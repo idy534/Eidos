@@ -235,12 +235,14 @@ export interface WorkspaceDirectoryListing {
 
 export interface WorkspaceFilePreview {
   path: string;
-  kind: "text" | "markdown" | "code" | "unavailable";
+  kind: "text" | "markdown" | "code" | "image" | "pdf" | "html" | "unavailable";
   sizeBytes: number;
   truncated: boolean;
   content?: string;
   language?: string;
   reason?: "binary" | "unsupported";
+  version?: string;
+  mimeType?: string;
 }
 
 export interface TerminalSessionInfo {
@@ -602,6 +604,7 @@ export type RuntimeNotification =
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }
   | { method: "run/completed"; params: { sessionId: string; run: Run } }
+  | { method: "item/updated"; params: { sessionId: string; runId: string; item: Item } }
   | { method: "item/started"; params: { sessionId: string; runId: string; item: Item } }
   | { method: "item/completed"; params: { sessionId: string; runId: string; item: Item } }
   | {
@@ -619,3 +622,33 @@ export type RuntimeNotification =
     };
 
 export type AppShortcut = typeof IPC.APP_NEW_TASK | typeof IPC.APP_OPEN_WORKSPACE;
+
+export interface WorkspaceAssetChunk {
+  workspaceVersion: string;
+  data: string;
+  version: string;
+  mimeType: string;
+  sizeBytes: number;
+  nextOffset: number;
+  complete: boolean;
+}
+
+export interface BrowserPageState {
+  url: string;
+  title: string;
+  loading: boolean;
+  error?: string;
+}
+export interface BrowserBounds { x: number; y: number; width: number; height: number }
+export interface BrowserAnnotationElement { tag: string; text: string; x: number; y: number; width: number; height: number }
+export interface BrowserAnnotation {
+  elements: BrowserAnnotationElement[];
+  url: string;
+  title: string;
+  selection: string;
+  screenshot: string;
+  capturedAt: number;
+}
+
+export interface GitReviewPatch { patch: string; diffHash: string; head: string }
+export interface GitHunkInput { path: string; action: "stage" | "unstage" | "discard"; hunkIndex: number; diffHash: string; operationId: string }

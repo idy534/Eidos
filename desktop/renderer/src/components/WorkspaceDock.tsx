@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { DropdownMenu } from "./DropdownMenu.js";
 import "./WorkspaceDock.css";
 
-export type WorkspaceToolKind = "review" | "terminal" | "files";
+export type WorkspaceToolKind = "review" | "terminal" | "files" | "browser";
 
 export interface WorkspaceTab {
   id: string;
@@ -27,6 +27,7 @@ const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
   review: "审阅",
   terminal: "终端",
   files: "文件",
+  browser: "网页",
 };
 
 function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
@@ -38,6 +39,7 @@ function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
       </svg>
     );
   }
+  if (tool === "browser") return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><ellipse cx="10" cy="10" rx="3" ry="7.5" /><path d="M2.5 10h15" /></svg>;
   if (tool === "files") {
     return (
       <svg viewBox="0 0 20 20" aria-hidden="true">

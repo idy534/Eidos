@@ -82,6 +82,7 @@ class EventType(StrEnum):
     SEGMENT_STATUS_CHANGED = "segment.status_changed"
     STEP_STATUS_CHANGED = "step.status_changed"
     ITEM_STARTED = "item.started"
+    ITEM_UPDATED = "item.updated"
     ITEM_DELTA = "item.delta"
     ITEM_COMPLETED = "item.completed"
     APPROVAL_STATUS_CHANGED = "approval.status_changed"

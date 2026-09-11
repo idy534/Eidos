@@ -789,6 +789,18 @@ class RuntimeServer:
                 ),
             ),
             (
+                "session/gitReadPatch",
+                method_dtos.SessionGitReadPatchRequestDto,
+                method_dtos.SessionGitReadPatchResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_read_patch(request),
+            ),
+            (
+                "session/gitApplyHunk",
+                method_dtos.SessionGitApplyHunkRequestDto,
+                method_dtos.SessionGitStageResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.git_apply_hunk(request),
+            ),
+            (
                 "session/gitDiff",
                 method_dtos.SessionGitDiffRequestDto,
                 method_dtos.SessionGitDiffResponseDto,
@@ -803,6 +815,12 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().workspace.list_directory(
                     request
                 ),
+            ),
+            (
+                "workspace/readAsset",
+                method_dtos.WorkspaceReadAssetRequestDto,
+                method_dtos.WorkspaceReadAssetResponseDto,
+                lambda _id, request: self._applications_or_error().workspace.read_asset(request),
             ),
             (
                 "workspace/readFilePreview",

@@ -12,6 +12,7 @@ import { dispatchAppCommand as dispatchCommand, ensureAppWindow as ensureWindow 
 import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies } from "./quit-flow.js";
 import { shutdownRuntime } from "./runtime-shutdown.js";
 import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
+import { ArtifactPreviewManager } from "./artifact-preview.js";
 import { TerminalManager } from "./terminal-manager.js";
 import type {
   ApprovalDecision,
@@ -52,6 +53,8 @@ function log(level: "info" | "warn" | "error", context: string, message: string,
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 app.setName("Eidos");
+
+const artifactPreview = new ArtifactPreviewManager(() => clientOrThrow());
 
 let runtimeStatus: RuntimeStatus = { state: "starting" };
 let runtimeClient: RuntimeClient | undefined;
@@ -284,11 +287,15 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      plugins: true,
     },
   });
 
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.once("ready-to-show", () => window.show());
   const ownerId = window.webContents.id;
+  const previewContents = window.webContents;
+  window.on("closed", () => artifactPreview.closeOwner(previewContents));
   window.webContents.once("destroyed", () => terminalManager.closeOwner(ownerId));
   void window.loadFile(path.join(currentDirectory, "../renderer/index.html"));
   return window;
@@ -563,9 +570,13 @@ ipcMain.handle(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
   return clientOrThrow().deleteProject(projectId);
 });
 ipcMain.handle(IPC.SESSION_LIST, () => clientOrThrow().listSessions());
-ipcMain.handle(IPC.SESSION_READ, (_event, sessionId: unknown) => {
+ipcMain.handle(IPC.SESSION_READ, (_event, sessionId: unknown, options: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
-  return clientOrThrow().readSession(sessionId);
+  if (options !== undefined && (!options || typeof options !== "object" || Object.keys(options).some((key) => !["itemLimit", "beforeItemId"].includes(key)))) throw new Error("分页参数无效。");
+  const itemLimit = options ? Reflect.get(options, "itemLimit") : undefined;
+  const beforeItemId = options ? Reflect.get(options, "beforeItemId") : undefined;
+  if (itemLimit !== undefined && (!Number.isInteger(itemLimit) || itemLimit < 1 || itemLimit > 500) || beforeItemId !== undefined && (typeof beforeItemId !== "string" || beforeItemId.length > 256)) throw new Error("分页参数无效。");
+  return clientOrThrow().readSession(sessionId, { ...(itemLimit === undefined ? {} : { itemLimit }), ...(beforeItemId === undefined ? {} : { beforeItemId }) });
 });
 ipcMain.handle(IPC.EVENT_LIST, (_event, sessionId: unknown, afterEventId: unknown) => {
   if (typeof sessionId !== "string" || typeof afterEventId !== "number") {
@@ -597,16 +608,20 @@ ipcMain.handle(IPC.SESSION_HANDOFF, (_event, sessionId: unknown, target: unknown
   ) {
     throw new Error("Handoff 参数无效。");
   }
+  artifactPreview.closeSession(sessionId);
   terminalManager.closeSession(sessionId);
   return clientOrThrow().handoffSession(sessionId, target).then((result) => {
+    artifactPreview.closeSession(sessionId);
     terminalManager.closeSession(sessionId);
     return result;
   });
 });
 ipcMain.handle(IPC.SESSION_RESTORE_WORKTREE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
+  artifactPreview.closeSession(sessionId);
   terminalManager.closeSession(sessionId);
   return clientOrThrow().restoreSessionWorktree(sessionId).then((result) => {
+    artifactPreview.closeSession(sessionId);
     terminalManager.closeSession(sessionId);
     return result;
   });
@@ -639,6 +654,7 @@ ipcMain.handle(IPC.SESSION_RENAME, (_event, sessionId: unknown, title: unknown) 
 ipcMain.handle(IPC.SESSION_DELETE, (_event, sessionId: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   return clientOrThrow().deleteSession(sessionId).then((result) => {
+    artifactPreview.closeSession(sessionId);
     terminalManager.closeSession(sessionId);
     return result;
   });
@@ -666,6 +682,29 @@ ipcMain.handle(IPC.WORKSPACE_LIST_DIRECTORY, (
     limit === undefined ? undefined : Number(limit),
   );
 });
+function previewOwner(event: Electron.IpcMainInvokeEvent): Electron.WebContents {
+  const owner = event.sender;
+  if (BrowserWindow.fromWebContents(owner)?.webContents !== owner || event.senderFrame !== owner.mainFrame) throw new Error("预览请求来源无效。");
+  return owner;
+}
+function previewString(value: unknown): string {
+  if (typeof value !== "string" || !value || value.length > 8192 || value.includes("\0")) throw new Error("预览参数无效。");
+  return value;
+}
+ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (event, id: unknown, path: unknown, version: unknown) => {
+  if (version !== undefined && (typeof version !== "string" || !/^[a-f0-9]{64}$/.test(version))) throw new Error("文件版本无效。");
+  return artifactPreview.prepare(previewOwner(event), previewString(id), previewString(path), version as string | undefined);
+});
+ipcMain.handle(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
+ipcMain.handle(IPC.BROWSER_OPEN, (event, id: unknown, url: unknown) => artifactPreview.open(previewOwner(event), previewString(id), previewString(url)));
+ipcMain.handle(IPC.BROWSER_CLOSE, (event, id: unknown) => artifactPreview.close(previewOwner(event), previewString(id)));
+ipcMain.handle(IPC.BROWSER_STATE, (event, id: unknown) => artifactPreview.state(previewOwner(event), previewString(id)));
+ipcMain.handle(IPC.BROWSER_ANNOTATE, (event, id: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id)));
+ipcMain.handle(IPC.BROWSER_BOUNDS, (event, id: unknown, bounds: unknown) => {
+  if (bounds !== null && (typeof bounds !== "object" || !bounds || !["x", "y", "width", "height"].every((key) => typeof Reflect.get(bounds, key) === "number" && Number.isFinite(Reflect.get(bounds, key))))) throw new Error("页面位置无效。");
+  artifactPreview.bounds(previewOwner(event), previewString(id), bounds as import("../shared/index.js").BrowserBounds | null);
+});
+
 ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (
   _event,
   sessionId: unknown,
@@ -785,6 +824,16 @@ ipcMain.handle(IPC.SESSION_GIT_CREATE_BRANCH, (
     throw new Error("Git Create Branch 参数无效。");
   }
   return clientOrThrow().createSessionGitBranch(sessionId, branch, operationId);
+});
+ipcMain.handle(IPC.SESSION_GIT_READ_PATCH, (event, id: unknown, path: unknown, layer: unknown) => {
+  previewOwner(event);
+  if (layer !== "staged" && layer !== "unstaged") throw new Error("Diff 范围无效。");
+  return clientOrThrow().readGitReviewPatch(previewString(id), previewString(path), layer);
+});
+ipcMain.handle(IPC.SESSION_GIT_APPLY_HUNK, (event, id: unknown, input: unknown) => {
+  previewOwner(event);
+  if (!input || typeof input !== "object" || !["path", "action", "hunkIndex", "diffHash", "operationId"].every((key) => Object.hasOwn(input, key)) || Object.keys(input).length !== 5) throw new Error("分块操作参数无效。");
+  return clientOrThrow().applyGitHunk(previewString(id), input as import("../shared/index.js").GitHunkInput);
 });
 ipcMain.handle(IPC.SESSION_GIT_STAGE, (
   _event,
@@ -1156,6 +1205,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    artifactPreview.install();
     buildMenu();
     createWindow();
     void startRuntime();
@@ -1177,6 +1227,7 @@ app.on("before-quit", (event) => {
 });
 
 app.on("will-quit", () => {
+  artifactPreview.closeAll();
   terminalManager.closeAll();
   terminateRuntimeOnce();
 });

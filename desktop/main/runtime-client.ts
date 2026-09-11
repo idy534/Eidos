@@ -189,6 +189,7 @@ import type {
   ExtensionSnapshot as ExtensionSnapshotResult,
   WorkspaceDirectoryListing,
   WorkspaceFilePreview,
+  WorkspaceAssetChunk,
 } from "../shared/index.js";
 
 export interface InitializeResult {
@@ -496,6 +497,10 @@ export class RuntimeClient {
     );
   }
 
+  readWorkspaceAsset(sessionId: string, path: string, executionRoot: string, offset = 0, version?: string, workspaceVersion?: string): Promise<WorkspaceAssetChunk> {
+    return this.validatedRequest("workspace/readAsset", { sessionId, path, executionRoot, offset, ...(version ? { version } : {}), ...(workspaceVersion ? { workspaceVersion } : {}) }, isWorkspaceAssetChunk);
+  }
+
   renameSession(
     sessionId: string, title: string, operationId = randomUUID(),
   ): Promise<Session> {
@@ -554,6 +559,14 @@ export class RuntimeClient {
     return this.validatedRequest(
       "session/gitCreateBranch", { operationId, sessionId, branch }, isSessionGitMutationResult,
     );
+  }
+
+  readGitReviewPatch(sessionId: string, path: string, layer: "staged" | "unstaged"): Promise<import("../shared/index.js").GitReviewPatch> {
+    return this.validatedRequest("session/gitReadPatch", { sessionId, path, layer }, (value): value is import("../shared/index.js").GitReviewPatch => isRecord(value) && hasOnlyKeys(value, ["patch", "diffHash", "head"]) && typeof value.patch === "string" && typeof value.diffHash === "string" && /^[a-f0-9]{64}$/.test(value.diffHash) && typeof value.head === "string");
+  }
+
+  applyGitHunk(sessionId: string, input: import("../shared/index.js").GitHunkInput): Promise<SessionGitMutationResult> {
+    return this.validatedRequest("session/gitApplyHunk", { sessionId, ...input }, isSessionGitMutationResult);
   }
 
   stageSessionGit(
@@ -1145,7 +1158,7 @@ function isNotification(value: unknown): value is RuntimeNotification {
       "queued", "running", "waiting_approval", "finalizing",
     ].includes(run.status);
   }
-  if (value.method === "item/started" || value.method === "item/completed") {
+  if (value.method === "item/started" || value.method === "item/completed" || value.method === "item/updated") {
     const item = params.item;
     const valid = (
       hasOnlyKeys(params, ["sessionId", "runId", "item"])
@@ -1158,6 +1171,7 @@ function isNotification(value: unknown): value is RuntimeNotification {
     if (!valid || !isItem(item)) {
       return false;
     }
+    if (value.method === "item/updated") return true;
     return value.method === "item/started"
       ? item.status === "in_progress" && item.completedAt === undefined
       : item.status !== "in_progress" && item.completedAt !== undefined;
@@ -1453,16 +1467,29 @@ function isWorkspaceDirectoryListing(value: unknown): value is WorkspaceDirector
   );
 }
 
+function isWorkspaceAssetChunk(value: unknown): value is WorkspaceAssetChunk {
+  return isRecord(value) && hasOnlyKeys(value, ["data", "version", "workspaceVersion", "mimeType", "sizeBytes", "nextOffset", "complete"])
+    && typeof value.workspaceVersion === "string" && /^[a-f0-9]{64}$/.test(value.workspaceVersion)
+    && typeof value.data === "string" && value.data.length <= 262144 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.data)
+    && typeof value.version === "string" && /^[a-f0-9]{64}$/.test(value.version)
+    && typeof value.mimeType === "string" && isNonNegativeInteger(value.sizeBytes)
+    && value.sizeBytes <= 32 * 1024 * 1024
+    && isNonNegativeInteger(value.nextOffset) && value.nextOffset <= value.sizeBytes
+    && typeof value.complete === "boolean" && value.complete === (value.nextOffset === value.sizeBytes);
+}
+
 function isWorkspaceFilePreview(value: unknown): value is WorkspaceFilePreview {
   return (
     isRecord(value)
     && hasOnlyKeys(value, [
-      "path", "kind", "sizeBytes", "truncated", "content", "language", "reason",
+      "path", "kind", "sizeBytes", "truncated", "content", "language", "reason", "version", "mimeType",
     ])
     && typeof value.path === "string"
-    && ["text", "markdown", "code", "unavailable"].includes(String(value.kind))
+    && ["text", "markdown", "code", "image", "pdf", "html", "unavailable"].includes(String(value.kind))
     && isNonNegativeInteger(value.sizeBytes)
     && typeof value.truncated === "boolean"
+    && (value.version === undefined || typeof value.version === "string" && /^[a-f0-9]{64}$/.test(value.version))
+    && (value.mimeType === undefined || typeof value.mimeType === "string")
     && (value.content === undefined || typeof value.content === "string")
     && (value.language === undefined || typeof value.language === "string")
     && (value.reason === undefined || ["binary", "unsupported"].includes(String(value.reason)))

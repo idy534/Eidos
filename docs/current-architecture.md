@@ -27,9 +27,9 @@ Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 
 
 文件读写、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint 属于 Workspace 或 Runtime 能力。它们不因为 Project 没有 Git 而失效。Git status 和 Git diff 在 Git Project 的当前 execution root 上提供。Managed Worktree 和 Git-based Fork 仍然只在 Git Project 中提供。
 
-Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、敏感路径、hard discovery directory 和 root ignore 规则。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 只返回有界 UTF-8 预览。Renderer 对 Conversation 传来的历史文件路径先检查当前目录项；目录项明确缺失时，Renderer 不直接调用预览接口。目录列表截断时，Runtime 继续负责最终验证。Renderer 不直接读取 filesystem。
+Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、敏感路径、hard discovery directory 和 root ignore 规则。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 使用当前 Session 的私有 Workspace，仍经过同一个 Reader。Renderer 对 Conversation 传来的历史文件路径先检查当前目录项；目录项明确缺失时，Renderer 不直接调用预览接口。目录列表截断时，Runtime 继续负责最终验证。Renderer 不直接读取 filesystem。
 
-Desktop 会让 Conversation 始终保持挂载。用户可以从 Session header 右上角唯一的按钮打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal 和 Files Tab。Review 和 Files 各只有一个工具 Tab，Terminal 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab、当前路径和文件大小共享一条预览栏，侧栏布局默认给预览区更多空间。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
+Desktop 会让 Conversation 始终保持挂载。用户可以从 Session header 右上角唯一的按钮打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review、Files 和 Browser 各只有一个工具 Tab，Terminal 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab、当前路径和文件大小共享一条预览栏，侧栏布局默认给预览区更多空间。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
 
 ## 2. Process Architecture
 
@@ -522,3 +522,15 @@ Context 从未决 Durable Intent 投影最多 16 条 `reconciliationOrigins`，�
 Base/Effective Permission 的 `approvalWriteRoots` 标记用户 Skill 存储目录。字段默认空，旧权限快照仍可读取；新 Run 的产品权限工厂填入数据目录的 `skills`。Skill 激活只提供读权限，普通 Skill 的写入必须来自明确的附加授权。Runtime、PermissionPolicyEvaluator 和 Seatbelt 使用同一授权范围；精确文件授权不会开放同目录其他文件。Seatbelt 只允许获批目标祖先的 metadata 检查，不开放祖先目录内容。`skills/.system` 作为独立 protected write path 永久禁写，即使它被选作 Workspace 也不能修改。
 
 Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受控文件 helper 可在明确审批后不使用 Seatbelt，但 Runtime 会继续核验每个目标的保护范围、身份和版本。权限等待后的重物化、Durable Intent、最终内容验证和 Reconciliation 规则保持不变。Skill 文件修改不重写当前 Turn 的 Catalog Snapshot；后续 Turn 重新发现修改后的内容。
+
+### 产物预览与反馈
+
+本轮实现沿用 `Renderer → typed preload IPC → Main → RuntimeClient → WorkspaceExplorerApplication → WorkspaceReader`。Main 的 `ArtifactPreviewManager` 只保存短期资源授权和原生网页视图。文件权限、Workspace 身份和有界读取仍由 Runtime 判定；Renderer 和网页不直接使用 Node 文件 API。资源授权绑定 WebContents、Session、execution root、Workspace 身份和所选文件版本。每个资源块都重新检查版本。文本资源完整扫描后才释放原始字节；扫描产生脱敏替换时，原始资源会被拒绝。
+
+图片/PDF 在主 Renderer 中作为被动资源加载。可运行的 HTML 使用没有 preload 的 sandboxed `WebContentsView`，并使用独立临时 Session。该视图不共享主应用的 IPC 或 Cookie。Main 注册资源协议、拒绝额外权限和下载，并在生命周期结束时清理视图及授权。Browser 的网页、滚动和标注草稿不是持久业务事实；发送后的反馈沿用普通用户消息链路。
+
+`record_workspace_change` 在同一 SQLite 事务内记录准备后的 Diff 和 `item.updated` Event。Event/Outbox 将更新后的 Item 投影为 `item/updated`。Desktop 的“最近一轮”从已有 Item/ToolCall 读取，不维护另一个 Run 成功状态。准备中、完成和失败仍使用原 ToolCall 状态。原始模型参数流不作为可执行补丁展示。
+
+`session/gitReadPatch` 读取 index 或 worktree 文本差异并返回 Diff hash。`session/gitApplyHunk` 在现有 Session Git operation 边界内检查 active Run、路径和当前补丁 hash。现有 `unidiff` 负责选择 hunk，原生 Git 负责校验和修改。操作必须携带 operationId，沿用 SQLite 幂等与不确定操作语义。此实现没有数据库迁移、第二套 Artifact 表或新增第三方依赖。
+
+当前修订尚未完成测试和 Desktop 验收，具体边界见 `current-limitations.md` 的“本轮产物实现的边界”。
