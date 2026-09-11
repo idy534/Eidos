@@ -374,14 +374,17 @@ test("creates first-class Direct Workspace sessions without Git review state", a
       }],
       truncated: false,
     });
-    assert.deepEqual(await client.readWorkspaceFilePreview(first.id, "nested folder/hello.ts"), {
+    const preview = await client.readWorkspaceFilePreview(first.id, "nested folder/hello.ts");
+    assert.deepEqual({ ...preview, version: undefined }, {
       path: "nested folder/hello.ts",
       kind: "code",
       sizeBytes: 27,
       truncated: false,
       content: "export const hello = true;\n",
       language: "typescript",
+      version: undefined,
     });
+    assert.match(preview.version ?? "", /^[a-f0-9]{64}$/);
     assert.equal(first.project?.workspaceRoot, await realpath(workspaceRoot));
     assert.equal(first.project?.gitAvailable, false);
     assert.equal(first.project?.id, second.project?.id);

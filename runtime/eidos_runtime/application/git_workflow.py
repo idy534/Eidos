@@ -34,6 +34,7 @@ from eidos_runtime.protocol.methods import (
     SessionGitReadPatchRequestDto,
     SessionGitReadPatchResponseDto,
     SessionGitApplyHunkRequestDto,
+    SessionGitApplyHunkResponseDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
     SessionGitCreateBranchRequestDto,
@@ -205,7 +206,7 @@ class GitWorkflowApplication:
             raise ApplicationError("GIT_HUNK_UNAVAILABLE") from error
         return GitHunkPlan(session, Path(status.worktree_root), request.path, request.action, request.diff_hash, patch)
 
-    def apply_hunk(self, plan: GitHunkPlan) -> SessionGitStageResponseDto:
+    def apply_hunk(self, plan: GitHunkPlan) -> SessionGitApplyHunkResponseDto:
         try:
             current = self._worktrees.git.review_patch(plan.root, plan.path, staged=plan.action == "unstage")
             if hashlib.sha256(current.encode()).hexdigest() != plan.diff_hash:
@@ -213,7 +214,7 @@ class GitWorkflowApplication:
             self._worktrees.git.apply_review_hunk(plan.root, plan.patch, action=plan.action)
         except GitError as error:
             raise _workflow_error(error) from error
-        return _mutation_result(SessionGitStageResponseDto, self._status(plan.session))
+        return _mutation_result(SessionGitApplyHunkResponseDto, self._status(plan.session))
 
     def preflight_stage(self, request: SessionGitStageRequestDto) -> GitMutationPlan:
         session, before = self._prepare_mutation(request.session_id)

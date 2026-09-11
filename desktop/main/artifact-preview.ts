@@ -158,7 +158,9 @@ export class ArtifactPreviewManager {
     if (!bounds) { entry.view.setVisible(false); return; }
     const window = BrowserWindow.fromWebContents(owner);
     if (!window) return;
-    const [width, height] = window.getContentSize();
+    const [contentWidth, contentHeight] = window.getContentSize();
+    const width = contentWidth ?? 0;
+    const height = contentHeight ?? 0;
     const x = Math.max(0, Math.min(width, Math.round(bounds.x)));
     const y = Math.max(0, Math.min(height, Math.round(bounds.y)));
     entry.view.setBounds({ x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height))) });

@@ -46,6 +46,11 @@ import { applyNotification, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
 import { NavigationControls } from "../components/NavigationControls.js";
 import { useNavigationHistory } from "./useNavigationHistory.js";
+import {
+  collectOutputArtifacts,
+  OutputContent,
+  useCompleteSessionItems,
+} from "../components/TurnResults.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
@@ -135,6 +140,12 @@ export function AppShell({ runtime }: AppShellProps) {
   const [handoffSessionId, setHandoffSessionId] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(loadSidebarOpen);
   const [browserRequest, setBrowserRequest] = useState<{ url: string; id: number }>();
+  const [reviewRequest, setReviewRequest] = useState<{
+    runId: string;
+    path?: string;
+    itemId?: string;
+    requestId: number;
+  }>();
   const [dockOpen, setDockOpen] = useState(false);
   const [dockExpanded, setDockExpanded] = useState(false);
   const [dockWidth, setDockWidth] = useState<number>();
@@ -611,6 +622,12 @@ export function AppShell({ runtime }: AppShellProps) {
   const { snapshot } = sessionState;
   const currentSnapshot = snapshot ?? sessionState.draft;
   const isDraft = Boolean(!snapshot && sessionState.draft);
+  const completeSessionItems = useCompleteSessionItems(
+    currentSnapshot && !isDraft ? currentSnapshot.session.id : undefined,
+    currentSnapshot?.items ?? [],
+    currentSnapshot?.previousItemId,
+  );
+  const outputArtifacts = collectOutputArtifacts(completeSessionItems.items);
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
   const sessionWorktree = currentSnapshot?.session.worktree;
   const sessionIsLocal = currentSnapshot?.session.executionMode === "local"
@@ -666,6 +683,10 @@ export function AppShell({ runtime }: AppShellProps) {
       window.removeEventListener("keydown", closeOnKeyDown);
     };
   }, [executionKey, sessionHasProject]);
+
+  useEffect(() => {
+    setReviewRequest(undefined);
+  }, [currentSnapshot?.session.id]);
 
   function getDockResizeBounds(): { min: number; max: number } {
     const bodyWidth = workspaceBodyRef.current?.getBoundingClientRect().width || window.innerWidth;
@@ -752,6 +773,20 @@ export function AppShell({ runtime }: AppShellProps) {
     setBrowserRequest({ url, id: ++fileOpenSequenceRef.current });
   }
 
+  function handleOpenReview(request: { runId: string; path?: string; itemId?: string }): void {
+    if (!sessionHasGit) return;
+    openTool("review");
+    setReviewRequest({ ...request, requestId: ++fileOpenSequenceRef.current });
+  }
+
+  function handleOpenExternal(path: string): void {
+    if (!currentSnapshot) return;
+    const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
+    const resolved = artifactPath(path, root);
+    if (!resolved) return;
+    void window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved).catch(() => undefined);
+  }
+
   function handleOpenFileInDock(path: string): void {
     if (!currentSnapshot) return;
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
@@ -793,7 +828,7 @@ export function AppShell({ runtime }: AppShellProps) {
     || handoffBusy
     || !isStorageReady;
 
-  const workspaceActions = sessionHasProject && availableTools.length > 0 ? (
+  const workspaceActions = currentSnapshot && !isDraft && availableTools.length > 0 ? (
     <>
       <div className="workspace-header-tools">
         <details
@@ -826,6 +861,11 @@ export function AppShell({ runtime }: AppShellProps) {
             <header>
               <h2>环境信息</h2>
             </header>
+            <OutputContent
+              artifacts={outputArtifacts}
+              loading={completeSessionItems.loading}
+              error={completeSessionItems.error}
+            />
             {sessionHasGit && (
               <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
                 <span>变更</span>
@@ -872,7 +912,14 @@ export function AppShell({ runtime }: AppShellProps) {
   ) : currentSnapshot && !isDraft ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} /> : null;
 
   return (
-    <ArtifactProvider value={currentSnapshot ? { sessionId: currentSnapshot.session.id, executionRoot: currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot, openFile: handleOpenFileInDock, openBrowser: handleOpenBrowser } : undefined}>
+    <ArtifactProvider value={currentSnapshot ? {
+      sessionId: currentSnapshot.session.id,
+      executionRoot: currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
+      openFile: handleOpenFileInDock,
+      openBrowser: handleOpenBrowser,
+      openExternal: handleOpenExternal,
+      openReview: sessionHasGit ? handleOpenReview : undefined,
+    } : undefined}>
     <main className={`workbench${sidebarOpen ? "" : " workbench--sidebar-collapsed"}`}>
       <SessionSidebar
         sessions={sessionState.sessions}
@@ -1035,6 +1082,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
                 <ExecutionFeed
                   items={currentSnapshot.items}
+                  resultItems={completeSessionItems.items}
                   runs={currentSnapshot.runs}
                   models={modelState.list?.models ?? []}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
@@ -1148,9 +1196,10 @@ export function AppShell({ runtime }: AppShellProps) {
                       <GitChangesPanel
                         sessionId={currentSnapshot.session.id}
                         workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
-                        items={currentSnapshot.items}
+                        items={completeSessionItems.items}
                         latestRunId={currentSnapshot.runs.at(-1)?.id}
                         previousItemId={currentSnapshot.previousItemId}
+                        lastTurnRequest={reviewRequest}
                         scope={gitReviewState.scope}
                         status={gitReviewState.status}
                         summary={gitReviewState.summary}
@@ -1195,8 +1244,6 @@ export function AppShell({ runtime }: AppShellProps) {
                   />;
                   return (
                     <WorkspaceExplorer
-                      items={currentSnapshot.items}
-                      resultsIncomplete={Boolean(currentSnapshot.previousItemId)}
                       sessionId={currentSnapshot.session.id}
                       executionKey={executionKey}
                       onFeedback={handleReviewFeedback}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 import subprocess
 import threading
@@ -13,6 +14,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.git import WorktreeManager
 from eidos_runtime.protocol.methods import (
     WorkspaceListDirectoryRequestDto,
+    WorkspaceReadAssetRequestDto,
     WorkspaceReadFilePreviewRequestDto,
     SessionCreateRequestDto,
 )
@@ -149,6 +151,114 @@ def test_text_markdown_and_binary_preview_are_typed_and_bounded(tmp_path: Path) 
             "truncated": False,
             "reason": "binary",
         }
+    finally:
+        store.close()
+
+
+def test_image_and_pdf_preview_return_versioned_typed_metadata(tmp_path: Path) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        (workspace / "diagram.png").write_bytes(b"\x89PNG\r\n")
+        (workspace / "manual.pdf").write_bytes(b"%PDF-1.7\n")
+
+        image = application.read_file_preview(
+            WorkspaceReadFilePreviewRequestDto(sessionId=session_id, path="diagram.png")
+        ).root
+        pdf = application.read_file_preview(
+            WorkspaceReadFilePreviewRequestDto(sessionId=session_id, path="manual.pdf")
+        ).root
+
+        assert image["kind"] == "image"
+        assert image["mimeType"] == "image/png"
+        assert len(image["version"]) == 64
+        assert pdf["kind"] == "pdf"
+        assert pdf["mimeType"] == "application/pdf"
+        assert len(pdf["version"]) == 64
+    finally:
+        store.close()
+
+
+def test_asset_reads_bounded_chunks_and_rejects_stale_identity(tmp_path: Path) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    payload = b"\x89PNG\r\n" + b"x" * (192 * 1024 + 3)
+    (workspace / "diagram.png").write_bytes(payload)
+    execution_root = str(workspace.resolve())
+    try:
+        first = application.read_asset(
+            WorkspaceReadAssetRequestDto(
+                sessionId=session_id,
+                path="diagram.png",
+                executionRoot=execution_root,
+            )
+        ).root
+
+        assert base64.b64decode(first["data"]) == payload[: 192 * 1024]
+        assert first["nextOffset"] == 192 * 1024
+        assert first["complete"] is False
+        assert first["mimeType"] == "image/png"
+
+        second = application.read_asset(
+            WorkspaceReadAssetRequestDto(
+                sessionId=session_id,
+                path="diagram.png",
+                executionRoot=execution_root,
+                offset=first["nextOffset"],
+                version=first["version"],
+                workspaceVersion=first["workspaceVersion"],
+            )
+        ).root
+        assert base64.b64decode(second["data"]) == payload[192 * 1024 :]
+        assert second["complete"] is True
+        assert second["nextOffset"] == len(payload)
+
+        with pytest.raises(ApplicationError) as wrong_root:
+            application.read_asset(
+                WorkspaceReadAssetRequestDto(
+                    sessionId=session_id,
+                    path="diagram.png",
+                    executionRoot=str(tmp_path),
+                )
+            )
+        assert wrong_root.value.code == "WORKSPACE_IDENTITY_CHANGED"
+
+        (workspace / "diagram.png").write_bytes(payload + b"changed")
+        with pytest.raises(ApplicationError) as changed:
+            application.read_asset(
+                WorkspaceReadAssetRequestDto(
+                    sessionId=session_id,
+                    path="diagram.png",
+                    executionRoot=execution_root,
+                    version=first["version"],
+                )
+            )
+        assert changed.value.code == "WORKSPACE_FILE_CHANGED"
+    finally:
+        store.close()
+
+
+def test_asset_rejects_unsupported_and_sensitive_content(tmp_path: Path) -> None:
+    store, application, session_id, workspace = _application(tmp_path)
+    try:
+        (workspace / "notes.txt").write_text("plain\n", encoding="utf-8")
+        with pytest.raises(ApplicationError, match="WORKSPACE_PREVIEW_UNSUPPORTED"):
+            application.read_asset(
+                WorkspaceReadAssetRequestDto(
+                    sessionId=session_id,
+                    path="notes.txt",
+                    executionRoot=str(workspace.resolve()),
+                )
+            )
+
+        (workspace / "page.html").write_text("<p>secret</p>\n", encoding="utf-8")
+        application._scan_text = lambda _value: "[redacted]"  # type: ignore[method-assign]
+        with pytest.raises(ApplicationError, match="WORKSPACE_SENSITIVE_CONTENT"):
+            application.read_asset(
+                WorkspaceReadAssetRequestDto(
+                    sessionId=session_id,
+                    path="page.html",
+                    executionRoot=str(workspace.resolve()),
+                )
+            )
     finally:
         store.close()
 

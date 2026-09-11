@@ -4,8 +4,8 @@ import type { Item } from "../contracts.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { userFacingError } from "../session-state.js";
 
-export function LastTurnChanges({ sessionId, previousItemId, items, runId, onFeedback, disabled }: {
-  sessionId: string; previousItemId?: string | undefined; items: Item[]; runId?: string | undefined; onFeedback?: ((text: string) => Promise<void>) | undefined; disabled: boolean;
+export function LastTurnChanges({ sessionId, previousItemId, items, runId, focusPath, onFeedback, disabled }: {
+  sessionId: string; previousItemId?: string | undefined; items: Item[]; runId?: string | undefined; focusPath?: string | undefined; onFeedback?: ((text: string) => Promise<void>) | undefined; disabled: boolean;
 }) {
   const actions = useArtifacts();
   const [older, setOlder] = useState<Item[]>([]);
@@ -13,6 +13,12 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, onFee
   const [loading, setLoading] = useState(false);
   const currentItems = [...new Map([...older, ...items].map((item) => [item.id, item])).values()].filter((item) => item.runId === runId).sort((a, b) => a.ordinal - b.ordinal);
   const changes = currentItems.filter((item) => item.toolCall?.changeDiff);
+  const matchesFocus = (file: { oldPath: string; newPath: string }): boolean => (
+    !focusPath || file.oldPath === focusPath || file.newPath === focusPath
+  );
+  const hasFocusedChange = !focusPath || changes.some((item) => {
+    try { return parseDiff(item.toolCall!.changeDiff!).some(matchesFocus); } catch { return false; }
+  });
   const [anchor, setAnchor] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
@@ -41,7 +47,8 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, onFee
     {changes.map((item) => {
       const call = item.toolCall!;
       try {
-        const files = parseDiff(call.changeDiff!);
+        const files = parseDiff(call.changeDiff!).filter(matchesFocus);
+        if (!files.length) return null;
         return <article key={item.id}><strong>{call.status === "running" ? "准备或执行中" : call.status === "completed" ? "执行完成" : "未完整完成"}</strong>
           {files.map((file) => <div key={`${file.oldPath}:${file.newPath}`}><button title="打开当前文件，历史内容以此处 Diff 为准" onClick={() => actions?.openFile(file.newPath === "/dev/null" ? file.oldPath : file.newPath)}>{file.newPath === "/dev/null" ? file.oldPath : file.newPath}</button>
             <Diff viewType="unified" diffType={file.type} hunks={file.hunks} gutterEvents={{ onClick: ({ change, side }) => {
@@ -54,6 +61,7 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, onFee
       } catch { return <pre key={item.id}>{call.changeDiff}</pre>; }
     })}
     {!changes.length && <p>本轮还没有已记录的文件补丁。</p>}
+    {focusPath && changes.length > 0 && !hasFocusedChange && <p>本轮未找到该文件的历史 Diff。</p>}
     {anchor && <div><pre>{anchor}</pre><textarea aria-label="本轮修改反馈" value={body} maxLength={8192} onChange={(event) => setBody(event.target.value)} /><button disabled={disabled || busy || !body.trim()} onClick={() => void send()}>发送反馈</button>{error && <p role="alert">{error}</p>}</div>}
   </section>;
 }

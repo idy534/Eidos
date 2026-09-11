@@ -45,6 +45,12 @@ interface GitChangesPanelProps {
   sessionId: string;
   latestRunId?: string | undefined;
   previousItemId?: string | undefined;
+  lastTurnRequest?: {
+    runId: string;
+    path?: string;
+    itemId?: string;
+    requestId: number;
+  } | undefined;
   items?: import("../contracts.js").Item[] | undefined;
   workspaceRoot: string;
   scope: GitDiffScope;
@@ -162,6 +168,9 @@ function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
 
 export function GitChangesPanel(props: GitChangesPanelProps) {
   const [lastTurn, setLastTurn] = useState(false);
+  useEffect(() => {
+    setLastTurn(Boolean(props.lastTurnRequest));
+  }, [props.lastTurnRequest?.requestId, props.sessionId]);
   const summaryControlled = Object.prototype.hasOwnProperty.call(props, "summary");
   const {
     sessionId,
@@ -493,7 +502,18 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         </p>
       )}
 
-      {lastTurn && <LastTurnChanges key={`${sessionId}:${props.latestRunId}`} sessionId={sessionId} previousItemId={props.previousItemId} items={props.items ?? []} runId={props.latestRunId} onFeedback={onSendReviewFeedback} disabled={reviewFeedbackDisabled} />}
+      {lastTurn && (
+        <LastTurnChanges
+          key={`${sessionId}:${props.lastTurnRequest?.runId ?? props.latestRunId}:${props.lastTurnRequest?.requestId ?? ""}`}
+          sessionId={sessionId}
+          previousItemId={props.previousItemId}
+          items={props.items ?? []}
+          runId={props.lastTurnRequest?.runId ?? props.latestRunId}
+          focusPath={props.lastTurnRequest?.path}
+          onFeedback={onSendReviewFeedback}
+          disabled={reviewFeedbackDisabled}
+        />
+      )}
       <div className="git-review-files" hidden={lastTurn}>
         {visibleGroups.map((group) => (
           <section className="git-file-group" key={group.id} aria-label={group.label}>

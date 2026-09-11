@@ -168,7 +168,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(sessionButton).toBeEnabled();
   });
 
-  it("hides Files for a projectless session", async () => {
+  it("shows workspace tools for a projectless session", async () => {
     const projectlessSession: Session = {
       ...startupSession,
       id: "projectless-session",
@@ -195,7 +195,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(projectlessSession.title) }));
     await screen.findByRole("textbox", { name: "告诉 Eidos 要做什么" });
     expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "打开工作区工具" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开工作区工具" })).toBeInTheDocument();
     expect(screen.queryByLabelText("会话上下文")).not.toBeInTheDocument();
   });
 

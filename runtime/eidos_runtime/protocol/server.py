@@ -797,7 +797,7 @@ class RuntimeServer:
             (
                 "session/gitApplyHunk",
                 method_dtos.SessionGitApplyHunkRequestDto,
-                method_dtos.SessionGitStageResponseDto,
+                method_dtos.SessionGitApplyHunkResponseDto,
                 lambda _id, request: self._applications_or_error().sessions.git_apply_hunk(request),
             ),
             (

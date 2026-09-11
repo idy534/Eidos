@@ -330,7 +330,7 @@ Project
 ```
 
 新的 `project/create` 接收可选的 `name` 和必需的 `workspaceRoot`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再保存 Project 元数据。名称缺省时，Runtime 使用 canonical Workspace 的文件夹名。这个调用不创建 Session。新的 `session/create` 接收 `workspaceRoot`、`executionMode`、可选的 `baseRef` 和显式的 `includeLocalChanges`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再检测可选 Git capability。`executionMode = local` 时，Runtime 创建 `worktree_id = NULL` 的 Local Session，不创建 Git side effect，也不创建 Worktree lifecycle intent。`executionMode = worktree` 时，Runtime 要求 Git capability，通过 `GitBackend` 将 `baseRef` 解析为 immutable `base_commit`，确定 `project_id`、`worktree_id`、`worktree_root` 和 `branch = NULL`，写入 durable lifecycle intent，然后通过唯一的 hardened Git CLI `worktree add --detach` 创建 Worktree。Runtime 只复制 ignored 且命中 source `.worktreeinclude` 的文件、自动复制 ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md`，以及可选的 Git patch bytes。没有 Git 时，Worktree 请求返回 typed `WORKTREE_REQUIRES_GIT`。没有显式 `baseRef` 时，Runtime 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。Local Run 使用 `Project.workspace_root`，Worktree Run 使用 Worktree root。
-`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。该 Session 使用 Runtime 数据目录内的私有锚点目录作为内部执行 workspace 和 identity。默认路径是 `~/.eidos/.eidos-projectless/<session_id>`。自定义 `EIDOS_DATA_DIR` 时，锚点目录仍位于该数据目录内。该 Session 不会创建 Project、Worktree 或 Repository workspace。它固定为 Local execution。Run resolution 为这个系统 workspace 生成普通的 workspace permission profile，并保留数据目录保护。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules、Repository Context 或 workspace-environment。Desktop 仍不显示 Files 和文件树。
+`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。该 Session 使用 Runtime 数据目录内的私有锚点目录作为内部执行 workspace 和 identity。默认路径是 `~/.eidos/.eidos-projectless/<session_id>`。自定义 `EIDOS_DATA_DIR` 时，锚点目录仍位于该数据目录内。该 Session 不会创建 Project、Worktree 或 Repository workspace。它固定为 Local execution。Run resolution 为这个系统 workspace 生成普通的 workspace permission profile，并保留数据目录保护。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules、Repository Context 或 workspace-environment。Desktop 仍提供当前 Session 的 Files、输出内容和文件预览，但不提供 Git Review。
 
 ### Local ↔ Managed Worktree Handoff
 
@@ -531,6 +531,10 @@ Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受�
 
 `record_workspace_change` 在同一 SQLite 事务内记录准备后的 Diff 和 `item.updated` Event。Event/Outbox 将更新后的 Item 投影为 `item/updated`。Desktop 的“最近一轮”从已有 Item/ToolCall 读取，不维护另一个 Run 成功状态。准备中、完成和失败仍使用原 ToolCall 状态。原始模型参数流不作为可执行补丁展示。
 
+Desktop 的 `TurnResults` 在每个 Run 的最终答复后投影文本修改和格式化产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。文本修改按路径合并；重复路径无法由已有证据形成可靠合并 Diff 时，Renderer 保留路径但不编造行数。`OutputContent` 在环境信息中按路径保留当前 Session 最新产物记录。Files 只负责文件树和预览，不再负责结果列表。
+
+修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。产物卡复用 Workspace Explorer、隔离 HTML 预览和 Main 的受控系统应用打开入口。DOCX 没有内置预览时不会展示不可用的预览操作。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
+
 `session/gitReadPatch` 读取 index 或 worktree 文本差异并返回 Diff hash。`session/gitApplyHunk` 在现有 Session Git operation 边界内检查 active Run、路径和当前补丁 hash。现有 `unidiff` 负责选择 hunk，原生 Git 负责校验和修改。操作必须携带 operationId，沿用 SQLite 幂等与不确定操作语义。此实现没有数据库迁移、第二套 Artifact 表或新增第三方依赖。
 
-当前修订尚未完成测试和 Desktop 验收，具体边界见 `current-limitations.md` 的“本轮产物实现的边界”。
+当前修订的自动测试、构建、原生 Seatbelt 和 Electron smoke 已通过。真实 Desktop 操作验收仍未完成，具体边界见 `current-limitations.md` 的“本轮产物实现的边界”。

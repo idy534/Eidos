@@ -8,6 +8,7 @@
     "rootDir": "desktop",
     "outDir": "dist/renderer-test",
     "strict": true,
+    "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "types": ["node", "react", "react-dom"]

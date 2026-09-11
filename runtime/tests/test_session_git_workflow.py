@@ -21,6 +21,8 @@ from eidos_runtime.protocol.methods import (
     SessionGitCreateBranchRequestDto,
     SessionGitDiffRequestDto,
     SessionGitDiscardRequestDto,
+    SessionGitApplyHunkRequestDto,
+    SessionGitReadPatchRequestDto,
     SessionGitStageRequestDto,
     SessionGitStatusRequestDto,
     SessionGitSwitchBranchRequestDto,
@@ -127,6 +129,79 @@ def test_structured_status_and_file_diff_are_runtime_owned(tmp_path: Path) -> No
         assert diff["changedFiles"] == ["new file.txt"]
         assert "untracked" in diff["unifiedDiff"]
         assert "tracked.txt" not in diff["unifiedDiff"]
+    finally:
+        store.close()
+
+
+def test_git_review_patch_applies_one_hunk_and_rejects_stale_hash(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    lines = [f"line-{index}\n" for index in range(1, 31)]
+    (repository / "tracked.txt").write_text("".join(lines), encoding="utf-8")
+    _git(repository, "add", "tracked.txt")
+    _git(repository, "commit", "-qm", "expand fixture")
+    store, _manager, application = _application(tmp_path)
+    try:
+        session = _create_session(application, repository, execution_mode="local")
+        changed = list(lines)
+        changed[1] = "changed-second\n"
+        changed[-2] = "changed-penultimate\n"
+        (repository / "tracked.txt").write_text("".join(changed), encoding="utf-8")
+
+        patch = application.git_read_patch(
+            SessionGitReadPatchRequestDto(
+                sessionId=session["id"], path="tracked.txt", layer="unstaged"
+            )
+        ).root
+        assert patch["patch"].count("@@ -") == 2
+        assert len(patch["diffHash"]) == 64
+
+        request = SessionGitApplyHunkRequestDto(
+            operationId=str(uuid.uuid4()),
+            sessionId=session["id"],
+            path="tracked.txt",
+            action="stage",
+            hunkIndex=0,
+            diffHash=patch["diffHash"],
+        )
+        result = application.git_apply_hunk(request).root
+        assert application.git_apply_hunk(request).root == result
+        staged = _git(repository, "diff", "--cached", "--", "tracked.txt")
+        unstaged = _git(repository, "diff", "--", "tracked.txt")
+        assert "changed-second" in staged
+        assert "changed-penultimate" not in staged
+        assert "changed-penultimate" in unstaged
+        assert "changed-second" not in unstaged
+
+        with pytest.raises(ApplicationError, match="GIT_DIFF_CHANGED"):
+            application.git_apply_hunk(
+                SessionGitApplyHunkRequestDto(
+                    operationId=str(uuid.uuid4()),
+                    sessionId=session["id"],
+                    path="tracked.txt",
+                    action="stage",
+                    hunkIndex=0,
+                    diffHash=patch["diffHash"],
+                )
+            )
+
+        remaining = application.git_read_patch(
+            SessionGitReadPatchRequestDto(
+                sessionId=session["id"], path="tracked.txt", layer="unstaged"
+            )
+        ).root
+        with pytest.raises(ApplicationError, match="GIT_HUNK_UNAVAILABLE"):
+            application.git_apply_hunk(
+                SessionGitApplyHunkRequestDto(
+                    operationId=str(uuid.uuid4()),
+                    sessionId=session["id"],
+                    path="tracked.txt",
+                    action="stage",
+                    hunkIndex=9,
+                    diffHash=remaining["diffHash"],
+                )
+            )
     finally:
         store.close()
 

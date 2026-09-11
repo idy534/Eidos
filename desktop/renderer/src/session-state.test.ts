@@ -127,6 +127,54 @@ test("a completed assistant item without content preserves streamed text", () =>
   assert.equal(result?.items[0]?.status, "completed");
 });
 
+test("an item update preserves content and merges the latest tool evidence", () => {
+  const existing: Item = {
+    id: "item-tool",
+    sessionId: session.id,
+    runId: "run-1",
+    ordinal: 3,
+    kind: "file_change",
+    status: "in_progress",
+    createdAt: 1,
+    content: "partial result",
+    toolCall: {
+      id: "tool-1",
+      itemId: "item-tool",
+      modelStepIndex: 1,
+      batchOrder: 0,
+      providerCallId: "provider-1",
+      toolName: "apply_patch",
+      status: "running",
+      startedAt: 1,
+      changeDiff: "old diff",
+    },
+  };
+  const incoming: Item = {
+    ...existing,
+    status: "completed",
+    completedAt: 2,
+    toolCall: {
+      ...existing.toolCall!,
+      status: "completed",
+      resultJson: '{"ok":true}',
+    },
+  };
+  delete incoming.content;
+
+  const result = applyNotification(
+    { session, runs: [], items: [existing], stepResolutions: [] },
+    {
+      method: "item/updated",
+      params: { sessionId: session.id, runId: "run-1", item: incoming },
+    },
+  );
+
+  assert.equal(result?.items[0]?.content, "partial result");
+  assert.equal(result?.items[0]?.status, "completed");
+  assert.equal(result?.items[0]?.toolCall?.status, "completed");
+  assert.equal(result?.items[0]?.toolCall?.resultJson, '{"ok":true}');
+});
+
 test("a new run's user item stays after the preceding run's items", () => {
   const previousUser: Item = {
     id: "item-previous-user",

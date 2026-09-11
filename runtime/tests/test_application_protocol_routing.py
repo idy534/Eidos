@@ -59,7 +59,8 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
     registered = {registration.name for registration in server.method_registry}
     assert {
         "project/list", "project/delete",
-        "session/gitStatus", "session/gitDiff", "session/gitStage",
+        "session/gitStatus", "session/gitReadPatch", "session/gitApplyHunk",
+        "session/gitDiff", "session/gitStage",
         "session/gitUnstage", "session/gitCommit", "session/gitDiscard",
         "session/gitSwitchBranch", "session/gitCreateBranch",
         "session/gitRemoteStatus",
@@ -70,7 +71,7 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
         "context/usage",
         "checkpoint/create", "checkpoint/list", "checkpoint/rewind",
         "checkpoint/fork",
-        "workspace/listDirectory", "workspace/readFilePreview",
+        "workspace/listDirectory", "workspace/readAsset", "workspace/readFilePreview",
         "review/listComments", "review/createComment", "review/deleteComment",
     } <= registered
     server.close()

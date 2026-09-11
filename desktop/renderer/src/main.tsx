@@ -5,6 +5,7 @@ import "react-diff-view/style/index.css";
 import { App } from "./App";
 import "./styles.css";
 import "./components/response-actions.css";
+import "./components/TurnResults.css";
 
 
 createRoot(document.getElementById("root")!).render(

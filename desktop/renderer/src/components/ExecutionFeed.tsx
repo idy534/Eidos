@@ -18,6 +18,7 @@ import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
+import { TurnResults } from "./TurnResults.js";
 
 
 type FeedbackHandler = (
@@ -29,6 +30,7 @@ type EditResendHandler = (run: Run, editedInput: string) => Promise<void>;
 
 interface Props {
   items: Item[];
+  resultItems?: Item[];
   runs: Run[];
   models?: ModelOption[];
   workspaceRoot?: string;
@@ -78,6 +80,7 @@ const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
 
 export function ExecutionFeed({
   items,
+  resultItems = items,
   runs,
   models = [],
   workspaceRoot = "",
@@ -169,6 +172,7 @@ export function ExecutionFeed({
                   key={`${runId}:${segment.user?.id ?? index}`}
                   segment={segment}
                   run={run}
+                  resultItems={resultItems}
                   modelName={modelName}
                   workspaceRoot={workspaceRoot}
                   isLast={index === segments.length - 1}
@@ -216,6 +220,7 @@ export function isFeedAtBottom(
 function RunSegment({
   segment,
   run,
+  resultItems,
   modelName,
   workspaceRoot,
   isLast,
@@ -237,6 +242,7 @@ function RunSegment({
 }: {
   segment: Segment;
   run: Run;
+  resultItems: Item[];
   modelName: string;
   workspaceRoot?: string | undefined;
   isLast: boolean;
@@ -315,6 +321,9 @@ function RunSegment({
           onRegenerate={onRegenerate}
         />
       ))}
+      {isLast && TERMINAL_RUN_STATUSES.has(run.status)
+        && segment.response.every((item) => item.status !== "in_progress")
+        && <TurnResults run={run} items={resultItems} />}
     </>
   );
 }

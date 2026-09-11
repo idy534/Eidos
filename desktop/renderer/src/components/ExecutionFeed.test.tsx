@@ -296,7 +296,7 @@ test("does not describe a failed file write as edited", () => {
   assert.doesNotMatch(html, /已编辑 summary\.txt/);
 });
 
-test("shows the applied diff for an automatic workspace file change", () => {
+test("shows the completed diff for an automatic workspace file change", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[item({
@@ -321,7 +321,7 @@ test("shows the applied diff for an automatic workspace file change", () => {
     />,
   );
 
-  assert.match(html, /已应用的变更/);
+  assert.match(html, /已完成的变更/);
   assert.match(html, /\+\+\+ b\/summary\.txt/);
   assert.doesNotMatch(html, /批准并写入/);
 });

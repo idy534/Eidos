@@ -761,6 +761,10 @@ class SessionGitStageResponseDto(SessionGitMutationResponseDto):
     pass
 
 
+class SessionGitApplyHunkResponseDto(SessionGitMutationResponseDto):
+    pass
+
+
 class SessionGitUnstageResponseDto(SessionGitMutationResponseDto):
     pass
 

@@ -5,6 +5,8 @@ export interface ArtifactActions {
   executionRoot: string;
   openFile(path: string): void;
   openBrowser(url: string): void;
+  openExternal?: ((path: string) => void) | undefined;
+  openReview?: ((request: { runId: string; path?: string; itemId?: string }) => void) | undefined;
 }
 const Context = createContext<ArtifactActions | undefined>(undefined);
 export const ArtifactProvider = Context.Provider;

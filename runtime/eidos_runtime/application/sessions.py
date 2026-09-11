@@ -80,6 +80,7 @@ from eidos_runtime.protocol.methods import (
     SessionGitReadPatchRequestDto,
     SessionGitReadPatchResponseDto,
     SessionGitApplyHunkRequestDto,
+    SessionGitApplyHunkResponseDto,
     SessionGitDiffResponseDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
@@ -1319,11 +1320,11 @@ class SessionApplication:
             raise ApplicationError("INTERNAL_ERROR")
         return self._git_workflow.read_patch(request)
 
-    def git_apply_hunk(self, request: SessionGitApplyHunkRequestDto) -> SessionGitStageResponseDto:
+    def git_apply_hunk(self, request: SessionGitApplyHunkRequestDto) -> SessionGitApplyHunkResponseDto:
         if self._git_workflow is None:
             raise ApplicationError("INTERNAL_ERROR")
         return self._execute_git_mutation(
-            request, scope="session/gitApplyHunk", result_type=SessionGitStageResponseDto,
+            request, scope="session/gitApplyHunk", result_type=SessionGitApplyHunkResponseDto,
             preflight=lambda: self._git_workflow.preflight_hunk(request),
             execute=self._git_workflow.apply_hunk,
         )
