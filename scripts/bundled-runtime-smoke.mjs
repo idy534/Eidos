@@ -183,7 +183,7 @@ from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyC
 from eidos_runtime.tools.contracts import ApplyPatchInput
 from eidos_runtime.tools.workspace import ToolExecutor
 from eidos_runtime.workspace.discovery_scope import WorkspaceDiscoveryScope
-from eidos_runtime.workspace.codex_patch import encode_patch, parse_patch
+from eidos_runtime.workspace.codex_patch import parse_patch
 from eidos_runtime.workspace.search_driver import (
     RipgrepBinaryResolver,
     RipgrepSearchDriver,
@@ -221,54 +221,28 @@ required = (
 for relative in required:
     assert (app_root / relative).is_file(), relative
 
-def encode_and_parse_add(path, content):
-    request = ApplyPatchInput.model_validate({
-        "changes": ({
-            "type": "add",
-            "path": path,
-            "content": content,
-        },),
-    })
-    canonical = encode_patch(request)
-    parsed = parse_patch(canonical)
+for name, body, expected in (
+    ("content", "+one\n+\n+two\n", "one\n\ntwo\n"),
+    ("empty", "", ""),
+    ("single-newline", "+\n", "\n"),
+    ("double-newline", "+\n+\n", "\n\n"),
+):
+    raw = f"*** Begin Patch\n*** Add File: {name}.txt\n{body}*** End Patch\n"
+    request = ApplyPatchInput.model_validate({"patch": raw})
+    parsed = parse_patch(request.patch)
     assert len(parsed) == 1
-    assert parsed[0].path == path
-    assert parsed[0].content == content
-    return canonical
+    assert parsed[0].path == f"{name}.txt"
+    assert parsed[0].content == expected
+    with tempfile.TemporaryDirectory(prefix="eidos-bundled-function-patch-") as directory:
+        with ToolExecutor(Path(directory)) as executor:
+            prepared = executor.prepare_file_change(
+                "apply_patch", request.model_dump(mode="json"), threading.Event()
+            )
+            assert not isinstance(prepared, dict), prepared
+            result, _ = executor.commit_patch("apply_patch", prepared, threading.Event())
+            assert result["outcome"] == "success", result
+        assert (Path(directory) / f"{name}.txt").read_text() == expected
 
-canonical_patch = encode_and_parse_add(
-    "bundled-apply-patch.txt",
-    "one\n\ntwo\n",
-)
-assert canonical_patch == (
-    "*** Begin Patch\n"
-    "*** Add File: bundled-apply-patch.txt\n"
-    "+one\n"
-    "+\n"
-    "+two\n"
-    "*** End Patch"
-)
-empty_patch = encode_and_parse_add("bundled-empty.txt", "")
-assert empty_patch == (
-    "*** Begin Patch\n"
-    "*** Add File: bundled-empty.txt\n"
-    "*** End Patch"
-)
-single_newline_patch = encode_and_parse_add("bundled-single-newline.txt", "\n")
-assert single_newline_patch == (
-    "*** Begin Patch\n"
-    "*** Add File: bundled-single-newline.txt\n"
-    "+\n"
-    "*** End Patch"
-)
-double_newline_patch = encode_and_parse_add("bundled-double-newline.txt", "\n\n")
-assert double_newline_patch == (
-    "*** Begin Patch\n"
-    "*** Add File: bundled-double-newline.txt\n"
-    "+\n"
-    "+\n"
-    "*** End Patch"
-)
 
 native_patch = (
     "*** Begin Patch\n"

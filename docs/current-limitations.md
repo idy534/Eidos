@@ -30,7 +30,7 @@
 ### Workspace 与工具
 
 - 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件。写入工具支持普通 Workspace 写入和经审批的外部普通文件写入；普通 Skill 需要明确写入授权，`skills/.system` 始终禁写。已有文件使用受控原地写入，新文件使用排他提交；工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
-- `apply_patch` 的输入取决于当前 Run 的 ModelProfile capability。`supports_custom_tools=true` 且 `supports_tool_grammar=true` 时，模型收到 native Custom / FREEFORM Tool，并直接提交 Codex Patch 原文。其他 Provider 继续接受结构化 `{ "changes": [...] }` Function 参数。Function compatibility 路径仍使用 `CodexPatchEncoder`，模型提交旧的 raw `{ "patch": "..." }` 输入不会兼容。
+- `apply_patch` 统一使用 Codex Patch：支持 Custom 和 Grammar 的相应 profile 直接提交原文；Function profile 提交 `{ "patch": "..." }`。旧的 `{ "changes": [...] }` 不再接受。Function 仍受 64 KiB JSON 参数总量限制，Custom/Patch parser 受 512 KiB 输入限制，单文件和 Diff 限额不变。模型应使用小范围 Update，避免完整重写大文件。JSON 类型、Patch 语法、当前文件匹配和最终写入验证是不同阶段；单个阶段通过不代表编辑成功。离线回归验证契约和安全行为，不能代表真实 Provider/模型的成功率；模型成功率需要另行使用相同任务集测量。
 - Custom Tool 的 input delta 在 Responses adapter 内部重组。Desktop 在完整参数通过解析并完成 Prepare 后显示持久补丁更新；它不展示尚未校验的逐 token 补丁。Prepare 完成不代表文件提交成功。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
 - 本地 grammar 将上游 `add_line+` 改为 `add_line*`，以对齐 Codex Rust streaming parser 的空 Add 行为。Lark 对上游零宽文本正则的写法也使用了兼容 token。其他 Workspace 边界和文件安全限制不变。

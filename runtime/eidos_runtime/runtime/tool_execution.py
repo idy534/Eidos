@@ -85,6 +85,7 @@ def _explicit_reconciliation_required(
 
 def _invalid_arguments_summary(
     validation: ToolArgumentValidationResult,
+    tool_name: str = "",
 ) -> str:
     details = []
     if validation.path is not None:
@@ -97,9 +98,15 @@ def _invalid_arguments_summary(
         details.append(f"minimum={validation.minimum}")
     if validation.actual is not None:
         details.append(f"actual={validation.actual}")
-    return "Invalid tool arguments: " + ", ".join(
-        details or ["invalid_arguments"]
-    )
+    summary = "Invalid tool arguments: " + ", ".join(details or ["invalid_arguments"])
+    if tool_name == "apply_patch":
+        summary += (
+            ' No files were changed by this call. Expected {"patch":"*** Begin Patch\\n'
+            '*** Update File: example.txt\\n@@\\n-old\\n+new\\n*** End Patch"}. '
+            "The patch value must be a string; changes/chunks are not accepted. "
+            "Submit a corrected, small targeted Patch using the current tool definition."
+        )
+    return summary
 
 
 class ToolInfrastructureError(RuntimeError):
@@ -568,7 +575,7 @@ class ToolExecutionController:
                         tool_error(
                             call.name,
                             "invalid_arguments",
-                            _invalid_arguments_summary(validation),
+                            _invalid_arguments_summary(validation, call.name),
                         ),
                         "completed",
                     )

@@ -666,13 +666,12 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         call = ModelToolCall(
             "call-patch",
             "apply_patch",
-            {
-                "changes": [{
-                    "type": "add",
-                    "path": "a.txt",
-                    "content": "hello\n",
-                }]
-            },
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Add File: a.txt\n"
+                "+hello\n"
+                "*** End Patch\n"
+            )},
         )
         plan = self.dispatcher.plan(call)
         assert plan.descriptor is not None
@@ -744,9 +743,12 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
             approval=self.approval,
         )
         handler.execute_side_effect = controller.execute_side_effect
-        call = ModelToolCall("call-patch", "apply_patch", {
-            "changes": [{"type": "add", "path": "a.txt", "content": "hello\n"}],
-        })
+        call = ModelToolCall("call-patch", "apply_patch", {"patch": (
+                                                              "*** Begin Patch\n"
+                                                              "*** Add File: a.txt\n"
+                                                              "+hello\n"
+                                                              "*** End Patch\n"
+                                                          )})
         outcome = controller.execute(
             run_id=self.run["id"], item=self._item("apply_patch", call.arguments),
             call=call, plan=self.dispatcher.plan(call), cancel=cancel_event, deadline=None,

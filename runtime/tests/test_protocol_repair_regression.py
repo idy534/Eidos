@@ -51,20 +51,26 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     ModelToolCall(
                         "patch-go-mod",
                         "apply_patch",
-                        {"changes": [{
-                            "type": "add",
-                            "path": "go.mod",
-                            "content": "module shipping-lab\n\ngo 1.26\n",
-                        }]},
+                        {"patch": (
+                            "*** Begin Patch\n"
+                            "*** Add File: go.mod\n"
+                            "+module shipping-lab\n"
+                            "+\n"
+                            "+go 1.26\n"
+                            "*** End Patch\n"
+                        )},
                     ),
                     ModelToolCall(
                         "patch-main",
                         "apply_patch",
-                        {"changes": [{
-                            "type": "add",
-                            "path": "main.go",
-                            "content": "package main\n\nfunc main() {}\n",
-                        }]},
+                        {"patch": (
+                            "*** Begin Patch\n"
+                            "*** Add File: main.go\n"
+                            "+package main\n"
+                            "+\n"
+                            "+func main() {}\n"
+                            "*** End Patch\n"
+                        )},
                     ),
                 ),
             ),
@@ -176,6 +182,67 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             assistant_text,
             ["I will write the file now.", "Recovered after receiving the tool error."],
         )
+
+    def test_old_patch_history_survives_restart_and_new_patch_commits(self) -> None:
+        target = self.workspace / "example.txt"
+        target.write_text("old\n")
+        legacy = {"changes": [{"type": "update", "path": "example.txt", "chunks": {
+            "item": {"oldLines": "old", "newLines": "new", "endOfFile": "false"},
+        }}]}
+        run, _ = self.store.create_run(self.session["id"], "Update example")
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("old-input", "apply_patch", legacy),)),
+            ModelResponse(text="The input needs correction."),
+        ])
+        RuntimeLoop(self.store, model, lambda _message: None).run(run["id"], threading.Event())
+        assert target.read_text() == "old\n"
+        assert self.store.connection is not None
+        saved = self.store.connection.execute(
+            "SELECT arguments_json, result_json FROM tool_calls WHERE provider_call_id = ?",
+            ("old-input",),
+        ).fetchone()
+        assert json.loads(saved["arguments_json"]) == legacy
+        result = json.loads(saved["result_json"])
+        assert result["code"] == "invalid_arguments"
+        assert "Expected" in result["summary"] and '"patch"' in result["summary"]
+        assert "No files were changed" in result["summary"]
+        assert not result["sideEffectsMayExist"]
+        assert self.store.connection.execute(
+            "SELECT COUNT(*) FROM durable_intents WHERE run_id = ?", (run["id"],)
+        ).fetchone()[0] == 0
+
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        resumed, _ = self.store.create_run(self.session["id"], "Continue with corrected input")
+        corrected = {"patch": (
+                        "*** Begin Patch\n"
+                        "*** Update File: example.txt\n"
+                        "@@\n"
+                        "-old\n"
+                        "+new\n"
+                        "*** End Patch\n"
+                    )}
+        resumed_model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("new-input", "apply_patch", corrected),)),
+            ModelResponse(text="Updated."),
+        ])
+        RuntimeLoop(self.store, resumed_model, lambda _message: None).run(
+            resumed["id"], threading.Event()
+        )
+        assert self.store.read_run(resumed["id"])["status"] == "succeeded"
+        assert target.read_text() == "new\n"
+        historical_call = next(
+            item for item in resumed_model.contexts[0]
+            if item.get("type") == "tool_call" and item.get("callId") == "old-input"
+        )
+        assert json.loads(historical_call["arguments"]) == legacy
+        definition = next(
+            tool for tool in resumed_model.tool_definitions_history[0]
+            if tool.name == "apply_patch"
+        )
+        assert set(definition.parameters_json_schema["properties"]) == {"patch"}
+        assert "historical calls" in definition.description
 
     def test_valid_and_invalid_read_calls_keep_batch_order(self) -> None:
         (self.workspace / "hello.txt").write_text("hello\n", encoding="utf-8")

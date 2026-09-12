@@ -308,19 +308,21 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
                 "sensitive-1", "apply_patch",
-                {"changes": [{
-                    "type": "add",
-                    "path": "a.txt",
-                    "content": "password=first\n",
-                }]},
+                {"patch": (
+                    "*** Begin Patch\n"
+                    "*** Add File: a.txt\n"
+                    "+password=first\n"
+                    "*** End Patch\n"
+                )},
             ),)),
             ModelResponse(tool_calls=(ModelToolCall(
                 "sensitive-2", "apply_patch",
-                {"changes": [{
-                    "type": "add",
-                    "path": "b.txt",
-                    "content": "password=second\n",
-                }]},
+                {"patch": (
+                    "*** Begin Patch\n"
+                    "*** Add File: b.txt\n"
+                    "+password=second\n"
+                    "*** End Patch\n"
+                )},
             ),)),
         ])
         RuntimeEngine(self.store, model, lambda _message: None).run(

@@ -323,11 +323,14 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         )
         patched = self.executor.prepare_file_change(
             "apply_patch",
-            {"changes": [{
-                "type": "update",
-                "path": "ignored.txt",
-                "chunks": [{"oldLines": ["before"], "newLines": ["after"]}],
-            }]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: ignored.txt\n"
+                "@@\n"
+                "-before\n"
+                "+after\n"
+                "*** End Patch\n"
+            )},
             threading.Event(),
         )
         deleted = self.executor.prepare_file_change(

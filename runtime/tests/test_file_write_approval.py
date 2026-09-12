@@ -292,10 +292,14 @@ class FileWriteApprovalTests(unittest.TestCase):
         self.dependencies.skill_access = SimpleNamespace(active_roots=lambda: (skill,))
         self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
         execute = Mock()
-        call = ModelToolCall("call", "apply_patch", {"changes": [{
-            "type": "update", "path": "skills/review/SKILL.md",
-            "chunks": [{"oldLines": ["old skill"], "newLines": ["new skill"]}],
-        }]})
+        call = ModelToolCall("call", "apply_patch", {"patch": (
+                                                        "*** Begin Patch\n"
+                                                        "*** Update File: skills/review/SKILL.md\n"
+                                                        "@@\n"
+                                                        "-old skill\n"
+                                                        "+new skill\n"
+                                                        "*** End Patch\n"
+                                                    )})
         with (
             patch.object(self.handler, "_execute", side_effect=lambda *_args: self.effect(execute)),
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),

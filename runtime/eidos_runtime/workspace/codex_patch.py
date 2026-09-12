@@ -10,15 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import NoReturn
 
 from lark import Lark, Token, Tree
 from lark.exceptions import LarkError, UnexpectedInput
 
 from eidos_runtime.model.client import MAX_CUSTOM_TOOL_INPUT_BYTES
-
-if TYPE_CHECKING:
-    from eidos_runtime.tools.contracts import ApplyPatchInput
 
 BEGIN_PATCH = "*** Begin Patch"
 END_PATCH = "*** End Patch"
@@ -144,104 +141,6 @@ def patch_grammar() -> str:
     """Return the grammar used by both native custom tools and the parser."""
 
     return Path(__file__).with_name("apply_patch.lark").read_text(encoding="utf-8")
-
-
-def encode_patch(request: "ApplyPatchInput") -> str:
-    """Encode structured ApplyPatch input into canonical Codex patch text.
-
-    This encoder has no filesystem or matching responsibilities. It only
-    writes the syntax that :func:`parse_patch` consumes, using LF regardless of
-    the input content's line ending style.
-    """
-
-    changes = getattr(request, "changes", None)
-    if not changes:
-        raise PatchError(
-            "patch_format_error",
-            "Patch must contain at least one file change",
-        )
-
-    lines = [BEGIN_PATCH]
-    for change in changes:
-        kind = getattr(change, "type", None)
-        path = _encoder_path(change, "path")
-        if kind == "add":
-            content = _encoder_text(change, "content")
-            lines.append(f"{ADD_FILE} {path}")
-            normalized_content = _normalize_line_endings(content)
-            content_lines = normalized_content.split("\n")
-            if content_lines[-1] == "":
-                content_lines.pop()
-            lines.extend(f"+{line}" for line in content_lines)
-            continue
-
-        if kind == "delete":
-            lines.append(f"{DELETE_FILE} {path}")
-            continue
-
-        if kind == "update":
-            move_to = getattr(change, "moveTo", None)
-            if move_to is not None:
-                move_to = _validate_encoder_line(move_to, "moveTo")
-                if not move_to:
-                    raise PatchError(
-                        "patch_format_error",
-                        "Update moveTo must be a non-empty path",
-                        target_path=path,
-                    )
-            chunks = tuple(getattr(change, "chunks", ()))
-            if not chunks and move_to is None:
-                raise PatchError(
-                    "patch_format_error",
-                    "Update change must contain chunks or moveTo",
-                    target_path=path,
-                )
-            lines.append(f"{UPDATE_FILE} {path}")
-            if move_to is not None:
-                lines.append(f"{MOVE_TO} {move_to}")
-            for index, chunk in enumerate(chunks):
-                context = getattr(chunk, "context", None)
-                if context is None or context == "":
-                    lines.append("@@")
-                else:
-                    lines.append(f"@@ {_validate_encoder_line(context, 'context')}")
-                old_lines = tuple(getattr(chunk, "oldLines", ()))
-                new_lines = tuple(getattr(chunk, "newLines", ()))
-                if not old_lines and not new_lines:
-                    raise PatchError(
-                        "patch_format_error",
-                        "Update chunk must contain oldLines or newLines",
-                        target_path=path,
-                    )
-                lines.extend(
-                    f"-{_validate_encoder_line(line, 'oldLines')}"
-                    for line in old_lines
-                )
-                lines.extend(
-                    f"+{_validate_encoder_line(line, 'newLines')}"
-                    for line in new_lines
-                )
-                if getattr(chunk, "endOfFile", False):
-                    if index != len(chunks) - 1:
-                        raise PatchError(
-                            "patch_format_error",
-                            "'*** End of File' must be on the final update chunk",
-                            target_path=path,
-                        )
-                    lines.append(END_OF_FILE)
-            continue
-
-        raise PatchError(
-            "patch_format_error",
-            "Unsupported ApplyPatch change type",
-            target_path=path,
-        )
-
-    lines.append(END_PATCH)
-    patch = "\n".join(lines)
-    if len(patch.encode("utf-8")) > MAX_PATCH_BYTES:
-        raise PatchError("patch_too_large", "Patch exceeds the 512 KiB limit")
-    return patch
 
 
 def _normalize_patch_text(text: str) -> str:
@@ -562,34 +461,6 @@ def _target_before_line(
     return None, None
 
 
-def _encoder_path(change: object, field_name: str) -> str:
-    value = getattr(change, field_name, None)
-    if not isinstance(value, str):
-        raise PatchError("patch_format_error", f"{field_name} must be text")
-    value = _validate_encoder_line(value, field_name)
-    if not value:
-        raise PatchError("patch_format_error", f"{field_name} must be non-empty")
-    return value
-
-
-def _encoder_text(change: object, field_name: str) -> str:
-    value = getattr(change, field_name, None)
-    if not isinstance(value, str):
-        raise PatchError("patch_format_error", f"{field_name} must be text")
-    return value
-
-
-def _validate_encoder_line(value: object, field_name: str) -> str:
-    if not isinstance(value, str):
-        raise PatchError("patch_format_error", f"{field_name} must be text")
-    if any(character in value for character in {"\x00", "\n", "\r"}):
-        raise PatchError(
-            "patch_format_error",
-            f"{field_name} must contain a single line",
-        )
-    return value
-
-
 def apply_update(original: str, action: UpdateFile) -> str:
     """Apply one parsed update action using exact, forward-only matching.
 
@@ -734,7 +605,6 @@ __all__ = [
     "UpdateFile",
     "UpdateFileChunk",
     "apply_update",
-    "encode_patch",
     "patch_grammar",
     "parse_patch",
 ]

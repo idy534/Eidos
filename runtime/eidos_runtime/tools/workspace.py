@@ -41,10 +41,10 @@ from eidos_runtime.workspace.discovery_policy import (
 from eidos_runtime.workspace.codex_patch import (
     AddFile,
     DeleteFile,
+    MAX_PATCH_BYTES,
     PatchError as CodexPatchError,
     UpdateFile,
     apply_update,
-    encode_patch,
     patch_grammar,
     parse_patch,
 )
@@ -193,12 +193,35 @@ class ResolvedAuthorizedPath:
     writable: bool
 
 
+# Both transports teach the same edit language. Transport-specific wrapping is
+# added separately so a function model never receives FREEFORM instructions.
+_APPLY_PATCH_DESCRIPTION = (
+    "Edit text files using Codex Patch. Read the relevant current lines before editing. "
+    "Prefer small Update hunks over deleting and recreating an existing file. "
+    "Copy context exactly, including indentation; include enough unchanged lines to "
+    "identify the intended location. Do not use numbered unified-diff headers. "
+    "Start with *** Begin Patch and end with *** End Patch. "
+    "For Add File, prefix every content line with + (no content lines creates an empty file). "
+    "For Update File, use @@ or @@ followed by a context line; prefix unchanged lines "
+    "with a space, removed lines with -, and added lines with +. "
+    "Use *** Move to: destination after Update File to rename. "
+    "Use *** Delete File: path to delete. Multiple files and hunks are allowed. "
+    "Use *** End of File only to anchor the final hunk at the file end. "
+    "Example:\n*** Begin Patch\n*** Update File: example.py\n@@\n def greet():\n"
+    "-    return 'old'\n+    return 'new'\n*** End Patch\n"
+    "Use workspace-relative or canonical absolute paths. Writes outside the workspace "
+    "require approval or an existing run grant. Paths, base hashes and final contents "
+    "are verified. On context mismatch, read the current lines and submit a corrected "
+    "patch; never blindly repeat a failed edit."
+)
+
+
 _BUILTIN_CONTRACTS = (
     ("list_files", "List bounded regular files under a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.'); supports maxDepth and maxEntries. Results are relative to the selected root and may be truncated.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
     ("read_file", "Read one bounded UTF-8 file from the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
-    ("apply_patch", "Apply structured Add, Update, Delete, and Move changes. Use workspace-relative paths or canonical absolute paths. Writes outside the workspace require approval or an existing run grant. Existing files are updated in place; paths, base hashes, and final contents are verified.", "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
+    ("apply_patch", "Pass the Patch text in the single JSON field `patch`. The old `changes` format in historical calls is no longer accepted. " + _APPLY_PATCH_DESCRIPTION, "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run one shell command in the macOS workspace sandbox. The Runtime returns after yieldTimeMs with either an exit result or shell_running and sessionId. For a running command, use write_stdin with empty chars to wait and read progress, or chars=\\u0003 to interrupt. Choose whether to keep waiting from the output and user intent. The command has no default lifetime deadline. Finish or stop the command before a final answer; another side effect cannot start while it runs. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
     ("write_stdin", "Continue an existing Shell session in this Run. Empty chars waits and reads new output; chars=\\u0003 interrupts the command. Other chars send stdin under the original command permissions. yieldTimeMs bounds this wait, not the command lifetime. Repeated waiting is valid while the process is running. Stop waiting after executionStatus=exited. Read persisted terminal output with read_tool_output using the original run_shell outputCallId, never sessionId.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
@@ -240,12 +263,8 @@ def _tool_specs(
     return tuple(
         spec.model_copy(update={
             "description": (
-                "Apply a Codex Patch to files. This is a FREEFORM "
-                "tool, so do not wrap the patch in JSON. Input must be raw "
-                "Codex Patch text beginning with `*** Begin Patch` and ending "
-                "with `*** End Patch`. Use workspace-relative or canonical absolute paths. "
-                "Writes outside the workspace require approval or an existing run grant. "
-                "Existing files are updated in place; paths, base hashes, and final contents are verified."
+                "This is a FREEFORM tool. Submit raw Patch text, not JSON or Markdown fences. "
+                + _APPLY_PATCH_DESCRIPTION
             ),
             "input_kind": "custom",
             "input_schema": None,
@@ -319,7 +338,7 @@ def builtin_tool_registry(
         provenance = ToolProvenance.model_validate({
             "kind": "builtin",
             "sourceId": "eidos",
-            "sourceVersion": "1",
+            "sourceVersion": "2" if spec.name == "apply_patch" else "1",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         })
         adapter = _BuiltinAdapter(executor, spec, operation)
@@ -446,9 +465,7 @@ class ToolExecutor:
     def external_patch_paths(
         self, arguments: object, *, approval_roots: tuple[str, ...] = (),
     ) -> tuple[Path, ...]:
-        raw = arguments if isinstance(arguments, str) else encode_patch(
-            ApplyPatchInput.model_validate(arguments, strict=False)
-        )
+        raw = arguments if isinstance(arguments, str) else ApplyPatchInput.model_validate(arguments).patch
         paths = []
         for hunk in parse_patch(raw):
             for value in (hunk.path, getattr(hunk, "move_to", None)):
@@ -763,39 +780,30 @@ class ToolExecutor:
         arguments: object,
         cancel: threading.Event,
     ) -> PreparedPatch | dict[str, object]:
-        """Prepare structured or raw changes against workspace evidence.
-
-        The parser owns raw patch syntax. The encoder remains only for the
-        structured compatibility path. This method keeps path validation, read
-        evidence, diff generation, and commit metadata in the existing
-        Workspace executor.
-        """
+        """Prepare either transport's Patch through the same parser and write boundary."""
         try:
             self._verify_root()
             _check_cancel(cancel)
             if isinstance(arguments, str):
-                scanned_input = default_scanner().scan_text(arguments)
-                if scanned_input.text != arguments:
-                    raise SensitiveScanError("sensitive tool input")
                 patch_value = arguments
             else:
-                scanned_arguments = default_scanner().scan_json(arguments)
-                if scanned_arguments != arguments:
-                    raise SensitiveScanError("sensitive tool arguments")
                 try:
-                    # ToolRegistry has already validated model JSON and normalized
-                    # tuple fields to lists. ``strict=False`` only restores those
-                    # JSON container shapes; StrictStr and literal fields remain
-                    # strict, while this second validation keeps the Workspace
-                    # boundary independent from its caller.
-                    request = ApplyPatchInput.model_validate(arguments, strict=False)
+                    request = ApplyPatchInput.model_validate(arguments)
                 except ValidationError:
                     return _error(
                         tool_name,
                         "TOOL_ARGUMENT_CONTRACT_VIOLATION",
-                        "Invalid structured apply_patch arguments",
+                        "Expected a single JSON field `patch` containing Codex Patch text",
                     )
-                patch_value = encode_patch(request)
+                patch_value = request.patch
+            try:
+                patch_bytes = len(patch_value.encode("utf-8"))
+            except UnicodeEncodeError:
+                raise CodexPatchError("invalid_utf8", "Patch must be valid UTF-8") from None
+            if patch_bytes > MAX_PATCH_BYTES:
+                raise CodexPatchError("patch_too_large", "Patch exceeds the 512 KiB limit")
+            if default_scanner().scan_text(patch_value).text != patch_value:
+                raise SensitiveScanError("sensitive tool input")
             hunks = parse_patch(patch_value)
             if not hunks:
                 return _error(
@@ -941,6 +949,13 @@ class ToolExecutor:
                 summary = f"Patch format error{location}{target}: {error.message}"
             else:
                 summary = error.message
+            if error.code in {"patch_format_error", "patch_context_mismatch"}:
+                recovery = (
+                    "Correct the Patch markers and line prefixes, then resubmit."
+                    if error.code == "patch_format_error" else
+                    "Read the current target lines, then submit a new targeted Patch with exact context."
+                )
+                summary += f" No files were changed by this call. {recovery}"
             return _error(tool_name, error.code, summary)
         except WorkspacePathError as error:
             return _error(

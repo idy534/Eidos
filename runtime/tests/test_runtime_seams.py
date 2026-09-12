@@ -96,11 +96,12 @@ class RuntimeSeamTests(unittest.TestCase):
                     ModelToolCall(
                         "second",
                         "apply_patch",
-                        {"changes": [{
-                            "type": "add",
-                            "path": "a.txt",
-                            "content": "x\n",
-                        }]},
+                        {"patch": (
+                            "*** Begin Patch\n"
+                            "*** Add File: a.txt\n"
+                            "+x\n"
+                            "*** End Patch\n"
+                        )},
                     ),
                 )))
             finally:

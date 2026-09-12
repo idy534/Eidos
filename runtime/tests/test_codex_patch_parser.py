@@ -8,10 +8,8 @@ from eidos_runtime.workspace.codex_patch import (
     PatchError,
     UpdateFile,
     apply_update,
-    encode_patch,
     parse_patch,
 )
-from eidos_runtime.tools.contracts import ApplyPatchInput
 
 
 def test_parse_add_update_delete_and_move_actions_in_source_order() -> None:
@@ -147,51 +145,8 @@ def test_parse_rejects_patch_without_file_hunks() -> None:
     assert raised.value.line_number is not None
 
 
-def test_encode_patch_builds_canonical_multifile_unicode_patch() -> None:
-    request = ApplyPatchInput.model_validate(
-        {
-            "changes": [
-                {
-                    "type": "add",
-                    "path": "文档/新文件.txt",
-                    "content": "你好\n\n世界\n",
-                },
-                {
-                    "type": "update",
-                    "path": "src/旧.py",
-                    "moveTo": "src/新.py",
-                    "chunks": [
-                        {
-                            "context": "函数 😀",
-                            "oldLines": ["旧值"],
-                            "newLines": ["新值"],
-                            "endOfFile": True,
-                        },
-                    ],
-                },
-                {"type": "delete", "path": "删除.txt"},
-            ]
-        },
-        strict=False,
-    )
-
-    encoded = encode_patch(request)
-
-    assert encoded == (
-        "*** Begin Patch\n"
-        "*** Add File: 文档/新文件.txt\n"
-        "+你好\n"
-        "+\n"
-        "+世界\n"
-        "*** Update File: src/旧.py\n"
-        "*** Move to: src/新.py\n"
-        "@@ 函数 😀\n"
-        "-旧值\n"
-        "+新值\n"
-        "*** End of File\n"
-        "*** Delete File: 删除.txt\n"
-        "*** End Patch"
-    )
+def test_parse_patch_builds_canonical_multifile_unicode_patch() -> None:
+    encoded = '*** Begin Patch\n*** Add File: 文档/新文件.txt\n+你好\n+\n+世界\n*** Update File: src/旧.py\n*** Move to: src/新.py\n@@ 函数 😀\n-旧值\n+新值\n*** End of File\n*** Delete File: 删除.txt\n*** End Patch'
     assert "\r" not in encoded
     assert [type(action) for action in parse_patch(encoded)] == [
         AddFile,
@@ -200,36 +155,13 @@ def test_encode_patch_builds_canonical_multifile_unicode_patch() -> None:
     ]
 
 
-def test_encode_patch_preserves_empty_add_file_without_a_plus_line() -> None:
-    request = ApplyPatchInput.model_validate(
-        {"changes": [{"type": "add", "path": "empty.txt", "content": ""}]},
-        strict=False,
-    )
-
-    encoded = encode_patch(request)
-
-    assert encoded == (
-        "*** Begin Patch\n"
-        "*** Add File: empty.txt\n"
-        "*** End Patch"
-    )
+def test_parse_patch_preserves_empty_add_file_without_a_plus_line() -> None:
+    encoded = '*** Begin Patch\n*** Add File: empty.txt\n*** End Patch'
     assert parse_patch(encoded)[0].content == ""
 
 
 def test_parse_preserves_trailing_space_in_file_path() -> None:
-    request = ApplyPatchInput.model_validate(
-        {"changes": [{"type": "add", "path": "a ", "content": "x"}]},
-        strict=False,
-    )
-
-    encoded = encode_patch(request)
-
-    assert encoded == (
-        "*** Begin Patch\n"
-        "*** Add File: a \n"
-        "+x\n"
-        "*** End Patch"
-    )
+    encoded = '*** Begin Patch\n*** Add File: a \n+x\n*** End Patch'
     assert parse_patch(encoded)[0].path == "a "
 
 
@@ -263,29 +195,12 @@ def test_apply_update_supports_pure_deletion() -> None:
     assert apply_update("keep\nremove\n", action) == "keep\n"
 
 
-def test_encode_patch_rejects_end_of_file_before_last_chunk() -> None:
-    request = ApplyPatchInput.model_validate(
-        {
-            "changes": [
-                {
-                    "type": "update",
-                    "path": "notes.txt",
-                    "chunks": [
-                        {
-                            "oldLines": ["first"],
-                            "newLines": ["one"],
-                            "endOfFile": True,
-                        },
-                        {"oldLines": ["second"], "newLines": ["two"]},
-                    ],
-                }
-            ]
-        },
-        strict=False,
-    )
-
-    with pytest.raises(PatchError, match="final update chunk"):
-        encode_patch(request)
+def test_parse_rejects_end_of_file_before_last_chunk() -> None:
+    with pytest.raises(PatchError):
+        parse_patch(
+            "*** Begin Patch\n*** Update File: notes.txt\n@@\n-first\n+one\n"
+            "*** End of File\n@@\n-second\n+two\n*** End Patch\n"
+        )
 
 
 def test_end_of_file_requires_the_last_chunk_lines_at_file_end() -> None:

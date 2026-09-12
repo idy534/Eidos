@@ -298,13 +298,12 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-patch",
                             "apply_patch",
-                            {
-                                "changes": [{
-                                    "type": "add",
-                                    "path": "notes.txt",
-                                    "content": "approved\n",
-                                }]
-                            },
+                            {"patch": (
+                                "*** Begin Patch\n"
+                                "*** Add File: notes.txt\n"
+                                "+approved\n"
+                                "*** End Patch\n"
+                            )},
                         ),
                     )
                 ),
@@ -357,16 +356,14 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-patch",
                             "apply_patch",
-                            {
-                                "changes": [{
-                                    "type": "update",
-                                    "path": "hello.txt",
-                                    "chunks": [{
-                                        "oldLines": ["hello from workspace"],
-                                        "newLines": ["changed"],
-                                    }],
-                                }]
-                            },
+                            {"patch": (
+                                "*** Begin Patch\n"
+                                "*** Update File: hello.txt\n"
+                                "@@\n"
+                                "-hello from workspace\n"
+                                "+changed\n"
+                                "*** End Patch\n"
+                            )},
                         ),
                     )
                 ),
@@ -404,16 +401,14 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-patch",
                             "apply_patch",
-                            {
-                                "changes": [{
-                                    "type": "update",
-                                    "path": "hello.txt",
-                                    "chunks": [{
-                                        "oldLines": ["hello from workspace"],
-                                        "newLines": ["model change"],
-                                    }],
-                                }]
-                            },
+                            {"patch": (
+                                "*** Begin Patch\n"
+                                "*** Update File: hello.txt\n"
+                                "@@\n"
+                                "-hello from workspace\n"
+                                "+model change\n"
+                                "*** End Patch\n"
+                            )},
                         ),
                     )
                 ),
@@ -447,16 +442,14 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-patch",
                             "apply_patch",
-                            {
-                                "changes": [{
-                                    "type": "update",
-                                    "path": "hello.txt",
-                                    "chunks": [{
-                                        "oldLines": ["hello from workspace"],
-                                        "newLines": ["blind"],
-                                    }],
-                                }]
-                            },
+                            {"patch": (
+                                "*** Begin Patch\n"
+                                "*** Update File: hello.txt\n"
+                                "@@\n"
+                                "-hello from workspace\n"
+                                "+blind\n"
+                                "*** End Patch\n"
+                            )},
                         ),
                     )
                 ),
@@ -484,16 +477,14 @@ class RuntimeLoopTests(unittest.TestCase):
                         ModelToolCall(
                             "call-patch",
                             "apply_patch",
-                            {
-                                "changes": [{
-                                    "type": "update",
-                                    "path": "hello.txt",
-                                    "chunks": [{
-                                        "oldLines": ["hello from workspace"],
-                                        "newLines": ["blind"],
-                                    }],
-                                }]
-                            },
+                            {"patch": (
+                                "*** Begin Patch\n"
+                                "*** Update File: hello.txt\n"
+                                "@@\n"
+                                "-hello from workspace\n"
+                                "+blind\n"
+                                "*** End Patch\n"
+                            )},
                         ),
                     )
                 ),
@@ -513,13 +504,9 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual((self.workspace / "hello.txt").read_text(), "blind\n")
 
     def test_invalid_or_mismatched_patch_never_requests_approval(self) -> None:
-        changes = ({
-            "type": "update",
-            "path": "hello.txt",
-            "chunks": [{"oldLines": ["other"], "newLines": ["new"]}],
-        },)
-        for index, change in enumerate(changes):
-            with self.subTest(change=change):
+        patches = ("*** Begin Patch\n*** Update File: hello.txt\n@@\n-other\n+new\n*** End Patch\n",)
+        for index, patch_text in enumerate(patches):
+            with self.subTest(patch=patch_text):
                 run, _ = self.store.create_run(self.session["id"], "Invalid Patch")
                 model = ScriptedModel(
                     [
@@ -535,7 +522,7 @@ class RuntimeLoopTests(unittest.TestCase):
                                 ModelToolCall(
                                     f"call-patch-{index}",
                                     "apply_patch",
-                                    {"changes": [change]},
+                                    {"patch": patch_text},
                                 ),
                             )
                         ),
@@ -567,8 +554,8 @@ class RuntimeLoopTests(unittest.TestCase):
     def test_invalid_apply_patch_arguments_stop_before_approval_or_side_effects(self) -> None:
         cases = (
             (
-                "legacy_patch_field",
-                {"patch": "*** Begin Patch\n*** End Patch\n"},
+                "non_string_patch_field",
+                {"patch": False},
             ),
             (
                 "empty_structured_update",
@@ -669,11 +656,10 @@ class RuntimeLoopTests(unittest.TestCase):
                 ModelToolCall(
                     "outside-patch",
                     "apply_patch",
-                    {"changes": [{
-                        "type": "add",
-                        "path": str(outside),
-                        "content": "must not write\n",
-                    }]},
+                    {"patch": (
+                        f"*** Begin Patch\n*** Add File: {outside}\n"
+                        "+must not write\n*** End Patch\n"
+                    )},
                 ),
             )),
             ModelResponse(text="I will keep the patch inside the workspace."),
@@ -1777,14 +1763,14 @@ class ToolExecutorTests(unittest.TestCase):
     def test_codex_patch_prepares_and_commits_expected_content(self) -> None:
         prepared = self.executor.prepare_file_change(
             "apply_patch",
-            {"changes": [{
-                "type": "update",
-                "path": "src/app.py",
-                "chunks": [{
-                    "oldLines": ["print('needle')"],
-                    "newLines": ["print('updated')"],
-                }],
-            }]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: src/app.py\n"
+                "@@\n"
+                "-print('needle')\n"
+                "+print('updated')\n"
+                "*** End Patch\n"
+            )},
             threading.Event(),
         )
         self.assertFalse(isinstance(prepared, dict), prepared)
@@ -1804,14 +1790,14 @@ class ToolExecutorTests(unittest.TestCase):
     ) -> None:
         prepared = self.executor.prepare_file_change(
             "apply_patch",
-            {"changes": [{
-                "type": "update",
-                "path": "src/app.py",
-                "chunks": [{
-                    "oldLines": ["print('needle')"],
-                    "newLines": ["print('updated')"],
-                }],
-            }]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: src/app.py\n"
+                "@@\n"
+                "-print('needle')\n"
+                "+print('updated')\n"
+                "*** End Patch\n"
+            )},
             threading.Event(),
         )
         self.assertFalse(isinstance(prepared, dict), prepared)

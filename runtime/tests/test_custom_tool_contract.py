@@ -341,7 +341,7 @@ def test_dispatcher_keeps_custom_input_raw_and_rejects_function_payload() -> Non
     assert dispatcher.validate_execution(response.tool_calls[0], plan)
 
 
-def test_native_apply_patch_preparation_does_not_encode_raw_patch(tmp_path: Path) -> None:
+def test_native_apply_patch_preparation_preserves_raw_patch(tmp_path: Path) -> None:
     raw = (
         "*** Begin Patch\n"
         "*** Add File: quoted.txt\n"
@@ -354,13 +354,9 @@ def test_native_apply_patch_preparation_does_not_encode_raw_patch(tmp_path: Path
         supports_custom_tools=True,
         supports_tool_grammar=True,
     ) as executor:
-        with patch(
-            "eidos_runtime.tools.workspace.encode_patch",
-            side_effect=AssertionError("native custom path encoded a patch"),
-        ):
-            prepared = executor.prepare_file_change(
-                "apply_patch", raw, threading.Event()
-            )
+        prepared = executor.prepare_file_change(
+            "apply_patch", raw, threading.Event()
+        )
         assert not isinstance(prepared, dict), prepared
         result, _ = executor.commit_patch(
             "apply_patch", prepared, threading.Event()
@@ -416,7 +412,7 @@ def test_tool_capable_registry_always_advertises_apply_patch(
     assert apply_patch.spec.input_kind == expected_kind
 
 
-def test_structured_and_native_apply_patch_share_workspace_commit_semantics(
+def test_function_and_native_apply_patch_share_workspace_commit_semantics(
     tmp_path: Path,
 ) -> None:
     from eidos_runtime.tools.contracts import ApplyPatchInput
@@ -429,13 +425,10 @@ def test_structured_and_native_apply_patch_share_workspace_commit_semantics(
     custom_target = custom_root / "same.txt"
     structured_target.write_text("old\n", encoding="utf-8")
     custom_target.write_text("old\n", encoding="utf-8")
-    request = ApplyPatchInput.model_validate({
-        "changes": [{
-            "type": "update",
-            "path": str(structured_target),
-            "chunks": [{"oldLines": ["old"], "newLines": ["new"]}],
-        }],
-    }, strict=False)
+    request = ApplyPatchInput.model_validate({"patch": (
+        f"*** Begin Patch\n*** Update File: {structured_target}\n"
+        "@@\n-old\n+new\n*** End Patch\n"
+    )})
     structured_arguments = request.model_dump(mode="json", by_alias=True)
     raw_patch = (
         "*** Begin Patch\n"

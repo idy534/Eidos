@@ -29,79 +29,26 @@ def test_model_catalog_exposes_only_apply_patch_for_file_mutation() -> None:
     assert "write_file" not in names
     assert "delete_file" not in names
     spec = next(spec for spec in TOOL_SPECS if spec.name == "apply_patch")
-    assert set(spec.input_schema["properties"]) == {"changes"}
-    assert "patch" not in spec.input_schema["properties"]
-    assert spec.input_schema["required"] == ["changes"]
-    assert "Begin Patch" not in spec.description
-    assert "@@" not in spec.description
+    assert set(spec.input_schema["properties"]) == {"patch"}
+    assert spec.input_schema["required"] == ["patch"]
 
 
-def test_apply_patch_contract_requires_non_empty_structured_changes() -> None:
-    with pytest.raises(ValidationError):
-        ApplyPatchInput.model_validate({"patch": "*** Begin Patch"})
-
-    with pytest.raises(ValidationError):
-        ApplyPatchInput.model_validate({"changes": ()})
-
-    with pytest.raises(ValidationError):
-        ApplyPatchInput.model_validate({
-            "changes": ({
-                "type": "update", "path": "a.txt", "chunks": ()
-            },),
-        })
-
-    with pytest.raises(ValidationError):
-        ApplyPatchInput.model_validate({
-            "changes": ({
-                "type": "update",
-                "path": "a.txt",
-                "chunks": ({"oldLines": (), "newLines": ()},),
-            },),
-        })
-
-
-def test_apply_patch_contract_rejects_control_and_oversized_values() -> None:
-    invalid_values = (
-        {"changes": ({"type": "add", "path": "", "content": ""},)},
-        {"changes": ({"type": "add", "path": "a\n", "content": ""},)},
-        {"changes": ({"type": "add", "path": "a", "content": "界" * 87_382},)},
-        {
-            "changes": ({
-                "type": "update",
-                "path": "a",
-                "chunks": ({
-                    "oldLines": ("old\n",),
-                    "newLines": ("new",),
-                },),
-            },),
-        },
-    )
-    for value in invalid_values:
+def test_apply_patch_contract_requires_non_empty_text() -> None:
+    for value in ({"patch": ""}, {"patch": False}, {"patch": []}, {"changes": []}):
         with pytest.raises(ValidationError):
             ApplyPatchInput.model_validate(value)
-
-
-def test_apply_patch_contract_leaves_final_path_boundary_to_workspace() -> None:
-    request = ApplyPatchInput.model_validate({
-        "changes": (
-            {"type": "add", "path": "../outside.txt", "content": "x"},
-            {"type": "update", "path": "/source.txt", "moveTo": "../target.txt"},
-        ),
-    })
-
-    assert request.changes[0].path == "../outside.txt"
-    assert request.changes[1].moveTo == "../target.txt"
 
 
 def test_add_file_creates_missing_parent_directories(tmp_path: Path) -> None:
     with _executor(tmp_path) as executor:
         result, delta = _run_patch(
             executor,
-            {"changes": [{
-                "type": "add",
-                "path": "src/core/types.ts",
-                "content": "export type ID = string;\n",
-            }]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Add File: src/core/types.ts\n"
+                "+export type ID = string;\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -115,11 +62,10 @@ def test_function_apply_patch_accepts_workspace_absolute_path(tmp_path: Path) ->
     with _executor(tmp_path) as executor:
         result, delta = _run_patch(
             executor,
-            {"changes": [{
-                "type": "add",
-                "path": str(target),
-                "content": "print('ok')\n",
-            }]},
+            {"patch": (
+                f"*** Begin Patch\n*** Add File: {target}\n"
+                "+print('ok')\n*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -181,9 +127,9 @@ def test_apply_patch_rejects_absolute_path_outside_workspace(
             supports_tool_grammar=True,
         )
     else:
-        arguments = {"changes": [{
-            "type": "add", "path": str(outside), "content": "outside\n"
-        }]}
+        arguments = {"patch": (
+            f"*** Begin Patch\n*** Add File: {outside}\n+outside\n*** End Patch\n"
+        )}
         executor = _executor(tmp_path)
     with executor:
         prepared = executor.prepare_file_change(
@@ -227,16 +173,16 @@ def test_custom_apply_patch_rejects_absolute_move_destination_outside_workspace(
 
 
 @pytest.mark.parametrize(
-    ("content", "expected_bytes"),
-    (("", b""), ("\n", b"\n"), ("\n\n", b"\n\n")),
+    ("body", "expected_bytes"),
+    (("", b""), ("+\n", b"\n"), ("+\n+\n", b"\n\n")),
 )
 def test_add_file_preserves_empty_and_newline_bytes(
-    tmp_path: Path, content: str, expected_bytes: bytes
+    tmp_path: Path, body: str, expected_bytes: bytes
 ) -> None:
     with _executor(tmp_path) as executor:
         result, _ = _run_patch(
             executor,
-            {"changes": [{"type": "add", "path": "new.txt", "content": content}]},
+            {"patch": f"*** Begin Patch\n*** Add File: new.txt\n{body}*** End Patch\n"},
         )
 
     assert result["outcome"] == "success"
@@ -247,11 +193,12 @@ def test_add_file_preserves_trailing_space_in_path(tmp_path: Path) -> None:
     with _executor(tmp_path) as executor:
         result, _ = _run_patch(
             executor,
-            {
-                "changes": [
-                    {"type": "add", "path": "trailing.txt ", "content": "x\n"}
-                ]
-            },
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Add File: trailing.txt \n"
+                "+x\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -265,18 +212,17 @@ def test_update_supports_bare_context_and_context_header(tmp_path: Path) -> None
     with _executor(tmp_path) as executor:
         result, _ = _run_patch(
             executor,
-            {"changes": [{
-                "type": "update",
-                "path": "events.ts",
-                "chunks": [
-                    {"oldLines": ["first"], "newLines": ["start"]},
-                    {
-                        "context": "function handle()",
-                        "oldLines": ["old"],
-                        "newLines": ["new"],
-                    },
-                ],
-            }]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: events.ts\n"
+                "@@\n"
+                "-first\n"
+                "+start\n"
+                "@@ function handle()\n"
+                "-old\n"
+                "+new\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -289,18 +235,18 @@ def test_update_supports_multiple_chunks_and_end_of_file(tmp_path: Path) -> None
     with _executor(tmp_path) as executor:
         result, delta = _run_patch(
             executor,
-            {"changes": [{
-                "type": "update",
-                "path": "app.py",
-                "chunks": [
-                    {"oldLines": ["one"], "newLines": ["ONE"]},
-                    {
-                        "oldLines": ["three"],
-                        "newLines": ["THREE"],
-                        "endOfFile": True,
-                    },
-                ],
-            }]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: app.py\n"
+                "@@\n"
+                "-one\n"
+                "+ONE\n"
+                "@@\n"
+                "-three\n"
+                "+THREE\n"
+                "*** End of File\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -315,20 +261,16 @@ def test_update_supports_pure_insertion_and_deletion(tmp_path: Path) -> None:
     with _executor(tmp_path) as executor:
         result, _ = _run_patch(
             executor,
-            {
-                "changes": [
-                    {
-                        "type": "update",
-                        "path": "insert.txt",
-                        "chunks": [{"newLines": ["tail"]}],
-                    },
-                    {
-                        "type": "update",
-                        "path": "delete.txt",
-                        "chunks": [{"oldLines": ["remove"]}],
-                    },
-                ]
-            },
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: insert.txt\n"
+                "@@\n"
+                "+tail\n"
+                "*** Update File: delete.txt\n"
+                "@@\n"
+                "-remove\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -342,15 +284,14 @@ def test_update_preserves_file_without_final_newline(tmp_path: Path) -> None:
     with _executor(tmp_path) as executor:
         result, _ = _run_patch(
             executor,
-            {
-                "changes": [
-                    {
-                        "type": "update",
-                        "path": "no-final-newline.txt",
-                        "chunks": [{"oldLines": ["old"], "newLines": ["new"]}],
-                    }
-                ]
-            },
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: no-final-newline.txt\n"
+                "@@\n"
+                "-old\n"
+                "+new\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -362,12 +303,10 @@ def test_apply_patch_rejects_canonical_patch_over_512_kib(tmp_path: Path) -> Non
     with _executor(tmp_path) as executor:
         prepared = executor.prepare_file_change(
             "apply_patch",
-            {
-                "changes": [
-                    {"type": "add", "path": "first.txt", "content": content},
-                    {"type": "add", "path": "second.txt", "content": content},
-                ]
-            },
+            {"patch": (
+                f"*** Begin Patch\n*** Add File: first.txt\n+{content}\n"
+                f"*** Add File: second.txt\n+{content}\n*** End Patch\n"
+            )},
             threading.Event(),
         )
 
@@ -383,15 +322,16 @@ def test_delete_and_move_are_file_changes(tmp_path: Path) -> None:
     with _executor(tmp_path) as executor:
         result, delta = _run_patch(
             executor,
-            {"changes": [
-                {
-                    "type": "update",
-                    "path": "old.txt",
-                    "moveTo": "nested/new.txt",
-                    "chunks": [{"oldLines": ["old"], "newLines": ["moved"]}],
-                },
-                {"type": "delete", "path": "nested/new.txt"},
-            ]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: old.txt\n"
+                "*** Move to: nested/new.txt\n"
+                "@@\n"
+                "-old\n"
+                "+moved\n"
+                "*** Delete File: nested/new.txt\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -405,7 +345,11 @@ def test_delete_file_is_reported_as_a_committed_file_change(tmp_path: Path) -> N
     with _executor(tmp_path) as executor:
         result, delta = _run_patch(
             executor,
-            {"changes": [{"type": "delete", "path": "obsolete.txt"}]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Delete File: obsolete.txt\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -418,14 +362,16 @@ def test_patch_can_change_multiple_files_and_reports_summary(tmp_path: Path) -> 
     with _executor(tmp_path) as executor:
         result, delta = _run_patch(
             executor,
-            {"changes": [
-                {"type": "add", "path": "added.txt", "content": "new\n"},
-                {
-                    "type": "update",
-                    "path": "existing.txt",
-                    "chunks": [{"oldLines": ["old"], "newLines": ["updated"]}],
-                },
-            ]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Add File: added.txt\n"
+                "+new\n"
+                "*** Update File: existing.txt\n"
+                "@@\n"
+                "-old\n"
+                "+updated\n"
+                "*** End Patch\n"
+            )},
         )
 
     assert result["outcome"] == "success"
@@ -439,23 +385,31 @@ def test_context_mismatch_and_malformed_patch_are_actionable(tmp_path: Path) -> 
     with _executor(tmp_path) as executor:
         mismatch = executor.prepare_file_change(
             "apply_patch",
-            {
-                "changes": [{
-                    "type": "update",
-                    "path": "events.ts",
-                    "chunks": [{
-                        "context": "missing context",
-                        "oldLines": ["old"],
-                        "newLines": ["new"],
-                    }],
-                }],
-            },
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: events.ts\n"
+                "@@ missing context\n"
+                "-old\n"
+                "+new\n"
+                "*** End Patch\n"
+            )},
+            threading.Event(),
+        )
+        malformed = executor.prepare_file_change(
+            "apply_patch",
+            {"patch": "*** Begin Patch\n*** Add File: new.txt\nmissing prefix\n*** End Patch\n"},
             threading.Event(),
         )
 
     assert mismatch["code"] == "patch_context_mismatch"
     assert "events.ts" in mismatch["summary"]
     assert "missing context" in mismatch["summary"]
+    assert "Read the current target lines" in mismatch["summary"]
+    assert malformed["code"] == "patch_format_error"
+    assert "Correct the Patch markers" in malformed["summary"]
+    assert "No files were changed" in malformed["summary"]
+    assert not (tmp_path / "new.txt").exists()
+    assert (tmp_path / "events.ts").read_text() == "actual\n"
 
 
 def test_workspace_boundary_remains_fail_closed(tmp_path: Path) -> None:
@@ -463,11 +417,12 @@ def test_workspace_boundary_remains_fail_closed(tmp_path: Path) -> None:
     with _executor(tmp_path) as executor:
         prepared = executor.prepare_file_change(
             "apply_patch",
-            {"changes": [{
-                "type": "add",
-                "path": "../outside.txt",
-                "content": "secret\n",
-            }]},
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Add File: ../outside.txt\n"
+                "+secret\n"
+                "*** End Patch\n"
+            )},
             threading.Event(),
         )
         if isinstance(prepared, dict):
@@ -485,20 +440,18 @@ def test_failed_later_commit_keeps_committed_prefix(tmp_path: Path) -> None:
     with _executor(tmp_path) as executor:
         prepared = executor.prepare_file_change(
             "apply_patch",
-            {
-                "changes": [
-                    {
-                        "type": "update",
-                        "path": "first.txt",
-                        "chunks": [{"oldLines": ["one"], "newLines": ["ONE"]}],
-                    },
-                    {
-                        "type": "update",
-                        "path": "second.txt",
-                        "chunks": [{"oldLines": ["two"], "newLines": ["TWO"]}],
-                    },
-                ]
-            },
+            {"patch": (
+                "*** Begin Patch\n"
+                "*** Update File: first.txt\n"
+                "@@\n"
+                "-one\n"
+                "+ONE\n"
+                "*** Update File: second.txt\n"
+                "@@\n"
+                "-two\n"
+                "+TWO\n"
+                "*** End Patch\n"
+            )},
             threading.Event(),
         )
         assert not isinstance(prepared, dict)
