@@ -64,7 +64,7 @@ _MARKDOWN_SUFFIXES = frozenset({".md", ".markdown", ".mdx"})
 _UNSUPPORTED_SUFFIXES = frozenset({
     ".7z", ".a", ".archive", ".db", ".dmg", ".doc", ".docx", ".gz",
     ".jar", ".pdf", ".rar", ".sqlite", ".sqlite3", ".tar", ".tgz",
-    ".xls", ".xlsx", ".zip",
+    ".xls", ".xlsx", ".ppt", ".pptx", ".odp", ".ods", ".odt", ".zip",
 })
 _CODE_LANGUAGES = {
     ".bash": "bash", ".c": "c", ".cc": "cpp", ".cpp": "cpp",
@@ -255,7 +255,7 @@ class WorkspaceReader:
         if suffix in _UNSUPPORTED_SUFFIXES:
             return WorkspaceFilePreview(
                 path=normalized, kind="unavailable", size_bytes=metadata.st_size,
-                truncated=truncated, reason="unsupported",
+                truncated=truncated, reason="unsupported", version=version,
             )
         try:
             content = content_bytes.decode("utf-8-sig", errors="strict")
@@ -265,7 +265,7 @@ class WorkspaceReader:
             else:
                 return WorkspaceFilePreview(
                     path=normalized, kind="unavailable", size_bytes=metadata.st_size,
-                    truncated=False, reason="binary",
+                    truncated=False, reason="binary", version=version,
                 )
         if any(
             character not in {"\n", "\r", "\t"}
@@ -274,7 +274,7 @@ class WorkspaceReader:
         ):
             return WorkspaceFilePreview(
                 path=normalized, kind="unavailable", size_bytes=metadata.st_size,
-                truncated=truncated, reason="binary",
+                truncated=truncated, reason="binary", version=version,
             )
         if suffix in _MARKDOWN_SUFFIXES:
             kind: Literal["text", "markdown", "code", "html"] = "markdown"

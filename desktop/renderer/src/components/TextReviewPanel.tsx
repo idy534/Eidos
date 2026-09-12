@@ -3,9 +3,10 @@ import { parseDiff } from "react-diff-view";
 import type { Item } from "../contracts.js";
 import { LastTurnChanges } from "./LastTurnChanges.js";
 
-export function TextReviewPanel({ sessionId, runId, path, items, loading, error, onFeedback, disabled }: {
+export function TextReviewPanel({ sessionId, runId, path, items, loading, error, onFeedback, disabled, hasMore, onLoadMore }: {
   sessionId: string; runId: string; path?: string | undefined; items: Item[];
   loading: boolean; error?: string | undefined; onFeedback(text: string): Promise<void>; disabled: boolean;
+  hasMore?: boolean; onLoadMore?: (() => void) | undefined;
 }) {
   const [scope, setScope] = useState<"turn" | "task">("turn");
   const [focusPath, setFocusPath] = useState(path);
@@ -19,6 +20,7 @@ export function TextReviewPanel({ sessionId, runId, path, items, loading, error,
       <button role="tab" aria-selected={scope === "task"} onClick={() => setScope("task")}>整个任务修改</button>
     </div>
     {loading && <p role="status">正在读取更早的修改记录…</p>}
+    {hasMore && <button type="button" disabled={loading} onClick={onLoadMore}>加载更早的修改记录</button>}
     {error && <p role="alert">修改记录尚未完整读取：{error}</p>}
     {focusPath && <button onClick={() => setFocusPath(undefined)}>显示全部文件</button>}
     {scope === "turn" ? <LastTurnChanges key={focusPath ?? "all"} sessionId={sessionId} items={items}

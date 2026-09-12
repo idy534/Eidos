@@ -22,6 +22,7 @@ const FILE_ICON_BY_EXTENSION: Record<string, WorkspaceFileIconSpec> = {
   pdf: { kind: "pdf", label: "PDF" },
   zip: { kind: "archive", label: "ZIP" }, "7z": { kind: "archive", label: "ZIP" }, rar: { kind: "archive", label: "ZIP" }, tar: { kind: "archive", label: "ZIP" }, gz: { kind: "archive", label: "ZIP" },
   doc: { kind: "document", label: "DOC" }, docx: { kind: "document", label: "DOC" },
+  ppt: { kind: "document", label: "PPT" }, pptx: { kind: "document", label: "PPT" }, odp: { kind: "document", label: "PPT" },
   csv: { kind: "table", label: "CSV" }, xls: { kind: "table", label: "XLS" }, xlsx: { kind: "table", label: "XLS" },
   db: { kind: "database", label: "DB" }, sqlite: { kind: "database", label: "DB" }, sqlite3: { kind: "database", label: "DB" },
 };

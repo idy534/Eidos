@@ -4,6 +4,7 @@ import json
 import sqlite3
 
 from eidos_runtime.context.facts import CompactSummary
+from eidos_runtime.protocol.file_diff import display_file_diff
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.protocol.schemas import (
     ItemDto,
@@ -346,7 +347,7 @@ def _item_from_row(
         if tool_row["approval_feedback"] is not None:
             tool_call["approvalFeedback"] = tool_row["approval_feedback"]
         if tool_row["approval_diff"] is not None:
-            tool_call["changeDiff"] = tool_row["approval_diff"]
+            tool_call["changeDiff"] = display_file_diff(tool_row["approval_diff"])
         if tool_row["base_sha256"] is not None:
             tool_call["baseSha256"] = tool_row["base_sha256"]
         if "provenance_json" in tool_row.keys() and tool_row["provenance_json"]:

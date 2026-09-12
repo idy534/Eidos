@@ -4,21 +4,44 @@ import type { Item, ToolCall } from "../contracts.js";
 import { artifactPath, useArtifacts } from "./ArtifactContext.js";
 
 /** References from persisted tool evidence; this is not an execution-success projection. */
-export function toolFilePaths(call: ToolCall): string[] {
-  const paths = new Set<string>();
+export function toolFileChanges(call: ToolCall): { path: string; deleted: boolean; observed: boolean }[] {
+  const paths = new Map<string, { path: string; deleted: boolean; observed: boolean }>();
+  const observed = ["run_shell", "write_stdin", "shell"].includes(call.toolName);
+  const add = (path: unknown, deleted = false) => {
+    if (typeof path === "string" && path && path !== "/dev/null") paths.set(path, { path, deleted, observed });
+  };
   if (call.changeDiff) {
-    try { for (const file of parseDiff(call.changeDiff)) for (const path of [file.oldPath, file.newPath]) if (path && path !== "/dev/null") paths.add(path); }
+    try { for (const file of parseDiff(call.changeDiff)) {
+      if (file.oldPath !== file.newPath && file.oldPath !== "/dev/null") add(file.oldPath, true);
+      add(file.newPath === "/dev/null" ? file.oldPath : file.newPath, file.type === "delete");
+    } }
     catch { /* The original tool card still displays unsupported patch text. */ }
   }
   try {
     const result: unknown = JSON.parse(call.resultJson ?? "{}");
     const data: unknown = result && typeof result === "object" ? Reflect.get(result, "data") : undefined;
-    if (data && typeof data === "object") for (const key of ["created", "modified", "deleted"]) {
-      const values: unknown = Reflect.get(data, key);
-      if (Array.isArray(values)) for (const path of values) if (typeof path === "string") paths.add(path);
+    const structured = data && typeof data === "object" ? Reflect.get(data, "structuredContent") : undefined;
+    for (const record of [data, structured]) {
+      if (!record || typeof record !== "object") continue;
+      for (const key of ["created", "modified", "deleted"]) {
+        const values: unknown = Reflect.get(record, key);
+        if (Array.isArray(values)) for (const path of values) add(path, key === "deleted");
+      }
+      const changes: unknown = Reflect.get(record, "changes");
+      if (Array.isArray(changes)) for (const change of changes) {
+        if (!change || typeof change !== "object") continue;
+        const oldPath: unknown = Reflect.get(change, "path");
+        const newPath: unknown = Reflect.get(change, "newPath");
+        if (typeof newPath === "string" && newPath !== oldPath) add(oldPath, true);
+        add(typeof newPath === "string" ? newPath : oldPath, Reflect.get(change, "kind") === "delete");
+      }
     }
   } catch { /* Missing or malformed results do not create file references. */ }
-  return [...paths];
+  return [...paths.values()];
+}
+
+export function toolFilePaths(call: ToolCall): string[] {
+  return toolFileChanges(call).map((change) => change.path);
 }
 
 export function ResultFiles({ items, incomplete }: { items: Item[]; incomplete: boolean }) {

@@ -43,10 +43,11 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
   useEffect(() => {
     if (!actions || !path || version || typeof window.eidosRuntime?.onNotification !== "function") return;
     return window.eidosRuntime.onNotification((event) => {
-      if (event.method === "workspace/changed" && event.params.sessionId === actions.sessionId && event.params.paths.some((changed) => changed === path || path.startsWith(changed + "/"))) setRevision((value) => value + 1);
+      if (event.method === "workspace/changed" && event.params.sessionId === actions.sessionId && event.params.paths.some((changed) => changed === "." || changed === path || path.startsWith(changed + "/"))) setRevision((value) => value + 1);
     });
   }, [actions?.sessionId, path, version]);
-  const [state, setState] = useState<{ url?: string; error?: string }>({});
+  const key = JSON.stringify([actions?.sessionId, actions?.executionRoot, path, version, revision]);
+  const [state, setState] = useState<{ key?: string; url?: string; error?: string }>({});
   useEffect(() => {
     let current = true;
     let created: string | undefined;
@@ -54,9 +55,9 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
     if (!actions || !path || typeof window.eidosRuntime?.prepareWorkspacePreview !== "function") return;
     void window.eidosRuntime.prepareWorkspacePreview(actions.sessionId, path, version).then((url) => {
       created = url;
-      if (current) setState({ url });
+      if (current) setState({ key, url });
       else if (typeof window.eidosRuntime?.releaseWorkspacePreview === "function") void window.eidosRuntime.releaseWorkspacePreview(url).catch(() => {});
-    }).catch(() => { if (current) setState({ error: "预览不可用，请刷新文件。" }); });
+    }).catch(() => { if (current) setState({ key, error: "预览不可用，请刷新文件。" }); });
     return () => {
       current = false;
       if (created && typeof window.eidosRuntime?.releaseWorkspacePreview === "function") {
@@ -64,7 +65,7 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
       }
     };
   }, [actions?.sessionId, actions?.executionRoot, path, version, revision]);
-  return state;
+  return state.key === key ? state : {};
 }
 
 export function ArtifactImage({ path, alt, version }: { path: string; alt: string; version?: string }) {

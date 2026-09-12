@@ -533,6 +533,8 @@ export function WorkspaceExplorer({
                 </div>
               ))}
             </div>
+            {activePreviewPath && <button type="button" disabled={previewLoadingPath === activePreviewPath}
+              onClick={() => openFile(activePreviewPath, true)} title="重新核对当前文件并读取预览">刷新文件</button>}
           </div>
         )}
         {previewLoadingPath === activePreviewPath && !activePreview ? (
@@ -628,7 +630,8 @@ function WorkspacePreview({ preview }: { preview: WorkspaceFilePreview }) {
       : preview.kind === "unavailable" ? (
         <div className="workspace-preview-unavailable">
           <strong>{preview.reason === "binary" ? "二进制文件无法预览" : "此文件类型暂不支持预览"}</strong>
-          <span>请在外部编辑器中打开该文件。</span>
+          <span>文件已读取，但 Eidos 暂无此格式的内置预览。</span>
+          {actions?.openExternal && <button type="button" onClick={() => actions.openExternal?.(preview.path)}>系统应用打开</button>}
         </div>
       ) : preview.kind === "markdown" ? (
         <div className="workspace-markdown-preview">

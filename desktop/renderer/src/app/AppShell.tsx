@@ -637,7 +637,7 @@ export function AppShell({ runtime }: AppShellProps) {
     currentSnapshot?.items ?? [],
     currentSnapshot?.previousItemId,
   );
-  const outputArtifacts = collectOutputArtifacts(completeSessionItems.items);
+  const outputArtifacts = collectOutputArtifacts(completeSessionItems.items, currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot);
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
   const sessionWorktree = currentSnapshot?.session.worktree;
   const sessionIsLocal = currentSnapshot?.session.executionMode === "local"
@@ -805,7 +805,8 @@ export function AppShell({ runtime }: AppShellProps) {
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root);
     if (!resolved) return;
-    void window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved).catch(() => undefined);
+    void window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved)
+      .catch((cause) => sessionActions.setError(userFacingError(cause)));
   }
 
   function handleOpenFileInDock(path: string): void {
@@ -886,6 +887,8 @@ export function AppShell({ runtime }: AppShellProps) {
               artifacts={outputArtifacts}
               loading={completeSessionItems.loading}
               error={completeSessionItems.error}
+              hasMore={completeSessionItems.hasMore}
+              onLoadMore={completeSessionItems.loadMore}
             />
             <div className="environment-popover__row">
               <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
@@ -1216,6 +1219,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}
                     runId={reviewRequest.runId} path={reviewRequest.path} items={completeSessionItems.items}
                     loading={completeSessionItems.loading} error={completeSessionItems.error}
+                    hasMore={completeSessionItems.hasMore} onLoadMore={completeSessionItems.loadMore}
                     onFeedback={handleReviewFeedback} disabled={Boolean(activeRun) || runState.isSubmitting} />;
                   if (tab.kind === "review") {
                     return sessionHasGit ? (

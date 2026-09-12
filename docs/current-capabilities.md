@@ -31,7 +31,7 @@
 - `session/create` 的协议默认 `executionMode` 是 `local`。Desktop 只在首次提交时调用它。Worktree 请求会先解析可选 `baseRef` 为 immutable `baseCommit`，并接受显式的 `includeLocalChanges`。缺省 `baseRef` 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。不存在的 ref 返回 `BASE_REF_NOT_FOUND`。
 - `session/create` 允许省略或传入空的 `workspaceRoot` 来创建 projectless Session。Projectless Session 只接受 `executionMode = local`，不创建 Project 或 Worktree binding。
 - Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录都位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
-- Projectless Run 使用系统私有锚点作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 提供当前 Session 私有 Workspace 的 Files、环境信息中的“输出内容”和文件预览。Projectless 对话不展示文本修改卡，但仍可以展示产物卡。
+- Projectless Run 使用系统私有锚点作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 提供当前 Session 私有 Workspace 的 Files、环境信息中的“输出内容”和文件预览。Projectless 对话同样展示文本修改卡和产物卡。
 - Local Session 和 Worktree Session 都是正式 Session projection。Worktree Session 默认使用 detached HEAD，`worktree.branch` 为 NULL。Git Project 的 Local Session 通过当前 Local checkout 提供 Git status 和 Git diff。
 - Worktree 创建只会从 source repository root 的 `.worktreeinclude` 复制同时命中 `pathspec.GitIgnoreSpec` 且由 Git ignore 判定为 ignored 的 local files。Tracked files 和 untracked non-ignored files 不由 `.worktreeinclude` 复制。Runtime 只在 matched concrete path 上执行 `.git`、target boundary、source symlink、target parent、atomic replacement、fsync 和 permission safety；Runtime 不重新限制 Git pattern grammar。Managed Worktree 内的 `.worktreeinclude` 不具有 authority。Ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md` 会自动 materialize；tracked override 只使用 Git checkout 内容。
 - `includeLocalChanges = true` 要求 source `HEAD == baseCommit`。Runtime 使用 hardened Git CLI capture/apply full patch 和 staged patch，覆盖 tracked modified/deleted、staged、unstaged、binary、symlink、mode 和 untracked state。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Local-change state conflict、source change 和 materialization failure 会 rollback Worktree，无法安全清理时进入 `cleanup_required`。Dirty submodule checkout 不属于当前 transfer contract，Runtime 返回 `worktree_gitlink_unsupported`。
@@ -95,7 +95,7 @@
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
 - Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。预览区保留打开文件的 Tab，不额外显示当前路径、文件大小或手动刷新入口。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。图片和 PDF 使用有界资源预览，HTML 可以在隔离网页面板中运行或查看源码；其他二进制、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
-- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口展示当前执行方式、分支、对比分支、增删行数和当前会话的输出产物。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。HTML 产物卡展示当前文件的 `<title>`，不展示文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
+- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口展示当前执行方式、分支、对比分支、增删行数和当前会话的输出产物。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。HTML 产物卡优先展示当前文件的 `<title>`，没有标题或读取失败时使用文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
 - Desktop Review 使用 baseline `changedFiles` 和 `session/gitStatus` 建立文件手风琴。它包含已提交和未提交的任务改动。Renderer 在文件展开时才请求 `session/gitDiff(path)`，并用 `react-diff-view` 显示 native Git patch。Review 支持展开全部差异和折叠全部差异。Stage、Unstage 和 Discard 分别调用现有 typed API。Open in Editor 只把相对路径交给 Main，Main 会按当前 Session execution root 重新验证真实路径。
 - Review 支持在 Diff gutter 上创建行级 Review Comment。Comment 绑定 Session、path、scope、old/new side、line、观察到的 HEAD 和 Diff hash。Diff 变化后，Runtime 会把无法精确证明仍有效的 Comment 标成 stale。用户点击 Send Review Feedback 后，Desktop 只把 active Comment 格式化成普通用户输入，并复用现有 Run 启动链路。创建 Comment 本身不会启动 Agent。
 - Review 的提交弹层展示 branch、upstream 和 ahead/behind。它可以先 Stage 未暂存文件，再执行 Commit，也可以顺序执行 Commit 和 Push。弹层继续提供 Fetch、fast-forward-only Pull、Push、Merge、Rebase 和对应 abort/continue。每个操作复用现有 typed Runtime API 和 `operationId` 语义。Detached managed Worktree 可以继续使用 Create Branch Here。Advanced Git target 只来自 typed local branch observation。
@@ -330,14 +330,14 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## 产物入口与预览（本轮代码，待真实 Desktop 验收）
 
-本节描述本轮代码修订。Renderer 定向测试、Desktop 门槛、构建、原生 Seatbelt 和 Electron smoke 已通过。Runtime 完整测试沿用前一阶段结果，本轮没有修改 Runtime。真实桌面操作验收仍需单独进行。
+本节描述产物链路的当前代码修订。用户要求先完成代码，再确认测试阶段。本次修订尚未编写或修改测试，也未运行测试、静态检查、构建或 Desktop 验收；历史通过记录不代表本次代码已验证。
 
 - 本轮结果卡只在 Run 进入终态且当前回答不再生成后显示，位置在最终答复之后。运行中、等待审批和收尾阶段不显示；失败或取消且没有最终答复时，系统仍展示已经产生的结果。本次展示时机修订尚未运行测试。文本修改卡从 Session 快照中的 Run、Item 和持久化 ToolCall 投影，支持单文件紧凑卡、多文件折叠列表、删除记录、失败状态和对应 Run/文件的 Review 入口。卡片不把整个仓库当前差异当成本轮修改。
-- 文本修改的路径会按本轮合并。重复修改同一路径时不会简单累加补丁行数；没有可靠合并 Diff 时会显示“行数未完整统计”。Shell 只有路径观察而没有可靠 Diff 时不会生成虚假的行数。
-- DOCX、PDF、图片和 HTML 产物显示独立文件卡。HTML 可以同时出现在产物卡和文本修改卡中。DOCX 只提供受控的系统应用打开入口，PDF、图片和 HTML 使用已有 Workspace 预览或隔离网页预览。
-- 环境信息浮层提供“输出内容”。它跨当前 Session 分页读取历史 Item，按路径合并并保留最新记录。删除的文件不会进入输出列表。Projectless Session 也提供这个入口。Files 只保留文件树和预览，不再显示结果文件列表。
-- 历史修改卡打开记录中的 Run 和文件 Diff；产物卡打开当前 Workspace 文件，文件版本变化由已有预览版本和刷新提示处理。当前没有足够证据时，“撤销”按钮显示不可用原因，不调用当前整文件 Discard。
-- 最终回复中的 Workspace 文件链接、工具卡片中的文件名和 Files 中的文件共用文件打开入口，不建立第二套执行状态。
+- Item 输出使用已锁定的 `unidiff` 识别普通 Unified Diff 的文件边界，并为 Desktop 补充 Git 文件头。SQLite 中的原始补丁、hunk、换行说明和执行状态保持原样。新旧记录共用这个输出边界。文本修改按本轮路径归组，重复编辑显示累计补丁增删；部分补丁缺失时仍显示已知部分和缺失文件数。没有任何可统计补丁时显示明确原因。统计不代表最终净变化，也不代表准备中的补丁已经写入。
+- 产物资格不再依赖格式白名单。工具报告的文件变化可以生成通用文件卡，PPTX、XLSX、压缩包和未知格式同样可见。格式映射只决定展示标签和专用预览入口。文件卡核对当前文件，显示文件大小、执行状态和当前版本说明；无内置预览时，Files 提供系统应用打开。系统打开失败会显示错误。完整文本补丁已经进入文本卡时，普通文件不再重复展示独立卡。
+- 环境信息浮层提供“输出内容”。它从当前 Session 的已加载工具记录投影文件，并按 ordinal 和路径保留最新记录。历史记录每次读取 200 条，用户可以继续加载；产物列表每次展示 20 个文件。只有完成的删除记录会移除旧条目，失败或待核验的删除仍保留状态提示。Shell 观察记录会明确说明归属限制。MCP 的 structuredContent 中已有的 created/modified/deleted/changes 字段也可以提供候选路径。
+- 历史修改卡打开记录中的 Run 和文件 Diff；产物卡明确打开当前 Workspace 文件。文件卡和 Files 提供刷新入口；预览授权仍绑定 Session、execution root 和文件版本，切换版本时不会继续暴露旧 URL。当前没有足够证据时，“撤销”按钮显示不可用原因，不调用当前整文件 Discard。
+- 最终回复中的 Workspace 文件链接、工具卡片中的文件名和 Files 中的文件共用受控打开入口。系统复用现有 Markdown 解析器，从最后一条完整回复提取本地链接和图片引用，补充尚未进入工具结果列表的文件卡。引用卡标记“回复引用，未证明生成”，并通过 Runtime 核对当前文件；代码块和普通文本路径不会变成生成事实。引用卡暂不加入环境信息中的工具结果列表。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
 - Review 提供“最近一轮”范围，按持久化 ToolCall 顺序显示准备中或已结束的文件补丁。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
@@ -345,7 +345,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Browser 使用 Electron `WebContentsView`，支持本地 HTML、HTTP/HTTPS 页面和开发服务。网页面板提供新标签页空状态、地址输入、刷新和隔离网页预览。地址栏使用 `tldts` 识别域名、IP 和本地地址，支持完整 HTTP/HTTPS 地址和常见无协议地址；输入框保持左对齐并可在已打开页面后继续编辑，其他输入会转换为 Google 搜索。刷新只在按钮图标上播放一次逆时针半圈动画，不额外显示加载文字。一个 Workspace 可以同时打开多个独立 Browser Tab。网页面板不提供标注或开发终端按钮；开发终端仍由独立工作区工具提供，Projectless 仍不提供手动 Terminal。
 - 本地 HTML 资源仅来自当前 Workspace，页面不能访问 Eidos preload、Node 或其他文件协议。Browser 使用临时隔离分区，拒绝权限申请、新窗口和下载。窗口关闭、Session 删除、Handoff 和 Worktree Restore 会清理对应网页和预览授权。
 
-- 本轮结果卡与环境输出列表复用 Eidos 的暖白、灰绿、语义增删色及字号变量。结果卡使用紧凑间距，审核与撤销复用小号 Button。Renderer 行为测试和构建已通过，真实 Desktop 视觉验收仍需单独进行。
+- 本轮结果卡与环境输出列表复用 Eidos 的颜色和字号变量。紧凑文件卡也保留执行状态和读取错误。当前修订尚未进行 Renderer 行为测试、构建或 Desktop 视觉验收。
 
 - 文本卡的标题、审核按钮和文件行可以打开独立文本审查面板，支持 Git、非 Git 和 Projectless 会话。面板只提供“最近一轮修改”和“整个任务修改”；前者绑定被点击卡片的 Run，后者展示当前 Session 的补丁历史。面板没有 Git 操作，也不在工作区工具列表或环境信息中提供入口。原有 Git 提交入口保留。本次修改未运行测试或 Desktop 验收。
 

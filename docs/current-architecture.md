@@ -29,7 +29,7 @@ Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 
 
 Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、敏感路径、hard discovery directory 和 root ignore 规则。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 使用当前 Session 的私有 Workspace，仍经过同一个 Reader。Renderer 对 Conversation 传来的历史文件路径先检查当前目录项；目录项明确缺失时，Renderer 不直接调用预览接口。目录列表截断时，Runtime 继续负责最终验证。Renderer 不直接读取 filesystem。
 
-Desktop 会让 Conversation 始终保持挂载。Session header 右侧固定显示环境信息入口；用户可以通过工作区开关打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab 保留在预览栏中，预览区不显示当前路径、文件大小或手动刷新入口，侧栏布局默认给预览区更多空间。产物卡的图片会直接进入全屏预览，HTML 会直接打开隔离网页面板，PDF 会进入 Files 的内置预览，系统应用打开入口保持可用。Dock 普通展开时环境信息入口仍在 Session header，完全展开时入口显示在 Dock header。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
+Desktop 会让 Conversation 始终保持挂载。Session header 右侧固定显示环境信息入口；用户可以通过工作区开关打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab 保留在预览栏中，预览区提供手动刷新入口，侧栏布局默认给预览区更多空间。产物卡的图片会直接进入全屏预览，HTML 会直接打开隔离网页面板，PDF 会进入 Files 的内置预览，系统应用打开入口保持可用。Dock 普通展开时环境信息入口仍在 Session header，完全展开时入口显示在 Dock header。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
 
 ## 2. Process Architecture
 
@@ -539,10 +539,16 @@ Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受�
 
 `record_workspace_change` 在同一 SQLite 事务内记录准备后的 Diff 和 `item.updated` Event。Event/Outbox 将更新后的 Item 投影为 `item/updated`。Desktop 的“最近一轮”从已有 Item/ToolCall 读取，不维护另一个 Run 成功状态。准备中、完成和失败仍使用原 ToolCall 状态。原始模型参数流不作为可执行补丁展示。
 
-Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和格式化产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组；重复路径保留各次完整补丁的累计增删，并显示“累计”及非净差异说明。任一次缺少补丁时，统计保持未知。HTML 卡片通过现有受控文件预览读取当前 `<title>`，不把文件名作为正文标题。`OutputContent` 在环境信息中按路径保留当前 Session 最新产物记录。Files 只负责文件树和预览，不再负责结果列表。
+Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和格式化产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组；重复路径保留各次完整补丁的累计增删，并显示“累计”及非净差异说明。缺少部分补丁时，界面保留已知累计值，并列出缺少统计的文件数；完全缺少补丁时显示原因。HTML 卡片通过现有受控文件预览读取当前 `<title>`，没有标题或读取失败时使用文件名。`OutputContent` 在环境信息中按路径保留当前 Session 最新产物记录。Files 只负责文件树和预览，不再负责结果列表。
 
-修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览和 Main 的受控系统应用打开入口；DOCX 没有内置预览时只展示系统应用打开。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
+修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。产物卡复用 Workspace Explorer、隔离 HTML 预览和 Main 的受控系统应用打开入口。通用文件卡不要求已知扩展名；没有内置预览时，Files 展示文件说明和系统应用打开按钮。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
+
+`protocol/file_diff.py` 在 Item 输出边界复用 `unidiff` 的文件边界位置，为普通 Unified Diff 添加 Desktop 所需的 Git 文件头。Mapper 不修改 SQLite 中的原始补丁。此输出适配同时服务结果统计、工具文件链接和历史文本审查；它不改变工具输入、权限、补丁执行和持久化状态。无法解析的旧记录保留原文。
+
+文件结果投影共用 `toolFileChanges`，从已有文件变化字段和 MCP structuredContent 读取路径。执行状态仍来自原 Item/ToolCall。Shell 路径观察不能证明文件由单个命令独占生成。回复链接通过现有 Markdown 解析器识别，作为单独标记的引用候选；Runtime 的受控预览读取只证明当前文件可读，不证明历史交付已经成功。界面不推断文件的业务重要性，不把目录内所有文件当作交付物。
+
+历史 Item 读取每批 200 条，后续读取由用户触发。Session 和游标切换会使旧请求失效。文件卡和 Files 提供刷新入口，文件元数据复用 `workspace/readFilePreview`；界面不建立 Artifact 表、文件快照库或第二套成功状态。
 
 `session/gitReadPatch` 读取 index 或 worktree 文本差异并返回 Diff hash。`session/gitApplyHunk` 在现有 Session Git operation 边界内检查 active Run、路径和当前补丁 hash。现有 `unidiff` 负责选择 hunk，原生 Git 负责校验和修改。操作必须携带 operationId，沿用 SQLite 幂等与不确定操作语义。本轮没有数据库迁移或第二套 Artifact 表；浏览器地址识别新增直接依赖 `tldts`。
 
-当前修订的自动测试、构建、原生 Seatbelt 和 Electron smoke 已通过。真实 Desktop 操作验收仍未完成，具体边界见 `current-limitations.md` 的“本轮产物实现的边界”。
+本次产物可靠性修订尚未编写测试或运行验证。用户确认代码后，再补测试并集中执行验证。具体边界见 `current-limitations.md` 的“本轮产物实现的边界”。
