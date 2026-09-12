@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
 import uuid
+from typing import Literal
 
 from eidos_runtime.db.database import (
     CommittedMutation,
@@ -25,6 +27,8 @@ from eidos_runtime.db.mappers import (
     _snapshot_item,
     _step_resolution_review,
 )
+from eidos_runtime.file_limits import TOOL_TEXT_PAGE_CHARACTERS
+from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.domain.session import (
     DeletedSession,
     Session,
@@ -832,6 +836,37 @@ class SessionRepository(Repository):
         ).fetchone()
         if active is not None:
             raise SessionActiveError("session has an active run")
+
+    def read_tool_text(
+        self, session_id: str, tool_call_id: str, field: Literal["diff", "result"],
+        sha256: str, offset: int,
+    ) -> ToolTextPage:
+        if field not in {"diff", "result"} or offset < 0:
+            raise InvalidCursorError("invalid tool text page")
+        column = "approval_diff" if field == "diff" else "ui_result_json"
+        with self.lock:
+            row = self._connection().execute(
+                f"SELECT tool_calls.{column} AS content, tool_calls.result_json "
+                "FROM tool_calls JOIN items ON items.id = tool_calls.item_id "
+                "WHERE tool_calls.id = ? AND items.session_id = ?",
+                (tool_call_id, session_id),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("tool call not found in session")
+        content = row["content"]
+        if content is None and field == "result":
+            content = row["result_json"]
+        if not isinstance(content, str):
+            raise ResourceNotFoundError("tool text unavailable")
+        # ponytail: hash the bounded text per page; index hashes only if reads become costly.
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if digest != sha256:
+            raise InvalidCursorError("tool text changed; reload the session before reading")
+        if offset > len(content):
+            raise InvalidCursorError("tool text offset exceeds content")
+        end = min(len(content), offset + TOOL_TEXT_PAGE_CHARACTERS)
+        return ToolTextPage(content=content[offset:end], next_offset=end,
+                            total_characters=len(content), sha256=digest)
 
     def read_session_snapshot(
         self,

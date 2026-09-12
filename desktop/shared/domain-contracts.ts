@@ -333,11 +333,22 @@ export interface ToolCall {
   approvalDecision?: "approve" | "reject";
   approvalFeedback?: string;
   changeDiff?: string;
+  changeDiffBytes?: number;
+  changeDiffHash?: string;
+  resultBytes?: number;
+  resultHash?: string;
   baseSha256?: string;
   provenance?: ToolProvenance;
   toolSetHash?: string;
   startedAt: number;
   completedAt?: number;
+}
+
+export interface ToolTextPage {
+  content: string;
+  nextOffset: number;
+  totalCharacters: number;
+  sha256: string;
 }
 
 export interface Item {
@@ -482,6 +493,8 @@ interface ApprovalRequestBase {
 export interface FileApprovalRequest extends ApprovalRequestBase {
   kind: "file_change";
   diff: string;
+  diffBytes?: number | undefined;
+  diffHash?: string | undefined;
 }
 
 export interface CommandApprovalRequest extends ApprovalRequestBase {

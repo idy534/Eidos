@@ -1007,12 +1007,12 @@ class ContextPersistenceTests(unittest.TestCase):
             self.session["id"],
             "continue",
             model_profile=default_profile_snapshot("deepseek-flash").model_copy(
-                # System instructions have grown (~6.2K chars of layered
-                # instructions + tools), so a 9.4K window no longer holds
-                # the compacted payload. 11K still proves that compaction
+                # System instructions have grown (~6.2K+ chars of layered
+                # instructions + tools), so an 11K window no longer holds
+                # the compacted payload (~10.3K tokens). 14K still proves that compaction
                 # turns a non-fitting context into a fitting one while
                 # staying far below the product default (128K).
-                update={"context_window_tokens": 11_000, "max_output_tokens": 1_000}
+                update={"context_window_tokens": 14_000, "max_output_tokens": 1_000}
             ),
         )
         builder = ContextBuilder(self.store)

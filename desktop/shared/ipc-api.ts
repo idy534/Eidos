@@ -3,6 +3,7 @@ import type {
   RuntimeHealth,
   SessionListResult,
   SessionSnapshot,
+  ToolTextPage,
   EventListResult,
   Session,
   SessionHandoffResult,
@@ -101,6 +102,7 @@ export interface EidosRuntimeAPI {
   deleteProject(projectId: string): Promise<DeleteProjectResult>;
   listSessions(): Promise<SessionListResult>;
   readSession(sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot>;
+  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset?: number): Promise<ToolTextPage>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;
   createSession(
     workspaceRoot: string | null,

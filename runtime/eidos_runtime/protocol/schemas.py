@@ -302,6 +302,10 @@ class ToolCallDto(ClosedModel):
     approval_decision: Literal["approve", "reject"] | None = Field(default=None, alias="approvalDecision")
     approval_feedback: StrictStr | None = Field(default=None, alias="approvalFeedback")
     change_diff: StrictStr | None = Field(default=None, alias="changeDiff")
+    change_diff_bytes: StrictInt | None = Field(default=None, alias="changeDiffBytes", ge=0)
+    change_diff_hash: StrictStr | None = Field(default=None, alias="changeDiffHash", pattern=r"^[0-9a-f]{64}$")
+    result_bytes: StrictInt | None = Field(default=None, alias="resultBytes", ge=0)
+    result_hash: StrictStr | None = Field(default=None, alias="resultHash", pattern=r"^[0-9a-f]{64}$")
     base_sha256: StrictStr | None = Field(default=None, alias="baseSha256")
     provenance: dict[str, JsonValue] | None = None
     tool_set_hash: StrictStr | None = Field(default=None, alias="toolSetHash")

@@ -58,7 +58,7 @@ describe("WorkspaceDock", () => {
     render(<Harness initialTabs={[]} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("打开工作区");
-    expect(screen.getByRole("button", { name: "审阅" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Git" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "终端" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "文件" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "网页" })).toBeInTheDocument();
@@ -70,7 +70,7 @@ describe("WorkspaceDock", () => {
   it("adds and switches tool windows while keeping inactive content mounted", () => {
     render(<Harness />);
 
-    expect(screen.getByRole("tab", { name: "审阅" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Git" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("审阅内容")).toBeVisible();
     expect(screen.getByText("文件内容")).toBeInTheDocument();
     expect(screen.getByText("文件内容").closest("[role=tabpanel]")).toHaveAttribute("hidden");
@@ -158,7 +158,7 @@ describe("WorkspaceDock", () => {
   it("uses a diff document glyph for review", () => {
     render(<Harness initialTabs={[]} />);
 
-    const review = screen.getByRole("button", { name: "审阅" });
+    const review = screen.getByRole("button", { name: "Git" });
     expect(review.querySelector("path"))
       .toHaveAttribute("d", "M5 2.5h7l3 3v12H5zM12 2.5v3h3M7.5 10h4M9.5 8v4M7.5 14h4");
   });

@@ -6,11 +6,12 @@ from typing import Annotated, Callable, Literal, Protocol, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from eidos_runtime.file_limits import MAX_PATCH_BYTES
 from eidos_runtime.model.response_phase import AssistantMessagePhase
 
 
 MAX_FUNCTION_ARGUMENT_BYTES = 64 * 1024
-MAX_CUSTOM_TOOL_INPUT_BYTES = 512 * 1024
+MAX_CUSTOM_TOOL_INPUT_BYTES = MAX_PATCH_BYTES
 MAX_TOOL_CALL_ID_BYTES = 256
 MAX_TOOL_NAME_BYTES = 256
 

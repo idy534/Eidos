@@ -160,6 +160,15 @@ class SessionReadRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "before_item_id")
 
 
+class ToolTextReadRequestDto(_CanonicalIdRequest):
+    session_id: StrictStr = Field(alias="sessionId")
+    tool_call_id: StrictStr = Field(alias="toolCallId")
+    field: Literal["diff", "result"]
+    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    offset: StrictInt = Field(default=0, ge=0, le=9_007_199_254_740_991)
+    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "tool_call_id")
+
+
 class SessionGitStatusRequestDto(_CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
@@ -619,6 +628,13 @@ class ProjectCreateResponseDto(MethodResultDto, ProjectDto):
 
 class ProjectDeleteResponseDto(MethodResultDto):
     deleted_project_id: StrictStr = Field(alias="deletedProjectId")
+
+
+class ToolTextReadResponseDto(MethodResultDto):
+    content: StrictStr
+    next_offset: StrictInt = Field(alias="nextOffset", ge=0, le=9_007_199_254_740_991)
+    total_characters: StrictInt = Field(alias="totalCharacters", ge=0, le=9_007_199_254_740_991)
+    sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class SessionReadResponseDto(MethodResultDto):

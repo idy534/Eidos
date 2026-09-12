@@ -17,6 +17,7 @@ from eidos_runtime.extensions.skill_access import (
     SkillAccess,
 )
 from eidos_runtime.extensions.skills import SkillCreation
+from eidos_runtime.file_limits import MAX_PATCH_BYTES
 from eidos_runtime.model.client import (
     CustomToolPayload,
     FunctionToolPayload,
@@ -164,12 +165,14 @@ def _scan_tool_payload(
     scanner: SensitiveScanner, call: ModelToolCall
 ) -> ToolPayload:
     if isinstance(call.payload, FunctionToolPayload):
-        scanned = scanner.scan_json(call.payload.arguments)
+        scanned = scanner.scan_json(
+            call.payload.arguments, max_bytes=MAX_PATCH_BYTES if call.name == "apply_patch" else 512 * 1024
+        )
         if not isinstance(scanned, dict) or scanned != call.payload.arguments:
             raise SensitiveScanError("sensitive tool arguments")
         return FunctionToolPayload(arguments=scanned)
     if isinstance(call.payload, CustomToolPayload):
-        scanned = scanner.scan_text(call.payload.input)
+        scanned = scanner.scan_text(call.payload.input, max_bytes=MAX_PATCH_BYTES)
         if scanned.text != call.payload.input:
             raise SensitiveScanError("sensitive tool input")
         return CustomToolPayload(input=call.payload.input)

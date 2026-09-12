@@ -15,7 +15,7 @@ from typing import NoReturn
 from lark import Lark, Token, Tree
 from lark.exceptions import LarkError, UnexpectedInput
 
-from eidos_runtime.model.client import MAX_CUSTOM_TOOL_INPUT_BYTES
+from eidos_runtime.file_limits import MAX_PATCH_BYTES
 
 BEGIN_PATCH = "*** Begin Patch"
 END_PATCH = "*** End Patch"
@@ -24,7 +24,6 @@ UPDATE_FILE = "*** Update File:"
 DELETE_FILE = "*** Delete File:"
 MOVE_TO = "*** Move to:"
 END_OF_FILE = "*** End of File"
-MAX_PATCH_BYTES = MAX_CUSTOM_TOOL_INPUT_BYTES
 
 _PATCH_PARSER = Lark.open(
     str(Path(__file__).with_name("apply_patch.lark")),
@@ -123,7 +122,7 @@ def parse_patch(text: str) -> list[AddFile | UpdateFile | DeleteFile]:
     except UnicodeEncodeError:
         raise PatchError("invalid_utf8", "Patch must be valid UTF-8") from None
     if input_bytes > MAX_PATCH_BYTES:
-        raise PatchError("patch_too_large", "Patch exceeds the 512 KiB limit")
+        raise PatchError("patch_too_large", f"Patch exceeds the {MAX_PATCH_BYTES}-byte input budget")
     normalized = _normalize_patch_text(text)
     _reject_control_characters(normalized)
     try:

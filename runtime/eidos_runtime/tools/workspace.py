@@ -19,6 +19,9 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
+from eidos_runtime.file_limits import (
+    MAX_FILE_BYTES as MAX_EDIT_FILE_BYTES, MAX_PATCH_WORKING_BYTES, tool_result_limit,
+)
 from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
@@ -88,13 +91,13 @@ from eidos_runtime.tools.contracts import (
 
 
 MAX_FILE_BYTES = 256 * 1024
-MAX_READ_FILE_BYTES = 2 * 1024 * 1024
+MAX_READ_FILE_BYTES = MAX_EDIT_FILE_BYTES
 MAX_RANGE_LINES = 2_000
 MAX_LIST_DEPTH = LIST_FILES_MAX_DEPTH
 MAX_LIST_ENTRIES = LIST_FILES_MAX_ENTRIES
 MAX_SEARCH_RESULTS = SEARCH_TEXT_MAX_RESULTS
-MAX_FILE_CHANGE_BYTES = 256 * 1024
-MAX_DIFF_BYTES = 512 * 1024
+MAX_FILE_CHANGE_BYTES = MAX_EDIT_FILE_BYTES
+MAX_DIFF_BYTES = MAX_PATCH_WORKING_BYTES
 TOOL_DEADLINE_SECONDS = 5.0
 SHELL_PREFLIGHT_DEADLINE_SECONDS = 10.0
 MAX_SHELL_PREFLIGHT_ENTRIES = 250_000
@@ -197,7 +200,6 @@ class ResolvedAuthorizedPath:
 # added separately so a function model never receives FREEFORM instructions.
 _APPLY_PATCH_DESCRIPTION = (
     "Edit text files using Codex Patch. Read the relevant current lines before editing. "
-    "Prefer small Update hunks over deleting and recreating an existing file. "
     "Copy context exactly, including indentation; include enough unchanged lines to "
     "identify the intended location. Do not use numbered unified-diff headers. "
     "Start with *** Begin Patch and end with *** End Patch. "
@@ -211,8 +213,7 @@ _APPLY_PATCH_DESCRIPTION = (
     "-    return 'old'\n+    return 'new'\n*** End Patch\n"
     "Use workspace-relative or canonical absolute paths. Writes outside the workspace "
     "require approval or an existing run grant. Paths, base hashes and final contents "
-    "are verified. On context mismatch, read the current lines and submit a corrected "
-    "patch; never blindly repeat a failed edit."
+    "are verified. Choose file organization and the scope of each edit according to the task."
 )
 
 
@@ -221,7 +222,7 @@ _BUILTIN_CONTRACTS = (
     ("read_file", "Read one bounded UTF-8 file from the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
     ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
-    ("apply_patch", "Pass the Patch text in the single JSON field `patch`. The old `changes` format in historical calls is no longer accepted. " + _APPLY_PATCH_DESCRIPTION, "workspace", False, 5, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
+    ("apply_patch", "Pass the Patch text in the single JSON field `patch`. The old `changes` format in historical calls is no longer accepted. " + _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run one shell command in the macOS workspace sandbox. The Runtime returns after yieldTimeMs with either an exit result or shell_running and sessionId. For a running command, use write_stdin with empty chars to wait and read progress, or chars=\\u0003 to interrupt. Choose whether to keep waiting from the output and user intent. The command has no default lifetime deadline. Finish or stop the command before a final answer; another side effect cannot start while it runs. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
     ("write_stdin", "Continue an existing Shell session in this Run. Empty chars waits and reads new output; chars=\\u0003 interrupts the command. Other chars send stdin under the original command permissions. yieldTimeMs bounds this wait, not the command lifetime. Repeated waiting is valid while the process is running. Stop waiting after executionStatus=exited. Read persisted terminal output with read_tool_output using the original run_shell outputCallId, never sessionId.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
@@ -402,7 +403,7 @@ def canonical_tool_result(
     encoded = json.dumps(
         validated, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
-    if len(encoded) > 512 * 1024:
+    if len(encoded) > tool_result_limit(tool_name):
         return _error(tool_name, "tool_result_too_large", "Tool result exceeded the safe size limit")
     return validated
 
@@ -598,7 +599,17 @@ class ToolExecutor:
             or normalized is None
             or prepare is None
         ):
-            return _error(tool_name, "invalid_arguments", "Invalid arguments")
+            code = (
+                validation.reason_code
+                if validation and validation.reason_code == "patch_too_large"
+                else "invalid_arguments"
+            )
+            summary = (
+                f"Patch exceeds the {MAX_PATCH_BYTES}-byte input budget"
+                if code == "patch_too_large"
+                else "Invalid arguments"
+            )
+            return _error(tool_name, code, summary)
         return prepare(normalized, cancel)
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
@@ -801,8 +812,8 @@ class ToolExecutor:
             except UnicodeEncodeError:
                 raise CodexPatchError("invalid_utf8", "Patch must be valid UTF-8") from None
             if patch_bytes > MAX_PATCH_BYTES:
-                raise CodexPatchError("patch_too_large", "Patch exceeds the 512 KiB limit")
-            if default_scanner().scan_text(patch_value).text != patch_value:
+                raise CodexPatchError("patch_too_large", f"Patch exceeds the {MAX_PATCH_BYTES}-byte input budget")
+            if default_scanner().scan_text(patch_value, max_bytes=MAX_PATCH_BYTES).text != patch_value:
                 raise SensitiveScanError("sensitive tool input")
             hunks = parse_patch(patch_value)
             if not hunks:
@@ -814,6 +825,7 @@ class ToolExecutor:
             planned: dict[str, tuple[bytes, int] | None] = {}
             prepared: list[FileChange] = []
             diffs: list[str] = []
+            working_bytes = 0
             for hunk in hunks:
                 _check_cancel(cancel)
                 if isinstance(hunk, AddFile):
@@ -834,12 +846,18 @@ class ToolExecutor:
                         path, cancel, allow_missing_parents=True
                     )
                     planned[path] = existing
+                working_bytes += 4096 + (len(existing[0]) if existing is not None else 0)
+                if working_bytes > MAX_PATCH_WORKING_BYTES:
+                    raise WorkspacePathError("patch_working_set_too_large")
                 if kind == "add":
                     content_value = hunk.content
                     candidate = content_value.encode("utf-8")
                     _validate_patch_content(candidate)
                     if len(candidate) > MAX_FILE_CHANGE_BYTES:
                         raise WorkspacePathError("file_too_large")
+                    working_bytes += len(candidate)
+                    if working_bytes > MAX_PATCH_WORKING_BYTES:
+                        raise WorkspacePathError("patch_working_set_too_large")
                     old_content = None if existing is None else existing[0]
                     mode = 0o644 if existing is None else existing[1]
                     change = _make_patch_change(
@@ -883,6 +901,9 @@ class ToolExecutor:
                 _validate_patch_content(candidate)
                 if len(candidate) > MAX_FILE_CHANGE_BYTES:
                     raise WorkspacePathError("file_too_large")
+                working_bytes += len(candidate)
+                if working_bytes > MAX_PATCH_WORKING_BYTES:
+                    raise WorkspacePathError("patch_working_set_too_large")
                 move_value = hunk.move_to
                 if move_value is not None:
                     if not isinstance(move_value, str):
@@ -897,6 +918,9 @@ class ToolExecutor:
                             destination, cancel, allow_missing_parents=True
                         )
                         planned[destination] = destination_existing
+                    working_bytes += len(destination_existing[0]) if destination_existing is not None else 0
+                    if working_bytes > MAX_PATCH_WORKING_BYTES:
+                        raise WorkspacePathError("patch_working_set_too_large")
                     change = _make_patch_change(
                         path=path,
                         candidate=candidate,
@@ -953,7 +977,7 @@ class ToolExecutor:
                 recovery = (
                     "Correct the Patch markers and line prefixes, then resubmit."
                     if error.code == "patch_format_error" else
-                    "Read the current target lines, then submit a new targeted Patch with exact context."
+                    "Read the current target lines and correct the Patch context."
                 )
                 summary += f" No files were changed by this call. {recovery}"
             return _error(tool_name, error.code, summary)
@@ -1094,7 +1118,7 @@ class ToolExecutor:
             committed_fd = self._open_file_at(parent_fd, parts[-1])
             try:
                 committed, _metadata = _read_regular_file(
-                    committed_fd, threading.Event()
+                    committed_fd, threading.Event(), limit=MAX_EDIT_FILE_BYTES
                 )
             finally:
                 os.close(committed_fd)
@@ -1252,8 +1276,12 @@ class ToolExecutor:
                 "Patch did not change any files",
                 {"path": prepared.path, "changes": []},
             ), delta
-        summary = "Success. Updated the following files: " + ", ".join(
-            _delta_summary(change) for change in delta.changes
+        summary = (
+            "Success. Updated the following files: " + ", ".join(
+                _delta_summary(change) for change in delta.changes
+            )
+            if len(delta.changes) <= 20
+            else f"Success. Updated {len(delta.changes)} files."
         )
         return _success(
             tool_name,
@@ -1590,7 +1618,7 @@ class ToolExecutor:
                 raise WorkspacePathError("unsupported_file_owner")
             if getattr(metadata, "st_flags", 0) != 0:
                 raise WorkspacePathError("unsupported_file_flags")
-            content, _stable = _read_regular_file(descriptor, cancel)
+            content, _stable = _read_regular_file(descriptor, cancel, limit=MAX_EDIT_FILE_BYTES)
             return content, mode
         finally:
             os.close(descriptor)
@@ -1638,7 +1666,7 @@ class ToolExecutor:
                 return -1
             raise WorkspacePathError("file_version_conflict") from None
         try:
-            content, _metadata = _read_regular_file(descriptor, cancel)
+            content, _metadata = _read_regular_file(descriptor, cancel, limit=MAX_EDIT_FILE_BYTES)
         except Exception:
             os.close(descriptor)
             raise

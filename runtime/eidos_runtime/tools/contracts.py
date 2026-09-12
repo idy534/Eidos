@@ -24,6 +24,8 @@ from pydantic import (
 )
 from pydantic.fields import PydanticUndefined
 
+from eidos_runtime.file_limits import MAX_PATCH_BYTES
+
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
     NetworkPermissions,
@@ -228,9 +230,14 @@ class ApplyPatchInput(StrictToolModel):
         description=(
             "Complete Codex Patch text, from *** Begin Patch to *** End Patch. "
             "Use actual newlines in the decoded string. Do not include Markdown fences. "
-            "Use small, targeted edits; the JSON arguments must fit within 64 KiB."
+            "The text may include multiple files and multiple hunks."
         ),
     )
+
+    @field_validator("patch")
+    @classmethod
+    def validate_patch_bytes(cls, value: str) -> str:
+        return _utf8_limit(value, MAX_PATCH_BYTES, "patch_too_large")
 
 
 class DeleteFileInput(ReadFileInput):

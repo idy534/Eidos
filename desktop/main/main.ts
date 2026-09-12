@@ -570,6 +570,16 @@ ipcMain.handle(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
   return clientOrThrow().deleteProject(projectId);
 });
 ipcMain.handle(IPC.SESSION_LIST, () => clientOrThrow().listSessions());
+ipcMain.handle(IPC.TOOL_TEXT_READ, (_event, sessionId: unknown, toolCallId: unknown, field: unknown, sha256: unknown, offset: unknown) => {
+  if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256
+    || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 256
+    || (field !== "diff" && field !== "result")
+    || typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)
+    || typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error("工具文本读取参数无效。");
+  }
+  return clientOrThrow().readToolText(sessionId, toolCallId, field, sha256, offset);
+});
 ipcMain.handle(IPC.SESSION_READ, (_event, sessionId: unknown, options: unknown) => {
   if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
   if (options !== undefined && (!options || typeof options !== "object" || Object.keys(options).some((key) => !["itemLimit", "beforeItemId"].includes(key)))) throw new Error("分页参数无效。");

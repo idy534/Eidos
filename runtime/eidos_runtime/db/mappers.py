@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from eidos_runtime.protocol.tool_text import project_tool_text
 from eidos_runtime.context.facts import CompactSummary
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.protocol.schemas import (
@@ -48,7 +49,7 @@ def _load_json_object(value: object) -> dict[str, object] | None:
 def _snapshot_item(
     row: sqlite3.Row, tool_row: sqlite3.Row | None
 ) -> dict[str, object]:
-    item = _item_from_row(row, tool_row)
+    item = project_tool_text(_item_from_row(row, tool_row))
     content = item.get("content")
     if isinstance(content, str):
         item["content"] = _truncate_snapshot_text(content)

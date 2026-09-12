@@ -3,6 +3,7 @@ import { Diff, Hunk, parseDiff } from "react-diff-view";
 import type { Item } from "../contracts.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { userFacingError } from "../session-state.js";
+import { ToolTextView } from "./ToolTextView.js";
 
 export function LastTurnChanges({ sessionId, previousItemId, items, runId, focusPath, onFeedback, disabled, entireTask = false }: {
   entireTask?: boolean; sessionId: string; previousItemId?: string | undefined; items: Item[]; runId?: string | undefined; focusPath?: string | undefined; onFeedback?: ((text: string) => Promise<void>) | undefined; disabled: boolean;
@@ -12,11 +13,12 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   const [cursor, setCursor] = useState(previousItemId);
   const [loading, setLoading] = useState(false);
   const currentItems = [...new Map([...older, ...items].map((item) => [item.id, item])).values()].filter((item) => entireTask || item.runId === runId).sort((a, b) => a.createdAt - b.createdAt || a.ordinal - b.ordinal);
-  const changes = currentItems.filter((item) => item.toolCall?.changeDiff);
+  const changes = currentItems.filter((item) => item.toolCall?.changeDiff || item.toolCall?.changeDiffHash);
   const matchesFocus = (file: { oldPath: string; newPath: string }): boolean => (
     !focusPath || file.oldPath === focusPath || file.newPath === focusPath
   );
   const hasFocusedChange = !focusPath || changes.some((item) => {
+    if (item.toolCall?.changeDiffHash) return true;
     try { return parseDiff(item.toolCall!.changeDiff!).some(matchesFocus); } catch { return false; }
   });
   const [anchor, setAnchor] = useState("");
@@ -46,6 +48,12 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
     {error && <p role="alert">{error}</p>}
     {changes.map((item) => {
       const call = item.toolCall!;
+      if (call.changeDiffHash) return <article key={item.id}>
+        {entireTask && <p>轮次：{item.runId}</p>}
+        <strong>{call.status === "running" ? "准备或执行中" : call.status === "completed" ? "执行完成" : "未完整完成"}</strong>
+        {focusPath && <p>完整补丁包含此次工具调用的全部文件。</p>}
+        <ToolTextView key={call.changeDiffHash} sessionId={sessionId} toolCallId={call.id} field="diff" sha256={call.changeDiffHash} totalBytes={call.changeDiffBytes!} />
+      </article>;
       try {
         const files = parseDiff(call.changeDiff!).filter(matchesFocus);
         if (!files.length) return null;

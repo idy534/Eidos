@@ -182,6 +182,7 @@ import type {
   GitRebaseResult,
   SessionListResult,
   SessionSnapshot,
+  ToolTextPage,
   SkillListResult,
   SkillMetadata,
   ToolCall,
@@ -472,6 +473,14 @@ export class RuntimeClient {
       { sessionId, ...options },
       isSessionSnapshot,
     );
+  }
+
+  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset = 0): Promise<ToolTextPage> {
+    return this.validatedRequest("toolCall/readText", { sessionId, toolCallId, field, sha256, offset },
+      (value): value is ToolTextPage => isToolTextPage(value)
+        && value.sha256 === sha256
+        && value.nextOffset === offset + Array.from(value.content).length
+        && (value.nextOffset > offset || value.nextOffset === value.totalCharacters));
   }
 
   listWorkspaceDirectory(
@@ -1941,6 +1950,22 @@ function isItem(value: unknown): value is Item {
     : value.toolCall === undefined;
 }
 
+function isToolTextPage(value: unknown): value is ToolTextPage {
+  return isRecord(value)
+    && hasOnlyKeys(value, ["content", "nextOffset", "totalCharacters", "sha256"])
+    && typeof value.content === "string" && Array.from(value.content).length <= 16 * 1024
+    && isNonNegativeInteger(value.nextOffset) && isNonNegativeInteger(value.totalCharacters)
+    && value.nextOffset <= value.totalCharacters
+    && typeof value.sha256 === "string" && /^[a-f0-9]{64}$/.test(value.sha256);
+}
+
+function hasTextReference(value: Record<string, unknown>, prefix: string): boolean {
+  const bytes = value[`${prefix}Bytes`];
+  const hash = value[`${prefix}Hash`];
+  return bytes === undefined && hash === undefined
+    || isNonNegativeInteger(bytes) && typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash);
+}
+
 function isToolCall(value: unknown): value is ToolCall {
   if (
     !isRecord(value)
@@ -1961,6 +1986,7 @@ function isToolCall(value: unknown): value is ToolCall {
       "approvalDecision",
       "approvalFeedback",
       "changeDiff",
+      "changeDiffBytes", "changeDiffHash", "resultBytes", "resultHash",
       "baseSha256",
       "provenance",
       "toolSetHash",
@@ -1985,6 +2011,7 @@ function isToolCall(value: unknown): value is ToolCall {
     && (value.approvalDecision === undefined || ["approve", "reject"].includes(String(value.approvalDecision)))
     && (value.approvalFeedback === undefined || typeof value.approvalFeedback === "string")
     && (value.changeDiff === undefined || typeof value.changeDiff === "string")
+    && hasTextReference(value, "changeDiff") && hasTextReference(value, "result")
     && (value.baseSha256 === undefined || typeof value.baseSha256 === "string")
     && (value.provenance === undefined || isToolProvenance(value.provenance))
     && (value.toolSetHash === undefined || typeof value.toolSetHash === "string")
@@ -2184,7 +2211,7 @@ function approvalRequestFrom(
     return undefined;
   }
   if (params.kind === "file_change") {
-    if (typeof params.diff !== "string") {
+    if (typeof params.diff !== "string" || !hasTextReference(params, "diff")) {
       return undefined;
     }
     return {
@@ -2196,6 +2223,8 @@ function approvalRequestFrom(
       kind: "file_change",
       summary: params.summary as string,
       diff: params.diff as string,
+      diffBytes: typeof params.diffBytes === "number" ? params.diffBytes : undefined,
+      diffHash: typeof params.diffHash === "string" ? params.diffHash : undefined,
     };
   }
   if (params.kind === "external_tool") {

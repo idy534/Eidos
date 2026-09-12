@@ -6,6 +6,7 @@ import type {
   RuntimeHealth,
   SessionListResult,
   SessionSnapshot,
+  ToolTextPage,
   EventListResult,
   Session,
   SessionHandoffResult,
@@ -127,6 +128,7 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.PROJECT_DELETE, projectId),
   listSessions: (): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST),
   readSession: (sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot> => ipcRenderer.invoke(IPC.SESSION_READ, sessionId, options),
+  readToolText: (sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset = 0): Promise<ToolTextPage> => ipcRenderer.invoke(IPC.TOOL_TEXT_READ, sessionId, toolCallId, field, sha256, offset),
   listEvents: (sessionId: string, afterEventId: number): Promise<EventListResult> =>
     ipcRenderer.invoke(IPC.EVENT_LIST, sessionId, afterEventId),
   createSession: (

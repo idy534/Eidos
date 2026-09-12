@@ -41,6 +41,7 @@ export const IPC = {
   PROJECT_DELETE: "project:delete",
   SESSION_LIST: "session:list",
   SESSION_READ: "session:read",
+  TOOL_TEXT_READ: "tool:read-text",
   SESSION_CREATE: "session:create",
   SESSION_CREATE_BRANCH: "session:create-branch",
   SESSION_HANDOFF: "session:handoff",

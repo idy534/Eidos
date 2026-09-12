@@ -10,7 +10,7 @@ from pathlib import Path
 import unicodedata
 import uuid
 import threading
-from typing import Protocol, TypeVar
+from typing import Literal, Protocol, TypeVar
 
 from pydantic import ValidationError
 
@@ -62,7 +62,9 @@ from eidos_runtime.git.models import (
 )
 from eidos_runtime.git.status import DiffScope, GitDiffSnapshot, GitStatusSnapshot
 from eidos_runtime.repo_intelligence.watcher import RepositoryChange
+from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.protocol.methods import (
+    ToolTextReadRequestDto, ToolTextReadResponseDto,
     EventListRequestDto,
     EventListResponseDto,
     MethodResultDto,
@@ -234,6 +236,11 @@ class SessionStorePort(Protocol):
 
     @property
     def data_directory(self) -> Path | None: ...
+
+    def read_tool_text(
+        self, session_id: str, tool_call_id: str, field: Literal["diff", "result"],
+        sha256: str, offset: int,
+    ) -> ToolTextPage: ...
 
     def read_session_snapshot(
         self,
@@ -1183,6 +1190,18 @@ class SessionApplication:
         if page.next_cursor is not None:
             value["nextCursor"] = page.next_cursor
         return _result(SessionListResponseDto, value)
+
+    def read_tool_text(self, request: ToolTextReadRequestDto) -> ToolTextReadResponseDto:
+        try:
+            page = self._store.read_tool_text(
+                request.session_id, request.tool_call_id, request.field,
+                request.sha256, request.offset,
+            )
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+        except InvalidCursorError as error:
+            raise ApplicationInvalidParamsError("INVALID_CURSOR", str(error)) from error
+        return ToolTextReadResponseDto.model_validate(page.to_wire_dict())
 
     def read_snapshot(
         self, request: SessionReadRequestDto

@@ -9,6 +9,7 @@ export function TextReviewPanel({ sessionId, runId, path, items, loading, error,
 }) {
   const [scope, setScope] = useState<"turn" | "task">("turn");
   const [focusPath, setFocusPath] = useState(path);
+  const pagedItems = items.filter((item) => item.toolCall?.changeDiffHash);
   const taskPaths = useMemo(() => [...new Set(items.flatMap((item) => {
     try { return parseDiff(item.toolCall?.changeDiff ?? "").map((file) => file.newPath === "/dev/null" ? file.oldPath : file.newPath); }
     catch { return []; }
@@ -25,8 +26,10 @@ export function TextReviewPanel({ sessionId, runId, path, items, loading, error,
       runId={runId} focusPath={focusPath} onFeedback={onFeedback} disabled={disabled} />
       : <>{taskPaths.filter((file) => !focusPath || file === focusPath).map((file) => <details key={file} open={Boolean(focusPath)}>
         <summary>{file}</summary>
-        <LastTurnChanges sessionId={sessionId} items={items} entireTask focusPath={file} onFeedback={onFeedback} disabled={disabled} />
-      </details>)}{!taskPaths.length && <p>整个任务尚无可展示的文本补丁。</p>}</>}
+        <LastTurnChanges sessionId={sessionId} items={items.filter((item) => !item.toolCall?.changeDiffHash)} entireTask focusPath={file} onFeedback={onFeedback} disabled={disabled} />
+      </details>)}
+      {pagedItems.length > 0 && <LastTurnChanges sessionId={sessionId} items={pagedItems} entireTask focusPath={focusPath} onFeedback={onFeedback} disabled={disabled} />}
+      {!taskPaths.length && !pagedItems.length && <p>整个任务尚无可展示的文本补丁。</p>}</>}
 
   </section>;
 }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.protocol.tool_text import project_tool_text
+
 
 class EventProjector:
     """Pure projection from committed Event envelopes to protocol v1 notifications."""
@@ -137,6 +139,9 @@ class EventProjector:
 
     @staticmethod
     def _notification(method: str, params: dict[str, object]) -> dict[str, object]:
+        item = params.get("item")
+        if isinstance(item, dict):
+            params = {**params, "item": project_tool_text(item)}
         return {"jsonrpc": "2.0", "method": method, "params": params}
 
     @staticmethod

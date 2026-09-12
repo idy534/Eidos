@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from typing import Literal, TypeVar
 
+from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
 from eidos_runtime.db.database import (
     DATABASE_NAME,
@@ -712,6 +713,14 @@ class SessionStore:
             offset_bytes=offset_bytes,
             max_bytes=max_bytes,
             from_end=from_end,
+        )
+
+    def read_tool_text(
+        self, session_id: str, tool_call_id: str, field: Literal["diff", "result"],
+        sha256: str, offset: int,
+    ) -> ToolTextPage:
+        return self._repository(self._sessions).read_tool_text(
+            session_id, tool_call_id, field, sha256, offset,
         )
 
     def read_session_snapshot(

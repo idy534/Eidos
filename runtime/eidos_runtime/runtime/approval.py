@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
+from eidos_runtime.protocol.tool_text import project_approval_diff
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.fault_injection import hit_fault
@@ -121,7 +122,11 @@ class ApprovalCoordinator:
             "diff": diff,
             "baseSha256": base_sha256,
         }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        request = {**(request or description), "permissionBlockFingerprint": fingerprint}
+        request = {
+            **(request or description),
+            **project_approval_diff(request or description),
+            "permissionBlockFingerprint": fingerprint,
+        }
         if self.store.approval_prompt_blocked(run_id, fingerprint):
             return ApprovalOutcome(
                 decision="reject",
@@ -163,7 +168,7 @@ class ApprovalCoordinator:
                     "runId": pending_item["runId"],
                     "itemId": pending_item["id"],
                     "toolCallId": tool_call["id"],
-                    **description,
+                    **project_approval_diff(description),
                 }),
                 cancel,
             )

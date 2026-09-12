@@ -149,3 +149,62 @@ def test_title_update_and_event_roll_back_together(
     persisted = sessions.read_session(session.id)
     assert persisted is not None
     assert persisted.title is None
+
+
+def test_read_tool_text_paging_and_verification(
+    repository: tuple[Database, SessionRepository, Path],
+) -> None:
+    import hashlib
+    from eidos_runtime.db.errors import InvalidCursorError
+    from eidos_runtime.file_limits import TOOL_TEXT_PAGE_CHARACTERS
+    from eidos_runtime.models.tool_text import ToolTextPage
+
+    database, sessions, workspace = repository
+    session = sessions.create_session(str(workspace))
+
+    content = "line of diff\n" * 2000
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    connection = database.connection()
+    connection.execute(
+        """
+        INSERT INTO runs (id, session_id, user_input, model_id, model_profile_json, status, created_at, updated_at)
+        VALUES ('run-1', ?, 'prompt', 'deepseek-flash', '{}', 'running', 1000, 1000)
+        """,
+        (session.id,),
+    )
+    connection.execute(
+        """
+        INSERT INTO items (id, session_id, run_id, ordinal, kind, status, created_at)
+        VALUES ('item-1', ?, 'run-1', 0, 'tool_call', 'completed', 1000)
+        """,
+        (session.id,),
+    )
+    connection.execute(
+        """
+        INSERT INTO tool_calls (
+            id, item_id, model_step_index, batch_order, provider_call_id,
+            tool_name, status, arguments_json, approval_status, started_at,
+            approval_diff
+        ) VALUES (
+            'tc-1', 'item-1', 0, 0, 'p-1',
+            'apply_patch', 'completed', '{}', 'approved', 1000,
+            ?
+        )
+        """,
+        (content,),
+    )
+    connection.commit()
+
+    page1 = sessions.read_tool_text(session.id, "tc-1", "diff", digest, 0)
+    assert isinstance(page1, ToolTextPage)
+    assert page1.sha256 == digest
+    assert page1.total_characters == len(content)
+    assert page1.next_offset == min(len(content), TOOL_TEXT_PAGE_CHARACTERS)
+    assert page1.content == content[:page1.next_offset]
+
+    if page1.next_offset < page1.total_characters:
+        page2 = sessions.read_tool_text(session.id, "tc-1", "diff", digest, page1.next_offset)
+        assert page2.content == content[page1.next_offset:page2.next_offset]
+
+    with pytest.raises(InvalidCursorError):
+        sessions.read_tool_text(session.id, "tc-1", "diff", "0" * 64, 0)

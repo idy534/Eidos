@@ -298,8 +298,8 @@ def test_update_preserves_file_without_final_newline(tmp_path: Path) -> None:
     assert target.read_bytes() == b"new"
 
 
-def test_apply_patch_rejects_canonical_patch_over_512_kib(tmp_path: Path) -> None:
-    content = "x" * (256 * 1024)
+def test_apply_patch_rejects_canonical_patch_over_budget(tmp_path: Path) -> None:
+    content = "x" * (4 * 1024 * 1024 + 1024)
     with _executor(tmp_path) as executor:
         prepared = executor.prepare_file_change(
             "apply_patch",

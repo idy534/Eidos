@@ -10,13 +10,13 @@ from typing import Callable
 import anyio
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
+from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES, function_argument_limit
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     CustomToolPayload,
     FunctionToolDefinition,
     FunctionToolPayload,
     MAX_CUSTOM_TOOL_INPUT_BYTES,
-    MAX_FUNCTION_ARGUMENT_BYTES,
     MAX_TOOL_CALL_ID_BYTES,
     MAX_TOOL_NAME_BYTES,
     ModelContextItem,
@@ -195,7 +195,7 @@ def map_responses_response(
                 or not isinstance(call_id, str)
                 or not isinstance(name, str)
                 or not _valid_call_identity(call_id, name)
-                or len(encoded) > MAX_FUNCTION_ARGUMENT_BYTES
+                or len(encoded) > function_argument_limit(name)
             ):
                 raise _protocol_error(_field(response, "provider_name"))
             calls.append(ModelToolCall(
@@ -393,8 +393,10 @@ class OpenAIResponsesModelClient:
         cancel: threading.Event,
         on_text_delta: Callable[[str], None],
     ) -> tuple[object, dict[str, str]]:
-        custom_inputs: dict[str, str] = {}
-        function_arguments: dict[str, str] = {}
+        custom_parts: dict[str, list[str]] = {}
+        custom_bytes: dict[str, int] = {}
+        function_parts: dict[str, list[str]] = {}
+        function_bytes: dict[str, int] = {}
         final_response: object | None = None
         iterator = stream.__aiter__()  # type: ignore[attr-defined]
         stream_closed = False
@@ -464,29 +466,36 @@ class OpenAIResponsesModelClient:
                     item_id = _field(event, "item_id")
                     delta = _field(event, "delta")
                     if isinstance(item_id, str) and isinstance(delta, str):
-                        value = custom_inputs.get(item_id, "") + delta
-                        if not _valid_utf8_size(value, MAX_CUSTOM_TOOL_INPUT_BYTES):
+                        size = custom_bytes.get(item_id, 0) + len(delta.encode("utf-8"))
+                        if size > MAX_CUSTOM_TOOL_INPUT_BYTES:
                             raise ValueError("custom_tool_input_too_large")
-                        custom_inputs[item_id] = value
+                        custom_bytes[item_id] = size
+                        custom_parts.setdefault(item_id, []).append(delta)
                 elif event_type == "response.custom_tool_call_input.done":
                     item_id = _field(event, "item_id")
                     raw_input = _field(event, "input")
                     if isinstance(item_id, str) and isinstance(raw_input, str):
                         if not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES):
                             raise ValueError("custom_tool_input_too_large")
-                        custom_inputs[item_id] = raw_input
+                        custom_parts[item_id] = [raw_input]
+                        custom_bytes[item_id] = len(raw_input.encode("utf-8"))
                 elif event_type == "response.function_call_arguments.delta":
                     item_id = _field(event, "item_id")
                     delta = _field(event, "delta")
                     if isinstance(item_id, str) and isinstance(delta, str):
-                        function_arguments[item_id] = (
-                            function_arguments.get(item_id, "") + delta
-                        )
+                        size = function_bytes.get(item_id, 0) + len(delta.encode("utf-8"))
+                        if size > MAX_PATCH_ARGUMENT_BYTES:
+                            raise ValueError("function_arguments_too_large")
+                        function_bytes[item_id] = size
+                        function_parts.setdefault(item_id, []).append(delta)
                 elif event_type == "response.function_call_arguments.done":
                     item_id = _field(event, "item_id")
                     arguments = _field(event, "arguments")
                     if isinstance(item_id, str) and isinstance(arguments, str):
-                        function_arguments[item_id] = arguments
+                        if not _valid_utf8_size(arguments, MAX_PATCH_ARGUMENT_BYTES):
+                            raise ValueError("function_arguments_too_large")
+                        function_parts[item_id] = [arguments]
+                        function_bytes[item_id] = len(arguments.encode("utf-8"))
                 elif event_type == "response.output_item.done":
                     pass
                 elif event_type == "response.completed":
@@ -503,6 +512,8 @@ class OpenAIResponsesModelClient:
 
         if final_response is None:
             raise _protocol_error(None)
+        custom_inputs = {key: "".join(parts) for key, parts in custom_parts.items()}
+        function_arguments = {key: "".join(parts) for key, parts in function_parts.items()}
         output = _field(final_response, "output", ())
         if isinstance(output, (list, tuple)):
             for item in output:

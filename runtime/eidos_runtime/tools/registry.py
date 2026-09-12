@@ -19,13 +19,13 @@ from pydantic import (
     model_validator,
 )
 
+from eidos_runtime.file_limits import function_argument_limit
 from eidos_runtime.protocol.schemas import ClosedModel, StepToolSnapshotDto
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     CustomToolFormat,
     FunctionToolDefinition,
     MAX_CUSTOM_TOOL_INPUT_BYTES,
-    MAX_FUNCTION_ARGUMENT_BYTES,
     ModelToolDefinitionLike,
 )
 from eidos_runtime.tools.contracts import (
@@ -396,7 +396,7 @@ class ToolRegistryEntry:
                 sort_keys=True,
                 allow_nan=False,
             ).encode("utf-8")
-            if enforce_size and len(encoded_value) > MAX_FUNCTION_ARGUMENT_BYTES:
+            if enforce_size and len(encoded_value) > function_argument_limit(self.spec.name):
                 return ToolArgumentValidationResult(
                     valid=False,
                     code="TOOL_ARGUMENT_CONTRACT_VIOLATION",

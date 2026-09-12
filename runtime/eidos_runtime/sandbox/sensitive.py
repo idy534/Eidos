@@ -72,13 +72,13 @@ class SensitiveScanner:
         except Exception as error:
             raise SensitiveScanError("sensitive rules are invalid") from error
 
-    def scan_text(self, value: str) -> ScanResult:
+    def scan_text(self, value: str, *, max_bytes: int = MAX_SCAN_BYTES) -> ScanResult:
         if not isinstance(value, str):
             raise SensitiveScanError("text is invalid")
         encoded = value.encode("utf-8", errors="strict")
-        if len(encoded) > MAX_SCAN_BYTES:
+        if len(encoded) > max_bytes:
             raise SensitiveScanError("sensitive scan capacity exceeded")
-        deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS
+        deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS * max(1, len(encoded) / MAX_SCAN_BYTES)
         safe = value
         audited: list[str] = []
         for rule, pattern in self.rules:
@@ -95,17 +95,17 @@ class SensitiveScanner:
                 audited.append(rule.id)
         return ScanResult(text=safe, auditedRuleIds=audited)
 
-    def scan_json(self, value: object) -> object:
+    def scan_json(self, value: object, *, max_bytes: int = MAX_SCAN_BYTES) -> object:
         if isinstance(value, str):
-            return self.scan_text(value).text
+            return self.scan_text(value, max_bytes=max_bytes).text
         if value is None or isinstance(value, (bool, int, float)):
             return value
         if isinstance(value, list):
-            return [self.scan_json(item) for item in value]
+            return [self.scan_json(item, max_bytes=max_bytes) for item in value]
         if isinstance(value, tuple):
-            return tuple(self.scan_json(item) for item in value)
+            return tuple(self.scan_json(item, max_bytes=max_bytes) for item in value)
         if isinstance(value, dict) and all(isinstance(key, str) for key in value):
-            return {key: self.scan_json(item) for key, item in value.items()}
+            return {key: self.scan_json(item, max_bytes=max_bytes) for key, item in value.items()}
         raise SensitiveScanError("JSON value is invalid")
 
 

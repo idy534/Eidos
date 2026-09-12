@@ -1,3 +1,4 @@
+import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -951,12 +952,15 @@ function ToolItem({ item, toolCall, onOpenFile }: {
       <div className="tool-body">
         <p>{safeToolSummary(toolCall.resultJson, item.status)}</p>
         {onOpenFile && toolFilePaths(toolCall).map((path) => <button type="button" className="tool-file-link" key={path} title={`打开当前文件：${path}`} onClick={() => onOpenFile(path)}>{path}</button>)}
-        {item.kind === "file_change" && toolCall.changeDiff && (
+        {item.kind === "file_change" && (toolCall.changeDiff || toolCall.changeDiffHash) && (
           <>
             <p className="feed-label">{toolCall.status === "completed" ? "已完成的变更" : toolCall.status === "running" ? "准备或执行中的变更" : "计划变更（可能只完成部分写入）"}</p>
-            <pre className="diff-view">{toolCall.changeDiff}</pre>
+            {toolCall.changeDiffHash
+              ? <ToolTextView key={toolCall.changeDiffHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="diff" sha256={toolCall.changeDiffHash} totalBytes={toolCall.changeDiffBytes!} />
+              : <pre className="diff-view">{toolCall.changeDiff}</pre>}
           </>
         )}
+        {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
         {toolCall.provenance?.kind === "mcp" && (
           <p className="tool-provenance">
             Plugin {toolCall.provenance.pluginId} · Server {toolCall.provenance.serverId}

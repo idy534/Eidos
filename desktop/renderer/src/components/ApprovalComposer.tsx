@@ -1,5 +1,6 @@
 import type { ApprovalRequest, Run } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
+import { ToolTextView } from "./ToolTextView.js";
 
 export interface ApprovalComposerProps {
   run: Run;
@@ -41,7 +42,9 @@ export function ApprovalComposer({run, approval, respondingApprovalIds,
           </div>
           <span>{isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}</span>
         </div>
-        <pre className="diff-view">
+        {approval.kind === "file_change" && approval.diffHash
+          ? <ToolTextView key={approval.diffHash} sessionId={approval.sessionId} toolCallId={approval.toolCallId} field="diff" sha256={approval.diffHash} totalBytes={approval.diffBytes!} />
+          : <pre className="diff-view">
           {approval.kind === "file_change"
             ? approval.diff
             : approval.kind === "external_tool"
@@ -51,7 +54,7 @@ export function ApprovalComposer({run, approval, respondingApprovalIds,
                 : approval.kind === "permission_request"
                   ? [approval.command, approval.cwd, approval.reason, "授权范围：当前 Run", JSON.stringify(approval.permissions, null, 2)].filter(Boolean).join("\n")
                   : commandApprovalDetails(approval)}
-        </pre>
+        </pre>}
         {localError && <p className="approval-error" role="alert">{localError}</p>}
         <div className="approval-actions">
           <Button

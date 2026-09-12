@@ -104,7 +104,7 @@ def _invalid_arguments_summary(
             ' No files were changed by this call. Expected {"patch":"*** Begin Patch\\n'
             '*** Update File: example.txt\\n@@\\n-old\\n+new\\n*** End Patch"}. '
             "The patch value must be a string; changes/chunks are not accepted. "
-            "Submit a corrected, small targeted Patch using the current tool definition."
+            "Submit corrected arguments using the current tool definition."
         )
     return summary
 

@@ -1617,7 +1617,7 @@ class ToolExecutorTests(unittest.TestCase):
         medium = self.workspace / "medium.txt"
         medium.write_text("a" * (300 * 1024), encoding="utf-8")
         huge = self.workspace / "huge.txt"
-        huge.write_text("b" * (2 * 1024 * 1024 + 1), encoding="utf-8")
+        huge.write_text("b" * (16 * 1024 * 1024 + 1), encoding="utf-8")
         lines = self.workspace / "lines.txt"
         lines.write_text("".join(f"line {number}\n" for number in range(1, 21)), encoding="utf-8")
 

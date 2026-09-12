@@ -774,6 +774,12 @@ class RuntimeServer:
                 ),
             ),
             (
+                "toolCall/readText",
+                method_dtos.ToolTextReadRequestDto,
+                method_dtos.ToolTextReadResponseDto,
+                lambda _id, request: self._applications_or_error().sessions.read_tool_text(request),
+            ),
+            (
                 "session/read",
                 method_dtos.SessionReadRequestDto,
                 method_dtos.SessionReadResponseDto,
@@ -1751,11 +1757,12 @@ def _model_from_environment() -> ModelClient | None:
                             "fake-write-1",
                             "apply_patch",
                             {
-                                "changes": [{
-                                    "type": "add",
-                                    "path": "approved.txt",
-                                    "content": "approved\n",
-                                }]
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Add File: approved.txt\n"
+                                    "+approved\n"
+                                    "*** End Patch\n"
+                                )
                             },
                         ),
                     )

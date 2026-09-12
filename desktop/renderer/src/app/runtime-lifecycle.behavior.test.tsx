@@ -303,7 +303,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "添加窗口" }));
     expect(screen.getByRole("menu", { name: "添加窗口" })).toBeVisible();
     fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole("tab", { name: "审阅" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "终端 1" })).not.toBeInTheDocument();
     expect(screen.getByText("打开工作区").closest("[role=status]")).toHaveTextContent("打开工作区");
     expect(screen.getByRole("textbox", { name: "告诉 Eidos 要做什么" })).toBeInTheDocument();
     expect(container.querySelector(".workspace-main")).toBeInTheDocument();
@@ -313,13 +313,16 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(container.querySelector(".workspace-body")?.getAttribute("style"))
       .toContain("--workspace-dock-width");
 
-    fireEvent.click(screen.getByRole("button", { name: "审阅" }));
-    expect(screen.getByRole("tab", { name: "审阅" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "终端" }));
+    expect(screen.getByRole("tab", { name: "终端 1" })).toHaveAttribute("aria-selected", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "展开工作区" }));
     expect(container.querySelector(".workspace-body")).toHaveClass("workspace-body--expanded");
     expect(container.querySelector(".workspace-main-column")).toHaveClass("workspace-main-column--hidden");
-    expect(dockHeader).toContainElement(screen.getByRole("button", { name: "环境信息" }));
+    expect(dockHeader).not.toContainElement(screen.getByRole("button", { name: "环境信息" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "收缩工作区" }));
+    expect(container.querySelector(".workspace-body")).not.toHaveClass("workspace-body--expanded");
 
     fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
     fireEvent.pointerDown(document.body);

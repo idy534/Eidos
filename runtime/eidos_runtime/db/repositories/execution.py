@@ -34,6 +34,7 @@ from eidos_runtime.db.transitions import (
     transition_segments,
 )
 from eidos_runtime.db.repositories.workspace import execution_workspace_for_session
+from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
 from eidos_runtime.models import EidosFrozenStrictModel
@@ -1661,7 +1662,8 @@ class ExecutionRepository(Repository):
         }:
             raise ValueError("invalid approval kind")
         request_json = _bounded_canonical_json(
-            request or {}, code="approval_request_invalid", max_bytes=1024 * 1024
+            request or {}, code="approval_request_invalid",
+            max_bytes=(MAX_PATCH_ARGUMENT_BYTES if (request or {}).get("kind") == "file_change" else 1024 * 1024),
         )
         now = _now_ms()
         approval_id = str(uuid.uuid4())

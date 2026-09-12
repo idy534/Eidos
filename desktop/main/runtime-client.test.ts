@@ -1477,8 +1477,10 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req1.diff, "diff text");
     assert.equal(req1.apiKey, undefined);
     assert.equal(req1.environment, undefined);
+    assert.equal(req1.diffBytes, undefined);
+    assert.equal(req1.diffHash, undefined);
     assert.deepEqual(Object.keys(req1).sort(), [
-      "diff", "id", "itemId", "kind", "runId", "sessionId", "summary", "toolCallId",
+      "diff", "diffBytes", "diffHash", "id", "itemId", "kind", "runId", "sessionId", "summary", "toolCallId",
     ]);
 
     // 2. command_execution

@@ -39,6 +39,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from eidos_runtime.file_limits import function_argument_limit
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     FunctionToolDefinition,
@@ -672,7 +673,7 @@ def map_model_response(
             or len(call_id.encode("utf-8")) > MAX_TOOL_CALL_ID_BYTES
             or not call.tool_name
             or len(call.tool_name.encode("utf-8")) > MAX_TOOL_NAME_BYTES
-            or len(encoded) > MAX_TOOL_ARGUMENT_BYTES
+            or len(encoded) > function_argument_limit(call.tool_name)
         ):
             raise ModelRequestError(ModelRequestFailure(
                 code="protocol_error",
