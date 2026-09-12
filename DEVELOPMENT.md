@@ -63,6 +63,8 @@ Agent 在 Eidos Shell 内执行本仓库测试时，应先核对实际执行权�
 
 uv 缓存写入失败时，Agent 应选择已有可写缓存或临时目录，或申请具体路径权限。Agent 不应默认放开整个 HOME。缓存清理不能解除未知 Shell Intent。测试报告应记录退出码、实际完成的阶段和最终汇总；输出不完整时，测试者必须把总数和未核验结论标为未验证。
 
+Agent Shell 的 zsh/bash 默认开启 `pipefail`。验证命令优先直接输出到工具的有界捕获，不要用 `head` 提前关闭管道。多个有依赖关系的阶段使用 `&&`；分号后最后一条命令的成功不能证明前面阶段通过。POSIX sh 保持原来的退出码行为。
+
 开发过程中优先运行受影响测试：
 
 ```bash
@@ -250,6 +252,8 @@ Runtime 初始化失败时，先检查启动终端中的 stderr 日志和 `runti
 ## 11. OpenTelemetry tracing
 
 Runtime 默认初始化 OpenTelemetry SDK，但 `OTEL_TRACES_EXPORTER` 默认值是 `none`，所以默认不会导出 Trace。
+
+启用 OTLP 且没有显式参数时，Runtime 使用 3 秒 exporter timeout 和 30 秒 batch schedule delay，主动 flush 最多等待 5 秒。维护者可以使用标准 `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`、`OTEL_EXPORTER_OTLP_TIMEOUT` 和 `OTEL_BSP_SCHEDULE_DELAY` 覆盖导出参数。持续导出失败需要排查 collector；本地执行和持久化不依赖 collector 可用。
 
 在开发环境把 Trace 打到 Runtime stderr：
 

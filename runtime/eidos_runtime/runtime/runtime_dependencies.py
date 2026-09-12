@@ -489,6 +489,20 @@ class RuntimeDependencyCoordinator:
                 self._snapshot.snapshot_sha256 if self._snapshot is not None else None
             ),
         }
+        if default is not None and self._snapshot is not None:
+            metadata.update({
+                "source": "eidos_runtime_bundle",
+                "executables": [
+                    {"name": entry.name, "path": entry.path, "version": entry.version}
+                    for entry in self._snapshot.executables
+                ],
+                "pythonPath": list(self._snapshot.python_path),
+                "pythonPackages": [
+                    {"name": entry.name, "importName": entry.import_name, "version": entry.version}
+                    for entry in self._snapshot.python_package_roots
+                    if entry.import_name is not None
+                ],
+            })
         if self.catalog_error is not None:
             metadata["runtimeDependencyError"] = self.catalog_error.code
         return metadata

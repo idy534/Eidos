@@ -575,9 +575,15 @@ class _SkillReadAdapter:
                 )
         source = skill["source"]
         assert isinstance(source, dict)
+        try:
+            page = _skill_content_page(
+                str(skill["content"]), arguments.get("offset", 0), arguments.get("maxBytes", 12_000),
+            )
+        except SkillReadError as error:
+            return _skill_error("skill_read", str(error), "Use a returned nextOffset to continue reading")
         return _skill_success("skill_read", {
             "qualifiedId": skill["qualifiedId"],
-            "content": skill["content"],
+            **page.model_dump(exclude_unset=True),
             "contentHash": skill["contentHash"],
             "pluginId": source["pluginId"],
             "pluginVersion": source["pluginVersion"],
@@ -613,13 +619,39 @@ class _SkillResourceAdapter:
             )
         source = resource["source"]
         assert isinstance(source, dict)
+        try:
+            page = _skill_content_page(
+                str(resource["content"]), arguments.get("offset", 0), arguments.get("maxBytes", 12_000),
+            )
+        except SkillReadError as error:
+            return _skill_error("skill_read_resource", str(error), "Use a returned nextOffset to continue reading")
         return _skill_success("skill_read_resource", {
             "qualifiedId": resource["qualifiedId"],
             "resourcePath": resource["resourcePath"],
-            "content": resource["content"],
+            **page.model_dump(exclude_unset=True),
             "contentHash": resource["contentHash"],
             "pluginId": source["pluginId"],
         })
+
+
+def _skill_content_page(content: str, offset: object, max_bytes: object) -> SkillReadResultData:
+    encoded = content.encode("utf-8")
+    if (
+        type(offset) is not int or not 0 <= offset <= len(encoded)
+        or type(max_bytes) is not int or not 4 <= max_bytes <= 12_000
+        or (offset < len(encoded) and encoded[offset] & 0xC0 == 0x80)
+    ):
+        raise SkillReadError("skill_resource_invalid_offset")
+    page = encoded[offset:offset + max_bytes].decode("utf-8", errors="ignore")
+    # Leave room for metadata within the 48 KiB model result envelope, even
+    # when control characters require six-byte JSON escapes.
+    while len(json.dumps(page, ensure_ascii=False).encode("utf-8")) > 36 * 1024:
+        page = page[:len(page) // 2]
+    end = offset + len(page.encode("utf-8"))
+    return SkillReadResultData(
+        content=page, startByte=offset, endByte=end, totalBytes=len(encoded),
+        nextOffset=end if end < len(encoded) else None,
+    )
 
 
 class _SkillCreateAdapter:
@@ -736,9 +768,11 @@ def _skill_entry(name: str, adapter: object) -> ToolRegistryEntry:
             "description": (
                 "Read a UTF-8 resource from an enabled local Skill. Pass its "
                 "qualifiedId and a resourcePath relative to that Skill; do "
-                "not pass an absolute path or a path containing '..'."
+                "not pass an absolute path or a path containing '..'. Continue with "
+                "offset=nextOffset while nextOffset is present. contentHash identifies the full resource."
                 if is_resource else
-                "Read the instructions for an enabled local skill"
+                "Read paged instructions for an enabled local Skill. Continue with offset=nextOffset "
+                "while nextOffset is present. contentHash identifies the full resource."
             ),
             "sideEffect": "none",
             "approvalRequired": False,

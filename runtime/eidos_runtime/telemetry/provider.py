@@ -34,7 +34,7 @@ class TelemetryProvider:
             if self._closed or self.tracer_provider is None:
                 return
             try:
-                flushed = self.tracer_provider.force_flush()
+                flushed = self.tracer_provider.force_flush(timeout_millis=5_000)
                 if flushed is False:
                     logger.warning("OpenTelemetry force flush timed out")
             except Exception:
@@ -128,8 +128,22 @@ def _span_processors(names: Iterable[str]) -> tuple[SpanProcessor, ...]:
                 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
                 endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-                exporter = OTLPSpanExporter(endpoint=endpoint or None)
-                processors.append(BatchSpanProcessor(exporter))
+                # Keep optional remote diagnostics bounded during a collector
+                # outage. The SDK still owns retries, queuing and shutdown.
+                exporter = OTLPSpanExporter(
+                    endpoint=endpoint or None,
+                    timeout=(
+                        None if any(os.getenv(key) for key in (
+                            "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "OTEL_EXPORTER_OTLP_TIMEOUT",
+                        )) else 3.0
+                    ),
+                )
+                processors.append(BatchSpanProcessor(
+                    exporter,
+                    schedule_delay_millis=(
+                        None if os.getenv("OTEL_BSP_SCHEDULE_DELAY") else 30_000
+                    ),
+                ))
         except Exception:
             logger.exception("OpenTelemetry %s exporter initialization failed", name)
     return tuple(processors)

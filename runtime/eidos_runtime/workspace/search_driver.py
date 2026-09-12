@@ -787,7 +787,7 @@ def _validate_include_glob(value: str) -> None:
 
 
 def _is_within_search_path(path: str, search_path: str) -> bool:
-    return search_path == "." or path.startswith(f"{search_path}/")
+    return search_path == "." or path == search_path or path.startswith(f"{search_path}/")
 
 
 def _event_path(data: dict[str, object]) -> str:

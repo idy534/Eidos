@@ -51,6 +51,9 @@
 
 ### Agent Shell
 
+- Agent zsh/bash 使用原生 `pipefail`，管道前段的失败会影响管道退出码；POSIX sh 保持原行为。`head` 提前关闭管道可能导致 SIGPIPE，调用方应优先使用工具的有界输出。分号后命令的成功仍不能证明前面所有阶段通过。Runtime 不解析任意命令正文来推断业务成功。
+- Runtime 的依赖、TLS 和视觉验收指引约束模型决策，但它们不是任意 Shell 程序的静态安全证明。系统不会自动安装缺失的 Office/渲染工具，也不会把结构检查当作逐页视觉验收。`succeeded` 表示 Run 正常结束，不表示所有人工验收已完成。
+
 - `outputComplete=false` 表示输出尚未完整获得，原因可能是仍在运行、捕获失败或原始输出截断。旧结果缺少该字段时，系统不能推断输出完整。`outputCaptureError` 只保存安全原因码，不能恢复已经丢失或被安全扫描拒绝的内容。本次历史 Run 的具体捕获子原因不会被新代码补写。
 - 同一对账 epoch 最多允许三轮工具恢复，随后现有 Finalizer 收尾并保留对账事实。系统不自动重放未知操作。模型的测试报告指引要求区分收集数与完成数，也要求标明缺失汇总和未执行阶段；这项指引不等于系统能够自动证明任意测试结论。
 
@@ -86,6 +89,8 @@
 
 ### Compaction 与 Context
 
+- 主动压缩是减少旧历史重发的软策略，不保证固定 token 成本或最优任务步骤。Runtime 保留用户消息、Skill 正文和近期证据，因此有些输入仍会超过软阈值。候选摘要未通过验证时，Runtime 保留原投影。新的有效读取仍可构成进展；LoopGuard 不判断任意任务的业务完成比例。
+
 - 默认 ContextCompactor 使用 deterministic bounded extraction 生成候选摘要。当前没有 model-assisted proposal。
 - 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
 - MemoryStore 已经提供独立 `memories.sqlite` 和 content-addressed Markdown 存储，但当前 ContextCompactor、用户长期记忆和跨 Session 检索尚未接入这个 Store。
@@ -104,6 +109,7 @@
 - 当前 OpenTelemetry 集成只配置 Traces。Runtime 的本地 JSONL 日志不等于 OTel Logs pipeline。Runtime 没有建立 OTel Metrics 或 Logs exporter，也没有把 Trace 或本地日志作为业务事实或恢复依据。
 - `OTEL_TRACES_EXPORTER` 默认是 `none`，因此默认不会把 Trace 导出到外部 Observability 后端。需要显式配置 `console` 或 `otlp` 才会导出。
 - 当前 Trace 主要覆盖 Run、Model Attempt 和 Tool Call。它不是完整的 Desktop 操作链、SQLite transaction、Repository Intelligence、Approval 或 Sandbox 内部阶段的全链路 tracing。
+- 较短的默认导出预算和较长的批次间隔只限制遥测开销，不能修复不可用的 collector。SDK 在持续失败或队列耗尽时仍可能丢弃 spans；本地日志、SQLite 和 Outbox 保持独立。维护者的显式 OTEL 配置可以改变默认预算。
 
 ### Application 边界
 

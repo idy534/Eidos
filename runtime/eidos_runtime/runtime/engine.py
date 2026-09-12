@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Callable, Protocol
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
 from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.context.project_rules import ProjectRuleResolver
-from eidos_runtime.context.compactor import ContextCompactionError, ContextCompactor
+from eidos_runtime.context.compactor import (
+    ContextCompactionError, ContextCompactor,
+    SOFT_CONTEXT_TARGET_TOKENS, SOFT_COMPACTION_KEEP_ITEMS,
+)
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
@@ -306,7 +309,9 @@ class RuntimeEngine:
             }:
                 self._fail(run_id, "TOOL_INFRASTRUCTURE_FAILURE")
         finally:
-            self._pause_effective_time(run_id)
+            mutation = self._pause_effective_time(run_id)
+            if mutation is not None:
+                self.events.publish(mutation, run=mutation.value)
 
     def _drive(
         self,
@@ -335,6 +340,7 @@ class RuntimeEngine:
         pending_compaction_baseline: int | None = None
         pending_provider_recovery = False
         pending_projection_marker: tuple[object, ...] | None = None
+        soft_compaction_frontier: set[str] = set()
         finalizer = RunFinalizer(
             self.store,
             self.model,
@@ -490,6 +496,32 @@ class RuntimeEngine:
                     ) from error
                 continue
             context_state = _context_state(built)
+            # A roomy model window is not a reason to resend an entire long Run.
+            # This is best effort: a soft target never turns into a Run limit.
+            summarized_ids = set(
+                built.facts.compact_summary.source_item_ids
+                if built.facts.compact_summary else ()
+            )
+            uncompressed_ids = {item.item_id for item in built.facts.items} - summarized_ids
+            if (
+                built.budget.fits
+                and built.budget.projected_input_tokens > SOFT_CONTEXT_TARGET_TOKENS
+                and not built.facts.reconciliation_required
+                and not built.facts.pending_approval_ids
+                and len(uncompressed_ids - soft_compaction_frontier) >= 2 * SOFT_COMPACTION_KEEP_ITEMS
+            ):
+                soft_compaction_frontier = uncompressed_ids
+                try:
+                    compactor.compact(
+                        run.run_id, "mid_turn",
+                        keep_recent_items=SOFT_COMPACTION_KEEP_ITEMS,
+                    )
+                except ContextCompactionError:
+                    # Preserve the original facts and continue within the real
+                    # window budget. Do not repeatedly compact the same frontier.
+                    pass
+                else:
+                    continue
             decision_budget = (
                 built.budget.model_copy(update={"fits": True})
                 if context_state in estimated_pressure_states

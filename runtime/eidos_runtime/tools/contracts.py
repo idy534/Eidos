@@ -360,6 +360,8 @@ class SkillReadInput(StrictToolModel):
         max_length=129,
         description="Qualified id of an enabled local Skill.",
     )
+    offset: int = Field(default=0, ge=0, le=1024 * 1024, description="UTF-8 byte offset; use nextOffset from the previous page.")
+    maxBytes: int = Field(default=12_000, ge=4, le=12_000, description="Maximum content bytes per page.")
 
     @field_validator("qualifiedId")
     @classmethod
@@ -714,6 +716,10 @@ class SkillReadResultData(StrictToolModel):
     )
     qualifiedId: StrictStr | None = None
     content: StrictStr | None = None
+    startByte: int | None = Field(default=None, ge=0)
+    endByte: int | None = Field(default=None, ge=0)
+    totalBytes: int | None = Field(default=None, ge=0)
+    nextOffset: int | None = Field(default=None, ge=0)
     contentHash: StrictStr | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
     )
@@ -1268,6 +1274,8 @@ def _fit_shell_serialized_budget(
 
 
 def _continuation(tool_name: str, data: dict[str, object]) -> str:
+    if tool_name in {"skill_read", "skill_read_resource"}:
+        return "Continue the same Skill resource using offset=nextOffset; do not restart at offset=0."
     if tool_name == "read_file":
         return "Use read_file_range to continue with a narrower line range."
     if tool_name == "read_file_range" and data.get("nextLine") is not None:

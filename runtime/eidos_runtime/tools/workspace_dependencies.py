@@ -225,29 +225,7 @@ class WorkspaceDependenciesTool:
     ) -> dict[str, object]:
         if cancel.is_set():
             return _tool_error("tool_canceled", "Dependency discovery was canceled")
-        try:
-            snapshot = self._catalog_factory().snapshot()
-        except WorkspaceDependencyError:
-            return _tool_error(
-                "workspace_dependencies_unavailable",
-                "Verified workspace dependencies are unavailable",
-            )
-        data: dict[str, object] = {
-            "source": snapshot.source,
-            "executables": [
-                {
-                    "name": value.name,
-                    "path": value.path,
-                    "version": value.version,
-                }
-                for value in snapshot.executables
-            ],
-            "pythonPath": list(snapshot.python_path),
-            "pythonPackages": [
-                value.model_dump(mode="json", by_alias=True)
-                for value in snapshot.python_packages
-            ],
-        }
+        data: dict[str, object] = {}
         if self._metadata_provider is not None:
             try:
                 data.update(_bounded_binding_metadata(self._metadata_provider()))
@@ -257,7 +235,28 @@ class WorkspaceDependenciesTool:
                 data.update({
                     "defaultDependencyBindingId": None,
                     "activeSkillDependencyBindings": [],
+                    "runtimeDependencyError": "binding_projection_unavailable",
                 })
+        if "source" not in data:
+            try:
+                snapshot = self._catalog_factory().snapshot()
+            except WorkspaceDependencyError:
+                return _tool_error(
+                    "workspace_dependencies_unavailable",
+                    "Verified workspace dependencies are unavailable",
+                )
+            data.update({
+                "source": snapshot.source,
+                "executables": [
+                    {"name": value.name, "path": value.path, "version": value.version}
+                    for value in snapshot.executables
+                ],
+                "pythonPath": list(snapshot.python_path),
+                "pythonPackages": [
+                    value.model_dump(mode="json", by_alias=True)
+                    for value in snapshot.python_packages
+                ],
+            })
         return {
             "schemaVersion": 1,
             "toolContractVersion": 1,
@@ -295,7 +294,9 @@ def workspace_dependencies_entry(
                 "declaration, select the matching activeSkillDependencyBindings entry "
                 "by skillQualifiedId; use defaultDependencyBindingId only for an "
                 "unbound command. Binding IDs select verified environments and do not "
-                "grant paths or environment values."
+                "grant paths or environment values. Pass the selected ID as run_shell.dependencyBindingId "
+                "and use $RUNTIME_PYTHON or $RUNTIME_NODE inside that Shell. An empty package list "
+                "does not prove ambient Python or Node has the Skill's dependencies."
             ),
             "sideEffect": "none",
             "approvalRequired": False,
@@ -395,20 +396,21 @@ def _explicit_runtime_python_paths() -> tuple[Path, ...]:
 def _runtime_python_packages(
     roots: tuple[Path, ...],
 ) -> tuple[WorkspacePythonPackage, ...]:
-    try:
-        package = distribution("python-docx")
-    except PackageNotFoundError:
-        return ()
-    location = Path(package.locate_file("")).resolve(strict=False)
-    if not any(_path_contained(location, root) for root in roots):
-        return ()
-    return (
-        WorkspacePythonPackage(
-            name="python-docx",
-            import_name="docx",
-            version=package.version,
-        ),
-    )
+    packages: list[WorkspacePythonPackage] = []
+    for name, import_name in (
+        ("python-docx", "docx"), ("pillow", "PIL"),
+        ("lxml", "lxml"), ("defusedxml", "defusedxml"),
+    ):
+        try:
+            package = distribution(name)
+        except PackageNotFoundError:
+            continue
+        location = Path(package.locate_file("")).resolve(strict=False)
+        if any(_path_contained(location, root) for root in roots):
+            packages.append(WorkspacePythonPackage(
+                name=name, import_name=import_name, version=package.version,
+            ))
+    return tuple(packages)
 
 
 def _path_contained(path: Path, root: Path) -> bool:
@@ -442,6 +444,16 @@ def _bounded_binding_metadata(
             result["defaultDependencyBindingId"] = (
                 validated.default_dependency_binding_id
             )
+            catalog_fields = {"source", "executables", "pythonPath", "pythonPackages"}
+            if catalog_fields.issubset(metadata):
+                catalog = WorkspaceDependenciesResultData.model_validate({
+                    key: metadata[key] for key in catalog_fields
+                })
+                result.update(catalog.model_dump(
+                    mode="json", by_alias=True, include={
+                        "source", "executables", "python_path", "python_packages",
+                    },
+                ))
     value = metadata.get("runtimeDependencyError")
     if value is not None:
         try:

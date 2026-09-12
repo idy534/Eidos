@@ -422,10 +422,15 @@ def prepare_shell_launch(
     dependency_environment: DependencyShellEnvironment | None = None,
 ) -> ShellLaunchSpec:
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
+    # zsh and bash support pipefail natively. Keep POSIX sh compatibility.
+    shell_argv = [str(shell.executable)]
+    if shell.kind in {"zsh", "bash"}:
+        shell_argv.extend(("-o", "pipefail"))
+    shell_argv.extend(("-c", command))
     argv = (
-        profile.command([str(shell.executable), "-c", command])
+        profile.command(shell_argv)
         if sandboxed
-        else [str(shell.executable), "-c", command]
+        else shell_argv
     )
     return ShellLaunchSpec(
         argv=tuple(argv),

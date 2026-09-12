@@ -17,6 +17,8 @@ SUMMARY_MAX_ITEMS = 16
 SUMMARY_ENTRY_MAX_BYTES = 512
 SUMMARY_TASK_GOAL_MAX_BYTES = 1_024
 SUMMARY_MAX_SERIALIZED_BYTES = 4 * 1_024
+SOFT_CONTEXT_TARGET_TOKENS = 64 * 1024
+SOFT_COMPACTION_KEEP_ITEMS = 16
 _SYMBOL_PATTERN = re.compile(
     r"(?m)^\s*(?:async\s+)?(?:def|class|fn|struct|enum|interface|type|function|const)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)"
@@ -39,9 +41,11 @@ class ContextCompactor:
     def __init__(self, store: SessionStore) -> None:
         self.store = store
 
-    def compact(self, run_id: str, phase: str) -> CompactSummary:
+    def compact(self, run_id: str, phase: str, *, keep_recent_items: int = 0) -> CompactSummary:
         if phase not in {"pre_turn", "mid_turn"}:
             raise ValueError("invalid compaction phase")
+        if keep_recent_items < 0:
+            raise ValueError("invalid recent item count")
         repository = self.store.verified_compaction_repository()
         facts = repository.load_facts(run_id)
         existing = facts.compact_summary
@@ -51,6 +55,15 @@ class ContextCompactor:
             and (phase == "mid_turn" or item.run_id != run_id)
             and (existing is None or item.item_id not in existing.source_item_ids)
         )
+        if keep_recent_items:
+            # Soft compaction keeps current instructions and the recent working
+            # evidence verbatim. Hard window recovery retains its existing path.
+            eligible = tuple(
+                item for item in eligible[:-keep_recent_items]
+                if item.status in {"completed", "failed"}
+                and item.kind != "user_message"
+                and item.tool_name not in {"skill_read", "skill_read_resource"}
+            )
         if not eligible:
             raise ContextCompactionError("no compactable history")
         source_ids = tuple(dict.fromkeys((

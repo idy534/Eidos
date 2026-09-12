@@ -1774,13 +1774,13 @@ class ToolCallRuntime:
                 successes.append(
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 )
-            context_facts.append(_hash_json({
-                "toolName": call.name,
-                "payload": tool_payload_fingerprint_value(payload),
-                "resultFingerprint": (
-                    outcome.progress_fingerprint or _hash_json(outcome.result)
-                ),
-            }))
+                context_facts.append(_hash_json({
+                    "toolName": call.name,
+                    "payload": tool_payload_fingerprint_value(payload),
+                    "resultFingerprint": (
+                        outcome.progress_fingerprint or _hash_json(outcome.result)
+                    ),
+                }))
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
@@ -1959,13 +1959,13 @@ class ToolCallRuntime:
                 successes.append(
                     outcome.progress_fingerprint or _hash_json(outcome.result)
                 )
-            context_facts.append(_hash_json({
-                "toolName": call.name,
-                "payload": tool_payload_fingerprint_value(call.payload),
-                "resultFingerprint": (
-                    outcome.progress_fingerprint or _hash_json(outcome.result)
-                ),
-            }))
+                context_facts.append(_hash_json({
+                    "toolName": call.name,
+                    "payload": tool_payload_fingerprint_value(call.payload),
+                    "resultFingerprint": (
+                        outcome.progress_fingerprint or _hash_json(outcome.result)
+                    ),
+                }))
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
