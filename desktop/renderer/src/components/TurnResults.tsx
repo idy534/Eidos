@@ -510,7 +510,8 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
   const hidden = projection.textChanges.length - files.length;
   const first = projection.textChanges[0];
   if (!first) return null;
-  const title = projection.textChanges.length === 1 ? `已编辑 ${fileName(first.path)}` : `已编辑 ${projection.textChanges.length} 个文件`;
+  const isSingle = projection.textChanges.length === 1;
+  const title = isSingle ? `已编辑 ${fileName(first.path)}` : `已编辑 ${projection.textChanges.length} 个文件`;
   const undoReason = "当前会话没有可精确恢复本轮修改的检查点。";
   const review = (change?: TurnTextChange) => {
     if (!actions?.openReview) return;
@@ -518,13 +519,22 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
   };
   const canReview = Boolean(actions?.openReview);
   return (
-    <article className="turn-result-card turn-result-card--changes">
+    <article className={`turn-result-card turn-result-card--changes${isSingle ? " turn-result-card--single" : ""}`}>
       <header className="turn-result-card__header">
-        <span className="turn-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={first.path} /></span>
-        <div className="turn-result-card__title">
-          <button type="button" className="turn-result-card__title-link" disabled={!canReview} onClick={() => review(projection.textChanges.length === 1 ? first : undefined)} title="打开文本修改审查"><strong>{title}</strong></button>
-          <ChangeStats additions={projection.additions} deletions={projection.deletions} cumulative={projection.textChanges.some((change) => change.cumulative)} />
-        </div>
+        <button
+          type="button"
+          className="turn-result-card__main"
+          disabled={!canReview}
+          onClick={() => review(isSingle ? first : undefined)}
+          title="打开文本修改审查"
+          aria-label={title}
+        >
+          <span className="turn-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={first.path} /></span>
+          <span className="turn-result-card__title">
+            <strong>{title}</strong>
+            <ChangeStats additions={projection.additions} deletions={projection.deletions} cumulative={projection.textChanges.some((change) => change.cumulative)} />
+          </span>
+        </button>
         <div className="turn-result-card__actions">
           <Button variant="ghost" size="small" className="turn-result-card__undo" disabled title={undoReason}>撤销</Button>
           <Button

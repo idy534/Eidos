@@ -233,6 +233,35 @@ describe("TurnResults", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "审核" }));
     expect(openReview).toHaveBeenLastCalledWith({ runId: run.id });
+
+    fireEvent.click(screen.getByRole("button", { name: "已编辑 4 个文件" }));
+    expect(openReview).toHaveBeenLastCalledWith({ runId: run.id });
+  });
+
+  it("shows the single-file card with single card styling and routes review to its run and file", () => {
+    const openReview = vi.fn();
+    const items = [changeItem("item-1", "src/single.ts")];
+
+    const { container } = render(
+      <ArtifactProvider
+        value={{
+          sessionId: run.sessionId,
+          executionRoot: "/workspace",
+          openFile: vi.fn(),
+          openBrowser: vi.fn(),
+          openReview,
+        }}
+      >
+        <TurnResults run={run} items={items} />
+      </ArtifactProvider>,
+    );
+
+    const card = container.querySelector(".turn-result-card--single");
+    expect(card).toBeInTheDocument();
+    expect(screen.getByText("已编辑 single.ts")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "已编辑 single.ts" }));
+    expect(openReview).toHaveBeenCalledWith({ runId: run.id, path: "src/single.ts", itemId: "item-1" });
   });
 
   it("puts artifacts before text changes and uses the controlled DOCX opener", async () => {
