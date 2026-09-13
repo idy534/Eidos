@@ -21,6 +21,20 @@ const run: Run = {
   updatedAt: 2,
 };
 
+const declarationProvenance = {
+  kind: "builtin" as const,
+  sourceId: "eidos.declare-outputs",
+  sourceVersion: "1",
+  contentHash: "a".repeat(64),
+};
+
+interface DeclaredOutputInput {
+  path: string;
+  title?: string;
+  sizeBytes?: number;
+  version?: string;
+}
+
 function diff(path: string, oldValue = "old", newValue = "new"): string {
   return [
     `diff --git a/${path} b/${path}`,
@@ -62,6 +76,34 @@ function changeItem(
   };
 }
 
+function declaredItem(
+  id: string,
+  outputs: DeclaredOutputInput[],
+  overrides: Partial<NonNullable<Item["toolCall"]>> = {},
+): Item {
+  return changeItem(id, outputs[0]?.path ?? "output.bin", {
+    toolName: "declare_outputs",
+    changeDiff: "",
+    provenance: declarationProvenance,
+    resultJson: JSON.stringify({
+      outcome: "success",
+      code: "ok",
+      data: {
+        executionRoot: "/workspace",
+        outputs: outputs.map(({ path, title, sizeBytes = 1, version = "a".repeat(64) }) => ({
+          path,
+          sizeBytes,
+          version,
+          ...(title === undefined ? {} : { title }),
+        })),
+      },
+      sideEffectsMayExist: false,
+      reconciliationRequired: false,
+    }),
+    ...overrides,
+  });
+}
+
 afterEach(() => cleanup());
 
 function PaginatedOutput({ items }: { items: Item[] }) {
@@ -80,18 +122,19 @@ describe("TurnResults", () => {
         onNotification: vi.fn().mockReturnValue(vi.fn()),
         prepareWorkspacePreview: vi.fn().mockImplementation(async (_sessionId: string, path: string) => `eidos-preview://preview/${path}`),
         releaseWorkspacePreview: vi.fn().mockResolvedValue(undefined),
-        readWorkspaceFilePreview: vi.fn().mockResolvedValue({
-          path: "page.html",
-          kind: "html",
+        readWorkspaceFilePreview: vi.fn().mockImplementation(async (_sessionId: string, path: string) => ({
+          path,
+          kind: path === "diagram.png" ? "image" : "html",
           sizeBytes: 20,
           truncated: false,
-          content: "<title>产品预览</title>",
-        }),
+          version: "a".repeat(64),
+          ...(path === "page.html" ? { content: "<title>产品预览</title>" } : {}),
+        })),
       },
     });
     const items = [
-      changeItem("item-1", "diagram.png", { changeDiff: "", resultJson: JSON.stringify({ data: { created: ["diagram.png"] } }) }),
-      changeItem("item-2", "page.html", { changeDiff: "", resultJson: JSON.stringify({ data: { created: ["page.html"] } }) }),
+      declaredItem("item-1", [{ path: "diagram.png" }]),
+      declaredItem("item-2", [{ path: "page.html" }]),
     ];
 
     try {
@@ -118,7 +161,7 @@ describe("TurnResults", () => {
       expect(await screen.findByRole("dialog", { name: "diagram.png 图片预览" })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "关闭图片预览" }));
 
-      const htmlButton = await screen.findByRole("button", { name: "打开 产品预览" });
+      const htmlButton = await screen.findByRole("button", { name: "打开 page.html" });
       fireEvent.click(htmlButton);
       await waitFor(() => expect(openBrowser).toHaveBeenCalledWith("eidos-preview://preview/page.html"));
     } finally {
@@ -131,9 +174,10 @@ describe("TurnResults", () => {
     const items = [
       changeItem("item-1", "src/index.ts"),
       changeItem("item-2", "src/index.ts", { changeDiff: diff("src/index.ts", "new", "newer") }),
-      changeItem("item-3", "index.html", {
-        resultJson: JSON.stringify({ data: { created: ["docs/report.docx"] } }),
-      }),
+      declaredItem("item-3", [
+        { path: "docs/report.docx" },
+        { path: "index.html" },
+      ], { changeDiff: diff("index.html") }),
       changeItem("item-4", "gone.txt", {
         changeDiff: "",
         resultJson: JSON.stringify({ data: { deleted: ["gone.txt"] } }),
@@ -150,7 +194,7 @@ describe("TurnResults", () => {
       cumulative: true,
     });
     expect(projection.artifacts).toMatchObject([
-      { path: "docs/report.docx", kind: "docx", itemId: "item-3" },
+      { path: "docs/report.docx", kind: "document", itemId: "item-3" },
       { path: "index.html", kind: "html", itemId: "item-3" },
     ]);
   });
@@ -191,64 +235,131 @@ describe("TurnResults", () => {
     expect(openReview).toHaveBeenLastCalledWith({ runId: run.id });
   });
 
-  it("puts artifacts before text changes and uses the controlled DOCX opener", () => {
+  it("puts artifacts before text changes and uses the controlled DOCX opener", async () => {
     const openFile = vi.fn();
     const openExternal = vi.fn();
-    const item = changeItem("item-1", "index.html", {
-      resultJson: JSON.stringify({ data: { created: ["docs/report.docx", "index.html"] } }),
+    const item = declaredItem("item-1", [
+      { path: "docs/report.docx" },
+      { path: "index.html" },
+    ], { changeDiff: diff("index.html") });
+
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readWorkspaceFilePreview: vi.fn().mockResolvedValue({
+          path: "docs/report.docx",
+          kind: "unavailable",
+          sizeBytes: 1,
+          truncated: false,
+          version: "a".repeat(64),
+          reason: "unsupported",
+        }),
+      },
     });
 
-    render(
-      <ArtifactProvider
-        value={{
-          sessionId: run.sessionId,
-          executionRoot: "/workspace",
-          openFile,
-          openBrowser: vi.fn(),
-          openExternal,
-        }}
-      >
-        <TurnResults run={run} items={[item]} />
-      </ArtifactProvider>,
-    );
+    try {
+      render(
+        <ArtifactProvider
+          value={{
+            sessionId: run.sessionId,
+            executionRoot: "/workspace",
+            openFile,
+            openBrowser: vi.fn(),
+            openExternal,
+          }}
+        >
+          <TurnResults run={run} items={[item]} />
+        </ArtifactProvider>,
+      );
 
-    fireEvent.click(screen.getByRole("button", { name: "打开 report.docx" }));
-    expect(openExternal).toHaveBeenCalledWith("docs/report.docx");
-    expect(screen.getByText("文档 · DOCX")).toBeInTheDocument();
-    expect(screen.getByText("网页 · HTML")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "审核 index.html" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "打开 正在读取页面标题…" }));
-    expect(openFile).not.toHaveBeenCalledWith("index.html");
+      fireEvent.click(screen.getByRole("button", { name: "打开 report.docx" }));
+      await waitFor(() => expect(openExternal).toHaveBeenCalledWith("docs/report.docx"));
+      expect(screen.getByText("文档 · DOCX")).toBeInTheDocument();
+      expect(screen.getByText("网页 · HTML")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "审核 index.html" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "打开 index.html" })).toBeInTheDocument();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
   });
 
-  it("keeps the latest output record and removes deleted paths", () => {
-    const first = changeItem("item-1", "report.pdf", {
-      resultJson: JSON.stringify({ data: { created: ["report.pdf", "old.png"] } }),
-    });
-    const latest = changeItem("item-2", "report.pdf", {
-      resultJson: JSON.stringify({ data: { modified: ["report.pdf"], deleted: ["old.png"] } }),
-    });
+  it("keeps the latest declaration and preserves omitted output history", () => {
+    const first = declaredItem("item-1", [
+      { path: "report.pdf", title: "Draft" },
+      { path: "old.png" },
+    ]);
+    const latest = declaredItem("item-2", [{ path: "report.pdf", title: "Final" }]);
 
     expect(collectOutputArtifacts([first, latest])).toMatchObject([
-      { path: "report.pdf", itemId: "item-2" },
+      { path: "report.pdf", itemId: "item-2", title: "Final" },
+      { path: "old.png", itemId: "item-1" },
     ]);
   });
 
   it("pages older Session items before building the environment output list", async () => {
     const readSession = vi.fn().mockResolvedValue({
-      items: [changeItem("item-9", "old.pdf", { resultJson: JSON.stringify({ data: { created: ["old.pdf"] } }) })],
+      items: [declaredItem("item-9", [{ path: "old.pdf" }])],
       previousItemId: undefined,
     });
     const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
     Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readSession } });
 
     try {
-      render(<PaginatedOutput items={[changeItem("item-10", "current.pdf", { resultJson: JSON.stringify({ data: { created: ["current.pdf"] } }) })]} />);
+      render(<PaginatedOutput items={[declaredItem("item-10", [{ path: "current.pdf" }])]} />);
       await waitFor(() => expect(screen.getByRole("button", { name: "打开 old.pdf" })).toBeInTheDocument());
       expect(readSession).toHaveBeenCalledWith("session-results", { itemLimit: 200, beforeItemId: "older-cursor" });
     } finally {
       if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
       else delete (window as Partial<Window>).eidosRuntime;
     }
+  });
+
+  it("projects only successful builtin declarations and classifies every supported format", () => {
+    const valid = declaredItem("item-valid", [
+      { path: "report.DOCX" },
+      { path: "slides.pptx" },
+      { path: "data.XLSM" },
+      { path: "table.tsv" },
+      { path: "notes.md" },
+    ]);
+    const legacy = changeItem("item-legacy", "legacy.pptx", {
+      changeDiff: "",
+      resultJson: JSON.stringify({ data: { created: ["legacy.pptx"] } }),
+    });
+    const wrongSource = declaredItem("item-wrong-source", [{ path: "wrong.pdf" }], {
+      provenance: { ...declarationProvenance, sourceId: "other-tool" },
+    });
+    const failed = declaredItem("item-failed", [{ path: "failed.xlsx" }]);
+    failed.status = "failed";
+
+    expect(projectTurnResults([valid, legacy, wrongSource, failed], run.id).artifacts).toMatchObject([
+      { path: "data.XLSM", kind: "spreadsheet" },
+      { path: "notes.md", kind: "file" },
+      { path: "report.DOCX", kind: "document" },
+      { path: "slides.pptx", kind: "presentation" },
+      { path: "table.tsv", kind: "spreadsheet" },
+    ]);
+  });
+
+  it("rejects the whole declaration batch when one output is malformed", () => {
+    const invalid = declaredItem("item-invalid", [{ path: "report.md" }], {
+      resultJson: JSON.stringify({
+        outcome: "success",
+        code: "ok",
+        data: {
+          executionRoot: "/workspace",
+          outputs: [
+            { path: "report.md", sizeBytes: 1, version: "a".repeat(64) },
+            { path: "broken.md", sizeBytes: 1, version: "not-a-version" },
+          ],
+        },
+        sideEffectsMayExist: false,
+        reconciliationRequired: false,
+      }),
+    });
+
+    expect(collectOutputArtifacts([invalid])).toEqual([]);
   });
 });

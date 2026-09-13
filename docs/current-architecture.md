@@ -553,4 +553,4 @@ Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复�
 
 `session/gitReadPatch` 读取 index 或 worktree 文本差异并返回 Diff hash。`session/gitApplyHunk` 在现有 Session Git operation 边界内检查 active Run、路径和当前补丁 hash。现有 `unidiff` 负责选择 hunk，原生 Git 负责校验和修改。操作必须携带 operationId，沿用 SQLite 幂等与不确定操作语义。本轮没有数据库迁移或第二套 Artifact 表；浏览器地址识别新增直接依赖 `tldts`。
 
-以前产物预览修订有自动验证记录，但这些结果不覆盖 2026-09-13 的产物声明修订。本次按用户要求只修改生产代码和文档，测试代码和集中验证等待用户确认。具体边界见 `current-limitations.md` 的“本轮产物实现的边界”。
+以前产物预览修订有自动验证记录。2026-09-13 的产物声明修订已经补充并通过对应的 Runtime、协议、Main 和 Renderer 测试。具体限制和未完成的人工验收见 `current-limitations.md` 的“本轮产物实现的边界”。

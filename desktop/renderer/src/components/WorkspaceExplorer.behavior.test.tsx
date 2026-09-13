@@ -100,6 +100,8 @@ describe("WorkspaceExplorer", () => {
         { name: "README.md", relativePath: "README.md", kind: "file" as const, sizeBytes: 8 },
         { name: "tool.py", relativePath: "tool.py", kind: "file" as const, sizeBytes: 8 },
         { name: "notes.txt", relativePath: "notes.txt", kind: "file" as const, sizeBytes: 8 },
+        { name: "slides.pptx", relativePath: "slides.pptx", kind: "file" as const, sizeBytes: 8 },
+        { name: "table.xlsx", relativePath: "table.xlsx", kind: "file" as const, sizeBytes: 8 },
         { name: "unknown.custom", relativePath: "unknown.custom", kind: "file" as const, sizeBytes: 8 },
       ],
       truncated: false,
@@ -114,6 +116,8 @@ describe("WorkspaceExplorer", () => {
     expect(container.querySelector('[data-file-icon="markdown"]')).toBeInTheDocument();
     expect(container.querySelector('[data-file-icon="python"]')).toBeInTheDocument();
     expect(container.querySelector('[data-file-icon="text"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-icon="presentation"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-file-icon="table"]')).toBeInTheDocument();
     expect(container.querySelector('[data-file-icon="generic"]')).toBeInTheDocument();
   });
 

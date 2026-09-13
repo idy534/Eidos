@@ -128,6 +128,8 @@ def test_text_markdown_and_binary_preview_are_typed_and_bounded(tmp_path: Path) 
         (workspace / "main.py").write_text("print('ok')\n", encoding="utf-8")
         (workspace / "README.md").write_text("# Hello\n", encoding="utf-8")
         (workspace / "binary.dat").write_bytes(b"\x01\x02\x03")
+        (workspace / "slides.pptx").write_bytes(b"pptx")
+        (workspace / "sheet.xlsm").write_bytes(b"xlsm")
 
         code = application.read_file_preview(
             WorkspaceReadFilePreviewRequestDto(sessionId=session_id, path="main.py")
@@ -144,13 +146,20 @@ def test_text_markdown_and_binary_preview_are_typed_and_bounded(tmp_path: Path) 
         assert code["content"] == "print('ok')\n"
         assert markdown["kind"] == "markdown"
         assert markdown["content"] == "# Hello\n"
-        assert binary == {
-            "path": "binary.dat",
-            "kind": "unavailable",
-            "sizeBytes": 3,
-            "truncated": False,
-            "reason": "binary",
-        }
+        assert binary["path"] == "binary.dat"
+        assert binary["kind"] == "unavailable"
+        assert binary["sizeBytes"] == 3
+        assert binary["truncated"] is False
+        assert binary["reason"] == "binary"
+        assert len(binary["version"]) == 64
+
+        for filename in ("slides.pptx", "sheet.xlsm"):
+            preview = application.read_file_preview(
+                WorkspaceReadFilePreviewRequestDto(sessionId=session_id, path=filename)
+            ).root
+            assert preview["kind"] == "unavailable"
+            assert preview["reason"] == "unsupported"
+            assert len(preview["version"]) == 64
     finally:
         store.close()
 
