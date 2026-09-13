@@ -8,7 +8,7 @@ import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 
 type ChangeState = "committed" | "partial" | "planned";
-type ArtifactKind = "docx" | "pdf" | "image" | "html" | "file";
+type ArtifactKind = "document" | "pdf" | "presentation" | "spreadsheet" | "image" | "html" | "file";
 
 export interface TurnTextChange {
   cumulative?: boolean;
@@ -50,10 +50,17 @@ interface ParsedFileChange {
 }
 
 // Format chooses presentation, never whether a file is a deliverable.
-const PREVIEW_EXTENSIONS: Record<string, ArtifactKind> = {
-  doc: "docx",
-  docx: "docx",
+const ARTIFACT_FORMATS: Record<string, ArtifactKind> = {
+  doc: "document",
+  docx: "document",
   pdf: "pdf",
+  ppt: "presentation",
+  pptx: "presentation",
+  csv: "spreadsheet",
+  tsv: "spreadsheet",
+  xls: "spreadsheet",
+  xlsx: "spreadsheet",
+  xlsm: "spreadsheet",
   png: "image",
   jpg: "image",
   jpeg: "image",
@@ -88,9 +95,19 @@ function fileName(path: string): string {
   return path.split("/").at(-1) || path;
 }
 
+function fileExtension(path: string): string {
+  const name = fileName(path);
+  return name.includes(".") ? name.slice(name.lastIndexOf(".") + 1).toLowerCase() : "";
+}
+
 function artifactKind(path: string): ArtifactKind | undefined {
-  const extension = path.toLowerCase().split(".").at(-1) || "";
-  return PREVIEW_EXTENSIONS[extension];
+  return ARTIFACT_FORMATS[fileExtension(path)];
+}
+
+function isOfficeArtifact(path: string): boolean {
+  const kind = artifactKind(path);
+  return kind === "document" || kind === "presentation"
+    || (kind === "spreadsheet" && !["csv", "tsv"].includes(fileExtension(path)));
 }
 
 function normalizedPath(path: string): string {
@@ -128,7 +145,7 @@ function recordedTextChanges(item: Item): ParsedFileChange[] {
     const path = normalizedPath(value);
     if (!path || path === "/dev/null") return;
     const kind = artifactKind(path);
-    if (kind && kind !== "html" && !deleted) return;
+    if (!deleted && (kind === "pdf" || kind === "image" || isOfficeArtifact(path))) return;
     const current = changes.get(path);
     if (current) {
       if (deleted) current.deleted = true;
@@ -319,12 +336,15 @@ export function useCompleteSessionItems(
 }
 
 function ArtifactLabel({ artifact }: { artifact: TurnArtifact }): string {
+  const format = fileExtension(artifact.path).toUpperCase();
   switch (artifact.kind) {
-    case "docx": return `文档 · ${artifact.path.toLowerCase().endsWith(".doc") ? "DOC" : "DOCX"}`;
+    case "document": return `文档 · ${format}`;
     case "pdf": return "文档 · PDF";
-    case "image": return "图片";
-    case "html": return "网页 · HTML";
-    case "file": return `文件${fileName(artifact.path).includes(".") ? ` · ${artifact.path.split(".").at(-1)?.toUpperCase()}` : ""}`;
+    case "presentation": return `演示文稿 · ${format}`;
+    case "spreadsheet": return `表格 · ${format}`;
+    case "image": return `图片 · ${format}`;
+    case "html": return `网页 · ${format}`;
+    case "file": return `文件${format ? ` · ${format}` : ""}`;
   }
 }
 
@@ -335,10 +355,10 @@ function artifactOpenItems(
   openExternal: () => void,
 ): DropdownMenuItem[] {
   const items: DropdownMenuItem[] = [];
-  if (artifact.kind !== "docx" && actions?.openFile) {
+  if (!isOfficeArtifact(artifact.path) && actions?.openFile) {
     items.push({
       key: "preview",
-      label: artifact.kind === "file" ? "打开文件" : "内置预览",
+      label: artifact.kind === "file" ? "打开文件" : artifact.kind === "spreadsheet" ? "文本预览" : "内置预览",
       onClick: openBuiltInPreview,
     });
   }
@@ -410,7 +430,7 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
       setVersionNote(preview.version && preview.version !== artifact.version
         ? "文件已在声明后变化，打开的是当前版本。" : undefined);
       setPreviewVersion(preview.version);
-      if (external || preview.kind === "unavailable") {
+      if (external || isOfficeArtifact(artifact.path) || preview.kind === "unavailable") {
         if (!actions.openExternal) throw new Error("当前没有系统应用打开入口。");
         await actions.openExternal(artifact.path);
       } else if (preview.kind === "image") {

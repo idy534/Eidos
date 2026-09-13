@@ -1160,6 +1160,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .workspace-file-type-icon:is(
   [data-file-icon="javascript"],
   [data-file-icon="json"],
+  [data-file-icon="presentation"],
   [data-file-icon="yaml"]
 ) { color: var(--status-warning); }
 .workspace-file-type-icon:is(

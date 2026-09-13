@@ -339,6 +339,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 内置工具 `declare_outputs` 始终随 Run 注册，系统提示要求模型在交付文件前调用，不依赖系统或第三方 Skill。每次接收 1–20 个 `outputs`，每项包含 `path` 和可选 `title`。路径允许 Workspace 相对路径或当前 Run Workspace 内的绝对路径。工具只核验普通文件的路径、身份、大小和版本，不读取文件内容、不写文件，也不证明作者、内容质量或测试通过。
 - Runtime 对整个声明批次核验后，通过现有 ToolResult、Item 和 Event/Outbox 事务保存结果，不新建产物表。同一批次有任一文件失败时，该批次不声明任何产物；同一路径重复出现时采用最后一项标题。每次调用只新增或更新指定文件，省略的文件保持原记录，文件修改后需要再次声明。
 - 产物卡只读取内置 `declare_outputs` 的成功结果。后缀、Shell 文件变化、普通 Markdown 链接和 `purpose="output"` 文本均不再自动产生卡片。系统对明确交付的任意文件格式提供卡片，PPTX、XLSX、ZIP 和 Markdown 不受原后缀白名单限制。声明过的 HTML 或 Markdown 有文本修改证据时仍可同时进入文本卡。
+- 产物卡的专属分类覆盖文档（DOC、DOCX）、PDF、演示文稿（PPT、PPTX）、表格（CSV、TSV、XLS、XLSX、XLSM）、图片（PNG、JPG、JPEG、GIF、WEBP、SVG）和网页（HTML、HTM），后缀匹配不区分大小写；其他格式仍使用通用文件卡。卡片显示分类和实际格式，演示文稿及表格复用文件树的对应图标。DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM 只提供系统应用打开，CSV/TSV 提供文本预览和系统应用打开。CSV/TSV 有修改证据时仍可进入文本审查，分类不会将它们当作二进制而丢弃。
 - 用户点击卡片时，系统通过已有受控文件预览读取当前文件信息。图片使用全屏预览，HTML 使用隔离网页，PDF、文本和 Markdown 进入 Files；不支持内置预览的文件使用受控系统应用打开。卡片标题使用声明标题或文件名，不再读取当前 HTML 的 `<title>`。系统显示打开失败或版本变化提示；声明文件所属执行目录与当前目录不同时，卡片禁止打开，避免读取另一个同名文件。
 - 环境信息浮层提供“输出内容”。它跨当前 Session 分页读取声明，按执行目录和相对路径保留最新声明。已声明文件的删除不抹除历史交付记录；用户打开已删除文件时会收到失败提示。Run 后续失败或取消不会移除此前已经成功提交的声明。Projectless Session 同样支持声明和输出入口。Files 继续提供文件树和预览。
 - 旧会话没有交付声明时，不再凭后缀生成历史产物卡；原始工具记录、回复链接和 Files 入口保留。系统不会补造旧交付事实。
