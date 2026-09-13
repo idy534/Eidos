@@ -664,7 +664,7 @@ export function AppShell({ runtime }: AppShellProps) {
     : "empty";
   const availableTools: WorkspaceToolKind[] = sessionHasProject
     ? sessionHasGit
-      ? ["terminal", "files", "browser"]
+      ? ["review", "terminal", "files", "browser"]
       : ["terminal", "files", "browser"]
     : currentSnapshot && !isDraft ? ["files", "browser"] : [];
 
@@ -887,6 +887,15 @@ export function AppShell({ runtime }: AppShellProps) {
               loading={completeSessionItems.loading}
               error={completeSessionItems.error}
             />
+            {sessionHasGit && (
+              <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
+                <span>变更</span>
+                <span className="git-line-summary" aria-label="修改行数">
+                  <ins>+{gitReviewState.summary?.additions ?? 0}</ins>
+                  <del>-{gitReviewState.summary?.deletions ?? 0}</del>
+                </span>
+              </button>
+            )}
             <div className="environment-popover__row">
               <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
               {sessionHasGit && (
@@ -1248,6 +1257,7 @@ export function AppShell({ runtime }: AppShellProps) {
                             ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")
                             : undefined
                         }
+                        expanded={dockExpanded}
                       />
                     ) : null;
                   }

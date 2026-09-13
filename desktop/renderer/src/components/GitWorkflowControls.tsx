@@ -14,6 +14,7 @@ import type {
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
+import { DropdownMenu } from "./DropdownMenu.js";
 
 
 interface GitWorkflowControlsProps {
@@ -23,6 +24,8 @@ interface GitWorkflowControlsProps {
   disabled: boolean;
   onRefresh(): void;
   openRequest?: number | undefined;
+  compact?: boolean | undefined;
+  expanded?: boolean | undefined;
   onCreateBranch?: (() => void) | undefined;
   switchBranch?: (
     sessionId: string, branch: string, operationId: string,
@@ -94,6 +97,8 @@ export function GitWorkflowControls({
   disabled,
   onRefresh,
   openRequest,
+  compact = false,
+  expanded = false,
   onCreateBranch,
   switchBranch = defaults.switchBranch,
   readRemoteStatus = defaults.readRemoteStatus,
@@ -275,90 +280,60 @@ export function GitWorkflowControls({
     }
   };
 
-  return (
-    <section className="git-workflow-controls" aria-label="Git workflow">
-      <div className="git-workflow-observation">
-        {localSession && branches.length > 0 ? (
-          <label className="git-local-branch-control">
-            <span className="sr-only">当前本地分支</span>
-            <select
-              aria-label="当前本地分支"
-              value={status.branch ?? ""}
-              disabled={controlsDisabled || status.dirty}
-              onChange={(event) => {
-                const branch = event.target.value;
-                if (branch && branch !== status.branch) {
-                  void run(
-                    "switch-branch",
-                    `switch-branch:${branch}:${status.head}`,
-                    (operationId) => switchBranch(sessionId, branch, operationId),
-                  );
-                }
-              }}
-            >
-              {status.branch === null && <option value="">Detached HEAD</option>}
-              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-            </select>
-          </label>
-        ) : (
-          <strong>{status.branch ?? "Detached HEAD"}</strong>
-        )}
-        {upstream ? <span>{upstream.remote}/{upstream.branch}</span> : <span>No upstream</span>}
-        {remote?.ahead !== null && remote?.ahead !== undefined
-          && remote.behind !== null && remote.behind !== undefined && (
-          <span>↑{remote.ahead} ↓{remote.behind}</span>
-        )}
-      </div>
+  const branchMenuItems = [
+    ...branches.map((branch) => ({
+      key: `branch-${branch}`,
+      label: branch === status.branch ? `✓ ${branch}` : branch,
+      disabled: controlsDisabled || status.dirty || branch === status.branch,
+      onClick: () => {
+        void run(
+          "switch-branch",
+          `switch-branch:${branch}:${status.head}`,
+          (operationId) => switchBranch(sessionId, branch, operationId),
+        );
+      },
+    })),
+    ...(canCreateBranch
+      ? [
+          {
+            key: "create-branch",
+            label: localSession ? "创建分支..." : "在此创建分支...",
+            disabled: controlsDisabled || (localSession && status.dirty),
+            onClick: () => onCreateBranch?.(),
+          },
+        ]
+      : []),
+  ];
 
-      {canCreateBranch && (
-        <Button
-          size="small"
-          variant={localSession ? "secondary" : "primary"}
-          disabled={controlsDisabled || (localSession && status.dirty)}
-          onClick={onCreateBranch}
-        >
-          {localSession ? "创建分支" : "在此创建分支"}
-        </Button>
-      )}
-
-      <button
-        type="button"
-        className="git-workflow-trigger"
-        aria-haspopup="dialog"
-        aria-expanded={workflowOpen}
-        onClick={() => setWorkflowOpen(true)}
+  const dialogContent = workflowOpen && (
+    <div
+      className="modal-backdrop git-workflow-modal-backdrop"
+      onClick={busy === undefined ? () => setWorkflowOpen(false) : undefined}
+    >
+      <div
+        ref={dialogRef}
+        className="modal-dialog modal-dialog--wide git-workflow-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="git-workflow-dialog-title"
+        onClick={(event) => event.stopPropagation()}
       >
-        <span>提交或推送</span>
-      </button>
-      {workflowOpen && (
-        <div
-          className="modal-backdrop git-workflow-modal-backdrop"
-          onClick={busy === undefined ? () => setWorkflowOpen(false) : undefined}
-        >
-          <div
-            ref={dialogRef}
-            className="modal-dialog modal-dialog--wide git-workflow-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="git-workflow-dialog-title"
-            onClick={(event) => event.stopPropagation()}
+        <div className="modal-header git-workflow-dialog-header">
+          <div>
+            <h3 id="git-workflow-dialog-title">提交和推送</h3>
+            <p className="modal-subtitle">{status.branch ?? "Detached HEAD"}</p>
+          </div>
+          <button
+            type="button"
+            className="git-workflow-dialog-close"
+            aria-label="关闭提交和推送"
+            disabled={busy !== undefined}
+            onClick={() => setWorkflowOpen(false)}
           >
-            <div className="modal-header git-workflow-dialog-header">
-              <div>
-                <h3 id="git-workflow-dialog-title">提交和推送</h3>
-                <p className="modal-subtitle">{status.branch ?? "Detached HEAD"}</p>
-              </div>
-              <button
-                type="button"
-                className="git-workflow-dialog-close"
-                aria-label="关闭提交和推送"
-                disabled={busy !== undefined}
-                onClick={() => setWorkflowOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="git-workflow-dialog-content">
+            ×
+          </button>
+        </div>
+        <div className="git-workflow-dialog-content">
           <form
             className="git-commit-form"
             onSubmit={(event) => {
@@ -373,6 +348,7 @@ export function GitWorkflowControls({
               onChange={(event) => setMessage(event.target.value)}
               placeholder="输入提交信息"
               maxLength={16_384}
+              disabled={controlsDisabled || status.branch === null}
             />
             <label className="git-include-unstaged">
               <input
@@ -473,10 +449,108 @@ export function GitWorkflowControls({
               )}
             </aside>
           )}
-            </div>
-          </div>
         </div>
+      </div>
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <div className="git-workflow-controls git-workflow-controls--compact" aria-label="Git workflow">
+        <div className="git-workflow-pill-group" aria-label="提交推送与分支管理">
+          <button
+            type="button"
+            className={`git-workflow-pill-action${expanded ? " git-workflow-pill-action--expanded" : ""}`}
+            aria-label="提交或推送"
+            aria-haspopup="dialog"
+            aria-expanded={workflowOpen}
+            disabled={controlsDisabled}
+            onClick={() => setWorkflowOpen(true)}
+            title="提交或推送"
+          >
+            <span className="git-workflow-commit-glyph" aria-hidden="true" />
+            {expanded && <span className="git-workflow-pill-label">提交或推送</span>}
+          </button>
+          <DropdownMenu
+            className="git-workflow-branch-dropdown"
+            label="切换分支"
+            triggerAriaLabel="切换分支"
+            trigger={(
+              <span
+                className="git-workflow-branch-trigger"
+                title={`当前分支: ${status.branch ?? "分离状态"}${remote?.ahead ? ` ↑${remote.ahead}` : ""}${remote?.behind ? ` ↓${remote.behind}` : ""}`}
+              >
+                <span className="git-workflow-branch-glyph" aria-hidden="true" />
+                <span className="dropdown-caret" aria-hidden="true">▾</span>
+              </span>
+            )}
+            items={branchMenuItems.length > 0
+              ? branchMenuItems
+              : [{ key: "none", label: status.branch ?? "无可用分支", disabled: true, onClick: () => undefined }]}
+          />
+        </div>
+        {dialogContent}
+        {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <section className="git-workflow-controls" aria-label="Git workflow">
+      <div className="git-workflow-observation">
+        {localSession && branches.length > 0 ? (
+          <label className="git-local-branch-control">
+            <span className="sr-only">当前本地分支</span>
+            <select
+              aria-label="当前本地分支"
+              value={status.branch ?? ""}
+              disabled={controlsDisabled || status.dirty}
+              onChange={(event) => {
+                const branch = event.target.value;
+                if (branch && branch !== status.branch) {
+                  void run(
+                    "switch-branch",
+                    `switch-branch:${branch}:${status.head}`,
+                    (operationId) => switchBranch(sessionId, branch, operationId),
+                  );
+                }
+              }}
+            >
+              {status.branch === null && <option value="">Detached HEAD</option>}
+              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+            </select>
+          </label>
+        ) : (
+          <strong>{status.branch ?? "Detached HEAD"}</strong>
+        )}
+        {upstream ? <span>{upstream.remote}/{upstream.branch}</span> : <span>No upstream</span>}
+        {remote?.ahead !== null && remote?.ahead !== undefined
+          && remote.behind !== null && remote.behind !== undefined && (
+          <span>↑{remote.ahead} ↓{remote.behind}</span>
+        )}
+      </div>
+
+      {canCreateBranch && (
+        <Button
+          size="small"
+          variant={localSession ? "secondary" : "primary"}
+          disabled={controlsDisabled || (localSession && status.dirty)}
+          onClick={onCreateBranch}
+        >
+          {localSession ? "创建分支" : "在此创建分支"}
+        </Button>
       )}
+
+      <button
+        type="button"
+        className="git-workflow-trigger"
+        aria-haspopup="dialog"
+        aria-expanded={workflowOpen}
+        onClick={() => setWorkflowOpen(true)}
+      >
+        <span>提交或推送</span>
+      </button>
+      {dialogContent}
 
       {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
     </section>

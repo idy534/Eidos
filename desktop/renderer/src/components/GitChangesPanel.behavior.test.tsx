@@ -324,7 +324,7 @@ describe("GitChangesPanel", () => {
     };
     const listComments = vi.fn().mockResolvedValue([active, stale]);
     const onSendReviewFeedback = vi.fn().mockResolvedValue(undefined);
-    renderPanel({ listComments, onSendReviewFeedback });
+    renderPanel({ listComments, onSendReviewFeedback, expanded: true });
 
     fireEvent.click(screen.getByRole("button", { name: /README\.md/ }));
     expect(await screen.findByText("Add coverage.")).toBeInTheDocument();
@@ -335,5 +335,50 @@ describe("GitChangesPanel", () => {
       "Please address the following review feedback:\n"
       + "- README.md (new line 1): Add coverage.",
     ));
+  });
+
+  it("does not show review feedback button when not expanded, and shows it when expanded", () => {
+    const onSendReviewFeedback = vi.fn();
+    const first = renderPanel({ onSendReviewFeedback, expanded: false });
+    expect(screen.queryByRole("button", { name: "发送审阅意见" })).not.toBeInTheDocument();
+    first.result.unmount();
+
+    renderPanel({ onSendReviewFeedback, expanded: true });
+    expect(screen.getByRole("button", { name: "发送审阅意见" })).toBeInTheDocument();
+  });
+
+  it("renders single-row toolbar with scope dropdown and no compareRef line", () => {
+    const onScopeChange = vi.fn();
+    const first = renderPanel({ onScopeChange, expanded: false });
+
+    expect(screen.getByRole("button", { name: "Diff 范围" })).toHaveTextContent("未提交");
+    expect(document.querySelector(".git-scope-dropdown-label")).toHaveTextContent("未提交");
+    expect(screen.queryByTitle(/eidos\/a →/)).not.toBeInTheDocument();
+    expect(document.querySelector(".git-review-compare")).not.toBeInTheDocument();
+    first.result.unmount();
+
+    const second = renderPanel({ onScopeChange, expanded: true });
+    expect(document.querySelector(".git-changes-panel--expanded")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Diff 范围" })).toHaveTextContent("未提交");
+
+    fireEvent.click(screen.getByRole("button", { name: "Diff 范围" }));
+    expect(document.querySelector(".git-scope-dropdown-menu")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "整个任务" }));
+    expect(onScopeChange).toHaveBeenCalledWith("baseline");
+    second.result.unmount();
+  });
+
+  it("offers create branch in more options menu and excludes expand-all and refresh-git", () => {
+    const onCreateBranch = vi.fn();
+    renderPanel({ onCreateBranch, status: { ...status, dirty: false } });
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.queryByRole("menuitem", { name: /全部差异/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "刷新 Git 变更" })).not.toBeInTheDocument();
+
+    const createBranchItem = screen.getByRole("menuitem", { name: "创建分支..." });
+    expect(createBranchItem).toBeInTheDocument();
+    fireEvent.click(createBranchItem);
+    expect(onCreateBranch).toHaveBeenCalledTimes(1);
   });
 });

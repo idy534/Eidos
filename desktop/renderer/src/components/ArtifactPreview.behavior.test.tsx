@@ -199,7 +199,9 @@ describe("artifact previews and feedback", () => {
       </ArtifactProvider>,
     );
 
-    expect(screen.getByText("执行完成")).toBeInTheDocument();
+    expect(screen.queryByText("执行完成")).not.toBeInTheDocument();
+    expect(screen.queryByText(/这里按工具执行顺序展示文件修改记录/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "src/index.ts" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "src/index.ts" }));
     const gutter = container.querySelector(".diff-gutter");
     expect(gutter).not.toBeNull();

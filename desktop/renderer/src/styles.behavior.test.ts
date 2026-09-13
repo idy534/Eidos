@@ -52,9 +52,11 @@ describe("interactive color tokens", () => {
 
   it("adapts Git review controls to the dock width instead of the window width", () => {
     expect(styles).toMatch(/\.git-changes-panel\s*\{[^}]*container-type: inline-size;[^}]*container-name: git-review;/s);
-    expect(styles).toMatch(/@container git-review \(max-width: 30rem\)\s*\{[\s\S]*\.git-changes-toolbar\s*\{[^}]*display: grid;/s);
+    expect(styles).toMatch(/@container git-review \(max-width: 30rem\)\s*\{[\s\S]*\.git-changes-toolbar\s*\{[^}]*display: flex;/s);
     expect(styles).toMatch(/@container git-review \(max-width: 30rem\)\s*\{[\s\S]*\.git-scope-tabs\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s);
     expect(styles).toMatch(/\.git-scope-tab\s*\{[^}]*white-space: nowrap;/s);
+    expect(styles).toMatch(/\.git-scope-dropdown-label\s*\{[^}]*text-overflow:\s*ellipsis;/s);
+    expect(styles).toMatch(/\.git-scope-dropdown-label\s*\{[^}]*max-width:\s*clamp\(/s);
   });
 
   it("supports collapsible sidebar and top-level navigation controls", () => {

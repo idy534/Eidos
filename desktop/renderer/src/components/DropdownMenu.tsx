@@ -33,6 +33,7 @@ interface DropdownMenuProps {
   /** Optional aria-label for the menu list */
   label?: string;
   className?: string;
+  menuClassName?: string;
   title?: string;
   triggerAriaLabel?: string;
 }
@@ -53,6 +54,7 @@ export function DropdownMenu({
   items,
   label,
   className = "",
+  menuClassName = "",
   title,
   triggerAriaLabel,
 }: DropdownMenuProps) {
@@ -219,7 +221,7 @@ export function DropdownMenu({
       {open && renderPortal(
         <div
           ref={menuRef}
-          className="dropdown-menu"
+          className={`dropdown-menu ${menuClassName}`.trim()}
           role="menu"
           aria-label={label}
           style={style}

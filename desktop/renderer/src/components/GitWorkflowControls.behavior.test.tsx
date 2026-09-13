@@ -338,4 +338,37 @@ describe("GitWorkflowControls", () => {
     expect(screen.getByRole("button", { name: "Merge" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rebase" })).toBeDisabled();
   });
+
+  it("renders compact pill button with glyph and switches branch via dropdown", async () => {
+    const switchBranch = vi.fn().mockResolvedValue({
+      head: status.head,
+      branch: "main",
+      status: { ...status, worktreeId: null, branch: "main" },
+    });
+    renderControls({
+      compact: true,
+      expanded: false,
+      status: { ...status, worktreeId: null, branch: "feature/review", dirty: false },
+      switchBranch,
+    });
+
+    const pillAction = screen.getByRole("button", { name: "提交或推送" });
+    expect(pillAction).toBeInTheDocument();
+    expect(pillAction.querySelector(".git-workflow-commit-glyph")).toBeInTheDocument();
+    expect(pillAction.querySelector(".git-workflow-pill-label")).not.toBeInTheDocument();
+
+    const branchTrigger = await screen.findByRole("button", { name: "切换分支" });
+    fireEvent.click(branchTrigger);
+    const targetBranchItem = await screen.findByRole("menuitem", { name: "main" });
+    expect(targetBranchItem).toBeInTheDocument();
+    fireEvent.click(targetBranchItem);
+    expect(switchBranch).toHaveBeenCalledWith("session-a", "main", expect.any(String));
+  });
+
+  it("displays label in compact pill button when workspace dock is expanded", () => {
+    renderControls({ compact: true, expanded: true });
+
+    const pillAction = screen.getByRole("button", { name: "提交或推送" });
+    expect(pillAction.querySelector(".git-workflow-pill-label")).toHaveTextContent("提交或推送");
+  });
 });

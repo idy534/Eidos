@@ -71,6 +71,12 @@ describe("App & Runtime Lifecycle behavior", () => {
       listPendingApprovals: vi.fn().mockResolvedValue([]),
       readExtensions: vi.fn().mockResolvedValue({ plugins: [], skills: [], servers: [], throughEventId: 0 }),
       readExtensionEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0 }),
+      createTerminal: vi.fn().mockResolvedValue({ terminalId: "terminal-1", sessionId: "startup-session" }),
+      writeTerminal: vi.fn().mockResolvedValue(undefined),
+      resizeTerminal: vi.fn().mockResolvedValue(undefined),
+      closeTerminal: vi.fn().mockResolvedValue(undefined),
+      onTerminalData: vi.fn().mockReturnValue(() => {}),
+      onTerminalExit: vi.fn().mockReturnValue(() => {}),
       ...overrides,
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
@@ -282,7 +288,7 @@ describe("App & Runtime Lifecycle behavior", () => {
       }),
     });
 
-    const { container } = render(<App />);
+    const { container, unmount } = render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(session.title!) }));
 
     expect(await screen.findByRole("button", { name: "环境信息" })).toBeInTheDocument();
@@ -305,6 +311,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("tab", { name: "终端 1" })).not.toBeInTheDocument();
     expect(screen.getByText("打开工作区").closest("[role=status]")).toHaveTextContent("打开工作区");
+    expect(screen.getByRole("button", { name: "审查" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "告诉 Eidos 要做什么" })).toBeInTheDocument();
     expect(container.querySelector(".workspace-main")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "关闭工作区工具" })).toHaveLength(1);
@@ -346,6 +353,15 @@ describe("App & Runtime Lifecycle behavior", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "更改工作环境" })).not.toBeInTheDocument());
     fireEvent.click(within(reopenedEnvironment).getByRole("button", { name: "提交或推送" }));
     expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭提交和推送" }));
+    expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
+    const envForReview = screen.getByRole("region", { name: "环境信息预览" });
+    expect(within(envForReview).getByRole("button", { name: /变更/ })).toBeInTheDocument();
+    fireEvent.click(within(envForReview).getByRole("button", { name: /变更/ }));
+    expect(await screen.findByRole("tab", { name: "审查" })).toHaveAttribute("aria-selected", "true");
+    unmount();
   });
 
   it("health-only state remains in ready application and presents read-only warning", async () => {

@@ -16,6 +16,7 @@ import type {
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
+import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { HunkActions } from "./HunkActions.js";
 import { LastTurnChanges } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
@@ -58,6 +59,7 @@ interface GitChangesPanelProps {
   summary?: SessionGitDiff | undefined;
   loading: boolean;
   error: string | undefined;
+  expanded?: boolean | undefined;
   onScopeChange(scope: GitDiffScope): void;
   onRefresh(): void;
   readDiff?: (sessionId: string, scope: GitDiffScope, path?: string) => Promise<SessionGitDiff>;
@@ -166,6 +168,16 @@ function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
+function MoreHorizontalIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <circle cx="5" cy="10" r="1.5" fill="currentColor" />
+      <circle cx="10" cy="10" r="1.5" fill="currentColor" />
+      <circle cx="15" cy="10" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function GitChangesPanel(props: GitChangesPanelProps) {
   const [lastTurn, setLastTurn] = useState(false);
   useEffect(() => {
@@ -180,6 +192,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     summary,
     loading,
     error,
+    expanded = false,
     onScopeChange,
     onRefresh,
     readDiff = defaultReadDiff,
@@ -391,45 +404,103 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   const stats = diffStats(effectiveSummary);
   const allFilesExpanded = selections.length > 0
     && selections.every((selection) => expandedKeys.has(selectionKey(selection)));
-  const compareRef = effectiveSummary?.compareRef
-    ?? (scope === "baseline" ? status?.baseRef ?? effectiveSummary?.baseCommit?.slice(0, 7) : "HEAD");
+  const fullScopeLabel = lastTurn
+    ? "最近一轮"
+    : scope === "baseline"
+      ? "整个任务"
+      : "未提交";
+  const currentScopeLabel = fullScopeLabel;
+
+  const scopeMenuItems: DropdownMenuItem[] = [
+    {
+      key: "head",
+      label: "未提交",
+      disabled: !lastTurn && scope === "head",
+      onClick: () => {
+        setLastTurn(false);
+        onScopeChange("head");
+      },
+    },
+    {
+      key: "lastTurn",
+      label: "最近一轮",
+      disabled: lastTurn,
+      onClick: () => setLastTurn(true),
+    },
+    {
+      key: "baseline",
+      label: "整个任务",
+      disabled: !lastTurn && scope === "baseline",
+      onClick: () => {
+        setLastTurn(false);
+        onScopeChange("baseline");
+      },
+    },
+  ];
+
+  const moreMenuItems: DropdownMenuItem[] = [
+    ...(onCreateBranch
+      ? [
+          {
+            key: "create-branch",
+            label: "创建分支...",
+            disabled: workflowDisabled || (status?.worktreeId === null && status?.dirty === true),
+            onClick: () => onCreateBranch(),
+          },
+        ]
+      : []),
+    ...(onSendReviewFeedback
+      ? [
+          {
+            key: "send-review-feedback",
+            label: "发送审阅意见",
+            disabled: commentLoading || reviewFeedbackDisabled,
+            onClick: () => void sendReviewFeedback(),
+          },
+        ]
+      : []),
+  ];
 
   return (
-    <section className="git-changes-panel" aria-label="Git Changes">
-      {status && (
-        <GitWorkflowControls
-          sessionId={sessionId}
-          workspaceRoot={workspaceRoot}
-          status={status}
-          disabled={workflowDisabled}
-          openRequest={workflowOpenRequest}
-          onRefresh={onRefresh}
-          onCreateBranch={onCreateBranch}
-        />
-      )}
-      <header className="git-changes-toolbar">
-        <div className="git-scope-tabs" role="tablist" aria-label="Diff 范围">
-          <button type="button" role="tab" aria-selected={lastTurn} className="git-scope-tab" onClick={() => setLastTurn(true)}>最近一轮</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={!lastTurn && scope === "head"}
-            className="git-scope-tab"
-            onClick={() => { setLastTurn(false); onScopeChange("head"); }}
-          >
-            未提交
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={!lastTurn && scope === "baseline"}
-            className="git-scope-tab"
-            onClick={() => { setLastTurn(false); onScopeChange("baseline"); }}
-          >
-            整个任务
-          </button>
+    <section className={`git-changes-panel${expanded ? " git-changes-panel--expanded" : ""}`} aria-label="Git Changes">
+      <header className="git-changes-toolbar" aria-label="审查工具栏">
+        <div className="git-changes-toolbar-left">
+          <DropdownMenu
+            className="git-scope-dropdown"
+            menuClassName="git-scope-dropdown-menu"
+            label="Diff 范围"
+            triggerAriaLabel="Diff 范围"
+            trigger={(
+              <span className="git-scope-dropdown-trigger" title={`切换变更范围: ${fullScopeLabel}`}>
+                <span className="git-scope-dropdown-label">{currentScopeLabel}</span>
+                <span className="dropdown-caret" aria-hidden="true">▾</span>
+              </span>
+            )}
+            items={scopeMenuItems}
+          />
+          {!lastTurn && (
+            <div className="git-review-stats" aria-label="变更统计">
+              <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
+              <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
+              {effectiveSummary?.statsIncomplete === true && (
+                <span className="git-review-incomplete">统计不完整</span>
+              )}
+            </div>
+          )}
         </div>
-        <div className="git-review-toolbar-actions">
+
+        <div className="git-changes-toolbar-right">
+          <DropdownMenu
+            className="git-more-dropdown"
+            label="更多操作"
+            triggerAriaLabel="更多操作"
+            trigger={(
+              <span className="git-icon-button git-more-trigger" title="更多操作">
+                <MoreHorizontalIcon />
+              </span>
+            )}
+            items={moreMenuItems}
+          />
           <Button
             variant="ghost"
             size="small"
@@ -463,7 +534,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           >
             <span className="sr-only">刷新 Git 变更</span>
           </Button>
-          {onSendReviewFeedback && (
+          {expanded && onSendReviewFeedback && (
             <Button
               variant="secondary"
               size="small"
@@ -474,28 +545,21 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
               发送审阅意见
             </Button>
           )}
+          {status && (
+            <GitWorkflowControls
+              sessionId={sessionId}
+              workspaceRoot={workspaceRoot}
+              status={status}
+              compact={true}
+              expanded={expanded}
+              disabled={workflowDisabled}
+              openRequest={workflowOpenRequest}
+              onRefresh={onRefresh}
+              onCreateBranch={onCreateBranch}
+            />
+          )}
         </div>
       </header>
-
-      {status && !lastTurn && (
-        <div className="git-review-summary" aria-label="Git 状态">
-          <div className="git-review-stats">
-            <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
-            <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
-            {effectiveSummary?.statsIncomplete === true && (
-              <span className="git-review-incomplete">统计不完整</span>
-            )}
-          </div>
-          <div
-            className="git-review-compare"
-            title={`${status.branch ?? "Detached HEAD"} → ${compareRef ?? "未设置基线"}`}
-          >
-            <span className="git-review-branch">{status.branch ?? "Detached HEAD"}</span>
-            <span aria-hidden="true">→</span>
-            <code>{compareRef ?? "未设置基线"}</code>
-          </div>
-        </div>
-      )}
       {(error || summaryError || localError) && (
         <p className="approval-error git-review-error" role="alert">
           {localError ?? summaryError ?? error}

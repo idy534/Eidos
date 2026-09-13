@@ -25,7 +25,7 @@ interface WorkspaceDockProps {
 
 const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
   "text-review": "文本审查",
-  review: "Git",
+  review: "审查",
   terminal: "终端",
   files: "文件",
   browser: "网页",
