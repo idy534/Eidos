@@ -13,6 +13,7 @@ from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.tools.contracts import _read_path, result_model
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
+from eidos_runtime.tools.workspace import canonical_tool_result
 from eidos_runtime.workspace.reader import (
     WorkspacePathError,
     WorkspaceReader,
@@ -97,12 +98,12 @@ class DeclareOutputsAdapter:
             return _error(error.code, "Outputs were not declared: " + error.code)
         except OSError:
             return _error("file_unavailable", "Outputs could not be inspected")
-        return {
+        return canonical_tool_result("declare_outputs", {
             "outcome": "success", "code": "ok",
             "summary": f"Declared {len(outputs)} output files. File existence is verified, not content quality.",
             "data": data.to_wire_dict(exclude_none=True),
             "sideEffectsMayExist": False, "reconciliationRequired": False,
-        }
+        }, data_model=DeclareOutputsResultData)
 
 
 def declare_outputs_entry(workspace: WorkspaceIdentity) -> ToolRegistryEntry:
@@ -142,7 +143,7 @@ def declare_outputs_entry(workspace: WorkspaceIdentity) -> ToolRegistryEntry:
 
 
 def _error(code: str, summary: str) -> dict[str, object]:
-    return {
+    return canonical_tool_result("declare_outputs", {
         "outcome": "error", "code": code, "summary": summary, "data": {},
         "sideEffectsMayExist": False, "reconciliationRequired": False,
-    }
+    }, data_model=DeclareOutputsResultData)

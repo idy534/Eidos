@@ -10,7 +10,7 @@
 - Desktop 可以选择 Workspace，读取 Runtime 提供的 Git context，并在 Session Composer 中选择 Local 或 Worktree execution。Git Worktree execution 可以选择 starting branch。Source dirty 且 starting branch 是 current branch 时，Desktop 默认勾选 `Include current changes`，但 Runtime 只接受显式的 `includeLocalChanges`。Non-Git Workspace 只启用 Local，Composer 不显示 execution mode 和 branch。Desktop 也可以创建不绑定 Project 的会话；这类会话默认使用 Local。
 - Desktop 可以列出、读取、重命名和删除 Session。Session 删除不会删除所属 Project。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
-- 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
+- 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
 - 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Projectless Session 提供 Files 和文件树，读取范围是当前 Session 的私有 Workspace。
 - Desktop 的“更改工作环境”弹窗使用中文展示“本地”和“新建本地工作树”。当前环境是本地时，用户也可以在弹窗中切换本地分支。切换到本地工作树时，Runtime 会创建或复用这个 Session 已关联的工作树；切换回本地时，Runtime 会安全迁移当前 Git 状态。整个过程不会创建新 Session。环境切换期间，Desktop 会禁用输入、创建分支、删除和 Session 导航；完成后只刷新当前 Session 的执行绑定和 Git 审阅状态。
 - Desktop 的 Review Dock 会按 Dock 自身宽度切换布局。窄 Dock 会把分支观察、Git 操作、Diff 范围和审阅操作分成稳定的行。分支与比较目标保持单行省略。空范围只显示一个可读空状态，不再显示零文件分组。
@@ -331,6 +331,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Projectless 文件提交从 Runtime 已核验的 Workspace 目录 fd 开始，helper 只向下进行 fd-relative 访问。当前 Session 的 Workspace 默认可新建、更新和删除普通文件，不开放整个 `.eidos` 或其他 Session 目录。新建提交只把目标已存在的错误归为版本冲突；其他系统错误保留失败分类，并记录不含路径和内容的阶段与 errno。
 
 ## 产物入口与预览（本轮代码，待真实 Desktop 验收）
+
+本次后续修复让 `declare_outputs` 的成功和失败结果都先经过标准结果封装，避免缺少 `toolName` 导致 `TOOL_RESULT_CONTRACT_VIOLATION`。本次只修改生产代码和文档，测试代码和验证等待用户确认；下述既有测试记录不代表本次修复已通过验证。
 
 本节描述当前代码。2026-09-13 的 `declare_outputs` 修订涉及 Runtime 和 Desktop。对应的 Renderer、Runtime、协议和 Main 测试已经补充，并已通过 `pnpm test:fast` 和 `pnpm test:full`。`large_repository` 独立规模测试和真实 Desktop 人工验收仍未进行。
 

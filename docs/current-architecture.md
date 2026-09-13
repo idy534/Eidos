@@ -547,6 +547,8 @@ Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复�
 
 产物身份由内置 `declare_outputs` 的成功 ToolResult 提供。`RunResources` 将该工具作为 direct、single-batch 的内置工具注册；系统级 Agent 指令要求模型在交付最终文件前调用，Skill 不负责定义工具的适用范围。工具使用现有 Pydantic 工具 Schema 和通用结果投影。其 Adapter 使用 Run 固定的 WorkspaceIdentity，通过 WorkspaceReader 的 fd-relative 边界核验普通文件元数据，并复查整个批次。文件读取采用非阻塞打开，特殊文件不会在类型检查前阻塞；符号链接、多硬链接、文件 owner 不匹配、敏感路径和 `.git` 路径不能声明。该工具不读取文件内容，也不改变文件；声明只存在于控制器正常提交的 ToolResult 中，所以它沿用只读工具执行链、取消和结果提交语义，不增加独立持久化动作或 Durable Intent。现有控制器继续承担结果校验、敏感信息扫描以及 ToolResult/Event/Outbox 的同事务提交。
 
+Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装，并显式使用 `DeclareOutputsResultData`。结果在进入控制器的首次严格校验前就带有 `toolName` 和契约版本字段。失败结果保留原始错误码，控制器不放宽结果校验。本次结果封装修复尚未进入测试阶段。
+
 声明结果包含 executionRoot、outputs（path、可选 title、sizeBytes、version）。version 沿用文件身份、大小和修改时间生成的版本标识，不是内容快照或质量证明。输入每批最多 20 项，路径沿用 512 UTF-8 字节上限，标题最多 120 个字符。任一核验失败时，整个调用没有成功声明；后续成功调用按文件新增或更新，省略其他文件不撤销其声明。Renderer 只接收 builtin/eidos.declare-outputs 的成功结果；Shell 观察、Diff、文件后缀和回复标记不产生交付事实。工具结果仍通过现有 resultJson 传递，不修改 RPC Envelope 或 SQLite Schema。
 
 修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览和 Main 的受控系统应用打开入口；DOCX 没有内置预览时只展示系统应用打开。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。

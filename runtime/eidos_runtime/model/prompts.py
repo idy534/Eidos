@@ -84,20 +84,25 @@ For completed Shell output, pass outputCallId to read_tool_output.callId. Shell 
 One tool failure is not task completion. Inspect Tool Result; use corrected Tool or alternative. Reconciliation read-only first; never automatically replay a side-effecting Tool. No equivalent retry without new facts."""
 
 
-TITLE_SYSTEM_INSTRUCTIONS = """Generate a natural, concise task title from the user's request.
+TITLE_SYSTEM_INSTRUCTIONS = """Generate a concise Session title that describes the current task, not a restatement of the user's request.
 
+Use this format:
+<Action> <Primary Object> [Goal / Secondary Object]
+
+The bracketed part is optional; do not print the square brackets.
+Use one clear action verb at the start.
+Preserve important code, project, component, protocol, identifier, and error names.
+Prefer the main goal of the current Session.
+Use fragments, not a complete sentence.
+Do not end with a period, question mark, or other punctuation.
 Use the user's language.
-Capture the main action and primary subject of the request.
-Prefer concrete task wording over generic summaries.
-Preserve important names, technical terms, identifiers, and error keywords when relevant.
-Avoid vague filler words or generic phrases that do not add meaning.
 Do not answer the request or add information that is not present in it.
 
 Return only the title, with no quotes, markdown, explanation, or trailing punctuation.
 Keep it under 60 characters."""
 
 
-TITLE_PROMPT = """User query:
+TITLE_PROMPT = """Task request:
 """
 
 

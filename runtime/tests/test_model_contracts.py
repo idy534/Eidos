@@ -105,8 +105,15 @@ class ModelContractTests(unittest.TestCase):
             BASE_AGENT_INSTRUCTIONS,
         )
         self.assertIn("instead of repeating the rejected request", RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertIn("natural, concise task title", TITLE_SYSTEM_INSTRUCTIONS)
-        self.assertIn("User query", TITLE_PROMPT)
+        self.assertIn(
+            "describes the current task, not a restatement",
+            TITLE_SYSTEM_INSTRUCTIONS,
+        )
+        self.assertIn(
+            "<Action> <Primary Object> [Goal / Secondary Object]",
+            TITLE_SYSTEM_INSTRUCTIONS,
+        )
+        self.assertIn("Task request", TITLE_PROMPT)
 
     def test_runtime_policy_requires_goal_driven_tool_failure_recovery(self) -> None:
         policy = " ".join(RUNTIME_POLICY_INSTRUCTIONS.lower().split())
