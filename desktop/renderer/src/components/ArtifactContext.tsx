@@ -5,7 +5,7 @@ export interface ArtifactActions {
   executionRoot: string;
   openFile(path: string): void;
   openBrowser(url: string): void;
-  openExternal?: ((path: string) => void) | undefined;
+  openExternal?: ((path: string) => void | Promise<void>) | undefined;
   openReview?: ((request: { runId: string; path?: string; itemId?: string }) => void) | undefined;
 }
 const Context = createContext<ArtifactActions | undefined>(undefined);
@@ -13,17 +13,17 @@ export const ArtifactProvider = Context.Provider;
 export const useArtifacts = () => useContext(Context);
 
 /** Resolve links against the displayed document; Runtime performs the authoritative read. */
-export function artifactPath(href: string, root: string, documentPath?: string): string | undefined {
+export function artifactPath(href: string, root: string, documentPath?: string, literal = false): string | undefined {
   try {
-    if (!href || href.startsWith("#")) return undefined;
-    let value = href.startsWith("file://") ? href : decodeURIComponent(href);
-    if (/^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith("file://")) return undefined;
-    if (value.startsWith("file://")) {
+    if (!href || (!literal && href.startsWith("#"))) return undefined;
+    let value = literal || href.startsWith("file://") ? href : decodeURIComponent(href);
+    if (!literal && /^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith("file://")) return undefined;
+    if (!literal && value.startsWith("file://")) {
       const url = new URL(value);
       if (url.hostname) return undefined;
       value = decodeURIComponent(url.pathname);
     }
-    value = value.replace(/#.*$/, "").replace(/:\d+(?::\d+)?$/, "");
+    if (!literal) value = value.replace(/#.*$/, "").replace(/:\d+(?::\d+)?$/, "");
     if (value.startsWith("/")) {
       if (!value.startsWith(root.replace(/\/$/, "") + "/")) return undefined;
       value = value.slice(root.replace(/\/$/, "").length + 1);
@@ -46,7 +46,8 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
       if (event.method === "workspace/changed" && event.params.sessionId === actions.sessionId && event.params.paths.some((changed) => changed === path || path.startsWith(changed + "/"))) setRevision((value) => value + 1);
     });
   }, [actions?.sessionId, path, version]);
-  const [state, setState] = useState<{ url?: string; error?: string }>({});
+  const key = JSON.stringify([actions?.sessionId, actions?.executionRoot, path, version, revision]);
+  const [state, setState] = useState<{ key?: string; url?: string; error?: string }>({});
   useEffect(() => {
     let current = true;
     let created: string | undefined;
@@ -54,17 +55,17 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
     if (!actions || !path || typeof window.eidosRuntime?.prepareWorkspacePreview !== "function") return;
     void window.eidosRuntime.prepareWorkspacePreview(actions.sessionId, path, version).then((url) => {
       created = url;
-      if (current) setState({ url });
+      if (current) setState({ key, url });
       else if (typeof window.eidosRuntime?.releaseWorkspacePreview === "function") void window.eidosRuntime.releaseWorkspacePreview(url).catch(() => {});
-    }).catch(() => { if (current) setState({ error: "预览不可用，请刷新文件。" }); });
+    }).catch(() => { if (current) setState({ key, error: "预览不可用，请重新打开文件。" }); });
     return () => {
       current = false;
       if (created && typeof window.eidosRuntime?.releaseWorkspacePreview === "function") {
         void window.eidosRuntime.releaseWorkspacePreview(created).catch(() => {});
       }
     };
-  }, [actions?.sessionId, actions?.executionRoot, path, version, revision]);
-  return state;
+  }, [actions?.sessionId, actions?.executionRoot, path, version, revision, key]);
+  return state.key === key ? state : {};
 }
 
 export function ArtifactImage({ path, alt, version }: { path: string; alt: string; version?: string }) {

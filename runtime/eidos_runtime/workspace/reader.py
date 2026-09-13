@@ -64,7 +64,7 @@ _MARKDOWN_SUFFIXES = frozenset({".md", ".markdown", ".mdx"})
 _UNSUPPORTED_SUFFIXES = frozenset({
     ".7z", ".a", ".archive", ".db", ".dmg", ".doc", ".docx", ".gz",
     ".jar", ".pdf", ".rar", ".sqlite", ".sqlite3", ".tar", ".tgz",
-    ".xls", ".xlsx", ".zip",
+    ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".odp", ".ods", ".odt", ".zip",
 })
 _CODE_LANGUAGES = {
     ".bash": "bash", ".c": "c", ".cc": "cpp", ".cpp": "cpp",
@@ -238,6 +238,22 @@ class WorkspaceReader:
         finally:
             os.close(descriptor)
 
+    def stat_file(
+        self, path: str, *, cancel: threading.Event | None = None,
+    ) -> os.stat_result:
+        """Inspect an existing regular file without reading or exposing its contents."""
+        if cancel is not None and cancel.is_set():
+            raise WorkspacePathError("canceled")
+        _, metadata, _, _ = self.read_file_bytes(path, limit=0, allow_truncation=True, cancel=cancel)
+        if metadata.st_uid != self.workspace.owner:
+            raise WorkspacePathError("workspace_boundary_violation")
+        named_root = os.stat(self.workspace.path, follow_symlinks=False)
+        if (named_root.st_dev, named_root.st_ino, named_root.st_uid) != (
+            self.workspace.device, self.workspace.inode, self.workspace.owner,
+        ):
+            raise WorkspacePathError("workspace_identity_changed")
+        return metadata
+
     def read_preview(self, path: str) -> WorkspaceFilePreview:
         content_bytes, metadata, normalized, truncated = self.read_file_bytes(
             path,
@@ -255,7 +271,7 @@ class WorkspaceReader:
         if suffix in _UNSUPPORTED_SUFFIXES:
             return WorkspaceFilePreview(
                 path=normalized, kind="unavailable", size_bytes=metadata.st_size,
-                truncated=truncated, reason="unsupported",
+                truncated=truncated, reason="unsupported", version=version,
             )
         try:
             content = content_bytes.decode("utf-8-sig", errors="strict")
@@ -265,7 +281,7 @@ class WorkspaceReader:
             else:
                 return WorkspaceFilePreview(
                     path=normalized, kind="unavailable", size_bytes=metadata.st_size,
-                    truncated=False, reason="binary",
+                    truncated=False, reason="binary", version=version,
                 )
         if any(
             character not in {"\n", "\r", "\t"}
@@ -274,7 +290,7 @@ class WorkspaceReader:
         ):
             return WorkspaceFilePreview(
                 path=normalized, kind="unavailable", size_bytes=metadata.st_size,
-                truncated=truncated, reason="binary",
+                truncated=truncated, reason="binary", version=version,
             )
         if suffix in _MARKDOWN_SUFFIXES:
             kind: Literal["text", "markdown", "code", "html"] = "markdown"
@@ -396,7 +412,8 @@ class WorkspaceReader:
 
     @staticmethod
     def _open_file(parent_fd: int, name: str) -> int:
-        flags = os.O_RDONLY
+        # Do not block on a FIFO before the regular-file check can reject it.
+        flags = os.O_RDONLY | os.O_NONBLOCK
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:

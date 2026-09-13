@@ -17,6 +17,13 @@ export function toolFilePaths(call: ToolCall): string[] {
       const values: unknown = Reflect.get(data, key);
       if (Array.isArray(values)) for (const path of values) if (typeof path === "string") paths.add(path);
     }
+    if (call.toolName === "declare_outputs" && data && typeof data === "object") {
+      const outputs: unknown = Reflect.get(data, "outputs");
+      if (Array.isArray(outputs)) for (const output of outputs.slice(0, 20)) {
+        const path: unknown = output && typeof output === "object" ? Reflect.get(output, "path") : undefined;
+        if (typeof path === "string") paths.add(path);
+      }
+    }
   } catch { /* Missing or malformed results do not create file references. */ }
   return [...paths];
 }

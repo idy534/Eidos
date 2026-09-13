@@ -1070,6 +1070,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
     write_file: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
+    declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
   };
   return labels[toolCall.toolName] ?? `${running ? "正在运行" : "已运行"} ${toolCall.toolName}`;
 }

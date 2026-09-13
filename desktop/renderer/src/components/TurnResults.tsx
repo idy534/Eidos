@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff } from "react-diff-view";
 import { createPortal } from "react-dom";
 import type { Item, Run } from "../contracts.js";
@@ -8,7 +8,7 @@ import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 
 type ChangeState = "committed" | "partial" | "planned";
-type ArtifactKind = "docx" | "pdf" | "image" | "html";
+type ArtifactKind = "docx" | "pdf" | "image" | "html" | "file";
 
 export interface TurnTextChange {
   cumulative?: boolean;
@@ -27,6 +27,10 @@ export interface TurnArtifact {
   kind: ArtifactKind;
   runId: string;
   itemId: string;
+  executionRoot: string;
+  version: string;
+  sizeBytes: number;
+  title?: string;
 }
 
 export interface TurnResultProjection {
@@ -45,13 +49,8 @@ interface ParsedFileChange {
   deleted: boolean;
 }
 
-interface ArtifactEvent {
-  path: string;
-  kind: ArtifactKind;
-  deleted: boolean;
-}
-
-const ARTIFACT_EXTENSIONS: Record<string, ArtifactKind> = {
+// Format chooses presentation, never whether a file is a deliverable.
+const PREVIEW_EXTENSIONS: Record<string, ArtifactKind> = {
   doc: "docx",
   docx: "docx",
   pdf: "pdf",
@@ -91,7 +90,7 @@ function fileName(path: string): string {
 
 function artifactKind(path: string): ArtifactKind | undefined {
   const extension = path.toLowerCase().split(".").at(-1) || "";
-  return ARTIFACT_EXTENSIONS[extension];
+  return PREVIEW_EXTENSIONS[extension];
 }
 
 function normalizedPath(path: string): string {
@@ -171,37 +170,41 @@ function changeState(item: Item): ChangeState {
   return "partial";
 }
 
-function itemArtifactEvents(item: Item): ArtifactEvent[] {
+function itemDeclaredOutputs(item: Item): TurnArtifact[] {
   const call = item.toolCall;
-  if (!call) return [];
+  if (call?.toolName !== "declare_outputs"
+    || call.provenance?.kind !== "builtin"
+    || call.provenance.sourceId !== "eidos.declare-outputs"
+    || item.status !== "completed" || call.status !== "completed") return [];
   const result = parseObject(call.resultJson);
+  if (result.outcome !== "success" || result.code !== "ok" || result.reconciliationRequired === true) return [];
   const data = objectField(result, "data");
-  const events = new Map<string, ArtifactEvent>();
-  const add = (path: string, deleted = false): void => {
-    const normalized = normalizedPath(path);
-    const kind = artifactKind(normalized);
-    if (!kind) return;
-    events.set(normalized, { path: normalized, kind, deleted });
-  };
-  for (const path of stringArray(objectField(data, "created"))) add(path);
-  for (const path of stringArray(objectField(data, "modified"))) add(path);
-  for (const path of stringArray(objectField(data, "deleted"))) add(path, true);
-  const changes = objectField(data, "changes");
-  if (Array.isArray(changes)) {
-    for (const change of changes) {
-      if (!change || typeof change !== "object") continue;
-      const path = typeof Reflect.get(change, "newPath") === "string"
-        ? Reflect.get(change, "newPath") as string
-        : typeof Reflect.get(change, "path") === "string"
-          ? Reflect.get(change, "path") as string
-          : undefined;
-      if (path) add(path, Reflect.get(change, "kind") === "delete");
-    }
+  const executionRoot = objectField(data, "executionRoot");
+  const outputs = objectField(data, "outputs");
+  if (typeof executionRoot !== "string" || !executionRoot.startsWith("/")
+    || !Array.isArray(outputs) || !outputs.length || outputs.length > 20) return [];
+  const artifacts: TurnArtifact[] = [];
+  for (const output of outputs) {
+    const path = objectField(output, "path");
+    const version = objectField(output, "version");
+    const sizeBytes = objectField(output, "sizeBytes");
+    const title = objectField(output, "title");
+    if (typeof path !== "string" || !path || /[\x00-\x1f\x7f\\]/.test(path)
+      || path.split("/").some((part) => !part || part === "." || part === "..")
+      || typeof version !== "string" || !/^[a-f0-9]{64}$/.test(version)
+      || typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0
+      || (title !== undefined && (typeof title !== "string" || !title.trim() || Array.from(title).length > 120))) return [];
+    artifacts.push({
+      path, kind: artifactKind(path) ?? "file", executionRoot, version, sizeBytes,
+      runId: item.runId, itemId: item.id,
+      ...(typeof title === "string" ? { title } : {}),
+    });
   }
-  for (const change of parsedDiffChanges(call.changeDiff ?? "")) {
-    if (artifactKind(change.path)) add(change.path, change.deleted || call.toolName === "delete_file");
-  }
-  return [...events.values()];
+  return artifacts;
+}
+
+function artifactKey(artifact: TurnArtifact): string {
+  return JSON.stringify([artifact.executionRoot, artifact.path]);
 }
 
 export function projectTurnResults(items: Item[], runId: string): TurnResultProjection {
@@ -238,12 +241,8 @@ export function projectTurnResults(items: Item[], runId: string): TurnResultProj
         });
       }
     }
-    for (const event of itemArtifactEvents(item)) {
-      if (event.deleted) {
-        artifacts.delete(event.path);
-      } else {
-        artifacts.set(event.path, { ...event, runId, itemId: item.id });
-      }
+    for (const artifact of itemDeclaredOutputs(item)) {
+      artifacts.set(artifactKey(artifact), artifact);
     }
   }
 
@@ -262,14 +261,13 @@ export function projectTurnResults(items: Item[], runId: string): TurnResultProj
 }
 
 export function collectOutputArtifacts(items: Item[]): TurnArtifact[] {
-  const latest = new Map<string, TurnArtifact | undefined>();
+  const latest = new Map<string, TurnArtifact>();
   for (const item of items) {
-    for (const event of itemArtifactEvents(item)) {
-      if (event.deleted) latest.set(event.path, undefined);
-      else latest.set(event.path, { ...event, runId: item.runId, itemId: item.id });
+    for (const artifact of itemDeclaredOutputs(item)) {
+      latest.set(artifactKey(artifact), artifact);
     }
   }
-  return [...latest.values()].filter((artifact): artifact is TurnArtifact => Boolean(artifact));
+  return [...latest.values()];
 }
 
 export function useCompleteSessionItems(
@@ -322,58 +320,25 @@ export function useCompleteSessionItems(
 
 function ArtifactLabel({ artifact }: { artifact: TurnArtifact }): string {
   switch (artifact.kind) {
-    case "docx": return "文档 · DOCX";
+    case "docx": return `文档 · ${artifact.path.toLowerCase().endsWith(".doc") ? "DOC" : "DOCX"}`;
     case "pdf": return "文档 · PDF";
     case "image": return "图片";
     case "html": return "网页 · HTML";
+    case "file": return `文件${fileName(artifact.path).includes(".") ? ` · ${artifact.path.split(".").at(-1)?.toUpperCase()}` : ""}`;
   }
-}
-
-function htmlTitle(content: string | undefined): string | undefined {
-  if (!content) return undefined;
-  try {
-    return new DOMParser().parseFromString(content, "text/html").title.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function useHtmlArtifactTitle(artifact: TurnArtifact): string | undefined {
-  const actions = useArtifacts();
-  const [title, setTitle] = useState<string>();
-
-  useEffect(() => {
-    let active = true;
-    setTitle(undefined);
-    if (
-      artifact.kind !== "html"
-      || !actions
-      || typeof window.eidosRuntime?.readWorkspaceFilePreview !== "function"
-    ) return () => { active = false; };
-
-    void window.eidosRuntime.readWorkspaceFilePreview(actions.sessionId, artifact.path)
-      .then((preview) => {
-        if (active) setTitle(htmlTitle(preview.content) || "未命名网页");
-      })
-      .catch(() => {
-        if (active) setTitle("未命名网页");
-      });
-    return () => { active = false; };
-  }, [actions?.sessionId, artifact.kind, artifact.itemId, artifact.path]);
-
-  return title;
 }
 
 function artifactOpenItems(
   artifact: TurnArtifact,
   actions: ReturnType<typeof useArtifacts>,
   openBuiltInPreview: () => void,
+  openExternal: () => void,
 ): DropdownMenuItem[] {
   const items: DropdownMenuItem[] = [];
   if (artifact.kind !== "docx" && actions?.openFile) {
     items.push({
       key: "preview",
-      label: "内置预览",
+      label: artifact.kind === "file" ? "打开文件" : "内置预览",
       onClick: openBuiltInPreview,
     });
   }
@@ -381,7 +346,7 @@ function artifactOpenItems(
     items.push({
       key: "external",
       label: "系统应用打开",
-      onClick: () => actions.openExternal?.(artifact.path),
+      onClick: openExternal,
     });
   }
   return items;
@@ -389,25 +354,40 @@ function artifactOpenItems(
 
 function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; compact?: boolean }) {
   const actions = useArtifacts();
-  const title = useHtmlArtifactTitle(artifact);
-  const displayName = artifact.kind === "html" ? (title || "正在读取页面标题…") : fileName(artifact.path);
+  const displayName = artifact.title || fileName(artifact.path);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState<string>();
+  const [versionNote, setVersionNote] = useState<string>();
+  const [previewVersion, setPreviewVersion] = useState<string>();
+  const openSequence = useRef(0);
+  const wrongWorkspace = Boolean(actions && artifact.executionRoot !== actions.executionRoot);
   const [imageOpen, setImageOpen] = useState(false);
   const [htmlOpenPending, setHtmlOpenPending] = useState(false);
   const [htmlOpenHandled, setHtmlOpenHandled] = useState(false);
-  const previewPath = (artifact.kind === "image" && imageOpen) || (artifact.kind === "html" && htmlOpenPending)
+  const previewPath = !wrongWorkspace && (imageOpen || htmlOpenPending)
     ? artifact.path
     : undefined;
-  const { url: previewUrl, error: previewError } = usePreviewUrl(previewPath);
+  const { url: previewUrl, error: previewError } = usePreviewUrl(previewPath, previewVersion);
 
   useEffect(() => {
-    if (!htmlOpenPending || htmlOpenHandled || artifact.kind !== "html" || !actions) return;
+    setOpening(false);
+    setOpenError(undefined);
+    setVersionNote(undefined);
+    setImageOpen(false);
+    setHtmlOpenPending(false);
+    return () => { openSequence.current += 1; };
+  }, [actions?.sessionId, actions?.executionRoot, artifact.itemId, artifact.version]);
+
+  useEffect(() => {
+    if (!htmlOpenPending || htmlOpenHandled || wrongWorkspace || !actions) return;
     if (previewUrl) {
       setHtmlOpenHandled(true);
       actions.openBrowser(previewUrl);
     } else if (previewError) {
+      setOpenError(previewError);
       setHtmlOpenPending(false);
     }
-  }, [actions, artifact.kind, htmlOpenPending, previewError, previewUrl]);
+  }, [actions, htmlOpenHandled, htmlOpenPending, previewError, previewUrl, wrongWorkspace]);
 
   useEffect(() => {
     if (!imageOpen) return;
@@ -418,32 +398,49 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [imageOpen]);
 
-  const openBuiltInPreview = () => {
-    if (artifact.kind === "image") {
-      setImageOpen(true);
-    } else if (artifact.kind === "html") {
-      setHtmlOpenHandled(false);
-      setHtmlOpenPending(true);
-    } else {
-      actions?.openFile(artifact.path);
+  const open = async (external = false) => {
+    if (!actions || wrongWorkspace || opening) return;
+    const sequence = ++openSequence.current;
+    setOpening(true);
+    setOpenError(undefined);
+    setHtmlOpenPending(false);
+    try {
+      const preview = await window.eidosRuntime.readWorkspaceFilePreview(actions.sessionId, artifact.path);
+      if (sequence !== openSequence.current) return;
+      setVersionNote(preview.version && preview.version !== artifact.version
+        ? "文件已在声明后变化，打开的是当前版本。" : undefined);
+      setPreviewVersion(preview.version);
+      if (external || preview.kind === "unavailable") {
+        if (!actions.openExternal) throw new Error("当前没有系统应用打开入口。");
+        await actions.openExternal(artifact.path);
+      } else if (preview.kind === "image") {
+        setImageOpen(true);
+      } else if (preview.kind === "html") {
+        setHtmlOpenHandled(false);
+        setHtmlOpenPending(true);
+      } else {
+        actions.openFile(artifact.path);
+      }
+    } catch (error) {
+      if (sequence === openSequence.current) setOpenError(
+        `无法打开文件。${error instanceof Error ? error.message : "文件可能已删除或无法访问。"}`,
+      );
+    } finally {
+      if (sequence === openSequence.current) setOpening(false);
     }
   };
-  const openItems = artifactOpenItems(artifact, actions, openBuiltInPreview);
-  const open = () => {
-    if (artifact.kind === "docx") actions?.openExternal?.(artifact.path);
-    else openBuiltInPreview();
-  };
+  const openItems = artifactOpenItems(artifact, actions, () => { void open(); }, () => { void open(true); });
   return (
     <>
       <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>
-        <button type="button" className="artifact-result-card__main" onClick={open} title={`打开 ${displayName}`} aria-label={`打开 ${displayName}`}>
+        <button type="button" className="artifact-result-card__main" disabled={!actions || wrongWorkspace || opening} onClick={() => { void open(); }} title={artifact.path} aria-label={`打开 ${displayName}`}>
           <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
           <span className="artifact-result-card__copy">
             <strong>{displayName}</strong>
-            <small>{ArtifactLabel({ artifact })}</small>
+            <small>{ArtifactLabel({ artifact })}{artifact.title ? ` · ${fileName(artifact.path)}` : ""}</small>
           </span>
         </button>
-        {!compact && openItems.length > 0 && (
+        {!compact && !wrongWorkspace && !opening && openItems.length > 0 && (
           <DropdownMenu
             trigger="打开方式"
             label={`${fileName(artifact.path)} 的打开方式`}
@@ -452,6 +449,9 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
           />
         )}
       </article>
+      {(wrongWorkspace || openError || versionNote) && <p className="turn-result-card__note" role={openError ? "alert" : "status"}>
+        {wrongWorkspace ? "此产物属于其他执行目录，当前工作区无法打开。" : openError || versionNote}
+      </p>}
       {imageOpen && typeof document !== "undefined" && createPortal(
         <div
           className="artifact-image-preview"
@@ -548,7 +548,7 @@ export function TurnResults({ run, items, showTextChanges = true }: { run: Run; 
   if (!projection.artifacts.length && (!showTextChanges || !projection.textChanges.length)) return null;
   return (
     <section className="turn-results" aria-label="本轮结果">
-      {projection.artifacts.map((artifact) => <ArtifactCard artifact={artifact} key={artifact.path} />)}
+      {projection.artifacts.map((artifact) => <ArtifactCard artifact={artifact} key={artifactKey(artifact)} />)}
       {showTextChanges && projection.textChanges.length > 0 && <TextChangeCard projection={projection} />}
     </section>
   );
@@ -565,8 +565,8 @@ export function OutputContent({ artifacts, loading = false, error }: {
       {loading && <p className="environment-output__status" role="status">正在读取更早的输出…</p>}
       {error && <p className="environment-output__status" role="alert">更早的输出暂时无法读取：{error}</p>}
       {artifacts.length > 0
-        ? <div className="environment-output__list">{artifacts.map((artifact) => <ArtifactCard artifact={artifact} compact key={artifact.path} />)}</div>
-        : <p className="environment-output__empty">当前会话还没有可打开的输出产物。</p>}
+        ? <div className="environment-output__list">{artifacts.map((artifact) => <ArtifactCard artifact={artifact} compact key={artifactKey(artifact)} />)}</div>
+        : <p className="environment-output__empty">当前会话还没有已声明的输出产物。</p>}
     </section>
   );
 }

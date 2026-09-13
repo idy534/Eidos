@@ -800,18 +800,18 @@ export function AppShell({ runtime }: AppShellProps) {
     setReviewRequest({ ...request, requestId: ++fileOpenSequenceRef.current });
   }
 
-  function handleOpenExternal(path: string): void {
+  async function handleOpenExternal(path: string): Promise<void> {
     if (!currentSnapshot) return;
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
-    const resolved = artifactPath(path, root);
-    if (!resolved) return;
-    void window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved).catch(() => undefined);
+    const resolved = artifactPath(path, root, undefined, true);
+    if (!resolved) throw new Error("文件不在当前工作区内。");
+    await window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved);
   }
 
   function handleOpenFileInDock(path: string): void {
     if (!currentSnapshot) return;
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
-    const resolved = artifactPath(path, root);
+    const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) return;
     openTool("files");
     setExplorerOpenRequest({ path: resolved, requestId: ++fileOpenSequenceRef.current });

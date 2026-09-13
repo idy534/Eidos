@@ -95,7 +95,7 @@
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
 - Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。预览区保留打开文件的 Tab，不额外显示当前路径、文件大小或手动刷新入口。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。图片和 PDF 使用有界资源预览，HTML 可以在隔离网页面板中运行或查看源码；其他二进制、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
-- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口展示当前执行方式、分支、对比分支、增删行数和当前会话的输出产物。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。HTML 产物卡展示当前文件的 `<title>`，不展示文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
+- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口展示当前执行方式、分支、对比分支、增删行数和当前会话的输出产物。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。产物卡只展示成功的内置交付声明，标题使用声明标题或真实文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
 - Desktop Review 使用 baseline `changedFiles` 和 `session/gitStatus` 建立文件手风琴。它包含已提交和未提交的任务改动。Renderer 在文件展开时才请求 `session/gitDiff(path)`，并用 `react-diff-view` 显示 native Git patch。Review 支持展开全部差异和折叠全部差异。Stage、Unstage 和 Discard 分别调用现有 typed API。Open in Editor 只把相对路径交给 Main，Main 会按当前 Session execution root 重新验证真实路径。
 - Review 支持在 Diff gutter 上创建行级 Review Comment。Comment 绑定 Session、path、scope、old/new side、line、观察到的 HEAD 和 Diff hash。Diff 变化后，Runtime 会把无法精确证明仍有效的 Comment 标成 stale。用户点击 Send Review Feedback 后，Desktop 只把 active Comment 格式化成普通用户输入，并复用现有 Run 启动链路。创建 Comment 本身不会启动 Agent。
 - Review 的提交弹层展示 branch、upstream 和 ahead/behind。它可以先 Stage 未暂存文件，再执行 Commit，也可以顺序执行 Commit 和 Push。弹层继续提供 Fetch、fast-forward-only Pull、Push、Merge、Rebase 和对应 abort/continue。每个操作复用现有 typed Runtime API 和 `operationId` 语义。Detached managed Worktree 可以继续使用 Create Branch Here。Advanced Git target 只来自 typed local branch observation。
@@ -332,12 +332,16 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## 产物入口与预览（本轮代码，待真实 Desktop 验收）
 
-本节描述本轮代码修订。Renderer 定向测试、Desktop 门槛、构建、原生 Seatbelt 和 Electron smoke 已通过。Runtime 完整测试沿用前一阶段结果，本轮没有修改 Runtime。真实桌面操作验收仍需单独进行。
+本节描述当前代码。2026-09-13 的 `declare_outputs` 修订涉及 Runtime 和 Desktop；按用户要求，本次未编写或修改测试，也未运行测试、类型检查、lint、构建或 Desktop 验收。以前的验证结果不覆盖此次修订。
 
 - 本轮结果卡只在 Run 进入终态且当前回答不再生成后显示，位置在最终答复之后。运行中、等待审批和收尾阶段不显示；失败或取消且没有最终答复时，系统仍展示已经产生的结果。本次展示时机修订尚未运行测试。文本修改卡从 Session 快照中的 Run、Item 和持久化 ToolCall 投影，支持单文件紧凑卡、多文件折叠列表、删除记录、失败状态和对应 Run/文件的 Review 入口。卡片不把整个仓库当前差异当成本轮修改。
-- 文本修改的路径会按本轮合并。重复修改同一路径时不会简单累加补丁行数；没有可靠合并 Diff 时会显示“行数未完整统计”。Shell 只有路径观察而没有可靠 Diff 时不会生成虚假的行数。
-- DOCX、PDF、图片和 HTML 产物显示独立文件卡。HTML 可以同时出现在产物卡和文本修改卡中。DOCX 只提供受控的系统应用打开入口，PDF、图片和 HTML 使用已有 Workspace 预览或隔离网页预览。
-- 环境信息浮层提供“输出内容”。它跨当前 Session 分页读取历史 Item，按路径合并并保留最新记录。删除的文件不会进入输出列表。Projectless Session 也提供这个入口。Files 只保留文件树和预览，不再显示结果文件列表。
+- 文本修改按本轮路径归组。重复修改且各次补丁完整时，卡片显示累计增删；该统计包含重复编辑，不代表最终净差异。缺少补丁时，系统显示“行数未完整统计”。Shell 只有路径观察而没有可靠 Diff 时不会生成虚假的行数。
+- 内置工具 `declare_outputs` 始终随 Run 注册，系统提示要求模型在交付文件前调用，不依赖系统或第三方 Skill。每次接收 1–20 个 `outputs`，每项包含 `path` 和可选 `title`。路径允许 Workspace 相对路径或当前 Run Workspace 内的绝对路径。工具只核验普通文件的路径、身份、大小和版本，不读取文件内容、不写文件，也不证明作者、内容质量或测试通过。
+- Runtime 对整个声明批次核验后，通过现有 ToolResult、Item 和 Event/Outbox 事务保存结果，不新建产物表。同一批次有任一文件失败时，该批次不声明任何产物；同一路径重复出现时采用最后一项标题。每次调用只新增或更新指定文件，省略的文件保持原记录，文件修改后需要再次声明。
+- 产物卡只读取内置 `declare_outputs` 的成功结果。后缀、Shell 文件变化、普通 Markdown 链接和 `purpose="output"` 文本均不再自动产生卡片。系统对明确交付的任意文件格式提供卡片，PPTX、XLSX、ZIP 和 Markdown 不受原后缀白名单限制。声明过的 HTML 或 Markdown 有文本修改证据时仍可同时进入文本卡。
+- 用户点击卡片时，系统通过已有受控文件预览读取当前文件信息。图片使用全屏预览，HTML 使用隔离网页，PDF、文本和 Markdown 进入 Files；不支持内置预览的文件使用受控系统应用打开。卡片标题使用声明标题或文件名，不再读取当前 HTML 的 `<title>`。系统显示打开失败或版本变化提示；声明文件所属执行目录与当前目录不同时，卡片禁止打开，避免读取另一个同名文件。
+- 环境信息浮层提供“输出内容”。它跨当前 Session 分页读取声明，按执行目录和相对路径保留最新声明。已声明文件的删除不抹除历史交付记录；用户打开已删除文件时会收到失败提示。Run 后续失败或取消不会移除此前已经成功提交的声明。Projectless Session 同样支持声明和输出入口。Files 继续提供文件树和预览。
+- 旧会话没有交付声明时，不再凭后缀生成历史产物卡；原始工具记录、回复链接和 Files 入口保留。系统不会补造旧交付事实。
 - 历史修改卡打开记录中的 Run 和文件 Diff；产物卡打开当前 Workspace 文件，文件版本变化由已有预览版本和刷新提示处理。当前没有足够证据时，“撤销”按钮显示不可用原因，不调用当前整文件 Discard。
 - 最终回复中的 Workspace 文件链接、工具卡片中的文件名和 Files 中的文件共用文件打开入口，不建立第二套执行状态。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
