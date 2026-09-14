@@ -293,6 +293,11 @@ button.environment-popover__row:hover:not(:disabled) {
   grid-column: 1;
 }
 
+.workbench--sidebar-collapsed .workspace-dock--expanded .workspace-dock__header,
+.workbench--sidebar-collapsed .workspace-body--expanded .workspace-dock__header {
+  padding-left: calc(86px + 8rem);
+}
+
 .workspace-dock__header {
   flex: none;
   height: 2.75rem;

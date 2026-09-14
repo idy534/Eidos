@@ -70,5 +70,6 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.workspace-body--session-centered,\s*\.workbench--sidebar-collapsed\s*\.workspace-body--session-centered\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
     expect(styles).toMatch(/\.workspace-header--empty\s*\{[^}]*position:\s*absolute;[^}]*-webkit-app-region:\s*drag;/s);
     expect(styles).toMatch(/\.settings-page-header\s*\{[^}]*-webkit-app-region:\s*drag;/s);
+    expect(dockStyles).toMatch(/\.workbench--sidebar-collapsed\s+\.workspace-dock--expanded\s+\.workspace-dock__header,\s*\.workbench--sidebar-collapsed\s+\.workspace-body--expanded\s+\.workspace-dock__header\s*\{[^}]*padding-left:\s*calc\(86px\s*\+\s*8rem\);/s);
   });
 });
