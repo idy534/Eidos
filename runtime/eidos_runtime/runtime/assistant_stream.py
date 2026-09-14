@@ -5,6 +5,7 @@ from typing import Callable
 
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.runtime.events import RuntimeEvents
+from eidos_runtime.runtime.provider_control import contains_provider_control_syntax
 
 
 MAX_ASSISTANT_BYTES = 512 * 1024
@@ -41,6 +42,38 @@ class AssistantStreamWriter:
         self._pending: list[str] = []
         self._pending_bytes = 0
         self._last_flush = monotonic()
+        self._text_tail = ""
+        self._control_rejected = False
+
+    def stream(self, delta: str) -> None:
+        """Publish scanned text, retaining unfinished markup until it is known."""
+        self.check_cancel()
+        if self._control_rejected:
+            return
+        text = self._text_tail + delta
+        if len(text.encode("utf-8")) > MAX_ASSISTANT_BYTES:
+            raise AssistantStreamTooLarge("assistant output is too large")
+        if contains_provider_control_syntax(text):
+            self._control_rejected = True
+            self._text_tail = ""
+            return
+        # A provider envelope may span scanner callbacks. Keep an open tag
+        # private until its closing bracket or full-response validation.
+        opening = text.rfind("<")
+        boundary = opening if opening > text.rfind(">") else len(text)
+        self._text_tail = text[boundary:]
+        for start in range(0, boundary, 1024):
+            self.write(text[start:min(start + 1024, boundary)])
+        # The scanner already batches complete lines. Flush now so a paused
+        # provider cannot leave the last safe line waiting for another callback.
+        self.flush()
+
+    def finish_stream(self) -> None:
+        """Release the remaining text only after complete-response validation."""
+        for start in range(0, len(self._text_tail), 1024):
+            self.write(self._text_tail[start:start + 1024])
+        self._text_tail = ""
+        self.flush()
 
     def write(self, delta: str) -> None:
         self.check_cancel()

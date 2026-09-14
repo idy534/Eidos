@@ -1,5 +1,7 @@
 # Eidos 当前限制
 
+- `session/read` 不提供 Step Resolution Review 内容，兼容字段 `stepResolutions` 固定为空数组。Desktop 当前不展示这些信息，Runtime 也未新增按需详情 RPC。完整执行快照仍持久化并由执行读取入口校验；打开 Session 不承担这些 Blob 的完整性检查。本项代码修订尚未验证，不能据此宣称 UI 打开耗时已经达标。
+
 本文只记录 Stage 4+ 后续能力、其他平台支持，以及没有 Apple credentials 时无法验证的真实签名结果。本文不记录已经解决的问题，也不记录历史阶段。
 
 ## 平台与分发
@@ -17,7 +19,10 @@
 - 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、连接测试或主动 capability probe。当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
-- Model 流收到的 provisional text 在完整响应通过校验前不会持久化。可重试的 transport failure 会复用 frozen snapshot。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair。
+- 回答流式输出的代码修订尚未编写或执行测试。敏感扫描仍按完整行释放文本，无换行的长段落会等到响应结束。尚未闭合的尖括号文本会等待闭合或完整响应校验，以避免跨片段的 Provider 控制标记进入 Feed。当前实现不是逐 token 输出。
+- Assistant 文本在完整响应校验前可以作为 `in_progress` Item 显示。Runtime 只有在校验成功后才确认它；失败草稿不会进入后续模型上下文。Runtime 不会额外调用模型来提前判断最终回答。如果响应随后包含 ToolCall，现有 Feed 会把前面的文本归入过程区。
+- 已发布文本会参与 transport retry 的安全判断。normalization 的 `protocol_error` 和 `length` 仍走现有有界 protocol repair；失败草稿先结束，新的 Attempt 使用新 Item。`content_filter`、cancel 和 authentication failure 不进入该 repair。旧 Event 缺少 offset 时不能获得新的偏移去重保证。增量缺口会等待现有 Run 结束快照刷新来修复。
+- 本次未修改 SQLite 表结构，但新 delta Event 会保存 offset。旧 Runtime 的严格 Event 校验不接受这个字段，所以产生新 Event 后不能直接把同一数据目录交给旧 Runtime；回退需要恢复升级前备份。协议 Fixture 和回归测试按用户要求留到确认后的测试阶段。
 - Context Usage 的 estimated 值是有界 fallback，不是 tokenizer 精确值。它不能单独证明 Provider 已拒绝请求。
 
 ### Run 并发与资源模型

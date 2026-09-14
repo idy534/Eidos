@@ -622,7 +622,7 @@ export type RuntimeNotification =
   | { method: "item/completed"; params: { sessionId: string; runId: string; item: Item } }
   | {
       method: "item/delta";
-      params: { sessionId: string; runId: string; itemId: string; sequence: number; delta: string };
+      params: { sessionId: string; runId: string; itemId: string; sequence: number; delta: string; offset?: number };
     }
   | {
       method: "approval/requested" | "approval/resolved" | "approval/canceled";

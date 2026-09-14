@@ -552,6 +552,7 @@ function AssistantMessage({
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent content={item.content || ""} />
+      {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
       {isFinal && item.content && (
         <div className="feed-item-footer response-footer">

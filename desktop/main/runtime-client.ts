@@ -1187,11 +1187,12 @@ function isNotification(value: unknown): value is RuntimeNotification {
   }
   if (value.method === "item/delta") {
     return (
-      hasOnlyKeys(params, ["sessionId", "runId", "itemId", "sequence", "delta"])
+      hasOnlyKeys(params, ["sessionId", "runId", "itemId", "sequence", "delta", "offset"])
       && typeof params.sessionId === "string"
       && typeof params.runId === "string"
       && typeof params.itemId === "string"
       && isPositiveInteger(params.sequence)
+      && (params.offset === undefined || isNonNegativeInteger(params.offset))
       && typeof params.delta === "string"
     );
   }

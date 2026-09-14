@@ -153,9 +153,6 @@ class RunFinalizer:
 
         try:
             hit_fault("finalization_model_failure")
-            # Finalization is deliberately provisional until the whole provider
-            # response is known. A tool-less request must never stream provider
-            # control markup into persisted assistant content before validation.
             base_context = (*context, {
                 "type": "finalization",
                 "toolsAllowed": False,
@@ -165,7 +162,7 @@ class RunFinalizer:
             result = runner.run(
                 base_context,
                 request_cancel,
-                lambda _delta: None,
+                writer.stream,
                 instructions=resolved.text,
                 allow_tools=False,
             )
@@ -174,8 +171,7 @@ class RunFinalizer:
             if timed_out.is_set():
                 failure_reason = "finalization_timeout"
             elif _finalization_protocol_error(result) is None:
-                writer.write(result.text)
-                writer.flush()
+                writer.finish_stream()
             else:
                 failure_reason = "finalization_protocol_error"
         except SensitiveScanError:
@@ -258,6 +254,12 @@ def _attempt_status(failure_reason: str | None) -> str:
 
 
 def _finalization_protocol_error(result: ModelStepResult) -> str | None:
-    if result.tool_calls or contains_provider_control_syntax(result.text):
+    if (
+        result.tool_calls
+        or contains_provider_control_syntax(result.text)
+        or result.response_state not in {None, "complete"}
+        or result.finish_reason in {"length", "content_filter", "error"}
+        or not result.text
+    ):
         return "invalid_response"
     return None

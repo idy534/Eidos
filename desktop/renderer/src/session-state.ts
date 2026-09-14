@@ -217,9 +217,16 @@ export function applyNotification(
   if (notification.method === "item/delta") {
     return {
       ...snapshot,
-      items: snapshot.items.map((item) => item.id === notification.params.itemId
-        ? { ...item, content: `${item.content ?? ""}${notification.params.delta}` }
-        : item),
+      items: snapshot.items.map((item) => {
+        if (item.id !== notification.params.itemId) return item;
+        const { delta, offset } = notification.params;
+        const content = item.content ?? "";
+        // Snapshots can already contain this delta. Never append a replay or
+        // an out-of-order fragment; the session refresh repairs missing text.
+        if (offset !== undefined && offset !== content.length) return item;
+        if (item.kind === "assistant_message" && item.status !== "in_progress") return item;
+        return { ...item, content: content + delta };
+      }),
     };
   }
   if (
@@ -234,6 +241,7 @@ export function applyNotification(
   }
   const incoming = notification.params.item;
   const existing = snapshot.items.find((item) => item.id === incoming.id);
+  if (notification.method === "item/started" && existing) return snapshot;
   let merged: Item = existing?.content !== undefined && incoming.content === undefined
     ? { ...incoming, content: existing.content }
     : incoming;

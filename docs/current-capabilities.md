@@ -9,6 +9,7 @@
 - Main 可以启动、健康检查、通知和关闭 Python Runtime。单个 RPC 超时会作为请求级错误返回，迟到响应不会因为找不到已完成的请求而终止 Runtime。Runtime 进程真正意外退出时，Desktop 会显示启动错误，并提供“重新启动 Runtime”恢复入口。
 - Desktop 可以选择 Workspace，读取 Runtime 提供的 Git context，并在 Session Composer 中选择 Local 或 Worktree execution。Git Worktree execution 可以选择 starting branch。Source dirty 且 starting branch 是 current branch 时，Desktop 默认勾选 `Include current changes`，但 Runtime 只接受显式的 `includeLocalChanges`。Non-Git Workspace 只启用 Local，Composer 不显示 execution mode 和 branch。Desktop 也可以创建不绑定 Project 的会话；这类会话默认使用 Local。
 - Desktop 可以列出、读取、重命名和删除 Session。Session 删除不会删除所属 Project。
+- Session 首屏和历史分页的读取代码不再构建 Step Resolution Review。响应保留空的 `stepResolutions` 字段。Items、Runs 和事件游标继续使用原有读取路径。本项代码修订尚未进入测试和性能验收阶段。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
 - 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
 - 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Projectless Session 提供 Files 和文件树，读取范围是当前 Session 的私有 Workspace。
@@ -45,6 +46,9 @@
 - 健康 Run 不受固定 model-step、Run duration 或 fixed repeated-call counter 限制。Segment rollover 不会把 Run 变成终态。
 
 ## Model
+
+- 回答流式输出已完成代码修订，尚未进入测试阶段。普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。本次没有新增模型请求、工具参数流式展示或传输服务。
+- 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
 - ModelConfigStore 支持内置 Catalog 中的十四个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
 - 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`glm-5.3`、`minimax-m3`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。

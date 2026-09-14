@@ -119,6 +119,7 @@ class EventProjector:
                 "itemId": payload["itemId"],
                 "sequence": payload["sequence"],
                 "delta": payload["delta"],
+                **({"offset": payload["offset"]} if payload.get("offset") is not None else {}),
             }),)
         if event_type == "approval.status_changed" and isinstance(payload, dict):
             current = payload.get("current")

@@ -1096,7 +1096,7 @@ class ExecutionRepository(Repository):
             raise ValueError("at least one delta is required")
         with self.lock, self._connection() as connection:
             fact = connection.execute(
-                """SELECT session_id, run_id FROM items WHERE id = ? AND (
+                """SELECT session_id, run_id, content FROM items WHERE id = ? AND (
                     status = 'in_progress' OR EXISTS (
                         SELECT 1 FROM tool_calls t WHERE t.item_id = items.id
                         AND t.tool_name = 'run_shell'
@@ -1116,21 +1116,25 @@ class ExecutionRepository(Repository):
             if updated.rowcount != 1:
                 raise InvalidRunStateError("item is not active")
             now = _now_ms()
-            events = tuple(
-                append_event(
+            # UTF-16 units match JavaScript string offsets, including emoji.
+            content_offset = len((fact["content"] or "").encode("utf-16-le")) // 2
+            delta_events = []
+            for index, delta in enumerate(deltas):
+                delta_events.append(append_event(
                     connection,
                     EventType.ITEM_DELTA,
                     now,
                     {
                         "item_id": item_id,
-                        "sequence": first_sequence + offset,
+                        "sequence": first_sequence + index,
                         "delta": delta,
+                        "offset": content_offset,
                     },
                     session_id=fact["session_id"],
                     run_id=fact["run_id"],
-                )
-                for offset, delta in enumerate(deltas)
-            )
+                ))
+                content_offset += len(delta.encode("utf-16-le")) // 2
+            events = tuple(delta_events)
         item = self.read_item(item_id)
         return CommittedMutation(item, events)
 

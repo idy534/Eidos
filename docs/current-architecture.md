@@ -287,11 +287,13 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 
 `RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
 
-`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 即使已经收到尚未持久化的 provisional text，也会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
+`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。敏感扫描尚未释放的文本不代表可见进度；已经发布的 Assistant Item 会参与 retry safety 判断。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
 
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
 ## 11. Persistence & Events
+
+Session 展示快照与执行快照使用不同的读取入口。`session/read` 的首屏和历史分页不查询 Step/Rule Resolution 表，也不读取或校验 Step Resolution Blob。响应保留 `stepResolutions: []`，以兼容现有 DTO 和 Main 校验。Runtime 执行与审批恢复仍通过完整快照入口读取数据，并保留原有完整性校验。这项读取路径调整已修订代码，测试与性能验收待执行。
 
 `state.sqlite` 是可变业务状态的唯一权威。它保存 Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context lineage、Compaction 和 Checkpoint。业务状态变化与 Event/Outbox 仍在同一个 `state.sqlite` transaction 中提交。
 
@@ -556,3 +558,11 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 `session/gitReadPatch` 读取 index 或 worktree 文本差异并返回 Diff hash。`session/gitApplyHunk` 在现有 Session Git operation 边界内检查 active Run、路径和当前补丁 hash。现有 `unidiff` 负责选择 hunk，原生 Git 负责校验和修改。操作必须携带 operationId，沿用 SQLite 幂等与不确定操作语义。本轮没有数据库迁移或第二套 Artifact 表；浏览器地址识别新增直接依赖 `tldts`。
 
 以前产物预览修订有自动验证记录。2026-09-13 的产物声明修订已经补充并通过对应的 Runtime、协议、Main 和 Renderer 测试。具体限制和未完成的人工验收见 `current-limitations.md` 的“本轮产物实现的边界”。
+
+### 回答流式输出（代码修订，待测试）
+
+普通采样和 RunFinalizer 复用 `ModelRunner → StreamingSensitiveScanner → AssistantStreamWriter → SQLite Event/Outbox → item/delta → Main → typed IPC → Renderer`。Writer 立即刷新扫描器释放的安全文本块，并把大文本拆成有界片段。Writer 保留未闭合的尖括号尾部，并阻止已识别的 Provider 控制标记；完整响应校验仍由原有 Runtime 链路负责。正常完成复用当前 Item，不再把整个回答重复写入。校验失败或断流会结束当前草稿；取消和重启沿用已有 Item 终态与恢复规则。Context Repository 排除 in-progress 和 incomplete Assistant Item。
+
+新 delta 的 `offset` 在追加内容的同一 SQLite 事务内计算，单位为 UTF-16 code unit，与 JavaScript 字符串长度一致。该字段只扩展 Event payload 和 Notification，不增加 DB 列或第二套状态。Renderer 对已有 Item 的 started 重投不再覆盖本地内容，并拒绝重复或有缺口的 offset。Run 结束时的持久快照刷新负责最终内容校正。旧 Event 不带 offset，继续兼容读取。旧 Desktop 的严格通知校验不接受新增字段，所以 Desktop 与 Runtime 必须一起更新。
+
+本次不新增模型调用、传输连接、依赖或工具参数流式能力。现有按行敏感扫描仍限制无换行文本的显示时机。用户要求先完成代码修订，确认后再编写测试并集中验证，因此当前没有测试、lint、构建或真实 Provider 验证结果。

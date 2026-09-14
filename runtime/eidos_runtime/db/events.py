@@ -102,6 +102,7 @@ class ItemEventPayload(ClosedModel):
 class ItemDeltaEventPayload(ItemEventPayload):
     sequence: int
     delta: str
+    offset: int | None = Field(default=None, ge=0)
 
 
 class ToolCallEventPayload(ClosedModel):

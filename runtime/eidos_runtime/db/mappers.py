@@ -9,13 +9,7 @@ from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.protocol.schemas import (
     ItemDto,
     RunDto,
-    StepResolutionReviewDto,
 )
-from eidos_runtime.runtime.resolution import (
-    RuleResolutionSnapshot,
-    StepResolutionSnapshot,
-)
-from eidos_runtime.db.json_blobs import JsonBlobStore
 
 
 MAX_SNAPSHOT_TEXT_BYTES = 192 * 1024
@@ -119,41 +113,6 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         sort_keys=True,
     )
 
-
-def _step_resolution_review(
-    row: sqlite3.Row,
-    *,
-    blobs: JsonBlobStore | None = None,
-) -> dict[str, object]:
-    step_json = row["step_snapshot_json"]
-    if blobs is not None:
-        step_json = blobs.read_json(step_json, expected_kind="step-resolution")
-    step = StepResolutionSnapshot.model_validate_json(step_json)
-    rules = RuleResolutionSnapshot.model_validate_json(row["rule_snapshot_json"])
-    return StepResolutionReviewDto.model_validate({
-        "id": step.id,
-        "stepId": row["step_id"],
-        "runId": row["run_id"],
-        "stepOrdinal": row["ordinal"],
-        "snapshotHash": step.snapshot_hash,
-        "requestHash": step.final_request_hash,
-        "ruleSnapshotId": rules.id,
-        "ruleSnapshotHash": rules.snapshot_hash,
-        "rules": [
-            {
-                **rule.model_dump(mode="json", exclude={"content"}),
-            }
-            for rule in rules.rules
-        ],
-        "shadowed": [
-            candidate.model_dump(mode="json")
-            for candidate in rules.shadowed
-        ],
-        "warnings": [
-            warning.model_dump(mode="json")
-            for warning in rules.warnings
-        ],
-    }).to_json_value()
 
 def _truncate_snapshot_text(value: str) -> str:
     encoded = value.encode("utf-8")

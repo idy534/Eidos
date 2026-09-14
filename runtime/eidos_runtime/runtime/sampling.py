@@ -71,9 +71,8 @@ class SamplingCancelled(SamplingError):
 class SamplingRuntime:
     """Owns Step sampling and ModelAttempts.
 
-    Assistant text stays provisional until RuntimeEngine validates the complete
-    model response. This prevents invalid protocol output and tool-call control
-    syntax from becoming persisted conversation facts before validation.
+    Scanned text streams into an in-progress Item. The Engine confirms it only
+    after complete-response validation; failed Items stay outside model context.
     """
 
     def __init__(
@@ -86,6 +85,7 @@ class SamplingRuntime:
         self.store = store
         self.runner = ModelRunner(model, sensitive)
         self.events = events
+        self._writer: AssistantStreamWriter | None = None
 
     def sample(
         self, step: StepContext, cancel: threading.Event
@@ -96,7 +96,15 @@ class SamplingRuntime:
             step.model_id,
             step.model_profile.provider_id,
         ) as span:
-            outcome = self._sample(step, cancel)
+            self._writer = AssistantStreamWriter(
+                self.store, self.events, step.run_id, step.step_index,
+                check_cancel=lambda: self._check_cancel(cancel),
+            )
+            try:
+                outcome = self._sample(step, cancel)
+            except Exception:
+                self._writer.abort()
+                raise
             finish_model_attempt(span, outcome)
             return outcome
 
@@ -104,6 +112,13 @@ class SamplingRuntime:
         self, step: StepContext, cancel: threading.Event
     ) -> SamplingOutcome:
         provisional_text: list[str] = []
+        writer = self._writer
+        assert writer is not None
+
+        def on_text(delta: str) -> None:
+            provisional_text.append(delta)
+            writer.stream(delta)
+
         try:
             frozen = self.store.read_running_context_snapshot(step.run_id)
             if frozen is None or frozen.model_attempt_id != step.model_attempt_id:
@@ -111,7 +126,7 @@ class SamplingRuntime:
             result = self.runner.run(
                 frozen.model_context,
                 cancel,
-                provisional_text.append,
+                on_text,
                 instructions=frozen.instructions,
                 tool_definitions=frozen.tool_definitions,
             )
@@ -146,6 +161,7 @@ class SamplingRuntime:
                 canceled=isinstance(error, SamplingCancelled),
                 max_attempts=step.model_profile.retry_max_attempts,
                 attempt_number=_current_attempt_number(self.store, step),
+                visible_output_emitted=writer.item is not None,
             )
             self.store.complete_current_model_attempt(
                 step.run_id,
@@ -240,6 +256,8 @@ class SamplingRuntime:
         retry_reason: str = "completed",
         protocol_diagnostic: ProtocolDiagnostic | None = None,
     ) -> None:
+        if status != "completed" and self._writer is not None:
+            self._writer.abort()
         response_text_bytes, response_text_sha256 = response_text_metrics(
             sampled.text
         )
@@ -280,6 +298,9 @@ class SamplingRuntime:
     ) -> dict[str, object] | None:
         if not text:
             return None
+        if self._writer is not None:
+            self._writer.finish_stream()
+            return self._writer.item
         writer = AssistantStreamWriter(
             self.store,
             self.events,
@@ -300,6 +321,9 @@ class SamplingRuntime:
         """Persist validated mid-turn text as a completed Assistant Item."""
         if not text:
             return None
+        if self._writer is not None:
+            self._writer.finish_stream()
+            return self._writer.complete()
         writer = AssistantStreamWriter(
             self.store,
             self.events,
@@ -365,10 +389,8 @@ def _terminal_retry_decision(
     canceled: bool,
     max_attempts: int,
     attempt_number: int,
+    visible_output_emitted: bool = False,
 ) -> RetryDecision:
-    # ModelRunner only reports provisional text here.  The Engine has not
-    # committed an Assistant Item or ToolCall, so ``had_progress`` is a
-    # diagnostic fact and not a replay-safety barrier.
     decision = retry_decision(
         failure or error,
         RetryState(
@@ -376,7 +398,7 @@ def _terminal_retry_decision(
                 attempt_number,
                 (failure.transport_attempt_count if failure else 1) or 1,
             ),
-            visible_output_emitted=False,
+            visible_output_emitted=visible_output_emitted,
             canceled=canceled,
         ),
         RetryPolicy(max_attempts=max_attempts),
