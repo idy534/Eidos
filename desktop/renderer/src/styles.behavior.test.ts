@@ -42,6 +42,7 @@ describe("interactive color tokens", () => {
     expect(dockStyles).toMatch(/\.workspace-dock__actions\s*\{[^}]*flex: none;[^}]*gap: 0\.35rem;/s);
     expect(dockStyles).toMatch(/\.workspace-dock-toggle svg,\s*\.workspace-header-tools svg,\s*\.workspace-dock__actions svg,\s*\.workspace-dock__add svg\s*\{[^}]*width: 1\.25rem;[^}]*height: 1\.25rem;/s);
     expect(dockStyles).toMatch(/\.workspace-dock__add \.dropdown-trigger:hover,[^}]*\.workspace-dock__actions \.icon-button:hover\s*\{[^}]*background: var\(--surface-selected\);/s);
+    expect(dockStyles).toMatch(/\.workspace-body \.session-header,\s*\.workspace-dock__header\s*\{[^}]*height:\s*2\.75rem;[^}]*min-height:\s*2\.75rem;/s);
   });
 
   it("renders compact single-column diff colors", () => {

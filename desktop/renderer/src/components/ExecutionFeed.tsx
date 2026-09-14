@@ -943,6 +943,22 @@ function ToolItem({ item, toolCall, onOpenFile }: {
     );
   }
 
+  const result = parseObject(toolCall.resultJson);
+  const isDeclareOutputs = toolCall.toolName === "declare_outputs";
+  const isError = Boolean(
+    result.outcome === "error"
+    || (typeof result.code === "string" && result.code && result.code !== "ok")
+    || item.status === "failed"
+    || item.status === "declined"
+    || item.status === "canceled"
+    || toolCall.status === "failed"
+    || toolCall.status === "canceled"
+    || isReconciliationGate(result),
+  );
+  const showSummary = !isDeclareOutputs || isError;
+  const summary = safeToolSummary(toolCall.resultJson, item.status);
+  const filePaths = toolFilePaths(toolCall);
+
   return (
     <details className="tool-item" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
@@ -950,8 +966,29 @@ function ToolItem({ item, toolCall, onOpenFile }: {
         <span>{toolSummary(toolCall, item.status)}</span>
       </summary>
       <div className="tool-body">
-        <p>{safeToolSummary(toolCall.resultJson, item.status)}</p>
-        {onOpenFile && toolFilePaths(toolCall).map((path) => <button type="button" className="tool-file-link" key={path} title={`打开当前文件：${path}`} onClick={() => onOpenFile(path)}>{path}</button>)}
+        {showSummary && summary && (
+          <p className={isError ? "tool-summary--error" : undefined}>{summary}</p>
+        )}
+        {filePaths.length > 0 && (
+          <div className="tool-file-list">
+            {filePaths.map((path) => (
+              <div key={path} className="tool-file-entry">
+                {onOpenFile ? (
+                  <button
+                    type="button"
+                    className="tool-file-link"
+                    title={`打开当前文件：${path}`}
+                    onClick={() => onOpenFile(path)}
+                  >
+                    {path}
+                  </button>
+                ) : (
+                  <span className="tool-file-link" title={path}>{path}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {item.kind === "file_change" && (toolCall.changeDiff || toolCall.changeDiffHash) && (
           <>
             <p className="feed-label">{toolCall.status === "completed" ? "已完成的变更" : toolCall.status === "running" ? "准备或执行中的变更" : "计划变更（可能只完成部分写入）"}</p>

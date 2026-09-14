@@ -97,13 +97,12 @@ describe("TextReviewPanel", () => {
     expect(turnTab).toHaveAttribute("aria-selected", "true");
     expect(taskTab).toHaveAttribute("aria-selected", "false");
 
-    // Only 1 file in run-2
+    // Only 1 file in run-2, auto-expanded
     expect(screen.getByText("共 1 个文件修改")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "src/current.ts" })).toBeInTheDocument();
+    const currentBtn = screen.getByRole("button", { name: "src/current.ts" });
+    expect(currentBtn).toBeInTheDocument();
+    expect(currentBtn).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByRole("button", { name: "src/old.ts" })).not.toBeInTheDocument();
-
-    // Does not show multi-file filter chips bar when only 1 file
-    expect(screen.queryByRole("navigation", { name: "文件过滤" })).not.toBeInTheDocument();
   });
 
   it("switches to '整个任务修改' and displays all changes across the session", () => {
@@ -130,18 +129,13 @@ describe("TextReviewPanel", () => {
     expect(turnTab).toHaveAttribute("aria-selected", "false");
     expect(taskTab).toHaveAttribute("aria-selected", "true");
 
-    // Both files now visible
+    // Both files now visible in the list
     expect(screen.getByText("共 2 个文件修改")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "src/current.ts" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "src/old.ts" })).toBeInTheDocument();
-
-    // Filter chips bar appears
-    const nav = screen.getByRole("navigation", { name: "文件过滤" });
-    expect(nav).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "全部文件 (2)" })).toBeInTheDocument();
   });
 
-  it("filters diffs by clicking file chips and restores by clicking '全部文件'", () => {
+  it("expands and collapses individual files by clicking file headers", () => {
     const item1 = makeChangeItem({ id: "item-1", runId: "run-2", path: "src/a.ts" });
     const item2 = makeChangeItem({ id: "item-2", runId: "run-2", path: "src/b.ts" });
 
@@ -158,23 +152,131 @@ describe("TextReviewPanel", () => {
       </ArtifactProvider>,
     );
 
-    // Initial state: both files shown
     expect(screen.getByText("共 2 个文件修改")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "src/a.ts" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "src/b.ts" })).toBeInTheDocument();
 
-    // Click chip for b.ts
-    const bChip = screen.getByTitle("src/b.ts");
-    fireEvent.click(bChip);
+    const aBtn = screen.getByRole("button", { name: "src/a.ts" });
+    const bBtn = screen.getByRole("button", { name: "src/b.ts" });
+    expect(aBtn).toHaveAttribute("aria-expanded", "false");
+    expect(bBtn).toHaveAttribute("aria-expanded", "false");
 
-    // Only b.ts is displayed now
-    expect(screen.queryByRole("button", { name: "src/a.ts" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "src/b.ts" })).toBeInTheDocument();
+    // Click to expand a.ts
+    fireEvent.click(aBtn);
+    expect(aBtn).toHaveAttribute("aria-expanded", "true");
+    expect(bBtn).toHaveAttribute("aria-expanded", "false");
 
-    // Click "全部文件 (2)" chip
-    fireEvent.click(screen.getByRole("button", { name: "全部文件 (2)" }));
-    expect(screen.getByRole("button", { name: "src/a.ts" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "src/b.ts" })).toBeInTheDocument();
+    // Click to collapse a.ts
+    fireEvent.click(aBtn);
+    expect(aBtn).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("expands and collapses all files with the toolbar toggle button", () => {
+    const item1 = makeChangeItem({ id: "item-1", runId: "run-2", path: "src/a.ts" });
+    const item2 = makeChangeItem({ id: "item-2", runId: "run-2", path: "src/b.ts" });
+
+    render(
+      <ArtifactProvider value={artifactValue()}>
+        <TextReviewPanel
+          sessionId="session-a"
+          runId="run-2"
+          items={[item1, item2]}
+          loading={false}
+          onFeedback={vi.fn().mockResolvedValue(undefined)}
+          disabled={false}
+        />
+      </ArtifactProvider>,
+    );
+
+    const toggleAllBtn = screen.getByRole("button", { name: "展开全部差异" });
+    expect(toggleAllBtn).toBeInTheDocument();
+
+    // Click to expand all
+    fireEvent.click(toggleAllBtn);
+    expect(screen.getByRole("button", { name: "src/a.ts" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "src/b.ts" })).toHaveAttribute("aria-expanded", "true");
+
+    // Now button should say '折叠全部差异'
+    const collapseAllBtn = screen.getByRole("button", { name: "折叠全部差异" });
+    expect(collapseAllBtn).toBeInTheDocument();
+
+    // Click to collapse all
+    fireEvent.click(collapseAllBtn);
+    expect(screen.getByRole("button", { name: "src/a.ts" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "src/b.ts" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("calls onRefresh when the refresh button is clicked", () => {
+    const onRefresh = vi.fn();
+    const item = makeChangeItem({ id: "item-1", runId: "run-2", path: "src/a.ts" });
+
+    render(
+      <ArtifactProvider value={artifactValue()}>
+        <TextReviewPanel
+          sessionId="session-a"
+          runId="run-2"
+          items={[item]}
+          loading={false}
+          onRefresh={onRefresh}
+          onFeedback={vi.fn().mockResolvedValue(undefined)}
+          disabled={false}
+        />
+      </ArtifactProvider>,
+    );
+
+    const refreshBtn = screen.getByRole("button", { name: "刷新修改记录" });
+    fireEvent.click(refreshBtn);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens file in workspace when '在工作区打开' button is clicked", () => {
+    const artifacts = artifactValue();
+    const item = makeChangeItem({ id: "item-1", runId: "run-2", path: "src/a.ts" });
+
+    render(
+      <ArtifactProvider value={artifacts}>
+        <TextReviewPanel
+          sessionId="session-a"
+          runId="run-2"
+          items={[item]}
+          loading={false}
+          onFeedback={vi.fn().mockResolvedValue(undefined)}
+          disabled={false}
+        />
+      </ArtifactProvider>,
+    );
+
+    // Single file is auto-expanded
+    const openBtn = screen.getByRole("button", { name: "在工作区打开" });
+    fireEvent.click(openBtn);
+    expect(artifacts.openFile).toHaveBeenCalledWith("src/a.ts");
+  });
+
+  it("submits line review feedback with anchor", async () => {
+    const onFeedback = vi.fn().mockResolvedValue(undefined);
+    const item = makeChangeItem({ id: "item-1", runId: "run-2", path: "src/a.ts" });
+
+    const { container } = render(
+      <ArtifactProvider value={artifactValue()}>
+        <TextReviewPanel
+          sessionId="session-a"
+          runId="run-2"
+          items={[item]}
+          loading={false}
+          onFeedback={onFeedback}
+          disabled={false}
+        />
+      </ArtifactProvider>,
+    );
+
+    const gutter = container.querySelector(".diff-gutter");
+    expect(gutter).not.toBeNull();
+    fireEvent.click(gutter!);
+
+    const input = screen.getByRole("textbox", { name: "本轮修改反馈" });
+    expect(input).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: "请优化此处的实现" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "发送反馈" }));
+    expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("请优化此处的实现"));
   });
 
   it("never renders disclaimer text or raw execution complete label", () => {

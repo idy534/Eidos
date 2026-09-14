@@ -1225,7 +1225,9 @@ export function AppShell({ runtime }: AppShellProps) {
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}
                     runId={reviewRequest.runId} path={reviewRequest.path} items={completeSessionItems.items}
                     loading={completeSessionItems.loading} error={completeSessionItems.error}
-                    onFeedback={handleReviewFeedback} disabled={Boolean(activeRun) || runState.isSubmitting} />;
+                    onFeedback={handleReviewFeedback} disabled={Boolean(activeRun) || runState.isSubmitting}
+                    onRefresh={() => currentSnapshot && void sessionActions.selectSession(currentSnapshot.session)}
+                    expanded={dockExpanded} />;
                   if (tab.kind === "review") {
                     return sessionHasGit ? (
                       <GitChangesPanel

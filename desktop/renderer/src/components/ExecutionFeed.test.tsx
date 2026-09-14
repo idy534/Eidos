@@ -1100,3 +1100,110 @@ test("keeps followup failures visible without promoting progress to a final repl
   assert.equal((html.match(/response-footer/g) ?? []).length, 1);
   assert.doesNotMatch(html, /write_stdin/);
 });
+
+test("renders successful declare_outputs without disclaimer and with each output on a separate line", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "declare-tool-item",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-declare",
+            itemId: "declare-tool-item",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-declare",
+            toolName: "declare_outputs",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({
+              outputs: [
+                { path: "japan-ppt/日本之美.pptx" },
+                { path: "japan-notes/01-概述.md" },
+              ],
+            }),
+            resultJson: JSON.stringify({
+              outcome: "success",
+              code: "ok",
+              summary: "Declared 2 output files. File existence is verified, not content quality.",
+              data: {
+                executionRoot: "/workspace",
+                outputs: [
+                  { path: "japan-ppt/日本之美.pptx", version: "a".repeat(64), sizeBytes: 1024 },
+                  { path: "japan-notes/01-概述.md", version: "b".repeat(64), sizeBytes: 2048 },
+                ],
+              },
+            }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+      onOpenFile={() => {}}
+    />,
+  );
+
+  // Must show the summary header
+  assert.match(html, />已声明产物</);
+  // Must NOT show the disclaimer prompt
+  assert.doesNotMatch(html, /File existence is verified/);
+  assert.doesNotMatch(html, /Declared 2 output files/);
+  // Must render output list with each item in a separate line entry
+  assert.match(html, /class="tool-file-list"/);
+  assert.equal((html.match(/class="tool-file-entry"/g) ?? []).length, 2);
+  assert.match(html, /title="打开当前文件：japan-ppt\/日本之美\.pptx"[^>]*>japan-ppt\/日本之美\.pptx<\/button>/);
+  assert.match(html, /title="打开当前文件：japan-notes\/01-概述\.md"[^>]*>japan-notes\/01-概述\.md<\/button>/);
+});
+
+test("renders errored declare_outputs with error message and no file list", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "declare-tool-item-error",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "failed",
+          toolCall: {
+            id: "tc-declare-err",
+            itemId: "declare-tool-item-error",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-declare-err",
+            toolName: "declare_outputs",
+            status: "failed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({ outputs: [{ path: "missing.txt" }] }),
+            resultJson: JSON.stringify({
+              outcome: "error",
+              code: "file_unavailable",
+              summary: "Outputs were not declared: file_unavailable",
+              data: {},
+            }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+      onOpenFile={() => {}}
+    />,
+  );
+
+  // Must show the error summary in body with error class
+  assert.match(html, /class="tool-summary--error">Outputs were not declared: file_unavailable<\/p>/);
+  // Must NOT render any file list
+  assert.doesNotMatch(html, /class="tool-file-list"/);
+});

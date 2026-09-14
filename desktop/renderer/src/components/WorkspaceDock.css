@@ -322,7 +322,7 @@ button.environment-popover__row:hover:not(:disabled) {
 
 .workspace-dock__tab {
   flex: none;
-  border-radius: 0.7rem;
+  border-radius: var(--radius);
   color: var(--muted);
 }
 
@@ -334,11 +334,12 @@ button.environment-popover__row:hover:not(:disabled) {
 .workspace-dock__tab > [role="tab"] {
   display: flex;
   min-width: 0;
-  min-height: 2.25rem;
+  min-height: 2rem;
+  height: 2rem;
   align-items: center;
   gap: 0.45rem;
   border: 0;
-  padding: 0.35rem 0.15rem 0.35rem 0.65rem;
+  padding: 0.2rem 0.15rem 0.2rem 0.65rem;
   color: inherit;
   background: transparent;
   box-shadow: none;
@@ -365,8 +366,8 @@ button.environment-popover__row:hover:not(:disabled) {
 
 .workspace-dock__tab-close {
   display: grid;
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 1.35rem;
+  height: 1.35rem;
   place-items: center;
   border: 0;
   border-radius: 50%;
@@ -374,7 +375,7 @@ button.environment-popover__row:hover:not(:disabled) {
   color: inherit;
   background: transparent;
   box-shadow: none;
-  font-size: 1rem;
+  font-size: 0.9rem;
 }
 
 .workspace-dock__tab-close:hover { background: rgba(0, 0, 0, 0.06); }
@@ -558,9 +559,9 @@ button.environment-popover__row:hover:not(:disabled) {
 .workspace-body--resizing .workspace-drawer { transition: none; }
 .workspace-body .session-header,
 .workspace-dock__header {
-  height: 3.5rem;
-  min-height: 3.5rem;
-  max-height: 3.5rem;
+  height: 2.75rem;
+  min-height: 2.75rem;
+  max-height: 2.75rem;
   box-sizing: border-box;
   flex-wrap: nowrap;
   padding-top: 0;
@@ -571,4 +572,4 @@ button.environment-popover__row:hover:not(:disabled) {
 }
 
 /* Each pane owns its header; the drawer remains flush with the session top. */
-.workspace-main-column > .session-header { flex: 0 0 3.5rem; }
+.workspace-main-column > .session-header { flex: 0 0 2.75rem; }

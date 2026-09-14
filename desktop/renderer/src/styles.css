@@ -248,7 +248,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   height: 2.25rem;
   padding: 0;
   border: 0;
-  border-radius: 0.8rem;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -259,11 +259,11 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 
 .nav-icon-btn:hover:not(:disabled) {
   color: var(--text);
-  background: var(--surface-selected);
+  background: var(--surface-hover);
 }
 
 .nav-icon-btn:active:not(:disabled) {
-  background: var(--surface-selected);
+  background: var(--surface-hover);
   transform: scale(0.96);
 }
 
@@ -2184,7 +2184,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   max-width: fit-content;
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 0.98rem;
+  font-size: 0.85rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
@@ -4206,6 +4206,31 @@ button.tool-file-link:focus,
 }
 .tool-body { padding: 0.3rem 0 0.4rem 1.5rem; }
 .tool-body p { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
+.tool-body p.tool-summary--error { color: var(--danger); }
+.tool-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.tool-body > p + .tool-file-list {
+  margin-top: 0.35rem;
+}
+.tool-file-entry {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.tool-file-entry .tool-file-link {
+  text-align: left;
+}
+span.tool-file-link {
+  cursor: default;
+  text-decoration: none !important;
+}
+span.tool-file-link:hover {
+  text-decoration-color: transparent !important;
+  color: inherit !important;
+}
 
 .shell-result {
   position: relative;
