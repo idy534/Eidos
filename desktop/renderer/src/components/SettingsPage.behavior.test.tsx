@@ -49,6 +49,11 @@ const presets: ModelPresetsResult = {
           supportsToolCall: true, supportsImages: false, supportsReasoning: false,
         },
         {
+          id: "glm-5.3-flash", name: "GLM 5.3 Flash",
+          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          supportsToolCall: true, supportsImages: false, supportsReasoning: false,
+        },
+        {
           id: "minimax-m3", name: "MiniMax M3",
           url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
           supportsToolCall: true, supportsImages: true, supportsReasoning: false,
@@ -147,12 +152,16 @@ describe("Model settings", () => {
     await user.selectOptions(screen.getByLabelText("提供商"), "volcengine");
     expect(screen.getByRole("option", { name: "DeepSeek V4 Pro GA" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "GLM 5.3" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "GLM 5.3 Flash" }),
+    ).not.toHaveTextContent("glm-5.3-flash");
     expect(screen.getByRole("option", { name: "MiniMax M3" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("模型名称"), "glm-5.3-flash");
     await user.type(screen.getByLabelText("API Key"), "volcengine-secret");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     expect(createModel).toHaveBeenCalledWith({
-      provider: "volcengine", modelId: "deepseek-v4-pro-ga-260813", apiKey: "volcengine-secret",
+      provider: "volcengine", modelId: "glm-5.3-flash", apiKey: "volcengine-secret",
     });
     expect(onModelsChanged).toHaveBeenCalledTimes(1);
   });

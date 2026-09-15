@@ -158,11 +158,11 @@ API Key 会经过本地模型配置写入链路：Renderer 通过 typed IPC 把�
 当前 Model Catalog 只包含以下 Provider 和 Model ID：
 
 ```text
-deepseek: deepseek-v4-pro, deepseek-v4-flash
+deepseek: deepseek-flash
 minimax:  MiniMax-M3
 kimi:    kimi-k3, kimi-k2.7-code-highspeed
 volcengine: deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
-            glm-5-2-260617, glm-5.3, minimax-m3,
+            glm-5.3, glm-5.3-flash, minimax-m3,
             doubao-seed-evolving,
             doubao-seed-2-1-pro-260628, doubao-seed-2-1-turbo-260628,
             doubao-seed-2-0-code-preview-260215

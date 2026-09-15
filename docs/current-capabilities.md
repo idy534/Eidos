@@ -50,8 +50,8 @@
 - 回答流式输出已完成代码修订，尚未进入测试阶段。普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。本次没有新增模型请求、工具参数流式展示或传输服务。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
-- ModelConfigStore 支持内置 Catalog 中的十四个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
-- 火山引擎 Coding Plan 使用 `https://ark.cn-beijing.volces.com/api/coding/v3`，支持 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5-2-260617`、`glm-5.3`、`minimax-m3`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
+- ModelConfigStore 支持内置 Catalog 中的十三个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
+- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/coding/v3`，包含 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash`、`minimax-m3`、`doubao-seed-evolving`、`doubao-seed-2-1-pro-260628`、`doubao-seed-2-1-turbo-260628` 和 `doubao-seed-2-0-code-preview-260215`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
 - Runtime 同时支持 OpenAI-compatible Chat Completions 和 OpenAI Responses。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。

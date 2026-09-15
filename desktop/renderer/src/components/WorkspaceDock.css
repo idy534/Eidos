@@ -252,13 +252,6 @@ button.environment-popover__row:hover:not(:disabled) {
   white-space: nowrap;
 }
 
-.environment-popover__note {
-  margin: 0;
-  padding: 0 0.55rem 0.35rem;
-  color: var(--muted);
-  font-size: var(--font-size-xs);
-}
-
 .git-line-summary {
   display: inline-flex;
   gap: 0.25rem;
@@ -282,6 +275,7 @@ button.environment-popover__row:hover:not(:disabled) {
   flex-direction: column;
   border-left: 1px solid var(--line);
   background: var(--surface);
+  font-family: var(--font-ui);
 }
 
 .workspace-dock--expanded {

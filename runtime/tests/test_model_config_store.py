@@ -42,8 +42,8 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "kimi-k2.7-code-highspeed",
         "deepseek-v4-pro-ga-260813",
         "deepseek-v4-flash-ga-260731",
-        "glm-5-2-260617",
         "glm-5.3",
+        "glm-5.3-flash",
         "minimax-m3",
         "doubao-seed-evolving",
         "doubao-seed-2-1-pro-260628",
@@ -99,6 +99,57 @@ def test_legacy_deepseek_model_id_is_migrated_to_the_current_id(
     assert json.loads(store.path.read_text(encoding="utf-8"))[0]["id"] == "deepseek-flash"
 
 
+def test_removed_volcengine_glm_52_config_migrates_to_glm_53(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.path.write_text(
+        json.dumps([
+            {
+                "id": "glm-5-2-260617",
+                "name": "GLM 5.2",
+                "vendor": "Volcengine",
+                "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                "apiKey": "volcengine-secret-value",
+                "supportsToolCall": True,
+                "supportsImages": False,
+                "supportsReasoning": False,
+            }
+        ]),
+        encoding="utf-8",
+    )
+    store.path.chmod(0o600)
+
+    store.initialize()
+
+    models = store.list()
+    assert [(model.id, model.name, model.api_key) for model in models] == [
+        ("glm-5.3", "GLM 5.3", "volcengine-secret-value")
+    ]
+    assert json.loads(store.path.read_text(encoding="utf-8"))[0]["id"] == "glm-5.3"
+
+
+def test_glm_52_migration_conflict_preserves_both_saved_models(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    common = {
+        "vendor": "Volcengine",
+        "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+        "apiKey": "volcengine-secret-value",
+        "supportsToolCall": True,
+        "supportsImages": False,
+        "supportsReasoning": False,
+    }
+    payload = json.dumps([
+        {**common, "id": "glm-5-2-260617", "name": "GLM 5.2"},
+        {**common, "id": "glm-5.3", "name": "GLM 5.3"},
+    ])
+    store.path.write_text(payload, encoding="utf-8")
+    store.path.chmod(0o600)
+
+    with pytest.raises(ModelConfigError, match="migration conflict"):
+        store.initialize()
+
+    assert store.path.read_text(encoding="utf-8") == payload
+
+
 def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits() -> None:
     presets = model_presets()
     provider = next(item for item in presets["providers"] if item["id"] == "volcengine")
@@ -106,8 +157,8 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
     assert [model["id"] for model in provider["models"]] == [
         "deepseek-v4-pro-ga-260813",
         "deepseek-v4-flash-ga-260731",
-        "glm-5-2-260617",
         "glm-5.3",
+        "glm-5.3-flash",
         "minimax-m3",
         "doubao-seed-evolving",
         "doubao-seed-2-1-pro-260628",
@@ -122,8 +173,8 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
     expected_limits = {
         "deepseek-v4-pro-ga-260813": (1_048_576, 131_072),
         "deepseek-v4-flash-ga-260731": (1_048_576, 393_216),
-        "glm-5-2-260617": (1_048_576, 131_072),
         "glm-5.3": (1_048_576, 131_072),
+        "glm-5.3-flash": (1_048_576, 131_072),
         "minimax-m3": (524_288, 131_072),
         "doubao-seed-evolving": (1_048_576, 262_144),
         "doubao-seed-2-1-pro-260628": (262_144, 262_144),
@@ -136,8 +187,12 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         assert profile.max_output_tokens == max_output
 
     glm = next(model for model in provider["models"] if model["id"] == "glm-5.3")
+    glm_flash = next(
+        model for model in provider["models"] if model["id"] == "glm-5.3-flash"
+    )
     minimax = next(model for model in provider["models"] if model["id"] == "minimax-m3")
     assert glm["supportsImages"] is False
+    assert glm_flash["supportsImages"] is False
     assert minimax["supportsImages"] is True
 
 

@@ -201,10 +201,11 @@ describe("GitChangesPanel", () => {
     await waitFor(() => expect(readDiff).toHaveBeenCalledTimes(4));
   });
 
-  it("marks summary statistics as incomplete when native stats report a binary file", () => {
+  it("does not surface an incomplete-statistics hint when native stats report a binary file", () => {
     renderPanel({ summary: summaryDiff({ truncated: true, statsIncomplete: true }) });
 
-    expect(screen.getByText("统计不完整")).toBeInTheDocument();
+    expect(screen.queryByText("统计不完整")).not.toBeInTheDocument();
+    expect(screen.getByText("+4")).toBeInTheDocument();
   });
 
   it("keeps native statistics exact when only the rendered patch is truncated", () => {

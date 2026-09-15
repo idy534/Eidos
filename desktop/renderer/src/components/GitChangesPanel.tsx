@@ -482,9 +482,6 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             <div className="git-review-stats" aria-label="变更统计">
               <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
               <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
-              {effectiveSummary?.statsIncomplete === true && (
-                <span className="git-review-incomplete">统计不完整</span>
-              )}
             </div>
           )}
         </div>
@@ -614,9 +611,6 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                         <span className="git-file-stats">
                           <span>+{fileStats.additions}</span>
                           <span>-{fileStats.deletions}</span>
-                          {(summaryFileStats?.statsIncomplete || state?.diff?.statsIncomplete) && (
-                            <span>不完整</span>
-                          )}
                         </span>
                       )}
                     </button>

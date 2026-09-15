@@ -73,4 +73,12 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.settings-page-header\s*\{[^}]*-webkit-app-region:\s*drag;/s);
     expect(dockStyles).toMatch(/\.workbench--sidebar-collapsed\s+\.workspace-dock--expanded\s+\.workspace-dock__header,\s*\.workbench--sidebar-collapsed\s+\.workspace-body--expanded\s+\.workspace-dock__header\s*\{[^}]*padding-left:\s*calc\(86px\s*\+\s*8rem\);/s);
   });
+
+  it("maintains typography consistency between session and workspace", () => {
+    expect(styles).toMatch(/--font-code:[^;]*"PingFang SC"[^;]*monospace;/);
+    expect(styles).toMatch(/--diff-font-family:\s*var\(--font-code\);/);
+    expect(styles).toMatch(/code,\s*kbd,\s*samp,\s*pre\s*\{[^}]*font-family:\s*var\(--font-code\);/s);
+    expect(styles).toMatch(/\.workspace-code-preview pre,\s*\.workspace-code-preview code\s*\{[^}]*font-family:\s*var\(--font-code\);/s);
+    expect(dockStyles).toMatch(/\.workspace-dock\s*\{[^}]*font-family:\s*var\(--font-ui\);/s);
+  });
 });

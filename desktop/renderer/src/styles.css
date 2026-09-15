@@ -10,7 +10,8 @@
 
   /* Typography Stack */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
-  --font-code: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --font-code: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "PingFang SC", monospace;
+  --diff-font-family: var(--font-code);
 
   /* Font Sizes & Line Heights */
   --font-size-xs: 11px;
@@ -95,6 +96,7 @@ body {
 }
 
 button, input, textarea, select { font: inherit; }
+code, kbd, samp, pre { font-family: var(--font-code); }
 
 /* Apple-style Buttons */
 button {
@@ -1290,7 +1292,10 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .workspace-preview-notice { margin: 0; padding: 0.45rem 1rem; background: #f5eddd; color: #6f5b38; font-size: var(--font-size-caption); }
 .workspace-markdown-preview { max-width: 54rem; padding: 1.5rem 2rem 4rem; }
 .workspace-text-preview,
-.workspace-code-preview pre {
+.workspace-text-preview code,
+.workspace-code-preview,
+.workspace-code-preview pre,
+.workspace-code-preview code {
   min-height: 100%;
   margin: 0;
   padding: 1rem 1.25rem 4rem;
@@ -1298,8 +1303,8 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   background: var(--surface) !important;
   color: var(--text);
   font-family: var(--font-code);
-  font-size: 12.5px;
-  line-height: 1.65;
+  font-size: var(--font-size-code);
+  line-height: var(--line-height-code);
   tab-size: 2;
 }
 
@@ -1882,7 +1887,6 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 
 .git-review-stat--addition { color: var(--status-success); }
 .git-review-stat--deletion { color: var(--status-danger); }
-.git-review-incomplete { color: var(--status-warning); }
 
 .git-review-error {
   flex: none;

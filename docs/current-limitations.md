@@ -15,7 +15,7 @@
 
 ### Model Provider
 
-- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十四个 Model ID。
+- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十三个 Model ID，包括火山引擎目录项 `glm-5.3-flash`。
 - 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、连接测试或主动 capability probe。当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。

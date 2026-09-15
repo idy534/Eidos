@@ -917,9 +917,6 @@ export function AppShell({ runtime }: AppShellProps) {
                 <span>{gitReviewState.summary?.compareRef ?? gitReviewState.status?.baseRef ?? "HEAD"}</span>
               </div>
             )}
-            {gitReviewState.summary?.statsIncomplete && (
-              <p className="environment-popover__note" role="status">二进制文件未计入行数</p>
-            )}
             {sessionHasGit && (
               <button type="button" className="environment-popover__row" onClick={openGitWorkflow}>
                 <span>提交或推送</span>

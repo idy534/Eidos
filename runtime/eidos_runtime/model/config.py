@@ -238,8 +238,8 @@ MODEL_PROVIDERS = (
                 maxOutputTokens=393_216,
             ),
             CatalogModel(
-                id="glm-5-2-260617",
-                name="GLM 5.2",
+                id="glm-5.3",
+                name="GLM 5.3",
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
@@ -248,8 +248,8 @@ MODEL_PROVIDERS = (
                 maxOutputTokens=131_072,
             ),
             CatalogModel(
-                id="glm-5.3",
-                name="GLM 5.3",
+                id="glm-5.3-flash",
+                name="GLM 5.3 Flash",
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
@@ -315,6 +315,7 @@ MODEL_PROVIDERS = (
 LEGACY_MODEL_ID_ALIASES = {
     "deepseek-v4-flash": "deepseek-flash",
     "deepseek-v4-pro": "deepseek-flash",
+    "glm-5-2-260617": "glm-5.3",
 }
 
 
