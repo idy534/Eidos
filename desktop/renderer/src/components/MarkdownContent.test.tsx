@@ -36,3 +36,34 @@ test("does not activate raw HTML, remote images, or links", () => {
   assert.match(html, /远程图/);
   assert.match(html, /文档/);
 });
+
+test("renders streaming tokens with fade spans when isStreaming is true", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"你好世界 Hello world"} isStreaming={true} />,
+  );
+
+  assert.match(html, /<span class="streaming-token-fade">你<\/span>/);
+  assert.match(html, /<span class="streaming-token-fade">好<\/span>/);
+  assert.match(html, /<span class="streaming-token-fade">世<\/span>/);
+  assert.match(html, /<span class="streaming-token-fade">界<\/span>/);
+  assert.match(html, /<span class="streaming-token-fade">Hello<\/span>/);
+  assert.match(html, /<span class="streaming-token-fade">world<\/span>/);
+});
+
+test("renders static semantic content without any streaming spans when isStreaming is false", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"你好世界 Hello world"} isStreaming={false} />,
+  );
+
+  assert.doesNotMatch(html, /streaming-token-fade/);
+  assert.equal(html, '<div class="markdown-body"><p>你好世界 Hello world</p></div>');
+});
+
+test("does not wrap pre or code blocks in streaming spans during streaming", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"```ts\nconst x = 1;\n```"} isStreaming={true} />,
+  );
+
+  assert.doesNotMatch(html, /streaming-token-fade/);
+  assert.match(html, /<pre><code class="language-ts">const x = 1;\n<\/code><\/pre>/);
+});

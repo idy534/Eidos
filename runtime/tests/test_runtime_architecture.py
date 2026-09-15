@@ -117,16 +117,16 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 store.connection.execute(
                     "SELECT COUNT(*) FROM model_attempts"
                 ).fetchone()[0],
-                2,
+                1,
             )
             attempts = store.read_model_attempts(run["id"])
-            self.assertEqual(model.calls, 2)
-            self.assertEqual(attempts[0]["retryDecision"]["reason"], "transport_retry")
+            self.assertEqual(model.calls, 1)
+            self.assertEqual(attempts[0]["retryDecision"]["reason"], "unsafe_stream_progress")
             self.assertEqual(
                 [item.get("content") for item in store.read_session_snapshot(
                     session["id"]
                 )["items"] if item["kind"] == "assistant_message"],
-                ["done"],
+                ["safe progress"],
             )
 
     def test_step_snapshot_drives_model_validation_and_execution(self) -> None:

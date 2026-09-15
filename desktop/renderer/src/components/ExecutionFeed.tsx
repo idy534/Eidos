@@ -1,6 +1,6 @@
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import stripAnsi from "strip-ansi";
 
@@ -107,12 +107,19 @@ export function ExecutionFeed({
   onOpenFile,
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
+  const isAtBottomRef = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
+
+  const handleScroll = useCallback((event: React.UIEvent<HTMLElement>) => {
+    const bottom = isFeedAtBottom(event.currentTarget);
+    isAtBottomRef.current = bottom;
+    setAtBottom(bottom);
+  }, []);
 
   useLayoutEffect(() => {
     const feed = feedRef.current;
-    if (feed && atBottom) feed.scrollTop = feed.scrollHeight;
-  }, [items, responseActionState.revisions, atBottom]);
+    if (feed && isAtBottomRef.current) feed.scrollTop = feed.scrollHeight;
+  }, [items, responseActionState.revisions]);
 
   const supersededRunIds = useMemo(
     () => new Set(responseActionState.revisions.map((revision) => revision.sourceRunId)),
@@ -157,7 +164,7 @@ export function ExecutionFeed({
         className="feed"
         aria-label="Execution Feed"
         aria-live="polite"
-        onScroll={(event) => setAtBottom(isFeedAtBottom(event.currentTarget))}
+        onScroll={handleScroll}
       >
         {itemGroups.map(({ runId, items: runItems }) => {
           const run = runsById.get(runId);
@@ -181,6 +188,7 @@ export function ExecutionFeed({
                   workspaceRoot={workspaceRoot}
                   isLast={index === segments.length - 1}
                   canReviseRun={canReviseRun}
+                  atBottom={atBottom}
                   feedbackByItemId={feedbackByItemId}
                   pendingFeedbackItemIds={pendingFeedbackItemIds}
                   revisionSubmitting={revisionSubmitting}
@@ -207,7 +215,11 @@ export function ExecutionFeed({
         type="button"
         aria-label="滚动到最新内容"
         hidden={atBottom}
-        onClick={() => feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" })}
+        onClick={() => {
+          isAtBottomRef.current = true;
+          setAtBottom(true);
+          feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
+        }}
       >
         <span aria-hidden="true">↓</span>
       </button>
@@ -218,7 +230,7 @@ export function ExecutionFeed({
 export function isFeedAtBottom(
   feed: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
 ): boolean {
-  return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 2;
+  return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 16;
 }
 
 function RunSegment({
@@ -230,6 +242,7 @@ function RunSegment({
   workspaceRoot,
   isLast,
   canReviseRun,
+  atBottom = true,
   feedbackByItemId,
   pendingFeedbackItemIds,
   revisionSubmitting,
@@ -253,6 +266,7 @@ function RunSegment({
   workspaceRoot?: string | undefined;
   isLast: boolean;
   canReviseRun: boolean;
+  atBottom?: boolean | undefined;
   feedbackByItemId: ReadonlyMap<string, ResponseFeedbackValue>;
   pendingFeedbackItemIds: ReadonlySet<string>;
   revisionSubmitting: boolean;
@@ -319,6 +333,7 @@ function RunSegment({
           run={run}
           modelName={modelName}
           workspaceRoot={workspaceRoot}
+          atBottom={atBottom}
           feedback={feedbackByItemId.get(item.id)}
           feedbackPending={pendingFeedbackItemIds.has(item.id)}
           canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
@@ -509,6 +524,7 @@ function AssistantMessage({
   run,
   modelName,
   workspaceRoot = "",
+  atBottom = true,
   feedback,
   feedbackPending,
   canRegenerate,
@@ -523,6 +539,7 @@ function AssistantMessage({
   run: Run;
   modelName: string;
   workspaceRoot?: string | undefined;
+  atBottom?: boolean | undefined;
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
@@ -535,23 +552,13 @@ function AssistantMessage({
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
-
-  useLayoutEffect(() => {
-    if (
-      item.status !== "in_progress"
-      || !item.content
-      || window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    ) return;
-    const block = contentRef.current?.querySelector<HTMLElement>(".markdown-body > :last-child");
-    const latest = block?.querySelector<HTMLElement>("tbody tr:last-child, li:last-child") ?? block;
-    latest?.scrollIntoView({ block: "end" });
-  }, [item.content, item.status]);
+  const isStreaming = item.status === "in_progress";
 
   const canFeedback = item.status === "completed" && Boolean(item.content);
 
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
-      <MarkdownContent content={item.content || ""} />
+      <MarkdownContent content={item.content || ""} isStreaming={isStreaming} />
       {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
       {isFinal && item.content && (
@@ -765,7 +772,7 @@ function ProcessItem({
 }) {
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
-    return <div className="process-text"><MarkdownContent content={item.content} /></div>;
+    return <div className="process-text"><MarkdownContent content={item.content} isStreaming={item.status === "in_progress"} /></div>;
   }
   if (!item.toolCall) return null;
 

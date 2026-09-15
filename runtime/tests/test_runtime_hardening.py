@@ -837,6 +837,26 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertNotIn("Use review checklist.", model.instructions_history[0])
         self.assertNotIn("Use review checklist.", model.instructions_history[1])
 
+    def test_streamed_deltas_record_utf16_offsets(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "stream")
+        step = self.store.increment_model_step(run["id"])
+        notifications: list[dict[str, object]] = []
+        writer = AssistantStreamWriter(
+            self.store,
+            RuntimeEvents(notifications.append),
+            run["id"],
+            step,
+        )
+
+        writer.stream("🙂")
+        writer.stream("x")
+
+        deltas = [
+            event for event in notifications if event["method"] == "item/delta"
+        ]
+        self.assertEqual([event["params"]["offset"] for event in deltas], [0, 2])
+        self.assertEqual(writer.item["content"], "🙂x")
+
     def _finalizing_run(self, user_input: str) -> dict[str, object]:
         run, _ = self.store.create_run(self.session["id"], user_input)
         assert self.store.connection is not None

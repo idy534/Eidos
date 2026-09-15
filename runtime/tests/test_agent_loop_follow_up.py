@@ -329,7 +329,7 @@ class AgentLoopFollowUpTests(unittest.TestCase):
         self.assertEqual(
             [item.get("content") for item in snapshot["items"]
              if item["kind"] == "assistant_message"],
-            ["The response was completed concisely."],
+            ["truncated", "The response was completed concisely."],
         )
         attempts = self.store.read_model_attempts(run["id"])
         self.assertEqual(len(attempts), 2)

@@ -127,6 +127,25 @@ test("a completed assistant item without content preserves streamed text", () =>
   assert.equal(result?.items[0]?.status, "completed");
 });
 
+test("item deltas use offsets to ignore duplicates and gaps", () => {
+  const current = snapshot("running", "🙂");
+  const delta = (offset: number, value: string): RuntimeNotification => ({
+    method: "item/delta",
+    params: {
+      sessionId: session.id,
+      runId: "run-1",
+      itemId: "item-1",
+      sequence: offset + 1,
+      offset,
+      delta: value,
+    },
+  });
+
+  assert.equal(applyNotification(current, delta(0, "🙂"))?.items[0]?.content, "🙂");
+  assert.equal(applyNotification(current, delta(1, "x"))?.items[0]?.content, "🙂");
+  assert.equal(applyNotification(current, delta(2, "x"))?.items[0]?.content, "🙂x");
+});
+
 test("an item update preserves content and merges the latest tool evidence", () => {
   const existing: Item = {
     id: "item-tool",

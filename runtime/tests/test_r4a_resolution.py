@@ -348,13 +348,31 @@ class ResolutionPersistenceTests(unittest.TestCase):
             json.loads(after.final_request_json)["messages"],
             json.loads(after.context_payload_json),
         )
-        review = self.store.read_session_snapshot(self.session["id"])[
-            "stepResolutions"
-        ][0]
-        self.assertEqual(review["id"], after.id)
-        self.assertEqual(review["requestHash"], after.final_request_hash)
-        self.assertEqual(review["rules"][0]["relativePath"], "EIDOS.md")
-        self.assertNotIn("content", review["rules"][0])
+        self.assertEqual(
+            self.store.read_session_snapshot(self.session["id"])["stepResolutions"],
+            [],
+        )
+
+    def test_session_snapshot_does_not_read_historical_resolution_blobs(self) -> None:
+        (self.workspace / "EIDOS.md").write_text("persistent rule", encoding="utf-8")
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        RuntimeEngine(
+            self.store,
+            ScriptedModel([ModelResponse(text="done")]),
+            lambda _message: None,
+        ).run(run["id"], threading.Event())
+
+        original = self.store._database.json_blobs.read_json
+
+        def fail_if_read(*args, **kwargs):
+            raise AssertionError("session snapshot read a resolution blob")
+
+        self.store._database.json_blobs.read_json = fail_if_read
+        try:
+            snapshot = self.store.read_session_snapshot(self.session["id"])
+        finally:
+            self.store._database.json_blobs.read_json = original
+        self.assertEqual(snapshot["stepResolutions"], [])
 
     def test_sampling_tool_call_and_attempt_trace_same_step_snapshot(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "read")

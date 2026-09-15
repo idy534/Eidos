@@ -223,7 +223,8 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         messages = [
             item for item in snapshot["items"] if item["kind"] == "assistant_message"
         ]
-        self.assertEqual(messages, [])
+        self.assertEqual([item["content"] for item in messages], ["safe progress"])
+        self.assertEqual([item["status"] for item in messages], ["failed"])
         self.assertEqual(model.calls, 1)
         future_context = ContextBuilder(self.store).build(run["id"]).model_context
         self.assertNotIn(
@@ -242,7 +243,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             1,
         )
         attempt = self.store.read_model_attempts(run["id"])[0]
-        self.assertEqual(attempt["retryDecision"]["reason"], "non_retryable_error")
+        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
 
     def test_stream_failure_before_first_delta_does_not_replay_unknown_stream_state(self) -> None:
         class InitiallyUnavailableModel:

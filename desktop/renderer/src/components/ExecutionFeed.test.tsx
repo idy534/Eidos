@@ -38,6 +38,7 @@ function item(overrides: Partial<Item> & Pick<Item, "id" | "ordinal" | "kind">):
 
 test("keeps auto-scroll only while the feed is at the bottom", () => {
   assert.equal(isFeedAtBottom({ scrollHeight: 1000, scrollTop: 398, clientHeight: 600 }), true);
+  assert.equal(isFeedAtBottom({ scrollHeight: 1000, scrollTop: 388, clientHeight: 600 }), true);
   assert.equal(isFeedAtBottom({ scrollHeight: 1000, scrollTop: 350, clientHeight: 600 }), false);
 });
 
