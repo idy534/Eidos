@@ -14,7 +14,7 @@ const modelList: ModelListResult = {
     id: "deepseek-v4-flash", name: "DeepSeek-V4 Flash", vendor: "DeepSeek",
     provider: "deepseek", url: "https://api.deepseek.com/chat/completions",
     supportsToolCall: true, supportsImages: false, supportsReasoning: true,
-    reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+    reasoning: { defaultSelection: "high", selections: ["high", "max"] },
   }],
 };
 const presets: ModelPresetsResult = {
@@ -26,14 +26,14 @@ const presets: ModelPresetsResult = {
       id: "minimax", name: "MiniMax", models: [{
         id: "MiniMax-M3", name: "MiniMax M3", url: "https://api.minimaxi.com/v1/chat/completions",
         supportsToolCall: true, supportsImages: false, supportsReasoning: true,
-        reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+        reasoning: { defaultSelection: "thinking", selections: ["none", "thinking"] },
       }],
     },
     {
       id: "kimi", name: "月之暗面 / Kimi", models: [{
         id: "kimi-k3", name: "Kimi K3", url: "https://api.moonshot.cn/v1/chat/completions",
         supportsToolCall: true, supportsImages: false, supportsReasoning: true,
-        reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+        reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
       }],
     },
     {

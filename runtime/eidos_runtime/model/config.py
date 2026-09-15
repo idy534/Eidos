@@ -19,19 +19,49 @@ DEFAULT_MAX_OUTPUT_TOKENS = 8_192
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 
 
-class ModelReasoningConfig(EidosFrozenStrictModel):
-    default_effort: Literal["high", "max"]
-    supported_efforts: tuple[Literal["high", "max"], ...]
+ModelReasoningSelection = Literal[
+    "none", "thinking", "low", "medium", "high", "max"
+]
 
-    @field_validator("supported_efforts", mode="before")
+
+class ModelReasoningConfig(EidosFrozenStrictModel):
+    default_selection: ModelReasoningSelection
+    selections: tuple[ModelReasoningSelection, ...]
+
+    @field_validator("selections", mode="before")
     @classmethod
-    def normalize_supported_efforts(cls, value: object) -> object:
+    def normalize_selections(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_old_effort_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        old_default = normalized.pop(
+            "defaultEffort", normalized.pop("default_effort", None)
+        )
+        old_selections = normalized.pop(
+            "supportedEfforts", normalized.pop("supported_efforts", None)
+        )
+        if (
+            "defaultSelection" not in normalized
+            and "default_selection" not in normalized
+        ):
+            if old_default is not None:
+                normalized["defaultSelection"] = old_default
+        if "selections" not in normalized:
+            if old_selections is not None:
+                normalized["selections"] = old_selections
+        return normalized
+
     @model_validator(mode="after")
-    def validate_default_effort(self) -> "ModelReasoningConfig":
-        if self.default_effort not in self.supported_efforts:
-            raise ValueError("default reasoning effort must be supported")
+    def validate_default_selection(self) -> "ModelReasoningConfig":
+        if not self.selections or self.default_selection not in self.selections:
+            raise ValueError("default reasoning selection must be supported")
+        if len(set(self.selections)) != len(self.selections):
+            raise ValueError("reasoning selections must be unique")
         return self
 
 
@@ -59,8 +89,8 @@ class ModelConfig(EidosFrozenStrictModel):
 
     @model_validator(mode="after")
     def validate_reasoning(self) -> "ModelConfig":
-        if self.supports_reasoning != (self.reasoning is not None):
-            raise ValueError("reasoning configuration does not match capability")
+        if self.reasoning is not None and not self.supports_reasoning:
+            raise ValueError("reasoning selections require reasoning capability")
         return self
 
 
@@ -87,7 +117,12 @@ class ModelProfileSpec(EidosFrozenStrictModel):
     supports_custom_tools: bool = False
     supports_tool_grammar: bool = False
 
-    def snapshot(self, config: ModelConfig | dict[str, object]) -> ModelProfileSnapshot:
+    def snapshot(
+        self,
+        config: ModelConfig | dict[str, object],
+        *,
+        reasoning_selection: ModelReasoningSelection | None = None,
+    ) -> ModelProfileSnapshot:
         supports_tools = (
             config.supports_tool_call
             if isinstance(config, ModelConfig)
@@ -121,6 +156,7 @@ class ModelProfileSpec(EidosFrozenStrictModel):
             supports_tools=supports_tools,
             supports_json_schema_output=supports_json_schema_output,
             supports_reasoning=supports_reasoning,
+            reasoning_selection=reasoning_selection,
             supports_images=supports_images,
             supports_custom_tools=self.supports_custom_tools,
             supports_tool_grammar=self.supports_tool_grammar,
@@ -149,10 +185,6 @@ class CatalogProvider(EidosFrozenStrictModel):
     models: tuple[CatalogModel, ...]
 
 
-_REASONING = ModelReasoningConfig(
-    defaultEffort="high",
-    supportedEfforts=("high", "max"),
-)
 MODEL_PROVIDERS = (
     CatalogProvider(
         id="deepseek",
@@ -166,7 +198,10 @@ MODEL_PROVIDERS = (
                 supportsToolCall=True,
                 supportsImages=False,
                 supportsReasoning=True,
-                reasoning=_REASONING,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("none", "low", "high", "max"),
+                ),
                 contextWindowTokens=802_816,
             ),
         ),
@@ -183,7 +218,10 @@ MODEL_PROVIDERS = (
                 supportsToolCall=True,
                 supportsImages=False,
                 supportsReasoning=True,
-                reasoning=_REASONING,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="thinking",
+                    selections=("none", "thinking"),
+                ),
             ),
         ),
     ),
@@ -199,7 +237,10 @@ MODEL_PROVIDERS = (
                 supportsToolCall=True,
                 supportsImages=False,
                 supportsReasoning=True,
-                reasoning=_REASONING,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="max",
+                    selections=("low", "high", "max"),
+                ),
             ),
             CatalogModel(
                 id="kimi-k2.7-code-highspeed",
@@ -208,7 +249,7 @@ MODEL_PROVIDERS = (
                 supportsToolCall=True,
                 supportsImages=False,
                 supportsReasoning=True,
-                reasoning=_REASONING,
+                reasoning=None,
             ),
         ),
     ),
@@ -216,6 +257,8 @@ MODEL_PROVIDERS = (
         id="volcengine",
         name="火山引擎 / Volcengine",
         vendor="Volcengine",
+        # Values come from the requested model matrix. The Coding Plan endpoint
+        # still needs provider-specific wire verification before mapping them.
         models=(
             CatalogModel(
                 id="deepseek-v4-pro-ga-260813",
@@ -223,7 +266,11 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
-                supportsReasoning=False,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("none", "low", "high", "max"),
+                ),
                 contextWindowTokens=1_048_576,
                 maxOutputTokens=131_072,
             ),
@@ -233,7 +280,11 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
-                supportsReasoning=False,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("none", "low", "high", "max"),
+                ),
                 contextWindowTokens=1_048_576,
                 maxOutputTokens=393_216,
             ),
@@ -243,7 +294,7 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
-                supportsReasoning=False,
+                supportsReasoning=True,
                 contextWindowTokens=1_048_576,
                 maxOutputTokens=131_072,
             ),
@@ -253,7 +304,11 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
-                supportsReasoning=False,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="max",
+                    selections=("low", "high", "max"),
+                ),
                 contextWindowTokens=1_048_576,
                 maxOutputTokens=131_072,
             ),
@@ -273,7 +328,11 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
-                supportsReasoning=False,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("none", "low", "medium", "high"),
+                ),
                 contextWindowTokens=1_048_576,
                 maxOutputTokens=262_144,
             ),
@@ -283,7 +342,11 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
-                supportsReasoning=False,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("none", "low", "medium", "high"),
+                ),
                 contextWindowTokens=262_144,
                 maxOutputTokens=262_144,
             ),
@@ -293,7 +356,11 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
-                supportsReasoning=False,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("none", "low", "medium", "high"),
+                ),
                 contextWindowTokens=262_144,
                 maxOutputTokens=262_144,
             ),
@@ -303,7 +370,11 @@ MODEL_PROVIDERS = (
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
-                supportsReasoning=False,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="medium",
+                    selections=("none", "low", "medium", "high"),
+                ),
                 contextWindowTokens=262_144,
                 maxOutputTokens=131_072,
             ),
@@ -373,6 +444,19 @@ class ModelCatalog:
             supports_tool_grammar=model.supports_tool_grammar,
         )
 
+    def reasoning_selection(
+        self,
+        model_id: str,
+        requested: ModelReasoningSelection | None,
+    ) -> ModelReasoningSelection | None:
+        _, model = self.lookup(self.provider_id_for(model_id), model_id)
+        reasoning = model.reasoning
+        if requested is None:
+            return reasoning.default_selection if reasoning else None
+        if reasoning is None or requested not in reasoning.selections:
+            raise ModelReasoningSelectionError("reasoning selection is unsupported")
+        return requested
+
     def public(self) -> dict[str, object]:
         return {
             "providers": [
@@ -410,6 +494,10 @@ class ModelConfigError(RuntimeError):
     pass
 
 
+class ModelReasoningSelectionError(ValueError):
+    pass
+
+
 class ModelConfigStore:
     def __init__(self, data_directory: Path | None = None) -> None:
         self.data_directory = data_directory
@@ -440,22 +528,22 @@ class ModelConfigStore:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             return
 
-        if not any(value.id in LEGACY_MODEL_ID_ALIASES for value in values):
-            return
-
         migrated: list[ModelConfig] = []
         seen: set[str] = set()
+        changed = False
         for value in values:
             model_id = MODEL_CATALOG.canonical_id(value.id)
             if model_id in seen:
                 raise ModelConfigError("model configuration migration conflict")
             seen.add(model_id)
-            if model_id == value.id:
-                migrated.append(value)
-                continue
             provider_id = MODEL_CATALOG.provider_id_for(model_id)
-            migrated.append(MODEL_CATALOG.materialize(provider_id, model_id, value.api_key))
-        self._write(migrated)
+            refreshed = MODEL_CATALOG.materialize(
+                provider_id, model_id, value.api_key
+            )
+            migrated.append(refreshed)
+            changed = changed or model_id != value.id or refreshed != value
+        if changed:
+            self._write(migrated)
 
     def list(self) -> list[ModelConfig]:
         path = self._path()
@@ -611,4 +699,7 @@ def model_presets() -> dict[str, object]:
 def default_profile_snapshot(model_id: str) -> ModelProfileSnapshot:
     provider_id = MODEL_CATALOG.provider_id_for(model_id)
     config = MODEL_CATALOG.materialize(provider_id, model_id, "placeholder-key")
-    return MODEL_CATALOG.profile(model_id).snapshot(config)
+    selection = MODEL_CATALOG.reasoning_selection(model_id, None)
+    return MODEL_CATALOG.profile(model_id).snapshot(
+        config, reasoning_selection=selection
+    )

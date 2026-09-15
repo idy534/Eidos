@@ -145,6 +145,7 @@ import type {
   McpListResult,
   McpServerRecord,
   ModelId,
+  ModelReasoningSelection,
   ModelListResult,
   ModelOption,
   ModelPresetsResult,
@@ -778,9 +779,18 @@ export class RuntimeClient {
     userInput: string,
     modelId: ModelId,
     operationId = randomUUID(),
+    reasoningSelection?: ModelReasoningSelection,
   ): Promise<Run> {
     return this.validatedRequest(
-      "run/start", { sessionId, userInput, modelId, operationId }, isRun,
+      "run/start",
+      {
+        sessionId,
+        userInput,
+        modelId,
+        operationId,
+        ...(reasoningSelection !== undefined ? { reasoningSelection } : {}),
+      },
+      isRun,
     );
   }
 
@@ -1261,11 +1271,19 @@ function isModelOption(value: unknown): value is ModelOption {
 }
 
 function isModelReasoning(value: unknown): boolean {
+  const selections = isRecord(value) ? value.selections : undefined;
+  const validSelections = ["none", "thinking", "low", "medium", "high", "max"];
   return isRecord(value)
-    && hasOnlyKeys(value, ["defaultEffort", "supportedEfforts"])
-    && ["high", "max"].includes(String(value.defaultEffort))
-    && Array.isArray(value.supportedEfforts)
-    && value.supportedEfforts.every((effort) => ["high", "max"].includes(String(effort)));
+    && hasOnlyKeys(value, ["defaultSelection", "selections"])
+    && typeof value.defaultSelection === "string"
+    && validSelections.includes(value.defaultSelection)
+    && Array.isArray(selections)
+    && selections.length > 0
+    && selections.every((selection) => (
+      typeof selection === "string" && validSelections.includes(selection)
+    ))
+    && selections.includes(value.defaultSelection)
+    && new Set(selections).size === selections.length;
 }
 
 function isModelId(value: unknown): value is ModelId {

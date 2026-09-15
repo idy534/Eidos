@@ -1,9 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
-import type { ContextUsage, ModelId, Run, Session } from "../contracts.js";
+import type { ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
+import { ReasoningSelector } from "./ReasoningSelector.js";
 
 export interface ComposerProps {
   composerMode: ComposerMode;
@@ -11,6 +12,7 @@ export interface ComposerProps {
   input: string;
   modelList: import("../contracts.js").ModelListResult | undefined;
   selectedModelId: ModelId | undefined;
+  reasoningSelection?: ModelReasoningSelection | undefined;
   contextUsage: ContextUsage | undefined;
   modelConfigured: boolean;
   modelLoading: boolean;
@@ -21,7 +23,9 @@ export interface ComposerProps {
   onSubmit: () => void;
   onCancel: () => void;
   onModelChange: (id: ModelId) => void;
+  onReasoningSelectionChange?: (selection: ModelReasoningSelection) => void;
   onOpenModelSettings: () => void;
+  showContextIndicator?: boolean;
   showSessionContext?: boolean;
   project?: Session["project"] | null;
   projectless?: boolean;
@@ -41,6 +45,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   input,
   modelList,
   selectedModelId,
+  reasoningSelection,
   contextUsage,
   modelConfigured,
   modelLoading,
@@ -51,7 +56,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   onSubmit,
   onCancel,
   onModelChange,
+  onReasoningSelectionChange,
   onOpenModelSettings,
+  showContextIndicator = true,
   showSessionContext = true,
   project,
   projectless = false,
@@ -138,6 +145,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     || !input.trim();
 
   const hasProjectContext = showSessionContext && (project !== undefined || projectless);
+  const selectedModel = modelList?.models.find((model) => model.id === selectedModelId);
+  const modelReasoning = selectedModel?.reasoning ?? undefined;
+  const selectedReasoning = reasoningSelection ?? modelReasoning?.defaultSelection;
   const projectName = project?.name?.trim() || (project ? basename(project.workspaceRoot) : undefined);
 
   return (
@@ -251,22 +261,17 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         </div>
 
         <div className="composer-options">
-          <ContextIndicator usage={contextUsage} />
-          <label htmlFor="run-model" className="sr-only">
-            本次模型
-          </label>
-          <select
-            id="run-model"
-            value={selectedModelId ?? ""}
-            disabled={composerMode !== "idle" || modelLoading || isSubmitting || !modelConfigured}
-            onChange={(e) => onModelChange(e.target.value as ModelId)}
-          >
-            {modelList?.models.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.name}
-              </option>
-            ))}
-          </select>
+          {showContextIndicator && <ContextIndicator usage={contextUsage} />}
+          {modelList && modelList.models.length > 0 && (
+            <ReasoningSelector
+              models={modelList.models}
+              selectedModelId={selectedModelId}
+              selection={selectedReasoning}
+              disabled={composerMode !== "idle" || modelLoading || isSubmitting}
+              onModelChange={onModelChange}
+              onChange={(selection) => onReasoningSelectionChange?.(selection)}
+            />
+          )}
 
           {canCancel ? (
           <Button

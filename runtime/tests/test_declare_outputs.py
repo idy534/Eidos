@@ -92,6 +92,9 @@ def test_a_failed_file_check_publishes_no_partial_declaration(tmp_path: Path) ->
     )
 
     assert result == {
+        "schemaVersion": 1,
+        "toolContractVersion": 1,
+        "toolName": "declare_outputs",
         "outcome": "error",
         "code": "file_unavailable",
         "summary": "Outputs were not declared: file_unavailable",

@@ -22,6 +22,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import DeltaThinkingPart, DeltaToolCall, FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
+from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai.exceptions import (
     IncompleteToolCall,
@@ -441,7 +443,8 @@ class PydanticAIModelClientTests(unittest.TestCase):
         messages = captured["messages"]
 
         self.assertEqual(title, "仓库分析")
-        self.assertEqual(captured["instructions"], TITLE_SYSTEM_INSTRUCTIONS)
+        expected_instructions = TITLE_SYSTEM_INSTRUCTIONS.removesuffix("\n")
+        self.assertEqual(captured["instructions"], expected_instructions)
         self.assertEqual(captured["tools"], [])
         self.assertEqual(len(messages), 1)
         self.assertIsInstance(messages[0], PAIModelRequest)
@@ -838,6 +841,96 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(response.text, "OK")
         self.assertNotIn("reasoning_effort", payloads[0])
         self.assertEqual(payloads[0]["thinking"], {"type": "disabled"})
+
+    def test_reasoning_selections_map_to_provider_request_settings(self) -> None:
+        scenarios = [
+            ("deepseek", "deepseek-flash", "none", {"type": "disabled"}, None),
+            ("deepseek", "deepseek-flash", "high", {"type": "enabled"}, "high"),
+            ("minimax", "MiniMax-M3", "none", {"type": "disabled"}, None),
+            ("minimax", "MiniMax-M3", "thinking", {"type": "adaptive"}, None),
+            ("kimi", "kimi-k3", "low", None, "low"),
+            ("kimi", "kimi-k3", "max", None, "max"),
+            # The Coding Plan endpoint is intentionally left without guessed fields.
+            ("volcengine", "glm-5.3-flash", "max", None, None),
+        ]
+        base_urls = {
+            "deepseek": "https://api.deepseek.com",
+            "minimax": "https://api.minimaxi.com/v1",
+            "kimi": "https://api.moonshot.cn/v1",
+            "volcengine": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        }
+
+        for provider_id, model_id, selection, expected_thinking, expected_effort in scenarios:
+            with self.subTest(provider=provider_id, selection=selection):
+                payloads: list[dict[str, object]] = []
+
+                async def handler(request: httpx.Request) -> httpx.Response:
+                    payloads.append(json.loads(request.content))
+                    return httpx.Response(
+                        200,
+                        headers={"content-type": "text/event-stream"},
+                        content=(
+                            b'data: {"id":"response-1","object":"chat.completion.chunk",'
+                            b'"created":0,"model":"fixture-model",'
+                            b'"choices":[{"index":0,"delta":{"content":"OK"},'
+                            b'"finish_reason":null}]}\n\n'
+                            b'data: {"id":"response-1","object":"chat.completion.chunk",'
+                            b'"created":0,"model":"fixture-model",'
+                            b'"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+                            b'data: [DONE]\n\n'
+                        ),
+                    )
+
+                http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+                openai_client = AsyncOpenAI(
+                    api_key="sk-example-key-for-tests",
+                    base_url=base_urls[provider_id],
+                    max_retries=0,
+                    http_client=http_client,
+                )
+                if provider_id == "deepseek":
+                    provider = DeepSeekProvider(openai_client=openai_client)
+                elif provider_id == "kimi":
+                    provider = MoonshotAIProvider(openai_client=openai_client)
+                else:
+                    provider = OpenAIProvider(openai_client=openai_client)
+                kernel = RuntimeAsyncKernel()
+                kernel.start()
+                client = PydanticAIModelClient(
+                    OpenAIChatModel(model_id, provider=provider),
+                    ModelProfileSpec(
+                        provider_id=provider_id,
+                        model_id=model_id,
+                        context_window_tokens=4_096,
+                        max_output_tokens=512,
+                        request_timeout_seconds=5.0,
+                    ),
+                    openai_client=openai_client,
+                    reasoning_selection=selection,
+                    async_kernel=kernel,
+                )
+                try:
+                    response = client.complete(
+                        ({"type": "user", "content": "Reply with OK."},),
+                        threading.Event(),
+                        lambda _delta: None,
+                        instructions=TEST_INSTRUCTIONS,
+                        allow_tools=False,
+                    )
+                    self.assertEqual(response.text, "OK")
+                    payload = payloads[0]
+                    if expected_thinking is None:
+                        self.assertNotIn("thinking", payload)
+                    else:
+                        self.assertEqual(payload.get("thinking"), expected_thinking)
+                    if expected_effort is None:
+                        self.assertNotIn("reasoning_effort", payload)
+                    else:
+                        self.assertEqual(payload.get("reasoning_effort"), expected_effort)
+                finally:
+                    client.close()
+                    kernel.close()
+                    asyncio.run(http_client.aclose())
 
 
 async def _one_chunk(_messages, _info):

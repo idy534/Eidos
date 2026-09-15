@@ -431,9 +431,17 @@ export interface EventListResult {
   throughEventId: number;
 }
 
+export type ModelReasoningSelection =
+  | "none"
+  | "thinking"
+  | "low"
+  | "medium"
+  | "high"
+  | "max";
+
 export interface ModelReasoning {
-  defaultEffort: "high" | "max";
-  supportedEfforts: Array<"high" | "max">;
+  defaultSelection: ModelReasoningSelection;
+  selections: ModelReasoningSelection[];
 }
 
 export interface ModelOption {

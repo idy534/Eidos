@@ -67,6 +67,11 @@ class ResponseActionApplication:
         except InvalidRunStateError as error:
             raise ApplicationError("INVALID_STATE", str(error)) from error
 
+        try:
+            source_profile = self._runs.read_model_profile(request.source_run_id)
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+
         revision_kind = "edit" if request.user_input is not None else "regenerate"
         user_input = (
             request.user_input
@@ -78,6 +83,7 @@ class ResponseActionApplication:
             "userInput": user_input,
             "modelId": source["modelId"],
             "operationId": request.operation_id,
+            "reasoningSelection": source_profile.reasoning_selection,
         })
         outcome = self._runs.start(start_request)
         run_id = str(outcome.response.root["id"])

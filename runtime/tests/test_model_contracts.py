@@ -106,11 +106,11 @@ class ModelContractTests(unittest.TestCase):
         )
         self.assertIn("instead of repeating the rejected request", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertIn(
-            "describes the current task, not a restatement",
+            "Describe the task, not the wording of the user's request.",
             TITLE_SYSTEM_INSTRUCTIONS,
         )
         self.assertIn(
-            "<Action> <Primary Object> [Goal / Secondary Object]",
+            "<Action> <Primary Object> [Goal / Scope]",
             TITLE_SYSTEM_INSTRUCTIONS,
         )
         self.assertIn("Task request", TITLE_PROMPT)

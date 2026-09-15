@@ -10,7 +10,7 @@ const mockModelList: ModelListResult = {
       id: "deepseek-v4-flash", name: "DeepSeek-V4 Flash", vendor: "DeepSeek",
       provider: "deepseek", url: "https://api.deepseek.com/chat/completions",
       supportsToolCall: true, supportsImages: false, supportsReasoning: true,
-      reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+      reasoning: { defaultSelection: "high", selections: ["high", "max"] },
     },
   ],
 };
@@ -65,6 +65,17 @@ describe("Composer DOM interaction & state behavior", () => {
 
     fireEvent.change(screen.getByLabelText("本次模型"), { target: { value: "deepseek-v4-flash" } });
     expect(onModelChange).toHaveBeenCalledWith("deepseek-v4-flash");
+  });
+
+  it("hides the reasoning selector when the selected model has no configurable choices", () => {
+    const modelList: ModelListResult = {
+      ...mockModelList,
+      models: mockModelList.models.map((model) => ({ ...model, reasoning: null })),
+    };
+    const { container } = render(<Composer {...defaultProps} modelList={modelList} />);
+
+    expect(container.querySelector(".reasoning-selector")).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider")).not.toBeInTheDocument();
   });
 
   it("shows provider, estimated, and empty context usage states beside the model", () => {

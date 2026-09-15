@@ -10,13 +10,13 @@ const models: ModelListResult = {
       id: "deepseek-v4-pro", name: "DeepSeek-V4 Pro", vendor: "DeepSeek",
       provider: "deepseek", url: "https://api.deepseek.com/chat/completions",
       supportsToolCall: true, supportsImages: false, supportsReasoning: true,
-      reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+      reasoning: { defaultSelection: "high", selections: ["high", "max"] },
     },
     {
       id: "MiniMax-M3", name: "MiniMax M3", vendor: "MiniMax",
       provider: "minimax", url: "https://api.minimaxi.com/v1/chat/completions",
       supportsToolCall: true, supportsImages: false, supportsReasoning: true,
-      reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+      reasoning: { defaultSelection: "thinking", selections: ["none", "thinking"] },
     },
   ],
 };

@@ -35,6 +35,7 @@ import type {
   Run,
   ContextUsage,
   ModelId,
+  ModelReasoningSelection,
   ModelListResult,
   ModelOption,
   ModelPresetsResult,
@@ -272,8 +273,18 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.SESSION_GIT_REBASE_ABORT, sessionId, operationId),
 
   // Runs
-  startRun: (sessionId: string, userInput: string, modelId: ModelId): Promise<Run> =>
-    ipcRenderer.invoke(IPC.RUN_START, sessionId, userInput, modelId),
+  startRun: (
+    sessionId: string,
+    userInput: string,
+    modelId: ModelId,
+    reasoningSelection?: ModelReasoningSelection,
+  ): Promise<Run> => ipcRenderer.invoke(
+    IPC.RUN_START,
+    sessionId,
+    userInput,
+    modelId,
+    reasoningSelection,
+  ),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
   readContextUsage: (runId: string): Promise<ContextUsage | null> =>
     ipcRenderer.invoke(IPC.CONTEXT_USAGE, runId),

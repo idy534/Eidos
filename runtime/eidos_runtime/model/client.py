@@ -17,6 +17,9 @@ MAX_TOOL_NAME_BYTES = 256
 
 
 ModelContextItem = dict[str, object]
+ModelReasoningSelection = Literal[
+    "none", "thinking", "low", "medium", "high", "max"
+]
 
 
 class _FrozenModel(BaseModel):
@@ -168,6 +171,7 @@ class ModelProfileSnapshot(_FrozenModel):
     supports_tools: bool
     supports_json_schema_output: bool
     supports_reasoning: bool
+    reasoning_selection: ModelReasoningSelection | None = None
     supports_images: bool = False
     supports_custom_tools: bool = False
     supports_tool_grammar: bool = False

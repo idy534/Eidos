@@ -57,6 +57,44 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
     )
 
 
+def test_model_catalog_declares_each_model_reasoning_choices_and_default() -> None:
+    presets = model_presets()
+    models = {
+        model["id"]: model
+        for provider in presets["providers"]
+        for model in provider["models"]
+    }
+    expected = {
+        "deepseek-flash": (True, "high", ["none", "low", "high", "max"]),
+        "MiniMax-M3": (True, "thinking", ["none", "thinking"]),
+        "kimi-k3": (True, "max", ["low", "high", "max"]),
+        "kimi-k2.7-code-highspeed": (True, None, None),
+        "deepseek-v4-pro-ga-260813": (True, "high", ["none", "low", "high", "max"]),
+        "deepseek-v4-flash-ga-260731": (True, "high", ["none", "low", "high", "max"]),
+        "glm-5.3": (True, None, None),
+        "glm-5.3-flash": (True, "max", ["low", "high", "max"]),
+        "minimax-m3": (False, None, None),
+        "doubao-seed-evolving": (True, "high", ["none", "low", "medium", "high"]),
+        "doubao-seed-2-1-pro-260628": (True, "high", ["none", "low", "medium", "high"]),
+        "doubao-seed-2-1-turbo-260628": (True, "high", ["none", "low", "medium", "high"]),
+        "doubao-seed-2-0-code-preview-260215": (
+            True, "medium", ["none", "low", "medium", "high"]
+        ),
+    }
+
+    assert set(models) == set(expected)
+    for model_id, (supports_reasoning, default, selections) in expected.items():
+        model = models[model_id]
+        assert model["supportsReasoning"] is supports_reasoning
+        if default is None:
+            assert model["reasoning"] is None
+            continue
+        assert model["reasoning"] == {
+            "defaultSelection": default,
+            "selections": selections,
+        }
+
+
 @pytest.mark.parametrize(
     ("legacy_id", "legacy_name"),
     [
@@ -94,9 +132,65 @@ def test_legacy_deepseek_model_id_is_migrated_to_the_current_id(
     store.initialize()
 
     assert [model.id for model in store.list()] == ["deepseek-flash"]
-    assert store.get(legacy_id) is not None
-    assert store.get(legacy_id).id == "deepseek-flash"
+    migrated = store.get(legacy_id)
+    assert migrated is not None
+    assert migrated.id == "deepseek-flash"
+    assert migrated.api_key == "sk-deepseek-secret-value"
+    assert migrated.reasoning is not None
+    assert migrated.reasoning.default_selection == "high"
+    assert migrated.reasoning.selections == ("none", "low", "high", "max")
     assert json.loads(store.path.read_text(encoding="utf-8"))[0]["id"] == "deepseek-flash"
+
+
+@pytest.mark.parametrize(
+    ("default_key", "supported_key"),
+    [
+        ("defaultEffort", "supportedEfforts"),
+        ("default_effort", "supported_efforts"),
+    ],
+)
+def test_old_models_json_reasoning_metadata_refreshes_and_preserves_api_key(
+    tmp_path: Path,
+    default_key: str,
+    supported_key: str,
+) -> None:
+    store = _store(tmp_path)
+    store.path.write_text(
+        json.dumps([
+            {
+                "id": "MiniMax-M3",
+                "name": "MiniMax M3",
+                "vendor": "MiniMax",
+                "url": "https://api.minimaxi.com/v1/chat/completions",
+                "apiKey": "minimax-secret-value",
+                "supportsToolCall": True,
+                "supportsImages": False,
+                "supportsReasoning": True,
+                "reasoning": {
+                    default_key: "high",
+                    supported_key: ["high", "max"],
+                },
+            }
+        ]),
+        encoding="utf-8",
+    )
+    store.path.chmod(0o600)
+
+    store.initialize()
+
+    model = store.get("MiniMax-M3")
+    assert model is not None
+    assert model.api_key == "minimax-secret-value"
+    assert model.reasoning is not None
+    assert model.reasoning.default_selection == "thinking"
+    assert model.reasoning.selections == ("none", "thinking")
+    persisted = json.loads(store.path.read_text(encoding="utf-8"))[0]
+    assert persisted["apiKey"] == "minimax-secret-value"
+    assert persisted["reasoning"] == {
+        "defaultSelection": "thinking",
+        "selections": ["none", "thinking"],
+    }
+    assert "reasoningSelection" not in persisted
 
 
 def test_removed_volcengine_glm_52_config_migrates_to_glm_53(tmp_path: Path) -> None:
@@ -223,8 +317,8 @@ def test_create_update_delete_round_trip_uses_the_documented_json_array(
     assert created.supports_images is False
     assert created.supports_reasoning is True
     assert created.reasoning is not None
-    assert created.reasoning.default_effort == "high"
-    assert created.reasoning.supported_efforts == ("high", "max")
+    assert created.reasoning.default_selection == "high"
+    assert created.reasoning.selections == ("none", "low", "high", "max")
 
     payload = json.loads(store.path.read_text(encoding="utf-8"))
     assert payload == [
@@ -238,8 +332,8 @@ def test_create_update_delete_round_trip_uses_the_documented_json_array(
             "supportsImages": False,
             "supportsReasoning": True,
             "reasoning": {
-                "defaultEffort": "high",
-                "supportedEfforts": ["high", "max"],
+                "defaultSelection": "high",
+                "selections": ["none", "low", "high", "max"],
             },
         }
     ]

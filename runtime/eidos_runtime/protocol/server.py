@@ -1594,15 +1594,20 @@ class RuntimeServer:
 
     def _model_lease_for_run(self, run_id: str) -> ModelClientLease:
         run = self.store.read_run(run_id)
+        profile = self.store.read_model_profile(run_id)
         if self.model is not None:
             return self._model_lease_for(str(run["modelId"]))
         with self._frozen_model_configs_lock:
             config = self._frozen_model_configs.pop(run_id, None)
         if config is None:
-            return self._model_lease_for(str(run["modelId"]))
+            config = self.model_config.get(str(run["modelId"]))
+            if config is None:
+                raise ModelConfigError("model is not configured")
         if self.model_gateway is None:
             raise ModelConfigError("model gateway is unavailable")
-        return self.model_gateway.acquire_lease(config)
+        return self.model_gateway.acquire_lease(
+            config, reasoning_selection=profile.reasoning_selection
+        )
 
     def _freeze_model_config(self, run_id: str, config: ModelConfig) -> None:
         with self._frozen_model_configs_lock:

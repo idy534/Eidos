@@ -576,6 +576,7 @@ export function AppShell({ runtime }: AppShellProps) {
       const started = await runActions.submitInput({
         snapshot: materialized,
         selectedModelId: modelState.selectedModelId,
+        reasoningSelection: modelState.reasoningSelection,
         isStorageReady,
         inputOverride: draftInput,
         onRunProjected: sessionActions.projectRun,
@@ -593,6 +594,7 @@ export function AppShell({ runtime }: AppShellProps) {
     await runActions.submitInput({
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
+      reasoningSelection: modelState.reasoningSelection,
       isStorageReady,
       onRunProjected: sessionActions.projectRun,
     });
@@ -603,6 +605,7 @@ export function AppShell({ runtime }: AppShellProps) {
     await runActions.submitInput({
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
+      reasoningSelection: modelState.reasoningSelection,
       isStorageReady,
       inputOverride: feedback,
       onRunProjected: sessionActions.projectRun,
@@ -1152,7 +1155,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   input={input}
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
+                  reasoningSelection={modelState.reasoningSelection}
                   contextUsage={contextUsageState.usage}
+                  showContextIndicator={Boolean(contextRun)}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}
                   isSubmitting={runState.isSubmitting || sessionState.pending.creatingSession === true || handoffBusy || restoreBusy}
@@ -1162,6 +1167,11 @@ export function AppShell({ runtime }: AppShellProps) {
                   onSubmit={handleSubmit}
                   onCancel={() => activeRun && !isDraft && snapshot && void runActions.cancelRun({ runId: activeRun.id, sessionId: snapshot.session.id })}
                   onModelChange={(id) => modelActions.selectModel(id)}
+                  onReasoningSelectionChange={(selection) => {
+                    if (modelState.selectedModelId) {
+                      modelActions.setReasoningSelection(modelState.selectedModelId, selection);
+                    }
+                  }}
                   onOpenModelSettings={() => {
                     setSettingsOpen(true);
                     setDockOpen(false);

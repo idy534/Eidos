@@ -80,5 +80,9 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/code,\s*kbd,\s*samp,\s*pre\s*\{[^}]*font-family:\s*var\(--font-code\);/s);
     expect(styles).toMatch(/\.workspace-code-preview pre,\s*\.workspace-code-preview code\s*\{[^}]*font-family:\s*var\(--font-code\);/s);
     expect(dockStyles).toMatch(/\.workspace-dock\s*\{[^}]*font-family:\s*var\(--font-ui\);/s);
+    expect(styles).toMatch(/\.git-file-button code\s*\{[^}]*font-family:\s*var\(--font-ui\);/s);
+    expect(styles).toMatch(/\.git-file-diff-scroll \.diff-gutter\s*\{[^}]*font-variant-numeric:\s*tabular-nums;/s);
+    expect(styles).toMatch(/\.git-file-diff-scroll \.diff-code\s*\{[^}]*tab-size:\s*2;/s);
+    expect(styles).toMatch(/\.git-review-stat\s*\{[^}]*font-size:\s*var\(--font-size-sidebar\);[^}]*font-variant-numeric:\s*tabular-nums;/s);
   });
 });

@@ -7,6 +7,7 @@ from eidos_runtime.model.config import (
     MODEL_CATALOG,
     ModelConfig,
     ModelConfigStore,
+    ModelReasoningSelection,
 )
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.pydantic_ai_client import (
@@ -63,10 +64,17 @@ class ModelGateway:
         self.resources = resource_registry
         self.async_kernel = async_kernel
 
-    def acquire_lease(self, config: ModelConfig) -> ModelGatewayLease:
+    def acquire_lease(
+        self,
+        config: ModelConfig,
+        *,
+        reasoning_selection: ModelReasoningSelection | None = None,
+    ) -> ModelGatewayLease:
         spec = MODEL_CATALOG.profile(config.id)
         built = build_pydantic_model(config, wire_api=spec.wire_api)
-        profile_snapshot = spec.snapshot(config)
+        profile_snapshot = spec.snapshot(
+            config, reasoning_selection=reasoning_selection
+        )
         if profile_snapshot.wire_api == "openai_responses":
             client: ModelClient = OpenAIResponsesModelClient(
                 spec,
@@ -86,7 +94,7 @@ class ModelGateway:
                 retry_transport=built.retry_client,
                 profile_snapshot=profile_snapshot,
                 parallel_tool_calls=config.supports_tool_call,
-                reasoning_effort=None,
+                reasoning_selection=reasoning_selection,
                 async_kernel=self.async_kernel,
             )
         lease = ModelGatewayLease(

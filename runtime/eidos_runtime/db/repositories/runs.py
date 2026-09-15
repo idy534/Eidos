@@ -291,6 +291,7 @@ class RunRepository(Repository):
                 "sessionId": session_id,
                 "userInput": user_input,
                 "modelId": model_id,
+                "reasoningSelection": profile.reasoning_selection,
                 "extensionSnapshot": json.loads(extension_snapshot_json),
             },
         )

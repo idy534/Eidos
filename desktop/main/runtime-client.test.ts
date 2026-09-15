@@ -829,6 +829,69 @@ test("lists only configured models and keeps task model history during session m
   }
 });
 
+test("passes reasoning selection while preserving the operation ID argument", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-reasoning-data-"));
+  const workspaceRoot = await createGitRepository("eidos-reasoning-workspace-");
+  let client: RuntimeClient | undefined;
+  try {
+    let completeRun: ((notification: RuntimeNotification) => void) | undefined;
+    const runCompleted = new Promise<RuntimeNotification>((resolve) => {
+      completeRun = resolve;
+    });
+    client = new RuntimeClient({
+      pythonExecutable,
+      runtimeRoot: path.join(projectRoot, "runtime"),
+      dataDirectory,
+      environment: { EIDOS_FAKE_MODEL: "1" },
+      onNotification: (notification) => {
+        if (notification.method === "run/completed") completeRun?.(notification);
+      },
+    });
+
+    await client.initialize();
+    const session = await client.createSession(workspaceRoot);
+    const operationId = randomUUID();
+    const started = await client.startRun(
+      session.id,
+      "Read README.md",
+      "deepseek-flash",
+      operationId,
+      "max",
+    );
+    const completed = await withTimeout(runCompleted, 5_000);
+    const replay = await client.startRun(
+      session.id,
+      "Read README.md",
+      "deepseek-flash",
+      operationId,
+      "max",
+    );
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+
+    const { stdout } = await execFileAsync(pythonExecutable, [
+      "-c",
+      "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute('SELECT model_profile_json FROM runs WHERE id=?',(sys.argv[2],)).fetchone()[0])",
+      path.join(dataDirectory, "state.sqlite"),
+      started.id,
+    ]);
+    const profile = JSON.parse(stdout) as { reasoning_selection?: string };
+    assert.equal(replay.id, started.id);
+    assert.equal(profile.reasoning_selection, "max");
+    assert.equal(completed.method, "run/completed");
+    if (completed.method === "run/completed") {
+      assert.equal(completed.params.run.id, started.id);
+      assert.equal(completed.params.run.status, "succeeded");
+    }
+  } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
+    await rm(dataDirectory, { recursive: true, force: true });
+    await rm(`${dataDirectory}-worktrees`, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test("routes runtime notifications during a fake model read loop", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-data-"));
   const workspaceRoot = await createGitRepository("eidos-workspace-");

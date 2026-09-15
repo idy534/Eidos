@@ -7,6 +7,7 @@ export type {
   ModelOption,
   ModelListResult,
   ModelReasoning,
+  ModelReasoningSelection,
   ModelPresetModel,
   ModelProviderPreset,
   ModelPresetsResult,

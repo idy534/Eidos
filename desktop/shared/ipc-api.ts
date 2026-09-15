@@ -32,6 +32,7 @@ import type {
   Run,
   ContextUsage,
   ModelId,
+  ModelReasoningSelection,
   ModelListResult,
   ModelOption,
   ModelPresetsResult,
@@ -216,7 +217,12 @@ export interface EidosRuntimeAPI {
   ): Promise<GitRebaseResult>;
 
   // Runs
-  startRun(sessionId: string, userInput: string, modelId: ModelId): Promise<Run>;
+  startRun(
+    sessionId: string,
+    userInput: string,
+    modelId: ModelId,
+    reasoningSelection?: ModelReasoningSelection,
+  ): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
   readContextUsage(runId: string): Promise<ContextUsage | null>;
   reviseRun(sourceRunId: string, userInput?: string): Promise<RunRevisionResult>;

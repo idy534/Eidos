@@ -168,6 +168,30 @@ volcengine: deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
             doubao-seed-2-0-code-preview-260215
 ```
 
+Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启用 thinking；`思考`表示启用 thinking，但不提供强度档位。表中的档位是 Eidos 的选择项，不代表不同 Provider 使用相同的请求字段。
+
+| Provider | Model ID | 可选项 | 默认值 |
+|---|---|---|---|
+| DeepSeek | `deepseek-flash` | 关闭、Low、High、Max | High |
+| MiniMax | `MiniMax-M3` | 关闭、思考 | 思考 |
+| Kimi | `kimi-k3` | Low、High、Max | Max |
+| Kimi | `kimi-k2.7-code-highspeed` | 固定思考，无强度选择 | 思考 |
+| Volcengine Coding Plan | `deepseek-v4-pro-ga-260813` | 关闭、Low、High、Max | High |
+| Volcengine Coding Plan | `deepseek-v4-flash-ga-260731` | 关闭、Low、High、Max | High |
+| Volcengine Coding Plan | `doubao-seed-evolving` | 关闭、Low、Medium、High | High |
+| Volcengine Coding Plan | `doubao-seed-2-1-pro-260628` | 关闭、Low、Medium、High | High |
+| Volcengine Coding Plan | `doubao-seed-2-1-turbo-260628` | 关闭、Low、Medium、High | High |
+| Volcengine Coding Plan | `doubao-seed-2-0-code-preview-260215` | 关闭、Low、Medium、High | Medium |
+| Volcengine Coding Plan | `glm-5.3-flash` | Low、High、Max；thinking 固定开启 | Max |
+| Volcengine Coding Plan | `glm-5.3` | 固定思考，无强度选择 | 思考 |
+| Volcengine Coding Plan | `minimax-m3` | 不提供 Eidos 控制 | Provider 默认值 |
+
+直连 Provider 的公开文档分别说明了不同能力。DeepSeek 使用 `thinking` 开关和 `reasoning_effort`；Low、High、Max 是有效档位，`minimal`、`medium`、`xhigh`、`ultra` 会映射到重复的实际档位。Kimi K3 使用顶层 `reasoning_effort`，可选 Low、High、Max，默认 Max，并且不能关闭思考。Kimi K2.7 Code HighSpeed 固定开启思考，没有公开的强度档位。MiniMax M3 使用 `thinking.type` 开关，`adaptive` 表示启用，`disabled` 表示关闭，省略时默认启用；没有离散 effort 档位。MiniMax 的 `reasoning_split` 只控制思考内容的返回格式，不控制思考开关。参考：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)、[Kimi Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort)、[Kimi K2.7 Code](https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart)、[MiniMax OpenAI SDK](https://platform.minimax.io/docs/api-reference/text-openai-api)。
+
+Volcengine Coding Plan 表格依据当前任务提供的官方文档检索结果整理。`/api/coding/v3` 的模型专属请求字段、实际 wire 值和默认行为尚未通过可独立读取的官方端点文档或受控请求核验。Catalog 选项不能作为 Provider 已接受这些字段的证据。
+
+`run/start` 接受所选模型允许的思考设置。Runtime 会拒绝该模型未声明的设置；请求没有设置时，Runtime 使用 Catalog 默认值。Runtime 将解析后的设置放入 Run 的不可变 `ModelProfileSnapshot`，并写入现有 `runs.model_profile_json`。这项改动不增加 SQLite 列，也不改变 schema 版本。
+
 ModelConfigStore 要求配置与内置 Catalog 严格匹配。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Chat Completions 是不支持 Responses、Custom Tool 或 Grammar 的模型的兼容路径，不是废弃路径。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。Responses stream 只有 `response.completed` 可以产生可执行的 normalized response。`response.failed`、`response.incomplete`、`error` 和没有 terminal event 的 EOF 都 fail closed。模型请求取消覆盖流式上下文建立和 SSE 等待阶段。流建立后，Runtime 关闭 Responses stream，并取消等待中的 `anext` task。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供 arbitrary custom provider、arbitrary base URL、arbitrary model ID 或主动 capability probe。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。

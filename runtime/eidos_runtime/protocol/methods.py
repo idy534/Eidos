@@ -32,6 +32,11 @@ from eidos_runtime.protocol.schemas import (
 )
 
 
+ModelReasoningSelection = Literal[
+    "none", "thinking", "low", "medium", "high", "max"
+]
+
+
 class MethodRequestDto(ClosedModel):
     """Base type for a method-specific request DTO."""
 
@@ -442,6 +447,9 @@ class RunStartRequestDto(_OperationRequest):
     session_id: StrictStr = Field(alias="sessionId")
     user_input: StrictStr = Field(alias="userInput", min_length=1, max_length=64 * 1024)
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
+    reasoning_selection: ModelReasoningSelection | None = Field(
+        default=None, alias="reasoningSelection"
+    )
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "session_id")
 
     @model_validator(mode="after")
@@ -1008,8 +1016,8 @@ class ContextUsageResponseDto(MethodResultDto):
 
 
 class ModelReasoningDto(ClosedModel):
-    default_effort: Literal["high", "max"] = Field(alias="defaultEffort")
-    supported_efforts: list[Literal["high", "max"]] = Field(alias="supportedEfforts")
+    default_selection: ModelReasoningSelection = Field(alias="defaultSelection")
+    selections: list[ModelReasoningSelection]
 
 
 class ModelOptionDto(ClosedModel):

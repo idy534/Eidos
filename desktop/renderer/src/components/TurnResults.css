@@ -487,6 +487,9 @@
   padding: 0.75rem;
   font-family: var(--font-code);
   font-size: var(--font-size-code);
+  line-height: var(--line-height-code);
+  tab-size: 2;
+  -moz-tab-size: 2;
   overflow: auto;
 }
 
@@ -507,6 +510,7 @@
 }
 
 .text-review-feedback-title {
+  font-family: var(--font-ui);
   font-size: var(--font-size-sidebar);
   font-weight: 600;
   color: var(--text);
@@ -535,6 +539,9 @@
   border-radius: var(--radius-sm);
   font-size: var(--font-size-caption);
   font-family: var(--font-code);
+  line-height: var(--line-height-code);
+  tab-size: 2;
+  -moz-tab-size: 2;
   color: var(--text-secondary);
   overflow-x: auto;
 }
@@ -547,8 +554,9 @@
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
-  font-family: inherit;
+  font-family: var(--font-ui);
   font-size: var(--font-size-sidebar);
+  line-height: var(--line-height-body);
   resize: vertical;
   box-sizing: border-box;
 }

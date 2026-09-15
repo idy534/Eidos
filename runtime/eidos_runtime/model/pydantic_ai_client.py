@@ -49,6 +49,7 @@ from eidos_runtime.model.client import (
     ModelClient,
     ModelContextItem,
     ModelProfileSnapshot,
+    ModelReasoningSelection,
     ModelRequestError,
     ModelRequestFailure,
     ModelResponse,
@@ -111,6 +112,7 @@ class PydanticAIModelClient:
         settings_extra_body: dict[str, object] | None = None,
         parallel_tool_calls: bool | None = True,
         reasoning_effort: str | None = None,
+        reasoning_selection: ModelReasoningSelection | None = None,
         image_authority: ViewImageAuthority | None = None,
         async_kernel: RuntimeAsyncKernel,
     ) -> None:
@@ -119,17 +121,48 @@ class PydanticAIModelClient:
         self._openai_client = openai_client
         self._provider_client = provider_client or openai_client
         self._retry_transport = retry_transport
-        self._settings_extra_body = (
-            settings_extra_body
-            if settings_extra_body is not None
-            else (
-                {"thinking": {"type": "disabled"}}
-                if profile_spec.provider_id == "deepseek"
-                else None
-            )
-        )
+        if settings_extra_body is not None:
+            self._settings_extra_body = settings_extra_body
+        elif profile_spec.provider_id == "deepseek":
+            self._settings_extra_body = {
+                "thinking": {
+                    "type": "disabled"
+                    if reasoning_selection in (None, "none")
+                    else "enabled"
+                }
+            }
+        elif (
+            profile_spec.provider_id == "minimax"
+            and reasoning_selection in ("none", "thinking")
+        ):
+            self._settings_extra_body = {
+                "thinking": {
+                    "type": "disabled"
+                    if reasoning_selection == "none"
+                    else "adaptive"
+                }
+            }
+        elif profile_spec.provider_id == "volcengine":
+            # Do not guess Coding Plan /api/coding/v3 request fields.
+            self._settings_extra_body = None
+        else:
+            self._settings_extra_body = None
         self._parallel_tool_calls = parallel_tool_calls
-        self._reasoning_effort = reasoning_effort
+        if reasoning_effort is not None:
+            self._reasoning_effort = reasoning_effort
+        elif (
+            profile_spec.provider_id == "deepseek"
+            and reasoning_selection in ("low", "high", "max")
+        ) or (
+            profile_spec.provider_id == "kimi"
+            and profile_spec.model_id == "kimi-k3"
+            and reasoning_selection in ("low", "high", "max")
+        ):
+            self._reasoning_effort = reasoning_selection
+        # Volcengine selections are persisted in the run snapshot but are not
+        # sent until the Coding Plan endpoint's mapping is verified.
+        else:
+            self._reasoning_effort = None
         self._image_authority = image_authority
         self._async_kernel = async_kernel
         self._closed = False
@@ -276,7 +309,7 @@ class PydanticAIModelClient:
         if self._settings_extra_body is not None:
             settings_values["extra_body"] = self._settings_extra_body
         if self._reasoning_effort is not None:
-            settings_values["reasoning_effort"] = self._reasoning_effort
+            settings_values["openai_reasoning_effort"] = self._reasoning_effort
         settings = ModelSettings(**settings_values)
         parameters = ModelRequestParameters(
             function_tools=(

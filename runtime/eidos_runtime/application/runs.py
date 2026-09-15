@@ -33,6 +33,7 @@ from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot, ModelU
 from eidos_runtime.model.config import (
     ModelConfig,
     ModelConfigError,
+    ModelReasoningSelectionError,
     MODEL_CATALOG,
     default_profile_snapshot,
 )
@@ -276,6 +277,11 @@ class RunApplication:
             raise RuntimeError("RunApplication read repository is not configured")
         return self._typed_repository.list_runs(session_id)
 
+    def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
+        if self._store is None:
+            raise RuntimeError("RunApplication store is not configured")
+        return self._store.read_model_profile(run_id)
+
     def start(self, request: RunStartRequestDto) -> RunStartOutcome:
         store, runtime, environment, scan_text = self._start_dependencies()
         if not environment.model_is_configured():
@@ -301,6 +307,7 @@ class RunApplication:
             "sessionId": request.session_id,
             "userInput": user_input,
             "modelId": model_id,
+            "reasoningSelection": model_profile.reasoning_selection,
             "extensionSnapshot": extension_snapshot,
         }
         if request.operation_id is not None:
@@ -574,17 +581,38 @@ class RunApplication:
     ) -> tuple[str, ModelProfileSnapshot, ModelConfig | None]:
         model_id = request.model_id
         try:
+            selected_reasoning = MODEL_CATALOG.reasoning_selection(
+                model_id, request.reasoning_selection
+            )
+        except ModelConfigError as error:
+            raise ApplicationError(
+                "MODEL_NOT_AVAILABLE", "model is unavailable"
+            ) from error
+        except ModelReasoningSelectionError as error:
+            raise ApplicationError(
+                "INVALID_PARAMS", "reasoning selection is unsupported for this model"
+            ) from error
+        try:
             run_model = environment.model_for(model_id)
         except ModelConfigError:
             run_model = None
         if run_model is not None:
             profile = getattr(run_model, "profile_snapshot", None)
-            return model_id, profile or default_profile_snapshot(model_id), None
+            base_profile = profile or default_profile_snapshot(model_id)
+            return (
+                model_id,
+                base_profile.model_copy(update={
+                    "reasoning_selection": selected_reasoning
+                }),
+                None,
+            )
         try:
             config = environment.model_config(model_id)
             return (
                 model_id,
-                MODEL_CATALOG.profile(model_id).snapshot(config),
+                MODEL_CATALOG.profile(model_id).snapshot(
+                    config, reasoning_selection=selected_reasoning
+                ),
                 config,
             )
         except (ModelConfigError, ValueError) as error:

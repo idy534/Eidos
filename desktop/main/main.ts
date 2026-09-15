@@ -21,6 +21,7 @@ import type {
   RuntimeNotification,
   RuntimeStatus,
   ModelCreateInput,
+  ModelReasoningSelection,
   ModelUpdateInput,
   ResponseFeedbackValue,
   ReviewCommentCreateInput,
@@ -1065,13 +1066,28 @@ ipcMain.handle(IPC.SESSION_GIT_REBASE_ABORT, (
   return clientOrThrow().abortSessionGitRebase(sessionId, operationId);
 });
 
-ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, modelId: unknown) => {
+ipcMain.handle(IPC.RUN_START, (
+  _event,
+  sessionId: unknown,
+  userInput: unknown,
+  modelId: unknown,
+  reasoningSelection: unknown,
+) => {
+  const validReasoningSelection =
+    reasoningSelection === undefined
+    || (
+      typeof reasoningSelection === "string"
+      && ["none", "thinking", "low", "medium", "high", "max"].includes(
+        reasoningSelection,
+      )
+    );
   if (
     typeof sessionId !== "string"
     || typeof userInput !== "string"
     || typeof modelId !== "string"
     || modelId.length === 0
     || modelId.length > 256
+    || !validReasoningSelection
   ) {
     throw new Error("Run 参数无效。");
   }
@@ -1079,6 +1095,8 @@ ipcMain.handle(IPC.RUN_START, (_event, sessionId: unknown, userInput: unknown, m
     sessionId,
     userInput,
     modelId,
+    undefined,
+    reasoningSelection as ModelReasoningSelection | undefined,
   );
 });
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {

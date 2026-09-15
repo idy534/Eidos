@@ -130,6 +130,26 @@ describe("useRunController real behavior", () => {
   });
 
   describe("Start behavior", () => {
+    it("passes the selected reasoning value to startRun", async () => {
+      const startRunSpy = vi.fn().mockResolvedValue(mockRunA);
+      setupMockRuntime({ startRun: startRunSpy });
+      const { result } = renderHook(() => useRunController(mockSnapshotA, true));
+      act(() => result.current[1].setInput("Use the strongest reasoning level"));
+
+      await act(async () => {
+        await result.current[1].submitInput({
+          snapshot: mockSnapshotA,
+          selectedModelId: "deepseek-v4-flash",
+          reasoningSelection: "max",
+          isStorageReady: true,
+        });
+      });
+
+      expect(startRunSpy).toHaveBeenCalledWith(
+        "session-A", "Use the strongest reasoning level", "deepseek-v4-flash", "max",
+      );
+    });
+
     it("submits review feedback through startRun without replacing the composer draft", async () => {
       const startRunSpy = vi.fn().mockResolvedValue(mockRunA);
       setupMockRuntime({ startRun: startRunSpy });

@@ -11,8 +11,11 @@ from eidos_runtime.application.errors import (
     ApplicationInvalidParamsError,
 )
 from eidos_runtime.application.runs import RunApplication
+from eidos_runtime.application.response_actions import ResponseActionApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.model.config import default_profile_snapshot
+from eidos_runtime.persistence.response_actions import ResponseActionRepository
 from eidos_runtime.protocol.methods import (
     EventListRequestDto,
     RunCancelRequestDto,
@@ -23,6 +26,7 @@ from eidos_runtime.protocol.methods import (
     SessionReadRequestDto,
     SessionRenameRequestDto,
 )
+from eidos_runtime.protocol.response_actions import RunReviseRequestDto
 from eidos_runtime.sandbox.sensitive import SensitiveContentDenied
 
 
@@ -370,6 +374,8 @@ def test_run_admission_ensures_repository_runtime_before_worker_start(
             )
         )
 
+        run_id = str(outcome.response.root["id"])
+        assert store.read_model_profile(run_id).reasoning_selection == "high"
         assert repository_runtime.activated == [workspace.resolve()]
         assert len(runtime.prepared) == 1
         outcome.mark_response_delivered()
@@ -417,6 +423,123 @@ def test_run_application_start_defers_worker_release_until_response_delivery(
         assert len(runtime.prepared) == 1
         assert runtime.released == runtime.prepared
         assert len(environment.title_requests) == 1
+    finally:
+        store.close()
+
+
+def test_run_start_persists_resolved_reasoning_selection_and_idempotency_key(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(str(workspace))
+        runtime = _RuntimePort(store)
+        application = _run_application(store, runtime)
+        operation_id = str(uuid4())
+        request = RunStartRequestDto(
+            sessionId=session["id"],
+            userInput="reason with maximum effort",
+            modelId="deepseek-flash",
+            operationId=operation_id,
+            reasoningSelection="max",
+        )
+
+        outcome = application.start(request)
+        run_id = str(outcome.response.root["id"])
+        assert store.read_model_profile(run_id).reasoning_selection == "max"
+        outcome.mark_response_delivered()
+
+        with pytest.raises(ApplicationError) as reused:
+            application.start(request.model_copy(update={
+                "reasoning_selection": "high"
+            }))
+        assert reused.value.code == "OPERATION_ID_REUSED"
+    finally:
+        store.close()
+
+
+def test_run_start_rejects_selection_not_supported_by_the_chosen_model(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(str(workspace))
+        application = _run_application(store, _RuntimePort(store))
+
+        with pytest.raises(ApplicationError) as invalid:
+            application.start(RunStartRequestDto(
+                sessionId=session["id"],
+                userInput="try to disable this model",
+                modelId="kimi-k3",
+                reasoningSelection="none",
+            ))
+
+        assert invalid.value.code == "INVALID_PARAMS"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("selection", ["max", None])
+def test_revision_inherits_source_run_reasoning_selection(
+    tmp_path: Path,
+    selection: str | None,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(str(workspace))
+        model_id = "deepseek-flash"
+        source_profile = default_profile_snapshot(model_id).model_copy(update={
+            "reasoning_selection": selection
+        })
+        source, _user_item = store.create_run(
+            session["id"],
+            "original question",
+            model_id=model_id,
+            model_profile=source_profile,
+        )
+        source_run_id = str(source["id"])
+        assistant_item_id = str(uuid4())
+        assert store.connection is not None
+        with store.lock, store.connection:
+            store.connection.execute(
+                """
+                INSERT INTO items (
+                    id, session_id, run_id, ordinal, model_step_index,
+                    kind, status, content, incomplete, created_at, completed_at
+                ) VALUES (?, ?, ?, 2, 1, 'assistant_message', 'completed', ?, 0, 2, 2)
+                """,
+                (assistant_item_id, session["id"], source_run_id, "original answer"),
+            )
+            store.connection.execute(
+                """
+                UPDATE runs
+                SET status = 'succeeded', completed_at = 2, updated_at = 2
+                WHERE id = ?
+                """,
+                (source_run_id,),
+            )
+
+        runtime = _RuntimePort(store)
+        runs = _run_application(store, runtime)
+        actions = ResponseActionApplication(
+            ResponseActionRepository(store), runs
+        )
+
+        outcome = actions.revise(RunReviseRequestDto(
+            sourceRunId=source_run_id,
+            operationId=str(uuid4()),
+        ))
+        revised_run_id = str(outcome.response.root["run"]["id"])
+
+        expected_selection = selection or "high"
+        assert store.read_model_profile(revised_run_id).reasoning_selection == expected_selection
+        outcome.mark_response_delivered()
     finally:
         store.close()
 

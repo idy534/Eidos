@@ -65,7 +65,7 @@ describe("App & Runtime Lifecycle behavior", () => {
           id: "deepseek-v4-flash", name: "DeepSeek-V4 Flash", vendor: "DeepSeek",
           provider: "deepseek", url: "https://api.deepseek.com/chat/completions",
           supportsToolCall: true, supportsImages: false, supportsReasoning: true,
-          reasoning: { defaultEffort: "high", supportedEfforts: ["high", "max"] },
+          reasoning: { defaultSelection: "high", selections: ["high", "max"] },
         }],
       }),
       listPendingApprovals: vi.fn().mockResolvedValue([]),
