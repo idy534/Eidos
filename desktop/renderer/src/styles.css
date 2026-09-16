@@ -1294,10 +1294,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .workspace-preview-notice { margin: 0; padding: 0.45rem 1rem; background: #f5eddd; color: #6f5b38; font-size: var(--font-size-caption); }
 .workspace-markdown-preview { max-width: 54rem; padding: 1.5rem 2rem 4rem; }
 .workspace-text-preview,
-.workspace-text-preview code,
-.workspace-code-preview,
-.workspace-code-preview pre,
-.workspace-code-preview code {
+.workspace-code-preview pre {
   min-height: 100%;
   margin: 0;
   padding: 1rem 1.25rem 4rem;

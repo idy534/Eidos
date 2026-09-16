@@ -82,7 +82,7 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/--font-code:[^;]*"PingFang SC"[^;]*monospace;/);
     expect(styles).toMatch(/--diff-font-family:\s*var\(--font-code\);/);
     expect(styles).toMatch(/code,\s*kbd,\s*samp,\s*pre\s*\{[^}]*font-family:\s*var\(--font-code\);/s);
-    expect(styles).toMatch(/\.workspace-code-preview pre,\s*\.workspace-code-preview code\s*\{[^}]*font-family:\s*var\(--font-code\);/s);
+    expect(styles).toMatch(/\.workspace-text-preview,\s*\.workspace-code-preview pre\s*\{[^}]*font-family:\s*var\(--font-code\);/s);
     expect(dockStyles).toMatch(/\.workspace-dock\s*\{[^}]*font-family:\s*var\(--font-ui\);/s);
     expect(styles).toMatch(/\.git-file-button code\s*\{[^}]*font-family:\s*var\(--font-ui\);/s);
     expect(styles).toMatch(/\.git-file-diff-scroll \.diff-gutter\s*\{[^}]*font-variant-numeric:\s*tabular-nums;/s);
