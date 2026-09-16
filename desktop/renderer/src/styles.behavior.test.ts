@@ -74,6 +74,10 @@ describe("interactive color tokens", () => {
     expect(dockStyles).toMatch(/\.workbench--sidebar-collapsed\s+\.workspace-dock--expanded\s+\.workspace-dock__header,\s*\.workbench--sidebar-collapsed\s+\.workspace-body--expanded\s+\.workspace-dock__header\s*\{[^}]*padding-left:\s*calc\(86px\s*\+\s*8rem\);/s);
   });
 
+  it("places the sidebar scrollbar against the divider", () => {
+    expect(styles).toMatch(/\.sidebar nav\s*\{[^}]*margin-right:\s*-0\.875rem;[^}]*padding-right:\s*0\.875rem;/s);
+  });
+
   it("maintains typography consistency between session and workspace", () => {
     expect(styles).toMatch(/--font-code:[^;]*"PingFang SC"[^;]*monospace;/);
     expect(styles).toMatch(/--diff-font-family:\s*var\(--font-code\);/);
