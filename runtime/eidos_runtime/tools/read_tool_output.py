@@ -13,7 +13,6 @@ from eidos_runtime.db.repositories.execution import (
     ToolOutputReadError,
 )
 from eidos_runtime.db.storage import SessionStore
-from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.tools.contracts import StrictToolModel, result_model
 from eidos_runtime.tools.registry import (
     ToolProvenance,
@@ -137,21 +136,7 @@ class ReadToolOutputAdapter:
             )
         if cancel.is_set():
             return _error("tool_canceled", "Output reading was canceled")
-        result = _page_result(page)
-        scan_result = _page_result(page, content=page.source_content)
-        try:
-            scanned = default_scanner().scan_json(scan_result)
-        except SensitiveScanError:
-            return _error(
-                "sensitive_content_rejected",
-                "Sensitive output was withheld",
-            )
-        if scanned != scan_result or not isinstance(scanned, dict):
-            return _error(
-                "sensitive_content_rejected",
-                "Sensitive output was withheld",
-            )
-        return result
+        return _page_result(page)
 
 
 def read_tool_output_entry(

@@ -150,6 +150,13 @@ _WORKSPACE_READ_TOOLS = frozenset({
     "read_file_range",
     "search_text",
 })
+_PRESENTATION_ONLY_TOOL_INPUTS = frozenset({
+    *_WORKSPACE_READ_TOOLS,
+    "run_shell",
+    "write_stdin",
+    "read_tool_output",
+    "apply_patch",
+})
 _REFRESHABLE_RECONCILIATION_SCOPES = frozenset({"workspace"})
 
 
@@ -164,9 +171,12 @@ def _tool_payload_value(call: ModelToolCall) -> dict[str, object] | str:
 def _scan_tool_payload(
     scanner: SensitiveScanner, call: ModelToolCall
 ) -> ToolPayload:
+    if call.name in _PRESENTATION_ONLY_TOOL_INPUTS:
+        return call.payload
     if isinstance(call.payload, FunctionToolPayload):
         scanned = scanner.scan_json(
-            call.payload.arguments, max_bytes=MAX_PATCH_BYTES if call.name == "apply_patch" else 512 * 1024
+            call.payload.arguments,
+            max_bytes=512 * 1024,
         )
         if not isinstance(scanned, dict) or scanned != call.payload.arguments:
             raise SensitiveScanError("sensitive tool arguments")
@@ -602,7 +612,12 @@ class ShellToolHandler:
         except RuntimeError as error:
             result = tool_result(call.name, "error", "shell_stdin_failed", "Shell input or observation failed", side_effects_may_exist=bool(arguments.chars), reconciliation_required=bool(arguments.chars))
             logger.warning("Shell session operation failed: %s", type(error).__name__)
-        result = safe_tool_result(self.dependencies.sensitive, call.name, bounded_tool_result(call.name, result))
+        result = safe_tool_result(
+            self.dependencies.sensitive,
+            call.name,
+            bounded_tool_result(call.name, result),
+            scan_output=False,
+        )
         return HandlerOutcome(result, "completed" if result.get("outcome") == "success" else "failed", "completed")
 
     def execute(
@@ -637,6 +652,19 @@ class ShellToolHandler:
         command = shell_input.command
         cwd_value = shell_input.cwd
         yield_time_ms = shell_input.yieldTimeMs
+        display_command = self.dependencies.sensitive.redact_for_presentation(
+            command
+        ).text
+        display_cwd = self.dependencies.sensitive.redact_for_presentation(
+            cwd_value
+        ).text
+        display_justification = (
+            self.dependencies.sensitive.redact_for_presentation(
+                shell_input.justification
+            ).text
+            if shell_input.justification is not None
+            else None
+        )
         # This watchdog bounds one observation, not the managed process lifetime.
         timeout = runtime.spec.timeout_seconds
         try:
@@ -769,6 +797,7 @@ class ShellToolHandler:
 
         def stream_safe_output(text: str) -> None:
             nonlocal delta_sequence
+            text = self.dependencies.sensitive.redact_for_presentation(text).text
             delta_sequence += 1
             mutation = self.dependencies.store.append_item_deltas_committed(
                 str(item["id"]), (text,), delta_sequence
@@ -851,7 +880,6 @@ class ShellToolHandler:
                     yield_time_ms=yield_time_ms,
                     wait_for_exit=False,
                     on_output=stream_safe_output,
-                    sensitive=self.dependencies.sensitive,
                     cancel=cancel,
                 )
                 if dependency_provenance is not None:
@@ -951,16 +979,12 @@ class ShellToolHandler:
             result = bounded_tool_result(
                 call.name, attach_workspace_diff(raw_result, workspace_diff)
             )
-            try:
-                result = safe_tool_result(
-                    self.dependencies.sensitive, call.name, result
-                )
-            except SensitiveScanError:
-                result = tool_error(
-                    call.name,
-                    "sensitive_content_rejected",
-                    "Shell output was withheld",
-                )
+            result = safe_tool_result(
+                self.dependencies.sensitive,
+                call.name,
+                result,
+                scan_output=False,
+            )
             data = (
                 result.get("data")
                 if isinstance(result.get("data"), dict)
@@ -1011,6 +1035,13 @@ class ShellToolHandler:
                 if request.approval_kind == "additional_permissions"
                 else "default_sandbox"
             )
+            display_escalation_reason = (
+                self.dependencies.sensitive.redact_for_presentation(
+                    request.escalation_reason
+                ).text
+                if request.escalation_reason is not None
+                else None
+            )
             description = {
                 "kind": "command_execution",
                 "summary": (
@@ -1020,8 +1051,8 @@ class ShellToolHandler:
                     if mode == "expanded_sandbox"
                     else "Run shell command"
                 ),
-                "command": command,
-                "cwd": cwd_value,
+                "command": display_command,
+                "cwd": display_cwd,
                 "networkEnabled": bool(summary.get("networkEnabled")),
                 "timeoutSeconds": timeout,
                 "executionMode": mode,
@@ -1031,13 +1062,13 @@ class ShellToolHandler:
                 "additionalExecutableAccess": summary.get("execute", []),
                 "attemptOrdinal": request.attempt_ordinal,
                 **(
-                    {"reason": shell_input.justification}
-                    if shell_input.justification is not None
+                    {"reason": display_justification}
+                    if display_justification is not None
                     else {}
                 ),
                 **(
-                    {"escalationReason": request.escalation_reason}
-                    if request.escalation_reason is not None
+                    {"escalationReason": display_escalation_reason}
+                    if display_escalation_reason is not None
                     else {}
                 ),
             }
@@ -1186,8 +1217,10 @@ class ShellToolHandler:
                         terminal["reconciliationRequired"] = True
                 exit_data = terminal["data"]
                 terminal = safe_tool_result(
-                    self.dependencies.sensitive, "run_shell",
+                    self.dependencies.sensitive,
+                    "run_shell",
                     bounded_tool_result("run_shell", terminal),
+                    scan_output=False,
                 )
                 if terminal.get("data", {}).get("executionStatus") != "exited":
                     terminal = tool_result(

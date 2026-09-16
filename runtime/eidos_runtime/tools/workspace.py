@@ -38,8 +38,6 @@ from eidos_runtime.workspace.discovery_scope import (
 from eidos_runtime.workspace.discovery_policy import (
     SENSITIVE_NAMES,
     SENSITIVE_SUFFIXES,
-    is_sensitive_directory as _is_sensitive_directory,
-    is_sensitive_name as _is_sensitive_name,
 )
 from eidos_runtime.workspace.codex_patch import (
     AddFile,
@@ -120,6 +118,9 @@ SHELL_SOURCE_SUFFIXES = {
     ".tsx",
 }
 MAX_PEM_SCAN_BYTES = 1024 * 1024
+_PROTECTED_WORKSPACE_METADATA_NAMES = frozenset({".git", ".agents", ".eidos"})
+
+
 class ToolCancelled(RuntimeError):
     pass
 
@@ -478,8 +479,6 @@ class ToolExecutor:
                 if not path.is_relative_to(self.workspace.path) or any(
                     path.is_relative_to(root) for root in approval_roots
                 ):
-                    # Validate the entire external path, including protected names.
-                    _validate_relative_path(str(path).lstrip("/"))
                     paths.append(path)
         return tuple(dict.fromkeys(paths))
 
@@ -514,6 +513,8 @@ class ToolExecutor:
         absolute = str(self.workspace.path / value)
         resolved = absolute if absolute in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
         target = self.workspace.path / resolved
+        if _is_protected_workspace_metadata_path(target, self.workspace.path):
+            raise WorkspacePathError("permission_not_requestable")
         if self.write_permissions is not None and not self.write_permissions.allows_file_write(target):
             raise WorkspacePathError("permission_not_requestable")
         return resolved
@@ -683,18 +684,8 @@ class ToolExecutor:
         try:
             self._verify_root()
             _check_cancel(cancel)
-            scanned_arguments = default_scanner().scan_json(arguments)
-            assert isinstance(scanned_arguments, dict)
-            result = tool(scanned_arguments, cancel)
-            scanned = default_scanner().scan_json(result)
-            assert isinstance(scanned, dict)
-            if scanned != result:
-                return _error(
-                    tool_name, "sensitive_content_rejected", "Sensitive content was withheld"
-                )
-            return canonical_tool_result(tool_name, scanned)
-        except SensitiveScanError:
-            return _error(tool_name, "sensitive_content_rejected", "Sensitive content was withheld")
+            result = tool(arguments, cancel)
+            return canonical_tool_result(tool_name, result)
         except ToolCancelled:
             return _error(tool_name, "canceled", "Tool was canceled")
         except DiscoveryScopeError as error:
@@ -731,6 +722,10 @@ class ToolExecutor:
             assert isinstance(path_value, str)
             parts = _validate_relative_path(path_value)
             normalized_path = "/".join(parts)
+            if _is_protected_workspace_metadata_path(
+                self.workspace.path / normalized_path, self.workspace.path
+            ):
+                raise WorkspacePathError("permission_not_requestable")
             existing = self._read_existing_for_change(normalized_path, cancel)
             deleting = operation == "delete"
             if deleting:
@@ -813,8 +808,6 @@ class ToolExecutor:
                 raise CodexPatchError("invalid_utf8", "Patch must be valid UTF-8") from None
             if patch_bytes > MAX_PATCH_BYTES:
                 raise CodexPatchError("patch_too_large", f"Patch exceeds the {MAX_PATCH_BYTES}-byte input budget")
-            if default_scanner().scan_text(patch_value, max_bytes=MAX_PATCH_BYTES).text != patch_value:
-                raise SensitiveScanError("sensitive tool input")
             hunks = parse_patch(patch_value)
             if not hunks:
                 return _error(
@@ -956,12 +949,6 @@ class ToolExecutor:
             if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
                 raise WorkspacePathError("diff_too_large")
             return PreparedPatch(tuple(prepared), diff)
-        except SensitiveScanError:
-            return _error(
-                tool_name,
-                "sensitive_content_rejected",
-                "Sensitive arguments were rejected",
-            )
         except UnicodeDecodeError:
             return _error(tool_name, "invalid_utf8", "File is not valid UTF-8")
         except ToolCancelled:
@@ -1022,6 +1009,10 @@ class ToolExecutor:
             self.verify_write_scope()
             _check_cancel(cancel)
             parts = _validate_relative_path(change.path)
+            if _is_protected_workspace_metadata_path(
+                self.workspace.path / change.path, self.workspace.path
+            ):
+                raise WorkspacePathError("permission_not_requestable")
             if self.write_permissions is not None and not self.write_permissions.allows_file_write(self.workspace.path / change.path):
                 raise WorkspacePathError("permission_not_requestable")
             parent_fd = self._open_parent(
@@ -1565,11 +1556,6 @@ class ToolExecutor:
             if metadata.st_uid != self.workspace.owner:
                 raise WorkspacePathError("unsupported_workspace_entry")
             return
-        if relative != ".env" and (
-            _is_shell_sensitive_name(name)
-            or _is_sensitive_directory(name)
-        ):
-            raise WorkspacePathError("sensitive_workspace_content")
         if stat.S_ISLNK(metadata.st_mode):
             return
         if stat.S_ISDIR(metadata.st_mode):
@@ -1578,8 +1564,6 @@ class ToolExecutor:
             raise WorkspacePathError("unsupported_workspace_entry")
         if metadata.st_nlink != 1:
             raise WorkspacePathError("unsupported_workspace_hardlink")
-        if _contains_sensitive_pem(directory_fd, name, metadata):
-            raise WorkspacePathError("sensitive_workspace_content")
 
     def _read_existing_for_change(
         self,
@@ -1904,10 +1888,19 @@ def _validate_relative_path(value: str) -> tuple[str, ...]:
     if path.is_absolute() or ".." in path.parts:
         raise WorkspacePathError("workspace_boundary_violation")
     parts = tuple(part for part in path.parts if part not in {"", "."})
-    if not parts or any(_is_sensitive_name(part) or _is_sensitive_directory(part) for part in parts):
-        code = "sensitive_path" if parts else "workspace_boundary_violation"
-        raise WorkspacePathError(code)
+    if not parts:
+        raise WorkspacePathError("workspace_boundary_violation")
     return parts
+
+
+def _is_protected_workspace_metadata_path(
+    path: Path, workspace_root: Path
+) -> bool:
+    try:
+        relative = path.relative_to(workspace_root)
+    except ValueError:
+        return False
+    return any(part in _PROTECTED_WORKSPACE_METADATA_NAMES for part in relative.parts)
 
 
 _MISSING = object()

@@ -133,8 +133,8 @@ class ShellProcessManager:
             launch=launch,
             started_at=time.monotonic(),
         )
+        session.on_output = on_output
         if sensitive is not None:
-            session.on_output = on_output
             for name in ("stdout", "stderr"):
                 session.scanners[name] = StreamingSensitiveScanner(
                     sensitive,
@@ -174,7 +174,6 @@ class ShellProcessManager:
             snapshot = self._wait_and_snapshot(session, 0, "run_shell", cumulative=True)
         if not wait_for_exit:
             return snapshot
-        self._emit_output(snapshot, on_output)
         return self._wait_until_exit(session, snapshot, on_output, cancel)
 
     def wait(
@@ -421,7 +420,6 @@ class ShellProcessManager:
                 "run_shell",
                 cancel=None if cancel_sent else cancel,
             )
-            self._emit_output(snapshot, on_output)
 
     @staticmethod
     def _emit_output(

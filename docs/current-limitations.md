@@ -37,7 +37,8 @@
 ### Workspace 与工具
 
 - 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件。写入工具支持普通 Workspace 写入和经审批的外部普通文件写入；普通 Skill 需要明确写入授权，`skills/.system` 始终禁写。已有文件使用受控原地写入，新文件使用排他提交；工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
-- `apply_patch` 统一使用 Codex Patch：支持 Custom 和 Grammar 的相应 profile 直接提交原文；Function profile 提交 `{ "patch": "..." }`。旧的 `{ "changes": [...] }` 不再接受。两条路径的 Patch 原文预算统一为 8 MiB，Function 外层 JSON 另留转义空间。单文件读取、准备和提交校验上限统一为 16 MiB；一次 Patch 的准备内容预算为 64 MiB，Diff 和结果各有 64 MiB 上限。预算约束 Runtime 资源，工具说明不规定文件拆分、补丁大小偏好或分批时机。JSON 类型、Patch 语法、当前文件匹配和最终写入验证是不同阶段；单个阶段通过不代表编辑成功。离线回归验证契约和安全行为，不能代表真实 Provider/模型的成功率；模型成功率需要另行使用相同任务集测量。
+- 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录继续受到写入保护。Workspace 外的 Eidos data 和 credential 路径仍由永久拒绝保护。
+- `apply_patch` 统一使用 Codex Patch：支持 Custom 和 Grammar 的相应 profile 直接提交原文；Function profile 提交 `{ "patch": "..." }`。旧的 `{ "changes": [...] }` 不再接受。两条路径的 Patch 原文预算统一为 8 MiB，Function 外层 JSON 另留转义空间。`apply_patch` 不再按内容模式或敏感文件名拒绝 Patch。单文件读取、准备和提交校验上限统一为 16 MiB；一次 Patch 的准备内容预算为 64 MiB，Diff 和结果各有 64 MiB 上限。预算约束 Runtime 资源，工具说明不规定文件拆分、补丁大小偏好或分批时机。JSON 类型、Patch 语法、当前文件匹配和最终写入验证是不同阶段；单个阶段通过不代表编辑成功。离线回归验证契约和安全行为，不能代表真实 Provider/模型的成功率；模型成功率需要另行使用相同任务集测量。
 - Custom Tool 的 input delta 在 Responses adapter 内部重组。Desktop 在完整参数通过解析并完成 Prepare 后显示持久补丁更新；它不展示尚未校验的逐 token 补丁。Prepare 完成不代表文件提交成功。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
 - 本地 grammar 将上游 `add_line+` 改为 `add_line*`，以对齐 Codex Rust streaming parser 的空 Add 行为。Lark 对上游零宽文本正则的写法也使用了兼容 token。其他 Workspace 边界和文件安全限制不变。
@@ -51,17 +52,17 @@
 - Inline Review Comment 当前只支持单条行级 Comment、删除、精确 anchor 失效和 active Comment 批量发送。它不支持 thread、reply、mention、reaction、云同步或模糊 re-anchor。stale Comment 只保留为历史提示，不会自动进入 Agent feedback。
 - Git diff 对已记录的 submodule 只观察 Gitlink HEAD 和 submodule workspace 缺失。submodule 内部的 nested working-tree dirtiness 尚未向父 repository diff 暴露。
 - Workspace discovery 只读取 Workspace root 的 `.gitignore` 和 `.eidosignore`。当前不支持 nested `.gitignore`。
-- Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。Ignore 规则不是权限，也不会缩小 Shell security scan 或副作用 evidence 范围。
+- Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。`.git`、`.agents` 和 `.eidos` 等 hard discovery 目录默认隐藏，但显式只读路径仍可读取。Ignore 规则不是权限。
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
-- Shell post-execution observation 在扫描超时、敏感条目或不完整 Workspace manifest 时可能是 `unknown`。这类 observation 不能替代 Runtime 明确报告的执行 uncertainty，也不会单独限制已明确退出的 Shell。对于仍由 Runtime 管理、结果带有有效 `sessionId` 且明确报告 `reconciliationRequired=false` 的 `executionStatus=running` Shell，Workspace observation 不完整不会单独建立 reconciliation。Runtime 仍会保留 `workspaceChangeState=unknown`、`workspaceDiffIncomplete=true` 和 `sideEffectsMayExist=true`。完整的 Workspace 状态与安全事实仍需要后置核验。
+- Shell post-execution observation 在超时或不完整 Workspace manifest 时可能是 `unknown`。这类 observation 不能替代 Runtime 明确报告的执行 uncertainty，也不会单独限制已明确退出的 Shell。对于仍由 Runtime 管理、结果带有有效 `sessionId` 且明确报告 `reconciliationRequired=false` 的 `executionStatus=running` Shell，Workspace observation 不完整不会单独建立 reconciliation。Runtime 仍会保留 `workspaceChangeState=unknown`、`workspaceDiffIncomplete=true` 和 `sideEffectsMayExist=true`。完整的 Workspace 状态与安全事实仍需要后置核验。
 
 ### Agent Shell
 
 - Agent zsh/bash 使用原生 `pipefail`，管道前段的失败会影响管道退出码；POSIX sh 保持原行为。`head` 提前关闭管道可能导致 SIGPIPE，调用方应优先使用工具的有界输出。分号后命令的成功仍不能证明前面所有阶段通过。Runtime 不解析任意命令正文来推断业务成功。
 - Runtime 的依赖、TLS 和视觉验收指引约束模型决策，但它们不是任意 Shell 程序的静态安全证明。系统不会自动安装缺失的 Office/渲染工具，也不会把结构检查当作逐页视觉验收。`succeeded` 表示 Run 正常结束，不表示所有人工验收已完成。
 
-- `outputComplete=false` 表示输出尚未完整获得，原因可能是仍在运行、捕获失败或原始输出截断。旧结果缺少该字段时，系统不能推断输出完整。`outputCaptureError` 只保存安全原因码，不能恢复已经丢失或被安全扫描拒绝的内容。本次历史 Run 的具体捕获子原因不会被新代码补写。
+- `outputComplete=false` 表示输出尚未完整获得，原因可能是仍在运行、捕获失败或原始输出截断。旧结果缺少该字段时，系统不能推断输出完整。`outputCaptureError` 只保存捕获原因码，不能恢复已经丢失的内容；当前 Shell 聚合输出不会因可识别凭据被拒绝。本次历史 Run 的具体捕获子原因不会被新代码补写。
 - 同一对账 epoch 最多允许三轮工具恢复，随后现有 Finalizer 收尾并保留对账事实。系统不自动重放未知操作。模型的测试报告指引要求区分收集数与完成数，也要求标明缺失汇总和未执行阶段；这项指引不等于系统能够自动证明任意测试结论。
 
 - Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 会阻止该 Run 启动新的副作用。
@@ -69,7 +70,7 @@
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Shell cwd 必须解析到 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。Workspace 外的 absolute cwd 会返回 Tool Error。
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
-- Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流安全片段的释放顺序，并把 ANSI/OSC 控制序列按纯文本处理。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
+- Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的展示脱敏片段顺序，并把 ANSI/OSC 控制序列按纯文本处理；聚合结果仍保留原始 stdout/stderr。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
 - `read_tool_output` 只读取当前 Session 中已持久化的终态 `run_shell` 输出，过去 Run 可以读取。它要求 provider tool call ID，默认 stdout，也支持 stderr；运行中、跨 Session、缺失或歧义 ID 会拒绝。请求的 `maxBytes` 范围是 4 字节至 16 KiB，实际页可能更小。分页结果按 UTF-8 边界返回 `startByte`、`endByte` 和 `nextOffset`，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell，也不会清除 reconciliation。
 - Desktop Terminal 是另一条 Main-owned PTY 路径。Agent Shell 的限制不会改变 Desktop Terminal 的现有说明。
@@ -157,11 +158,11 @@
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
 - 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
-- 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验、输出限额和敏感扫描。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
+- 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验和输出限额；展示片段使用 best-effort 凭据脱敏，聚合 stdout/stderr 保留原始内容。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
 - Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。
 
 - 已有文件的原地写入不是原子内容替换。外部读者可能看到中间内容；写前版本检查不能阻止外部编辑器在检查后并发写入。异常终止可能留下部分文件；Runtime 不会自动覆盖回旧内容或重放补丁。
-- 工作区外的已有文件按具体文件申请写权限。新文件使用目标最近的已存在父目录作为请求范围，审批会展示目录和具体文件。不存在的父目录可在批准后创建。永久拒绝路径、链接和敏感路径仍不能写入。无沙盒审批不会绕过操作系统 ACL、只读权限或系统隐私权限。
+- 工作区外的已有文件按具体文件申请写权限。新文件使用目标最近的已存在父目录作为请求范围，审批会展示目录和具体文件。不存在的父目录可在批准后创建。永久拒绝路径、链接、`.git`、`.agents` 和 `.eidos` 仍不能写入。无沙盒审批不会绕过操作系统 ACL、只读权限或系统隐私权限。
 
 - 外部文件写入的不确定结果需要对外部目标另行核实。当前 Workspace 刷新不覆盖外部文件，因此不能自动清除此类 Reconciliation；Runtime 不自动重放或回滚。
 

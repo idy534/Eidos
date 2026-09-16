@@ -18,6 +18,10 @@ SCAN_TIMEOUT_SECONDS = 1.0
 _INCOMPLETE_SECRET_ASSIGNMENT = re.compile(
     r"(?is)\b(?:password|passwd|token|secret)\s*[:=]\s*$"
 )
+_PRESENTATION_BEARER_TOKEN = re.compile(
+    r"(?i:\bBearer)[ \t]+[A-Za-z0-9._~+/-]{16,}=*"
+)
+_PRESENTATION_AWS_ACCESS_KEY_ID = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 
 
 class SensitiveScanError(RuntimeError):
@@ -72,7 +76,13 @@ class SensitiveScanner:
         except Exception as error:
             raise SensitiveScanError("sensitive rules are invalid") from error
 
-    def scan_text(self, value: str, *, max_bytes: int = MAX_SCAN_BYTES) -> ScanResult:
+    def scan_text(
+        self,
+        value: str,
+        *,
+        max_bytes: int = MAX_SCAN_BYTES,
+        reject_denied: bool = True,
+    ) -> ScanResult:
         if not isinstance(value, str):
             raise SensitiveScanError("text is invalid")
         encoded = value.encode("utf-8", errors="strict")
@@ -88,12 +98,31 @@ class SensitiveScanner:
             if match is None:
                 continue
             if rule.action == "deny":
-                raise SensitiveContentDenied(rule.id)
+                if reject_denied:
+                    raise SensitiveContentDenied(rule.id)
+                safe = pattern.sub(f"[REDACTED:{rule.id}]", safe)
+                continue
             if rule.action == "redact":
                 safe = pattern.sub(f"[REDACTED:{rule.id}]", safe)
             else:
                 audited.append(rule.id)
         return ScanResult(text=safe, auditedRuleIds=audited)
+
+    def redact_for_presentation(
+        self, value: str, *, max_bytes: int = MAX_SCAN_BYTES
+    ) -> ScanResult:
+        """Redact recognizable credentials without blocking the operation."""
+        try:
+            result = self.scan_text(value, max_bytes=max_bytes, reject_denied=False)
+        except SensitiveScanError:
+            return ScanResult(text="[REDACTED:sensitive_scan_failed]")
+        text = _PRESENTATION_BEARER_TOKEN.sub(
+            "Bearer [REDACTED:bearer_token]", result.text
+        )
+        text = _PRESENTATION_AWS_ACCESS_KEY_ID.sub(
+            "[REDACTED:aws_access_key_id]", text
+        )
+        return result.model_copy(update={"text": text})
 
     def scan_json(self, value: object, *, max_bytes: int = MAX_SCAN_BYTES) -> object:
         if isinstance(value, str):

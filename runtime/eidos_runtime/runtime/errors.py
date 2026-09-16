@@ -56,7 +56,10 @@ def safe_tool_result(
     result: dict[str, object],
     *,
     data_model: type[BaseModel] | None = None,
+    scan_output: bool = True,
 ) -> dict[str, object]:
+    if not scan_output:
+        return canonical_tool_result(tool_name, result, data_model=data_model)
     try:
         scanned = scanner.scan_json(result, max_bytes=tool_result_limit(tool_name))
     except SensitiveScanError:

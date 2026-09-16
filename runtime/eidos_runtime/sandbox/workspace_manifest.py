@@ -14,6 +14,7 @@ DEFAULT_SCAN_SECONDS = 2.0
 HASH_LIMIT_BYTES = 1024 * 1024
 IGNORED_NAMES = frozenset({
     ".git",
+    ".agents",
     ".eidos",
     ".venv",
     "__pycache__",

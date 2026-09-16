@@ -183,9 +183,17 @@ def base_permission_profile_for_workspace(
     return BasePermissionProfile.for_workspace(
         workspace_root=workspace_root,
         protected_paths=(data_directory,) if data_directory is not None else (),
-        protected_write_paths=(Path(__file__).resolve().parents[1], *(
-            (data_directory / "skills" / ".system",) if data_directory is not None else ()
-        )),
+        protected_write_paths=(
+            workspace_root / ".git",
+            workspace_root / ".agents",
+            workspace_root / ".eidos",
+            Path(__file__).resolve().parents[1],
+            *(
+                (data_directory / "skills" / ".system",)
+                if data_directory is not None
+                else ()
+            ),
+        ),
         approval_write_roots=(data_directory / "skills",) if data_directory is not None else (),
         runtime_roots=(_RUNTIME_RESOURCE_ROOT,),
     )

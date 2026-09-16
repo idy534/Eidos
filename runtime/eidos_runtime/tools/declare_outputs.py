@@ -76,8 +76,6 @@ class DeclareOutputsAdapter:
                             raise WorkspacePathError("workspace_boundary_violation")
                         path = path.relative_to(self.workspace.path)
                     normalized = "/".join(validate_workspace_relative_path(str(path)))
-                    if any(part.lower() == ".git" for part in Path(normalized).parts):
-                        raise WorkspacePathError("sensitive_path")
                     metadata = reader.stat_file(normalized, cancel=cancel)
                     outputs[normalized] = DeclaredOutput(
                         path=normalized, title=output.title,

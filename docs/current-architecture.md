@@ -27,7 +27,7 @@ Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 
 
 文件读写、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint 属于 Workspace 或 Runtime 能力。它们不因为 Project 没有 Git 而失效。Git status 和 Git diff 在 Git Project 的当前 execution root 上提供。Managed Worktree 和 Git-based Fork 仍然只在 Git Project 中提供。
 
-Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、敏感路径、hard discovery directory 和 root ignore 规则。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 使用当前 Session 的私有 Workspace，仍经过同一个 Reader。Renderer 对 Conversation 传来的历史文件路径先检查当前目录项；目录项明确缺失时，Renderer 不直接调用预览接口。目录列表截断时，Runtime 继续负责最终验证。Renderer 不直接读取 filesystem。
+Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、hard discovery directory 和 root ignore 规则。普通敏感文件名和内容可以读取；`.git`、`.agents`、`.eidos` 只在写入侧保护，显式路径可以列举、搜索和读取，默认发现仍隐藏这些元数据目录。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 使用当前 Session 的私有 Workspace，仍经过同一个 Reader。Renderer 对 Conversation 传来的历史文件路径先检查当前目录项；目录项明确缺失时，Renderer 不直接调用预览接口。目录列表截断时，Runtime 继续负责最终验证。Renderer 不直接读取 filesystem。
 
 Desktop 会让 Conversation 始终保持挂载。Session header 右侧固定显示环境信息入口；用户可以通过工作区开关打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab 保留在预览栏中，预览区不显示当前路径、文件大小或手动刷新入口，侧栏布局默认给预览区更多空间。产物卡的图片会直接进入全屏预览，HTML 会直接打开隔离网页面板，PDF 会进入 Files 的内置预览，系统应用打开入口保持可用。Dock 普通展开时环境信息入口仍在 Session header，完全展开时入口显示在 Dock header。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
 
@@ -207,7 +207,7 @@ Validate → Prepare → Permission Decision → Durable Intent
 → Execute → Verify → canonical ToolResult → Event / Context projection
 ```
 
-ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并受控提交已有文件的原地写入或新文件的排他创建。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
+ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。`apply_patch` 不执行敏感内容扫描，但仍执行输入类型、Patch 语法、Workspace 边界、权限、版本、受控写入和最终内容校验。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并受控提交已有文件的原地写入或新文件的排他创建。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
 
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
 
@@ -217,7 +217,7 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 `ModelToolCall` 的裸 `dict` 永远表示 Function payload。Custom payload 必须显式使用 `CustomToolPayload`。`tool_calls.payload_kind` 是 SQLite 中独立且受约束的类型 authority。ContextBuilder、DB mapper 和下一次 Provider projection 都读取这个字段，不再从 `arguments_json` 猜测类型。历史 Custom call/result 在 Responses 中继续投影为 native Custom item，在 Chat Completions 中投影为有界的普通历史信息。当前 Step 固化的 Tool Definition 仍然是当前输入 contract 的唯一 authority。 `apply_patch` builtin provenance 的 `sourceVersion` 为 `2`，新的输入 schema 和说明参与现有 Contract Hash；`contractVersion=1` 仍表示未变的 ToolSpec/ToolResult envelope 版本。历史参数和结果保持原样，不转换、不重放，不迁移 SQLite。旧输入重新提交时会得到有界的 `invalid_arguments` 提示，包含当前 `patch` 格式示例和无文件修改的说明。Patch 格式错误会提示修正标记，匹配失败会提示重新读取当前文件。模型通过现有 Loop 纠正输入；Runtime 不猜测参数、不放宽匹配、不自动重试写入。v7 到 v8 migration 只在迁移边界兼容旧的 native `apply_patch` envelope。
 
-文件编辑资源预算由 `file_limits.py` 汇集；独立提交 helper 持有单文件上限。Function 校验按工具选择参数预算，避免普通工具的 64 KiB 参数上限限制 Patch。两条 Patch 路径都验证 8 MiB 原文预算；Function 包装预算允许 JSON 转义增长。Prepare、写前版本复检、受控 helper 和写后校验统一支持 16 MiB 文件。Prepare 对旧内容、新内容和操作开销累计计费，预算为 64 MiB；完整 Diff 和 canonical result 各自有 64 MiB 预算。敏感扫描使用调用方的文本预算，完整扫描原文，扫描时间预算随输入字节数增长。Runtime 没有增加自动重试、自动拆文件或自动改写 Patch 的机制。
+文件编辑资源预算由 `file_limits.py` 汇集；独立提交 helper 持有单文件上限。Function 校验按工具选择参数预算，避免普通工具的 64 KiB 参数上限限制 Patch。两条 Patch 路径都验证 8 MiB 原文预算；Function 包装预算允许 JSON 转义增长。Prepare、写前版本复检、受控 helper 和写后校验统一支持 16 MiB 文件。Prepare 对旧内容、新内容和操作开销累计计费，预算为 64 MiB；完整 Diff 和 canonical result 各自有 64 MiB 预算。`apply_patch` 不执行敏感内容扫描。Runtime 没有增加自动重试、自动拆文件或自动改写 Patch 的机制。
 
 大文本的持久事实和 UI 消息分别处理。`protocol/tool_text.py` 为超过 64 KiB 的 Diff、结果生成内容哈希和字节数，通知及 Session 快照只携带引用和摘要。完整 Diff 继续存放在 `tool_calls.approval_diff`，完整 UI 结果继续存放在 `ui_result_json`；Runtime 内部的原始 Item 不受显示投影影响。审批指纹仍覆盖原始 Diff、路径、版本和权限，审批记录以 Diff 引用避免重复存储大文本，路径和指纹仍保留。Desktop 通过 typed preload IPC、Main RuntimeClient、`toolCall/readText` 和 SessionApplication 读取每页最多 16,384 个 Unicode 字符。Repository 从同一 Session 的 ToolCall 读取文本并核对 SHA-256，拒绝过期引用和越界偏移。接口不执行文件工具，不改变审批，也不引入新表或第二份业务状态。当前分页每次读取并校验整段有界文本；性能优化留待测量，不提前增加缓存或持久索引。
 
@@ -257,7 +257,7 @@ ShellEnvironmentSnapshotProvider 使用 resolved shell 的 `-lc` 做一次 bound
 
 Shell 的 effective environment 保留真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Runtime 只把 bundled `rg` 的目录去重后追加到 `PATH` 末尾。Provider 在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。`run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户的 Git 配置。`HardenedGitRunner` 仍是独立的 Git 执行路径。
 
-Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 按安全扫描器释放顺序把安全片段追加到同一个 Item content，并保留每个片段的顺序事实。Runtime 在每次等待窗口结束后把进程 session 和增量输出交给模型。模型通过 `write_stdin` 继续等待或停止命令。内部跟进 Item 保留审计记录；Renderer 把正常跟进隐藏，原命令卡片按 `executionStatus` 显示运行状态。
+Shell reader 为 stdout 和 stderr 分别保留 UTF-8 增量解码器。每次收到的字节只会生成已经可以解码的文本片段，结束时再 flush 未完成的解码状态。Shell handler 对 Live Feed 片段做 best-effort 展示脱敏，再按到达顺序追加到同一个 Item content；Shell 聚合结果保留原始 stdout/stderr。Runtime 在每次等待窗口结束后把进程 session 和增量输出交给模型。模型通过 `write_stdin` 继续等待或停止命令。内部跟进 Item 保留审计记录；Renderer 把正常跟进隐藏，原命令卡片按 `executionStatus` 显示运行状态。
 
 Desktop `ExecutionFeed` 的 Shell Item 默认折叠。用户展开后，Feed 在 Shell 运行中和终态都渲染累计的 Item content。它在已有累计内容时不再追加结果中的最终 stdout/stderr，因此不会重复输出，也不会丢失 stdout/stderr 的接收顺序。旧 Item 缺少或为空的 `content` 时，Renderer 使用结果中的 stdout 和 stderr 作为兼容回退。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 
@@ -273,7 +273,7 @@ Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本
 
 默认 profile 只允许 Workspace、snapshot `TMPDIR` 和 canonical system temp root `/tmp` 写入。macOS 的 `/tmp` 会规范化为 `/private/tmp`。真实 `HOME` 和其他位置默认只读。
 
-Seatbelt 永久拒绝 Eidos data 和 credential 路径的 read、write 和 map。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。`.git`、linked Worktree metadata 和 Git common metadata 只读。Workspace `.env` 可以被进程读取，但输出仍经过 SensitiveScanner。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。明确的 network denial 不会进入通用 unsandboxed retry。
+Seatbelt 永久拒绝 Eidos data 和 credential 路径的 read、write 和 map。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。Workspace 的 `.git`、`.agents`、`.eidos`、linked Worktree metadata 和 Git common metadata 只读。普通 Workspace `.env` 和其他敏感命名文件可以读取；命令、cwd 和审批理由在展示层使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。明确的 network denial 不会进入通用 unsandboxed retry。
 
 Managed linked Worktree 会把 Worktree 的已验证 `git_dir` 和 Project 的已验证 `git_common_dir` 传入 Seatbelt。Seatbelt 只允许读取这两个 Git metadata root。它明确拒绝这些路径的写入。原始 repository working tree 不属于该 Thread 的 execution workspace。
 
@@ -526,7 +526,7 @@ Run Grant 由当前 Run 中已批准的 `approvals.request_json` 派生。请求
 
 Runtime 重启可以恢复 R1 的结构化待批请求。恢复只接受没有不确定执行的暂停点。未执行的动作会重新准备并检查当前 Tool 契约和原审批 fingerprint。网络 denial 的恢复只交回保存的已知结果，不重放 Shell。缺少完整事实、契约变化、取消和不确定副作用继续 fail closed。恢复仍使用原 Approval、原 Run worker、ApprovalCoordinator 和 approve/reject RPC。
 
-数据库版本为 10。v8→v9 只为 `tool_calls` 增加可空 `raw_arguments_json`。新调用保存经过敏感内容检查的 Provider 原始参数，`arguments_json` 继续保存执行所用的规范化参数。旧行保持 NULL，Runtime 不会伪造历史原始参数。v9→v10 将全局 `running`/`finalizing` 唯一索引改为按 `session_id` 的唯一索引；迁移不改写旧的 `waiting_approval` 重叠记录，恢复 admission 按 Session 串行处理。旧版本逐级迁移，失败会回滚。
+数据库版本为 10。v8→v9 只为 `tool_calls` 增加可空 `raw_arguments_json`。新调用保存 Provider 原始参数，`arguments_json` 继续保存执行所用的规范化参数。旧行保持 NULL，Runtime 不会伪造历史原始参数。v9→v10 将全局 `running`/`finalizing` 唯一索引改为按 `session_id` 的唯一索引；迁移不改写旧的 `waiting_approval` 重叠记录，恢复 admission 按 Session 串行处理。旧版本逐级迁移，失败会回滚。
 
 Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替换普通输入框。文件、Shell、网络、MCP 和权限申请共用批准、拒绝、响应中、失效和错误状态。Eidos State 的既有文件变更映射保持兼容。Feed 只显示审批历史。Session 的 `activeRunStatus` 从 Active Run 派生，不写入 Session 表；Sidebar 对等待审批显示“等待批准”。
 

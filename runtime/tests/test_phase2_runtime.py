@@ -304,39 +304,35 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             1,
         )
 
-    def test_two_sensitive_model_tool_inputs_finalize_without_tool_or_approval(self) -> None:
+    def test_apply_patch_allows_sensitive_model_tool_input(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "write safely")
         model = ScriptedModel([
             ModelResponse(tool_calls=(ModelToolCall(
-                "sensitive-1", "apply_patch",
+                "sensitive", "apply_patch",
                 {"patch": (
                     "*** Begin Patch\n"
-                    "*** Add File: a.txt\n"
+                    "*** Add File: .env\n"
                     "+password=first\n"
+                    "+sk-abcdefghijklmnop\n"
                     "*** End Patch\n"
                 )},
             ),)),
-            ModelResponse(tool_calls=(ModelToolCall(
-                "sensitive-2", "apply_patch",
-                {"patch": (
-                    "*** Begin Patch\n"
-                    "*** Add File: b.txt\n"
-                    "+password=second\n"
-                    "*** End Patch\n"
-                )},
-            ),)),
+            ModelResponse(text="done"),
         ])
         RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
-        stopped = self.store.read_run(run["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "repeated_sensitive_tool_input")
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
         connection = self.store.connection
         assert connection is not None
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0], 0)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0], 1)
         self.assertEqual(connection.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 0)
-        self.assertEqual(connection.execute("SELECT COUNT(*) FROM durable_intents").fetchone()[0], 0)
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM durable_intents").fetchone()[0], 1)
+        self.assertEqual(
+            (self.workspace / ".env").read_text(),
+            "password=first\nsk-abcdefghijklmnop\n",
+        )
 
 
 if __name__ == "__main__":

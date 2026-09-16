@@ -706,8 +706,8 @@ class ToolExecutionController:
                             ),
                         )
                         if call.name == "run_shell" or plan.side_effect == "workspace":
-                            # The normal validation, bounds and sensitive scan below
-                            # still apply to partial output and termination evidence.
+                            # Normal validation and bounds still apply; shell output
+                            # remains raw in the aggregate result.
                             interrupted.result["data"] = outcome.result.get("data", {})
                         if known_file_result:
                             interrupted.result["sideEffectsMayExist"] = outcome.workspace_changed
@@ -773,6 +773,16 @@ class ToolExecutionController:
                     data_model=result_data_model,
                 ),
                 data_model=result_data_model,
+                scan_output=call.name not in {
+                    "list_files",
+                    "read_file",
+                    "read_file_range",
+                    "search_text",
+                    "run_shell",
+                    "write_stdin",
+                    "read_tool_output",
+                    "apply_patch",
+                },
             )
             if result.get("code") == "sensitive_content_rejected":
                 effects_possible = (

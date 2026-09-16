@@ -23,6 +23,37 @@ def _executor(tmp_path: Path) -> ToolExecutor:
     return ToolExecutor(tmp_path)
 
 
+@pytest.mark.parametrize("custom", (False, True))
+def test_apply_patch_allows_sensitive_like_path_and_content(
+    tmp_path: Path, custom: bool
+) -> None:
+    patch = (
+        "*** Begin Patch\n"
+        "*** Add File: .env\n"
+        "+password=hunter2\n"
+        "+sk-abcdefghijklmnop\n"
+        "*** End Patch\n"
+    )
+    arguments: object = patch if custom else {"patch": patch}
+    with ToolExecutor(
+        tmp_path,
+        supports_custom_tools=custom,
+        supports_tool_grammar=custom,
+    ) as executor:
+        prepared = executor.prepare_file_change(
+            "apply_patch", arguments, threading.Event()
+        )
+        assert not isinstance(prepared, dict), prepared
+        result, _ = executor.commit_patch(
+            "apply_patch", prepared, threading.Event()
+        )
+
+    assert result["outcome"] == "success"
+    assert (tmp_path / ".env").read_text() == (
+        "password=hunter2\nsk-abcdefghijklmnop\n"
+    )
+
+
 def test_model_catalog_exposes_only_apply_patch_for_file_mutation() -> None:
     names = {spec.name for spec in TOOL_SPECS}
     assert "apply_patch" in names

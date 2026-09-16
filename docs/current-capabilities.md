@@ -99,6 +99,7 @@
 ## Repository Discovery
 
 - `list_files` 和 `search_text` 可以使用 Workspace-relative path，或使用 Workspace 与当前 active Skill root 内的 canonical absolute path，执行有界文件发现和文本搜索。`read_file` 和 `read_file_range` 也支持这两种只读路径形式。Workspace authority 的结果路径保持 Workspace-relative；active Skill authority 的结果路径返回 canonical absolute path，目录结果保留末尾 `/`，所以发现结果可以直接作为下一次只读 Tool 输入。Skill 激活本身不授予写权限；普通 Skill 的写权限需要单独审批。未授权 absolute path 返回普通 Tool Error。
+- 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录继续受到写入保护。
 - `apply_patch` 的 Function 和 Custom 输入都接受 Workspace-relative path 和 Workspace 内的 canonical absolute path。Runtime 会在统一的 Workspace write resolver 中把模型 absolute path 归一化为内部 relative path。Move 的 source 和 destination 分别参与路径授权。Workspace 外普通路径及普通 Skill 路径可以经审批或有效 Run Grant 授权写入。数据目录内 `skills/.system` 始终禁止工具修改。
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
 - Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。预览区保留打开文件的 Tab，不额外显示当前路径、文件大小或手动刷新入口。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。图片和 PDF 使用有界资源预览，HTML 可以在隔离网页面板中运行或查看源码；其他二进制、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
@@ -159,7 +160,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Workspace mutation Tool 只向模型暴露 `apply_patch`。`write_file` 和 `delete_file` 不在模型 Tool Registry 中。
 - `apply_patch` 的两种传输共用 Codex Patch 文本。具备 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 的相应 ModelProfile 收到 native Custom / FREEFORM Tool，并直接提交 Patch 原文；其他 ModelProfile 收到只含字符串字段 `patch` 的 Function 参数。模型不再构造 `changes/chunks/oldLines/newLines/endOfFile` 对象。普通 Workspace 写入沿用当前 Workspace Permission；外部路径或无沙盒执行仍需扩权审批。
 - Function 和 Custom 的 payload 类型来自 Provider protocol 和持久化的 `payload_kind` discriminator。Runtime 不根据 Function arguments 的 JSON 内容推断 Custom。两条路径在同一个 Patch AST、Workspace prepare、写前版本检查、Durable Intent、受控文件提交、final validation 和 canonical Tool Result pipeline 汇合。
-- `apply_patch` 为长文本保留独立资源预算。Function 参数校验、Custom 输入、敏感内容扫描和 Parser 共用 8 MiB 原文上限；Function JSON 包装另有转义余量。读取和提交 helper 共用 16 MiB 文件上限，Prepare 限制累计准备内容为 64 MiB。工具支持单文件、多文件和多 hunk；模型自行决定文件组织和编辑范围。Responses 流按片段累计输入和字节数，在完成时合并文本，避免每个片段都复制和重新编码全部历史输入。
+- `apply_patch` 为长文本保留独立资源预算。Function 参数校验、Custom 输入和 Parser 共用 8 MiB 原文上限；Function JSON 包装另有转义余量。`apply_patch` 不再对 Patch 参数、变更内容或结果 Diff 执行敏感内容拒绝。读取和提交 helper 共用 16 MiB 文件上限，Prepare 限制累计准备内容为 64 MiB。工具支持单文件、多文件和多 hunk；模型自行决定文件组织和编辑范围。Responses 流按片段累计输入和字节数，在完成时合并文本，避免每个片段都复制和重新编码全部历史输入。
 - Desktop 的通知和快照对大 Diff、结果提供大小及内容哈希。审批、执行详情和文本审查可以按页读取 SQLite 中的完整文本。`toolCall/readText` 校验 Session、ToolCall、文本字段、SHA-256 和字符偏移；接口保持只读。控制通道仍保留原有消息上限。文件写入成功与界面单条消息容量不再共用同一个大小判断。
 - 两条输入路径共用 `parse_patch`、操作说明和最小示例。Runtime 不再使用结构化 Patch encoder。`apply_patch.lark` 以 `openai/codex` grammar 为来源，Lark 负责解析；空 Add、CRLF、外层空白和首个 Update 不带 `@@` 的兼容行为不变。Runtime 不自动补齐 envelope、marker 或行前缀。参数错误会给出当前 Function 输入示例；语法或上下文错误会提示修正方式。以上失败都在文件写入前返回，由模型在现有 Loop 中纠正。
 - 历史 `changes` 调用继续作为原始历史保留；当前工具说明明确标记旧格式已停用。新的输入契约通过 builtin `sourceVersion=2` 和现有 Contract Hash 标识。Runtime 不改写历史、不重放旧调用、不变更 SQLite Schema。
@@ -170,21 +171,21 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；永久拒绝路径不能扩权。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
-- ToolCallRuntime 和 ToolExecutionController 会执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。
+- ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
 - 普通 Tool Error 不会单独终止 Run。模型可以根据错误事实修正参数或选择替代 Tool。
 - 只有安全只读的 `parallel_safe` Tool 批次可以在自身的有界范围内并发。每个 Run 的 Workspace write、Shell、MCP、external 和 Eidos-state Tool 使用自己的独占副作用门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使共享同一个 Workspace。等待 Approval 不占用该 Run 的门。结果按模型声明顺序提交。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
 
 ## Shell
 
-- Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；安全扫描拒绝和持久化失败仍保留屏障。
+- Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；持久化失败仍保留屏障。
 - Runtime 会投影未决 Intent 的对账来源。同一 epoch 下的工具恢复最多三轮，普通 Run 和有效 Shell 空输入等待不受该限制。系统不会通过删除缓存、申请新权限或换一条命令解除未知 Shell Intent。
 
 - `HostShellResolver` 先使用账户 login shell，再使用 `SHELL`，最后使用 `/bin/zsh`、`/bin/bash`、`/bin/sh`。Resolver 只接受有效的绝对可执行 shell 路径。
 - `ShellEnvironmentSnapshotProvider` 对每个 shell executable、canonical cwd 和 capture launch identity 做一次 `-lc` 环境捕获。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。
 - 普通 `run_shell` 命令使用 resolved shell 的 `-c`。Snapshot 捕获失败时使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
-- Runtime 分开管理 Shell 进程寿命和工具等待窗口。模型收到 `shell_running` 后，可以用 `write_stdin` 的空 `chars` 继续等待和读取新输出，也可以发送 Ctrl-C 停止命令。Runtime 持续读取 stdout/stderr，并把安全输出追加到原命令 Item。内部会保存每次跟进 ToolCall；Desktop 不显示正常跟进卡片，也不显示 `write_stdin` 工具名。跟进失败会显示中文错误提示。
-- Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 将解码后的片段按安全扫描器释放顺序累积到 Item content，Desktop Execution Feed 在运行中和终态都使用这份累计内容。这样可以保留 stdout 和 stderr 安全片段的释放顺序，也不会在终态重复追加最终流。
+- Runtime 分开管理 Shell 进程寿命和工具等待窗口。模型收到 `shell_running` 后，可以用 `write_stdin` 的空 `chars` 继续等待和读取新输出，也可以发送 Ctrl-C 停止命令。Runtime 持续读取 stdout/stderr，并把做过 best-effort 展示脱敏的片段追加到原命令 Item；聚合结果保留原始 stdout/stderr。内部会保存每次跟进 ToolCall；Desktop 不显示正常跟进卡片，也不显示 `write_stdin` 工具名。跟进失败会显示中文错误提示。
+- Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 按片段到达顺序将展示脱敏后的内容累积到 Item content，Desktop Execution Feed 在运行中和终态都使用这份累计内容。这样可以保留 stdout 和 stderr 的到达顺序，也不会在终态重复追加最终流。
 - Desktop Shell Feed 默认折叠 Shell Item。用户展开后，Feed 将 Shell 输出按纯文本展示，并移除 ANSI 和 OSC 控制序列，不激活终端格式或链接。旧 Item 缺少或没有 `content` 时，Feed 回退到结果中的 stdout 和 stderr。待审批、已批准和已拒绝的 Shell 历史都使用这个 Shell Item，审批状态单独显示。
 - Feed 先按完整 Item 顺序区分过程消息和回复，再隐藏正常的 Shell 跟进卡片。隐藏 `write_stdin` 不会把它前面的进度文字变成最终回复。Run 仍在执行时，回复不显示最终操作栏；Run 进入终态后，只有最后一个消息段中的最后一条回复显示该操作栏。跟进失败仍显示中文错误提示。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。
@@ -193,7 +194,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 模型使用 `write_stdin` 分段等待并读取增量输出。`read_tool_output` 仍只读取原命令已持久化的终态结果。
 - Shell effective environment 使用真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Bundled `rg` 目录只追加在 `PATH` 末尾并去重。Provider 会在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。Runtime 不会强制设置 `LC_ALL`。
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
-- 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、`.git` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 默认可读和执行；普通 Skill 的具体写入范围可经审批开放，系统 Skill 永久禁写。Workspace `.env` 可读，但输出仍经过 SensitiveScanner。默认 network denied。
+- 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、Workspace 的 `.git`、`.agents`、`.eidos` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 默认可读和执行；普通 Skill 的具体写入范围可经审批开放，系统 Skill 永久禁写。Workspace `.env` 和其他敏感命名文件可读；命令和审批信息展示使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network denied。
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求。Runtime 会在启动进程前把该 intent 规范化为 additional network permission，并请求 Approval。获批后的命令仍在 macOS Seatbelt 中运行。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。additional write 需要 Approval。存在永久写入保护或 hard confidentiality deny 时，Runtime 拒绝裸 Shell 的 unsandboxed attempt，审批也不能移除这些保护。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
 - Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。Workspace 外的 absolute cwd 返回普通 Tool Error。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。

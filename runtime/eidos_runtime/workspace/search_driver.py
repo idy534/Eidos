@@ -19,10 +19,8 @@ from typing import Protocol
 
 from eidos_runtime.workspace.discovery_policy import (
     HARD_DISCOVERY_DIRECTORIES,
-    SENSITIVE_DIRECTORIES,
-    SENSITIVE_KEYWORDS,
-    SENSITIVE_NAMES,
-    SENSITIVE_SUFFIXES,
+    READABLE_METADATA_DIRECTORIES,
+    is_readable_metadata_path,
     is_discovery_path_allowed,
 )
 from eidos_runtime.workspace.discovery_scope import WorkspaceDiscoveryScope
@@ -198,10 +196,17 @@ class RipgrepFileEnumerator:
         if max_entries < 1:
             return (), False
         binary = self._resolver.resolve()
+        allow_metadata = is_readable_metadata_path(path)
         ignore_files = self.ignore_files(
             workspace_path, deadline=deadline, cancel=cancel
         )
-        argv = _build_discovery_argv(binary, workspace_path, ignore_files, path=path)
+        argv = _build_discovery_argv(
+            binary,
+            workspace_path,
+            ignore_files,
+            path=path,
+            allow_metadata=allow_metadata,
+        )
         try:
             process = subprocess.Popen(
                 argv,
@@ -258,7 +263,7 @@ class RipgrepFileEnumerator:
                                 "search_backend_protocol_error"
                             ) from None
                         path = path.removeprefix("./")
-                        if is_discovery_path_allowed(path):
+                        if is_discovery_path_allowed(path, allow_metadata=allow_metadata):
                             paths.append(path)
                             if len(paths) >= max_entries:
                                 truncated = True
@@ -276,7 +281,7 @@ class RipgrepFileEnumerator:
                 except UnicodeDecodeError:
                     raise SearchDriverError("search_backend_protocol_error") from None
                 path = path.removeprefix("./")
-                if is_discovery_path_allowed(path):
+                if is_discovery_path_allowed(path, allow_metadata=allow_metadata):
                     paths.append(path)
             if not truncated:
                 returncode = process.wait(timeout=1)
@@ -370,6 +375,7 @@ class RipgrepSearchDriver:
         cancel: threading.Event,
     ) -> WorkspaceSearchResult:
         binary = self._resolver.resolve()
+        allow_metadata = is_readable_metadata_path(request.path)
         ignore_files = RipgrepFileEnumerator(self._resolver).ignore_files(
             request.workspace_path,
             deadline=request.deadline,
@@ -383,6 +389,7 @@ class RipgrepSearchDriver:
             regex=request.regex,
             include_globs=request.include_globs,
             ignore_files=ignore_files,
+            allow_metadata=allow_metadata,
         )
         try:
             process = subprocess.Popen(
@@ -398,7 +405,7 @@ class RipgrepSearchDriver:
             )
         except OSError:
             raise SearchDriverError("search_backend_unavailable") from None
-        parser = _RipgrepEventParser(request)
+        parser = _RipgrepEventParser(request, allow_metadata=allow_metadata)
         selector = selectors.DefaultSelector()
         assert process.stdout is not None and process.stderr is not None
         selector.register(process.stdout, selectors.EVENT_READ, "stdout")
@@ -481,8 +488,9 @@ class RipgrepSearchDriver:
 
 
 class _RipgrepEventParser:
-    def __init__(self, request: WorkspaceSearchRequest) -> None:
+    def __init__(self, request: WorkspaceSearchRequest, *, allow_metadata: bool = False) -> None:
         self.request = request
+        self.allow_metadata = allow_metadata
         self.matches: list[WorkspaceSearchMatch] = []
         self.accepted_paths: dict[str, int] = {}
         self.searched_bytes_by_path: dict[str, int] = {}
@@ -566,7 +574,7 @@ class _RipgrepEventParser:
             return False
         if path not in self.accepted_paths:
             if (
-                not is_discovery_path_allowed(path)
+                not is_discovery_path_allowed(path, allow_metadata=self.allow_metadata)
                 or not _is_within_search_path(path, self.request.path)
                 or self.request.discovery_scope.is_ignored(path, is_directory=False)
             ):
@@ -634,6 +642,7 @@ def _build_argv(
     include_globs: tuple[str, ...] = (),
     ignore_files: tuple[Path, ...] | None = None,
     disable_vcs_ignore: bool | None = None,
+    allow_metadata: bool = False,
 ) -> list[str]:
     _validate_search_path(path)
     for glob in include_globs:
@@ -660,7 +669,7 @@ def _build_argv(
         argv.insert(2, "--fixed-strings")
     for glob in include_globs:
         argv.extend(("--glob", glob))
-    argv.extend(_hard_discovery_globs())
+    argv.extend(_hard_discovery_globs(allow_metadata=allow_metadata))
     effective_ignore_files = ignore_files or _ignore_files(workspace_path)
     if _needs_scope_fallback(workspace_path):
         effective_ignore_files = tuple(
@@ -678,6 +687,7 @@ def _build_discovery_argv(
     ignore_files: tuple[Path, ...] | None = None,
     disable_vcs_ignore: bool | None = None,
     path: str = ".",
+    allow_metadata: bool = False,
 ) -> list[str]:
     argv = [
         str(binary), "--files", "--null",
@@ -687,7 +697,7 @@ def _build_discovery_argv(
         ),
         "--sort", "path",
     ]
-    argv.extend(_hard_discovery_globs())
+    argv.extend(_hard_discovery_globs(allow_metadata=allow_metadata))
     effective_ignore_files = ignore_files or _ignore_files(workspace_path)
     if _needs_scope_fallback(workspace_path):
         effective_ignore_files = tuple(
@@ -713,17 +723,15 @@ def _discovery_options(disable_vcs_ignore: bool = False) -> tuple[str, ...]:
     return tuple(options)
 
 
-def _hard_discovery_globs() -> tuple[str, ...]:
+def _hard_discovery_globs(*, allow_metadata: bool = False) -> tuple[str, ...]:
     globs: list[str] = []
-    for directory in sorted(HARD_DISCOVERY_DIRECTORIES | SENSITIVE_DIRECTORIES):
+    directories = (
+        HARD_DISCOVERY_DIRECTORIES - READABLE_METADATA_DIRECTORIES
+        if allow_metadata
+        else HARD_DISCOVERY_DIRECTORIES
+    )
+    for directory in sorted(directories):
         globs.extend(("--glob", f"!**/{directory}/**"))
-    for name in sorted(SENSITIVE_NAMES | {".env"}):
-        globs.extend(("--glob", f"!**/{name}"))
-    for suffix in sorted(SENSITIVE_SUFFIXES):
-        globs.extend(("--glob", f"!**/*{suffix}"))
-    for keyword in sorted(SENSITIVE_KEYWORDS):
-        globs.extend(("--glob", f"!**/*{keyword}*"))
-    globs.extend(("--glob", "!**/.eidos-*"))
     return tuple(globs)
 
 
@@ -807,8 +815,8 @@ def _event_path(data: dict[str, object]) -> str:
     if path.startswith("./"):
         path = path[2:]
     if not is_discovery_path_allowed(path):
-        # A syntactically valid sensitive path is filtered later, but malformed paths
-        # are always a backend protocol violation.
+        # Hard discovery directories are filtered; malformed paths are always
+        # a backend protocol violation.
         if (
             not path
             or path.startswith("/")

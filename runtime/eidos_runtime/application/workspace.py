@@ -33,9 +33,6 @@ from eidos_runtime.repo_intelligence.watcher import (
     RepositoryChange,
     RepositoryWatchController,
 )
-from eidos_runtime.sandbox.sensitive import SensitiveScanError
-
-
 class WorkspaceSessionRepository(Protocol):
     def read_session_projection(self, session_id: str) -> SessionProjection | None: ...
 
@@ -103,10 +100,6 @@ class WorkspaceExplorerApplication:
             identity = self._execution_identity(request.session_id)
             with WorkspaceReader(identity) as reader:
                 preview = reader.read_preview(request.path)
-            content = (
-                self._scan_text(preview.content)
-                if preview.content is not None else None
-            )
             return WorkspaceReadFilePreviewResponseDto.model_validate({
                 "path": preview.path,
                 "kind": preview.kind,
@@ -114,12 +107,10 @@ class WorkspaceExplorerApplication:
                 "truncated": preview.truncated,
                 "version": preview.version,
                 "mimeType": preview.mime_type,
-                **({"content": content} if content is not None else {}),
+                **({"content": preview.content} if preview.content is not None else {}),
                 **({"language": preview.language} if preview.language is not None else {}),
                 **({"reason": preview.reason} if preview.reason is not None else {}),
             })
-        except SensitiveScanError as error:
-            raise ApplicationError("WORKSPACE_SENSITIVE_CONTENT") from error
         except (WorkspacePathError, DiscoveryScopeError) as error:
             raise ApplicationError(_workspace_error_code(error)) from error
 
@@ -145,21 +136,16 @@ class WorkspaceExplorerApplication:
                 if request.version is not None and request.version != version:
                     raise ApplicationError("WORKSPACE_FILE_CHANGED")
                 if mime.startswith("text/") or mime in {"application/json", "image/svg+xml"}:
-                    # Scan the complete text before releasing any chunk of executable content.
                     full, checked, _, _ = reader.read_file_bytes(request.path, limit=2 * 1024 * 1024)
                     if file_version(checked) != version:
                         raise ApplicationError("WORKSPACE_FILE_CHANGED")
-                    text = full.decode("utf-8-sig", errors="strict")
-                    if self._scan_text(text) != text:
-                        raise ApplicationError("WORKSPACE_SENSITIVE_CONTENT")
+                    full.decode("utf-8-sig", errors="strict")
             return WorkspaceReadAssetResponseDto(
                 data=base64.b64encode(data).decode("ascii"), version=version, workspaceVersion=workspace_version,
                 mimeType=mime, sizeBytes=metadata.st_size,
                 nextOffset=request.offset + len(data),
                 complete=request.offset + len(data) == metadata.st_size,
             )
-        except SensitiveScanError as error:
-            raise ApplicationError("WORKSPACE_SENSITIVE_CONTENT") from error
         except UnicodeDecodeError as error:
             raise ApplicationError("WORKSPACE_PREVIEW_UNSUPPORTED") from error
         except (WorkspacePathError, DiscoveryScopeError) as error:

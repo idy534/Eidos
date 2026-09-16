@@ -5,6 +5,7 @@ from pathlib import Path
 
 HARD_DISCOVERY_DIRECTORIES = frozenset({
     ".git",
+    ".agents",
     ".eidos",
     ".venv",
     "__pycache__",
@@ -12,6 +13,7 @@ HARD_DISCOVERY_DIRECTORIES = frozenset({
     "dist",
     "node_modules",
 })
+READABLE_METADATA_DIRECTORIES = frozenset({".git", ".agents", ".eidos"})
 SENSITIVE_DIRECTORIES = frozenset({
     ".aws", ".config", ".eidos", ".gnupg", ".kube", ".ssh"
 })
@@ -48,7 +50,14 @@ def is_sensitive_name(name: str) -> bool:
     )
 
 
-def is_discovery_path_allowed(relative_path: str) -> bool:
+def is_readable_metadata_path(relative_path: str) -> bool:
+    parts = relative_path.split("/")
+    return bool(parts) and parts[0] in READABLE_METADATA_DIRECTORIES
+
+
+def is_discovery_path_allowed(
+    relative_path: str, *, allow_metadata: bool = False
+) -> bool:
     if (
         not relative_path
         or relative_path.startswith("/")
@@ -59,9 +68,12 @@ def is_discovery_path_allowed(relative_path: str) -> bool:
     parts = relative_path.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         return False
-    if any(is_sensitive_name(part) for part in parts):
-        return False
+    hard_directories = (
+        HARD_DISCOVERY_DIRECTORIES - READABLE_METADATA_DIRECTORIES
+        if allow_metadata
+        else HARD_DISCOVERY_DIRECTORIES
+    )
     return not any(
-        part in HARD_DISCOVERY_DIRECTORIES or is_sensitive_directory(part)
+        part in hard_directories
         for part in parts[:-1]
     )

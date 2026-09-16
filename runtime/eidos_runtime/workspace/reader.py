@@ -13,8 +13,7 @@ from typing import Iterator, Literal
 from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.workspace.discovery_policy import (
     HARD_DISCOVERY_DIRECTORIES,
-    is_sensitive_directory,
-    is_sensitive_name,
+    is_readable_metadata_path,
 )
 from eidos_runtime.workspace.discovery_scope import WorkspaceDiscoveryScope
 
@@ -162,6 +161,7 @@ class WorkspaceReader:
         cancel = cancel or threading.Event()
         scope = WorkspaceDiscoveryScope.load(self.root_fd)
         directory_fd, normalized = self._open_directory_path(path)
+        allow_metadata = is_readable_metadata_path(normalized)
         deadline = time.monotonic() + DIRECTORY_READ_TIMEOUT_SECONDS
         try:
             entries = heapq.nsmallest(
@@ -173,6 +173,7 @@ class WorkspaceReader:
                     cancel,
                     deadline,
                     include_ignored_directories,
+                    allow_metadata,
                 ),
                 key=lambda item: item.name.encode("utf-8"),
             )
@@ -317,6 +318,7 @@ class WorkspaceReader:
         cancel: threading.Event,
         deadline: float,
         include_ignored_directories: bool,
+        allow_metadata: bool,
     ) -> Iterator[WorkspaceDirectoryEntry]:
         try:
             with os.scandir(directory_fd) as entries:
@@ -326,7 +328,7 @@ class WorkspaceReader:
                     if time.monotonic() > deadline:
                         raise WorkspacePathError("workspace_read_timeout")
                     name = entry.name
-                    if name in HARD_DISCOVERY_DIRECTORIES or is_sensitive_name(name):
+                    if name in HARD_DISCOVERY_DIRECTORIES and not allow_metadata:
                         continue
                     try:
                         metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
@@ -336,8 +338,6 @@ class WorkspaceReader:
                     if stat.S_ISLNK(metadata.st_mode):
                         continue
                     if stat.S_ISDIR(metadata.st_mode):
-                        if is_sensitive_directory(name):
-                            continue
                         ignored = scope.is_ignored(relative, is_directory=True)
                         if not ignored or include_ignored_directories:
                             yield WorkspaceDirectoryEntry(
@@ -434,12 +434,8 @@ def validate_workspace_relative_path(value: str) -> tuple[str, ...]:
     if path.is_absolute() or ".." in path.parts:
         raise WorkspacePathError("workspace_boundary_violation")
     parts = tuple(part for part in path.parts if part not in {"", "."})
-    if not parts or any(
-        is_sensitive_name(part) or is_sensitive_directory(part) for part in parts
-    ):
-        raise WorkspacePathError(
-            "sensitive_path" if parts else "workspace_boundary_violation"
-        )
+    if not parts:
+        raise WorkspacePathError("workspace_boundary_violation")
     return parts
 
 
@@ -447,8 +443,6 @@ def is_workspace_discoverable_path(value: str) -> bool:
     parts = Path(value).parts
     return bool(parts) and not any(
         part in HARD_DISCOVERY_DIRECTORIES
-        or is_sensitive_name(part)
-        or is_sensitive_directory(part)
         for part in parts
     )
 

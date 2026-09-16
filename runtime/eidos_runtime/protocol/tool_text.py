@@ -5,6 +5,14 @@ import hashlib
 import json
 
 from eidos_runtime.file_limits import INLINE_TOOL_TEXT_BYTES
+from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
+
+
+_DISPLAY_ARGUMENT_FIELDS = {
+    "run_shell": ("command", "cwd"),
+    "write_stdin": ("chars",),
+    "search_text": ("query",),
+}
 
 
 def project_tool_text(item: dict[str, object]) -> dict[str, object]:
@@ -13,6 +21,11 @@ def project_tool_text(item: dict[str, object]) -> dict[str, object]:
         return item
     projected = dict(call)
     arguments = projected.get("argumentsJson")
+    if isinstance(arguments, str):
+        arguments = _redact_display_arguments(
+            str(projected.get("toolName", "")), arguments
+        )
+        projected["argumentsJson"] = arguments
     if isinstance(arguments, str) and len(arguments.encode("utf-8")) > INLINE_TOOL_TEXT_BYTES:
         projected.pop("argumentsJson", None)
     for field, prefix in (("changeDiff", "changeDiff"), ("resultJson", "result")):
@@ -36,6 +49,34 @@ def project_tool_text(item: dict[str, object]) -> dict[str, object]:
                 "data": {"truncated": True},
             }, ensure_ascii=False)
     return {**item, "toolCall": projected}
+
+
+def _redact_display_arguments(tool_name: str, value: str) -> str:
+    fields = _DISPLAY_ARGUMENT_FIELDS.get(tool_name)
+    if fields is None:
+        return value
+    try:
+        arguments = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    if not isinstance(arguments, dict):
+        return value
+    changed = False
+    scanner = default_scanner()
+    for field in fields:
+        text = arguments.get(field)
+        if not isinstance(text, str):
+            continue
+        try:
+            redacted = scanner.redact_for_presentation(text).text
+        except SensitiveScanError:
+            redacted = "[REDACTED:sensitive_scan_failed]"
+        if redacted != text:
+            arguments[field] = redacted
+            changed = True
+    if not changed:
+        return value
+    return json.dumps(arguments, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def project_approval_diff(description: dict[str, object]) -> dict[str, object]:

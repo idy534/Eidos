@@ -12,6 +12,7 @@ from eidos_runtime.runtime.permission_policy import PermissionDisposition, Permi
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile, BasePermissionProfile, materialize_effective_profile,
 )
+from eidos_runtime.sandbox.sensitive import default_scanner
 
 
 class PermissionIntent(EidosFrozenStrictModel):
@@ -51,9 +52,13 @@ class PermissionRequests:
         )
         if decision.disposition is not PermissionDisposition.ASK:
             return decision.reason_code
+        scanner = default_scanner()
         intent = PermissionIntent(
-            permissions=permissions, reason=reason, command=command,
-            cwd=cwd, denial_category=denial_category,
+            permissions=permissions,
+            reason=(scanner.redact_for_presentation(reason).text if reason is not None else None),
+            command=(scanner.redact_for_presentation(command).text if command is not None else None),
+            cwd=(scanner.redact_for_presentation(cwd).text if cwd is not None else None),
+            denial_category=denial_category,
         )
         description = intent.to_wire_dict()
         outcome = self.approval.request(
