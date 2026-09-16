@@ -39,11 +39,14 @@ class McpManagerTests(unittest.TestCase):
         self.data = root / "data"
         self.workspace = root / "workspace"
         source = root / "plugin"
+        self.manual_root = root / "manual-mcp"
         self.data.mkdir(mode=0o700)
         self.workspace.mkdir()
         source.mkdir()
+        self.manual_root.mkdir()
         fixture = Path(__file__).parent / "fixtures" / "mcp_fixture.py"
         (source / "server.py").write_bytes(fixture.read_bytes())
+        (self.manual_root / "server.py").write_bytes(fixture.read_bytes())
         (source / "plugin.json").write_text(json.dumps({
             "schemaVersion": 1,
             "id": "demo",
@@ -405,6 +408,48 @@ class McpManagerTests(unittest.TestCase):
 
         refreshed = self.manager.refresh_if_changed()
         self.assertIsNotNone(refreshed)
+
+    def test_manual_stdio_server_uses_the_shared_mcp_manager(self) -> None:
+        self.plugins.create_manual_mcp(
+            server_id="manual_fixture",
+            executable=sys.executable,
+            argv=["server.py"],
+            env={"MCP_TEST_ENV": "configured"},
+            env_names=[],
+            cwd=str(self.manual_root),
+            permission_profile="workspace_read",
+            startup_timeout_seconds=5,
+            tool_timeout_seconds=1,
+        )
+        self.plugins.set_mcp_enabled("manual", "manual_fixture", True)
+        manager = McpManager(
+            self.plugins,
+            self.plugins.extension_snapshot(),
+            self.workspace,
+            sandbox=False,
+            async_kernel=self.kernel,
+            resource_registry=self.resources,
+        )
+        try:
+            entries = manager.start()
+            echo = next(
+                value for value in entries
+                if value.spec.name == "mcp__manual_fixture__echo"
+            )
+            manual_connection = next(
+                value for value in manager.connections
+                if value.config.id == "manual_fixture"
+            )
+            self.assertEqual(manual_connection.plugin_root, self.manual_root.resolve())
+            self.assertEqual(manual_connection.env_values, {
+                "MCP_TEST_ENV": "configured",
+            })
+            self.assertEqual(
+                echo.adapter.execute({"message": "manual"}, threading.Event())["outcome"],
+                "success",
+            )
+        finally:
+            manager.close()
 
     def test_maps_is_error_and_timeout_without_retry(self) -> None:
         entries = self.manager.start()

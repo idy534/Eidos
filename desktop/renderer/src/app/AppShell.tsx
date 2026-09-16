@@ -1025,6 +1025,7 @@ export function AppShell({ runtime }: AppShellProps) {
             onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
             onToggleMcp={(pId, sId, enabled) => extensionActions.setMcpEnabled(pId, sId, enabled)}
+            onCreateMcp={(input) => extensionActions.createMcpServer(input)}
           />
         ) : currentSnapshot ? (
           <>

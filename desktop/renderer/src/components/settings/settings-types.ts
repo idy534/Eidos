@@ -6,6 +6,7 @@ export type SettingsPendingAction =
   | { type: "toggle_plugin"; pluginId: string }
   | { type: "remove_plugin"; pluginId: string }
   | { type: "toggle_mcp"; pluginId: string; serverId: string }
+  | { type: "create_mcp" }
   | undefined;
 
 export interface SettingsToast {

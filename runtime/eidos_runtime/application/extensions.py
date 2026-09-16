@@ -138,6 +138,7 @@ class McpServerRecord(EidosFrozenStrictModel):
     plugin_hash: str
     server_id: str
     executable: str
+    cwd: str | None = None
     argv: tuple[str, ...]
     env_names: tuple[str, ...]
     permission_profile: Literal["connector", "workspace_read"]
@@ -354,6 +355,63 @@ class ExtensionApplication:
                 McpServerRecord.from_wire(server)
                 for server in self._plugins_or_error().list_mcp_servers()
             )
+        )
+
+    def create_mcp_server(
+        self,
+        *,
+        server_id: str,
+        executable: str,
+        argv: list[str],
+        env: Mapping[str, str],
+        env_names: list[str],
+        cwd: str | None,
+        permission_profile: str,
+        startup_timeout_seconds: int,
+        tool_timeout_seconds: int,
+        operation_id: str | None = None,
+    ) -> McpServerRecord:
+        plugins = self._plugins_or_error()
+        request = {
+            "serverId": server_id,
+            "executable": executable,
+            "argv": argv,
+            "env": dict(env),
+            "envNames": env_names,
+            "cwd": cwd,
+            "permissionProfile": permission_profile,
+            "startupTimeoutSeconds": startup_timeout_seconds,
+            "toolTimeoutSeconds": tool_timeout_seconds,
+        }
+        replay = self._extension_replay(
+            operation_id, "mcp/create", request, McpServerRecord
+        )
+        if replay is not None:
+            return replay
+        try:
+            server = McpServerRecord.from_wire(
+                plugins.create_manual_mcp(
+                    server_id=server_id,
+                    executable=executable,
+                    argv=argv,
+                    env=env,
+                    env_names=env_names,
+                    cwd=cwd,
+                    permission_profile=permission_profile,
+                    startup_timeout_seconds=startup_timeout_seconds,
+                    tool_timeout_seconds=tool_timeout_seconds,
+                )
+            )
+        except PluginImportError as error:
+            code = {
+                "mcp_server_id_conflict": "MCP_SERVER_ID_CONFLICT",
+                "mcp_cwd_invalid": "MCP_CWD_INVALID",
+            }.get(str(error), "MCP_CONFIG_INVALID")
+            raise _invalid_params(code) from error
+        except StorageError as error:
+            raise ApplicationError("MCP_CONFIG_INVALID") from error
+        return self._record_extension_operation(
+            operation_id, "mcp/create", request, server
         )
 
     def set_mcp_enabled(

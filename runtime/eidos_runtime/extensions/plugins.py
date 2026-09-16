@@ -7,17 +7,23 @@ from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import uuid
+from collections.abc import Mapping
 
 from pydantic import ValidationError
 
 from eidos_runtime.db.storage import ResourceNotFoundError, SessionStore
-from eidos_runtime.extensions.contracts import PluginManifestV1
+from eidos_runtime.extensions.contracts import (
+    McpServerConfigV1,
+    PluginManifestV1,
+    validate_env_values,
+)
 
 
 MAX_PLUGIN_FILES = 512
 MAX_PLUGIN_FILE_BYTES = 1024 * 1024
 MAX_PLUGIN_TOTAL_BYTES = 8 * 1024 * 1024
 MANIFEST_NAME = "plugin.json"
+MANUAL_MCP_PLUGIN_ID = "manual"
 
 
 class PluginImportError(ValueError):
@@ -43,6 +49,14 @@ class PluginCatalog:
             _validate_declared_files(manifest, files)
         except (KeyError, UnicodeDecodeError, json.JSONDecodeError, ValidationError):
             raise PluginImportError("plugin_manifest_invalid") from None
+        if manifest.id == MANUAL_MCP_PLUGIN_ID:
+            raise PluginImportError("plugin_id_conflict")
+        manual_server_ids = {
+            str(record["serverId"])
+            for record in self.store.list_manual_mcp_servers()
+        }
+        if any(server.id in manual_server_ids for server in manifest.mcp_servers):
+            raise PluginImportError("mcp_server_id_conflict")
         content_hash = _content_hash(files)
         existing = self.store.plugin_record(manifest.id)
         if existing is not None:
@@ -129,6 +143,24 @@ class PluginCatalog:
                     str(record["id"]), server.id
                 )["consented"],
             } for server in manifest.mcp_servers)
+        for record in self.store.list_manual_mcp_servers():
+            state = self.store.mcp_server_state(
+                MANUAL_MCP_PLUGIN_ID, str(record["serverId"])
+            )
+            servers.append({
+                "pluginId": MANUAL_MCP_PLUGIN_ID,
+                "pluginHash": record["contentHash"],
+                "id": record["serverId"],
+                "serverId": record["serverId"],
+                "executable": record["executable"],
+                "argv": record["argv"],
+                "envNames": record["envNames"],
+                "cwd": record["cwd"],
+                "permissionProfile": record["permissionProfile"],
+                "startupTimeoutSeconds": record["startupTimeoutSeconds"],
+                "toolTimeoutSeconds": record["toolTimeoutSeconds"],
+                "consented": state["consented"],
+            })
         plugins.sort(key=lambda value: str(value["id"]).encode("utf-8"))
         skills.sort(key=lambda value: (
             str(value["pluginId"]).encode("utf-8"),
@@ -176,6 +208,32 @@ class PluginCatalog:
                 if projection["errorCode"] is None:
                     projection.pop("errorCode")
                 result.append(projection)
+        for record in self.store.list_manual_mcp_servers():
+            state = self.store.mcp_server_state(
+                MANUAL_MCP_PLUGIN_ID, str(record["serverId"])
+            )
+            projection = {
+                "schemaVersion": 1,
+                "pluginId": MANUAL_MCP_PLUGIN_ID,
+                "pluginVersion": "manual",
+                "pluginHash": record["contentHash"],
+                "serverId": record["serverId"],
+                "executable": record["executable"],
+                "argv": list(record["argv"]),
+                "envNames": list(record["envNames"]),
+                "cwd": record["cwd"],
+                "permissionProfile": record["permissionProfile"],
+                "startupTimeoutSeconds": record["startupTimeoutSeconds"],
+                "toolTimeoutSeconds": record["toolTimeoutSeconds"],
+                "declaredEnabled": True,
+                "consented": state["consented"],
+                "available": bool(state["consented"] and state["errorCode"] is None),
+                "errorCode": state["errorCode"],
+                "updatedAt": state["updatedAt"],
+            }
+            if projection["errorCode"] is None:
+                projection.pop("errorCode")
+            result.append(projection)
         return sorted(result, key=lambda value: (
             str(value["pluginId"]).encode("utf-8"),
             str(value["serverId"]).encode("utf-8"),
@@ -184,6 +242,13 @@ class PluginCatalog:
     def set_mcp_enabled(
         self, plugin_id: str, server_id: str, enabled: bool
     ) -> dict[str, object]:
+        if plugin_id == MANUAL_MCP_PLUGIN_ID:
+            server = next((value for value in self.list_mcp_servers() if (
+                value["pluginId"] == plugin_id and value["serverId"] == server_id
+            )), None)
+            if server is None:
+                raise ResourceNotFoundError("mcp server not found")
+            return self.store.set_mcp_server_state(server, consented=enabled)
         record = self.store.plugin_record(plugin_id)
         if record is None or record["status"] != "installed" or not record["enabled"]:
             raise ResourceNotFoundError("plugin not found")
@@ -195,6 +260,90 @@ class PluginCatalog:
         if enabled and not server["declaredEnabled"]:
             raise PluginImportError("mcp_server_disabled_by_manifest")
         return self.store.set_mcp_server_state(server, consented=enabled)
+
+    def create_manual_mcp(
+        self,
+        *,
+        server_id: str,
+        executable: str,
+        argv: list[str],
+        env: Mapping[str, str],
+        env_names: list[str],
+        cwd: str | None,
+        permission_profile: str,
+        startup_timeout_seconds: int,
+        tool_timeout_seconds: int,
+    ) -> dict[str, object]:
+        if any(
+            str(server["serverId"]) == server_id
+            for server in self.list_mcp_servers()
+        ):
+            raise PluginImportError("mcp_server_id_conflict")
+        try:
+            env_values = validate_env_values(env)
+            config = McpServerConfigV1.model_validate({
+                "id": server_id,
+                "executable": executable,
+                "argv": argv,
+                "envNames": list(dict.fromkeys([*env_names, *env_values])),
+                "permissionProfile": permission_profile,
+                "startupTimeoutSeconds": startup_timeout_seconds,
+                "toolTimeoutSeconds": tool_timeout_seconds,
+                "enabled": True,
+            })
+            canonical_cwd = _manual_cwd(cwd, self.store.data_directory)
+        except ValueError as error:
+            raise PluginImportError(
+                "mcp_cwd_invalid" if str(error) == "mcp_cwd_invalid" else "mcp_config_invalid"
+            ) from None
+        except ValidationError:
+            raise PluginImportError("mcp_config_invalid") from None
+        record = {
+            "serverId": config.id,
+            "executable": config.executable,
+            "argv": list(config.argv),
+            "env": env_values,
+            "envNames": list(config.env_names),
+            "cwd": str(canonical_cwd),
+            "permissionProfile": config.permission_profile,
+            "startupTimeoutSeconds": config.startup_timeout_seconds,
+            "toolTimeoutSeconds": config.tool_timeout_seconds,
+        }
+        record["contentHash"] = _json_hash(record)
+        self.store.insert_manual_mcp_server(record)
+        created = next(
+            server for server in self.list_mcp_servers()
+            if server["pluginId"] == MANUAL_MCP_PLUGIN_ID
+            and server["serverId"] == config.id
+        )
+        return created
+
+    def manual_mcp_server_config(self, server_id: str) -> dict[str, object]:
+        try:
+            record = self.store.manual_mcp_server_config(server_id)
+            env_values = validate_env_values(record["env"])
+            canonical_cwd = _manual_cwd(
+                str(record["cwd"]), self.store.data_directory
+            )
+            config = McpServerConfigV1.model_validate({
+                "id": record["serverId"],
+                "executable": record["executable"],
+                "argv": record["argv"],
+                "envNames": record["envNames"],
+                "permissionProfile": record["permissionProfile"],
+                "startupTimeoutSeconds": record["startupTimeoutSeconds"],
+                "toolTimeoutSeconds": record["toolTimeoutSeconds"],
+                "enabled": True,
+            })
+        except ResourceNotFoundError:
+            raise PluginImportError("mcp_config_invalid") from None
+        except ValueError as error:
+            raise PluginImportError(
+                "mcp_cwd_invalid" if str(error) == "mcp_cwd_invalid" else "mcp_config_invalid"
+            ) from None
+        except ValidationError:
+            raise PluginImportError("mcp_config_invalid") from None
+        return {"config": config, "cwd": canonical_cwd, "env": env_values}
 
     def cleanup_removed(self) -> None:
         for record in self.list_plugins(include_removed=True):
@@ -350,6 +499,24 @@ def _json_hash(value: object) -> str:
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _manual_cwd(value: str | None, data_directory: Path | None) -> Path:
+    try:
+        candidate = Path(value).expanduser() if value else Path.home()
+        if not candidate.is_absolute() or candidate.is_symlink():
+            raise ValueError("mcp_cwd_invalid")
+        resolved = candidate.resolve(strict=True)
+        metadata = resolved.stat()
+    except (OSError, RuntimeError, ValueError):
+        raise ValueError("mcp_cwd_invalid") from None
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+        raise ValueError("mcp_cwd_invalid")
+    if data_directory is not None:
+        data_root = data_directory.resolve()
+        if resolved == data_root or data_root in resolved.parents:
+            raise ValueError("mcp_cwd_invalid")
+    return resolved
 
 
 def _install_files(destination: Path, files: dict[str, bytes]) -> None:

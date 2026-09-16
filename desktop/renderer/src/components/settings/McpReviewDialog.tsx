@@ -63,11 +63,11 @@ export function McpReviewDialog({
           <dl className="mcp-meta-grid">
             <div>
               <dt>Server 名称</dt>
-              <dd><code>{server.pluginId}:{server.serverId}</code></dd>
+              <dd><code>{server.pluginId === "manual" ? server.serverId : `${server.pluginId}:${server.serverId}`}</code></dd>
             </div>
             <div>
-              <dt>来源 Plugin</dt>
-              <dd>{server.pluginId} v{server.pluginVersion}</dd>
+              <dt>来源</dt>
+              <dd>{server.pluginId === "manual" ? "设置页手动配置" : `${server.pluginId} v${server.pluginVersion}`}</dd>
             </div>
             <div>
               <dt>权限配置</dt>
@@ -85,6 +85,12 @@ export function McpReviewDialog({
               <dt>工具超时</dt>
               <dd>{server.toolTimeoutSeconds} 秒</dd>
             </div>
+            {server.cwd && (
+              <div className="full-width">
+                <dt>工作目录</dt>
+                <dd><code>{server.cwd}</code></dd>
+              </div>
+            )}
           </dl>
 
           <div className="mcp-command-block">

@@ -431,7 +431,7 @@ Runtime 使用 typed Git observations，并在 observation failure、timeout 或
 
 ## 14. Extension Runtime
 
-PluginCatalog 只接收受控的本地 Plugin v1 包。Runtime 校验 manifest、文件数量、单文件和总大小、content hash，并把安装内容写入私有 extensions 目录。Plugin 可以声明 Skill 和 MCP Server。Plugin 的启用状态、版本、hash 和引用关系进入 SQLite。
+PluginCatalog 只接收受控的本地 Plugin v1 包。Runtime 校验 manifest、文件数量、单文件和总大小、content hash，并把安装内容写入私有 extensions 目录。Plugin 可以声明 Skill 和 MCP Server。Settings 也可以创建本地 stdio MCP Server。手动 MCP 保存在独立的 `manual_mcp_servers` 表中，不伪装成 Plugin。Plugin 和手动 MCP 会在统一 MCP Catalog 中投影。Plugin 的启用状态、版本、hash 和引用关系进入 SQLite。
 
 Skill 当前按以下边界工作：
 
@@ -453,11 +453,11 @@ Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md`
 
 Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 从 Workspace root 或 active Skill root 读取受信任的 PNG/JPEG，并把经 hash 和 size 复核的 binary content 投影为 Pydantic AI 的 multimodal `BinaryContent`。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
 
-Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skill 的 `type: mcp` 声明，并与本 Run extension snapshot 中已配置且 available 的 Plugin MCP server 比较。Runtime 保存 installed、missing 或 unsupported 的结构化诊断。Runtime 也会把未满足项作为低权限 user context warning 提供给后续 Step。这个检查不会安装、启用或启动新的 MCP server。Plugin 声明的 MCP server 仍由独立的 Plugin/MCP 配置、consent、官方 Python MCP SDK stdio client、Tool Registry、Approval 和 Sandbox 链路管理。Runtime 不负责 pip、npm、系统包或 MCP server 的自动安装。
+Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skill 的 `type: mcp` 声明，并与本 Run extension snapshot 中已配置且 available 的 Plugin 或手动 MCP server 比较。Runtime 保存 installed、missing 或 unsupported 的结构化诊断。Runtime 也会把未满足项作为低权限 user context warning 提供给后续 Step。这个检查不会安装、启用或启动新的 MCP server。Plugin 和手动 MCP 都由独立的 MCP 配置、consent、官方 Python MCP SDK stdio client、Tool Registry、Approval 和 Sandbox 链路管理。Runtime 不负责 pip、npm、系统包或 MCP server 的自动安装。
 
 `SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
-MCP 当前使用官方 Python MCP SDK 的 stdio client。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
+MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
 ## 15. Packaging & Distribution
 
@@ -519,7 +519,7 @@ Run Grant 由当前 Run 中已批准的 `approvals.request_json` 派生。请求
 
 Runtime 重启可以恢复 R1 的结构化待批请求。恢复只接受没有不确定执行的暂停点。未执行的动作会重新准备并检查当前 Tool 契约和原审批 fingerprint。网络 denial 的恢复只交回保存的已知结果，不重放 Shell。缺少完整事实、契约变化、取消和不确定副作用继续 fail closed。恢复仍使用原 Approval、原 Run worker、ApprovalCoordinator 和 approve/reject RPC。
 
-数据库版本为 10。v8→v9 只为 `tool_calls` 增加可空 `raw_arguments_json`。新调用保存 Provider 原始参数，`arguments_json` 继续保存执行所用的规范化参数。旧行保持 NULL，Runtime 不会伪造历史原始参数。v9→v10 将全局 `running`/`finalizing` 唯一索引改为按 `session_id` 的唯一索引；迁移不改写旧的 `waiting_approval` 重叠记录，恢复 admission 按 Session 串行处理。旧版本逐级迁移，失败会回滚。
+数据库版本为 11。v8→v9 只为 `tool_calls` 增加可空 `raw_arguments_json`。新调用保存 Provider 原始参数，`arguments_json` 继续保存执行所用的规范化参数。旧行保持 NULL，Runtime 不会伪造历史原始参数。v9→v10 将全局 `running`/`finalizing` 唯一索引改为按 `session_id` 的唯一索引；迁移不改写旧的 `waiting_approval` 重叠记录，恢复 admission 按 Session 串行处理。v10→v11 增加手动 MCP 配置表。环境变量值使用受保护 Blob 存储。旧版本逐级迁移，失败会回滚。
 
 Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替换普通输入框。文件、Shell、网络、MCP 和权限申请共用批准、拒绝、响应中、失效和错误状态。Eidos State 的既有文件变更映射保持兼容。Feed 只显示审批历史。Session 的 `activeRunStatus` 从 Active Run 派生，不写入 Session 表；Sidebar 对等待审批显示“等待批准”。
 

@@ -219,6 +219,7 @@ class McpServerRecordDto(ClosedModel):
     plugin_hash: StrictStr = Field(alias="pluginHash")
     server_id: StrictStr = Field(alias="serverId")
     executable: StrictStr
+    cwd: StrictStr | None = None
     argv: list[StrictStr]
     env_names: list[StrictStr] = Field(alias="envNames")
     permission_profile: Literal["connector", "workspace_read"] = Field(

@@ -47,6 +47,7 @@ import type {
   SkillListResult,
   McpListResult,
   McpServerRecord,
+  McpCreateInput,
   ExtensionSnapshot,
   RuntimeNotification,
   AppShortcut,
@@ -322,6 +323,8 @@ const api: EidosRuntimeAPI = {
   listMcpServers: (): Promise<McpListResult> => ipcRenderer.invoke(IPC.MCP_LIST),
   setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean): Promise<McpServerRecord> =>
     ipcRenderer.invoke(IPC.MCP_SET_ENABLED, pluginId, serverId, enabled),
+  createMcpServer: (input: McpCreateInput): Promise<McpServerRecord> =>
+    ipcRenderer.invoke(IPC.MCP_CREATE, input),
 
   // Extensions
   readExtensions: (): Promise<ExtensionSnapshot> => ipcRenderer.invoke(IPC.EXTENSION_READ),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 import re
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import Field, StrictInt, StrictStr, field_validator, model_validator
@@ -12,6 +13,29 @@ from eidos_runtime.protocol.schemas import ClosedModel
 _ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 _ENV = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+
+def validate_env_values(values: Mapping[str, str]) -> dict[str, str]:
+    if len(values) > 64:
+        raise ValueError("invalid_env_values")
+    result: dict[str, str] = {}
+    total_bytes = 0
+    for name, value in values.items():
+        if (
+            not isinstance(name, str)
+            or not _ENV.fullmatch(name)
+            or not isinstance(value, str)
+            or "\x00" in value
+        ):
+            raise ValueError("invalid_env_values")
+        value_bytes = len(value.encode("utf-8"))
+        if value_bytes > 4096:
+            raise ValueError("invalid_env_values")
+        total_bytes += value_bytes
+        result[name] = value
+    if total_bytes > 256 * 1024:
+        raise ValueError("invalid_env_values")
+    return result
 
 
 def _relative_path(value: str) -> str:

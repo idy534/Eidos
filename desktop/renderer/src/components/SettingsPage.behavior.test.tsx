@@ -77,7 +77,7 @@ function props(overrides = {}) {
     plugins: [], skills: [], mcpServers: [], pendingAction: undefined,
     onClose: vi.fn(), onModelsChanged: vi.fn().mockResolvedValue(undefined),
     onImportPlugin: vi.fn(), onTogglePlugin: vi.fn(), onRemovePlugin: vi.fn(),
-    onToggleMcp: vi.fn(),
+    onToggleMcp: vi.fn(), onCreateMcp: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -176,5 +176,32 @@ describe("Model settings", () => {
       provider: "volcengine", modelId: "glm-5.3-flash", apiKey: "volcengine-secret",
     });
     expect(onModelsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a manual stdio MCP from the settings page", async () => {
+    const user = userEvent.setup();
+    const onCreateMcp = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      listModelPresets: vi.fn().mockResolvedValue(presets),
+    } as EidosRuntimeAPI;
+    render(<SettingsPage {...props({ onCreateMcp })} />);
+
+    await screen.findByRole("button", { name: "添加模型" });
+    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+    await user.click(screen.getByRole("button", { name: "添加 MCP" }));
+    await user.type(screen.getByLabelText("名称"), "filesystem");
+    await user.type(screen.getByLabelText("启动命令"), "npx");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onCreateMcp).toHaveBeenCalledWith({
+      serverId: "filesystem",
+      executable: "npx",
+      argv: [],
+      env: {},
+      envNames: [],
+      permissionProfile: "workspace_read",
+      startupTimeoutSeconds: 15,
+      toolTimeoutSeconds: 60,
+    });
   });
 });

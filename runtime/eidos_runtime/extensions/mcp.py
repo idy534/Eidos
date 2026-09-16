@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import uuid
-from typing import Callable
+from typing import Callable, cast
 
 import anyio
 from mcp import ClientSession, StdioServerParameters
@@ -21,7 +21,8 @@ from mcp.client.stdio import stdio_client
 from mcp import types as mcp_types
 
 from eidos_runtime.extensions.contracts import McpServerConfigV1
-from eidos_runtime.extensions.plugins import PluginCatalog
+from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog, PluginImportError
+from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
 from eidos_runtime.tools.contracts import McpResultData, result_model
 from eidos_runtime.tools.json_schema import (
@@ -84,6 +85,7 @@ class McpConnection:
         runtime_root: Path,
         workspace_root: Path,
         config: McpServerConfigV1,
+        env_values: dict[str, str] | None = None,
         on_list_changed: Callable[[], None],
         async_kernel: RuntimeAsyncKernel,
         sandbox: bool = True,
@@ -92,6 +94,7 @@ class McpConnection:
         self.plugin_root = plugin_root
         self.workspace_root = workspace_root
         self.config = config
+        self.env_values = dict(env_values or {})
         self.on_list_changed = on_list_changed
         self.async_kernel = async_kernel
         self.sandbox = sandbox
@@ -460,6 +463,7 @@ class McpConnection:
             value = os.environ.get(name)
             if value is not None:
                 environment[name] = value
+        environment.update(self.env_values)
         if self.sandbox:
             if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
                 raise McpUnavailable("mcp_sandbox_unavailable")
@@ -573,23 +577,45 @@ class McpManager:
             if not server["available"]:
                 continue
             plugin_id = str(server["pluginId"])
-            if not _snapshot_has_plugin(self.snapshot, plugin_id, str(server["pluginHash"])):
+            if (
+                plugin_id != MANUAL_MCP_PLUGIN_ID
+                and not _snapshot_has_plugin(
+                    self.snapshot, plugin_id, str(server["pluginHash"])
+                )
+            ):
                 continue
-            manifest = self.plugins.manifest(plugin_id)
-            config = next(
-                value for value in manifest.mcp_servers
-                if value.id == server["serverId"]
-            )
+            env_values: dict[str, str] = {}
+            try:
+                if plugin_id == MANUAL_MCP_PLUGIN_ID:
+                    manual = self.plugins.manual_mcp_server_config(
+                        str(server["serverId"])
+                    )
+                    config = cast(McpServerConfigV1, manual["config"])
+                    plugin_root = Path(str(manual["cwd"]))
+                    env_values = cast(dict[str, str], manual["env"])
+                else:
+                    manifest = self.plugins.manifest(plugin_id)
+                    config = next(
+                        value for value in manifest.mcp_servers
+                        if value.id == server["serverId"]
+                    )
+                    plugin_root = self.plugins.installed_root(plugin_id)
+            except (PluginImportError, ResourceNotFoundError, StorageError) as error:
+                self.plugins.store.set_mcp_server_state(
+                    server, consented=True, error_code=str(error)
+                )
+                continue
             if self.async_kernel is None:
                 self.plugins.store.set_mcp_server_state(
                     server, consented=True, error_code="mcp_connection_lost"
                 )
                 continue
             connection = McpConnection(
-                plugin_root=self.plugins.installed_root(plugin_id),
+                plugin_root=plugin_root,
                 runtime_root=self.plugins.store.data_directory / "extensions" / "mcp-runtime",
                 workspace_root=self.workspace_root,
                 config=config,
+                env_values=env_values,
                 async_kernel=self.async_kernel,
                 on_list_changed=lambda plugin_id=plugin_id, server_id=config.id: self._list_changed(
                     plugin_id, server_id
@@ -622,7 +648,17 @@ class McpManager:
         for connection in self.connections:
             server = next((value for value in servers.values() if (
                 value["serverId"] == connection.config.id
-                and self.plugins.installed_root(str(value["pluginId"])) == connection.plugin_root
+                and (
+                    (
+                        str(value["pluginId"]) == MANUAL_MCP_PLUGIN_ID
+                        and Path(str(value["cwd"])) == connection.plugin_root
+                    )
+                    or (
+                        str(value["pluginId"]) != MANUAL_MCP_PLUGIN_ID
+                        and self.plugins.installed_root(str(value["pluginId"]))
+                        == connection.plugin_root
+                    )
+                )
             )), None)
             if server is None:
                 continue

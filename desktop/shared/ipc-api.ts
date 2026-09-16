@@ -44,6 +44,7 @@ import type {
   SkillListResult,
   McpListResult,
   McpServerRecord,
+  McpCreateInput,
   ExtensionSnapshot,
   RuntimeNotification,
   AppShortcut,
@@ -255,6 +256,7 @@ export interface EidosRuntimeAPI {
 
   listMcpServers(): Promise<McpListResult>;
   setMcpEnabled(pluginId: string, serverId: string, enabled: boolean): Promise<McpServerRecord>;
+  createMcpServer(input: McpCreateInput): Promise<McpServerRecord>;
 
   readExtensions(): Promise<ExtensionSnapshot>;
   readExtensionEvents(afterEventId: number): Promise<EventListResult>;
