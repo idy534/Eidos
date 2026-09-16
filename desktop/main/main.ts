@@ -23,6 +23,7 @@ import type {
   ModelCreateInput,
   ModelReasoningSelection,
   ModelUpdateInput,
+  McpCreateInput,
   ResponseFeedbackValue,
   ReviewCommentCreateInput,
 } from "../shared/index.js";
@@ -1189,6 +1190,12 @@ ipcMain.handle(IPC.MCP_SET_ENABLED, (_event, pluginId: unknown, serverId: unknow
     throw new Error("MCP Server 参数无效。");
   }
   return clientOrThrow().setMcpEnabled(pluginId, serverId, enabled);
+});
+ipcMain.handle(IPC.MCP_CREATE, (_event, input: unknown) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("MCP Server 参数无效。");
+  }
+  return clientOrThrow().createMcpServer(input as McpCreateInput);
 });
 
 ipcMain.handle(IPC.APPROVAL_LIST, () =>

@@ -131,6 +131,9 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SKILL_CATALOG_UNAVAILABLE",
   "SKILL_UNAVAILABLE",
   "MCP_SERVER_DISABLED",
+  "MCP_SERVER_ID_CONFLICT",
+  "MCP_CWD_INVALID",
+  "MCP_CONFIG_INVALID",
 ]);
 
 import type {
@@ -144,6 +147,7 @@ import type {
   Item,
   McpListResult,
   McpServerRecord,
+  McpCreateInput,
   ModelId,
   ModelReasoningSelection,
   ModelListResult,
@@ -881,6 +885,14 @@ export class RuntimeClient {
     return this.validatedRequest(
       "mcp/setEnabled", { pluginId, serverId, enabled, consent: true, operationId },
       isMcpServerRecord,
+    );
+  }
+
+  createMcpServer(
+    input: McpCreateInput, operationId = randomUUID(),
+  ): Promise<McpServerRecord> {
+    return this.validatedRequest(
+      "mcp/create", { ...input, operationId }, isMcpServerRecord,
     );
   }
 
@@ -2150,7 +2162,7 @@ function isMcpServerRecord(value: unknown): value is McpServerRecord {
     isRecord(value)
     && hasOnlyKeys(value, [
       "schemaVersion", "pluginId", "pluginVersion", "pluginHash", "serverId",
-      "executable", "argv", "envNames", "permissionProfile",
+      "executable", "cwd", "argv", "envNames", "permissionProfile",
       "startupTimeoutSeconds", "toolTimeoutSeconds", "declaredEnabled",
       "consented", "available", "errorCode", "updatedAt",
     ])
@@ -2158,6 +2170,7 @@ function isMcpServerRecord(value: unknown): value is McpServerRecord {
     && ["pluginId", "pluginVersion", "pluginHash", "serverId", "executable"].every(
       (key) => typeof value[key] === "string",
     )
+    && (value.cwd === undefined || typeof value.cwd === "string")
     && Array.isArray(value.argv) && value.argv.every((item) => typeof item === "string")
     && Array.isArray(value.envNames) && value.envNames.every((item) => typeof item === "string")
     && ["connector", "workspace_read"].includes(String(value.permissionProfile))

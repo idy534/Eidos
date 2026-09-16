@@ -87,6 +87,16 @@ class PluginProtocolTests(unittest.TestCase):
                 },
             })
             server.handle({
+                "jsonrpc": "2.0", "id": "client-mcp-create", "method": "mcp/create",
+                "params": {
+                    "serverId": "manualfixture", "executable": "python3",
+                    "argv": ["server.py"], "env": {"MCP_SECRET": "secret-value"},
+                    "envNames": ["PATH"], "cwd": str(source),
+                    "permissionProfile": "workspace_read",
+                    "operationId": "00000000-0000-4000-8000-000000000003",
+                },
+            })
+            server.handle({
                 "jsonrpc": "2.0", "id": "client-remove", "method": "plugin/remove",
                 "params": {"pluginId": "demo"},
             })
@@ -97,11 +107,15 @@ class PluginProtocolTests(unittest.TestCase):
             removed = next(message["result"] for message in messages if message.get("id") == "client-remove")
             skills = next(message["result"] for message in messages if message.get("id") == "client-skills")
             mcp = next(message["result"] for message in messages if message.get("id") == "client-mcp-enable")
+            manual_mcp = next(message["result"] for message in messages if message.get("id") == "client-mcp-create")
             self.assertEqual(imported["id"], "demo")
             self.assertEqual(next(message["result"] for message in messages if message.get("id") == "client-import-replay"), imported)
             self.assertTrue(listed["plugins"][0]["enabled"])
             self.assertEqual(skills["skills"][0]["qualifiedId"], "demo:review")
             self.assertTrue(mcp["consented"])
+            self.assertEqual(manual_mcp["pluginId"], "manual")
+            self.assertFalse(manual_mcp["consented"])
+            self.assertNotIn("secret-value", json.dumps(messages))
             self.assertEqual(removed["status"], "removed")
             self.assertEqual(
                 server.store.connection.execute(
@@ -110,7 +124,11 @@ class PluginProtocolTests(unittest.TestCase):
                 1,
             )
             self.assertNotIn(str(data), json.dumps(messages))
-            self.assertNotIn(str(source), json.dumps(messages))
+            non_manual_messages = [
+                message for message in messages
+                if message.get("id") != "client-mcp-create"
+            ]
+            self.assertNotIn(str(source), json.dumps(non_manual_messages))
             server.close()
 
     def test_plugin_methods_reject_unknown_fields(self) -> None:

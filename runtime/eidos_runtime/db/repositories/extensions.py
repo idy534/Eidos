@@ -134,6 +134,97 @@ class ExtensionRepository(Repository):
                 return True
         return False
 
+    def list_manual_mcp_servers(self) -> list[dict[str, object]]:
+        with self.lock:
+            rows = self._connection().execute(
+                "SELECT * FROM manual_mcp_servers ORDER BY server_id"
+            ).fetchall()
+        return [_manual_mcp_from_row(row) for row in rows]
+
+    def manual_mcp_server(self, server_id: str) -> dict[str, object] | None:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT * FROM manual_mcp_servers WHERE server_id = ?",
+                (server_id,),
+            ).fetchone()
+        return _manual_mcp_from_row(row) if row is not None else None
+
+    def manual_mcp_server_config(self, server_id: str) -> dict[str, object]:
+        record = self.manual_mcp_server(server_id)
+        if record is None:
+            raise ResourceNotFoundError("mcp server not found")
+        try:
+            values = json.loads(
+                self.database.json_blobs.read_json(
+                    str(record["envBlobRef"]), expected_kind="mcp-env"
+                )
+            )
+        except (TypeError, json.JSONDecodeError, StorageError) as error:
+            raise StorageError("manual_mcp_env_invalid") from error
+        if not isinstance(values, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in values.items()
+        ):
+            raise StorageError("manual_mcp_env_invalid")
+        return {**record, "env": values}
+
+    def insert_manual_mcp_server(
+        self, record: dict[str, object]
+    ) -> dict[str, object]:
+        now = _now_ms()
+        env_blob_ref = record.get("envBlobRef")
+        if env_blob_ref is None:
+            env_blob_ref = self.database.json_blobs.put_json(
+                "mcp-env",
+                json.dumps(
+                    record.get("env", {}),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO manual_mcp_servers (
+                    server_id, executable, argv_json, env_blob_ref, env_names_json,
+                    cwd, permission_profile, startup_timeout_seconds,
+                    tool_timeout_seconds, content_hash, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record["serverId"],
+                    record["executable"],
+                    json.dumps(record["argv"], ensure_ascii=False, separators=(",", ":")),
+                    env_blob_ref,
+                    json.dumps(record["envNames"], ensure_ascii=False, separators=(",", ":")),
+                    record["cwd"],
+                    record["permissionProfile"],
+                    record["startupTimeoutSeconds"],
+                    record["toolTimeoutSeconds"],
+                    record["contentHash"],
+                    now,
+                    now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO mcp_server_states (
+                    plugin_id, server_id, consented, error_code, updated_at
+                ) VALUES ('manual', ?, 0, NULL, ?)
+                """,
+                (record["serverId"], now),
+            )
+            append_event(
+                connection,
+                EventType.MCP_SERVER_STATE_CHANGED,
+                now,
+                {"server": _manual_mcp_projection(record, now)},
+            )
+        result = self.manual_mcp_server(str(record["serverId"]))
+        assert result is not None
+        return result
+
     def mcp_server_state(
         self, plugin_id: str, server_id: str
     ) -> dict[str, object]:
@@ -256,3 +347,61 @@ class ExtensionRepository(Repository):
             "hasMore": len(rows) > limit,
             "throughEventId": waterline,
         }
+
+
+def _manual_mcp_from_row(row: object) -> dict[str, object]:
+    if row is None:
+        raise StorageError("manual_mcp_server_invalid")
+    try:
+        argv = json.loads(row["argv_json"])
+        env_names = json.loads(row["env_names_json"])
+    except (TypeError, json.JSONDecodeError) as error:
+        raise StorageError("manual_mcp_server_invalid") from error
+    if (
+        not isinstance(argv, list)
+        or not all(isinstance(value, str) for value in argv)
+        or not isinstance(env_names, list)
+        or not all(isinstance(value, str) for value in env_names)
+    ):
+        raise StorageError("manual_mcp_server_invalid")
+    return {
+        "serverId": row["server_id"],
+        "executable": row["executable"],
+        "argv": argv,
+        "envBlobRef": row["env_blob_ref"],
+        "envNames": env_names,
+        "cwd": row["cwd"],
+        "permissionProfile": row["permission_profile"],
+        "startupTimeoutSeconds": row["startup_timeout_seconds"],
+        "toolTimeoutSeconds": row["tool_timeout_seconds"],
+        "contentHash": row["content_hash"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def _manual_mcp_projection(
+    record: dict[str, object], updated_at: int, *, consented: bool = False,
+    error_code: str | None = None,
+) -> dict[str, object]:
+    projection = {
+        "schemaVersion": 1,
+        "pluginId": "manual",
+        "pluginVersion": "manual",
+        "pluginHash": record["contentHash"],
+        "serverId": record["serverId"],
+        "executable": record["executable"],
+        "argv": record["argv"],
+        "envNames": record["envNames"],
+        "cwd": record["cwd"],
+        "permissionProfile": record["permissionProfile"],
+        "startupTimeoutSeconds": record["startupTimeoutSeconds"],
+        "toolTimeoutSeconds": record["toolTimeoutSeconds"],
+        "declaredEnabled": True,
+        "consented": consented,
+        "available": consented and error_code is None,
+        "updatedAt": updated_at,
+    }
+    if error_code is not None:
+        projection["errorCode"] = error_code
+    return projection

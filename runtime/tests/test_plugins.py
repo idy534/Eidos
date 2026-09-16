@@ -124,6 +124,72 @@ class PluginCatalogTests(unittest.TestCase):
         )
         self.assertEqual(snapshot["plugins"][0]["contentHash"], plugin["contentHash"])
 
+    def test_manual_mcp_config_persists_without_exposing_environment_values(self) -> None:
+        cwd = Path(self.temporary.name) / "manual-cwd"
+        cwd.mkdir()
+        created = self.catalog.create_manual_mcp(
+            server_id="local",
+            executable=sys.executable,
+            argv=["-c", "fixture"],
+            env={"MCP_SECRET": "secret-value"},
+            env_names=["PATH"],
+            cwd=str(cwd),
+            permission_profile="workspace_read",
+            startup_timeout_seconds=5,
+            tool_timeout_seconds=10,
+        )
+
+        self.assertEqual(created["pluginId"], "manual")
+        self.assertFalse(created["consented"])
+        self.assertEqual(created["cwd"], str(cwd.resolve()))
+        self.assertNotIn("secret-value", json.dumps(created))
+        self.assertEqual(
+            self.catalog.manual_mcp_server_config("local")["env"],
+            {"MCP_SECRET": "secret-value"},
+        )
+        self.assertTrue(all(
+            path.stat().st_mode & 0o777 == 0o600
+            for path in (self.data / "blobs").rglob("*")
+            if path.is_file()
+        ))
+        self.assertNotIn(
+            "secret-value",
+            json.dumps(self.catalog.extension_snapshot()),
+        )
+
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        self.catalog = PluginCatalog(self.store)
+        self.assertEqual(
+            self.catalog.manual_mcp_server_config("local")["env"],
+            {"MCP_SECRET": "secret-value"},
+        )
+        with self.assertRaisesRegex(PluginImportError, "mcp_server_id_conflict"):
+            self.catalog.create_manual_mcp(
+                server_id="local",
+                executable=sys.executable,
+                argv=[],
+                env={},
+                env_names=[],
+                cwd=str(cwd),
+                permission_profile="workspace_read",
+                startup_timeout_seconds=5,
+                tool_timeout_seconds=10,
+            )
+        with self.assertRaisesRegex(PluginImportError, "mcp_cwd_invalid"):
+            self.catalog.create_manual_mcp(
+                server_id="unknown_cwd",
+                executable=sys.executable,
+                argv=[],
+                env={},
+                env_names=[],
+                cwd="~definitely-not-a-user",
+                permission_profile="workspace_read",
+                startup_timeout_seconds=5,
+                tool_timeout_seconds=10,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

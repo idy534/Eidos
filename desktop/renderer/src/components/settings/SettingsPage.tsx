@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import type {
   ModelListResult,
   McpServerRecord,
+  McpCreateInput,
   PluginRecord,
   RuntimeStatus,
   SkillMetadata,
@@ -33,6 +34,7 @@ interface SettingsPageProps {
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onRemovePlugin: (pluginId: string) => Promise<void>;
   onToggleMcp: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
+  onCreateMcp: (input: McpCreateInput) => Promise<void>;
 }
 
 export function SettingsPage({
@@ -52,6 +54,7 @@ export function SettingsPage({
   onTogglePlugin,
   onRemovePlugin,
   onToggleMcp,
+  onCreateMcp,
 }: SettingsPageProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("model");
   const [toasts, setToasts] = useState<SettingsToast[]>([]);
@@ -163,6 +166,7 @@ export function SettingsPage({
                 servers={mcpServers}
                 pendingAction={pendingAction}
                 onToggleMcp={onToggleMcp}
+                onCreateMcp={onCreateMcp}
                 onShowToast={showToast}
               />
             )}

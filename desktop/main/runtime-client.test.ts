@@ -750,6 +750,17 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
     const skills = await client.listSkills();
     const servers = await client.listMcpServers();
     const enabled = await client.setMcpEnabled(imported.id, "fixture", true);
+    const manual = await client.createMcpServer({
+      serverId: "manual_fixture",
+      executable: "python3",
+      argv: ["server.py"],
+      env: { MCP_SECRET: "secret-value" },
+      envNames: ["PATH"],
+      cwd: pluginRoot,
+      permissionProfile: "workspace_read",
+      startupTimeoutSeconds: 5,
+      toolTimeoutSeconds: 10,
+    });
     const extensionSnapshot = await client.readExtensions();
     const extensionEvents = await client.readExtensionEvents(0);
 
@@ -757,6 +768,9 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
     assert.equal(skills.skills[0]?.qualifiedId, "desktop_fixture:review");
     assert.equal(servers.servers[0]?.permissionProfile, "workspace_read");
     assert.equal(enabled.consented, true);
+    assert.equal(manual.pluginId, "manual");
+    assert.equal(manual.consented, false);
+    assert.equal(manual.cwd, await realpath(pluginRoot));
     assert.equal(extensionSnapshot.plugins[0]?.id, "desktop_fixture");
     assert.ok(extensionEvents.items.some((event) => event.eventType === "mcp_server.state_changed"));
     await client.shutdown();

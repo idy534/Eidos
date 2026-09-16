@@ -20,6 +20,10 @@ from eidos_runtime.db.schema import (
     V7_TO_V8_MIGRATION_SQL,
     V8_SCHEMA_VERSION,
     V8_TO_V9_MIGRATION_SQL,
+    V9_SCHEMA_VERSION,
+    V9_TO_V10_MIGRATION_SQL,
+    V10_SCHEMA_VERSION,
+    V10_TO_V11_MIGRATION_SQL,
 )
 from eidos_runtime.db.thread_history import ThreadHistoryStore
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
@@ -408,13 +412,21 @@ class PersistenceLayout:
         with state.lock, self.json_blobs.lock:
             references: list[str] = []
             connection = state.connection()
+            tables = _table_names(connection)
             for table in ("context_snapshots", "step_resolution_snapshots"):
-                if table not in _table_names(connection):
+                if table not in tables:
                     continue
                 references.extend(
                     str(row[0])
                     for row in connection.execute(
                         f"SELECT snapshot_json FROM {table}"
+                    )
+                )
+            if "manual_mcp_servers" in tables:
+                references.extend(
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT env_blob_ref FROM manual_mcp_servers"
                     )
                 )
             return self.json_blobs.garbage_collect(references)
@@ -580,14 +592,27 @@ def _migrate_state_schema(state: StateDatabase) -> None:
     if revision == SCHEMA_VERSION:
         return
     if revision not in {
-        V5_SCHEMA_VERSION, V6_SCHEMA_VERSION, V7_SCHEMA_VERSION, V8_SCHEMA_VERSION
+        V5_SCHEMA_VERSION,
+        V6_SCHEMA_VERSION,
+        V7_SCHEMA_VERSION,
+        V8_SCHEMA_VERSION,
+        V9_SCHEMA_VERSION,
+        V10_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
-    migration = (V7_TO_V8_MIGRATION_SQL if revision < V8_SCHEMA_VERSION else "") + V8_TO_V9_MIGRATION_SQL
+    migration = ""
+    if revision < V8_SCHEMA_VERSION:
+        migration += V7_TO_V8_MIGRATION_SQL
+    if revision <= V8_SCHEMA_VERSION:
+        migration += V8_TO_V9_MIGRATION_SQL
+    elif revision == V9_SCHEMA_VERSION:
+        migration += V9_TO_V10_MIGRATION_SQL
     if revision == V5_SCHEMA_VERSION:
         migration = V5_TO_V6_MIGRATION_SQL + V6_TO_V7_MIGRATION_SQL + migration
     elif revision == V6_SCHEMA_VERSION:
         migration = V6_TO_V7_MIGRATION_SQL + migration
+    if revision < V10_SCHEMA_VERSION:
+        migration += V10_TO_V11_MIGRATION_SQL
     try:
         with state.lock:
             connection = state.connection()

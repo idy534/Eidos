@@ -596,6 +596,7 @@ export interface McpServerRecord {
   pluginHash: string;
   serverId: string;
   executable: string;
+  cwd?: string | undefined;
   argv: string[];
   envNames: string[];
   permissionProfile: "connector" | "workspace_read";
@@ -606,6 +607,18 @@ export interface McpServerRecord {
   available: boolean;
   errorCode?: string;
   updatedAt: number;
+}
+
+export interface McpCreateInput {
+  serverId: string;
+  executable: string;
+  argv: string[];
+  env: Record<string, string>;
+  envNames: string[];
+  cwd?: string | undefined;
+  permissionProfile: "connector" | "workspace_read";
+  startupTimeoutSeconds: number;
+  toolTimeoutSeconds: number;
 }
 
 export interface McpListResult {

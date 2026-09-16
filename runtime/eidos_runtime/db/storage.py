@@ -655,6 +655,20 @@ class SessionStore:
             content_hash,
         )
 
+    def list_manual_mcp_servers(self) -> list[dict[str, object]]:
+        return self._repository(self._extensions).list_manual_mcp_servers()
+
+    def manual_mcp_server(self, server_id: str) -> dict[str, object] | None:
+        return self._repository(self._extensions).manual_mcp_server(server_id)
+
+    def manual_mcp_server_config(self, server_id: str) -> dict[str, object]:
+        return self._repository(self._extensions).manual_mcp_server_config(server_id)
+
+    def insert_manual_mcp_server(
+        self, record: dict[str, object]
+    ) -> dict[str, object]:
+        return self._repository(self._extensions).insert_manual_mcp_server(record)
+
     def mcp_server_state(self, plugin_id: str, server_id: str) -> dict[str, object]:
         return self._repository(self._extensions).mcp_server_state(plugin_id, server_id)
 

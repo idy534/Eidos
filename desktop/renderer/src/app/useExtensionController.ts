@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { McpServerRecord, PluginRecord, SkillMetadata } from "../contracts.js";
+import type { McpCreateInput, McpServerRecord, PluginRecord, SkillMetadata } from "../contracts.js";
 import type { SettingsPendingAction } from "../components/settings/settings-types.js";
 import { userFacingError } from "../session-state.js";
 
@@ -18,6 +18,7 @@ export interface ExtensionControllerActions {
   setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<void>;
   removePlugin: (pluginId: string) => Promise<void>;
   setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
+  createMcpServer: (input: McpCreateInput) => Promise<void>;
   clearError: () => void;
 }
 
@@ -114,6 +115,21 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     }
   }, []);
 
+  const createMcpServer = useCallback(async (input: McpCreateInput): Promise<void> => {
+    setPendingAction({ type: "create_mcp" });
+    setError(undefined);
+    try {
+      await window.eidosRuntime.createMcpServer(input);
+      await fetchAndApplySnapshot();
+    } catch (cause) {
+      const msg = userFacingError(cause);
+      setError(msg);
+      throw new Error(msg);
+    } finally {
+      setPendingAction(undefined);
+    }
+  }, []);
+
   const clearError = useCallback((): void => {
     setError(undefined);
   }, []);
@@ -133,6 +149,7 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     setPluginEnabled,
     removePlugin,
     setMcpEnabled,
+    createMcpServer,
     clearError,
   };
 

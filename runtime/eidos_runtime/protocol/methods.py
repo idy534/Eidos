@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+import re
 from typing import ClassVar, Literal
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
@@ -558,6 +559,50 @@ class McpSetEnabledRequestDto(_OperationRequest):
         if value is not True:
             raise ValueError("consent must be true")
         return value
+
+
+class McpCreateRequestDto(_OperationRequest):
+    server_id: StrictStr = Field(alias="serverId", min_length=1, max_length=64)
+    executable: StrictStr = Field(min_length=1, max_length=1024)
+    argv: list[StrictStr] = Field(default_factory=list, max_length=64)
+    env: dict[StrictStr, StrictStr] = Field(default_factory=dict, max_length=64)
+    env_names: list[StrictStr] = Field(default_factory=list, alias="envNames", max_length=64)
+    cwd: StrictStr | None = Field(default=None, max_length=4096)
+    permission_profile: Literal["connector", "workspace_read"] = Field(
+        alias="permissionProfile"
+    )
+    startup_timeout_seconds: StrictInt = Field(
+        default=15, alias="startupTimeoutSeconds", ge=1, le=60
+    )
+    tool_timeout_seconds: StrictInt = Field(
+        default=60, alias="toolTimeoutSeconds", ge=1, le=600
+    )
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "McpCreateRequestDto":
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.server_id):
+            raise ValueError("invalid server id")
+        if any(
+            "\x00" in value or "\n" in value or "\r" in value
+            or len(value.encode("utf-8")) > 4096
+            for value in [self.executable, *self.argv]
+        ):
+            raise ValueError("invalid command")
+        if len(set(self.env_names)) != len(self.env_names) or any(
+            not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", value)
+            for value in self.env_names
+        ):
+            raise ValueError("invalid environment names")
+        if any(
+            not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name)
+            or "\x00" in value
+            or len(value.encode("utf-8")) > 4096
+            for name, value in self.env.items()
+        ):
+            raise ValueError("invalid environment")
+        if self.cwd and not self.cwd.startswith(("/", "~")):
+            raise ValueError("cwd must be absolute")
+        return self
 
 
 class ExtensionReadRequestDto(MethodRequestDto):
@@ -1115,6 +1160,10 @@ class McpListResponseDto(MethodResultDto):
 
 
 class McpSetEnabledResponseDto(MethodResultDto, McpServerRecordDto):
+    pass
+
+
+class McpCreateResponseDto(MethodResultDto, McpServerRecordDto):
     pass
 
 

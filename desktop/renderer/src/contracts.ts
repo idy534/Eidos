@@ -53,6 +53,7 @@ export type {
   SkillMetadata,
   SkillListResult,
   McpServerRecord,
+  McpCreateInput,
   McpListResult,
   ExtensionSnapshot,
   RuntimeEvent,

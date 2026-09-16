@@ -1,17 +1,19 @@
 import React, { useState } from "react";
 import { Button } from "../Button.js";
-import type { McpServerRecord } from "../../contracts";
+import type { McpCreateInput, McpServerRecord } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { SettingSection } from "./SettingSection";
 import { SettingRow } from "./SettingRow";
 import { StatusBadge } from "./StatusBadge";
 import { McpReviewDialog } from "./McpReviewDialog";
 import { EmptySettingsState } from "./EmptySettingsState";
+import { McpCreateDialog } from "./McpCreateDialog";
 
 interface McpSettingsProps {
   servers: McpServerRecord[];
   pendingAction: SettingsPendingAction;
   onToggleMcp: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
+  onCreateMcp: (input: McpCreateInput) => Promise<void>;
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
 }
 
@@ -19,11 +21,13 @@ export function McpSettings({
   servers,
   pendingAction,
   onToggleMcp,
+  onCreateMcp,
   onShowToast,
 }: McpSettingsProps) {
   const [reviewingServer, setReviewingServer] = useState<McpServerRecord | null>(null);
   const [expandedServerIds, setExpandedServerIds] = useState<Set<string>>(new Set());
   const [localError, setLocalError] = useState<string>();
+  const [createOpen, setCreateOpen] = useState(false);
 
   function toggleExpand(key: string) {
     setExpandedServerIds((prev) => {
@@ -61,13 +65,38 @@ export function McpSettings({
     }
   }
 
+  async function handleCreate(input: McpCreateInput) {
+    setLocalError(undefined);
+    try {
+      await onCreateMcp(input);
+      onShowToast(`MCP Server “${input.serverId}” 已保存，请审阅后启用`, "success");
+      setCreateOpen(false);
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : "保存 MCP Server 失败");
+      throw cause;
+    }
+  }
+
   return (
     <div className="settings-panel">
       <div className="settings-panel-header">
-        <h1>MCP Servers 扩展</h1>
-        <p className="settings-panel-subtitle">
-          MCP (Model Context Protocol) 允许 Agent 访问工具或数据源。启用敏感 Server 前需进行安全审阅与授权。
-        </p>
+        <div className="header-title-with-stats">
+          <div>
+            <h1>MCP Servers 扩展</h1>
+            <p className="settings-panel-subtitle">
+              MCP (Model Context Protocol) 允许 Agent 访问工具或数据源。启用敏感 Server 前需进行安全审阅与授权。
+            </p>
+          </div>
+          <Button
+            variant="primary"
+            size="medium"
+            disabled={pendingAction?.type === "create_mcp"}
+            loading={pendingAction?.type === "create_mcp"}
+            onClick={() => setCreateOpen(true)}
+          >
+            添加 MCP
+          </Button>
+        </div>
       </div>
 
       {localError && <p className="setting-banner-error" role="alert">{localError}</p>}
@@ -76,7 +105,7 @@ export function McpSettings({
         {servers.length === 0 ? (
           <EmptySettingsState
             title="没有 MCP Server 声明"
-            description="导入包含 MCP 声明的 Plugin 后，可在本列表中审阅并授予执行权限。"
+            description="你可以添加本地 STDIO MCP，也可以导入包含 MCP 声明的 Plugin。"
           />
         ) : (
           servers.map((server) => {
@@ -112,7 +141,9 @@ export function McpSettings({
                 title={
                   <div className="mcp-row-header">
                     <span className="mcp-server-name">{server.serverId}</span>
-                    <span className="mcp-plugin-tag">Plugin: {server.pluginId}</span>
+                    <span className="mcp-plugin-tag">
+                      {server.pluginId === "manual" ? "手动配置" : `Plugin: ${server.pluginId}`}
+                    </span>
                     <StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>
                   </div>
                 }
@@ -156,6 +187,12 @@ export function McpSettings({
                       <dt>Arguments</dt>
                       <dd><code>{server.argv.join(" ") || "(none)"}</code></dd>
                     </div>
+                    {server.cwd && (
+                      <div className="full-width">
+                        <dt>Working Directory</dt>
+                        <dd><code>{server.cwd}</code></dd>
+                      </div>
+                    )}
                     <div>
                       <dt>Startup Timeout</dt>
                       <dd>{server.startupTimeoutSeconds}s</dd>
@@ -185,6 +222,13 @@ export function McpSettings({
         busy={pendingAction?.type === "toggle_mcp"}
         onConfirm={() => void handleConfirmEnable()}
         onCancel={() => setReviewingServer(null)}
+      />
+      <McpCreateDialog
+        open={createOpen}
+        busy={pendingAction?.type === "create_mcp"}
+        error={localError}
+        onSave={handleCreate}
+        onCancel={() => setCreateOpen(false)}
       />
     </div>
   );
