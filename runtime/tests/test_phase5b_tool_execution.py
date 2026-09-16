@@ -515,7 +515,7 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertTrue(outcome.result["reconciliationRequired"])
 
-    def test_sensitive_output_preserves_explicit_clear_reconciliation_fact(self) -> None:
+    def test_read_output_preserves_explicit_clear_reconciliation_fact(self) -> None:
         result = {
             "schemaVersion": 1,
             "toolContractVersion": 1,
@@ -547,13 +547,16 @@ class ToolExecutionControllerTests(unittest.TestCase):
             deadline=None,
         )
 
-        self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
+        self.assertEqual(outcome.result["code"], "ok")
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertEqual(
+            outcome.result["data"]["content"], "sk-1234567890123456"
+        )
         persisted = json.loads(
             self.store.read_item(item["id"])["toolCall"]["resultJson"]
         )
-        self.assertNotIn("sk-1234567890123456", json.dumps(persisted))
+        self.assertIn("sk-1234567890123456", json.dumps(persisted))
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_oversized_output_preserves_explicit_clear_reconciliation_fact(self) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel

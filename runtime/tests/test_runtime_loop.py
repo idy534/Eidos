@@ -1591,7 +1591,7 @@ class ToolExecutorTests(unittest.TestCase):
         self.assertFalse((self.workspace / "new.txt").exists())
         self.assertEqual(existing.read_text(encoding="utf-8"), "base\n")
 
-    def test_sensitive_and_escaping_paths_are_rejected(self) -> None:
+    def test_sensitive_names_are_readable_and_escaping_paths_are_rejected(self) -> None:
         sensitive = self.executor.execute(
             "read_file", {"path": ".env"}, threading.Event()
         )
@@ -1599,19 +1599,45 @@ class ToolExecutorTests(unittest.TestCase):
             "read_file", {"path": "../outside"}, threading.Event()
         )
 
-        self.assertEqual(sensitive["code"], "sensitive_path")
+        self.assertEqual(sensitive["outcome"], "success")
+        self.assertEqual(sensitive["data"]["content"], "SECRET=value\n")
         self.assertEqual(escaping["code"], "invalid_arguments")
 
-    def test_sensitive_file_content_is_withheld_as_a_whole(self) -> None:
+    def test_sensitive_file_content_is_returned_raw(self) -> None:
         (self.workspace / "notes.txt").write_text(
             "public line\npassword=hunter2\n", encoding="utf-8"
         )
         result = self.executor.execute(
             "read_file", {"path": "notes.txt"}, threading.Event()
         )
-        self.assertEqual(result["code"], "sensitive_content_rejected")
-        self.assertNotIn("hunter2", json.dumps(result))
-        self.assertNotIn("public line", json.dumps(result))
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(
+            result["data"]["content"], "public line\npassword=hunter2\n"
+        )
+
+    def test_metadata_directories_are_write_protected(self) -> None:
+        for name in (".git", ".agents", ".eidos"):
+            with self.subTest(name=name):
+                (self.workspace / name).mkdir()
+                prepared = self.executor.prepare_file_change(
+                    "write_file",
+                    {"path": f"{name}/config.toml", "content": "value\n"},
+                    threading.Event(),
+                )
+                self.assertIsInstance(prepared, dict)
+                assert isinstance(prepared, dict)
+                self.assertEqual(prepared["code"], "permission_not_requestable")
+
+                (self.workspace / name / "config.toml").write_text(
+                    "value\n", encoding="utf-8"
+                )
+                read = self.executor.execute(
+                    "read_file",
+                    {"path": f"{name}/config.toml"},
+                    threading.Event(),
+                )
+                self.assertEqual(read["outcome"], "success")
+                self.assertEqual(read["data"]["content"], "value\n")
 
     def test_read_file_size_tiers_and_line_ranges_are_bounded(self) -> None:
         medium = self.workspace / "medium.txt"

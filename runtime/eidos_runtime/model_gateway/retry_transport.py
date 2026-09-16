@@ -9,8 +9,12 @@ import inspect
 import logging
 import threading
 
-import httpx
-from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
+import httpx2 as httpx
+from pydantic_ai.retries import (
+    AsyncHTTPX2TenacityTransport,
+    RetryConfig,
+    wait_retry_after,
+)
 from tenacity import RetryCallState, retry_if_exception, stop_after_attempt, wait_exponential
 
 from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig
@@ -83,7 +87,7 @@ class RetryTransportClient:
             "before_sleep": self._before_sleep,
             "reraise": True,
         }
-        self.transport = AsyncTenacityTransport(
+        self.transport = AsyncHTTPX2TenacityTransport(
             retry_config,
             wrapped=wrapped,
             validate_response=self._validate_response,

@@ -117,6 +117,23 @@ class ContextBudgetTests(unittest.TestCase):
         self.assertAlmostEqual(budget.context_usage.percent_used, 71.7, delta=0.1)
         self.assertTrue(budget.fits)
 
+    def test_zero_provider_usage_falls_back_to_estimate(self) -> None:
+        budget = estimate_context_budget(
+            {"messages": [{"content": "provider omitted usage"}]},
+            context_window_tokens=4_096,
+            request_max_output_tokens=512,
+            message_count=1,
+            tool_call_count=0,
+            tool_result_count=0,
+            provider_usage=ModelUsage(input_tokens=0, output_tokens=0),
+        )
+
+        self.assertEqual(budget.context_usage.source, "estimated")
+        self.assertEqual(
+            budget.context_usage.active_tokens,
+            budget.estimated_input_tokens,
+        )
+
     def test_projected_input_uses_current_payload_after_provider_usage(self) -> None:
         provider_usage = ModelUsage(
             input_tokens=185_000,

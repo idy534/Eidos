@@ -43,8 +43,6 @@ from eidos_runtime.runtime.shell_process_manager import (  # noqa: E402
 )
 from eidos_runtime.sandbox.permissions import BasePermissionProfile  # noqa: E402
 from eidos_runtime.sandbox.sensitive import (  # noqa: E402
-    SensitiveScanError,
-    StreamingSensitiveScanner,
     default_scanner,
 )
 from eidos_runtime.tools.workspace import (  # noqa: E402
@@ -369,15 +367,15 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             if mutate is not None:
                 mutate()
             if output and callable(kwargs.get("on_output")):
-                scanner = FixtureStreamingSensitiveScanner(
-                    kwargs["sensitive"], kwargs["on_output"]
-                )
-                try:
-                    scanner.feed("".join(output))
-                    if cancel is None or not cancel.is_set():
-                        scanner.finish()
-                except SensitiveScanError:
-                    pass
+                callback = kwargs["on_output"]
+                for index, part in enumerate(output):
+                    if cancel is not None and cancel.is_set():
+                        break
+                    callback(part)
+                    if observe is not None and part:
+                        observe()
+                    if cancel is not None and index == 0:
+                        cancel.set()
             normalized = dict(result)
             data = dict(result.get("data", {}))
             if output:
@@ -390,24 +388,6 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             )
             normalized["data"] = data
             return normalized
-
-        class FixtureStreamingSensitiveScanner(StreamingSensitiveScanner):
-            fixture_output_fed = False
-
-            def feed(self, chunk: str) -> None:
-                if output and not self.fixture_output_fed:
-                    self.fixture_output_fed = True
-                    chunks = output
-                else:
-                    chunks = (chunk,)
-                for index, part in enumerate(chunks):
-                    if cancel is not None and cancel.is_set():
-                        break
-                    super().feed(part)
-                    if observe is not None and part:
-                        observe()
-                    if cancel is not None and index == 0 and part:
-                        cancel.set()
 
         with (
             patch(
@@ -775,7 +755,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(item["content"], "first\n")
 
-    def test_shell_sensitive_output_is_not_streamed(self) -> None:
+    def test_shell_sensitive_output_is_redacted_for_streaming_only(self) -> None:
         outcome = self._execute(
             {
                 "outcome": "success", "code": "ok", "summary": "done",
@@ -792,10 +772,13 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             WHERE tool_calls.provider_call_id = 'shell-call'
             """
         ).fetchone()
-        self.assertIsNone(item["content"])
-        self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
+        self.assertEqual(item["content"], "[REDACTED:api_credential]\n")
+        self.assertEqual(outcome.result["code"], "ok")
+        self.assertEqual(
+            outcome.result["data"]["stdout"], "sk-1234567890123456\n"
+        )
 
-    def test_unsandboxed_shell_still_scans_sensitive_output(self) -> None:
+    def test_unsandboxed_shell_preserves_sensitive_output(self) -> None:
         handler = self.controller.runtime_context.handler  # type: ignore[attr-defined]
         assert handler is not None
         assert handler.dependencies.base_permissions is not None
@@ -828,7 +811,10 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             attempts=attempts,
         )
 
-        self.assertEqual(outcome.result["code"], "sensitive_content_rejected")
+        self.assertEqual(outcome.result["code"], "ok")
+        self.assertEqual(
+            outcome.result["data"]["stdout"], "sk-1234567890123456\n"
+        )
         self.assertFalse(attempts[0].sandboxed)
         self.assertTrue(outcome.result["sideEffectsMayExist"])
 

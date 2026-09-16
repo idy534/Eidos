@@ -94,16 +94,15 @@ class WorkspaceIndexTests(unittest.TestCase):
 
         self.assertEqual(identity.path, self.workspace.resolve())
 
-    def test_sensitive_file_added_after_initial_scan_is_detected(self) -> None:
+    def test_sensitive_file_added_after_initial_scan_is_indexed(self) -> None:
         self._refresh()
         (self.workspace / "new-token.txt").write_text(
             "sensitive", encoding="utf-8"
         )
 
-        with self.assertRaisesRegex(
-            WorkspacePathError, "sensitive_workspace_content"
-        ):
-            self._refresh()
+        snapshot = self._refresh()
+        self.assertTrue(snapshot.complete)
+        self.assertEqual(snapshot.entry_count, 1)
 
     def test_index_invalidates_on_workspace_identity_change(self) -> None:
         original = self.workspace.resolve()

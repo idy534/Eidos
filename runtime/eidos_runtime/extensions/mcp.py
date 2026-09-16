@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 import hashlib
 import json
 import logging
@@ -283,7 +282,7 @@ class McpConnection:
                 if self._close_event is not None:
                     self._close_event.set()
                 return
-            root = getattr(message, "root", None)
+            root = getattr(message, "root", message)
             if isinstance(root, mcp_types.ToolListChangedNotification):
                 try:
                     # The callback records an event in SQLite. It must not run
@@ -303,10 +302,22 @@ class McpConnection:
         startup_scope: anyio.CancelScope | None = None
         startup_deadline: float | None = None
         startup_ready = False
-        try:
-            # The scope begins before any transport preparation. It remains
-            # lexically around the contexts so their cleanup stays structured,
-            # then explicitly loses its deadline once the service is ready.
+        watchdog_stop = anyio.Event()
+        watchdog_done = anyio.Event()
+
+        async def startup_watchdog() -> None:
+            try:
+                with anyio.move_on_after(self.config.startup_timeout_seconds) as scope:
+                    await watchdog_stop.wait()
+                if scope.cancel_called and not startup_ready:
+                    await anyio.to_thread.run_sync(self._terminate_process_group)
+            finally:
+                watchdog_done.set()
+
+        async def serve_transport() -> None:
+            nonlocal startup_scope, startup_deadline, startup_ready
+            # The transport has a longer graceful shutdown window than Eidos's
+            # startup deadline. The watchdog keeps that deadline real.
             with anyio.fail_after(
                 self.config.startup_timeout_seconds
             ) as startup_scope:
@@ -327,6 +338,30 @@ class McpConnection:
                             startup_ready = True
                             startup_scope.deadline = math.inf
                             await self._close_event.wait()
+
+        try:
+            async with anyio.create_task_group() as watchdog_group:
+                watchdog_group.start_soon(startup_watchdog)
+                startup_timed_out = False
+                try:
+                    await serve_transport()
+                except BaseException:
+                    startup_timed_out = (
+                        not startup_ready
+                        and startup_scope is not None
+                        and startup_scope.cancel_called
+                    )
+                    if startup_timed_out:
+                        with anyio.CancelScope(shield=True):
+                            await watchdog_done.wait()
+                    else:
+                        watchdog_stop.set()
+                    raise
+                else:
+                    watchdog_stop.set()
+                finally:
+                    if not startup_timed_out:
+                        watchdog_group.cancel_scope.cancel()
         except McpUnavailable as error:
             self.error_code = str(error)
             raise
@@ -621,17 +656,19 @@ async def _discover_tools(session: ClientSession) -> tuple[mcp_types.Tool, ...]:
     tools: list[mcp_types.Tool] = []
     schema_bytes = 0
     for _page in range(MAX_LIST_PAGES):
-        page = await session.list_tools(cursor=cursor)
+        page = await session.list_tools(
+            params=mcp_types.PaginatedRequestParams(cursor=cursor)
+        )
         for tool in page.tools:
             encoded = json.dumps(
-                tool.inputSchema, ensure_ascii=False, separators=(",", ":"),
+                tool.input_schema, ensure_ascii=False, separators=(",", ":"),
                 sort_keys=True,
             ).encode("utf-8")
             schema_bytes += len(encoded)
             tools.append(tool)
             if len(tools) > MAX_TOOLS or schema_bytes > MAX_SCHEMA_BYTES:
                 raise McpUnavailable("mcp_tool_list_too_large")
-        cursor = page.nextCursor
+        cursor = page.next_cursor
         if cursor is None:
             return tuple(tools)
         if cursor in cursors:
@@ -645,14 +682,14 @@ async def _call_tool(
 ) -> dict[str, object]:
     if command.cancel.is_set():
         return _uncertain("mcp_tool_canceled")
-    result_holder: dict[str, mcp_types.CallToolResult] = {}
+    result_holder: dict[str, object] = {}
     canceled = False
 
     async def invoke() -> None:
         result_holder["result"] = await session.call_tool(
             command.name,
             command.arguments,
-            read_timeout_seconds=timedelta(seconds=command.timeout_seconds),
+            read_timeout_seconds=float(command.timeout_seconds),
         )
         group.cancel_scope.cancel()
 
@@ -671,7 +708,7 @@ async def _call_tool(
     if canceled or command.cancel.is_set():
         return _uncertain("mcp_tool_canceled")
     result = result_holder.get("result")
-    if result is None:
+    if not isinstance(result, mcp_types.CallToolResult):
         return _uncertain("mcp_connection_lost")
     texts: list[str] = []
     for content in result.content:
@@ -679,7 +716,7 @@ async def _call_tool(
             return _result("error", "mcp_content_unsupported", {})
         texts.append(content.text)
     text = "\n".join(texts)
-    structured = result.structuredContent
+    structured = result.structured_content
     if structured is not None:
         try:
             validate_bounded_json_value(structured)
@@ -690,10 +727,14 @@ async def _call_tool(
         data["text"] = text
     if structured is not None:
         data["structuredContent"] = structured
-    data["isError"] = bool(result.isError)
+    data["isError"] = bool(result.is_error)
     if len(json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_RESULT_BYTES:
         return _result("error", "mcp_result_too_large", {})
-    return _result("error" if result.isError else "success", "mcp_tool_error" if result.isError else "ok", data)
+    return _result(
+        "error" if result.is_error else "success",
+        "mcp_tool_error" if result.is_error else "ok",
+        data,
+    )
 
 
 def _tool_entry(
@@ -701,9 +742,9 @@ def _tool_entry(
     tool: mcp_types.Tool,
     server: dict[str, object],
 ) -> ToolRegistryEntry:
-    input_schema = tool.inputSchema
+    input_schema = tool.input_schema
     input_validator = BoundedJsonSchema(input_schema)
-    output_schema = tool.outputSchema
+    output_schema = tool.output_schema
     output_validator = (
         BoundedJsonSchema(output_schema) if output_schema is not None else None
     )

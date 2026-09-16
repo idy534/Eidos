@@ -178,7 +178,7 @@ class ModelProfileSnapshot(_FrozenModel):
     retry_max_attempts: int = Field(default=6, ge=1, le=10)
     retry_initial_backoff_seconds: float = Field(default=0.2, ge=0, le=60)
     retry_max_backoff_seconds: float = Field(default=2.0, ge=0, le=300)
-    pydantic_ai_version: str = "2.13.0"
+    pydantic_ai_version: str = "2.43.0"
 
 
 class ModelClient(Protocol):

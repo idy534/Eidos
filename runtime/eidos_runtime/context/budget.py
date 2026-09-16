@@ -68,7 +68,11 @@ def estimate_context_budget(
     estimated = payload_tokens + overhead
     provider_active_tokens = (
         provider_usage.input_tokens
-        if provider_usage is not None and provider_usage.input_tokens is not None
+        if (
+            provider_usage is not None
+            and provider_usage.input_tokens is not None
+            and provider_usage.input_tokens > 0
+        )
         else None
     )
     active_tokens = (

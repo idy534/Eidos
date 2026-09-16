@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from eidos_runtime.db.mappers import _snapshot_display_arguments  # noqa: PLC2701
+from eidos_runtime.protocol.tool_text import project_tool_text
 
 
 def test_discovery_snapshot_keeps_scoped_arguments_and_bounded_globs() -> None:
@@ -67,6 +68,37 @@ def test_snapshot_does_not_project_write_content_or_shell_permissions() -> None:
         "cwd": ".",
         "yieldTimeMs": 10_000,
     }
+
+
+def test_display_projection_redacts_command_and_search_text_only() -> None:
+    command = "printf 'Bearer abcdefghijklmnop'"
+    query = "token=supersecret"
+    item = {
+        "toolCall": {
+            "toolName": "run_shell",
+            "argumentsJson": json.dumps({"command": command, "cwd": "."}),
+        }
+    }
+    search_item = {
+        "toolCall": {
+            "toolName": "search_text",
+            "argumentsJson": json.dumps({"query": query, "path": "."}),
+        }
+    }
+
+    projected = project_tool_text(item)
+    projected_search = project_tool_text(search_item)
+
+    assert json.loads(item["toolCall"]["argumentsJson"]) == {
+        "command": command,
+        "cwd": ".",
+    }
+    assert json.loads(projected["toolCall"]["argumentsJson"])["command"] == (
+        "printf 'Bearer [REDACTED:bearer_token]'"
+    )
+    assert json.loads(projected_search["toolCall"]["argumentsJson"])["query"] == (
+        "[REDACTED:secret_assignment]"
+    )
 
 
 def test_snapshot_glob_projection_is_bounded() -> None:

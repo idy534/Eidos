@@ -692,7 +692,11 @@ def _context_usage_snapshot(
     latest_context_snapshot: ContextSnapshot | None,
 ) -> ContextUsageSnapshot | None:
     refreshed_at = int(time.time() * 1000)
-    if provider_usage is not None and provider_usage.input_tokens is not None:
+    if (
+        provider_usage is not None
+        and provider_usage.input_tokens is not None
+        and provider_usage.input_tokens > 0
+    ):
         active_tokens = provider_usage.input_tokens
         return ContextUsageSnapshot(
             active_tokens=active_tokens,

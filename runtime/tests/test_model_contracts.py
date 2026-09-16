@@ -84,7 +84,7 @@ class ModelContractTests(unittest.TestCase):
         )
         self.assertEqual(profile.schema_version, 1)
         self.assertEqual(profile.wire_api, "chat_completions")
-        self.assertEqual(profile.pydantic_ai_version, "2.13.0")
+        self.assertEqual(profile.pydantic_ai_version, "2.43.0")
 
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
         self.assertIn("Eidos", SYSTEM_SAFETY_INSTRUCTIONS)

@@ -137,7 +137,7 @@ def test_legacy_model_config_defaults_to_no_image_support() -> None:
 
     assert config.supports_images is False
     assert MODEL_CATALOG.profile("deepseek-v4-flash").supports_images is False
-    assert MODEL_CATALOG.profile("doubao-seed-evolving").supports_images is True
+    assert MODEL_CATALOG.profile("minimax-m3").supports_images is True
 
 
 def test_view_image_reads_a_valid_png_and_returns_canonical_metadata(tmp_path: Path) -> None:

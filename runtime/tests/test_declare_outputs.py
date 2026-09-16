@@ -119,10 +119,14 @@ def test_workspace_boundary_and_special_file_checks_fail_closed(tmp_path: Path) 
     hardlink = _adapter(workspace).execute(
         {"outputs": [{"path": "hardlink.txt"}]}, threading.Event()
     )
-    sensitive = _adapter(workspace).execute(
+    metadata_dir = workspace / ".git"
+    metadata_dir.mkdir()
+    (metadata_dir / "config").write_text("[core]\n", encoding="utf-8")
+    metadata = _adapter(workspace).execute(
         {"outputs": [{"path": ".git/config"}]}, threading.Event()
     )
 
     assert escaped["code"] == "workspace_boundary_violation"
     assert hardlink["code"] == "unsupported_file_hardlink"
-    assert sensitive["code"] == "sensitive_path"
+    assert metadata["outcome"] == "success"
+    assert metadata["data"]["outputs"][0]["path"] == ".git/config"

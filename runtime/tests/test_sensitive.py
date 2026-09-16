@@ -38,6 +38,18 @@ class SensitiveScannerTests(unittest.TestCase):
         )
         self.assertEqual(redacted.audited_rule_ids, ["email_address"])
 
+    def test_presentation_redaction_is_best_effort_without_changing_strict_scan(self) -> None:
+        secret = "Bearer abcdefghijklmnop AKIAABCDEFGHIJKLMNOP token=supersecret"
+
+        displayed = self.scanner.redact_for_presentation(secret).text
+
+        self.assertNotIn(secret, displayed)
+        self.assertIn("[REDACTED:bearer_token]", displayed)
+        self.assertIn("[REDACTED:aws_access_key_id]", displayed)
+        self.assertIn("[REDACTED:secret_assignment]", displayed)
+        with self.assertRaises(SensitiveContentDenied):
+            self.scanner.scan_text("sk-abcdefghijklmnop")
+
     def test_cross_chunk_secret_is_never_released(self) -> None:
         released: list[str] = []
         stream = StreamingSensitiveScanner(self.scanner, released.append)

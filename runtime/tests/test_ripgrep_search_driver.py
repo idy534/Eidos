@@ -270,10 +270,10 @@ def test_real_ripgrep_preserves_c2_ignore_sources_and_refresh(tmp_path: Path) ->
     sys.platform != "darwin" or platform.machine() != "arm64",
     reason="the C3 production artifact is intentionally macOS arm64 only",
 )
-def test_real_ripgrep_enforces_sensitive_symlink_and_file_compatibility(
+def test_real_ripgrep_filters_hard_metadata_and_unsafe_file_entries(
     tmp_path: Path,
 ) -> None:
-    for directory in (".git", ".eidos", ".ssh", ".aws", "node_modules"):
+    for directory in (".git", ".agents", ".eidos", ".ssh", ".aws", "node_modules"):
         path = tmp_path / directory
         path.mkdir()
         (path / "visible.txt").write_text("needle\n", encoding="utf-8")
@@ -311,7 +311,15 @@ def test_real_ripgrep_enforces_sensitive_symlink_and_file_compatibility(
     try:
         result = RipgrepSearchDriver().search(_request(tmp_path), threading.Event())
         assert [match.path for match in result.matches] == [
-            ".env.example", "ordinary.txt"
+            ".aws/visible.txt",
+            ".env",
+            ".env.example",
+            ".ssh/visible.txt",
+            "access-token.txt",
+            "client-secret.txt",
+            "credentials.json",
+            "ordinary.txt",
+            "private.key",
         ]
     finally:
         local_socket.close()

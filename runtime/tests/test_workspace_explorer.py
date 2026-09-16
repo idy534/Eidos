@@ -245,7 +245,7 @@ def test_asset_reads_bounded_chunks_and_rejects_stale_identity(tmp_path: Path) -
         store.close()
 
 
-def test_asset_rejects_unsupported_and_sensitive_content(tmp_path: Path) -> None:
+def test_asset_rejects_unsupported_but_returns_sensitive_content(tmp_path: Path) -> None:
     store, application, session_id, workspace = _application(tmp_path)
     try:
         (workspace / "notes.txt").write_text("plain\n", encoding="utf-8")
@@ -260,14 +260,14 @@ def test_asset_rejects_unsupported_and_sensitive_content(tmp_path: Path) -> None
 
         (workspace / "page.html").write_text("<p>secret</p>\n", encoding="utf-8")
         application._scan_text = lambda _value: "[redacted]"  # type: ignore[method-assign]
-        with pytest.raises(ApplicationError, match="WORKSPACE_SENSITIVE_CONTENT"):
-            application.read_asset(
-                WorkspaceReadAssetRequestDto(
-                    sessionId=session_id,
-                    path="page.html",
-                    executionRoot=str(workspace.resolve()),
-                )
+        asset = application.read_asset(
+            WorkspaceReadAssetRequestDto(
+                sessionId=session_id,
+                path="page.html",
+                executionRoot=str(workspace.resolve()),
             )
+        ).root
+        assert base64.b64decode(asset["data"]).decode() == "<p>secret</p>\n"
     finally:
         store.close()
 

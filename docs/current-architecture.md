@@ -143,7 +143,7 @@ CLAUDE.md
 
 `InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。
 
-Context Budget 优先使用最近 Provider Usage 的 active input tokens。Provider Usage 不可用时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
+Context Budget 只有在最近 Provider Usage 提供正的 active input tokens 时才使用该值。Provider Usage 不可用或返回 0 时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
 Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,536 tokens、仍符合真实模型窗口、没有待处理 Approval 或 reconciliation，且距离上次尝试已有至少 32 条新的未压缩 Item 时，Runtime 尝试压缩旧历史。这个路径保留最近 16 条候选 Item、用户消息和 Skill 读取正文。它复用现有事实验证与事务提交，不删除原始历史。主动压缩失败后，Runtime 保留原投影并继续正常的窗口判断；65,536 不是 Run 停止阈值。
 
@@ -162,10 +162,7 @@ deepseek: deepseek-flash
 minimax:  MiniMax-M3
 kimi:    kimi-k3, kimi-k2.7-code-highspeed
 volcengine: deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
-            glm-5.3, glm-5.3-flash, minimax-m3,
-            doubao-seed-evolving,
-            doubao-seed-2-1-pro-260628, doubao-seed-2-1-turbo-260628,
-            doubao-seed-2-0-code-preview-260215
+            glm-5.3, glm-5.3-flash, minimax-m3
 ```
 
 Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启用 thinking；`思考`表示启用 thinking，但不提供强度档位。表中的档位是 Eidos 的选择项，不代表不同 Provider 使用相同的请求字段。
@@ -178,10 +175,6 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 | Kimi | `kimi-k2.7-code-highspeed` | 固定思考，无强度选择 | 思考 |
 | Volcengine Coding Plan | `deepseek-v4-pro-ga-260813` | 关闭、Low、High、Max | High |
 | Volcengine Coding Plan | `deepseek-v4-flash-ga-260731` | 关闭、Low、High、Max | High |
-| Volcengine Coding Plan | `doubao-seed-evolving` | 关闭、Low、Medium、High | High |
-| Volcengine Coding Plan | `doubao-seed-2-1-pro-260628` | 关闭、Low、Medium、High | High |
-| Volcengine Coding Plan | `doubao-seed-2-1-turbo-260628` | 关闭、Low、Medium、High | High |
-| Volcengine Coding Plan | `doubao-seed-2-0-code-preview-260215` | 关闭、Low、Medium、High | Medium |
 | Volcengine Coding Plan | `glm-5.3-flash` | Low、High、Max；thinking 固定开启 | Max |
 | Volcengine Coding Plan | `glm-5.3` | 固定思考，无强度选择 | 思考 |
 | Volcengine Coding Plan | `minimax-m3` | 不提供 Eidos 控制 | Provider 默认值 |

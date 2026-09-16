@@ -290,15 +290,16 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
             ["fixtures/agent-test.json"],
         )
 
-    def test_eidosignore_negation_cannot_reinclude_hard_or_sensitive_paths(self) -> None:
+    def test_eidosignore_negation_cannot_reinclude_hard_metadata_paths(self) -> None:
         git_file = self.workspace / ".git" / "visible.txt"
+        agents_file = self.workspace / ".agents" / "visible.txt"
         eidos_file = self.workspace / ".eidos" / "visible.txt"
         sensitive_file = self.workspace / ".ssh" / "visible.txt"
-        for path in (git_file, eidos_file, sensitive_file):
+        for path in (git_file, agents_file, eidos_file, sensitive_file):
             path.parent.mkdir()
             path.write_text("needle\n", encoding="utf-8")
         (self.workspace / ".eidosignore").write_text(
-            "!.git/visible.txt\n!.eidos/visible.txt\n!.ssh/visible.txt\n",
+            "!.git/visible.txt\n!.agents/visible.txt\n!.eidos/visible.txt\n!.ssh/visible.txt\n",
             encoding="utf-8",
         )
 
@@ -306,9 +307,37 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         searched = self._search("needle")
 
         self.assertNotIn(".git/visible.txt", listed["data"]["paths"])
+        self.assertNotIn(".agents/visible.txt", listed["data"]["paths"])
         self.assertNotIn(".eidos/visible.txt", listed["data"]["paths"])
-        self.assertNotIn(".ssh/visible.txt", listed["data"]["paths"])
-        self.assertEqual(searched["data"]["matches"], [])
+        self.assertIn(".ssh/visible.txt", listed["data"]["paths"])
+        self.assertEqual(
+            [item["path"] for item in searched["data"]["matches"]],
+            [".ssh/visible.txt"],
+        )
+
+    def test_metadata_directories_are_hidden_by_default_but_readable_explicitly(self) -> None:
+        for name in (".git", ".agents", ".eidos"):
+            directory = self.workspace / name
+            directory.mkdir()
+            (directory / "config.toml").write_text("needle\n", encoding="utf-8")
+
+        listed = self._list()
+        searched = self._search("needle")
+
+        for name in (".git", ".agents", ".eidos"):
+            self.assertNotIn(f"{name}/config.toml", listed["data"]["paths"])
+            self.assertNotIn(
+                f"{name}/config.toml",
+                [item["path"] for item in searched["data"]["matches"]],
+            )
+
+            explicit_list = self._list({"path": name})
+            explicit_search = self._search("needle", path=name)
+            self.assertIn(f"{name}/config.toml", explicit_list["data"]["paths"])
+            self.assertEqual(
+                [item["path"] for item in explicit_search["data"]["matches"]],
+                [f"{name}/config.toml"],
+            )
 
     def test_ignored_file_remains_available_to_explicit_operations(self) -> None:
         ignored = self.workspace / "ignored.txt"
@@ -342,7 +371,7 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         self.assertNotIsInstance(patched, dict)
         self.assertNotIsInstance(deleted, dict)
 
-    def test_shell_launch_does_not_scan_gitignored_sensitive_and_unsafe_entries(self) -> None:
+    def test_shell_launch_allows_gitignored_sensitive_names_but_rejects_unsafe_entries(self) -> None:
         ignored = self.workspace / "ignored"
         ignored.mkdir()
         (self.workspace / ".gitignore").write_text("ignored/\n", encoding="utf-8")
@@ -351,8 +380,8 @@ class ToolExecutorDiscoveryScopeTests(unittest.TestCase):
         identity = self.executor.prepare_shell(".", threading.Event())
 
         self.assertEqual(identity.path, self.workspace.resolve())
-        with self.assertRaisesRegex(WorkspacePathError, "sensitive_workspace_content"):
-            self.executor.refresh_workspace_index(threading.Event())
+        snapshot = self.executor.refresh_workspace_index(threading.Event())
+        self.assertTrue(snapshot.complete)
 
         (ignored / "credentials.json").unlink()
         target = ignored / "target.txt"

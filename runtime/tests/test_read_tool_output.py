@@ -371,16 +371,17 @@ class ReadToolOutputTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(tuple(state), (1, 1))
 
-    def test_sensitive_output_is_rejected_before_return(self) -> None:
-        self._shell_item("secret-call", stdout="sk-" + "x" * 16)
+    def test_sensitive_output_is_returned_raw(self) -> None:
+        secret = "sk-" + "x" * 16
+        self._shell_item("secret-call", stdout=secret)
         entry = read_tool_output_entry(self.store, self.run["id"])
 
         result = entry.adapter.execute(
-            {"callId": "secret-call", "maxBytes": 16}, threading.Event()
+            {"callId": "secret-call", "maxBytes": 64}, threading.Event()
         )
 
-        self.assertEqual(result["outcome"], "error")
-        self.assertEqual(result["code"], "sensitive_content_rejected")
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["data"]["content"], secret)
 
     def test_duplicate_call_id_fails_closed(self) -> None:
         self._shell_item("duplicate-call", stdout="first")

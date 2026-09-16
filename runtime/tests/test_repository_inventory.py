@@ -13,7 +13,7 @@ from eidos_runtime.repo_intelligence.inventory import (
 )
 
 
-def test_inventory_is_bounded_deterministic_and_excludes_ignored_sensitive_paths(
+def test_inventory_is_bounded_deterministic_and_keeps_ordinary_sensitive_names(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "repo"
@@ -32,6 +32,7 @@ def test_inventory_is_bounded_deterministic_and_excludes_ignored_sensitive_paths
 
     assert first.complete is True
     assert [record.path for record in first.files] == [
+        ".env",
         ".gitignore",
         "README.md",
         "src/main.py",
@@ -39,10 +40,10 @@ def test_inventory_is_bounded_deterministic_and_excludes_ignored_sensitive_paths
     assert first.snapshot_hash == second.snapshot_hash
     assert first.generation == second.generation == 1
     assert first.files[1].encoding == "ascii"
-    assert first.files[2].language == "python"
-    assert first.files[2].content_hash is not None
+    assert first.files[3].language == "python"
+    assert first.files[3].content_hash is not None
     assert all(not record.path.startswith("ignored/") for record in first.files)
-    assert all(".env" not in record.path for record in first.files)
+    assert ".env" in [record.path for record in first.files]
 
 
 def test_inventory_cancellation_never_returns_a_complete_generation(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-import httpx
+import httpx2 as httpx
 from openai import AsyncOpenAI
 from pydantic_ai import ModelRequest as PAIModelRequest
 from pydantic_ai.messages import (

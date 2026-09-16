@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import httpx
+import httpx2 as httpx
 from pydantic import Field
 
 from eidos_runtime.models import EidosFrozenStrictModel

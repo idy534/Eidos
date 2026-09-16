@@ -10,7 +10,7 @@ import threading
 from typing import Any, Callable
 
 import anyio
-import httpx
+import httpx2 as httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (

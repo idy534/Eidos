@@ -45,10 +45,6 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "glm-5.3",
         "glm-5.3-flash",
         "minimax-m3",
-        "doubao-seed-evolving",
-        "doubao-seed-2-1-pro-260628",
-        "doubao-seed-2-1-turbo-260628",
-        "doubao-seed-2-0-code-preview-260215",
     ]
     assert all(
         model["url"].endswith("/chat/completions")
@@ -74,12 +70,6 @@ def test_model_catalog_declares_each_model_reasoning_choices_and_default() -> No
         "glm-5.3": (True, None, None),
         "glm-5.3-flash": (True, "max", ["low", "high", "max"]),
         "minimax-m3": (False, None, None),
-        "doubao-seed-evolving": (True, "high", ["none", "low", "medium", "high"]),
-        "doubao-seed-2-1-pro-260628": (True, "high", ["none", "low", "medium", "high"]),
-        "doubao-seed-2-1-turbo-260628": (True, "high", ["none", "low", "medium", "high"]),
-        "doubao-seed-2-0-code-preview-260215": (
-            True, "medium", ["none", "low", "medium", "high"]
-        ),
     }
 
     assert set(models) == set(expected)
@@ -254,10 +244,6 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         "glm-5.3",
         "glm-5.3-flash",
         "minimax-m3",
-        "doubao-seed-evolving",
-        "doubao-seed-2-1-pro-260628",
-        "doubao-seed-2-1-turbo-260628",
-        "doubao-seed-2-0-code-preview-260215",
     ]
     assert all(
         model["url"] == "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
@@ -270,10 +256,6 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         "glm-5.3": (1_048_576, 131_072),
         "glm-5.3-flash": (1_048_576, 131_072),
         "minimax-m3": (524_288, 131_072),
-        "doubao-seed-evolving": (1_048_576, 262_144),
-        "doubao-seed-2-1-pro-260628": (262_144, 262_144),
-        "doubao-seed-2-1-turbo-260628": (262_144, 262_144),
-        "doubao-seed-2-0-code-preview-260215": (262_144, 131_072),
     }
     for model_id, (context_window, max_output) in expected_limits.items():
         profile = MODEL_CATALOG.profile(model_id)

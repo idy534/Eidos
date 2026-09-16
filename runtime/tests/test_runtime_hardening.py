@@ -663,7 +663,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(next_signature.error_fingerprints, ("same",))
         self.assertIsNone(recovered.observe_progress(next_signature))
 
-    def test_parallel_safe_reads_reset_sensitive_input_streak(self) -> None:
+    def test_parallel_safe_reads_clear_sensitive_input_streak(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "sensitive streak")
         secret_path = "sk-abcdefghijklmnop"
         model = ScriptedModel([
@@ -690,7 +690,7 @@ class RuntimeHardeningTests(unittest.TestCase):
             "SELECT consecutive_sensitive_tool_inputs FROM runs WHERE id = ?",
             (run["id"],),
         ).fetchone()[0]
-        self.assertEqual(count, 1)
+        self.assertEqual(count, 0)
 
     def test_context_facts_bound_long_session_and_keep_current_goal(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old")

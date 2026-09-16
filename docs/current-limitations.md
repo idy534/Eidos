@@ -15,7 +15,7 @@
 
 ### Model Provider
 
-- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的十三个 Model ID，包括火山引擎目录项 `glm-5.3-flash`。
+- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的九个 Model ID，包括火山引擎目录项 `glm-5.3-flash`。
 - 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、连接测试或主动 capability probe。当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - 思考强度选项和默认值按模型配置。当前 Catalog 中的选择项不证明 Provider 已接受对应请求参数。Volcengine Coding Plan `/api/coding/v3` 的模型专属 wire 字段、值和默认行为尚未通过可独立读取的官方端点文档或受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
