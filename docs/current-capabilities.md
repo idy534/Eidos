@@ -59,7 +59,8 @@
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
 - Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。
-- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。直连 DeepSeek、MiniMax M3、Kimi K3 的选择会映射到 Provider 请求。火山 Coding Plan 的选择目前只校验并保存在 Run 快照中，尚未映射到 `/api/coding/v3` 请求字段。
+- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 的选择会映射到 Provider 请求。火山 Coding Plan 的选择目前只校验并保存在 Run 快照中，尚未映射到 `/api/coding/v3` 请求字段。
+- 设置中的已保存模型列表会把提供商名称显示在模型名称后面。添加、编辑模型对话框会在提供商选择器旁显示 Logo 和提供商名称。Logo 作为 Renderer 静态资源打包。
 - `run/start` 会按所选模型校验可选的思考设置。请求省略该设置时，Runtime 使用该模型的默认值。Runtime 把解析后的值固化到 Run 的 `ModelProfileSnapshot`，并保存在现有 `runs.model_profile_json` 中；SQLite 不新增列。
 - Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/coding/v3` wire 字段和值尚未经过受控请求验证；UI 选项不代表 Provider 已验证接受该参数。
 

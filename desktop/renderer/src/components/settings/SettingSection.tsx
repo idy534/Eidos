@@ -17,13 +17,15 @@ export function SettingSection({
 }: SettingSectionProps) {
   return (
     <section className={`setting-section ${className}`}>
-      <header className="setting-section-header">
-        <div className="setting-section-title-group">
-          <h2>{title}</h2>
-          {description && <div className="setting-section-desc">{description}</div>}
-        </div>
-        {headerAction && <div className="setting-section-action">{headerAction}</div>}
-      </header>
+      {(title || description || headerAction) && (
+        <header className="setting-section-header">
+          <div className="setting-section-title-group">
+            {title && <h2>{title}</h2>}
+            {description && <div className="setting-section-desc">{description}</div>}
+          </div>
+          {headerAction && <div className="setting-section-action">{headerAction}</div>}
+        </header>
+      )}
       <div className="setting-section-content">{children}</div>
     </section>
   );

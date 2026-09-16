@@ -15,6 +15,11 @@ const list: ModelListResult = {
     url: "https://api.moonshot.cn/v1/chat/completions",
     supportsToolCall: true, supportsImages: false, supportsReasoning: true,
     reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
+  }, {
+    id: "glm-5.3-flash", name: "GLM 5.3 Flash", vendor: "Volcengine", provider: "volcengine",
+    url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+    supportsToolCall: true, supportsImages: false, supportsReasoning: true,
+    reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
   }],
 };
 const REASONING_OVERRIDES_KEY = "eidos.modelReasoningOverrides.v1";
@@ -43,6 +48,19 @@ describe("useModelController", () => {
 
     expect(listModels).toHaveBeenCalledTimes(1);
     expect(result.current[0].list).toEqual(list);
+    expect(result.current[0].selectedModelId).toBe("deepseek-v4-flash");
+  });
+
+  it("preserves a manually selected GLM when a new session initializes without runs", () => {
+    const { result } = renderHook(() => useModelController());
+
+    act(() => result.current[1].initialize(list));
+    act(() => result.current[1].selectModel("glm-5.3-flash"));
+    act(() => result.current[1].initialize(list));
+
+    expect(result.current[0].selectedModelId).toBe("glm-5.3-flash");
+
+    act(() => result.current[1].initialize(list, "deepseek-v4-flash"));
     expect(result.current[0].selectedModelId).toBe("deepseek-v4-flash");
   });
 

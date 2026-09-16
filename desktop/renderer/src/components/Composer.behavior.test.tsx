@@ -61,20 +61,37 @@ describe("Composer DOM interaction & state behavior", () => {
 
   it("keeps the configured model selector available between completed Turns", () => {
     const onModelChange = vi.fn();
-    render(<Composer {...defaultProps} onModelChange={onModelChange} />);
+    const modelList: ModelListResult = {
+      ...mockModelList,
+      models: [
+        ...mockModelList.models,
+        {
+          id: "glm-5.3-flash", name: "GLM 5.3 Flash", vendor: "Volcengine",
+          provider: "volcengine", url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          supportsToolCall: true, supportsImages: false, supportsReasoning: true,
+          reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
+        },
+      ],
+    };
+    render(<Composer {...defaultProps} modelList={modelList} onModelChange={onModelChange} />);
 
-    fireEvent.change(screen.getByLabelText("本次模型"), { target: { value: "deepseek-v4-flash" } });
-    expect(onModelChange).toHaveBeenCalledWith("deepseek-v4-flash");
+    fireEvent.click(screen.getByRole("button", { name: /打开模型和思考强度菜单/ }));
+    fireEvent.click(screen.getByRole("button", { name: /切换模型/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /GLM 5\.3 Flash/ }));
+
+    expect(onModelChange).toHaveBeenCalledWith("glm-5.3-flash");
   });
 
-  it("hides the reasoning selector when the selected model has no configurable choices", () => {
+  it("keeps model selection available when the selected model has no configurable reasoning choices", () => {
     const modelList: ModelListResult = {
       ...mockModelList,
       models: mockModelList.models.map((model) => ({ ...model, reasoning: null })),
     };
-    const { container } = render(<Composer {...defaultProps} modelList={modelList} />);
+    render(<Composer {...defaultProps} modelList={modelList} />);
 
-    expect(container.querySelector(".reasoning-selector")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek-V4 Flash.*选择模型/ }));
+
+    expect(screen.getByRole("dialog", { name: "选择模型" })).toBeInTheDocument();
     expect(screen.queryByRole("slider")).not.toBeInTheDocument();
   });
 
@@ -102,6 +119,15 @@ describe("Composer DOM interaction & state behavior", () => {
 
     rerender(<Composer {...defaultProps} contextUsage={undefined} />);
     expect(screen.getByText("上下文 --")).toBeInTheDocument();
+  });
+
+  it("hides the context indicator without a Run and shows it when a Run exists", () => {
+    const { rerender } = render(<Composer {...defaultProps} showContextIndicator={false} />);
+
+    expect(screen.queryByRole("region", { name: "上下文 --" })).not.toBeInTheDocument();
+
+    rerender(<Composer {...defaultProps} showContextIndicator />);
+    expect(screen.getByRole("region", { name: "上下文 --" })).toBeInTheDocument();
   });
 
   it("renders project context above the input and defaults execution mode to Local", () => {
@@ -244,7 +270,7 @@ describe("Composer DOM interaction & state behavior", () => {
     );
 
     expect(screen.getByRole("button", { name: "取消 Run" })).toBeInTheDocument();
-    expect(screen.getByLabelText("本次模型")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeDisabled();
 
     const activeRunDisallowed: Run = {
       ...activeRunAllowed,

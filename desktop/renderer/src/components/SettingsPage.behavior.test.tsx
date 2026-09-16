@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import deepseekLogo from "../assets/providers/deepseek.svg";
+import kimiLogo from "../assets/providers/kimi.svg";
+import minimaxLogo from "../assets/providers/minimax.svg";
+import volcengineLogo from "../assets/providers/volcengine.svg";
 import type { EidosRuntimeAPI, ModelListResult, ModelPresetsResult, RuntimeStatus } from "../contracts.js";
 import { SettingsPage } from "./settings/SettingsPage.js";
 
@@ -89,11 +93,15 @@ describe("Model settings", () => {
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
       listModelPresets: vi.fn().mockResolvedValue(presets),
     } as EidosRuntimeAPI;
-    render(<SettingsPage {...props()} />);
+    const { container } = render(<SettingsPage {...props()} />);
 
     expect(await screen.findByText("本地配置文件")).toBeInTheDocument();
+    expect(screen.queryByText("自定义模型")).not.toBeInTheDocument();
     expect(screen.getByText("管理写入 ~/.eidos/models.json")).toBeInTheDocument();
     expect(screen.getByText("DeepSeek-V4 Flash")).toBeInTheDocument();
+    expect(screen.getByText("深度求索")).toBeInTheDocument();
+    expect(container.querySelector("img.model-vendor-icon")).toHaveAttribute("src", deepseekLogo);
+    expect(container.querySelector(".saved-model-copy strong + span")).toHaveTextContent("深度求索");
     expect(screen.queryByText(/Model Profiles|Test Connection|Capability|Verified|Unknown/)).not.toBeInTheDocument();
     expect(screen.queryByText("模型服务配置")).not.toBeInTheDocument();
   });
@@ -106,12 +114,15 @@ describe("Model settings", () => {
       listModelPresets: vi.fn().mockResolvedValue(presets),
       createModel,
     } as EidosRuntimeAPI;
-    render(<SettingsPage {...props({ modelList: { models: [], defaultModelId: null }, onModelsChanged })} />);
+    const { container } = render(<SettingsPage {...props({ modelList: { models: [], defaultModelId: null }, onModelsChanged })} />);
 
     await user.click(await screen.findByRole("button", { name: "添加模型" }));
     expect(screen.getByRole("heading", { name: "添加模型" })).toBeInTheDocument();
     expect(screen.getByText("仅支持 OpenAI 兼容协议 API")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("提供商"), "kimi");
+    expect(container.querySelector(".model-provider-control img")).toHaveAttribute("src", kimiLogo);
     await user.selectOptions(screen.getByLabelText("提供商"), "minimax");
+    expect(container.querySelector(".model-provider-control img")).toHaveAttribute("src", minimaxLogo);
     expect(screen.getByRole("option", { name: "MiniMax M3" })).not.toHaveTextContent("MiniMax-M3");
     await user.type(screen.getByLabelText("API Key"), "sk-local-secret");
     await user.click(screen.getByRole("button", { name: "保存" }));
@@ -146,10 +157,11 @@ describe("Model settings", () => {
       listModelPresets: vi.fn().mockResolvedValue(presets),
       createModel,
     } as EidosRuntimeAPI;
-    render(<SettingsPage {...props({ modelList: { models: [], defaultModelId: null }, onModelsChanged })} />);
+    const { container } = render(<SettingsPage {...props({ modelList: { models: [], defaultModelId: null }, onModelsChanged })} />);
 
     await user.click(await screen.findByRole("button", { name: "添加模型" }));
     await user.selectOptions(screen.getByLabelText("提供商"), "volcengine");
+    expect(container.querySelector(".model-provider-control img")).toHaveAttribute("src", volcengineLogo);
     expect(screen.getByRole("option", { name: "DeepSeek V4 Pro GA" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "GLM 5.3" })).toBeInTheDocument();
     expect(

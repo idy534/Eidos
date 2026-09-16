@@ -6,6 +6,7 @@ import type {
   ModelPresetsResult,
 } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { SettingSection } from "./SettingSection.js";
 import { SettingRow } from "./SettingRow.js";
@@ -25,13 +26,6 @@ interface ModelDraft {
   modelId: string;
   apiKey: string;
 }
-
-const vendorNames: Record<string, string> = {
-  DeepSeek: "深度求索",
-  MiniMax: "MiniMax",
-  Kimi: "月之暗面",
-  Volcengine: "火山引擎",
-};
 
 export function ModelSettings({
   modelList,
@@ -124,7 +118,6 @@ export function ModelSettings({
     <div className="settings-panel model-settings-panel">
       <div className="settings-panel-header">
         <h1>模型</h1>
-        <p className="settings-panel-subtitle">自定义模型</p>
       </div>
 
       <SettingSection title="">
@@ -148,12 +141,10 @@ export function ModelSettings({
               key={model.id}
               title={
                 <div className="saved-model">
-                  <span className={`model-vendor-icon model-vendor-icon--${model.provider}`} aria-hidden="true">
-                    {model.vendor.slice(0, 1)}
-                  </span>
+                  <ProviderLogo provider={model.provider} className="model-vendor-icon" />
                   <span className="saved-model-copy">
                     <strong>{model.name}</strong>
-                    <span>{vendorNames[model.vendor] ?? model.vendor}</span>
+                    <span>{getProviderName(model.provider)}</span>
                   </span>
                 </div>
               }
@@ -236,18 +227,21 @@ function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }
         <div className="modal-body model-dialog-fields">
           <label>
             <span>提供商</span>
-            <select
-              ref={providerSelectRef}
-              aria-label="提供商"
-              value={draft.provider}
-              disabled={busy}
-              onChange={(event) => {
-                const next = presets.providers.find((item) => item.id === event.target.value)!;
-                onChange({ ...draft, provider: next.id, modelId: next.models[0]?.id ?? "" });
-              }}
-            >
-              {presets.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+            <div className="model-provider-control">
+              <ProviderLogo provider={draft.provider} className="model-provider-control__logo" />
+              <select
+                ref={providerSelectRef}
+                aria-label="提供商"
+                value={draft.provider}
+                disabled={busy}
+                onChange={(event) => {
+                  const next = presets.providers.find((item) => item.id === event.target.value)!;
+                  onChange({ ...draft, provider: next.id, modelId: next.models[0]?.id ?? "" });
+                }}
+              >
+                {presets.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </div>
           </label>
           <label>
             <span>API Key</span>
