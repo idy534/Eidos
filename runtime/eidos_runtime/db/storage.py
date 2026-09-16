@@ -6,6 +6,7 @@ import threading
 from typing import Literal, TypeVar
 
 from eidos_runtime.models.tool_text import ToolTextPage
+from eidos_runtime.models.skill_settings import SkillState
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
 from eidos_runtime.db.database import (
     DATABASE_NAME,
@@ -627,6 +628,18 @@ class SessionStore:
     def set_run_effective_cwd(self, run_id: str, cwd: Path) -> None:
         """Persist the effective working directory for a run."""
         self._repository(self._runs).set_run_effective_cwd(run_id, cwd)
+
+    def skill_states(self) -> tuple[SkillState, ...]:
+        return self._repository(self._extensions).skill_states()
+
+    def save_skill_state(self, state: SkillState) -> None:
+        self._repository(self._extensions).save_skill_state(state)
+
+    def restore_removed_skill(self, qualified_id: str) -> None:
+        self._repository(self._extensions).restore_removed_skill(qualified_id)
+
+    def has_nonterminal_runs(self) -> bool:
+        return self._repository(self._extensions).has_nonterminal_runs()
 
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         return self._repository(self._extensions).plugin_record(plugin_id)

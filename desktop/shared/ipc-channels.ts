@@ -104,6 +104,9 @@ export const IPC = {
 
   // Skill
   SKILL_LIST: "skill:list",
+  SKILL_DETAIL: "skill:detail",
+  SKILL_SET_ENABLED: "skill:set-enabled",
+  SKILL_REMOVE: "skill:remove",
 
   // MCP
   MCP_LIST: "mcp:list",

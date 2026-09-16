@@ -130,6 +130,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "PLUGIN_ID_CONFLICT",
   "SKILL_CATALOG_UNAVAILABLE",
   "SKILL_UNAVAILABLE",
+  "SYSTEM_SKILL_PROTECTED",
   "MCP_SERVER_DISABLED",
   "MCP_SERVER_ID_CONFLICT",
   "MCP_CWD_INVALID",
@@ -189,6 +190,8 @@ import type {
   SessionSnapshot,
   ToolTextPage,
   SkillListResult,
+  SkillDetail,
+  SkillRemoval,
   SkillMetadata,
   ToolCall,
   ToolProvenance,
@@ -872,6 +875,18 @@ export class RuntimeClient {
 
   listSkills(): Promise<{ skills: SkillMetadata[] }> {
     return this.validatedRequest("skill/list", {}, isSkillListResult);
+  }
+
+  readSkillDetail(qualifiedId: string): Promise<SkillDetail> {
+    return this.validatedRequest("skill/detail", { qualifiedId }, isSkillDetail);
+  }
+
+  setSkillEnabled(qualifiedId: string, enabled: boolean): Promise<SkillMetadata> {
+    return this.validatedRequest("skill/setEnabled", { qualifiedId, enabled }, isSkillMetadata);
+  }
+
+  removeSkill(qualifiedId: string): Promise<SkillRemoval> {
+    return this.validatedRequest("skill/remove", { qualifiedId }, isSkillRemoval);
   }
 
   listMcpServers(): Promise<{ servers: McpServerRecord[] }> {
@@ -2097,10 +2112,13 @@ function isExtensionSnapshot(value: unknown): value is Record<string, unknown> {
     isRecord(value)
     && hasOnlyKeys(value, [
       "schemaVersion", "extensionContractVersion", "plugins",
-      "skillCatalogHash", "mcpConfigHash",
+      "skillCatalogHash", "mcpConfigHash", "excludedSkillIds",
     ])
     && value.schemaVersion === 1
     && value.extensionContractVersion === 1
+    && (value.excludedSkillIds === undefined || (
+      Array.isArray(value.excludedSkillIds) && value.excludedSkillIds.every((id) => typeof id === "string")
+    ))
     && typeof value.skillCatalogHash === "string"
     && typeof value.mcpConfigHash === "string"
     && Array.isArray(value.plugins)
@@ -2142,14 +2160,28 @@ function isSkillMetadata(value: unknown): value is SkillMetadata {
     isRecord(value)
     && hasOnlyKeys(value, [
       "schemaVersion", "qualifiedId", "name", "description", "pluginId",
-      "pluginVersion", "pluginHash", "contentHash",
+      "pluginVersion", "pluginHash", "contentHash", "sourceKind", "enabled", "available",
     ])
+    && ["system", "user", "plugin"].includes(String(value.sourceKind))
+    && typeof value.enabled === "boolean"
+    && typeof value.available === "boolean"
     && value.schemaVersion === 1
     && [
       "qualifiedId", "name", "description", "pluginId",
       "pluginVersion", "pluginHash", "contentHash",
     ].every((key) => typeof value[key] === "string")
   );
+}
+
+function isSkillDetail(value: unknown): value is SkillDetail {
+  return isRecord(value) && hasOnlyKeys(value, ["qualifiedId", "content", "body", "directory"])
+    && ["qualifiedId", "content", "body", "directory"].every((key) => typeof value[key] === "string");
+}
+
+function isSkillRemoval(value: unknown): value is SkillRemoval {
+  return isRecord(value) && hasOnlyKeys(value, ["qualifiedId", "removed", "cleanupPending"])
+    && typeof value.qualifiedId === "string" && value.removed === true
+    && typeof value.cleanupPending === "boolean";
 }
 
 function isSkillListResult(value: unknown): value is { skills: SkillMetadata[] } {

@@ -8,6 +8,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import sqlite3
 import stat
 import threading
 import urllib.error
@@ -20,6 +21,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.extensions.plugins import PluginCatalog, PluginImportError
+from eidos_runtime.db.errors import StorageError
 from eidos_runtime.extensions.skill_manifest import (
     SkillAgentMetadata,
     SkillManifestError,
@@ -375,6 +377,10 @@ class SkillCatalog:
 
     def extension_snapshot(self) -> dict[str, object]:
         snapshot = self.plugins.extension_snapshot()
+        snapshot["excludedSkillIds"] = [
+            state.qualified_id for state in self.plugins.store.skill_states()
+            if not state.enabled or state.removed
+        ]
         snapshot["skillCatalogHash"] = _catalog_hash(tuple(
             _catalog_entry(source) for source in self._sources(snapshot)
         ))
@@ -506,7 +512,11 @@ class SkillCatalog:
             skills_root, "user", "eidos-user", "local",
             source_kind="user",
         ))
-        ordered = sorted(sources, key=lambda value: value.qualified_id.encode("utf-8"))
+        excluded = snapshot.get("excludedSkillIds", [])
+        ordered = sorted(
+            (source for source in sources if source.qualified_id not in excluded),
+            key=lambda value: value.qualified_id.encode("utf-8"),
+        )
         if len(ordered) > MAX_SKILLS or len({value.qualified_id for value in ordered}) != len(ordered):
             raise SkillReadError("skill_catalog_invalid")
         return ordered
@@ -920,6 +930,11 @@ def _commit_skill_tree(
 ) -> dict[str, object]:
     if cancel.is_set():
         return _skill_error(tool_name, "tool_canceled", "Skill change canceled")
+    if any(
+        state.qualified_id == f"user:{creation.name}" and state.cleanup_pending
+        for state in catalog.plugins.store.skill_states()
+    ):
+        return _skill_error(tool_name, "skill_cleanup_pending", "Previous skill removal is still pending")
     data_directory = catalog.plugins.store.data_directory
     if data_directory is None:
         return _skill_error(tool_name, "skill_store_unavailable", "Skill store is unavailable")
@@ -942,7 +957,8 @@ def _commit_skill_tree(
         os.replace(staging, destination)
         committed = True
         _fsync_directory(skills_root)
-    except (OSError, SkillReadError):
+        catalog.plugins.store.restore_removed_skill(f"user:{creation.name}")
+    except (OSError, SkillReadError, StorageError, sqlite3.Error):
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         result = _skill_error(tool_name, "skill_write_failed", "Skill could not be written")

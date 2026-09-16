@@ -259,6 +259,9 @@ export interface RunStatusPresentation {
 }
 
 const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
+  SKILL_CATALOG_UNAVAILABLE: "技能列表暂时无法读取，请检查技能文件后重试。",
+  SKILL_UNAVAILABLE: "技能已不存在或内容无法读取，请重新打开设置。",
+  SYSTEM_SKILL_PROTECTED: "系统技能不能卸载，你可以将它禁用。",
   RUNTIME_NOT_INITIALIZED: "Runtime 尚未就绪，请稍后重试。",
   PROTOCOL_VERSION_UNSUPPORTED: "桌面端与 Runtime 版本不兼容，请重启或更新 Eidos。",
   RUN_ALREADY_ACTIVE: "当前已有一个 Run 正在执行，请先等待完成或取消。",

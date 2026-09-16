@@ -138,6 +138,7 @@ class RunExtensionSnapshotDto(ClosedModel):
     plugins: list[RunPluginSnapshotDto]
     skill_catalog_hash: StrictStr = Field(alias="skillCatalogHash")
     mcp_config_hash: StrictStr = Field(alias="mcpConfigHash")
+    excluded_skill_ids: list[StrictStr] = Field(default_factory=list, alias="excludedSkillIds")
 
 
 class SkillMetadataDto(ClosedModel):

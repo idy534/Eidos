@@ -51,6 +51,8 @@ export type {
   PluginRecord,
   PluginListResult,
   SkillMetadata,
+  SkillDetail,
+  SkillRemoval,
   SkillListResult,
   McpServerRecord,
   McpCreateInput,

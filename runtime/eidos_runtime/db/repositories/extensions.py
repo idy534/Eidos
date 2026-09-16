@@ -7,8 +7,63 @@ from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.db.events import append_event, event_from_row
 from eidos_runtime.db.mappers import _load_json_object, _plugin_from_row
 from eidos_runtime.runtime.state_machine import EventType
+from eidos_runtime.models.skill_settings import SkillState
 
 class ExtensionRepository(Repository):
+    def skill_states(self) -> tuple[SkillState, ...]:
+        with self.lock:
+            rows = self._connection().execute(
+                "SELECT * FROM skill_states ORDER BY qualified_id"
+            ).fetchall()
+        return tuple(SkillState(
+            qualified_id=row["qualified_id"], enabled=bool(row["enabled"]),
+            removed=bool(row["removed"]), source_kind=row["source_kind"],
+            directory_name=row["directory_name"], content_hash=row["content_hash"],
+            directory_device=row["directory_device"], directory_inode=row["directory_inode"],
+            cleanup_pending=bool(row["cleanup_pending"]),
+        ) for row in rows)
+
+    def save_skill_state(self, state: SkillState) -> None:
+        with self.lock, self._connection() as connection:
+            connection.execute(
+                """INSERT INTO skill_states (
+                    qualified_id, enabled, removed, source_kind, directory_name,
+                    directory_device, directory_inode, content_hash, cleanup_pending, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(qualified_id) DO UPDATE SET
+                    enabled=excluded.enabled, removed=excluded.removed,
+                    source_kind=excluded.source_kind, directory_name=excluded.directory_name,
+                    directory_device=excluded.directory_device, directory_inode=excluded.directory_inode,
+                    content_hash=excluded.content_hash,
+                    cleanup_pending=excluded.cleanup_pending, updated_at=excluded.updated_at
+                """,
+                (state.qualified_id, int(state.enabled), int(state.removed),
+                 state.source_kind, state.directory_name, state.directory_device, state.directory_inode, state.content_hash,
+                 int(state.cleanup_pending), _now_ms()),
+            )
+            append_event(connection, EventType.SKILL_STATE_CHANGED, _now_ms(), {
+                "qualifiedId": state.qualified_id,
+                "enabled": state.enabled, "removed": state.removed,
+            })
+
+    def restore_removed_skill(self, qualified_id: str) -> None:
+        with self.lock, self._connection() as connection:
+            changed = connection.execute(
+                "DELETE FROM skill_states WHERE qualified_id = ? AND removed = 1",
+                (qualified_id,),
+            )
+            if changed.rowcount:
+                append_event(connection, EventType.SKILL_STATE_CHANGED, _now_ms(), {
+                    "qualifiedId": qualified_id, "enabled": True, "removed": False,
+                })
+
+    def has_nonterminal_runs(self) -> bool:
+        with self.lock:
+            return self._connection().execute(
+                """SELECT 1 FROM runs WHERE status NOT IN
+                ('succeeded', 'failed', 'stopped', 'canceled', 'interrupted') LIMIT 1"""
+            ).fetchone() is not None
+
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         with self.lock:
             row = self._connection().execute(

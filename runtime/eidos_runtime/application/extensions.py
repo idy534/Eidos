@@ -28,6 +28,8 @@ from eidos_runtime.db.errors import (
 from eidos_runtime.db.repositories.async_operations import AsyncOperation
 from eidos_runtime.extensions.plugins import PluginCatalog, PluginImportError
 from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
+from eidos_runtime.extensions.skill_management import SkillManagement
+from eidos_runtime.models.skill_settings import ManagedSkill, SkillDetail, SkillRemoval
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
@@ -184,7 +186,7 @@ class PluginList(EidosFrozenStrictModel):
 
 
 class SkillList(EidosFrozenStrictModel):
-    skills: tuple[SkillMetadata, ...]
+    skills: tuple[ManagedSkill, ...]
 
 
 class McpServerList(EidosFrozenStrictModel):
@@ -193,7 +195,7 @@ class McpServerList(EidosFrozenStrictModel):
 
 class ExtensionRead(EidosFrozenStrictModel):
     plugins: tuple[PluginRecord, ...]
-    skills: tuple[SkillMetadata, ...]
+    skills: tuple[ManagedSkill, ...]
     servers: tuple[McpServerRecord, ...]
     through_event_id: int
 
@@ -330,15 +332,37 @@ class ExtensionApplication:
         )
 
     def list_skills(self) -> SkillList:
-        catalog = self._skill_catalog()
+        manager = SkillManagement(self._skill_catalog())
         try:
-            skills = tuple(
-                SkillMetadata.from_wire(skill)
-                for skill in catalog.catalog(catalog.extension_snapshot())
-            )
-        except SkillReadError as error:
+            with manager.store.lock:
+                return SkillList(skills=manager.list())
+        except (SkillReadError, PluginImportError, OSError) as error:
             raise ApplicationError("SKILL_CATALOG_UNAVAILABLE") from error
-        return SkillList(skills=skills)
+
+    def skill_detail(self, *, qualified_id: str) -> SkillDetail:
+        manager = SkillManagement(self._skill_catalog())
+        try:
+            with manager.store.lock:
+                return manager.detail(qualified_id)
+        except (SkillReadError, PluginImportError, OSError) as error:
+            raise ApplicationError("SKILL_UNAVAILABLE") from error
+
+    def set_skill_enabled(self, *, qualified_id: str, enabled: bool) -> ManagedSkill:
+        manager = SkillManagement(self._skill_catalog())
+        try:
+            with manager.store.lock:
+                return manager.set_enabled(qualified_id, enabled)
+        except (SkillReadError, PluginImportError, OSError) as error:
+            raise ApplicationError("SKILL_UNAVAILABLE") from error
+
+    def remove_skill(self, *, qualified_id: str) -> SkillRemoval:
+        manager = SkillManagement(self._skill_catalog())
+        try:
+            with manager.store.lock:
+                return manager.remove(qualified_id)
+        except (SkillReadError, PluginImportError, OSError) as error:
+            code = "SYSTEM_SKILL_PROTECTED" if str(error) == "system_skill_protected" else "SKILL_UNAVAILABLE"
+            raise ApplicationError(code) from error
 
     def read_skill(self, *, qualified_id: str) -> SkillContent:
         catalog = self._skill_catalog()
@@ -451,23 +475,10 @@ class ExtensionApplication:
 
     def read_extensions(self) -> ExtensionRead:
         plugins = self._plugins_or_error()
-        try:
-            catalog = SkillCatalog(plugins)
-            skills = tuple(
-                SkillMetadata.from_wire(skill)
-                for skill in catalog.catalog(catalog.extension_snapshot())
-            )
-        except SkillReadError:
-            skills = ()
         return ExtensionRead(
-            plugins=tuple(
-                PluginRecord.from_wire(plugin) for plugin in plugins.list_plugins()
-            ),
-            skills=skills,
-            servers=tuple(
-                McpServerRecord.from_wire(server)
-                for server in plugins.list_mcp_servers()
-            ),
+            plugins=tuple(PluginRecord.from_wire(plugin) for plugin in plugins.list_plugins()),
+            skills=self.list_skills().skills,
+            servers=tuple(McpServerRecord.from_wire(server) for server in plugins.list_mcp_servers()),
             through_event_id=self._store.extension_event_waterline(),
         )
 

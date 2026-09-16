@@ -45,6 +45,9 @@ import type {
   PluginListResult,
   PluginRecord,
   SkillListResult,
+  SkillMetadata,
+  SkillDetail,
+  SkillRemoval,
   McpListResult,
   McpServerRecord,
   McpCreateInput,
@@ -318,6 +321,12 @@ const api: EidosRuntimeAPI = {
 
   // Skills
   listSkills: (): Promise<SkillListResult> => ipcRenderer.invoke(IPC.SKILL_LIST),
+  readSkillDetail: (qualifiedId: string): Promise<SkillDetail> =>
+    ipcRenderer.invoke(IPC.SKILL_DETAIL, qualifiedId),
+  setSkillEnabled: (qualifiedId: string, enabled: boolean): Promise<SkillMetadata> =>
+    ipcRenderer.invoke(IPC.SKILL_SET_ENABLED, qualifiedId, enabled),
+  removeSkill: (qualifiedId: string): Promise<SkillRemoval> =>
+    ipcRenderer.invoke(IPC.SKILL_REMOVE, qualifiedId),
 
   // MCP
   listMcpServers: (): Promise<McpListResult> => ipcRenderer.invoke(IPC.MCP_LIST),

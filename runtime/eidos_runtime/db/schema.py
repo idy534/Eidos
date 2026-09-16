@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
+V11_SCHEMA_VERSION = 11
 V10_SCHEMA_VERSION = 10
 V9_SCHEMA_VERSION = 9
 V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V10_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V11_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1375,7 +1376,24 @@ CREATE TABLE manual_mcp_servers (
 );
 """
 
-SCHEMA_SQL = V10_SCHEMA_SQL + MANUAL_MCP_SCHEMA_SQL
+SKILL_STATE_SCHEMA_SQL = """
+CREATE TABLE skill_states (
+    qualified_id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    removed INTEGER NOT NULL DEFAULT 0 CHECK (removed IN (0, 1)),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('system', 'user', 'plugin')),
+    directory_name TEXT,
+    directory_device INTEGER,
+    directory_inode INTEGER,
+    content_hash TEXT NOT NULL,
+    cleanup_pending INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending IN (0, 1)),
+    updated_at INTEGER NOT NULL,
+    CHECK (source_kind != 'system' OR removed = 0)
+);
+"""
+
+V11_SCHEMA_SQL = V10_SCHEMA_SQL + MANUAL_MCP_SCHEMA_SQL
+SCHEMA_SQL = V11_SCHEMA_SQL + SKILL_STATE_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.
@@ -1586,3 +1604,5 @@ V8_TO_V9_MIGRATION_SQL = (
     "ALTER TABLE tool_calls ADD COLUMN raw_arguments_json TEXT;\n"
     + V9_TO_V10_MIGRATION_SQL
 )
+
+V11_TO_V12_MIGRATION_SQL = SKILL_STATE_SCHEMA_SQL

@@ -328,12 +328,12 @@ export function AppShell({ runtime }: AppShellProps) {
       const isCmdOrCtrl = event.metaKey || event.ctrlKey;
       if (isCmdOrCtrl && (event.key === "b" || event.key === "B")) {
         event.preventDefault();
-        toggleSidebar();
+        if (!settingsOpen) toggleSidebar();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleSidebar]);
+  }, [toggleSidebar, settingsOpen]);
 
   // -----------------------------------------------------------------------
   // Session Selection & Creation with Model re-eval
@@ -944,9 +944,9 @@ export function AppShell({ runtime }: AppShellProps) {
       openExternal: handleOpenExternal,
       openReview: handleOpenReview,
     } : undefined}>
-    <main className={`workbench${sidebarOpen ? "" : " workbench--sidebar-collapsed"}`}>
+    <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
       <SessionSidebar
-        collapsed={!sidebarOpen}
+        collapsed={!sidebarOpen || settingsOpen}
         sessions={sessionState.sessions}
         projects={sessionState.projects}
         selectedId={sessionState.navigationSessionId ?? currentSnapshot?.session.id}
@@ -1024,6 +1024,8 @@ export function AppShell({ runtime }: AppShellProps) {
             onImportPlugin={() => extensionActions.importPlugin()}
             onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
+            onToggleSkill={(id, enabled) => extensionActions.setSkillEnabled(id, enabled)}
+            onRemoveSkill={(id) => extensionActions.removeSkill(id)}
             onToggleMcp={(pId, sId, enabled) => extensionActions.setMcpEnabled(pId, sId, enabled)}
             onCreateMcp={(input) => extensionActions.createMcpServer(input)}
           />
@@ -1333,7 +1335,7 @@ export function AppShell({ runtime }: AppShellProps) {
       )}
       </section>
 
-      {!sidebarOpen && (
+      {!sidebarOpen && !settingsOpen && (
         <div className="collapsed-navigation-bar">
           <NavigationControls
             sidebarOpen={sidebarOpen}

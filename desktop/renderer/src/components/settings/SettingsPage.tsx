@@ -6,6 +6,7 @@ import type {
   PluginRecord,
   RuntimeStatus,
   SkillMetadata,
+  SkillRemoval,
 } from "../../contracts.js";
 import type { SettingsCategory, SettingsPendingAction, SettingsToast } from "./settings-types.js";
 import { SettingsCategoryItem, SettingsNavigation } from "./SettingsNavigation.js";
@@ -33,6 +34,8 @@ interface SettingsPageProps {
   onImportPlugin: () => Promise<void>;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onRemovePlugin: (pluginId: string) => Promise<void>;
+  onToggleSkill: (qualifiedId: string, enabled: boolean) => Promise<void>;
+  onRemoveSkill: (qualifiedId: string) => Promise<SkillRemoval>;
   onToggleMcp: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
   onCreateMcp: (input: McpCreateInput) => Promise<void>;
 }
@@ -53,6 +56,8 @@ export function SettingsPage({
   onImportPlugin,
   onTogglePlugin,
   onRemovePlugin,
+  onToggleSkill,
+  onRemoveSkill,
   onToggleMcp,
   onCreateMcp,
 }: SettingsPageProps) {
@@ -88,7 +93,7 @@ export function SettingsPage({
   const categories: SettingsCategoryItem[] = [
     { id: "model", label: "模型" },
     { id: "plugins", label: "Plugins", count: plugins.length },
-    { id: "skills", label: "Skills", count: skills.length },
+    { id: "skills", label: "技能", count: skills.length },
     {
       id: "mcp",
       label: "MCP Servers",
@@ -158,7 +163,14 @@ export function SettingsPage({
             )}
 
             {activeCategory === "skills" && (
-              <SkillSettings skills={skills} />
+              <SkillSettings
+                skills={skills}
+                pendingAction={pendingAction}
+                storageReady={storageReady}
+                onToggleSkill={onToggleSkill}
+                onRemoveSkill={onRemoveSkill}
+                onShowToast={showToast}
+              />
             )}
 
             {activeCategory === "mcp" && (

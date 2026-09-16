@@ -120,6 +120,7 @@ from eidos_runtime.db.storage import (
     StorageError,
 )
 from eidos_runtime.extensions.plugins import PluginCatalog
+from eidos_runtime.extensions.skill_management import SkillManagement
 from eidos_runtime.extensions.skills import (
     SkillCatalog,
     SkillReadError,
@@ -1132,6 +1133,30 @@ class RuntimeServer:
                 _request: self._applications_or_error().extensions.list_skills(),
             ),
             (
+                "skill/detail",
+                method_dtos.SkillReadRequestDto,
+                method_dtos.SkillDetailResponseDto,
+                lambda _id, request: self._applications_or_error().extensions.skill_detail(
+                    qualified_id=request.qualified_id
+                ),
+            ),
+            (
+                "skill/setEnabled",
+                method_dtos.SkillSetEnabledRequestDto,
+                method_dtos.ManagedSkillDto,
+                lambda _id, request: self._applications_or_error().extensions.set_skill_enabled(
+                    qualified_id=request.qualified_id, enabled=request.enabled
+                ),
+            ),
+            (
+                "skill/remove",
+                method_dtos.SkillReadRequestDto,
+                method_dtos.SkillRemoveResponseDto,
+                lambda _id, request: self._applications_or_error().extensions.remove_skill(
+                    qualified_id=request.qualified_id
+                ),
+            ),
+            (
                 "skill/read",
                 method_dtos.SkillReadRequestDto,
                 method_dtos.SkillReadResponseDto,
@@ -1417,6 +1442,7 @@ class RuntimeServer:
                 assert self.store.data_directory is not None
                 deploy_system_skills(self.store.data_directory)
                 self.plugins = PluginCatalog(self.store)
+                SkillManagement(SkillCatalog(self.plugins)).cleanup()
                 self.model_config.initialize()
                 self.async_kernel = RuntimeAsyncKernel(
                     resource_registry=self.supervisor.resources,
@@ -1745,6 +1771,7 @@ class RuntimeServer:
     def _cleanup_extensions(self) -> None:
         if self.plugins is not None:
             self.plugins.cleanup_removed()
+            SkillManagement(SkillCatalog(self.plugins)).cleanup()
 
 
 class _TitleCancellation(threading.Event):

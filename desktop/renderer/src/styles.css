@@ -2481,7 +2481,7 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 .settings-container {
   display: flex;
   gap: 2.25rem;
-  max-width: 1100px;
+  max-width: none;
   height: 100%;
   margin: 0 auto;
   padding: 2rem 1.75rem 2.5rem;
@@ -2824,19 +2824,19 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 }
 
 /* Model Settings Row Details */
-.model-row-title, .plugin-row-header, .skill-row-title, .mcp-row-header {
+.model-row-title, .plugin-row-header, .mcp-row-header {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   flex-wrap: wrap;
 }
 
-.model-name, .plugin-name, .skill-name, .mcp-server-name {
+.model-name, .plugin-name, .mcp-server-name {
   font-weight: 600;
   color: var(--text);
 }
 
-.model-id, .skill-qualified-id {
+.model-id {
   font-family: var(--font-code);
   font-size: 11px;
   color: var(--muted);
@@ -2851,7 +2851,7 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
   color: var(--text-tertiary);
 }
 
-.plugin-meta-info, .skill-meta-info, .mcp-row-summary {
+.plugin-meta-info, .mcp-row-summary {
   display: flex;
   align-items: center;
   gap: 0.4rem;

@@ -1179,6 +1179,20 @@ ipcMain.handle(IPC.PLUGIN_REMOVE, (_event, pluginId: unknown) => {
 });
 
 ipcMain.handle(IPC.SKILL_LIST, () => clientOrThrow().listSkills());
+function skillId(value: unknown): string {
+  if (typeof value !== "string" || !value.trim() || value.length > 256) {
+    throw new Error("技能参数无效。");
+  }
+  return value;
+}
+ipcMain.handle(IPC.SKILL_DETAIL, (_event, id: unknown) =>
+  clientOrThrow().readSkillDetail(skillId(id)));
+ipcMain.handle(IPC.SKILL_SET_ENABLED, (_event, id: unknown, enabled: unknown) => {
+  if (typeof enabled !== "boolean") throw new Error("技能状态无效。");
+  return clientOrThrow().setSkillEnabled(skillId(id), enabled);
+});
+ipcMain.handle(IPC.SKILL_REMOVE, (_event, id: unknown) =>
+  clientOrThrow().removeSkill(skillId(id)));
 ipcMain.handle(IPC.MCP_LIST, () => clientOrThrow().listMcpServers());
 ipcMain.handle(IPC.EXTENSION_READ, () => clientOrThrow().readExtensions());
 ipcMain.handle(IPC.EXTENSION_READ_EVENTS, (_event, afterEventId: unknown) => {

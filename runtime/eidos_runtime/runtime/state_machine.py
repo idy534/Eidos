@@ -93,6 +93,7 @@ class EventType(StrEnum):
     RECONCILIATION_CLEARED = "reconciliation.cleared"
     PLUGIN_IMPORTED = "plugin.imported"
     PLUGIN_STATE_CHANGED = "plugin.state_changed"
+    SKILL_STATE_CHANGED = "skill.state_changed"
     MCP_SERVER_STATE_CHANGED = "mcp_server.state_changed"
     MCP_TOOL_LIST_CHANGED = "mcp_tool_list.changed"
     CONTEXT_COMPACTED = "context.compacted"

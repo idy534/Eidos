@@ -32,6 +32,8 @@ from eidos_runtime.db.schema import (
     V7_SCHEMA_VERSION,
     V8_SCHEMA_VERSION,
     V10_SCHEMA_VERSION,
+    V11_SCHEMA_VERSION,
+    V11_TO_V12_MIGRATION_SQL,
     V9_SCHEMA_VERSION,
     V1_TO_V2_MIGRATION_SQL,
     V2_TO_V3_MIGRATION_SQL,
@@ -140,6 +142,7 @@ class Database:
                     V8_SCHEMA_VERSION,
                     V9_SCHEMA_VERSION,
                     V10_SCHEMA_VERSION,
+                    V11_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -188,6 +191,7 @@ class Database:
                         "BEGIN IMMEDIATE;\n"
                         + V9_TO_V10_MIGRATION_SQL
                         + V10_TO_V11_MIGRATION_SQL
+                        + V11_TO_V12_MIGRATION_SQL
                         + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                     )
                 except sqlite3.Error as error:
@@ -201,6 +205,7 @@ class Database:
                     connection.executescript(
                         "BEGIN IMMEDIATE;\n"
                         + V10_TO_V11_MIGRATION_SQL
+                        + V11_TO_V12_MIGRATION_SQL
                         + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                     )
                 except sqlite3.Error as error:
@@ -208,6 +213,15 @@ class Database:
                         connection.execute("ROLLBACK")
                     except sqlite3.Error:
                         pass
+                    raise StorageError("schema_migration_failed") from error
+            if revision == V11_SCHEMA_VERSION:
+                try:
+                    connection.executescript(
+                        "BEGIN IMMEDIATE;\n" + V11_TO_V12_MIGRATION_SQL
+                        + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                    )
+                except sqlite3.Error as error:
+                    connection.rollback()
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
             self._connection = connection

@@ -119,12 +119,12 @@ class PluginCatalog:
             _remove_tree(self._path_from_record(current), self.root)
         return removed
 
-    def extension_snapshot(self) -> dict[str, object]:
+    def extension_snapshot(self, *, include_disabled: bool = False) -> dict[str, object]:
         plugins: list[dict[str, object]] = []
         skills: list[dict[str, object]] = []
         servers: list[dict[str, object]] = []
         for record in self.list_plugins():
-            if not record["enabled"]:
+            if not include_disabled and not record["enabled"]:
                 continue
             manifest = self.manifest(str(record["id"]))
             plugins.append({

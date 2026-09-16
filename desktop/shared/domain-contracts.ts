@@ -574,7 +574,23 @@ export interface PluginListResult {
   plugins: PluginRecord[];
 }
 
+export interface SkillDetail {
+  qualifiedId: string;
+  content: string;
+  body: string;
+  directory: string;
+}
+
+export interface SkillRemoval {
+  qualifiedId: string;
+  removed: boolean;
+  cleanupPending: boolean;
+}
+
 export interface SkillMetadata {
+  sourceKind: "system" | "user" | "plugin";
+  enabled: boolean;
+  available: boolean;
   schemaVersion: 1;
   qualifiedId: string;
   name: string;

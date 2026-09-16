@@ -18,6 +18,7 @@ from pydantic import field_validator, model_validator
 
 from eidos_runtime.protocol.schemas import (
     ClosedModel,
+    SkillMetadataDto,
     ContextUsageSnapshotDto,
     EventEnvelopeDto,
     ItemDto,
@@ -28,7 +29,6 @@ from eidos_runtime.protocol.schemas import (
     SessionDto,
     SessionWorktreeDto,
     WorktreeSettingsDto,
-    SkillMetadataDto,
     StepResolutionReviewDto,
 )
 
@@ -537,6 +537,11 @@ class PluginRemoveRequestDto(_OperationRequest):
 
 class SkillListRequestDto(MethodRequestDto):
     pass
+
+
+class SkillSetEnabledRequestDto(MethodRequestDto):
+    qualified_id: StrictStr = Field(alias="qualifiedId", min_length=1, max_length=256)
+    enabled: bool
 
 
 class SkillReadRequestDto(MethodRequestDto):
@@ -1138,8 +1143,27 @@ class PluginRemoveResponseDto(_PluginResponseDto):
     pass
 
 
+class ManagedSkillDto(MethodResultDto, SkillMetadataDto):
+    source_kind: Literal["user", "system", "plugin"] = Field(alias="sourceKind")
+    enabled: bool
+    available: bool
+
+
+class SkillDetailResponseDto(MethodResultDto):
+    qualified_id: StrictStr = Field(alias="qualifiedId")
+    content: StrictStr
+    body: StrictStr
+    directory: StrictStr
+
+
+class SkillRemoveResponseDto(MethodResultDto):
+    qualified_id: StrictStr = Field(alias="qualifiedId")
+    removed: bool
+    cleanup_pending: bool = Field(alias="cleanupPending")
+
+
 class SkillListResponseDto(MethodResultDto):
-    skills: list[SkillMetadataDto]
+    skills: list[ManagedSkillDto]
 
 
 class SkillSourceDto(ClosedModel):
@@ -1169,7 +1193,7 @@ class McpCreateResponseDto(MethodResultDto, McpServerRecordDto):
 
 class ExtensionReadResponseDto(MethodResultDto):
     plugins: list[PluginRecordDto]
-    skills: list[SkillMetadataDto]
+    skills: list[ManagedSkillDto]
     servers: list[McpServerRecordDto]
     through_event_id: StrictInt = Field(alias="throughEventId")
 

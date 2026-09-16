@@ -583,3 +583,19 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 新 delta 的 `offset` 在追加内容的同一 SQLite 事务内计算，单位为 UTF-16 code unit，与 JavaScript 字符串长度一致。该字段只扩展 Event payload 和 Notification，不增加 DB 列或第二套状态。Renderer 对已有 Item 的 started 重投不再覆盖本地内容，并拒绝重复或有缺口的 offset。Run 结束时的持久快照刷新负责最终内容校正。旧 Event 不带 offset，继续兼容读取。旧 Desktop 的严格通知校验不接受新增字段，所以 Desktop 与 Runtime 必须一起更新。
 
 本次不新增模型调用、传输连接、依赖或工具参数流式能力。现有按行敏感扫描仍限制无换行文本的显示时机。用户要求先完成代码修订，确认后再编写测试并集中验证，因此当前没有测试、lint、构建或真实 Provider 验证结果。
+
+### Skill 设置管理
+
+Desktop 的技能设置沿用 Renderer → typed preload IPC → Main → RuntimeClient → ExtensionApplication 链路。`SkillManagement` 复用 `SkillCatalog` 的目录发现和内容校验。`skill/list` 与 `extension/read` 返回管理列表，包含已禁用技能和未启用插件提供的技能。管理数据增加 `sourceKind`、`enabled` 和 `available`。`enabled` 表示技能自身开关，`available` 表示所属插件是否可用；技能开关不替代插件授权。
+
+Runtime 的 `skill/detail` 返回完整 Markdown、去掉 frontmatter 的正文和经过目录发现校验的 canonical 技能目录。Desktop 按需读取详情，复用 Markdown 渲染、剪贴板和 Main 的 Finder 能力。详情的 Markdown 不继承当前 Session 的 Workspace 链接处理上下文。原有 `skill/read` 与 Run 内技能读取仍按可用 Catalog 工作。
+
+SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记、待清理状态和目录身份存入该表，并在同一事务写入 `skill.state_changed` Event/Outbox。旧数据迁移后没有覆盖项，技能默认启用。系统技能允许保存开关，但不能卸载，也不会通过设置修改 `.system` 文件。
+
+新 Turn 的 extension snapshot 保存 `excludedSkillIds`。SkillCatalog 仅按该快照排除禁用或卸载技能，不在当前 Run 读取可变设置。历史快照缺少该字段时按空清单处理。设置变更不修改已固定的 SkillCatalogSnapshot，也不撤销当前 Run 已获得的技能资源。
+
+个人分类包含独立用户技能和插件技能。独立用户技能先持久化卸载标记，再核验目录 owner、inode/device 和完整 tree hash。Runtime 在没有非终态 Run 时，把目录移至确定命名的私有暂存目录，再调用标准库的 fd-relative `shutil.rmtree`。清理失败或中断时，数据库保留待清理状态。现有扩展清理回调、设置列表读取和 Runtime 启动会重试；目录身份或内容变化时，Runtime 保留文件，不删除替换后的内容。暂存目录允许重启继续部分清理。存在待清理记录时，同名工具安装会拒绝提交；清理完成后的显式工具重装会移除卸载标记。
+
+插件技能只保存单技能卸载标记，不删除插件包内文件，因此不会破坏插件 hash 或影响其他 Skill/MCP。插件重启或开关不会移除该标记。当前实现保守地等待所有非终态 Run 结束后清理独立用户技能，不新增后台清理线程。
+
+本次生产实现尚未进入测试阶段。协议 Fixture、回归测试和迁移验证待用户确认后同步。
