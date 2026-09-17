@@ -517,7 +517,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   line-height: 1.4;
 }
 
-.workspace-list { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+.workspace-list { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
 
 .workspace-title-row {
   display: grid;
@@ -655,7 +655,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .session-list {
   display: grid;
   gap: 0.25rem;
-  margin: 0.25rem 0 0 0.85rem;
+  margin: 0.25rem 0 0 0.25rem;
   padding: 0;
   list-style: none;
 }
@@ -671,7 +671,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 0.5rem 0.65rem;
+  padding: 0.25rem 0.65rem;
   color: var(--text);
   background: transparent;
   box-shadow: none;
@@ -2952,14 +2952,37 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 .model-dialog-fields input,
 .model-dialog-fields select { width: 100%; box-sizing: border-box; }
 
-.mcp-create-dialog { width: min(680px, calc(100vw - 40px)); }
-.mcp-create-body { display: flex; flex-direction: column; gap: 14px; }
+.mcp-create-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, calc(100vw - 40px));
+  max-height: calc(100vh - 3rem);
+}
+.mcp-create-dialog .modal-header,
+.mcp-create-dialog .modal-footer { flex: none; }
+.mcp-create-dialog .modal-body { padding: 1rem 1.35rem; }
+.mcp-create-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: rgba(106, 111, 103, 0.28) transparent;
+  scrollbar-width: thin;
+}
 .mcp-create-body > label,
-.mcp-create-list-field { display: flex; flex-direction: column; gap: 7px; }
+.mcp-create-list-field { display: flex; flex-direction: column; gap: 5px; }
+.mcp-create-body input,
+.mcp-create-body select {
+  padding: 0.4rem 0.6rem;
+  font-size: 13px;
+}
 .mcp-create-body label > span,
 .mcp-create-list-field > span,
 .mcp-create-type-label { color: var(--text); font-size: 12.5px; font-weight: 600; }
-.mcp-create-entry { display: flex; align-items: center; gap: 7px; }
+.mcp-create-entry { display: flex; align-items: center; gap: 6px; }
+.mcp-create-entry .btn--small { flex: none; }
 .mcp-create-entry input { min-width: 0; flex: 1; box-sizing: border-box; }
 .mcp-create-env-entry input:first-child { flex: 0 1 42%; }
 .mcp-create-env-entry input:nth-child(2) { flex: 1; }
