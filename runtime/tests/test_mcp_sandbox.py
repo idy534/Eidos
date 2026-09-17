@@ -62,6 +62,12 @@ class McpSeatbeltTests(unittest.TestCase):
         self.assertFalse(self._run("connector", "open(%r,'w').write('x')" % str(self.workspace / "new.txt")))
         self.assertTrue(self._network_allowed("connector"))
 
+    def test_connector_resolves_network_hosts(self) -> None:
+        self.assertTrue(self._run(
+            "connector",
+            "import socket;socket.getaddrinfo('registry.npmjs.org',443)",
+        ))
+
     def test_workspace_read_allows_reads_but_denies_write_and_network(self) -> None:
         self.assertTrue(self._run("workspace_read", "open(%r).read()" % str(self.plugin / "plugin.txt")))
         self.assertTrue(self._run("workspace_read", "open(%r).read()" % str(self.workspace / "workspace.txt")))

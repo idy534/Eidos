@@ -20,6 +20,7 @@
   (subpath "/opt/homebrew")
   (subpath "/usr/local")
   (subpath "/private/etc")
+  (literal "/var/run/resolv.conf")
   (subpath "/dev/fd")
   (literal "/dev/null")
   (literal "/dev/zero")
@@ -29,6 +30,7 @@
 (allow file-read-metadata file-test-existence
   (path-ancestors "/opt/homebrew")
   (path-ancestors "/usr/local")
+  (path-ancestors "/var/run")
   (path-ancestors (param "PLUGIN_ROOT"))
   (path-ancestors (param "SANDBOX_HOME"))
   (path-ancestors (param "SANDBOX_TMP"))

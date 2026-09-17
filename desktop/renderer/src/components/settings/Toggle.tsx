@@ -18,25 +18,23 @@ export function Toggle({
   className = "",
 }: ToggleProps) {
   return (
-    <button
-      id={id}
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      className={`toggle-switch ${checked ? "toggle-switch--checked" : ""} ${className}`}
-      onClick={() => onChange(!checked)}
-      onKeyDown={(event) => {
-        if (event.key === " " || event.key === "Enter") {
-          event.preventDefault();
-          if (!disabled) {
-            onChange(!checked);
-          }
-        }
-      }}
+    <label
+      className={`toggle-switch ${checked ? "toggle-switch--checked" : ""} ${disabled ? "toggle-switch--disabled" : ""} ${className}`}
     >
-      <span className="toggle-thumb" />
-    </button>
+      <input
+        id={id}
+        type="checkbox"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        checked={checked}
+        disabled={disabled}
+        className="toggle-switch__input"
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
+      <span className="toggle-track" aria-hidden="true">
+        <span className="toggle-thumb" />
+      </span>
+    </label>
   );
 }
