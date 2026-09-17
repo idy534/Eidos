@@ -190,6 +190,50 @@ class PluginCatalogTests(unittest.TestCase):
                 tool_timeout_seconds=10,
             )
 
+    def test_manual_mcp_config_can_update_and_remove(self) -> None:
+        cwd = Path(self.temporary.name) / "manual-cwd"
+        cwd.mkdir()
+        self.catalog.create_manual_mcp(
+            server_id="local",
+            executable=sys.executable,
+            argv=["-c", "before"],
+            env={"MCP_SECRET": "secret-value"},
+            env_names=["PATH"],
+            cwd=str(cwd),
+            permission_profile="workspace_read",
+            startup_timeout_seconds=5,
+            tool_timeout_seconds=10,
+        )
+        self.catalog.set_mcp_enabled("manual", "local", True)
+
+        updated = self.catalog.update_manual_mcp(
+            server_id="local",
+            executable=sys.executable,
+            argv=["-c", "after"],
+            env={"NEW_SECRET": "new-value"},
+            env_names=["PATH"],
+            cwd=str(cwd),
+            permission_profile="connector",
+            startup_timeout_seconds=6,
+            tool_timeout_seconds=12,
+        )
+        self.assertEqual(updated["argv"], ["-c", "after"])
+        self.assertEqual(updated["permissionProfile"], "connector")
+        self.assertFalse(updated["consented"])
+        self.assertEqual(
+            self.catalog.manual_mcp_server_config("local")["env"],
+            {"MCP_SECRET": "secret-value", "NEW_SECRET": "new-value"},
+        )
+
+        self.assertTrue(self.catalog.remove_manual_mcp("local"))
+        self.assertEqual(self.store.list_manual_mcp_servers(), [])
+        self.assertIsNone(self.store.manual_mcp_server("local"))
+        self.assertIsNone(
+            self.store.connection.execute(
+                "SELECT 1 FROM mcp_server_states WHERE plugin_id = 'manual' AND server_id = 'local'"
+            ).fetchone()
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

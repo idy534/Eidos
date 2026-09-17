@@ -97,6 +97,24 @@ class PluginProtocolTests(unittest.TestCase):
                 },
             })
             server.handle({
+                "jsonrpc": "2.0", "id": "client-mcp-update", "method": "mcp/update",
+                "params": {
+                    "serverId": "manualfixture", "executable": "python3",
+                    "argv": ["server.py", "--updated"], "env": {"NEW_SECRET": "new-value"},
+                    "envNames": ["PATH"], "cwd": str(source),
+                    "permissionProfile": "connector", "startupTimeoutSeconds": 6,
+                    "toolTimeoutSeconds": 12,
+                    "operationId": "00000000-0000-4000-8000-000000000004",
+                },
+            })
+            server.handle({
+                "jsonrpc": "2.0", "id": "client-mcp-remove", "method": "mcp/remove",
+                "params": {
+                    "serverId": "manualfixture",
+                    "operationId": "00000000-0000-4000-8000-000000000005",
+                },
+            })
+            server.handle({
                 "jsonrpc": "2.0", "id": "client-remove", "method": "plugin/remove",
                 "params": {"pluginId": "demo"},
             })
@@ -108,6 +126,8 @@ class PluginProtocolTests(unittest.TestCase):
             skills = next(message["result"] for message in messages if message.get("id") == "client-skills")
             mcp = next(message["result"] for message in messages if message.get("id") == "client-mcp-enable")
             manual_mcp = next(message["result"] for message in messages if message.get("id") == "client-mcp-create")
+            updated_mcp = next(message["result"] for message in messages if message.get("id") == "client-mcp-update")
+            removed_mcp = next(message["result"] for message in messages if message.get("id") == "client-mcp-remove")
             self.assertEqual(imported["id"], "demo")
             self.assertEqual(next(message["result"] for message in messages if message.get("id") == "client-import-replay"), imported)
             self.assertTrue(listed["plugins"][0]["enabled"])
@@ -115,6 +135,10 @@ class PluginProtocolTests(unittest.TestCase):
             self.assertTrue(mcp["consented"])
             self.assertEqual(manual_mcp["pluginId"], "manual")
             self.assertFalse(manual_mcp["consented"])
+            self.assertEqual(updated_mcp["argv"], ["server.py", "--updated"])
+            self.assertEqual(updated_mcp["permissionProfile"], "connector")
+            self.assertFalse(updated_mcp["consented"])
+            self.assertEqual(removed_mcp, {"serverId": "manualfixture", "removed": True})
             self.assertNotIn("secret-value", json.dumps(messages))
             self.assertEqual(removed["status"], "removed")
             self.assertEqual(
@@ -126,7 +150,7 @@ class PluginProtocolTests(unittest.TestCase):
             self.assertNotIn(str(data), json.dumps(messages))
             non_manual_messages = [
                 message for message in messages
-                if message.get("id") != "client-mcp-create"
+                if message.get("id") not in {"client-mcp-create", "client-mcp-update"}
             ]
             self.assertNotIn(str(source), json.dumps(non_manual_messages))
             server.close()

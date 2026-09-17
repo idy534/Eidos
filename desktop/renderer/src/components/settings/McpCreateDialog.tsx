@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { McpCreateInput } from "../../contracts.js";
+import type { McpCreateInput, McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 
 interface McpCreateDialogProps {
   open: boolean;
   busy: boolean;
+  removeBusy?: boolean;
   error?: string | undefined;
+  server?: McpServerRecord | null;
   onSave: (input: McpCreateInput) => Promise<void>;
+  onRemove?: (serverId: string) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -28,35 +32,56 @@ function initialDraft() {
     envNames: [""],
     cwd: "",
     permissionProfile: "workspace_read" as McpCreateInput["permissionProfile"],
+    startupTimeoutSeconds: 15,
+    toolTimeoutSeconds: 60,
+  };
+}
+
+function draftFromServer(server: McpServerRecord) {
+  return {
+    serverId: server.serverId,
+    executable: server.executable,
+    argv: server.argv.length ? [...server.argv] : [""],
+    env: [{ name: "", value: "" }] as EnvRow[],
+    envNames: server.envNames.length ? [...server.envNames] : [""],
+    cwd: server.cwd ?? "",
+    permissionProfile: server.permissionProfile,
+    startupTimeoutSeconds: server.startupTimeoutSeconds,
+    toolTimeoutSeconds: server.toolTimeoutSeconds,
   };
 }
 
 export function McpCreateDialog({
   open,
   busy,
+  removeBusy = false,
   error,
+  server = null,
   onSave,
+  onRemove,
   onCancel,
 }: McpCreateDialogProps) {
   const [draft, setDraft] = useState(initialDraft);
   const [localError, setLocalError] = useState<string>();
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const serverIdRef = useRef<HTMLInputElement>(null);
   useDialogFocusLifecycle({ open, initialFocusRef: serverIdRef });
 
   useEffect(() => {
     if (!open) return;
-    setDraft(initialDraft());
+    setDraft(server ? draftFromServer(server) : initialDraft());
     setLocalError(undefined);
-  }, [open]);
+    setConfirmRemove(false);
+  }, [open, server]);
 
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onCancel();
+      if (event.key === "Escape" && !busy && !removeBusy) onCancel();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onCancel, open]);
+  }, [busy, onCancel, open, removeBusy]);
 
   if (!open) return null;
 
@@ -104,8 +129,8 @@ export function McpCreateDialog({
         env: configuredEnv,
         envNames,
         permissionProfile: draft.permissionProfile,
-        startupTimeoutSeconds: 15,
-        toolTimeoutSeconds: 60,
+        startupTimeoutSeconds: draft.startupTimeoutSeconds,
+        toolTimeoutSeconds: draft.toolTimeoutSeconds,
       };
       if (draft.cwd.trim()) input.cwd = draft.cwd.trim();
       await onSave(input);
@@ -114,9 +139,20 @@ export function McpCreateDialog({
     }
   }
 
+  async function remove() {
+    if (!server || !onRemove) return;
+    setLocalError(undefined);
+    try {
+      await onRemove(server.serverId);
+      setConfirmRemove(false);
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : "卸载 MCP Server 失败");
+    }
+  }
+
   const formError = localError || error;
   return (
-    <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
+    <div className="modal-backdrop" onClick={busy || removeBusy ? undefined : onCancel}>
       <div
         className="modal-dialog modal-dialog--wide mcp-create-dialog"
         role="dialog"
@@ -125,7 +161,7 @@ export function McpCreateDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-header">
-          <h3 id="mcp-create-title">连接至自定义 MCP</h3>
+          <h3 id="mcp-create-title">{server ? "编辑 MCP Server" : "连接至自定义 MCP"}</h3>
           <p className="modal-subtitle">配置一个本地 STDIO MCP Server。保存后，Eidos 会先等待你的审阅。</p>
         </div>
         <div className="modal-body mcp-create-body">
@@ -141,7 +177,8 @@ export function McpCreateDialog({
               aria-label="名称"
               placeholder="例如 filesystem"
               value={draft.serverId}
-              disabled={busy}
+              disabled={busy || removeBusy}
+              readOnly={Boolean(server)}
               onChange={(event) => setDraft({ ...draft, serverId: event.target.value })}
             />
           </label>
@@ -202,7 +239,7 @@ export function McpCreateDialog({
                   aria-label={`环境变量值 ${index + 1}`}
                   type="password"
                   autoComplete="off"
-                  placeholder="值"
+                  placeholder={server ? "留空保持原值" : "值"}
                   value={row.value}
                   disabled={busy}
                   onChange={(event) => setDraft({
@@ -281,11 +318,33 @@ export function McpCreateDialog({
           </label>
           {formError && <p className="setting-field-error" role="alert">{formError}</p>}
         </div>
-        <div className="modal-footer">
-          <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>
-          <Button variant="primary" loading={busy} disabled={busy} onClick={() => void save()}>保存</Button>
+        <div className="modal-footer mcp-create-footer">
+          {server && onRemove ? (
+            <Button
+              variant="danger"
+              disabled={busy || removeBusy}
+              onClick={() => setConfirmRemove(true)}
+            >
+              卸载
+            </Button>
+          ) : <span />}
+          <div className="mcp-create-footer-actions">
+            <Button variant="ghost" disabled={busy || removeBusy} onClick={onCancel}>取消</Button>
+            <Button variant="primary" loading={busy} disabled={busy || removeBusy} onClick={() => void save()}>保存</Button>
+          </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmRemove}
+        title="卸载 MCP Server？"
+        description={`确定要卸载“${server?.serverId ?? ""}”吗？卸载后需要重新添加才能使用。`}
+        confirmLabel="卸载"
+        isDestructive
+        busy={removeBusy}
+        error={localError}
+        onConfirm={() => void remove()}
+        onCancel={() => setConfirmRemove(false)}
+      />
     </div>
   );
 }

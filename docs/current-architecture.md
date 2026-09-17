@@ -457,7 +457,7 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 `SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
-MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
+MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
 ## 15. Packaging & Distribution
 

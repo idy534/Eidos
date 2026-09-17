@@ -280,6 +280,88 @@ class ExtensionRepository(Repository):
         assert result is not None
         return result
 
+    def update_manual_mcp_server(
+        self, record: dict[str, object]
+    ) -> dict[str, object]:
+        now = _now_ms()
+        env_blob_ref = self.database.json_blobs.put_json(
+            "mcp-env",
+            json.dumps(
+                record.get("env", {}),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        with self.lock, self._connection() as connection:
+            updated = connection.execute(
+                """
+                UPDATE manual_mcp_servers SET
+                    executable = ?, argv_json = ?, env_blob_ref = ?, env_names_json = ?,
+                    cwd = ?, permission_profile = ?, startup_timeout_seconds = ?,
+                    tool_timeout_seconds = ?, content_hash = ?, updated_at = ?
+                WHERE server_id = ?
+                """,
+                (
+                    record["executable"],
+                    json.dumps(record["argv"], ensure_ascii=False, separators=(",", ":")),
+                    env_blob_ref,
+                    json.dumps(record["envNames"], ensure_ascii=False, separators=(",", ":")),
+                    record["cwd"],
+                    record["permissionProfile"],
+                    record["startupTimeoutSeconds"],
+                    record["toolTimeoutSeconds"],
+                    record["contentHash"],
+                    now,
+                    record["serverId"],
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ResourceNotFoundError("mcp server not found")
+            connection.execute(
+                """
+                INSERT INTO mcp_server_states (
+                    plugin_id, server_id, consented, error_code, updated_at
+                ) VALUES ('manual', ?, 0, NULL, ?)
+                ON CONFLICT(plugin_id, server_id) DO UPDATE SET
+                    consented = 0, error_code = NULL, updated_at = excluded.updated_at
+                """,
+                (record["serverId"], now),
+            )
+            append_event(
+                connection,
+                EventType.MCP_SERVER_STATE_CHANGED,
+                now,
+                {"server": _manual_mcp_projection(record, now)},
+            )
+        result = self.manual_mcp_server(str(record["serverId"]))
+        assert result is not None
+        return result
+
+    def remove_manual_mcp_server(self, server_id: str) -> dict[str, object]:
+        record = self.manual_mcp_server(server_id)
+        if record is None:
+            raise ResourceNotFoundError("mcp server not found")
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            append_event(
+                connection,
+                EventType.MCP_SERVER_STATE_CHANGED,
+                now,
+                {"server": _manual_mcp_projection(record, now)},
+            )
+            connection.execute(
+                "DELETE FROM mcp_server_states WHERE plugin_id = 'manual' AND server_id = ?",
+                (server_id,),
+            )
+            deleted = connection.execute(
+                "DELETE FROM manual_mcp_servers WHERE server_id = ?",
+                (server_id,),
+            )
+            if deleted.rowcount != 1:
+                raise ResourceNotFoundError("mcp server not found")
+        return record
+
     def mcp_server_state(
         self, plugin_id: str, server_id: str
     ) -> dict[str, object]:

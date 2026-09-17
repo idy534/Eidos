@@ -1204,6 +1204,34 @@ class RuntimeServer:
                 ),
             ),
             (
+                "mcp/update",
+                method_dtos.McpUpdateRequestDto,
+                method_dtos.McpUpdateResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.update_mcp_server(
+                    server_id=request.server_id,
+                    executable=request.executable,
+                    argv=request.argv,
+                    env=request.env,
+                    env_names=request.env_names,
+                    cwd=request.cwd,
+                    permission_profile=request.permission_profile,
+                    startup_timeout_seconds=request.startup_timeout_seconds,
+                    tool_timeout_seconds=request.tool_timeout_seconds,
+                    operation_id=request.operation_id,
+                ),
+            ),
+            (
+                "mcp/remove",
+                method_dtos.McpRemoveRequestDto,
+                method_dtos.McpRemoveResponseDto,
+                lambda _id,
+                request: self._applications_or_error().extensions.remove_mcp_server(
+                    server_id=request.server_id,
+                    operation_id=request.operation_id,
+                ),
+            ),
+            (
                 "extension/read",
                 method_dtos.ExtensionReadRequestDto,
                 method_dtos.ExtensionReadResponseDto,
@@ -1230,6 +1258,8 @@ class RuntimeServer:
             "plugin/remove",
             "mcp/setEnabled",
             "mcp/create",
+            "mcp/update",
+            "mcp/remove",
         }
         reconfiguration_blocked = {"run/start"}
         for name, request_type, response_type, handler in handlers:

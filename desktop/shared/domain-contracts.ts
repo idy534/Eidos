@@ -637,6 +637,13 @@ export interface McpCreateInput {
   toolTimeoutSeconds: number;
 }
 
+export type McpUpdateInput = McpCreateInput;
+
+export interface McpServerRemoval {
+  serverId: string;
+  removed: true;
+}
+
 export interface McpListResult {
   servers: McpServerRecord[];
 }

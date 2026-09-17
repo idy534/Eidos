@@ -5,7 +5,13 @@ import deepseekLogo from "../assets/providers/deepseek.svg";
 import kimiLogo from "../assets/providers/kimi.svg";
 import minimaxLogo from "../assets/providers/minimax.svg";
 import volcengineLogo from "../assets/providers/volcengine.svg";
-import type { EidosRuntimeAPI, ModelListResult, ModelPresetsResult, RuntimeStatus } from "../contracts.js";
+import type {
+  EidosRuntimeAPI,
+  McpServerRecord,
+  ModelListResult,
+  ModelPresetsResult,
+  RuntimeStatus,
+} from "../contracts.js";
 import { SettingsPage } from "./settings/SettingsPage.js";
 
 const runtime: RuntimeStatus = {
@@ -82,6 +88,7 @@ function props(overrides = {}) {
       qualifiedId: "user:test", removed: true, cleanupPending: false,
     }),
     onToggleMcp: vi.fn(), onCreateMcp: vi.fn().mockResolvedValue(undefined),
+    onUpdateMcp: vi.fn().mockResolvedValue(undefined), onRemoveMcp: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -207,5 +214,58 @@ describe("Model settings", () => {
       startupTimeoutSeconds: 15,
       toolTimeoutSeconds: 60,
     });
+  });
+
+  it("edits and unloads a manual MCP from its edit dialog", async () => {
+    const user = userEvent.setup();
+    const onUpdateMcp = vi.fn().mockResolvedValue(undefined);
+    const onRemoveMcp = vi.fn().mockResolvedValue(undefined);
+    const server: McpServerRecord = {
+      schemaVersion: 1,
+      pluginId: "manual",
+      pluginVersion: "manual",
+      pluginHash: "a".repeat(64),
+      serverId: "filesystem",
+      executable: "npx",
+      argv: ["-y", "@modelcontextprotocol/server-everything"],
+      envNames: ["PATH"],
+      cwd: "/Users/xielei",
+      permissionProfile: "connector",
+      startupTimeoutSeconds: 15,
+      toolTimeoutSeconds: 60,
+      declaredEnabled: true,
+      consented: false,
+      available: false,
+      updatedAt: 1,
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      listModelPresets: vi.fn().mockResolvedValue(presets),
+    } as EidosRuntimeAPI;
+    render(<SettingsPage {...props({ mcpServers: [server], onUpdateMcp, onRemoveMcp })} />);
+
+    await screen.findByRole("button", { name: "添加模型" });
+    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+    await user.click(screen.getByRole("button", { name: "编辑" }));
+    expect(screen.getByRole("heading", { name: "编辑 MCP Server" })).toBeInTheDocument();
+    expect(screen.getByLabelText("启动命令")).toHaveValue("npx");
+    await user.clear(screen.getByLabelText("启动命令"));
+    await user.type(screen.getByLabelText("启动命令"), "node");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(onUpdateMcp).toHaveBeenCalledWith(expect.objectContaining({
+      serverId: "filesystem",
+      executable: "node",
+      argv: ["-y", "@modelcontextprotocol/server-everything"],
+      envNames: ["PATH"],
+      permissionProfile: "connector",
+      startupTimeoutSeconds: 15,
+      toolTimeoutSeconds: 60,
+    }));
+
+    await user.click(screen.getByRole("button", { name: "编辑" }));
+    await user.click(screen.getByRole("button", { name: "卸载" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("卸载 MCP Server？");
+    await user.click(screen.getByRole("alertdialog").querySelector("button.btn--danger")!);
+    expect(onRemoveMcp).toHaveBeenCalledWith("filesystem");
+    expect(await screen.findByText("MCP Server “filesystem” 已卸载")).toBeInTheDocument();
   });
 });

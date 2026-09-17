@@ -1,5 +1,12 @@
 import { useCallback, useRef, useState } from "react";
-import type { McpCreateInput, McpServerRecord, PluginRecord, SkillMetadata, SkillRemoval } from "../contracts.js";
+import type {
+  McpCreateInput,
+  McpServerRecord,
+  McpUpdateInput,
+  PluginRecord,
+  SkillMetadata,
+  SkillRemoval,
+} from "../contracts.js";
 import type { SettingsPendingAction } from "../components/settings/settings-types.js";
 import { userFacingError } from "../session-state.js";
 
@@ -19,6 +26,8 @@ export interface ExtensionControllerActions {
   removePlugin: (pluginId: string) => Promise<void>;
   setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
   createMcpServer: (input: McpCreateInput) => Promise<void>;
+  updateMcpServer: (input: McpUpdateInput) => Promise<void>;
+  removeMcpServer: (serverId: string) => Promise<void>;
   setSkillEnabled: (qualifiedId: string, enabled: boolean) => Promise<void>;
   removeSkill: (qualifiedId: string) => Promise<SkillRemoval>;
   clearError: () => void;
@@ -135,6 +144,36 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     }
   }, []);
 
+  const updateMcpServer = useCallback(async (input: McpUpdateInput): Promise<void> => {
+    setPendingAction({ type: "update_mcp", serverId: input.serverId });
+    setError(undefined);
+    try {
+      await window.eidosRuntime.updateMcpServer(input);
+      await fetchAndApplySnapshot();
+    } catch (cause) {
+      const msg = userFacingError(cause);
+      setError(msg);
+      throw new Error(msg);
+    } finally {
+      setPendingAction(undefined);
+    }
+  }, []);
+
+  const removeMcpServer = useCallback(async (serverId: string): Promise<void> => {
+    setPendingAction({ type: "remove_mcp", serverId });
+    setError(undefined);
+    try {
+      await window.eidosRuntime.removeMcpServer(serverId);
+      await fetchAndApplySnapshot();
+    } catch (cause) {
+      const msg = userFacingError(cause);
+      setError(msg);
+      throw new Error(msg);
+    } finally {
+      setPendingAction(undefined);
+    }
+  }, []);
+
   const setSkillEnabled = useCallback(async (qualifiedId: string, enabled: boolean): Promise<void> => {
     skillMutationRevision.current += 1;
     setPendingAction({ type: "toggle_skill", qualifiedId });
@@ -182,6 +221,8 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     removePlugin,
     setMcpEnabled,
     createMcpServer,
+    updateMcpServer,
+    removeMcpServer,
     clearError,
     setSkillEnabled,
     removeSkill,

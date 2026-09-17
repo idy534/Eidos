@@ -1028,6 +1028,8 @@ export function AppShell({ runtime }: AppShellProps) {
             onRemoveSkill={(id) => extensionActions.removeSkill(id)}
             onToggleMcp={(pId, sId, enabled) => extensionActions.setMcpEnabled(pId, sId, enabled)}
             onCreateMcp={(input) => extensionActions.createMcpServer(input)}
+            onUpdateMcp={(input) => extensionActions.updateMcpServer(input)}
+            onRemoveMcp={(serverId) => extensionActions.removeMcpServer(serverId)}
           />
         ) : currentSnapshot ? (
           <>

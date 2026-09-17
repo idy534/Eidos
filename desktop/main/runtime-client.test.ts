@@ -765,6 +765,19 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
       startupTimeoutSeconds: 5,
       toolTimeoutSeconds: 10,
     });
+    const updatedManual = await client.updateMcpServer({
+      serverId: "manual_fixture",
+      executable: "python3",
+      argv: ["server.py", "--updated"],
+      env: { MCP_SECRET: "secret-value" },
+      envNames: ["PATH"],
+      cwd: pluginRoot,
+      permissionProfile: "connector",
+      startupTimeoutSeconds: 6,
+      toolTimeoutSeconds: 12,
+    });
+    const removedManual = await client.removeMcpServer("manual_fixture");
+    const serversAfterRemoval = await client.listMcpServers();
     const extensionSnapshot = await client.readExtensions();
     const extensionEvents = await client.readExtensionEvents(0);
 
@@ -788,6 +801,14 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
     assert.equal(enabled.consented, true);
     assert.equal(manual.pluginId, "manual");
     assert.equal(manual.consented, false);
+    assert.deepEqual(updatedManual.argv, ["server.py", "--updated"]);
+    assert.equal(updatedManual.permissionProfile, "connector");
+    assert.equal(updatedManual.consented, false);
+    assert.deepEqual(removedManual, { serverId: "manual_fixture", removed: true });
+    assert.equal(
+      serversAfterRemoval.servers.some((server) => server.serverId === "manual_fixture"),
+      false,
+    );
     assert.equal(manual.cwd, await realpath(pluginRoot));
     assert.equal(extensionSnapshot.plugins[0]?.id, "desktop_fixture");
     assert.ok(extensionEvents.items.some((event) => event.eventType === "mcp_server.state_changed"));

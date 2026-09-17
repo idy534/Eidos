@@ -33,7 +33,9 @@ from eidos_runtime.models.skill_settings import ManagedSkill, SkillDetail, Skill
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
-ExtensionResultT = TypeVar("ExtensionResultT", "PluginRecord", "McpServerRecord")
+ExtensionResultT = TypeVar(
+    "ExtensionResultT", "PluginRecord", "McpServerRecord", "McpServerRemoval"
+)
 ValidatedResultT = TypeVar("ValidatedResultT", bound=EidosFrozenStrictModel)
 
 
@@ -165,6 +167,15 @@ class McpServerRecord(EidosFrozenStrictModel):
                 )
             normalized[field_name] = tuple(raw)
         return _validated(cls, normalized, "MCP server result is invalid")
+
+
+class McpServerRemoval(EidosFrozenStrictModel):
+    server_id: str
+    removed: Literal[True] = True
+
+    @classmethod
+    def from_wire(cls, value: object) -> "McpServerRemoval":
+        return _validated(cls, value, "MCP server removal result is invalid")
 
 
 class ExtensionEvent(EidosFrozenStrictModel):
@@ -436,6 +447,86 @@ class ExtensionApplication:
             raise ApplicationError("MCP_CONFIG_INVALID") from error
         return self._record_extension_operation(
             operation_id, "mcp/create", request, server
+        )
+
+    def update_mcp_server(
+        self,
+        *,
+        server_id: str,
+        executable: str,
+        argv: list[str],
+        env: Mapping[str, str],
+        env_names: list[str],
+        cwd: str | None,
+        permission_profile: str,
+        startup_timeout_seconds: int,
+        tool_timeout_seconds: int,
+        operation_id: str | None = None,
+    ) -> McpServerRecord:
+        plugins = self._plugins_or_error()
+        request = {
+            "serverId": server_id,
+            "executable": executable,
+            "argv": argv,
+            "env": dict(env),
+            "envNames": env_names,
+            "cwd": cwd,
+            "permissionProfile": permission_profile,
+            "startupTimeoutSeconds": startup_timeout_seconds,
+            "toolTimeoutSeconds": tool_timeout_seconds,
+        }
+        replay = self._extension_replay(
+            operation_id, "mcp/update", request, McpServerRecord
+        )
+        if replay is not None:
+            return replay
+        try:
+            server = McpServerRecord.from_wire(
+                plugins.update_manual_mcp(
+                    server_id=server_id,
+                    executable=executable,
+                    argv=argv,
+                    env=env,
+                    env_names=env_names,
+                    cwd=cwd,
+                    permission_profile=permission_profile,
+                    startup_timeout_seconds=startup_timeout_seconds,
+                    tool_timeout_seconds=tool_timeout_seconds,
+                )
+            )
+        except PluginImportError as error:
+            code = {
+                "mcp_server_not_found": "RESOURCE_NOT_FOUND",
+                "mcp_cwd_invalid": "MCP_CWD_INVALID",
+            }.get(str(error), "MCP_CONFIG_INVALID")
+            if code == "RESOURCE_NOT_FOUND":
+                raise ApplicationError(code) from error
+            raise _invalid_params(code) from error
+        except StorageError as error:
+            raise ApplicationError("MCP_CONFIG_INVALID") from error
+        return self._record_extension_operation(
+            operation_id, "mcp/update", request, server
+        )
+
+    def remove_mcp_server(
+        self, *, server_id: str, operation_id: str | None = None
+    ) -> McpServerRemoval:
+        plugins = self._plugins_or_error()
+        request = {"serverId": server_id}
+        replay = self._extension_replay(
+            operation_id, "mcp/remove", request, McpServerRemoval
+        )
+        if replay is not None:
+            return replay
+        try:
+            plugins.remove_manual_mcp(server_id)
+        except PluginImportError as error:
+            if str(error) == "mcp_server_not_found":
+                raise ApplicationError("RESOURCE_NOT_FOUND") from error
+            raise ApplicationError("MCP_CONFIG_INVALID") from error
+        result = McpServerRemoval(server_id=server_id)
+        return self._record_extension_operation(
+            operation_id, "mcp/remove", request, result
         )
 
     def set_mcp_enabled(

@@ -24,6 +24,7 @@ import type {
   ModelReasoningSelection,
   ModelUpdateInput,
   McpCreateInput,
+  McpUpdateInput,
   ResponseFeedbackValue,
   ReviewCommentCreateInput,
 } from "../shared/index.js";
@@ -1210,6 +1211,16 @@ ipcMain.handle(IPC.MCP_CREATE, (_event, input: unknown) => {
     throw new Error("MCP Server 参数无效。");
   }
   return clientOrThrow().createMcpServer(input as McpCreateInput);
+});
+ipcMain.handle(IPC.MCP_UPDATE, (_event, input: unknown) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("MCP Server 参数无效。");
+  }
+  return clientOrThrow().updateMcpServer(input as McpUpdateInput);
+});
+ipcMain.handle(IPC.MCP_REMOVE, (_event, serverId: unknown) => {
+  if (typeof serverId !== "string") throw new Error("MCP Server 参数无效。");
+  return clientOrThrow().removeMcpServer(serverId);
 });
 
 ipcMain.handle(IPC.APPROVAL_LIST, () =>

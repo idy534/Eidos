@@ -149,6 +149,8 @@ import type {
   McpListResult,
   McpServerRecord,
   McpCreateInput,
+  McpUpdateInput,
+  McpServerRemoval,
   ModelId,
   ModelReasoningSelection,
   ModelListResult,
@@ -908,6 +910,22 @@ export class RuntimeClient {
   ): Promise<McpServerRecord> {
     return this.validatedRequest(
       "mcp/create", { ...input, operationId }, isMcpServerRecord,
+    );
+  }
+
+  updateMcpServer(
+    input: McpUpdateInput, operationId = randomUUID(),
+  ): Promise<McpServerRecord> {
+    return this.validatedRequest(
+      "mcp/update", { ...input, operationId }, isMcpServerRecord,
+    );
+  }
+
+  removeMcpServer(
+    serverId: string, operationId = randomUUID(),
+  ): Promise<McpServerRemoval> {
+    return this.validatedRequest(
+      "mcp/remove", { serverId, operationId }, isMcpServerRemoval,
     );
   }
 
@@ -2219,6 +2237,11 @@ function isMcpServerRecord(value: unknown): value is McpServerRecord {
 function isMcpServerListResult(value: unknown): value is { servers: McpServerRecord[] } {
   return isRecord(value) && hasOnlyKeys(value, ["servers"])
     && Array.isArray(value.servers) && value.servers.every(isMcpServerRecord);
+}
+
+function isMcpServerRemoval(value: unknown): value is McpServerRemoval {
+  return isRecord(value) && hasOnlyKeys(value, ["serverId", "removed"])
+    && typeof value.serverId === "string" && value.removed === true;
 }
 
 function isExtensionSnapshotResult(value: unknown): value is ExtensionSnapshotResult {

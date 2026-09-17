@@ -56,6 +56,8 @@ export type {
   SkillListResult,
   McpServerRecord,
   McpCreateInput,
+  McpUpdateInput,
+  McpServerRemoval,
   McpListResult,
   ExtensionSnapshot,
   RuntimeEvent,

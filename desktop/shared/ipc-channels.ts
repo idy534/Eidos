@@ -112,6 +112,8 @@ export const IPC = {
   MCP_LIST: "mcp:list",
   MCP_SET_ENABLED: "mcp:set-enabled",
   MCP_CREATE: "mcp:create",
+  MCP_UPDATE: "mcp:update",
+  MCP_REMOVE: "mcp:remove",
 
   // Extensions
   EXTENSION_READ: "extension:read",

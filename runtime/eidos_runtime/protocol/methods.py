@@ -618,6 +618,21 @@ class McpCreateRequestDto(_OperationRequest):
         return self
 
 
+class McpUpdateRequestDto(McpCreateRequestDto):
+    pass
+
+
+class McpRemoveRequestDto(_OperationRequest):
+    server_id: StrictStr = Field(alias="serverId", min_length=1, max_length=64)
+
+    @field_validator("server_id")
+    @classmethod
+    def validate_server_id(cls, value: str) -> str:
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value):
+            raise ValueError("invalid server id")
+        return value
+
+
 class ExtensionReadRequestDto(MethodRequestDto):
     pass
 
@@ -1197,6 +1212,15 @@ class McpSetEnabledResponseDto(MethodResultDto, McpServerRecordDto):
 
 class McpCreateResponseDto(MethodResultDto, McpServerRecordDto):
     pass
+
+
+class McpUpdateResponseDto(MethodResultDto, McpServerRecordDto):
+    pass
+
+
+class McpRemoveResponseDto(MethodResultDto):
+    server_id: StrictStr = Field(alias="serverId")
+    removed: bool
 
 
 class ExtensionReadResponseDto(MethodResultDto):

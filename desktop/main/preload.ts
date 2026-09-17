@@ -51,6 +51,8 @@ import type {
   McpListResult,
   McpServerRecord,
   McpCreateInput,
+  McpUpdateInput,
+  McpServerRemoval,
   ExtensionSnapshot,
   RuntimeNotification,
   AppShortcut,
@@ -334,6 +336,10 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.MCP_SET_ENABLED, pluginId, serverId, enabled),
   createMcpServer: (input: McpCreateInput): Promise<McpServerRecord> =>
     ipcRenderer.invoke(IPC.MCP_CREATE, input),
+  updateMcpServer: (input: McpUpdateInput): Promise<McpServerRecord> =>
+    ipcRenderer.invoke(IPC.MCP_UPDATE, input),
+  removeMcpServer: (serverId: string): Promise<McpServerRemoval> =>
+    ipcRenderer.invoke(IPC.MCP_REMOVE, serverId),
 
   // Extensions
   readExtensions: (): Promise<ExtensionSnapshot> => ipcRenderer.invoke(IPC.EXTENSION_READ),

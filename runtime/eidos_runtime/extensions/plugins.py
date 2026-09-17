@@ -318,6 +318,70 @@ class PluginCatalog:
         )
         return created
 
+    def update_manual_mcp(
+        self,
+        *,
+        server_id: str,
+        executable: str,
+        argv: list[str],
+        env: Mapping[str, str],
+        env_names: list[str],
+        cwd: str | None,
+        permission_profile: str,
+        startup_timeout_seconds: int,
+        tool_timeout_seconds: int,
+    ) -> dict[str, object]:
+        try:
+            existing = self.store.manual_mcp_server_config(server_id)
+            env_values = validate_env_values({
+                **validate_env_values(existing["env"]),
+                **validate_env_values(env),
+            })
+            config = McpServerConfigV1.model_validate({
+                "id": server_id,
+                "executable": executable,
+                "argv": argv,
+                "envNames": list(dict.fromkeys([*env_names, *env_values])),
+                "permissionProfile": permission_profile,
+                "startupTimeoutSeconds": startup_timeout_seconds,
+                "toolTimeoutSeconds": tool_timeout_seconds,
+                "enabled": True,
+            })
+            canonical_cwd = _manual_cwd(cwd, self.store.data_directory)
+        except ResourceNotFoundError:
+            raise PluginImportError("mcp_server_not_found") from None
+        except ValueError as error:
+            raise PluginImportError(
+                "mcp_cwd_invalid" if str(error) == "mcp_cwd_invalid" else "mcp_config_invalid"
+            ) from None
+        except ValidationError:
+            raise PluginImportError("mcp_config_invalid") from None
+        record = {
+            "serverId": config.id,
+            "executable": config.executable,
+            "argv": list(config.argv),
+            "env": env_values,
+            "envNames": list(config.env_names),
+            "cwd": str(canonical_cwd),
+            "permissionProfile": config.permission_profile,
+            "startupTimeoutSeconds": config.startup_timeout_seconds,
+            "toolTimeoutSeconds": config.tool_timeout_seconds,
+        }
+        record["contentHash"] = _json_hash(record)
+        self.store.update_manual_mcp_server(record)
+        return next(
+            server for server in self.list_mcp_servers()
+            if server["pluginId"] == MANUAL_MCP_PLUGIN_ID
+            and server["serverId"] == config.id
+        )
+
+    def remove_manual_mcp(self, server_id: str) -> bool:
+        try:
+            self.store.remove_manual_mcp_server(server_id)
+        except ResourceNotFoundError:
+            raise PluginImportError("mcp_server_not_found") from None
+        return True
+
     def manual_mcp_server_config(self, server_id: str) -> dict[str, object]:
         try:
             record = self.store.manual_mcp_server_config(server_id)

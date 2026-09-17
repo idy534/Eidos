@@ -58,6 +58,8 @@ function props(overrides: Record<string, unknown> = {}) {
     }),
     onToggleMcp: vi.fn().mockResolvedValue(undefined),
     onCreateMcp: vi.fn().mockResolvedValue(undefined),
+    onUpdateMcp: vi.fn().mockResolvedValue(undefined),
+    onRemoveMcp: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }

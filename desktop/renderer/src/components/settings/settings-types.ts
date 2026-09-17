@@ -9,6 +9,8 @@ export type SettingsPendingAction =
   | { type: "remove_plugin"; pluginId: string }
   | { type: "toggle_mcp"; pluginId: string; serverId: string }
   | { type: "create_mcp" }
+  | { type: "update_mcp"; serverId: string }
+  | { type: "remove_mcp"; serverId: string }
   | undefined;
 
 export interface SettingsToast {

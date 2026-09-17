@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Button } from "../Button.js";
-import type { McpCreateInput, McpServerRecord } from "../../contracts";
+import type { McpCreateInput, McpServerRecord, McpUpdateInput } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { SettingSection } from "./SettingSection";
 import { SettingRow } from "./SettingRow";
@@ -14,6 +14,8 @@ interface McpSettingsProps {
   pendingAction: SettingsPendingAction;
   onToggleMcp: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
   onCreateMcp: (input: McpCreateInput) => Promise<void>;
+  onUpdateMcp: (input: McpUpdateInput) => Promise<void>;
+  onRemoveMcp: (serverId: string) => Promise<void>;
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
 }
 
@@ -22,12 +24,15 @@ export function McpSettings({
   pendingAction,
   onToggleMcp,
   onCreateMcp,
+  onUpdateMcp,
+  onRemoveMcp,
   onShowToast,
 }: McpSettingsProps) {
   const [reviewingServer, setReviewingServer] = useState<McpServerRecord | null>(null);
   const [expandedServerIds, setExpandedServerIds] = useState<Set<string>>(new Set());
   const [localError, setLocalError] = useState<string>();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingServer, setEditingServer] = useState<McpServerRecord | null>(null);
 
   function toggleExpand(key: string) {
     setExpandedServerIds((prev) => {
@@ -77,6 +82,30 @@ export function McpSettings({
     }
   }
 
+  async function handleUpdate(input: McpUpdateInput) {
+    setLocalError(undefined);
+    try {
+      await onUpdateMcp(input);
+      onShowToast(`MCP Server “${input.serverId}” 已保存，请重新审阅后启用`, "success");
+      setEditingServer(null);
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : "保存 MCP Server 失败");
+      throw cause;
+    }
+  }
+
+  async function handleRemove(serverId: string) {
+    setLocalError(undefined);
+    try {
+      await onRemoveMcp(serverId);
+      onShowToast(`MCP Server “${serverId}” 已卸载`, "success");
+      setEditingServer(null);
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : "卸载 MCP Server 失败");
+      throw cause;
+    }
+  }
+
   return (
     <div className="settings-panel">
       <div className="settings-panel-header">
@@ -112,9 +141,11 @@ export function McpSettings({
             const serverKey = `${server.pluginId}:${server.serverId}`;
             const isExpanded = expandedServerIds.has(serverKey);
             const isPending =
-              pendingAction?.type === "toggle_mcp" &&
-              pendingAction.pluginId === server.pluginId &&
-              pendingAction.serverId === server.serverId;
+              (pendingAction?.type === "toggle_mcp" &&
+                pendingAction.pluginId === server.pluginId &&
+                pendingAction.serverId === server.serverId) ||
+              ((pendingAction?.type === "update_mcp" || pendingAction?.type === "remove_mcp") &&
+                pendingAction.serverId === server.serverId);
 
             // Status logic
             let statusTone: "success" | "warning" | "danger" | "neutral" = "neutral";
@@ -155,27 +186,42 @@ export function McpSettings({
                   </div>
                 }
                 action={
-                  server.consented ? (
-                    <Button
-                      variant="ghost"
-                      size="medium"
-                      disabled={isPending || !server.declaredEnabled}
-                      loading={isPending}
-                      onClick={() => void handleDisable(server)}
-                    >
-                      停用
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="primary"
-                      size="medium"
-                      disabled={isPending || !server.declaredEnabled}
-                      loading={isPending}
-                      onClick={() => setReviewingServer(server)}
-                    >
-                      审阅并启用
-                    </Button>
-                  )
+                  <div className="mcp-row-actions">
+                    {server.pluginId === "manual" && (
+                      <Button
+                        variant="ghost"
+                        size="medium"
+                        disabled={isPending || !server.declaredEnabled}
+                        onClick={() => {
+                          setLocalError(undefined);
+                          setEditingServer(server);
+                        }}
+                      >
+                        编辑
+                      </Button>
+                    )}
+                    {server.consented ? (
+                      <Button
+                        variant="ghost"
+                        size="medium"
+                        disabled={isPending || !server.declaredEnabled}
+                        loading={isPending && pendingAction?.type === "toggle_mcp"}
+                        onClick={() => void handleDisable(server)}
+                      >
+                        停用
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="primary"
+                        size="medium"
+                        disabled={isPending || !server.declaredEnabled}
+                        loading={isPending && pendingAction?.type === "toggle_mcp"}
+                        onClick={() => setReviewingServer(server)}
+                      >
+                        审阅并启用
+                      </Button>
+                    )}
+                  </div>
                 }
                 expandableDetails={
                   <dl className="mcp-details-grid">
@@ -229,6 +275,16 @@ export function McpSettings({
         error={localError}
         onSave={handleCreate}
         onCancel={() => setCreateOpen(false)}
+      />
+      <McpCreateDialog
+        open={editingServer !== null}
+        server={editingServer}
+        busy={pendingAction?.type === "update_mcp" && pendingAction.serverId === editingServer?.serverId}
+        removeBusy={pendingAction?.type === "remove_mcp" && pendingAction.serverId === editingServer?.serverId}
+        error={localError}
+        onSave={handleUpdate}
+        onRemove={handleRemove}
+        onCancel={() => setEditingServer(null)}
       />
     </div>
   );

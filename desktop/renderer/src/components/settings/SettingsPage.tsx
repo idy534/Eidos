@@ -3,6 +3,7 @@ import type {
   ModelListResult,
   McpServerRecord,
   McpCreateInput,
+  McpUpdateInput,
   PluginRecord,
   RuntimeStatus,
   SkillMetadata,
@@ -38,6 +39,8 @@ interface SettingsPageProps {
   onRemoveSkill: (qualifiedId: string) => Promise<SkillRemoval>;
   onToggleMcp: (pluginId: string, serverId: string, enabled: boolean) => Promise<void>;
   onCreateMcp: (input: McpCreateInput) => Promise<void>;
+  onUpdateMcp: (input: McpUpdateInput) => Promise<void>;
+  onRemoveMcp: (serverId: string) => Promise<void>;
 }
 
 export function SettingsPage({
@@ -60,6 +63,8 @@ export function SettingsPage({
   onRemoveSkill,
   onToggleMcp,
   onCreateMcp,
+  onUpdateMcp,
+  onRemoveMcp,
 }: SettingsPageProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("model");
   const [toasts, setToasts] = useState<SettingsToast[]>([]);
@@ -179,6 +184,8 @@ export function SettingsPage({
                 pendingAction={pendingAction}
                 onToggleMcp={onToggleMcp}
                 onCreateMcp={onCreateMcp}
+                onUpdateMcp={onUpdateMcp}
+                onRemoveMcp={onRemoveMcp}
                 onShowToast={showToast}
               />
             )}
