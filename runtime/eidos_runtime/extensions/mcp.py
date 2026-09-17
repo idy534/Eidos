@@ -780,6 +780,7 @@ def _tool_entry(
 ) -> ToolRegistryEntry:
     input_schema = tool.input_schema
     input_validator = BoundedJsonSchema(input_schema)
+    input_schema = input_validator.schema
     output_schema = tool.output_schema
     output_validator = (
         BoundedJsonSchema(output_schema) if output_schema is not None else None

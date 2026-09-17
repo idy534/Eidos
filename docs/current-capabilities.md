@@ -156,6 +156,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Tools
 
 - Tool Registry 统一保存 ToolSpec、Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。
+- MCP Tool Schema 接受常见 draft-07/2020-12 `$schema` 元数据。Runtime 不解析远程 `$ref`；省略 `additionalProperties` 的对象仍按 Eidos 的有界闭对象规则处理。
 - 内置只读 Tool 包括 `list_files`、`read_file`、`read_file_range` 和 `search_text`。这些 Tool 接受 Workspace-relative path，或接受 Workspace 与当前 active Skill root 内的 canonical absolute path。
 - Workspace mutation Tool 只向模型暴露 `apply_patch`。`write_file` 和 `delete_file` 不在模型 Tool Registry 中。
 - `apply_patch` 的两种传输共用 Codex Patch 文本。具备 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 的相应 ModelProfile 收到 native Custom / FREEFORM Tool，并直接提交 Patch 原文；其他 ModelProfile 收到只含字符串字段 `patch` 的 Function 参数。模型不再构造 `changes/chunks/oldLines/newLines/endOfFile` 对象。普通 Workspace 写入沿用当前 Workspace Permission；外部路径或无沙盒执行仍需扩权审批。

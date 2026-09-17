@@ -399,6 +399,7 @@ class McpManagerTests(unittest.TestCase):
         self.assertEqual(echo.spec.side_effect, "external")
         self.assertTrue(echo.spec.approval_required)
         self.assertEqual(echo.spec.visibility, "deferred")
+        self.assertEqual(echo.spec.input_schema["additionalProperties"], False)
         self.assertEqual(echo.provenance.kind, "mcp")
         self.assertEqual(result["outcome"], "success")
         self.assertEqual(result["data"]["text"], "hello")

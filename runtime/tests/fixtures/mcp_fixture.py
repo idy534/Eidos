@@ -11,6 +11,7 @@ TOOLS = [
         "name": "echo",
         "description": "Return one message",
         "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {"message": {"type": "string", "maxLength": 256}},
             "required": ["message"],

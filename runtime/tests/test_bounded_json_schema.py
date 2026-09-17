@@ -72,6 +72,21 @@ def test_schema_policy_rejects_closed_subset_violations(
     assert_code(code, lambda: BoundedJsonSchema(schema))
 
 
+def test_standard_schema_dialect_metadata_is_accepted_without_remote_resolution() -> None:
+    validator = BoundedJsonSchema({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {"message": {"type": "string"}},
+        "required": ["message"],
+    })
+
+    assert validator.validate({"message": "hello"}) == {"message": "hello"}
+    assert_code(
+        "JSON_VALUE_ADDITIONAL_PROPERTY",
+        lambda: validator.validate({"message": "hello", "extra": True}),
+    )
+
+
 @pytest.mark.parametrize(
     ("schema", "value", "code"),
     [

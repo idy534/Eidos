@@ -18,9 +18,17 @@ MAX_JSON_SAFE_INTEGER = 9_007_199_254_740_991
 _KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
     "enum", "const", "default", "minimum", "maximum", "minLength",
-    "maxLength", "minItems", "maxItems", "description",
+    "maxLength", "minItems", "maxItems", "description", "$schema",
 }
 _TYPES = {"object", "array", "string", "integer", "number", "boolean", "null"}
+_SCHEMA_DIALECTS = {
+    "http://json-schema.org/draft-07/schema",
+    "http://json-schema.org/draft-07/schema#",
+    "https://json-schema.org/draft-07/schema",
+    "https://json-schema.org/draft-07/schema#",
+    "https://json-schema.org/draft/2020-12/schema",
+    "https://json-schema.org/draft/2020-12/schema#",
+}
 _VALUE_ERROR_CODES = {
     "type": "JSON_VALUE_TYPE",
     "enum": "JSON_VALUE_ENUM",
@@ -70,7 +78,7 @@ class BoundedJsonSchema:
     """Validates Eidos's bounded, closed, offline JSON Schema subset."""
 
     def __init__(self, schema: dict[str, object]) -> None:
-        self.schema = deepcopy(schema)
+        self.schema = _close_implicit_object_schemas(deepcopy(schema))
         _validate_schema(self.schema)
         try:
             Draft202012Validator.check_schema(self.schema)
@@ -117,9 +125,31 @@ def _validate_schema(schema: object) -> None:
     _preflight_schema_node(schema, 0, [0])
 
 
+def _close_implicit_object_schemas(schema: object) -> object:
+    if not isinstance(schema, dict):
+        return schema
+    normalized = dict(schema)
+    # MCP servers commonly omit this keyword. Keep Eidos's closed-object
+    # contract without accepting an unbounded additional-property schema.
+    if normalized.get("type") == "object" and "additionalProperties" not in normalized:
+        normalized["additionalProperties"] = False
+    properties = normalized.get("properties")
+    if isinstance(properties, dict):
+        normalized["properties"] = {
+            key: _close_implicit_object_schemas(value)
+            for key, value in properties.items()
+        }
+    items = normalized.get("items")
+    if isinstance(items, dict):
+        normalized["items"] = _close_implicit_object_schemas(items)
+    return normalized
+
+
 def _preflight_schema_node(schema: object, depth: int, count: list[int]) -> None:
     _count(depth, count, "JSON_SCHEMA_LIMIT_EXCEEDED")
     if not isinstance(schema, dict) or not set(schema).issubset(_KEYS):
+        raise JsonSchemaValidationError("JSON_SCHEMA_UNSUPPORTED")
+    if "$schema" in schema and schema["$schema"] not in _SCHEMA_DIALECTS:
         raise JsonSchemaValidationError("JSON_SCHEMA_UNSUPPORTED")
     kind = schema.get("type")
     if not isinstance(kind, str) or kind not in _TYPES:

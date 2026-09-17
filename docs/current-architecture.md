@@ -191,7 +191,7 @@ ModelConfigStore 要求配置与内置 Catalog 严格匹配。当前内置 Model
 
 ## 8. Tool Execution
 
-Tool Registry 保存 ToolSpec、输入和结果 Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。每个 Step 固化可见 Tool Set、Contract Hash 和 Extension Snapshot。
+Tool Registry 保存 ToolSpec、输入和结果 Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。MCP 输入 Schema 接受常见 draft-07/2020-12 `$schema` 元数据，但不解析远程 `$ref`；省略 `additionalProperties` 的对象在 Eidos 内按有界闭对象处理。每个 Step 固化可见 Tool Set、Contract Hash 和 Extension Snapshot。
 
 Runtime 对每个 ToolCall 执行以下阶段：
 
