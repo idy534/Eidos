@@ -778,10 +778,13 @@ def _tool_entry(
     tool: mcp_types.Tool,
     server: dict[str, object],
 ) -> ToolRegistryEntry:
-    input_schema = tool.input_schema
+    input_schema = _normalize_mcp_schema(tool.input_schema)
     input_validator = BoundedJsonSchema(input_schema)
     input_schema = input_validator.schema
-    output_schema = tool.output_schema
+    output_schema = (
+        _normalize_mcp_schema(tool.output_schema)
+        if tool.output_schema is not None else None
+    )
     output_validator = (
         BoundedJsonSchema(output_schema) if output_schema is not None else None
     )
@@ -821,6 +824,24 @@ def _tool_entry(
         input_schema_validator=input_validator,
         output_schema_validator=output_validator,
     )
+
+
+def _normalize_mcp_schema(schema: dict[str, object]) -> dict[str, object]:
+    """Close implicit MCP object schemas before Eidos validates them."""
+    normalized = dict(schema)
+    if normalized.get("type") == "object" and "additionalProperties" not in normalized:
+        normalized["additionalProperties"] = False
+    properties = normalized.get("properties")
+    if isinstance(properties, dict):
+        normalized["properties"] = {
+            key: _normalize_mcp_schema(value)
+            if isinstance(value, dict) else value
+            for key, value in properties.items()
+        }
+    items = normalized.get("items")
+    if isinstance(items, dict):
+        normalized["items"] = _normalize_mcp_schema(items)
+    return normalized
 
 
 def _valid_tool_entries(

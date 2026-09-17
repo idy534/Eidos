@@ -78,7 +78,7 @@ class BoundedJsonSchema:
     """Validates Eidos's bounded, closed, offline JSON Schema subset."""
 
     def __init__(self, schema: dict[str, object]) -> None:
-        self.schema = _close_implicit_object_schemas(deepcopy(schema))
+        self.schema = deepcopy(schema)
         _validate_schema(self.schema)
         try:
             Draft202012Validator.check_schema(self.schema)
@@ -123,26 +123,6 @@ def _validate_schema(schema: object) -> None:
     if len(encoded.encode("utf-8")) > MAX_SCHEMA_BYTES:
         raise JsonSchemaValidationError("JSON_SCHEMA_TOO_LARGE")
     _preflight_schema_node(schema, 0, [0])
-
-
-def _close_implicit_object_schemas(schema: object) -> object:
-    if not isinstance(schema, dict):
-        return schema
-    normalized = dict(schema)
-    # MCP servers commonly omit this keyword. Keep Eidos's closed-object
-    # contract without accepting an unbounded additional-property schema.
-    if normalized.get("type") == "object" and "additionalProperties" not in normalized:
-        normalized["additionalProperties"] = False
-    properties = normalized.get("properties")
-    if isinstance(properties, dict):
-        normalized["properties"] = {
-            key: _close_implicit_object_schemas(value)
-            for key, value in properties.items()
-        }
-    items = normalized.get("items")
-    if isinstance(items, dict):
-        normalized["items"] = _close_implicit_object_schemas(items)
-    return normalized
 
 
 def _preflight_schema_node(schema: object, depth: int, count: list[int]) -> None:

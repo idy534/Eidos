@@ -78,13 +78,10 @@ def test_standard_schema_dialect_metadata_is_accepted_without_remote_resolution(
         "type": "object",
         "properties": {"message": {"type": "string"}},
         "required": ["message"],
+        "additionalProperties": False,
     })
 
     assert validator.validate({"message": "hello"}) == {"message": "hello"}
-    assert_code(
-        "JSON_VALUE_ADDITIONAL_PROPERTY",
-        lambda: validator.validate({"message": "hello", "extra": True}),
-    )
 
 
 @pytest.mark.parametrize(

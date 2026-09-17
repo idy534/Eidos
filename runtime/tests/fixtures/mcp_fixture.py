@@ -15,7 +15,6 @@ TOOLS = [
             "type": "object",
             "properties": {"message": {"type": "string", "maxLength": 256}},
             "required": ["message"],
-            "additionalProperties": False,
         },
     },
     {
