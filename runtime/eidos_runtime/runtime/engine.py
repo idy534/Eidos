@@ -142,6 +142,8 @@ class RuntimeEngine:
         self.tool_concurrency_gate = ToolConcurrencyGate()
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
+        run = self.store.read_run(run_id)
+        self._emit_started(run_id, run)
         repository_context = RunRepositoryContext()
         repository_snapshot = None
         repository_state = None
@@ -157,7 +159,6 @@ class RuntimeEngine:
             capture_for_run = getattr(repository_state, "capture_for_run")
             repository_capture = capture_for_run()
             repository_snapshot = repository_capture.snapshot
-        run = self.store.read_run(run_id)
         if (
             repository_state is not None
             and repository_snapshot is not None
@@ -240,7 +241,6 @@ class RuntimeEngine:
         run: dict[str, object],
         repository_context: RunRepositoryContext,
     ) -> None:
-        self._emit_started(run_id, run)
         extension_snapshot = run.get("extensionSnapshot")
         if not isinstance(extension_snapshot, dict):
             extension_snapshot = dict(EMPTY_EXTENSION_SNAPSHOT)

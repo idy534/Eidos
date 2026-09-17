@@ -294,6 +294,8 @@ Workspace 激活只读取 SQLite 中的 latest complete generation metadata 和 
 
 `RuntimeEngine.run()` 在第一次模型执行前调用 `ensure_ready()`。空 Snapshot 会触发首次 bounded Inventory build。Cold start 或 watcher 失效会触发一次 reconciliation。Reconciliation 复用完整 Inventory scan 和 Index 的 previous-generation reuse。Clean active generation 会直接复用，不会 scan。RuntimeEngine 随后捕获 immutable `RepositoryAnalysisSnapshot`。同一个 Run 的所有 Model Step 都复用这个 view。
 
+Run worker 启动后，Runtime 会先发布 `run/started` 和用户 Item。Repository generation 与 Retrieval 仍然在第一次模型执行前完成，因此 Workspace readiness 不会延迟 Feed 展示用户 query 和“正在思考”。
+
 Watcher 只会合并 dirty path、增加 invalidation epoch，并把 recovery status 标记为 reconciliation required。Watcher 不会替换 active snapshot，也不会生成新 generation。如果 build 期间出现 watcher event，Runtime 可以保存已内部验证的 complete generation 作为新 baseline，但 active state 仍保持 dirty 和 reconciliation required。下一个 Run 才会再次 reconcile。并发 `ensure_ready()` 由每个 active state 的 Condition 串行化。同一 Workspace 同一时刻只有一个 Repository build。
 
 RepositoryMap 的 manifest 读取使用 Inventory 中的 device、inode、size、mtime 和 content hash 进行 verified read。Map 捕获 Git branch 和 HEAD 后，Application 会在 SQLite commit 前用 Dulwich 再读一次。Manifest 或 Git state 在关键窗口改变时，candidate 不会成为 authoritative complete generation。完整 generation 的 Snapshot、recovery status 和 dirty bookkeeping 在一个锁保护范围内发布。

@@ -598,6 +598,64 @@ def test_runtime_engine_ensures_workspace_active_before_model_execution(
         store.close()
 
 
+def test_runtime_engine_publishes_user_item_before_repository_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    store = SessionStore(tmp_path / "runtime-data")
+    store.initialize()
+    repository_runtime = _runtime(store.repository_intelligence_repository())
+    readiness_started = threading.Event()
+    release_readiness = threading.Event()
+    try:
+        session = store.create_session(str(root))
+        run, _item = store.create_run(session["id"], "inspect")
+        original_ensure_ready = repository_runtime.ensure_ready
+
+        def blocked_ensure_ready(
+            workspace: Path,
+            *,
+            cancel: threading.Event | None = None,
+        ) -> object:
+            readiness_started.set()
+            assert release_readiness.wait(2)
+            return original_ensure_ready(workspace, cancel=cancel)
+
+        monkeypatch.setattr(repository_runtime, "ensure_ready", blocked_ensure_ready)
+        notifications: list[dict[str, object]] = []
+        errors: list[BaseException] = []
+
+        def run_engine() -> None:
+            try:
+                RuntimeEngine(
+                    store,
+                    ScriptedModel([ModelResponse(text="done")]),
+                    notifications.append,
+                    repository_runtime=repository_runtime,
+                ).run(run["id"], threading.Event())
+            except BaseException as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=run_engine)
+        worker.start()
+        assert readiness_started.wait(2)
+        assert [message["method"] for message in notifications] == [
+            "run/started",
+            "item/started",
+            "item/completed",
+        ]
+        release_readiness.set()
+        worker.join(5)
+        assert not worker.is_alive()
+        assert errors == []
+    finally:
+        release_readiness.set()
+        repository_runtime.shutdown_all()
+        store.close()
+
+
 def test_runtime_engine_captures_repository_once_for_multi_step_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -801,12 +859,12 @@ def test_run_repository_capture_excludes_invalidation_after_capture(
 
         monkeypatch.setattr(active.application, "retrieve", record_retrieve)
         original_read_run = store.read_run
-        invalidated = False
+        read_run_calls = 0
 
         def read_run_after_capture(run_id: str):
-            nonlocal invalidated
-            if not invalidated:
-                invalidated = True
+            nonlocal read_run_calls
+            read_run_calls += 1
+            if read_run_calls == 2:
                 _BlockingWatchController.instances[0].emit(
                     RepositoryChange(path="main.py", change="modified")
                 )
