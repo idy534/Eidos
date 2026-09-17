@@ -548,6 +548,14 @@ class SkillReadRequestDto(MethodRequestDto):
     qualified_id: StrictStr = Field(alias="qualifiedId", min_length=1)
 
 
+class SkillDetailRequestDto(SkillReadRequestDto):
+    pass
+
+
+class SkillRemoveRequestDto(SkillReadRequestDto):
+    pass
+
+
 class McpListRequestDto(MethodRequestDto):
     pass
 

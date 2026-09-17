@@ -22,6 +22,19 @@
     "pluginHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
+  "managedSkill": {
+    "schemaVersion": 1,
+    "qualifiedId": "demo:review",
+    "name": "review",
+    "description": "Review files.",
+    "pluginId": "demo",
+    "pluginVersion": "1.0.0",
+    "pluginHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceKind": "plugin",
+    "enabled": true,
+    "available": true
+  },
   "mcpServer": {
     "schemaVersion": 1,
     "pluginId": "demo",

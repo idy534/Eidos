@@ -64,11 +64,14 @@ test("Python DTOs, TypeScript interfaces, and validators share key fields", () =
     python,
     [
       "-c",
-      "import json; from eidos_runtime.protocol import schemas; "
+      "import json; from eidos_runtime.protocol import methods, schemas; "
+        + "classes = {'ManagedSkillDto': methods.ManagedSkillDto, "
+        + "'SessionDto': schemas.SessionDto, 'RunDto': schemas.RunDto, "
+        + "'ItemDto': schemas.ItemDto, 'ToolCallDto': schemas.ToolCallDto, "
+        + "'PluginRecordDto': schemas.PluginRecordDto, "
+        + "'McpServerRecordDto': schemas.McpServerRecordDto}; "
         + "print(json.dumps({name: [field.alias or key for key, field in "
-        + "getattr(schemas, name).model_fields.items()] for name in "
-        + "('SessionDto','RunDto','ItemDto','ToolCallDto','PluginRecordDto',"
-        + "'SkillMetadataDto','McpServerRecordDto')}))",
+        + "model.model_fields.items()] for name, model in classes.items()}))",
     ],
     { cwd: path.join(root, "runtime"), encoding: "utf8" },
   ));
@@ -80,7 +83,7 @@ test("Python DTOs, TypeScript interfaces, and validators share key fields", () =
     ["ItemDto", "Item", "isItem"],
     ["ToolCallDto", "ToolCall", "isToolCall"],
     ["PluginRecordDto", "PluginRecord", "isPluginRecord"],
-    ["SkillMetadataDto", "SkillMetadata", "isSkillMetadata"],
+    ["ManagedSkillDto", "SkillMetadata", "isSkillMetadata"],
     ["McpServerRecordDto", "McpServerRecord", "isMcpServerRecord"],
   ];
 

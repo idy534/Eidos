@@ -598,4 +598,4 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 
 插件技能只保存单技能卸载标记，不删除插件包内文件，因此不会破坏插件 hash 或影响其他 Skill/MCP。插件重启或开关不会移除该标记。当前实现保守地等待所有非终态 Run 结束后清理独立用户技能，不新增后台清理线程。
 
-本次生产实现尚未进入测试阶段。协议 Fixture、回归测试和迁移验证待用户确认后同步。
+本次设置重构已进入测试阶段。Runtime 管理、数据库迁移、协议 Fixture、Main 集成和 Renderer 行为测试已经补充。定向测试、协议契约检查、Python 检查、Renderer 状态与行为测试、构建、Seatbelt 和 Electron smoke 已完成。Runtime 全量测试首次运行发现 4 个旧 schema 断言和 1 个方法请求类型复用问题；修正后，5 个失败用例已定向通过。Main 全量测试首次运行发现 1 个错误测试期望；修正后，该场景已定向通过。人工 UI 验收和真实 Provider 验证仍未完成。

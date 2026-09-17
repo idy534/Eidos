@@ -748,6 +748,10 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
     const imported = await client.importPlugin(pluginRoot);
     await client.setPluginEnabled(imported.id, true);
     const skills = await client.listSkills();
+    const detail = await client.readSkillDetail("desktop_fixture:review");
+    const disabled = await client.setSkillEnabled("desktop_fixture:review", false);
+    const removedSkill = await client.removeSkill("desktop_fixture:review");
+    const skillsAfterRemoval = await client.listSkills();
     const servers = await client.listMcpServers();
     const enabled = await client.setMcpEnabled(imported.id, "fixture", true);
     const manual = await client.createMcpServer({
@@ -766,6 +770,20 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
 
     assert.equal((await client.listPlugins()).plugins[0]?.id, "desktop_fixture");
     assert.equal(skills.skills[0]?.qualifiedId, "desktop_fixture:review");
+    assert.equal(detail.body, "Inspect first.\n");
+    assert.equal(detail.content.includes("name: review"), true);
+    assert.equal(detail.directory.endsWith(path.join("skills", "review")), true);
+    assert.equal(disabled.enabled, false);
+    assert.deepEqual(removedSkill, {
+      qualifiedId: "desktop_fixture:review", removed: true, cleanupPending: false,
+    });
+    assert.equal(
+      skillsAfterRemoval.skills.some(
+        (skill) => skill.qualifiedId === "desktop_fixture:review",
+      ),
+      false,
+    );
+    assert.ok(skillsAfterRemoval.skills.every((skill) => skill.sourceKind === "system"));
     assert.equal(servers.servers[0]?.permissionProfile, "workspace_read");
     assert.equal(enabled.consented, true);
     assert.equal(manual.pluginId, "manual");
@@ -773,6 +791,7 @@ test("imports and manages closed Plugin Skill and MCP records", async () => {
     assert.equal(manual.cwd, await realpath(pluginRoot));
     assert.equal(extensionSnapshot.plugins[0]?.id, "desktop_fixture");
     assert.ok(extensionEvents.items.some((event) => event.eventType === "mcp_server.state_changed"));
+    assert.ok(extensionEvents.items.some((event) => event.eventType === "skill.state_changed"));
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
   } finally {

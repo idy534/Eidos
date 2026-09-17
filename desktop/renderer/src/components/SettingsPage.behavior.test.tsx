@@ -77,6 +77,10 @@ function props(overrides = {}) {
     plugins: [], skills: [], mcpServers: [], pendingAction: undefined,
     onClose: vi.fn(), onModelsChanged: vi.fn().mockResolvedValue(undefined),
     onImportPlugin: vi.fn(), onTogglePlugin: vi.fn(), onRemovePlugin: vi.fn(),
+    onToggleSkill: vi.fn().mockResolvedValue(undefined),
+    onRemoveSkill: vi.fn().mockResolvedValue({
+      qualifiedId: "user:test", removed: true, cleanupPending: false,
+    }),
     onToggleMcp: vi.fn(), onCreateMcp: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };

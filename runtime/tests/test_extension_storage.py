@@ -10,6 +10,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SCHEMA_REVISION, SessionStore  # noqa: E402
+from eidos_runtime.protocol.methods import ManagedSkillDto  # noqa: E402
 from eidos_runtime.protocol.schemas import (  # noqa: E402
     McpServerRecordDto,
     PluginRecordDto,
@@ -60,6 +61,10 @@ class ExtensionStorageTests(unittest.TestCase):
             fixture["skill"],
         )
         self.assertEqual(
+            ManagedSkillDto.model_validate(fixture["managedSkill"]).to_json_value(),
+            fixture["managedSkill"],
+        )
+        self.assertEqual(
             McpServerRecordDto.model_validate(fixture["mcpServer"]).to_json_value(),
             fixture["mcpServer"],
         )
@@ -107,7 +112,7 @@ class ExtensionStorageTests(unittest.TestCase):
         connection = self.store.connection
         assert connection is not None
 
-        self.assertEqual(SCHEMA_REVISION, 11)
+        self.assertEqual(SCHEMA_REVISION, 12)
         self.assertIn(
             "extension_snapshot_json",
             {row[1] for row in connection.execute("PRAGMA table_info(runs)")},

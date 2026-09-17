@@ -1134,7 +1134,7 @@ class RuntimeServer:
             ),
             (
                 "skill/detail",
-                method_dtos.SkillReadRequestDto,
+                method_dtos.SkillDetailRequestDto,
                 method_dtos.SkillDetailResponseDto,
                 lambda _id, request: self._applications_or_error().extensions.skill_detail(
                     qualified_id=request.qualified_id
@@ -1150,7 +1150,7 @@ class RuntimeServer:
             ),
             (
                 "skill/remove",
-                method_dtos.SkillReadRequestDto,
+                method_dtos.SkillRemoveRequestDto,
                 method_dtos.SkillRemoveResponseDto,
                 lambda _id, request: self._applications_or_error().extensions.remove_skill(
                     qualified_id=request.qualified_id
