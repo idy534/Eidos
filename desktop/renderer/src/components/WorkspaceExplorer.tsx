@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
 
@@ -640,9 +640,27 @@ function WorkspacePreview({ preview }: { preview: WorkspaceFilePreview }) {
           {...(preview.language === undefined ? {} : { language: preview.language })}
         />
       ) : (
-        <pre className="workspace-text-preview"><code>{preview.content}</code></pre>
+        <NumberedText code={preview.content ?? ""} />
       )}
     </article>
+  );
+}
+
+function NumberedText({ code }: { code: string }) {
+  const lines = useMemo(() => {
+    const parts = code.split("\n");
+    if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+    return parts;
+  }, [code]);
+  return (
+    <pre className="workspace-text-preview workspace-text-preview--numbered">
+      {lines.map((line, index) => (
+        <span className="preview-line" key={index}>
+          <span className="preview-line-number" aria-hidden="true">{index + 1}</span>
+          <span className="preview-line-code">{line}</span>
+        </span>
+      ))}
+    </pre>
   );
 }
 
@@ -660,6 +678,6 @@ function ShikiPreview({ code, language }: { code: string; language?: string }) {
     });
     return () => { active = false; };
   }, [code, language]);
-  if (!html) return <pre className="workspace-text-preview"><code>{code}</code></pre>;
+  if (!html) return <NumberedText code={code} />;
   return <div className="workspace-code-preview" dangerouslySetInnerHTML={{ __html: html }} />;
 }

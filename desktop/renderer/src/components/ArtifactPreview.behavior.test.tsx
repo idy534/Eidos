@@ -9,6 +9,18 @@ import { MarkdownContent } from "./MarkdownContent.js";
 import { ResultFiles, toolFilePaths } from "./ResultFiles.js";
 import { WorkspaceExplorer } from "./WorkspaceExplorer.js";
 
+vi.mock("shiki/bundle/web", () => ({
+  codeToHtml: async (code: string) => {
+    const parts = code.split("\n");
+    if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+    return (
+      `<pre class="shiki"><code>${parts.map((line) => (
+        `<span class="line"><span>${line}</span></span>`
+      )).join("\n")}</code></pre>`
+    );
+  },
+}));
+
 
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 const patch = [
@@ -185,6 +197,56 @@ describe("artifact previews and feedback", () => {
     expect(await screen.findByText("你可以在网页面板中操作页面并检查效果。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "打开交互预览" }));
     expect(value.openBrowser).toHaveBeenLastCalledWith("eidos-preview://preview/page.html");
+  });
+
+  it("numbers plain text preview lines without a phantom trailing row", async () => {
+    const previews: Record<string, WorkspaceFilePreview> = {
+      "notes.txt": { path: "notes.txt", kind: "text", sizeBytes: 8, truncated: false, content: "first\n\nthird\n" },
+    };
+    const listDirectory = vi.fn().mockResolvedValue({
+      path: ".",
+      entries: [{ name: "notes.txt", relativePath: "notes.txt", kind: "file" as const, sizeBytes: 8 }],
+      truncated: false,
+    });
+    const readPreview = vi.fn(async (_sessionId: string, path: string) => previews[path]!);
+    const value = artifactValue();
+    const { container } = render(
+      <ArtifactProvider value={value}>
+        <WorkspaceExplorer sessionId="session-a" listDirectory={listDirectory} readPreview={readPreview} />
+      </ArtifactProvider>,
+    );
+
+    fireEvent.click(await screen.findByText("notes.txt"));
+    const numbers = await waitFor(() => {
+      const found = container.querySelectorAll(".preview-line-number");
+      expect(found).toHaveLength(3);
+      return found;
+    });
+    expect([...numbers].map((node) => node.textContent)).toEqual(["1", "2", "3"]);
+    expect(container.querySelectorAll(".preview-line")).toHaveLength(3);
+  });
+
+  it("renders highlighted code with per-line spans for CSS line numbers", async () => {
+    const previews: Record<string, WorkspaceFilePreview> = {
+      "main.py": { path: "main.py", kind: "code", sizeBytes: 16, truncated: false, language: "python", content: "a = 1\nb = 2\n" },
+    };
+    const listDirectory = vi.fn().mockResolvedValue({
+      path: ".",
+      entries: [{ name: "main.py", relativePath: "main.py", kind: "file" as const, sizeBytes: 16 }],
+      truncated: false,
+    });
+    const readPreview = vi.fn(async (_sessionId: string, path: string) => previews[path]!);
+    const value = artifactValue();
+    const { container } = render(
+      <ArtifactProvider value={value}>
+        <WorkspaceExplorer sessionId="session-a" listDirectory={listDirectory} readPreview={readPreview} />
+      </ArtifactProvider>,
+    );
+
+    fireEvent.click(await screen.findByText("main.py"));
+    await waitFor(() => {
+      expect(container.querySelectorAll(".workspace-code-preview .line")).toHaveLength(2);
+    });
   });
 
   it("shows the last-turn patch and sends feedback with an exact tool anchor", async () => {

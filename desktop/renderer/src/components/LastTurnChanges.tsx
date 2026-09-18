@@ -86,7 +86,7 @@ function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
 function OpenInEditorIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path d="M8 4H4v12h12v-4M11 4h5v5M15.5 4.5 9 11" />
+      <path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5V14A1.5 1.5 0 0 0 5.5 15.5H14.5A1.5 1.5 0 0 0 16 14V11.5M11.5 4H16V8.5M16 4 10 10" />
     </svg>
   );
 }
@@ -94,7 +94,7 @@ function OpenInEditorIcon() {
 function OpenInWorkspaceIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path d="M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15" />
+      <path d="M3 8V6.5A1.5 1.5 0 0 1 4.5 5h4l1.5 2h5.5A1.5 1.5 0 0 1 17 8.5V14.5A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5Z" />
     </svg>
   );
 }

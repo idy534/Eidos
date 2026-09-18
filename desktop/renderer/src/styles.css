@@ -1307,6 +1307,41 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   tab-size: 2;
 }
 
+/* Shiki 按行输出 span.line，计数器生成行号（复制代码时不带出行号） */
+.workspace-code-preview pre {
+  counter-reset: workspace-preview-line;
+}
+
+.workspace-code-preview .line {
+  counter-increment: workspace-preview-line;
+}
+
+.workspace-code-preview .line::before {
+  content: counter(workspace-preview-line);
+  display: inline-block;
+  width: 4ch;
+  margin-right: 1.25ch;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+/* 纯文本按行渲染，行号列与 Shiki 侧同宽对齐 */
+.preview-line {
+  display: block;
+}
+
+.preview-line-number {
+  display: inline-block;
+  width: 4ch;
+  margin-right: 1.25ch;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
 @media (max-width: 860px) {
   .workspace-explorer--expanded { grid-template-columns: minmax(0, 1fr) minmax(11rem, 40%); }
   .workspace-markdown-preview { padding-inline: 1.25rem; }
@@ -1883,7 +1918,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .git-review-stat {
-  font-family: var(--font-code);
+  font-family: var(--font-ui);
   font-size: var(--font-size-sidebar);
   font-variant-numeric: tabular-nums;
   font-weight: 550;
@@ -2009,7 +2044,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: var(--font-size-sidebar);
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2045,7 +2080,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   align-items: center;
   gap: 0.35rem;
   color: var(--muted);
-  font-family: var(--font-code);
+  font-family: var(--font-ui);
   font-size: var(--font-size-sidebar);
   font-weight: 550;
   font-variant-numeric: tabular-nums;
@@ -2057,11 +2092,11 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .git-file-stats span:last-child:not(:nth-child(2)) { color: var(--status-warning); }
 
 .git-file-button:hover {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, #737373 10%, transparent);
 }
 
 .git-file-button[aria-expanded="true"] {
-  background: var(--surface-hover);
+  background: color-mix(in srgb, #737373 10%, transparent);
 }
 
 .git-review-file-header .git-icon-button {
