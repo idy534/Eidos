@@ -33,6 +33,7 @@ DEFAULT_GIT_TIMEOUT_SECONDS = 15.0
 DEFAULT_GIT_OUTPUT_BYTES = 128 * 1024
 DEFAULT_GIT_PATCH_BYTES = 64 * 1024 * 1024
 DEFAULT_GIT_REMOTE_TIMEOUT_SECONDS = 120.0
+MAX_UNTRACKED_DIFF_FILES = 200
 
 
 class GitExecutionProfile(StrEnum):
@@ -270,8 +271,16 @@ class GitCli:
     ``/usr/bin/git``.
     """
 
-    def __init__(self, *, runner: HardenedGitRunner | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        runner: HardenedGitRunner | None = None,
+        max_untracked_diff_files: int = MAX_UNTRACKED_DIFF_FILES,
+    ) -> None:
+        if max_untracked_diff_files < 1:
+            raise ValueError("Git untracked diff file cap must be positive")
         self._runner = runner or HardenedGitRunner()
+        self._max_untracked_diff_files = max_untracked_diff_files
 
     def worktree_add(
         self,
@@ -769,6 +778,9 @@ class GitCli:
         output_limit_bytes: int,
         path: str | None = None,
     ) -> GitCliDiff:
+        untracked: tuple[str, ...] | None = None
+        if include_untracked:
+            untracked = self.untracked_paths(cwd)
         patch = self._capture_patch(
             cwd,
             base_commit=base_commit,
@@ -776,6 +788,7 @@ class GitCli:
             output_limit_bytes=output_limit_bytes,
             raise_on_truncation=False,
             path=path,
+            untracked=untracked,
         )
         changed_paths = self._changed_paths(
             cwd,
@@ -783,12 +796,14 @@ class GitCli:
             include_untracked=include_untracked,
             output_limit_bytes=output_limit_bytes,
             path=path,
+            untracked=untracked,
         )
         additions, deletions, stats_incomplete, file_stats = self._diff_stats(
             cwd,
             base_commit=base_commit,
             include_untracked=include_untracked,
             path=path,
+            untracked=untracked,
         )
         return GitCliDiff(
             patch=patch[0],
@@ -850,6 +865,7 @@ class GitCli:
         output_limit_bytes: int,
         raise_on_truncation: bool,
         path: str | None = None,
+        untracked: tuple[str, ...] | None = None,
     ) -> tuple[bytes, bool]:
         if output_limit_bytes < 1:
             raise ValueError("Git patch output limit must be positive")
@@ -873,7 +889,22 @@ class GitCli:
         output = bytearray(result.stdout)
         truncated = result.stdout_truncated
         if include_untracked and not truncated:
-            for relative in self.untracked_paths(cwd):
+            candidates = (
+                untracked if untracked is not None else self.untracked_paths(cwd)
+            )
+            if path is not None:
+                candidates = (
+                    (path,) if path in set(candidates) else ()
+                )
+            elif len(candidates) > self._max_untracked_diff_files:
+                if raise_on_truncation:
+                    raise GitCommandFailedError(
+                        "worktree-diff",
+                        returncode=None,
+                        stderr="Git untracked file count exceeds the diff cap",
+                    )
+                return bytes(output[:output_limit_bytes]), True
+            for relative in candidates[: self._max_untracked_diff_files + 1]:
                 if path is not None and relative != path:
                     continue
                 remaining = output_limit_bytes - len(output)
@@ -886,15 +917,15 @@ class GitCli:
                         )
                     truncated = True
                     break
-                untracked = self._untracked_patch(
+                untracked_patch = self._untracked_patch(
                     cwd,
                     relative,
                     output_limit_bytes=remaining,
                     raise_on_truncation=raise_on_truncation,
                     config_overrides=overrides,
                 )
-                output.extend(untracked[0])
-                if untracked[1]:
+                output.extend(untracked_patch[0])
+                if untracked_patch[1]:
                     truncated = True
                     break
         return bytes(output[:output_limit_bytes]), truncated
@@ -987,6 +1018,7 @@ class GitCli:
         include_untracked: bool,
         output_limit_bytes: int,
         path: str | None = None,
+        untracked: tuple[str, ...] | None = None,
     ) -> tuple[str, ...]:
         result = self._runner.run(
             (
@@ -1007,9 +1039,16 @@ class GitCli:
         )
         paths = {os.fsdecode(path) for path in result.stdout.split(b"\0") if path}
         if include_untracked:
+            candidates = (
+                untracked if untracked is not None else self.untracked_paths(cwd)
+            )
+            if path is not None:
+                candidates = (path,) if path in set(candidates) else ()
+            elif len(candidates) > self._max_untracked_diff_files:
+                candidates = candidates[: self._max_untracked_diff_files]
             paths.update(
                 relative
-                for relative in self.untracked_paths(cwd)
+                for relative in candidates
                 if path is None or relative == path
             )
         return tuple(sorted(paths))
@@ -1021,6 +1060,7 @@ class GitCli:
         base_commit: str,
         include_untracked: bool,
         path: str | None = None,
+        untracked: tuple[str, ...] | None = None,
     ) -> tuple[int, int, bool, tuple[GitCliFileStat, ...]]:
         overrides = filter_config_overrides(self._runner, cwd)
         result = self._runner.run(
@@ -1045,9 +1085,17 @@ class GitCli:
         deletions = sum(stat.deletions for stat in file_stats)
         if not include_untracked:
             return additions, deletions, incomplete, file_stats
+        candidates = untracked if untracked is not None else self.untracked_paths(cwd)
+        if path is not None:
+            candidates = (path,) if path in set(candidates) else ()
+        elif len(candidates) > self._max_untracked_diff_files:
+            # Over-cap: keep byte-bounded tracked stats and mark incomplete.
+            # Full batching via a temporary index is a follow-up; this cap
+            # only bounds per-file subprocess count on the observe path.
+            return additions, deletions, True, file_stats
         # ponytail: native Git needs one no-index call per untracked file; batch only
         # if measured review latency justifies a more complex temporary-index path.
-        for relative in self.untracked_paths(cwd):
+        for relative in candidates:
             if path is not None and relative != path:
                 continue
             untracked = self._runner.run(
