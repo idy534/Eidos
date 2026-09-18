@@ -445,6 +445,65 @@ class _DeferredGitPushAdapter:
         self._server.send(response(request_id, result.to_json_value()))
 
 
+class _DeferredGitObserveAdapter:
+    """Offload read-only Git observes from the JSON-RPC input loop.
+
+    Slow `git status/diff/context` must not head-of-line block cheap reads
+    such as `session/read` or `model/presets`. The input loop only validates
+    the request and schedules a supervisor managed task; the background task
+    sends the response later via the thread-safe `RuntimeServer.send`.
+    """
+
+    def __init__(
+        self,
+        server: "RuntimeServer",
+        kind: str,
+        method_name: str,
+    ) -> None:
+        self._server = server
+        self._kind = kind
+        self._method_name = method_name
+
+    def __call__(
+        self, request_id: str, request: BaseModel
+    ) -> BaseModel | DeferredMethodResult:
+        method = getattr(
+            self._server._applications_or_error().sessions, self._method_name
+        )
+
+        def _run(_cancel: threading.Event) -> None:
+            try:
+                result = method(request)
+            except ApplicationError as error:
+                self._server.send(business_error(request_id, error.code))
+                return
+            except Exception:
+                logger.exception("Deferred Git observe failed: %s", self._kind)
+                self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+                return
+            try:
+                to_wire = getattr(result, "to_json_value", None)
+                payload = (
+                    to_wire()
+                    if callable(to_wire)
+                    else result.model_dump(mode="json", by_alias=True)
+                )
+            except Exception:
+                logger.exception(
+                    "Deferred Git observe serialization failed: %s", self._kind
+                )
+                self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+                return
+            self._server.send(response(request_id, payload))
+
+        scheduled = self._server.supervisor.start_managed_task(self._kind, _run)
+        if not scheduled:
+            # Draining/reconfiguring: preserve current read availability by
+            # falling back to synchronous execution on the input loop.
+            return method(request)
+        return DeferredMethodResult()
+
+
 @dataclass(frozen=True)
 class _RuntimeApplications:
     projects: ProjectApplication
@@ -727,14 +786,6 @@ class RuntimeServer:
                 ),
             ),
             (
-                "project/gitContext",
-                method_dtos.GitContextRequestDto,
-                method_dtos.GitContextResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_context(
-                    request
-                ),
-            ),
-            (
                 "session/create",
                 method_dtos.SessionCreateRequestDto,
                 method_dtos.SessionCreateResponseDto,
@@ -788,14 +839,6 @@ class RuntimeServer:
                 request: self._applications_or_error().sessions.read_snapshot(request),
             ),
             (
-                "session/gitStatus",
-                method_dtos.SessionGitStatusRequestDto,
-                method_dtos.SessionGitStatusResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_status(
-                    request
-                ),
-            ),
-            (
                 "session/gitReadPatch",
                 method_dtos.SessionGitReadPatchRequestDto,
                 method_dtos.SessionGitReadPatchResponseDto,
@@ -806,14 +849,6 @@ class RuntimeServer:
                 method_dtos.SessionGitApplyHunkRequestDto,
                 method_dtos.SessionGitApplyHunkResponseDto,
                 lambda _id, request: self._applications_or_error().sessions.git_apply_hunk(request),
-            ),
-            (
-                "session/gitDiff",
-                method_dtos.SessionGitDiffRequestDto,
-                method_dtos.SessionGitDiffResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_diff(
-                    request
-                ),
             ),
             (
                 "workspace/listDirectory",
@@ -1318,6 +1353,39 @@ class RuntimeServer:
                 error_mapper=_application_error_mapping,
             )
         )
+        for name, request_type, response_type, method_name in (
+            (
+                "project/gitContext",
+                method_dtos.GitContextRequestDto,
+                method_dtos.GitContextResponseDto,
+                "git_context",
+            ),
+            (
+                "session/gitStatus",
+                method_dtos.SessionGitStatusRequestDto,
+                method_dtos.SessionGitStatusResponseDto,
+                "git_status",
+            ),
+            (
+                "session/gitDiff",
+                method_dtos.SessionGitDiffRequestDto,
+                method_dtos.SessionGitDiffResponseDto,
+                "git_diff",
+            ),
+        ):
+            registry.register(
+                MethodRegistration(
+                    name=name,
+                    request_type=request_type,
+                    response_type=response_type,
+                    handler=_DeferredGitObserveAdapter(
+                        self, kind=name, method_name=method_name
+                    ),
+                    allowed_when_draining=True,
+                    allowed_during_reconfiguration=True,
+                    error_mapper=_application_error_mapping,
+                )
+            )
         return registry
 
     def _worktree_settings_response(self) -> method_dtos.SettingsReadResponseDto:

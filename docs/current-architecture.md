@@ -83,7 +83,7 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 
 ## 4. Runtime Transport & Application Layer
 
-`RuntimeServer` 维护 SQLite Store、ModelConfigStore、RunSupervisor、RuntimeAsyncKernel 和 Method Registry。Method Registry 负责方法注册、typed request/response 校验、重复注册检查和稳定错误映射。
+`RuntimeServer` 维护 SQLite Store、ModelConfigStore、RunSupervisor、RuntimeAsyncKernel 和 Method Registry。Method Registry 负责方法注册、typed request/response 校验、重复注册检查和稳定错误映射。慢 remote（fetch/pull/push）与慢只读 Git 观察（`project/gitContext`、`session/gitStatus`、`session/gitDiff`）使用 `DeferredMethodResult` 与 supervisor managed task offload，后台经线程安全 `send` 回包，输入循环不等待；draining/重配调度失败时只读观察同步回退。
 
 应用层为 Session、Run、Response Action、Model、Extension、Repository、Context、Checkpoint 和 Long Task 提供边界。RuntimeServer 仍保留少量兼容入口，但它不会建立第二套状态权威。
 
