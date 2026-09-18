@@ -5,7 +5,7 @@ import { userFacingError } from "../session-state.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { ToolTextView } from "./ToolTextView.js";
-import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
+import { WorkspaceFileIcon, WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 
 function cleanFilePath(file: { oldPath: string; newPath: string }): string {
   const raw = file.newPath && file.newPath !== "/dev/null" ? file.newPath : file.oldPath;
@@ -81,14 +81,6 @@ function OpenInEditorIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
       <path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5V14A1.5 1.5 0 0 0 5.5 15.5H14.5A1.5 1.5 0 0 0 16 14V11.5M11.5 4H16V8.5M16 4 10 10" />
-    </svg>
-  );
-}
-
-function OpenInWorkspaceIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path d="M3 8V6.5A1.5 1.5 0 0 1 4.5 5h4l1.5 2h5.5A1.5 1.5 0 0 1 17 8.5V14.5A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5Z" />
     </svg>
   );
 }
@@ -475,7 +467,7 @@ export function TextReviewPanel({
                   size="small"
                   variant="ghost"
                   className="git-icon-button"
-                  icon={<OpenInWorkspaceIcon />}
+                  icon={<WorkspaceFolderIcon />}
                   aria-label={`在工作区打开 ${file.path}`}
                   title={`在工作区打开 ${file.path}`}
                   onClick={() => actions?.openFile(file.path)}

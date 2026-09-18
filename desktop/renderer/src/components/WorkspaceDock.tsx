@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { DropdownMenu } from "./DropdownMenu.js";
+import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import "./WorkspaceDock.css";
 
 export type WorkspaceToolKind = "text-review" | "review" | "terminal" | "files" | "browser";
@@ -42,11 +43,7 @@ function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
   }
   if (tool === "browser") return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><ellipse cx="10" cy="10" rx="3" ry="7.5" /><path d="M2.5 10h15" /></svg>;
   if (tool === "files") {
-    return (
-      <svg viewBox="0 0 20 20" aria-hidden="true">
-        <path d="M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15" />
-      </svg>
-    );
+    return <WorkspaceFolderIcon />;
   }
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">

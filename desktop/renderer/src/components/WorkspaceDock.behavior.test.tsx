@@ -163,11 +163,11 @@ describe("WorkspaceDock", () => {
       .toHaveAttribute("d", "M5 2.5h7l3 3v12H5zM12 2.5v3h3M7.5 10h4M9.5 8v4M7.5 14h4");
   });
 
-  it("uses a left-tab folder glyph for files", () => {
+  it("uses a rounded folder glyph for files", () => {
     render(<Harness initialTabs={[]} />);
 
     expect(screen.getByRole("button", { name: "文件" }).querySelector("path"))
-      .toHaveAttribute("d", "M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15");
+      .toHaveAttribute("d", "M3 8V6.5A1.5 1.5 0 0 1 4.5 5h4l1.5 2h5.5A1.5 1.5 0 0 1 17 8.5V14.5A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5Z");
   });
 
   it("uses an SVG plus glyph for add window trigger", () => {

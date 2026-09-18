@@ -17,6 +17,7 @@ import type {
 import { userFacingError } from "../session-state.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
+import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { LastTurnChanges, type ItemReviewStats } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
@@ -172,14 +173,6 @@ function OpenInEditorIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
       <path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5V14A1.5 1.5 0 0 0 5.5 15.5H14.5A1.5 1.5 0 0 0 16 14V11.5M11.5 4H16V8.5M16 4 10 10" />
-    </svg>
-  );
-}
-
-function OpenInWorkspaceIcon() {
-  return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
-      <path d="M3 8V6.5A1.5 1.5 0 0 1 4.5 5h4l1.5 2h5.5A1.5 1.5 0 0 1 17 8.5V14.5A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5Z" />
     </svg>
   );
 }
@@ -652,7 +645,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       size="small"
                       variant="ghost"
                       className="git-icon-button"
-                      icon={<OpenInWorkspaceIcon />}
+                      icon={<WorkspaceFolderIcon />}
                       aria-label={`在工作区打开 ${path}`}
                       title={`在工作区打开 ${path}`}
                       onClick={() => actions?.openFile(path)}

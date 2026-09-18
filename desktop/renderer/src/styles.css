@@ -2130,7 +2130,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.6;
+  stroke-width: 1.5;
 }
 
 .git-file-diff-scroll {
