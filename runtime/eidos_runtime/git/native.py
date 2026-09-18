@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import logging
 import os
+import tempfile
 from pathlib import Path
 import re
 import selectors
@@ -112,6 +113,7 @@ class HardenedGitRunner:
         timeout_seconds: float | None = None,
         cancel: threading.Event | None = None,
         editor_policy: GitEditorPolicy = GitEditorPolicy.DISABLED,
+        git_index_file: Path | None = None,
     ) -> GitCliResult:
         if not cwd.is_absolute() or not cwd.is_dir():
             raise GitCommandFailedError(operation, returncode=None)
@@ -122,6 +124,13 @@ class HardenedGitRunner:
             for argument in config_overrides
         ):
             raise ValueError("Git config override contains an invalid argument")
+        if git_index_file is not None:
+            if (
+                not isinstance(git_index_file, Path)
+                or not git_index_file.is_absolute()
+                or "\x00" in str(git_index_file)
+            ):
+                raise ValueError("Git index file override is invalid")
         argv = [self.git_executable]
         if apply_default_hardening:
             argv.extend(
@@ -167,6 +176,8 @@ class HardenedGitRunner:
             ssh_auth_sock = _validated_ssh_auth_sock(os.environ.get("SSH_AUTH_SOCK"))
             if ssh_auth_sock is not None:
                 environment["SSH_AUTH_SOCK"] = ssh_auth_sock
+        if git_index_file is not None:
+            environment["GIT_INDEX_FILE"] = str(git_index_file)
         command_timeout = (
             DEFAULT_GIT_REMOTE_TIMEOUT_SECONDS
             if timeout_seconds is None and profile is GitExecutionProfile.REMOTE
@@ -781,6 +792,20 @@ class GitCli:
         untracked: tuple[str, ...] | None = None
         if include_untracked:
             untracked = self.untracked_paths(cwd)
+        if (
+            include_untracked
+            and path is None
+            and untracked is not None
+            and 0 < len(untracked) <= self._max_untracked_diff_files
+        ):
+            batched = self._batched_diff_with_temp_index(
+                cwd,
+                base_commit=base_commit,
+                untracked=untracked,
+                output_limit_bytes=output_limit_bytes,
+            )
+            if batched is not None:
+                return batched
         patch = self._capture_patch(
             cwd,
             base_commit=base_commit,
@@ -813,6 +838,164 @@ class GitCli:
             deletions=deletions,
             stats_incomplete=stats_incomplete,
             file_stats=file_stats,
+        )
+
+    def _copy_real_index_for_temp_diff(self, cwd: Path, index_path: Path) -> bool:
+        """Seed a disposable index from the real one without mutating it."""
+
+        try:
+            result = self._runner.run(
+                ("rev-parse", "--git-dir"),
+                cwd=cwd,
+                operation="worktree-diff-temp-index-dir",
+                config_overrides=filter_config_overrides(self._runner, cwd),
+            )
+            git_dir_text = result.stdout.decode("utf-8", errors="strict").strip()
+        except (GitCommandFailedError, UnicodeDecodeError, OSError, ValueError):
+            return False
+        if not git_dir_text or "\x00" in git_dir_text:
+            return False
+        git_dir = Path(git_dir_text)
+        if not git_dir.is_absolute():
+            git_dir = cwd / git_dir_text
+        try:
+            real_index = (git_dir / "index").resolve(strict=False)
+            content = real_index.read_bytes()
+        except OSError:
+            return False
+        try:
+            with open(index_path, "wb") as stream:
+                stream.write(content)
+        except OSError:
+            return False
+        return True
+
+    def _batched_diff_with_temp_index(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str,
+        untracked: tuple[str, ...],
+        output_limit_bytes: int,
+    ) -> GitCliDiff | None:
+        """Single-shot untracked diff via a disposable index.
+
+        Returns None when the temporary index cannot be built, letting the
+        caller fall back to the bounded per-file path. The real index is
+        never touched; all reads use GIT_INDEX_FILE in the system temp dir.
+        """
+
+        if not untracked:
+            return None
+        overrides = filter_config_overrides(self._runner, cwd)
+        descriptor = -1
+        index_path: Path | None = None
+        try:
+            descriptor, raw_path = tempfile.mkstemp(prefix="eidos-git-index-")
+            os.close(descriptor)
+            descriptor = -1
+            index_path = Path(raw_path)
+            if not self._copy_real_index_for_temp_diff(cwd, index_path):
+                return None
+            for offset in range(0, len(untracked), 100):
+                chunk = untracked[offset : offset + 100]
+                self._runner.run(
+                    ("add", "-N", "--", *chunk),
+                    cwd=cwd,
+                    operation="worktree-diff-temp-index-add",
+                    config_overrides=overrides,
+                    git_index_file=index_path,
+                )
+            patch_result = self._runner.run(
+                (
+                    "diff",
+                    "--binary",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    base_commit,
+                    "--",
+                ),
+                cwd=cwd,
+                operation="worktree-diff",
+                config_overrides=overrides,
+                output_limit_bytes=output_limit_bytes,
+                raise_on_truncation=False,
+                git_index_file=index_path,
+            )
+            names_result = self._runner.run(
+                (
+                    "diff",
+                    "--name-only",
+                    "--no-renames",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "-z",
+                    base_commit,
+                    "--",
+                ),
+                cwd=cwd,
+                operation="worktree-diff-paths",
+                config_overrides=overrides,
+                output_limit_bytes=max(
+                    output_limit_bytes, DEFAULT_GIT_OUTPUT_BYTES
+                ),
+                git_index_file=index_path,
+            )
+            stats_result = self._runner.run(
+                (
+                    "diff",
+                    "--numstat",
+                    "--no-renames",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "-z",
+                    base_commit,
+                    "--",
+                ),
+                cwd=cwd,
+                operation="worktree-diff-stats",
+                config_overrides=overrides,
+                output_limit_bytes=DEFAULT_GIT_PATCH_BYTES,
+                git_index_file=index_path,
+            )
+        except (GitCommandFailedError, OSError, ValueError):
+            return None
+        finally:
+            if descriptor >= 0:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            if index_path is not None:
+                try:
+                    os.unlink(index_path)
+                except OSError:
+                    pass
+        try:
+            changed_paths = tuple(
+                sorted(
+                    {
+                        os.fsdecode(path)
+                        for path in names_result.stdout.split(b"\0")
+                        if path
+                    }
+                )
+            )
+            file_stats, stats_incomplete = _numstat_file_stats(stats_result.stdout)
+        except GitCommandFailedError:
+            return None
+        additions = sum(stat.additions for stat in file_stats)
+        deletions = sum(stat.deletions for stat in file_stats)
+        return GitCliDiff(
+            patch=patch_result.stdout[:output_limit_bytes],
+            changed_paths=changed_paths,
+            truncated=patch_result.stdout_truncated,
+            additions=additions,
+            deletions=deletions,
+            stats_incomplete=stats_incomplete,
+            file_stats=tuple(
+                sorted(file_stats, key=lambda stat: stat.path)
+            ),
         )
 
     def review_patch(self, cwd: Path, path: str, *, staged: bool) -> bytes:
