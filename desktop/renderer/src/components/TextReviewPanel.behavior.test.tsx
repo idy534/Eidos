@@ -135,6 +135,61 @@ describe("TextReviewPanel", () => {
     expect(screen.getByRole("button", { name: "src/old.ts" })).toBeInTheDocument();
   });
 
+  it("keeps '最近一轮修改' empty when the latest run has no patches", () => {
+    const item1 = makeChangeItem({ id: "item-1", runId: "run-1", path: "src/old.ts" });
+
+    render(
+      <ArtifactProvider value={artifactValue()}>
+        <TextReviewPanel
+          sessionId="session-a"
+          runId="run-2"
+          items={[item1]}
+          loading={false}
+          onFeedback={vi.fn().mockResolvedValue(undefined)}
+          disabled={false}
+        />
+      </ArtifactProvider>,
+    );
+
+    expect(screen.getByText("共 0 个文件修改")).toBeInTheDocument();
+    expect(screen.getByText("本轮还没有已记录的文件补丁。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "src/old.ts" })).not.toBeInTheDocument();
+  });
+
+  it("groups headerless runtime diffs by the recorded result path", () => {
+    const headerless = [
+      "--- a/tests/sample_test.yaml",
+      "+++ /dev/null",
+      "@@ -1,2 +0,0 @@",
+      "-old",
+      "-gone",
+      "",
+    ].join("\n");
+    const item: Item = {
+      ...makeChangeItem({ id: "item-h", runId: "run-2", path: "src/ignored.ts", diffContent: headerless }),
+      toolCall: {
+        ...makeChangeItem({ id: "item-h", runId: "run-2", path: "src/ignored.ts", diffContent: headerless }).toolCall!,
+        resultJson: JSON.stringify({ outcome: "success", code: "ok", data: { path: "tests/sample_test.yaml" } }),
+      },
+    };
+
+    render(
+      <ArtifactProvider value={artifactValue()}>
+        <TextReviewPanel
+          sessionId="session-a"
+          runId="run-2"
+          items={[item]}
+          loading={false}
+          onFeedback={vi.fn().mockResolvedValue(undefined)}
+          disabled={false}
+        />
+      </ArtifactProvider>,
+    );
+
+    expect(screen.getByText("共 1 个文件修改")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "tests/sample_test.yaml" })).toBeInTheDocument();
+  });
+
   it("expands and collapses individual files by clicking file headers", () => {
     const item1 = makeChangeItem({ id: "item-1", runId: "run-2", path: "src/a.ts" });
     const item2 = makeChangeItem({ id: "item-2", runId: "run-2", path: "src/b.ts" });

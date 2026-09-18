@@ -54,9 +54,9 @@ const gitStatus: SessionGitStatus = {
 };
 
 const gitDiff: SessionGitDiff = {
-  scope: "baseline",
-  compareRef: "main",
-  baseCommit: "a".repeat(40),
+  scope: "head",
+  compareRef: null,
+  baseCommit: "b".repeat(40),
   head: "b".repeat(40),
   dirty: true,
   changedFiles: ["README.md"],
@@ -106,7 +106,7 @@ describe("useGitReviewController", () => {
     await waitFor(() => expect(result.current[0].summary?.changedFiles).toEqual(["README.md"]));
 
     expect(window.eidosRuntime.readSessionGitStatus).toHaveBeenCalledWith("session-a");
-    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "baseline");
+    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "head");
   });
 
   it("switches scope and reloads the matching repository summary", async () => {
@@ -118,11 +118,11 @@ describe("useGitReviewController", () => {
     vi.mocked(window.eidosRuntime.readSessionGitStatus).mockClear();
     vi.mocked(window.eidosRuntime.readSessionGitDiff).mockClear();
 
-    act(() => result.current[1].selectScope("head"));
+    act(() => result.current[1].selectScope("baseline"));
 
-    expect(result.current[0].scope).toBe("head");
+    expect(result.current[0].scope).toBe("baseline");
     expect(window.eidosRuntime.readSessionGitStatus).not.toHaveBeenCalled();
-    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "head");
+    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "baseline");
   });
 
   it("debounces durable completion refreshes and ignores content deltas", async () => {
@@ -193,7 +193,7 @@ describe("useGitReviewController", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(window.eidosRuntime.readSessionGitStatus).toHaveBeenCalledOnce();
-    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "baseline");
+    expect(window.eidosRuntime.readSessionGitDiff).toHaveBeenCalledWith("session-a", "head");
   });
 
   it("coalesces Git refreshes while the current diff request is still running", async () => {

@@ -201,8 +201,10 @@ describe("artifact previews and feedback", () => {
 
     expect(screen.queryByText("执行完成")).not.toBeInTheDocument();
     expect(screen.queryByText(/这里按工具执行顺序展示文件修改记录/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "src/index.ts" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "src/index.ts" }));
+    const fileButton = screen.getByRole("button", { name: "src/index.ts" });
+    expect(fileButton).toBeInTheDocument();
+    expect(fileButton).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "在工作区打开" }));
     const gutter = container.querySelector(".diff-gutter");
     expect(gutter).not.toBeNull();
     fireEvent.click(gutter!);
@@ -213,6 +215,33 @@ describe("artifact previews and feedback", () => {
     expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("ToolCall: tool-a"));
     expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("Base SHA:"));
     expect(value.openFile).toHaveBeenCalledWith("src/index.ts");
+  });
+
+  it("groups headerless runtime diffs by the recorded result path", () => {
+    const value = artifactValue();
+    const headerless = [
+      "--- a/tests/sample_test.yaml",
+      "+++ /dev/null",
+      "@@ -1,2 +0,0 @@",
+      "-old",
+      "-gone",
+      "",
+    ].join("\n");
+    const item = {
+      ...changeItem(),
+      toolCall: {
+        ...changeItem().toolCall!,
+        changeDiff: headerless,
+        resultJson: JSON.stringify({ outcome: "success", code: "ok", data: { path: "tests/sample_test.yaml" } }),
+      },
+    };
+    render(
+      <ArtifactProvider value={value}>
+        <LastTurnChanges sessionId="session-a" items={[item]} runId="run-a" disabled={false} onFeedback={vi.fn().mockResolvedValue(undefined)} />
+      </ArtifactProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "tests/sample_test.yaml" })).toBeInTheDocument();
   });
 
   it("loads and applies a selected Git hunk with a new operation id", async () => {

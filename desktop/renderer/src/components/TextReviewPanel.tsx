@@ -12,6 +12,41 @@ function cleanFilePath(file: { oldPath: string; newPath: string }): string {
   return raw.replace(/^[ab]\//, "");
 }
 
+function fallbackItemPath(item: Item): string | undefined {
+  const raw = item.toolCall?.resultJson;
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const data = (parsed as Record<string, unknown>).data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+    const rec = data as Record<string, unknown>;
+    const path = rec.path;
+    if (typeof path === "string" && path && !path.includes("\0")) return path.replace(/^\.\//, "");
+    const changes = rec.changes;
+    if (Array.isArray(changes)) {
+      for (const value of changes) {
+        if (!value || typeof value !== "object") continue;
+        const record = value as Record<string, unknown>;
+        const candidate = record.newPath ?? record.path;
+        if (typeof candidate === "string" && candidate && !candidate.includes("\0")) {
+          return candidate.replace(/^\.\//, "");
+        }
+      }
+    }
+    for (const key of ["created", "modified", "deleted"]) {
+      const list = rec[key];
+      if (Array.isArray(list)) {
+        const first = list.find((entry): entry is string => typeof entry === "string" && Boolean(entry));
+        if (first) return first.replace(/^\.\//, "");
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 function computeDiffStats(hunks: Array<{ changes: Array<{ type: string }> }>): { additions: number; deletions: number } {
   let additions = 0;
   let deletions = 0;
@@ -105,8 +140,7 @@ export function TextReviewPanel({
 
   const scopedItems = useMemo(() => {
     if (scope === "turn") {
-      const turnItems = items.filter((item) => item.runId === runId);
-      return turnItems.length > 0 ? turnItems : items;
+      return items.filter((item) => item.runId === runId);
     }
     return items;
   }, [items, scope, runId]);
@@ -142,7 +176,7 @@ export function TextReviewPanel({
       try {
         const parsed = parseDiff(call.changeDiff);
         for (const file of parsed) {
-          const cleanPath = cleanFilePath(file);
+          const cleanPath = cleanFilePath(file) || fallbackItemPath(item);
           if (!cleanPath) continue;
           const stats = computeDiffStats(file.hunks);
           const existing = map.get(cleanPath) ?? {

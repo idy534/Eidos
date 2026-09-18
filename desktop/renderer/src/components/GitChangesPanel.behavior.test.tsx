@@ -215,23 +215,68 @@ describe("GitChangesPanel", () => {
     expect(screen.queryByText("统计不完整")).not.toBeInTheDocument();
   });
 
-  it("uses baseline changedFiles instead of the working tree groups", async () => {
+  it("shows entire task from session items instead of baseline changedFiles", async () => {
+    const item = {
+      id: "item-1",
+      sessionId: "session-a",
+      runId: "run-1",
+      ordinal: 1,
+      kind: "file_change",
+      status: "completed",
+      createdAt: 1,
+      toolCall: {
+        id: "tool-1",
+        itemId: "item-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "provider-1",
+        toolName: "apply_patch",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        changeDiff: [
+          "diff --git a/task.ts b/task.ts",
+          "--- a/task.ts",
+          "+++ b/task.ts",
+          "@@ -1 +1 @@",
+          "-old",
+          "+new",
+          "",
+        ].join("\n"),
+        baseSha256: "b".repeat(64),
+      },
+    };
     renderPanel({
-      scope: "baseline",
-      summary: summaryDiff({ scope: "baseline", changedFiles: ["committed.ts"] }),
-    });
+      scope: "head",
+      items: [item],
+      latestRunId: "run-1",
+    } as Partial<Parameters<typeof GitChangesPanel>[0]>);
 
-    expect(screen.getByRole("region", { name: "整个任务" })).toHaveTextContent("committed.ts");
-    expect(screen.queryByText("new file.txt")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /committed\.ts/ }));
-    expect(screen.queryByRole("button", { name: "暂存" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "在编辑器中打开" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Diff 范围" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "整个任务" }));
+
+    expect(await screen.findByText("task.ts")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Diff 范围" })).toHaveTextContent("整个任务");
+    expect(screen.getByText("共 1 个文件修改")).toBeInTheDocument();
   });
 
   it("shows one useful empty state without a zero-file group", () => {
+    const emptyStatus = {
+      ...status,
+      dirty: false,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      conflictCount: 0,
+      stagedFiles: [],
+      unstagedFiles: [],
+      untrackedFiles: [],
+      conflictFiles: [],
+    };
     renderPanel({
-      scope: "baseline",
-      summary: summaryDiff({ scope: "baseline", changedFiles: [], additions: 0, deletions: 0 }),
+      scope: "head",
+      status: emptyStatus,
+      summary: summaryDiff({ scope: "head", changedFiles: [], additions: 0, deletions: 0 }),
     });
 
     expect(screen.queryByRole("region", { name: "整个任务" })).not.toBeInTheDocument();
@@ -365,7 +410,8 @@ describe("GitChangesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Diff 范围" }));
     expect(document.querySelector(".git-scope-dropdown-menu")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "整个任务" }));
-    expect(onScopeChange).toHaveBeenCalledWith("baseline");
+    expect(screen.getByRole("button", { name: "Diff 范围" })).toHaveTextContent("整个任务");
+    expect(onScopeChange).not.toHaveBeenCalled();
     second.result.unmount();
   });
 

@@ -47,7 +47,7 @@ export function useGitReviewController({
   ready,
   session,
 }: GitReviewControllerOptions): readonly [GitReviewState, GitReviewActions] {
-  const [scope, setScope] = useState<GitDiffScope>("baseline");
+  const [scope, setScope] = useState<GitDiffScope>("head");
   const [status, setStatus] = useState<SessionGitStatus | undefined>(undefined);
   const [summary, setSummary] = useState<SessionGitDiff | undefined>(undefined);
   const [projectContext, setProjectContext] = useState<ProjectGitContext | undefined>(undefined);
@@ -252,8 +252,8 @@ export function useGitReviewController({
     refreshEpochRef.current += 1;
     refreshRequestRef.current = undefined;
     refreshPromiseRef.current = undefined;
-    scopeRef.current = "baseline";
-    setScope("baseline");
+    scopeRef.current = "head";
+    setScope("head");
     setStatus(undefined);
     setSummary(undefined);
     setProjectContext(undefined);

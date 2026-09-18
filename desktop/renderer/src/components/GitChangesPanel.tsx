@@ -22,7 +22,9 @@ import { LastTurnChanges } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
 
 
-type ReviewGroup = "baseline" | "staged" | "changes" | "untracked" | "conflicts";
+type ReviewGroup = "staged" | "changes" | "untracked" | "conflicts";
+
+type ReviewTab = "uncommitted" | "lastRun" | "entireTask";
 
 interface FileSelection {
   group: ReviewGroup;
@@ -179,10 +181,15 @@ function MoreHorizontalIcon() {
 }
 
 export function GitChangesPanel(props: GitChangesPanelProps) {
-  const [lastTurn, setLastTurn] = useState(false);
+  // 三段语义：
+  // - 未提交：Git HEAD vs 工作区，与 session/run 无关；
+  // - 最近一轮：最近一次 run 的 Item 补丁；
+  // - 整个任务：本 session 全部 run 的 Item 补丁。
+  const [reviewTab, setReviewTab] = useState<ReviewTab>("uncommitted");
   useEffect(() => {
-    setLastTurn(Boolean(props.lastTurnRequest));
+    setReviewTab(props.lastTurnRequest ? "lastRun" : "uncommitted");
   }, [props.lastTurnRequest?.requestId, props.sessionId]);
+  const isItemTab = reviewTab !== "uncommitted";
   const summaryControlled = Object.prototype.hasOwnProperty.call(props, "summary");
   const {
     sessionId,
@@ -233,14 +240,12 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     return () => { current = false; };
   }, [readDiff, scope, sessionId, summary, summaryControlled]);
 
-  const groups = useMemo<readonly FileGroup[]>(() => scope === "baseline"
-    ? [{ id: "baseline", label: "整个任务", paths: effectiveSummary?.changedFiles ?? [] }]
-    : [
-        { id: "staged", label: "已暂存", paths: status?.stagedFiles ?? [] },
-        { id: "changes", label: "修改", paths: status?.unstagedFiles ?? [] },
-        { id: "untracked", label: "未跟踪", paths: status?.untrackedFiles ?? [] },
-        { id: "conflicts", label: "冲突", paths: status?.conflictFiles ?? [] },
-      ], [effectiveSummary?.changedFiles, scope, status]);
+  const groups = useMemo<readonly FileGroup[]>(() => [
+    { id: "staged", label: "已暂存", paths: status?.stagedFiles ?? [] },
+    { id: "changes", label: "修改", paths: status?.unstagedFiles ?? [] },
+    { id: "untracked", label: "未跟踪", paths: status?.untrackedFiles ?? [] },
+    { id: "conflicts", label: "冲突", paths: status?.conflictFiles ?? [] },
+  ], [status]);
   const visibleGroups = useMemo(
     () => groups.filter((group) => group.paths.length > 0),
     [groups],
@@ -269,7 +274,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     setLocalError(undefined);
     setDraft(undefined);
     setDraftBody("");
-  }, [scope, sessionId]);
+  }, [scope, sessionId, reviewTab]);
 
   const loadFile = useCallback((selection: FileSelection): Promise<void> => {
     const key = selectionKey(selection);
@@ -404,9 +409,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   const stats = diffStats(effectiveSummary);
   const allFilesExpanded = selections.length > 0
     && selections.every((selection) => expandedKeys.has(selectionKey(selection)));
-  const fullScopeLabel = lastTurn
+  const fullScopeLabel = reviewTab === "lastRun"
     ? "最近一轮"
-    : scope === "baseline"
+    : reviewTab === "entireTask"
       ? "整个任务"
       : "未提交";
   const currentScopeLabel = fullScopeLabel;
@@ -415,26 +420,23 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     {
       key: "head",
       label: "未提交",
-      disabled: !lastTurn && scope === "head",
+      disabled: reviewTab === "uncommitted",
       onClick: () => {
-        setLastTurn(false);
-        onScopeChange("head");
+        setReviewTab("uncommitted");
+        if (scope !== "head") onScopeChange("head");
       },
     },
     {
-      key: "lastTurn",
+      key: "lastRun",
       label: "最近一轮",
-      disabled: lastTurn,
-      onClick: () => setLastTurn(true),
+      disabled: reviewTab === "lastRun",
+      onClick: () => setReviewTab("lastRun"),
     },
     {
-      key: "baseline",
+      key: "entireTask",
       label: "整个任务",
-      disabled: !lastTurn && scope === "baseline",
-      onClick: () => {
-        setLastTurn(false);
-        onScopeChange("baseline");
-      },
+      disabled: reviewTab === "entireTask",
+      onClick: () => setReviewTab("entireTask"),
     },
   ];
 
@@ -478,7 +480,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             )}
             items={scopeMenuItems}
           />
-          {!lastTurn && (
+          {!isItemTab && (
             <div className="git-review-stats" aria-label="变更统计">
               <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
               <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
@@ -505,7 +507,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             icon={<ExpandIcon collapse={allFilesExpanded} />}
             aria-label={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
             title={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
-            disabled={selections.length === 0}
+            disabled={isItemTab || selections.length === 0}
             onClick={() => {
               if (allFilesExpanded) {
                 setExpandedKeys(new Set());
@@ -563,9 +565,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
         </p>
       )}
 
-      {lastTurn && (
+      {isItemTab && (
         <LastTurnChanges
-          key={`${sessionId}:${props.lastTurnRequest?.runId ?? props.latestRunId}:${props.lastTurnRequest?.requestId ?? ""}`}
+          key={`${sessionId}:${reviewTab}:${props.lastTurnRequest?.runId ?? props.latestRunId}:${props.lastTurnRequest?.requestId ?? ""}`}
           sessionId={sessionId}
           previousItemId={props.previousItemId}
           items={props.items ?? []}
@@ -573,9 +575,10 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           focusPath={props.lastTurnRequest?.path}
           onFeedback={onSendReviewFeedback}
           disabled={reviewFeedbackDisabled}
+          entireTask={reviewTab === "entireTask"}
         />
       )}
-      <div className="git-review-files" hidden={lastTurn}>
+      <div className="git-review-files" hidden={isItemTab}>
         {visibleGroups.map((group) => (
           <section className="git-file-group" key={group.id} aria-label={group.label}>
             <h2>{group.label} <span>{group.paths.length}</span></h2>

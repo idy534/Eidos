@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Diff, Hunk, parseDiff } from "react-diff-view";
 import type { Item } from "../contracts.js";
 import { useArtifacts } from "./ArtifactContext.js";
@@ -7,21 +7,56 @@ import { ToolTextView } from "./ToolTextView.js";
 import { Button } from "./Button.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 
-function fileName(path: string): string {
-  const parts = path.split("/");
-  return parts[parts.length - 1] || path;
-}
-
 function cleanFilePath(file: { oldPath: string; newPath: string }): string {
   const raw = file.newPath && file.newPath !== "/dev/null" ? file.newPath : file.oldPath;
   return raw.replace(/^[ab]\//, "");
 }
 
+function cleanFocusPath(focus?: string): string | undefined {
+  if (!focus) return undefined;
+  return focus.replace(/^[ab]\//, "");
+}
+
 function matchesFocus(file: { oldPath: string; newPath: string }, focus?: string): boolean {
   if (!focus) return true;
   const clean = cleanFilePath(file);
-  const cleanFocus = focus.replace(/^[ab]\//, "");
+  const cleanFocus = cleanFocusPath(focus) ?? focus;
   return clean === cleanFocus || file.oldPath === focus || file.newPath === focus;
+}
+
+function fallbackItemPath(item: Item): string | undefined {
+  const raw = item.toolCall?.resultJson;
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const data = (parsed as Record<string, unknown>).data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+    const rec = data as Record<string, unknown>;
+    const path = rec.path;
+    if (typeof path === "string" && path && !path.includes("\0")) return path.replace(/^\.\//, "");
+    const changes = rec.changes;
+    if (Array.isArray(changes)) {
+      for (const value of changes) {
+        if (!value || typeof value !== "object") continue;
+        const record = value as Record<string, unknown>;
+        const candidate = record.newPath ?? record.path;
+        if (typeof candidate === "string" && candidate && !candidate.includes("\0")) {
+          return candidate.replace(/^\.\//, "");
+        }
+      }
+    }
+    for (const key of ["created", "modified", "deleted"]) {
+      const list = rec[key];
+      if (Array.isArray(list)) {
+        const first = list.find((entry): entry is string => typeof entry === "string" && Boolean(entry));
+        if (first) return first.replace(/^\.\//, "");
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 function computeDiffStats(hunks: Array<{ changes: Array<{ type: string }> }>): { additions: number; deletions: number } {
@@ -34,6 +69,46 @@ function computeDiffStats(hunks: Array<{ changes: Array<{ type: string }> }>): {
     }
   }
   return { additions, deletions };
+}
+
+function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className="git-file-disclosure-icon"
+      data-state={expanded ? "open" : "closed"}
+      aria-hidden="true"
+    >
+      <path d="m7 4 5 6-5 6" />
+    </svg>
+  );
+}
+
+function ExpandIcon({ collapse }: { collapse: boolean }) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      {collapse
+        ? <path d="M5 3v5m-2-2 2 2 2-2M5 17v-5m-2 2 2-2 2 2M10 5h7M10 10h7M10 15h7" />
+        : <path d="M5 8V3m-2 2 2-2 2 2M5 12v5m-2-2 2 2 2-2M10 5h7M10 10h7M10 15h7" />}
+    </svg>
+  );
+}
+
+interface FileChangeEntry {
+  item: Item;
+  toolCallId: string;
+  parsedFile?: ReturnType<typeof parseDiff>[number];
+  rawDiff?: string;
+  hash?: string;
+  bytes?: number;
+}
+
+interface FileReviewSummary {
+  path: string;
+  additions: number;
+  deletions: number;
+  changes: FileChangeEntry[];
+  openPath?: string;
 }
 
 export function LastTurnChanges({ sessionId, previousItemId, items, runId, focusPath, onFeedback, disabled, entireTask = false }: {
@@ -50,14 +125,136 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   const [older, setOlder] = useState<Item[]>([]);
   const [cursor, setCursor] = useState(previousItemId);
   const [loading, setLoading] = useState(false);
-  const currentItems = [...new Map([...older, ...items].map((item) => [item.id, item])).values()]
+  const currentItems = useMemo(() => [...new Map([...older, ...items].map((item) => [item.id, item])).values()]
     .filter((item) => entireTask || item.runId === runId)
-    .sort((a, b) => a.createdAt - b.createdAt || a.ordinal - b.ordinal);
-  const changes = currentItems.filter((item) => item.toolCall?.changeDiff || item.toolCall?.changeDiffHash);
-  const hasFocusedChange = !focusPath || changes.some((item) => {
-    if (item.toolCall?.changeDiffHash) return true;
-    try { return parseDiff(item.toolCall!.changeDiff!).some((f) => matchesFocus(f, focusPath)); } catch { return false; }
-  });
+    .sort((a, b) => a.createdAt - b.createdAt || a.ordinal - b.ordinal),
+  [older, items, entireTask, runId]);
+
+  const fileSummaries = useMemo<FileReviewSummary[]>(() => {
+    const map = new Map<string, FileReviewSummary>();
+    for (const item of currentItems) {
+      const call = item.toolCall;
+      if (!call) continue;
+      if (call.changeDiffHash) {
+        const pathKey = `patch-${call.id}`;
+        const existing = map.get(pathKey) ?? {
+          path: `补丁 ${call.id.slice(0, 8)}`,
+          additions: 0,
+          deletions: 0,
+          changes: [],
+        };
+        existing.changes.push({
+          item,
+          toolCallId: call.id,
+          hash: call.changeDiffHash,
+          bytes: call.changeDiffBytes ?? 0,
+        });
+        map.set(pathKey, existing);
+        continue;
+      }
+      if (!call.changeDiff) continue;
+      const fallbackPath = fallbackItemPath(item);
+      try {
+        const parsed = parseDiff(call.changeDiff).filter((f) => {
+          if (matchesFocus(f, focusPath)) return true;
+          if (!cleanFilePath(f) && fallbackPath && focusPath) {
+            return fallbackPath === (cleanFocusPath(focusPath) ?? focusPath);
+          }
+          return false;
+        });
+        for (const file of parsed) {
+          const cleanPath = cleanFilePath(file) || fallbackPath;
+          if (!cleanPath) continue;
+          const stats = computeDiffStats(file.hunks);
+          const existing = map.get(cleanPath) ?? {
+            path: cleanPath,
+            additions: 0,
+            deletions: 0,
+            changes: [],
+            openPath: cleanPath,
+          };
+          existing.additions += stats.additions;
+          existing.deletions += stats.deletions;
+          existing.changes.push({
+            item,
+            toolCallId: call.id,
+            parsedFile: file,
+          });
+          map.set(cleanPath, existing);
+        }
+      } catch {
+        const pathKey = `raw-${call.id}`;
+        const existing = map.get(pathKey) ?? {
+          path: `未格式化变更 (${call.id.slice(0, 8)})`,
+          additions: 0,
+          deletions: 0,
+          changes: [],
+        };
+        existing.changes.push({
+          item,
+          toolCallId: call.id,
+          rawDiff: call.changeDiff,
+        });
+        map.set(pathKey, existing);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.path.localeCompare(b.path));
+  }, [currentItems, focusPath]);
+
+  const totalStats = useMemo(() => {
+    let additions = 0;
+    let deletions = 0;
+    for (const file of fileSummaries) {
+      additions += file.additions;
+      deletions += file.deletions;
+    }
+    return { additions, deletions };
+  }, [fileSummaries]);
+
+  const focused = cleanFocusPath(focusPath);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => (
+    focused ? new Set([focused]) : new Set()
+  ));
+
+  useEffect(() => {
+    if (focused) {
+      setExpandedKeys((prev) => new Set([...prev, focused]));
+    }
+  }, [focused]);
+
+  useEffect(() => {
+    if (fileSummaries.length === 1 && expandedKeys.size === 0) {
+      const first = fileSummaries[0];
+      if (first) setExpandedKeys(new Set([first.path]));
+    }
+  }, [fileSummaries, expandedKeys.size]);
+
+  const allFilesExpanded = fileSummaries.length > 0
+    && fileSummaries.every((f) => expandedKeys.has(f.path));
+
+  const toggleAllExpanded = useCallback(() => {
+    if (allFilesExpanded) {
+      setExpandedKeys(new Set());
+    } else {
+      setExpandedKeys(new Set(fileSummaries.map((f) => f.path)));
+    }
+  }, [allFilesExpanded, fileSummaries]);
+
+  const toggleFile = useCallback((filePath: string) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(filePath)) {
+        next.delete(filePath);
+      } else {
+        next.add(filePath);
+      }
+      return next;
+    });
+  }, []);
+
+  const changesCount = currentItems.filter((item) => item.toolCall?.changeDiff || item.toolCall?.changeDiffHash).length;
+  const hasFocusedChange = !focusPath || fileSummaries.some((f) => f.openPath !== undefined)
+    || changesCount > 0 && currentItems.some((item) => item.toolCall?.changeDiffHash);
   const [anchor, setAnchor] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
@@ -69,7 +266,11 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
     try {
       const page = await window.eidosRuntime.readSession(sessionId, { beforeItemId: cursor, itemLimit: 200 });
       setOlder((current) => [...page.items, ...current]);
-      setCursor(page.items.some((item) => item.runId !== runId) ? undefined : page.previousItemId);
+      if (entireTask) {
+        setCursor(page.previousItemId);
+      } else {
+        setCursor(page.items.some((item) => item.runId !== runId) ? undefined : page.previousItemId);
+      }
     } catch (cause) { setError(userFacingError(cause)); }
     finally { setLoading(false); }
   }
@@ -95,107 +296,137 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
         </div>
       )}
       {error && <p className="text-review-error" role="alert">{error}</p>}
-      <div className="text-review-files-list">
-        {changes.map((item) => {
-          const call = item.toolCall!;
-          if (call.changeDiffHash) {
-            return (
-              <article className="text-review-card" key={item.id}>
-                {focusPath && <p className="text-review-note">完整补丁包含此次工具调用的全部文件。</p>}
-                <ToolTextView key={call.changeDiffHash} sessionId={sessionId} toolCallId={call.id} field="diff" sha256={call.changeDiffHash} totalBytes={call.changeDiffBytes!} />
-              </article>
-            );
-          }
-          try {
-            const files = parseDiff(call.changeDiff!).filter((f) => matchesFocus(f, focusPath));
-            if (!files.length) return null;
-            return files.map((file) => {
-              const cleanPath = cleanFilePath(file);
-              const fileNameStr = fileName(cleanPath);
-              const dirStr = cleanPath.slice(0, Math.max(0, cleanPath.length - fileNameStr.length));
-              const stats = computeDiffStats(file.hunks);
-              return (
-                <article className="text-review-card" key={`${item.id}:${file.oldPath}:${file.newPath}`}>
-                  <header className="text-review-file-header">
-                    <div className="text-review-file-info">
-                      <span className="text-review-file-icon" aria-hidden="true">
-                        <WorkspaceFileIcon name={cleanPath} />
-                      </span>
-                      <button
-                        type="button"
-                        className="text-review-file-path-btn"
-                        title={`在工作区打开 ${cleanPath}`}
-                        aria-label={cleanPath}
-                        onClick={() => actions?.openFile(cleanPath)}
-                      >
-                        {dirStr && <span className="text-review-file-dir">{dirStr}</span>}
-                        <strong>{fileNameStr}</strong>
-                      </button>
-                      <span className="turn-result__stats">
-                        {stats.additions > 0 && <ins>+{stats.additions}</ins>}
-                        {stats.deletions > 0 && <del>-{stats.deletions}</del>}
-                        {stats.additions === 0 && stats.deletions === 0 && <span className="turn-result__stats--unknown">无增减</span>}
-                      </span>
-                      {call.status && call.status !== "completed" && (
-                        <span className="text-review-status-badge">
-                          {call.status === "running" ? "执行中" : "未完成"}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-review-file-actions">
-                      <Button
-                        variant="ghost"
-                        size="small"
-                        className="text-review-open-btn"
-                        title={`在工作区打开 ${cleanPath}`}
-                        onClick={() => actions?.openFile(cleanPath)}
-                      >
-                        打开文件
-                      </Button>
-                    </div>
-                  </header>
-                  <div className="git-file-diff-scroll">
-                    <Diff
-                      className="git-diff-unified"
-                      viewType="unified"
-                      diffType={file.type}
-                      hunks={file.hunks}
-                      gutterClassName="git-diff-line-numbers"
-                      renderGutter={({ change, side, renderDefault }) => {
-                        if (side === "new") return null;
-                        return change.type === "insert" ? change.lineNumber : renderDefault();
-                      }}
-                      gutterEvents={{
-                        onClick: ({ change, side }) => {
-                          if (!change) return;
-                          const line = change.type === "normal"
-                            ? (side === "old" ? change.oldLineNumber : change.newLineNumber)
-                            : change.lineNumber;
-                          setAnchor(`Run: ${item.runId}\nToolCall: ${call.id}\n文件: ${cleanPath}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`);
-                        }
-                      }}
+      <div className="git-review-files">
+        {fileSummaries.length > 0 && (
+          <div className="text-review-files-summary" role="status">
+            <span>共 {fileSummaries.length} 个文件修改</span>
+            <span className="git-file-stats">
+              <span className="git-review-stat--addition">+{totalStats.additions}</span>
+              <span className="git-review-stat--deletion">-{totalStats.deletions}</span>
+            </span>
+            <Button
+              variant="ghost"
+              size="small"
+              className="git-icon-button"
+              icon={<ExpandIcon collapse={allFilesExpanded} />}
+              aria-label={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
+              title={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
+              disabled={fileSummaries.length === 0}
+              onClick={toggleAllExpanded}
+            >
+              <span className="sr-only">{allFilesExpanded ? "折叠全部差异" : "展开全部差异"}</span>
+            </Button>
+          </div>
+        )}
+        {fileSummaries.map((file) => {
+          const isFileExpanded = expandedKeys.has(file.path);
+          return (
+            <article className="git-review-file" key={file.path}>
+              <header className="git-review-file-header">
+                <button
+                  type="button"
+                  className="git-file-button"
+                  aria-expanded={isFileExpanded}
+                  aria-controls={`last-turn-diff-${encodeURIComponent(file.path)}`}
+                  aria-label={file.path}
+                  onClick={() => toggleFile(file.path)}
+                >
+                  <span className="git-file-disclosure">
+                    <FileDisclosureIcon expanded={isFileExpanded} />
+                  </span>
+                  <span className="text-review-file-icon" aria-hidden="true">
+                    <WorkspaceFileIcon name={file.openPath ?? file.path} />
+                  </span>
+                  <code>{file.path}</code>
+                  <span className="git-file-stats">
+                    <span className="git-review-stat--addition">+{file.additions}</span>
+                    <span className="git-review-stat--deletion">-{file.deletions}</span>
+                  </span>
+                </button>
+                {isFileExpanded && file.openPath && (
+                  <div className="git-file-actions">
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      onClick={() => actions?.openFile(file.openPath!)}
+                      title={`在工作区打开 ${file.openPath}`}
                     >
-                      {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
-                    </Diff>
+                      在工作区打开
+                    </Button>
                   </div>
-                </article>
-              );
-            });
-          } catch {
-            return (
-              <article className="text-review-card" key={item.id}>
-                <pre className="text-review-raw-diff">{call.changeDiff}</pre>
-              </article>
-            );
-          }
+                )}
+              </header>
+
+              {isFileExpanded && (
+                <div
+                  id={`last-turn-diff-${encodeURIComponent(file.path)}`}
+                  className="git-file-diff-scroll"
+                >
+                  {focusPath && !file.openPath && (
+                    <p className="text-review-note">完整补丁包含此次工具调用的全部文件。</p>
+                  )}
+                  {file.changes.map((change, idx) => {
+                    if (change.hash) {
+                      return (
+                        <ToolTextView
+                          key={change.hash}
+                          sessionId={sessionId}
+                          toolCallId={change.toolCallId}
+                          field="diff"
+                          sha256={change.hash}
+                          totalBytes={change.bytes!}
+                        />
+                      );
+                    }
+                    if (change.parsedFile) {
+                      return (
+                        <Diff
+                          key={`${change.item.id}:${idx}`}
+                          className="git-diff-unified"
+                          viewType="unified"
+                          diffType={change.parsedFile.type}
+                          hunks={change.parsedFile.hunks}
+                          gutterClassName="git-diff-line-numbers"
+                          renderGutter={({ change: lineChange, side, renderDefault }) => {
+                            if (side === "new") return null;
+                            return lineChange.type === "insert" ? lineChange.lineNumber : renderDefault();
+                          }}
+                          gutterEvents={{
+                            onClick: ({ change: lineChange, side }) => {
+                              if (!lineChange) return;
+                              const line = lineChange.type === "normal"
+                                ? (side === "old" ? lineChange.oldLineNumber : lineChange.newLineNumber)
+                                : lineChange.lineNumber;
+                              const call = change.item.toolCall!;
+                              setAnchor(`Run: ${change.item.runId}\nToolCall: ${call.id}\n文件: ${file.openPath ?? file.path}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`);
+                            },
+                          }}
+                        >
+                          {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+                        </Diff>
+                      );
+                    }
+                    if (change.rawDiff) {
+                      return (
+                        <pre key={change.item.id} className="text-review-raw-diff">
+                          {change.rawDiff}
+                        </pre>
+                      );
+                    }
+                    return null;
+                  })}
+                </div>
+              )}
+            </article>
+          );
         })}
       </div>
-      {!changes.length && (
+      {!fileSummaries.length && (
         <div className="text-review-empty">
           <p>{entireTask ? "整个任务尚无可展示的文本补丁。" : "本轮还没有已记录的文件补丁。"}</p>
         </div>
       )}
-      {focusPath && changes.length > 0 && !hasFocusedChange && (
+      {focusPath && fileSummaries.length > 0 && !hasFocusedChange && (
         <div className="text-review-empty">
           <p>未找到该文件的历史 Diff。</p>
         </div>
