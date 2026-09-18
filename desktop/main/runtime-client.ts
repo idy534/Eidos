@@ -1222,6 +1222,19 @@ function isNotification(value: unknown): value is RuntimeNotification {
       "queued", "running", "waiting_approval", "finalizing",
     ].includes(run.status);
   }
+  if (value.method === "context/compacted") {
+    return (
+      hasOnlyKeys(params, [
+        "sessionId", "runId", "summaryId", "sourceItemCount", "phase",
+      ])
+      && typeof params.sessionId === "string"
+      && typeof params.runId === "string"
+      && typeof params.summaryId === "string"
+      && isNonNegativeInteger(params.sourceItemCount)
+      && typeof params.phase === "string"
+      && params.phase.length > 0
+    );
+  }
   if (value.method === "item/started" || value.method === "item/completed" || value.method === "item/updated") {
     const item = params.item;
     const valid = (

@@ -103,7 +103,12 @@ class RunStorePort(Protocol):
 
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot: ...
 
-    def latest_model_usage(self, run_id: str) -> ModelUsage | None: ...
+    def latest_model_usage(
+        self,
+        run_id: str,
+        *,
+        context_snapshot_id: str | None = None,
+    ) -> ModelUsage | None: ...
 
     def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None: ...
 
@@ -506,10 +511,18 @@ class RunApplication:
         store, _runtime = self._cancel_dependencies()
         try:
             profile = store.read_model_profile(request.run_id)
+            latest_context_snapshot = store.read_latest_context_snapshot(request.run_id)
             usage = _context_usage_snapshot(
                 profile.context_window_tokens,
-                store.latest_model_usage(request.run_id),
-                store.read_latest_context_snapshot(request.run_id),
+                (
+                    store.latest_model_usage(
+                        request.run_id,
+                        context_snapshot_id=latest_context_snapshot.snapshot_id,
+                    )
+                    if latest_context_snapshot is not None
+                    else None
+                ),
+                latest_context_snapshot,
             )
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
@@ -710,9 +723,24 @@ def _context_usage_snapshot(
         )
     plan = getattr(latest_context_snapshot, "plan", None)
     budget = getattr(plan, "token_budget", None)
-    estimated = getattr(budget, "context_usage", None)
-    if isinstance(estimated, ContextUsageSnapshot):
-        return estimated.model_copy(update={"updated_at": refreshed_at})
+    projected = getattr(budget, "projected_input_tokens", None)
+    if not isinstance(projected, int) or isinstance(projected, bool):
+        projected = getattr(budget, "estimated_input_tokens", None)
+    if (
+        isinstance(projected, int)
+        and not isinstance(projected, bool)
+        and projected >= 0
+    ):
+        return ContextUsageSnapshot(
+            active_tokens=projected,
+            context_window_tokens=context_window_tokens,
+            percent_used=min(
+                100.0,
+                round(projected / context_window_tokens * 100, 1),
+            ),
+            source="estimated",
+            updated_at=refreshed_at,
+        )
     return None
 
 

@@ -21,9 +21,9 @@ interface ContextUsageControllerInput {
 /**
  * Reads the latest effective context projection for the selected Run.
  *
- * Context usage is refreshed from the Runtime after durable Run & Step
- * notifications. It maintains real-time continuity during execution
- * without clearing to empty during active runs.
+ * Context usage is refreshed from the Runtime after durable Run, Step and
+ * compaction notifications. A new Run starts with no usage until its own
+ * ContextSnapshot is available.
  */
 export function useContextUsageController({
   ready,
@@ -38,7 +38,7 @@ export function useContextUsageController({
   const [loading, setLoading] = useState(false);
   const requestSequence = useRef(0);
   const current = useRef({ ready, sessionId, modelId, runId });
-  const prevIds = useRef({ sessionId, modelId });
+  const prevIds = useRef({ sessionId, modelId, runId });
 
   current.current = { ready, sessionId, modelId, runId };
 
@@ -46,13 +46,17 @@ export function useContextUsageController({
     if (!ready || !sessionId || !modelId) {
       setUsage(undefined);
       setLoading(false);
-      prevIds.current = { sessionId, modelId };
+      prevIds.current = { sessionId, modelId, runId };
       return;
     }
 
-    if (prevIds.current.sessionId !== sessionId || prevIds.current.modelId !== modelId) {
+    if (
+      prevIds.current.sessionId !== sessionId
+      || prevIds.current.modelId !== modelId
+      || prevIds.current.runId !== runId
+    ) {
       setUsage(undefined);
-      prevIds.current = { sessionId, modelId };
+      prevIds.current = { sessionId, modelId, runId };
     }
 
     if (!runId) return;
@@ -102,6 +106,15 @@ export function useContextUsageController({
   }, []);
 
   const handleNotification = useCallback((notification: RuntimeNotification): void => {
+    if (notification.method === "context/compacted") {
+      const { runId, sessionId } = notification.params;
+      const state = current.current;
+      if (state.sessionId === sessionId && state.modelId) {
+        refreshFromRunId(runId, sessionId, state.modelId);
+      }
+      return;
+    }
+
     if (
       notification.method === "run/started"
       || notification.method === "run/updated"

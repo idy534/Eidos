@@ -66,7 +66,7 @@ describe("useContextUsageController", () => {
     expect(readContextUsage).toHaveBeenCalledTimes(2);
   });
 
-  it("maintains usage continuity during a new Run instead of wiping to blank", async () => {
+  it("clears usage for a new Run and refreshes after compaction", async () => {
     const updatedUsage = { ...usage, activeTokens: 190_000, percentUsed: 73.6 };
     const readContextUsage = vi.fn()
       .mockResolvedValueOnce(usage)
@@ -90,19 +90,24 @@ describe("useContextUsageController", () => {
     await act(async () => { await Promise.resolve(); });
     expect(result.current[0].usage).toEqual(usage);
 
-    // Transitioning to run-2 should preserve usage while waiting for new snapshot
-    rerender("run-2");
-    expect(result.current[0].usage).toEqual(usage);
+    await act(async () => {
+      rerender("run-2");
+      await Promise.resolve();
+    });
+    expect(result.current[0].usage).toBeUndefined();
 
-    await act(async () => { await Promise.resolve(); });
-    // When readContextUsage returns null before new snapshot, keep existing usage
-    expect(result.current[0].usage).toEqual(usage);
+    expect(readContextUsage).toHaveBeenCalledTimes(2);
 
-    // Real-time notification updates usage when new snapshot becomes available
     await act(async () => {
       result.current[1].handleNotification({
-        method: "item/completed",
-        params: { sessionId: "session-1", runId: "run-2", item: {} as any },
+        method: "context/compacted",
+        params: {
+          sessionId: "session-1",
+          runId: "run-2",
+          summaryId: "summary-1",
+          sourceItemCount: 8,
+          phase: "mid_turn",
+        },
       });
       await Promise.resolve();
     });

@@ -926,8 +926,16 @@ class SessionStore:
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
         return self._repository(self._execution).read_model_attempts(run_id)
 
-    def latest_model_usage(self, run_id: str) -> ModelUsage | None:
-        return self._repository(self._execution).latest_model_usage(run_id)
+    def latest_model_usage(
+        self,
+        run_id: str,
+        *,
+        context_snapshot_id: str | None = None,
+    ) -> ModelUsage | None:
+        return self._repository(self._execution).latest_model_usage(
+            run_id,
+            context_snapshot_id=context_snapshot_id,
+        )
 
     def create_assistant_item(
         self, run_id: str, model_step_index: int

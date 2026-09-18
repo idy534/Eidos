@@ -24,8 +24,16 @@ class _Runtime:
 
 
 class _Store:
-    def __init__(self, input_tokens: int = 185_000) -> None:
+    def __init__(
+        self,
+        input_tokens: int = 185_000,
+        *,
+        usage_snapshot_id: str = "context-current",
+        snapshot_id: str = "context-current",
+    ) -> None:
         self.input_tokens = input_tokens
+        self.usage_snapshot_id = usage_snapshot_id
+        self.snapshot_id = snapshot_id
 
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
         return ModelProfileSnapshot(
@@ -39,7 +47,14 @@ class _Store:
             supports_reasoning=False,
         )
 
-    def latest_model_usage(self, run_id: str) -> ModelUsage | None:
+    def latest_model_usage(
+        self,
+        run_id: str,
+        *,
+        context_snapshot_id: str | None = None,
+    ) -> ModelUsage | None:
+        if context_snapshot_id != self.usage_snapshot_id:
+            return None
         return ModelUsage(input_tokens=self.input_tokens, output_tokens=1_000)
 
     def read_latest_context_snapshot(self, run_id: str):
@@ -51,10 +66,13 @@ class _Store:
             tool_call_count=0,
             tool_result_count=0,
         )
-        return SimpleNamespace(plan=SimpleNamespace(token_budget=budget))
+        return SimpleNamespace(
+            snapshot_id=self.snapshot_id,
+            plan=SimpleNamespace(token_budget=budget),
+        )
 
 
-def test_context_usage_response_uses_latest_provider_input_tokens() -> None:
+def test_context_usage_response_uses_provider_input_for_latest_snapshot() -> None:
     run_id = "00000000-0000-4000-8000-000000000001"
     application = RunApplication(
         store=_Store(), runtime=_Runtime(), environment=None, scan_text=lambda value: value,
@@ -84,3 +102,38 @@ def test_context_usage_response_ignores_zero_provider_input_tokens() -> None:
     assert result.context_usage is not None
     assert result.context_usage.source == "estimated"
     assert result.context_usage.active_tokens > 0
+
+
+def test_context_usage_response_ignores_provider_usage_from_older_snapshot() -> None:
+    run_id = "00000000-0000-4000-8000-000000000001"
+    application = RunApplication(
+        store=_Store(usage_snapshot_id="context-old"),
+        runtime=_Runtime(),
+        environment=None,
+        scan_text=lambda value: value,
+    )
+
+    result = application.context_usage(ContextUsageRequestDto(runId=run_id))
+
+    assert result.context_usage is not None
+    assert result.context_usage.source == "estimated"
+    assert result.context_usage.active_tokens < 185_000
+
+
+def test_context_usage_response_has_no_value_without_context_snapshot() -> None:
+    class _StoreWithoutSnapshot(_Store):
+        def read_latest_context_snapshot(self, run_id: str):
+            return None
+
+    application = RunApplication(
+        store=_StoreWithoutSnapshot(),
+        runtime=_Runtime(),
+        environment=None,
+        scan_text=lambda value: value,
+    )
+
+    result = application.context_usage(
+        ContextUsageRequestDto(runId="00000000-0000-4000-8000-000000000001")
+    )
+
+    assert result.context_usage is None

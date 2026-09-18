@@ -143,11 +143,11 @@ CLAUDE.md
 
 `InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。
 
-Context Budget 只有在最近 Provider Usage 提供正的 active input tokens 时才使用该值。Provider Usage 不可用或返回 0 时，Runtime 使用标记为 `estimated` 的有界估算。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
+Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。Context Usage RPC 先读取当前 Run 最新的 ContextSnapshot，再读取与该 Snapshot 绑定的 ModelAttempt usage。该 Attempt 有正的 Provider `input_tokens` 时，RPC 返回 Provider 值；否则 RPC 返回该 Snapshot 的 `projected_input_tokens`，并标记为 `estimated`。RPC 不再使用当前 Snapshot 以前的 Attempt usage。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
 Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,536 tokens、仍符合真实模型窗口、没有待处理 Approval 或 reconciliation，且距离上次尝试已有至少 32 条新的未压缩 Item 时，Runtime 尝试压缩旧历史。这个路径保留最近 16 条候选 Item、用户消息和 Skill 读取正文。它复用现有事实验证与事务提交，不删除原始历史。主动压缩失败后，Runtime 保留原投影并继续正常的窗口判断；65,536 不是 Run 停止阈值。
 
-当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。Tool provenance 由候选摘要的 source Item IDs 解析到真实 ToolCall IDs，所以 pre-turn compaction 可以准确引用以前 Run 的 Tool facts，也不会附加无关 ToolCall。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。原始 Item 和 Tool 事实仍保存在 `state.sqlite`。验证失败会保留上一份 verified summary。
+当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。Tool provenance 由候选摘要的 source Item IDs 解析到真实 ToolCall IDs，所以 pre-turn compaction 可以准确引用以前 Run 的 Tool facts，也不会附加无关 ToolCall。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。Outbox 会把该 Event 投影为 `context/compacted` 通知，Desktop 收到通知后重新读取当前 Context Usage。原始 Item 和 Tool 事实仍保存在 `state.sqlite`。验证失败会保留上一份 verified summary。
 
 ## 7. Model Gateway
 

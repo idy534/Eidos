@@ -19,8 +19,8 @@
 - Desktop 可以在 Session 对应的 managed Worktree 被 retention 清理后显示 Restore Worktree 提示。Restore 会调用 `session/restoreWorktree`，并继续使用同一个 Session 和同一个 `associatedWorktreeId`。当前 execution mode 是 Worktree 且 Worktree 已删除时，Composer 会保持只读。
 - Settings 可以读取和修改 `automaticCleanup` 与 `managedWorktreeLimit`。Worktree limit 的有效范围是 1 到 100，默认值是 15。
 - Execution Feed 可以展示用户消息、模型文本、ToolCall、Tool Result、Approval、终态和恢复后的历史。
-- Composer 可以选择已配置 Model，并显示当前选中 Model 最近 Run 的 Context Usage。
-- Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。没有快照时显示无数据状态。
+- Composer 可以选择已配置 Model，并显示当前选中 Model 最新 ContextSnapshot 的 Context Usage。该 Snapshot 有 Provider usage 时显示 Provider `input_tokens`，否则显示该 Snapshot 的 `projected_input_tokens` 估算值。
+- Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。新的 Run 在产生自己的 ContextSnapshot 前显示无数据状态。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
 - Quit 流程会先处理活动 Run，再关闭 Runtime 和窗口资源。
 
 ## Session / Run

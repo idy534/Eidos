@@ -661,6 +661,16 @@ export type RuntimeNotification =
   | { method: "run/started"; params: { sessionId: string; run: Run } }
   | { method: "run/updated"; params: { sessionId: string; run: Run } }
   | { method: "run/completed"; params: { sessionId: string; run: Run } }
+  | {
+      method: "context/compacted";
+      params: {
+        sessionId: string;
+        runId: string;
+        summaryId: string;
+        sourceItemCount: number;
+        phase: string;
+      };
+    }
   | { method: "item/updated"; params: { sessionId: string; runId: string; item: Item } }
   | { method: "item/started"; params: { sessionId: string; runId: string; item: Item } }
   | { method: "item/completed"; params: { sessionId: string; runId: string; item: Item } }

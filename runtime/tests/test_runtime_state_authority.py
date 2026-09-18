@@ -130,6 +130,31 @@ class RuntimeStateAuthorityTests(unittest.TestCase):
             ["approval/requested", "approval/resolved", "approval/canceled"],
         )
 
+    def test_context_compaction_projects_context_usage_refresh_notification(self) -> None:
+        projector = EventProjector()
+        notification = projector.project({
+            "eventType": "context.compacted",
+            "sessionId": self.session["id"],
+            "runId": "run-1",
+            "payload": {
+                "summaryId": "summary-1",
+                "sourceItemCount": 8,
+                "phase": "mid_turn",
+            },
+        })
+
+        self.assertEqual(notification, ({
+            "jsonrpc": "2.0",
+            "method": "context/compacted",
+            "params": {
+                "sessionId": self.session["id"],
+                "runId": "run-1",
+                "summaryId": "summary-1",
+                "sourceItemCount": 8,
+                "phase": "mid_turn",
+            },
+        },))
+
     def test_persisted_run_status_wins_over_runtime_phase_tracker(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "pause")
         tracker = RuntimePhaseTracker(state=RuntimeState.CANCELED)

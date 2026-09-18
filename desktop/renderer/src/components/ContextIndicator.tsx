@@ -29,7 +29,7 @@ export function ContextIndicator({ usage, className }: ContextIndicatorProps) {
       role="region"
       aria-label={formattedUsage}
       aria-live="polite"
-      title="当前模型最近一次请求的有效上下文"
+      title="当前模型当前上下文使用量"
     >
       <svg
         className="context-progress-ring"

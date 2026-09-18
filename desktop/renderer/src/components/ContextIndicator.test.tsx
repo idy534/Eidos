@@ -20,6 +20,7 @@ void test("ContextIndicator renders circular ring and tooltip with formatted con
   assert.match(html, /context-progress-arc/);
   assert.match(html, /composer-context-tooltip/);
   assert.match(html, /上下文 18% · 145.1K \/ 802.8K/);
+  assert.match(html, /title="当前模型当前上下文使用量"/);
 });
 
 void test("ContextIndicator renders fallback state when usage is undefined", () => {

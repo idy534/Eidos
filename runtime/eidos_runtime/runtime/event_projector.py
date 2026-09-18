@@ -26,6 +26,22 @@ class EventProjector:
                 "title": payload["title"],
             }),)
         if (
+            event_type == "context.compacted"
+            and isinstance(payload, dict)
+            and isinstance(event.get("sessionId"), str)
+            and isinstance(event.get("runId"), str)
+            and isinstance(payload.get("summaryId"), str)
+            and isinstance(payload.get("sourceItemCount"), int)
+            and isinstance(payload.get("phase"), str)
+        ):
+            return (self._notification("context/compacted", {
+                "sessionId": event["sessionId"],
+                "runId": event["runId"],
+                "summaryId": payload["summaryId"],
+                "sourceItemCount": payload["sourceItemCount"],
+                "phase": payload["phase"],
+            }),)
+        if (
             event_type in {"run.created", "run.status_changed"}
             and run is not None
             and run.get("status") == "running"

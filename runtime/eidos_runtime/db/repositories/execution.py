@@ -1030,11 +1030,17 @@ class ExecutionRepository(Repository):
             ).fetchall()
         return [_model_attempt_from_row(row) for row in rows]
 
-    def latest_model_usage(self, run_id: str) -> ModelUsage | None:
-        """Return the latest provider-reported usage for this Run.
+    def latest_model_usage(
+        self,
+        run_id: str,
+        *,
+        context_snapshot_id: str | None = None,
+    ) -> ModelUsage | None:
+        """Return the latest provider usage for a Run or exact ContextSnapshot.
 
-        ModelAttempt usage is the durable provider fact.  Context projection
-        callers must not reconstruct active context from cumulative attempts.
+        ModelAttempt usage is the durable provider fact. Context Usage callers
+        pass a snapshot ID so an older request cannot represent the current
+        active context after compaction.
         """
         with self.lock:
             row = self._connection().execute(
@@ -1042,11 +1048,16 @@ class ExecutionRepository(Repository):
                 SELECT model_attempts.usage_json
                 FROM model_attempts
                 JOIN steps ON steps.id = model_attempts.step_id
-                WHERE steps.run_id = ? AND model_attempts.usage_json IS NOT NULL
+                WHERE steps.run_id = ?
+                  AND model_attempts.usage_json IS NOT NULL
+                  AND (
+                    ? IS NULL
+                    OR model_attempts.context_snapshot_id = ?
+                  )
                 ORDER BY model_attempts.creation_seq DESC
                 LIMIT 1
                 """,
-                (run_id,),
+                (run_id, context_snapshot_id, context_snapshot_id),
             ).fetchone()
         if row is None:
             return None
