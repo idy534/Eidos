@@ -566,7 +566,7 @@ Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受�
 
 Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组；重复路径保留各次完整补丁的累计增删，并显示“累计”及非净差异说明。任一次缺少补丁时，统计保持未知。产物标题来自声明中的可选标题或文件名。`OutputContent` 按执行目录和相对路径保留当前 Session 最新声明。Files 只负责文件树和预览。
 
-产物身份由内置 `declare_outputs` 的成功 ToolResult 提供。`RunResources` 将该工具作为 direct、single-batch 的内置工具注册；系统级 Agent 指令要求模型在交付最终文件前调用，Skill 不负责定义工具的适用范围。工具使用现有 Pydantic 工具 Schema 和通用结果投影。其 Adapter 使用 Run 固定的 WorkspaceIdentity，通过 WorkspaceReader 的 fd-relative 边界核验普通文件元数据，并复查整个批次。文件读取采用非阻塞打开，特殊文件不会在类型检查前阻塞；符号链接、多硬链接、文件 owner 不匹配、敏感路径和 `.git` 路径不能声明。该工具不读取文件内容，也不改变文件；声明只存在于控制器正常提交的 ToolResult 中，所以它沿用只读工具执行链、取消和结果提交语义，不增加独立持久化动作或 Durable Intent。现有控制器继续承担结果校验、敏感信息扫描以及 ToolResult/Event/Outbox 的同事务提交。
+产物身份由内置 `declare_outputs` 的成功 ToolResult 提供。`RunResources` 将该工具作为 direct、single-batch 的内置工具注册；系统级 Agent 指令要求模型仅对用户期望接收的独立终态交付文件调用，文件被创建或修改不等于交付物，项目内普通修改仍是工作区变更，中间文件默认不声明，Skill 不负责定义工具的适用范围。工具使用现有 Pydantic 工具 Schema 和通用结果投影。其 Adapter 使用 Run 固定的 WorkspaceIdentity，通过 WorkspaceReader 的 fd-relative 边界核验普通文件元数据，并复查整个批次。文件读取采用非阻塞打开，特殊文件不会在类型检查前阻塞；符号链接、多硬链接、文件 owner 不匹配、敏感路径和 `.git` 路径不能声明。该工具不读取文件内容，也不改变文件；声明只存在于控制器正常提交的 ToolResult 中，所以它沿用只读工具执行链、取消和结果提交语义，不增加独立持久化动作或 Durable Intent。现有控制器继续承担结果校验、敏感信息扫描以及 ToolResult/Event/Outbox 的同事务提交。
 
 Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装，并显式使用 `DeclareOutputsResultData`。结果在进入控制器的首次严格校验前就带有 `toolName` 和契约版本字段。失败结果保留原始错误码，控制器不放宽结果校验。本次结果封装修复尚未进入测试阶段。
 

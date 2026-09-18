@@ -154,7 +154,26 @@ class ModelContractTests(unittest.TestCase):
 
     def test_final_response_marker_has_no_prompt_protocol_meaning(self) -> None:
         self.assertNotIn("<!--", BASE_AGENT_INSTRUCTIONS)
-        self.assertNotIn("marker", BASE_AGENT_INSTRUCTIONS.lower())
+        # "output markers" is ordinary prose in the declare_outputs contract,
+        # not a hidden prompt protocol token.
+        without_prose = BASE_AGENT_INSTRUCTIONS.lower().replace("output markers", "")
+        self.assertNotIn("marker", without_prose)
+
+    def test_final_response_contract_declares_only_requested_deliverables(self) -> None:
+        contract = BASE_AGENT_INSTRUCTIONS
+        self.assertIn(
+            "Use `declare_outputs` only for standalone files the user expects to receive",
+            contract,
+        )
+        self.assertIn(
+            "A file is not a deliverable merely because it was created or edited",
+            contract,
+        )
+        self.assertIn("remain workspace changes unless the user explicitly asks", contract)
+        self.assertIn("Do not declare intermediate files", contract)
+        self.assertIn("declare it again after revising it", contract)
+        self.assertIn("When uncertain whether a file is a requested deliverable", contract)
+        self.assertIn("Links or other output markers do not replace `declare_outputs`", contract)
 
 
 if __name__ == "__main__":

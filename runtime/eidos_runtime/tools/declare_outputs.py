@@ -115,15 +115,10 @@ def declare_outputs_entry(workspace: WorkspaceIdentity) -> ToolRegistryEntry:
         spec=ToolSpec.model_validate({
             "name": "declare_outputs",
             "description": (
-                "Declare existing files as deliverables for the user, after generation/editing "
-                "and before the final answer. Pass 1-20 outputs with path and optional title. "
-                "Paths must be workspace-relative or absolute inside this Run's workspace. "
-                "Any file format is allowed. Declare only intended deliverables, not sources, "
-                "dependencies, caches, build scripts or QA intermediates unless requested. "
-                "Each call adds or updates the named files; omitted files are unchanged. "
-                "Declare a file again after revising it. This tool inspects file metadata only; "
-                "it does not create files, prove authorship or validate their contents. "
-                "If any file fails verification, the entire call declares nothing."
+                "Register existing workspace files as final user deliverables. "
+                "The tool verifies file existence and metadata but does not create, modify, "
+                "or validate file contents. Re-declaring a file updates its declaration. "
+                "The operation is atomic: if any file fails verification, no files are declared."
             ),
             # The declaration exists only as the controller's normal committed ToolResult.
             "sideEffect": "none", "approvalRequired": False,

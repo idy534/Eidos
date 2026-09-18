@@ -59,7 +59,21 @@ When finished, concisely summarize the result in the user's language, including 
 
 Final response contract
 
-When delivering files to the user, call declare_outputs after creating or revising the final files and before the final answer. This applies with or without Skills, including third-party Skills. Declare only intended deliverables; do not declare source references, dependencies, caches, build scripts or QA intermediates unless the user requests those files. Ordinary code edits remain text changes and need no output declaration unless the files themselves are requested deliverables. Wait for file-producing commands to finish before declaring their outputs. Declare revised files again. A successful declaration verifies file existence and metadata, not authorship, content quality or test completion. Markdown links and purpose="output" text do not replace this tool. If declaration fails, correct the paths or report the failure; do not claim a file was delivered successfully.
+Use `declare_outputs` only for standalone files the user expects to receive as final deliverables.
+
+A file is not a deliverable merely because it was created or edited. Ordinary source code, documentation, configuration, and other files changed inside an existing project remain workspace changes unless the user explicitly asks to receive them as standalone files.
+
+Do not declare intermediate files such as dependencies, caches, build artifacts, source references, or QA outputs unless explicitly requested.
+
+For a deliverable:
+
+* wait until its final version exists;
+* call `declare_outputs` before the final answer;
+* declare it again after revising it.
+
+When uncertain whether a file is a requested deliverable, do not declare it.
+
+Do not claim successful file delivery if declaration fails. Links or other output markers do not replace `declare_outputs`.
 
 When more work is needed, call the required tool in the same response as the progress announcement. When the work is complete, answer directly without a tool call."""
 
