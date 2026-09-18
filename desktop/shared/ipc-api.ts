@@ -20,7 +20,6 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
-  SessionGitDiscardResult,
   ReviewComment,
   ReviewCommentCreateInput,
   GitRemoteStatus,
@@ -150,14 +149,7 @@ export interface EidosRuntimeAPI {
     branch: string,
     operationId: string,
   ): Promise<SessionGitMutationResult>;
-  readGitReviewPatch(sessionId: string, path: string, layer: "staged" | "unstaged"): Promise<import("./domain-contracts.js").GitReviewPatch>;
-  applyGitHunk(sessionId: string, input: import("./domain-contracts.js").GitHunkInput): Promise<SessionGitMutationResult>;
   stageSessionGit(
-    sessionId: string,
-    paths: string[],
-    operationId: string,
-  ): Promise<SessionGitMutationResult>;
-  unstageSessionGit(
     sessionId: string,
     paths: string[],
     operationId: string,
@@ -167,11 +159,6 @@ export interface EidosRuntimeAPI {
     message: string,
     operationId: string,
   ): Promise<SessionGitCommitResult>;
-  discardSessionGit(
-    sessionId: string,
-    path: string,
-    operationId: string,
-  ): Promise<SessionGitDiscardResult>;
   listReviewComments(
     sessionId: string,
     path?: string,

@@ -293,6 +293,7 @@ button.environment-popover__row:hover:not(:disabled) {
 }
 
 .workspace-dock__header {
+  position: relative;
   flex: none;
   height: 2.75rem;
   min-height: 2.75rem;
@@ -302,6 +303,30 @@ button.environment-popover__row:hover:not(:disabled) {
   background: color-mix(in srgb, var(--surface) 90%, transparent);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  -webkit-app-region: drag;
+}
+
+.workspace-dock__header button,
+.workspace-dock__header input,
+.workspace-dock__header a,
+.workspace-dock__header [role="tab"],
+.workspace-dock__header [role="button"],
+.workspace-dock__header .dropdown-trigger,
+.workspace-dock__header .dropdown-menu,
+.workspace-dock__header .icon-button {
+  -webkit-app-region: no-drag !important;
+}
+
+.workbench--sidebar-collapsed .workspace-dock--expanded .workspace-dock__header::before,
+.workbench--sidebar-collapsed .workspace-body--expanded .workspace-dock__header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(86px + 8rem);
+  height: 100%;
+  -webkit-app-region: no-drag !important;
+  pointer-events: none;
 }
 
 .workspace-dock__tabs {

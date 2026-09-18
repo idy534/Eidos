@@ -23,7 +23,6 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
-  SessionGitDiscardResult,
   ReviewComment,
   ReviewCommentCreateInput,
   GitRemoteStatus,
@@ -187,32 +186,18 @@ const api: EidosRuntimeAPI = {
     operationId: string,
   ): Promise<SessionGitMutationResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_CREATE_BRANCH, sessionId, branch, operationId),
-  readGitReviewPatch: (sessionId: string, path: string, layer: "staged" | "unstaged") => ipcRenderer.invoke(IPC.SESSION_GIT_READ_PATCH, sessionId, path, layer),
-  applyGitHunk: (sessionId: string, input: import("../shared/domain-contracts.js").GitHunkInput) => ipcRenderer.invoke(IPC.SESSION_GIT_APPLY_HUNK, sessionId, input),
   stageSessionGit: (
     sessionId: string,
     paths: string[],
     operationId: string,
   ): Promise<SessionGitMutationResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_STAGE, sessionId, paths, operationId),
-  unstageSessionGit: (
-    sessionId: string,
-    paths: string[],
-    operationId: string,
-  ): Promise<SessionGitMutationResult> =>
-    ipcRenderer.invoke(IPC.SESSION_GIT_UNSTAGE, sessionId, paths, operationId),
   commitSessionGit: (
     sessionId: string,
     message: string,
     operationId: string,
   ): Promise<SessionGitCommitResult> =>
     ipcRenderer.invoke(IPC.SESSION_GIT_COMMIT, sessionId, message, operationId),
-  discardSessionGit: (
-    sessionId: string,
-    path: string,
-    operationId: string,
-  ): Promise<SessionGitDiscardResult> =>
-    ipcRenderer.invoke(IPC.SESSION_GIT_DISCARD, sessionId, path, operationId),
   listReviewComments: (
     sessionId: string,
     path?: string,

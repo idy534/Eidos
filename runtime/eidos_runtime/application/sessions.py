@@ -24,7 +24,6 @@ from eidos_runtime.application.git_workflow import (
     GitFetchPlan,
     GitMergePlan,
     GitMutationPlan,
-    GitHunkPlan,
     GitPullPlan,
     GitPushPlan,
     GitRebasePlan,
@@ -79,17 +78,11 @@ from eidos_runtime.protocol.methods import (
     SessionRestoreWorktreeRequestDto,
     SessionRestoreWorktreeResponseDto,
     SessionGitDiffRequestDto,
-    SessionGitReadPatchRequestDto,
-    SessionGitReadPatchResponseDto,
-    SessionGitApplyHunkRequestDto,
-    SessionGitApplyHunkResponseDto,
     SessionGitDiffResponseDto,
     SessionGitCommitRequestDto,
     SessionGitCommitResponseDto,
     SessionGitCreateBranchRequestDto,
     SessionGitCreateBranchResponseDto,
-    SessionGitDiscardRequestDto,
-    SessionGitDiscardResponseDto,
     SessionGitFetchRequestDto,
     SessionGitFetchResponseDto,
     SessionGitMergeAbortRequestDto,
@@ -115,8 +108,6 @@ from eidos_runtime.protocol.methods import (
     SessionGitStatusResponseDto,
     SessionGitSwitchBranchRequestDto,
     SessionGitSwitchBranchResponseDto,
-    SessionGitUnstageRequestDto,
-    SessionGitUnstageResponseDto,
     SessionListRequestDto,
     SessionListResponseDto,
     SessionReadRequestDto,
@@ -161,7 +152,7 @@ MAX_SESSION_TITLE_BYTES = 120
 ResultT = TypeVar("ResultT", bound=MethodResultDto)
 BranchResultT = TypeVar("BranchResultT", bound=SessionGitMutationResponseDto)
 GitPlanT = TypeVar(
-    "GitPlanT", GitMutationPlan, GitBranchPlan, GitMergePlan, GitRebasePlan, GitHunkPlan
+    "GitPlanT", GitMutationPlan, GitBranchPlan, GitMergePlan, GitRebasePlan
 )
 
 
@@ -1334,20 +1325,6 @@ class SessionApplication:
             },
         )
 
-    def git_read_patch(self, request: SessionGitReadPatchRequestDto) -> SessionGitReadPatchResponseDto:
-        if self._git_workflow is None:
-            raise ApplicationError("INTERNAL_ERROR")
-        return self._git_workflow.read_patch(request)
-
-    def git_apply_hunk(self, request: SessionGitApplyHunkRequestDto) -> SessionGitApplyHunkResponseDto:
-        if self._git_workflow is None:
-            raise ApplicationError("INTERNAL_ERROR")
-        return self._execute_git_mutation(
-            request, scope="session/gitApplyHunk", result_type=SessionGitApplyHunkResponseDto,
-            preflight=lambda: self._git_workflow.preflight_hunk(request),
-            execute=self._git_workflow.apply_hunk,
-        )
-
     def git_stage(
         self, request: SessionGitStageRequestDto
     ) -> SessionGitStageResponseDto:
@@ -1361,21 +1338,6 @@ class SessionApplication:
             result_type=SessionGitStageResponseDto,
             preflight=lambda: self._git_workflow.preflight_stage(request),
             execute=self._git_workflow.stage,
-        )
-
-    def git_unstage(
-        self, request: SessionGitUnstageRequestDto
-    ) -> SessionGitUnstageResponseDto:
-        if self._git_workflow is None:
-            raise ApplicationError(
-                "INTERNAL_ERROR", "Session Git workflow boundary is unavailable"
-            )
-        return self._execute_git_mutation(
-            request,
-            scope="session/gitUnstage",
-            result_type=SessionGitUnstageResponseDto,
-            preflight=lambda: self._git_workflow.preflight_unstage(request),
-            execute=self._git_workflow.unstage,
         )
 
     def git_commit(
@@ -1417,19 +1379,6 @@ class SessionApplication:
             result_type=SessionGitCreateBranchResponseDto,
             preflight=lambda: self._git_workflow.preflight_create_branch(request),
             execute=self._git_workflow.create_branch,
-        )
-
-    def git_discard(
-        self, request: SessionGitDiscardRequestDto
-    ) -> SessionGitDiscardResponseDto:
-        if self._git_workflow is None:
-            raise ApplicationError("INTERNAL_ERROR")
-        return self._execute_git_mutation(
-            request,
-            scope="session/gitDiscard",
-            result_type=SessionGitDiscardResponseDto,
-            preflight=lambda: self._git_workflow.preflight_discard(request),
-            execute=self._git_workflow.discard,
         )
 
     def git_merge(
@@ -1775,10 +1724,7 @@ class SessionApplication:
         self,
         request: (
             SessionGitStageRequestDto
-            | SessionGitUnstageRequestDto
             | SessionGitCommitRequestDto
-            | SessionGitDiscardRequestDto
-            | SessionGitApplyHunkRequestDto
             | SessionGitMergeRequestDto
             | SessionGitMergeAbortRequestDto
             | SessionGitRebaseRequestDto

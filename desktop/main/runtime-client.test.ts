@@ -447,17 +447,6 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
       await client.listReviewComments(local.id, "WORKFLOW.txt", "head"),
       [reviewComment],
     );
-    const discarded = await client.discardSessionGit(
-      local.id,
-      "WORKFLOW.txt",
-      "14141414-1414-4414-8414-141414141414",
-    );
-    assert.deepEqual(discarded.status.untrackedFiles, []);
-    await assert.rejects(readFile(path.join(repositoryRoot, "WORKFLOW.txt"), "utf8"));
-    assert.equal(
-      (await client.listReviewComments(local.id, "WORKFLOW.txt", "head"))[0]?.status,
-      "stale",
-    );
     assert.equal(
       await client.deleteReviewComment(local.id, reviewComment.id, randomUUID()),
       reviewComment.id,
@@ -474,12 +463,6 @@ test("projects managed Worktrees and keeps Git review isolated per session", asy
       await client.stageSessionGit(local.id, ["WORKFLOW.txt"], stageOperationId),
       staged,
     );
-    const unstaged = await client.unstageSessionGit(
-      local.id,
-      ["WORKFLOW.txt"],
-      "88888888-8888-4888-8888-888888888888",
-    );
-    assert.deepEqual(unstaged.status.untrackedFiles, ["WORKFLOW.txt"]);
     await client.stageSessionGit(local.id, ["WORKFLOW.txt"], randomUUID());
     const commitOperationId = "99999999-9999-4999-8999-999999999999";
     const committed = await client.commitSessionGit(

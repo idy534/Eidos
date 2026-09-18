@@ -1936,6 +1936,17 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   font-variant-numeric: tabular-nums;
 }
 
+/* 最近一轮/整个任务与未提交共用同一套列表盒模型：去掉 LastTurnChanges
+   自带的外层内边距与嵌套滚动，内容对齐到同一个 .git-review-files 容器。 */
+.git-changes-panel .last-turn-changes {
+  padding: 0;
+  overflow: visible;
+}
+
+.git-changes-panel .last-turn-changes .git-review-files {
+  overflow: visible;
+}
+
 .git-review-empty {
   display: grid;
   min-height: 14rem;
@@ -1962,15 +1973,15 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .git-review-file {
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-bottom: none;
   background: var(--surface-raised);
 }
 
 .git-review-file-header {
   display: flex;
   min-width: 0;
-  min-height: 2.75rem;
-  flex-wrap: wrap;
+  min-height: 2.25rem;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.5rem;
 }
@@ -1984,7 +1995,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   gap: 0.45rem;
   border: 0;
   border-radius: var(--radius-sm);
-  padding: 0.55rem 0.6rem;
+  padding: 0.35rem 0.6rem;
   overflow: hidden;
   color: var(--text);
   background: transparent;
@@ -2033,11 +2044,10 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   flex: none;
   align-items: center;
   gap: 0.35rem;
-  margin-left: auto;
   color: var(--muted);
   font-family: var(--font-code);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
+  font-size: var(--font-size-sidebar);
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
 }
@@ -2054,14 +2064,38 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   background: var(--surface-hover);
 }
 
-.git-file-actions {
-  display: flex;
+.git-review-file-header .git-icon-button {
   flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-  margin-left: 1.75rem;
-  padding: 0 0.5rem 0.5rem 0;
+  width: 1.85rem;
+  height: 1.85rem;
+  min-width: 1.85rem;
+  min-height: 1.85rem;
+  padding: 0;
+  gap: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.git-review-file-header:hover .git-icon-button,
+.git-review-file-header:focus-within .git-icon-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.git-review-file-header .git-icon-button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.git-review-file-header .git-icon-button svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
 }
 
 .git-file-diff-scroll {
@@ -2148,9 +2182,16 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   width: 5ch;
 }
 
-.git-diff-unified col.diff-gutter-col:nth-of-type(2),
+/* 第二 gutter 列在 unified 视图下为空：必须零宽隐藏而非 display:none，
+   否则 fixed 表格算法会为 widget 行的 colspan=3 造出幽灵列，
+   把代码列压到半宽（评论草稿/已发表评论都会触发）。 */
+.git-diff-unified col.diff-gutter-col:nth-of-type(2) {
+  width: 0;
+}
+
 .git-diff-unified .diff-line > .diff-gutter:nth-child(2) {
-  display: none;
+  padding: 0;
+  font-size: 0;
 }
 
 .git-diff-unified .diff-gutter {
@@ -4918,6 +4959,14 @@ button.composer-context-project--empty:hover:not(:disabled) {
   padding: 2rem;
   text-align: center;
   background: var(--surface);
+  -webkit-app-region: drag;
+}
+
+.runtime-gate button,
+.runtime-gate input,
+.runtime-gate a,
+.runtime-gate [role="button"] {
+  -webkit-app-region: no-drag !important;
 }
 
 .runtime-gate-card {

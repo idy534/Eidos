@@ -242,60 +242,8 @@ class _SessionGitPathsRequest(_OperationRequest):
         return normalized
 
 
-class SessionGitReadPatchRequestDto(_CanonicalIdRequest):
-    session_id: StrictStr = Field(alias="sessionId")
-    path: StrictStr = Field(min_length=1, max_length=4096)
-    layer: Literal["staged", "unstaged"]
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
-
-    @field_validator("path")
-    @classmethod
-    def _path(cls, value: str) -> str:
-        return _git_relative_path(value)
-
-
-class SessionGitReadPatchResponseDto(MethodResultDto):
-    patch: StrictStr
-    diff_hash: StrictStr = Field(alias="diffHash")
-    head: StrictStr
-
-
-class SessionGitApplyHunkRequestDto(_OperationRequest):
-    operation_id: StrictStr = Field(alias="operationId")
-    session_id: StrictStr = Field(alias="sessionId")
-    path: StrictStr = Field(min_length=1, max_length=4096)
-    action: Literal["stage", "unstage", "discard"]
-    hunk_index: StrictInt = Field(alias="hunkIndex", ge=0, le=10000)
-    diff_hash: StrictStr = Field(alias="diffHash", pattern="^[a-f0-9]{64}$")
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id", "session_id")
-
-    @field_validator("path")
-    @classmethod
-    def _path(cls, value: str) -> str:
-        return _git_relative_path(value)
-
-
 class SessionGitStageRequestDto(_SessionGitPathsRequest):
     pass
-
-
-class SessionGitUnstageRequestDto(_SessionGitPathsRequest):
-    pass
-
-
-class SessionGitDiscardRequestDto(_OperationRequest):
-    operation_id: StrictStr = Field(alias="operationId")
-    session_id: StrictStr = Field(alias="sessionId")
-    path: StrictStr = Field(min_length=1, max_length=4096)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = (
-        "operation_id",
-        "session_id",
-    )
-
-    @field_validator("path")
-    @classmethod
-    def _validate_path(cls, value: str) -> str:
-        return _git_relative_path(value)
 
 
 class SessionGitCommitRequestDto(_OperationRequest):
@@ -855,18 +803,6 @@ class SessionGitMutationResponseDto(MethodResultDto):
 
 
 class SessionGitStageResponseDto(SessionGitMutationResponseDto):
-    pass
-
-
-class SessionGitApplyHunkResponseDto(SessionGitMutationResponseDto):
-    pass
-
-
-class SessionGitUnstageResponseDto(SessionGitMutationResponseDto):
-    pass
-
-
-class SessionGitDiscardResponseDto(SessionGitMutationResponseDto):
     pass
 
 

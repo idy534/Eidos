@@ -110,6 +110,25 @@ describe("GitWorkflowControls", () => {
     expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
   });
 
+  it("portals the dialog to document body so dock stacking contexts cannot clip it", async () => {
+    const { result } = renderControls({ openRequest: 1 });
+
+    const dialog = await screen.findByRole("dialog", { name: "提交和推送" });
+    const backdrop = dialog.closest(".modal-backdrop");
+    expect(backdrop).toBeInTheDocument();
+    expect(backdrop?.parentElement).toBe(document.body);
+    expect(result.container.contains(dialog)).toBe(false);
+  });
+
+  it("renders dialog-only global mode without a trigger button", async () => {
+    renderControls({ dialogOnly: true, openRequest: 1 });
+
+    expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "提交或推送" })).not.toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "提交和推送" });
+    expect(dialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
+  });
+
   it("includes unstaged files before committing and can push the new commit", async () => {
     const { stage, commit, push } = renderControls();
     openWorkflow();

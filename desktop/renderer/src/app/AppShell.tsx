@@ -21,6 +21,7 @@ import { ComposerSlot } from "../components/ComposerSlot.js";
 import { Composer } from "../components/Composer.js";
 import { TextReviewPanel } from "../components/TextReviewPanel.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
+import { GitWorkflowControls } from "../components/GitWorkflowControls.js";
 import {
   WorkspaceExplorer,
   type WorkspaceFileOpenRequest,
@@ -842,7 +843,8 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function openGitWorkflow(): void {
-    openTool("review");
+    if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
+    setEnvironmentPopoverOpen(false);
     setWorkflowOpenRequest((request) => request + 1);
   }
 
@@ -1252,7 +1254,6 @@ export function AppShell({ runtime }: AppShellProps) {
                         scope={gitReviewState.scope}
                         status={gitReviewState.status}
                         summary={gitReviewState.summary}
-                        workflowOpenRequest={workflowOpenRequest}
                         loading={gitReviewState.loadingStatus || gitReviewState.loadingSummary}
                         error={gitReviewState.error}
                         onScopeChange={gitReviewActions.selectScope}
@@ -1361,6 +1362,28 @@ export function AppShell({ runtime }: AppShellProps) {
         onCreate={handleOpenCreateProject}
         onClose={() => setProjectPickerOpen(false)}
       />
+      {currentSnapshot && !isDraft && sessionHasGit && gitReviewState.status && (
+        <GitWorkflowControls
+          sessionId={currentSnapshot.session.id}
+          workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
+          status={gitReviewState.status}
+          disabled={
+            Boolean(activeRun)
+            || runState.isSubmitting
+            || handoffBusy
+            || sessionState.pending.branchSessionId === currentSnapshot.session.id
+            || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
+          }
+          onRefresh={gitReviewActions.refresh}
+          openRequest={workflowOpenRequest}
+          dialogOnly
+          onCreateBranch={
+            sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
+              ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")
+              : undefined
+          }
+        />
+      )}
       <CreateProjectDialog
         open={createProjectOpen}
         sourceFolder={createProjectFolder}

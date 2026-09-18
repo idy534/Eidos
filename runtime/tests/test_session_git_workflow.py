@@ -20,13 +20,9 @@ from eidos_runtime.protocol.methods import (
     SessionGitCommitRequestDto,
     SessionGitCreateBranchRequestDto,
     SessionGitDiffRequestDto,
-    SessionGitDiscardRequestDto,
-    SessionGitApplyHunkRequestDto,
-    SessionGitReadPatchRequestDto,
     SessionGitStageRequestDto,
     SessionGitStatusRequestDto,
     SessionGitSwitchBranchRequestDto,
-    SessionGitUnstageRequestDto,
 )
 
 
@@ -133,80 +129,7 @@ def test_structured_status_and_file_diff_are_runtime_owned(tmp_path: Path) -> No
         store.close()
 
 
-def test_git_review_patch_applies_one_hunk_and_rejects_stale_hash(
-    tmp_path: Path,
-) -> None:
-    repository = _repository(tmp_path)
-    lines = [f"line-{index}\n" for index in range(1, 31)]
-    (repository / "tracked.txt").write_text("".join(lines), encoding="utf-8")
-    _git(repository, "add", "tracked.txt")
-    _git(repository, "commit", "-qm", "expand fixture")
-    store, _manager, application = _application(tmp_path)
-    try:
-        session = _create_session(application, repository, execution_mode="local")
-        changed = list(lines)
-        changed[1] = "changed-second\n"
-        changed[-2] = "changed-penultimate\n"
-        (repository / "tracked.txt").write_text("".join(changed), encoding="utf-8")
-
-        patch = application.git_read_patch(
-            SessionGitReadPatchRequestDto(
-                sessionId=session["id"], path="tracked.txt", layer="unstaged"
-            )
-        ).root
-        assert patch["patch"].count("@@ -") == 2
-        assert len(patch["diffHash"]) == 64
-
-        request = SessionGitApplyHunkRequestDto(
-            operationId=str(uuid.uuid4()),
-            sessionId=session["id"],
-            path="tracked.txt",
-            action="stage",
-            hunkIndex=0,
-            diffHash=patch["diffHash"],
-        )
-        result = application.git_apply_hunk(request).root
-        assert application.git_apply_hunk(request).root == result
-        staged = _git(repository, "diff", "--cached", "--", "tracked.txt")
-        unstaged = _git(repository, "diff", "--", "tracked.txt")
-        assert "changed-second" in staged
-        assert "changed-penultimate" not in staged
-        assert "changed-penultimate" in unstaged
-        assert "changed-second" not in unstaged
-
-        with pytest.raises(ApplicationError, match="GIT_DIFF_CHANGED"):
-            application.git_apply_hunk(
-                SessionGitApplyHunkRequestDto(
-                    operationId=str(uuid.uuid4()),
-                    sessionId=session["id"],
-                    path="tracked.txt",
-                    action="stage",
-                    hunkIndex=0,
-                    diffHash=patch["diffHash"],
-                )
-            )
-
-        remaining = application.git_read_patch(
-            SessionGitReadPatchRequestDto(
-                sessionId=session["id"], path="tracked.txt", layer="unstaged"
-            )
-        ).root
-        with pytest.raises(ApplicationError, match="GIT_HUNK_UNAVAILABLE"):
-            application.git_apply_hunk(
-                SessionGitApplyHunkRequestDto(
-                    operationId=str(uuid.uuid4()),
-                    sessionId=session["id"],
-                    path="tracked.txt",
-                    action="stage",
-                    hunkIndex=9,
-                    diffHash=remaining["diffHash"],
-                )
-            )
-    finally:
-        store.close()
-
-
-def test_local_stage_unstage_and_commit_return_refreshed_status(tmp_path: Path) -> None:
+def test_local_stage_and_commit_return_refreshed_status(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     store, _manager, application = _application(tmp_path)
     try:
@@ -224,13 +147,6 @@ def test_local_stage_unstage_and_commit_return_refreshed_status(tmp_path: Path) 
         assert staged["branch"] == "main"
         assert staged["status"]["stagedFiles"] == ["new file.txt", "tracked.txt"]
 
-        unstaged = application.git_unstage(
-            SessionGitUnstageRequestDto(
-                sessionId=session["id"], paths=["new file.txt"]
-            )
-        ).root
-        assert unstaged["status"]["untrackedFiles"] == ["new file.txt"]
-
         committed = application.git_commit(
             SessionGitCommitRequestDto(
                 sessionId=session["id"], message="commit tracked"
@@ -239,7 +155,6 @@ def test_local_stage_unstage_and_commit_return_refreshed_status(tmp_path: Path) 
         assert committed["commit"] != original_head
         assert committed["commit"] == committed["head"]
         assert committed["status"]["stagedFiles"] == []
-        assert committed["status"]["untrackedFiles"] == ["new file.txt"]
     finally:
         store.close()
 
@@ -335,94 +250,6 @@ def test_local_branch_mutations_guard_workspace_and_invalidate_repository_runtim
                 )
             )
         assert busy.value.code == "GIT_WORKFLOW_BUSY"
-    finally:
-        store.close()
-
-
-def test_discard_restores_tracked_or_cleans_exact_untracked_file(tmp_path: Path) -> None:
-    repository = _repository(tmp_path)
-    store, _manager, application = _application(tmp_path)
-    try:
-        session = _create_session(application, repository, execution_mode="local")
-        (repository / "tracked.txt").write_text("changed\n", encoding="utf-8")
-        special = repository / "*.txt"
-        special.write_text("untracked\n", encoding="utf-8")
-        other = repository / "other-untracked.txt"
-        other.write_text("keep\n", encoding="utf-8")
-
-        tracked = application.git_discard(
-            SessionGitDiscardRequestDto(
-                sessionId=session["id"],
-                path="tracked.txt",
-                operationId=str(uuid.uuid4()),
-            )
-        ).root
-        discard_operation_id = str(uuid.uuid4())
-        discard_request = SessionGitDiscardRequestDto(
-            sessionId=session["id"],
-            path="*.txt",
-            operationId=discard_operation_id,
-        )
-        untracked = application.git_discard(discard_request).root
-        replayed = application.git_discard(discard_request).root
-
-        assert (repository / "tracked.txt").read_text(encoding="utf-8") == "base\n"
-        assert special.exists() is False
-        assert other.read_text(encoding="utf-8") == "keep\n"
-        assert untracked["status"]["untrackedFiles"] == ["other-untracked.txt"]
-        assert replayed == untracked
-        assert tracked["head"] == untracked["head"]
-    finally:
-        store.close()
-
-
-def test_discard_rejects_staged_only_path(tmp_path: Path) -> None:
-    repository = _repository(tmp_path)
-    store, _manager, application = _application(tmp_path)
-    try:
-        session = _create_session(application, repository, execution_mode="local")
-        (repository / "tracked.txt").write_text("staged\n", encoding="utf-8")
-        _git(repository, "add", "tracked.txt")
-
-        with pytest.raises(ApplicationError, match="GIT_DISCARD_REQUIRES_UNSTAGED"):
-            application.git_discard(
-                SessionGitDiscardRequestDto(
-                    sessionId=session["id"],
-                    path="tracked.txt",
-                    operationId=str(uuid.uuid4()),
-                )
-            )
-    finally:
-        store.close()
-
-
-def test_discard_rejects_unresolved_conflict(tmp_path: Path) -> None:
-    repository = _repository(tmp_path)
-    _git(repository, "switch", "-c", "side")
-    (repository / "tracked.txt").write_text("side\n", encoding="utf-8")
-    _git(repository, "commit", "-am", "side")
-    _git(repository, "switch", "main")
-    (repository / "tracked.txt").write_text("main\n", encoding="utf-8")
-    _git(repository, "commit", "-am", "main")
-    subprocess.run(
-        ["git", "merge", "side"],
-        cwd=repository,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    store, _manager, application = _application(tmp_path)
-    try:
-        session = _create_session(application, repository, execution_mode="local")
-        with pytest.raises(ApplicationError) as conflict:
-            application.git_discard(
-                SessionGitDiscardRequestDto(
-                    sessionId=session["id"],
-                    path="tracked.txt",
-                    operationId=str(uuid.uuid4()),
-                )
-            )
-        assert conflict.value.code == "GIT_CONFLICT"
     finally:
         store.close()
 
@@ -643,16 +470,6 @@ def test_git_mutations_reject_active_run_invalid_paths_and_empty_selection(
     with pytest.raises(ValidationError):
         SessionGitStageRequestDto(sessionId=session["id"], paths=["../outside"])
     with pytest.raises(ValidationError):
-        SessionGitUnstageRequestDto(sessionId=session["id"], paths=["/outside"])
-    with pytest.raises(ValidationError):
-        SessionGitDiscardRequestDto(
-            operationId=str(uuid.uuid4()),
-            sessionId=session["id"],
-            path="../outside",
-        )
-    with pytest.raises(ValidationError):
-        SessionGitDiscardRequestDto(sessionId=session["id"], path="tracked.txt")
-    with pytest.raises(ValidationError):
         SessionGitStageRequestDto(
             operationId="not-a-canonical-operation-id",
             sessionId=session["id"],
@@ -751,17 +568,6 @@ def test_git_mutation_operation_ids_replay_without_reexecuting_git(
         assert "tracked.txt" not in _git(repository, "diff", "--cached", "--name-only")
 
         _git(repository, "add", "--", "tracked.txt")
-        unstage_operation = str(uuid.uuid4())
-        unstage_request = SessionGitUnstageRequestDto(
-            operationId=unstage_operation,
-            sessionId=session_id,
-            paths=["tracked.txt"],
-        )
-        first_unstage = application.git_unstage(unstage_request).root
-        _git(repository, "add", "--", "tracked.txt")
-
-        assert application.git_unstage(unstage_request).root == first_unstage
-        assert _git(repository, "diff", "--cached", "--name-only") == "tracked.txt"
 
         commit_operation = str(uuid.uuid4())
         commit_request = SessionGitCommitRequestDto(

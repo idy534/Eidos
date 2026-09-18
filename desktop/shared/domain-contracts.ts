@@ -140,8 +140,6 @@ export interface SessionGitCommitResult extends SessionGitMutationResult {
   commit: string;
 }
 
-export type SessionGitDiscardResult = SessionGitMutationResult;
-
 export interface GitRemoteStatus {
   branch: string | null;
   remotes: Array<{ name: string }>;
@@ -716,6 +714,3 @@ export interface BrowserAnnotation {
   screenshot: string;
   capturedAt: number;
 }
-
-export interface GitReviewPatch { patch: string; diffHash: string; head: string }
-export interface GitHunkInput { path: string; action: "stage" | "unstage" | "discard"; hunkIndex: number; diffHash: string; operationId: string }

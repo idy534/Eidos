@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Diff, Hunk, parseDiff } from "react-diff-view";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Diff, Hunk, getChangeKey, parseDiff } from "react-diff-view";
 import type { Item } from "../contracts.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { userFacingError } from "../session-state.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { Button } from "./Button.js";
-import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 
 function cleanFilePath(file: { oldPath: string; newPath: string }): string {
   const raw = file.newPath && file.newPath !== "/dev/null" ? file.newPath : file.oldPath;
@@ -84,14 +83,27 @@ function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
   );
 }
 
-function ExpandIcon({ collapse }: { collapse: boolean }) {
+function OpenInEditorIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
-      {collapse
-        ? <path d="M5 3v5m-2-2 2 2 2-2M5 17v-5m-2 2 2-2 2 2M10 5h7M10 10h7M10 15h7" />
-        : <path d="M5 8V3m-2 2 2-2 2 2M5 12v5m-2-2 2 2 2-2M10 5h7M10 10h7M10 15h7" />}
+      <path d="M8 4H4v12h12v-4M11 4h5v5M15.5 4.5 9 11" />
     </svg>
   );
+}
+
+function OpenInWorkspaceIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15" />
+    </svg>
+  );
+}
+
+export interface ItemReviewStats {
+  additions: number;
+  deletions: number;
+  count: number;
+  allExpanded: boolean;
 }
 
 interface FileChangeEntry {
@@ -111,7 +123,7 @@ interface FileReviewSummary {
   openPath?: string;
 }
 
-export function LastTurnChanges({ sessionId, previousItemId, items, runId, focusPath, onFeedback, disabled, entireTask = false }: {
+export function LastTurnChanges({ sessionId, previousItemId, items, runId, focusPath, onFeedback, disabled, entireTask = false, onStats, expandSignal }: {
   entireTask?: boolean;
   sessionId: string;
   previousItemId?: string | undefined;
@@ -120,6 +132,8 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   focusPath?: string | undefined;
   onFeedback?: ((text: string) => Promise<void>) | undefined;
   disabled: boolean;
+  onStats?: ((stats: ItemReviewStats) => void) | undefined;
+  expandSignal?: { id: number; expand: boolean } | undefined;
 }) {
   const actions = useArtifacts();
   const [older, setOlder] = useState<Item[]>([]);
@@ -232,13 +246,25 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   const allFilesExpanded = fileSummaries.length > 0
     && fileSummaries.every((f) => expandedKeys.has(f.path));
 
-  const toggleAllExpanded = useCallback(() => {
-    if (allFilesExpanded) {
-      setExpandedKeys(new Set());
-    } else {
+  useEffect(() => {
+    onStats?.({
+      additions: totalStats.additions,
+      deletions: totalStats.deletions,
+      count: fileSummaries.length,
+      allExpanded: allFilesExpanded,
+    });
+  }, [onStats, totalStats.additions, totalStats.deletions, fileSummaries.length, allFilesExpanded]);
+
+  useEffect(() => {
+    if (!expandSignal) return;
+    if (expandSignal.expand) {
       setExpandedKeys(new Set(fileSummaries.map((f) => f.path)));
+    } else {
+      setExpandedKeys(new Set());
     }
-  }, [allFilesExpanded, fileSummaries]);
+    // fileSummaries 变化时沿用最近一次展开意图，保持工具栏与列表一致。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandSignal]);
 
   const toggleFile = useCallback((filePath: string) => {
     setExpandedKeys((prev) => {
@@ -255,8 +281,15 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   const changesCount = currentItems.filter((item) => item.toolCall?.changeDiff || item.toolCall?.changeDiffHash).length;
   const hasFocusedChange = !focusPath || fileSummaries.some((f) => f.openPath !== undefined)
     || changesCount > 0 && currentItems.some((item) => item.toolCall?.changeDiffHash);
-  const [anchor, setAnchor] = useState("");
-  const [body, setBody] = useState("");
+  // 行内草稿与未提交共用同一交互：点 gutter 在该行下方展开，其余位置不变。
+  const [draft, setDraft] = useState<{
+    filePath: string;
+    toolCallId: string;
+    changeKey: string;
+    anchorText: string;
+  }>();
+  const [draftBody, setDraftBody] = useState("");
+  const [sendError, setSendError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -276,14 +309,50 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   }
 
   async function send() {
-    if (!onFeedback) return;
-    setBusy(true); setError("");
+    if (!onFeedback || !draft) return;
+    setBusy(true); setSendError("");
     try {
-      await onFeedback(`请处理以下文本修改反馈。以下位置属于工具执行时的 Diff，请先核对当前文件。\n${anchor}\n用户意见：${body}`);
-      setBody("");
-      setAnchor("");
-    } catch (cause) { setError(userFacingError(cause)); }
+      await onFeedback(`请处理以下文本修改反馈。以下位置属于工具执行时的 Diff，请先核对当前文件。\n${draft.anchorText}\n用户意见：${draftBody}`);
+      setDraftBody("");
+      setDraft(undefined);
+    } catch (cause) { setSendError(userFacingError(cause)); }
     finally { setBusy(false); }
+  }
+
+  function draftWidgets(filePath: string, toolCallId: string): Record<string, ReactNode> {
+    if (!draft || draft.filePath !== filePath || draft.toolCallId !== toolCallId) return {};
+    return {
+      [draft.changeKey]: (
+        <div className="review-comment-draft">
+          <textarea
+            aria-label="本轮修改反馈"
+            value={draftBody}
+            onChange={(event) => setDraftBody(event.target.value)}
+            placeholder="输入针对选中代码行的修改意见..."
+            maxLength={8192}
+          />
+          <div>
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={disabled || busy || !draftBody.trim()}
+              loading={busy}
+              onClick={() => void send()}
+            >
+              发送反馈
+            </Button>
+            <Button
+              variant="ghost"
+              size="small"
+              onClick={() => { setDraft(undefined); setDraftBody(""); setSendError(""); }}
+            >
+              取消
+            </Button>
+          </div>
+          {sendError && <p className="text-review-error" role="alert">{sendError}</p>}
+        </div>
+      ),
+    };
   }
 
   return (
@@ -298,27 +367,9 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
       {error && <p className="text-review-error" role="alert">{error}</p>}
       <div className="git-review-files">
         {fileSummaries.length > 0 && (
-          <div className="text-review-files-summary" role="status">
-            <span>共 {fileSummaries.length} 个文件修改</span>
-            <span className="git-file-stats">
-              <span className="git-review-stat--addition">+{totalStats.additions}</span>
-              <span className="git-review-stat--deletion">-{totalStats.deletions}</span>
-            </span>
-            <Button
-              variant="ghost"
-              size="small"
-              className="git-icon-button"
-              icon={<ExpandIcon collapse={allFilesExpanded} />}
-              aria-label={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
-              title={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
-              disabled={fileSummaries.length === 0}
-              onClick={toggleAllExpanded}
-            >
-              <span className="sr-only">{allFilesExpanded ? "折叠全部差异" : "展开全部差异"}</span>
-            </Button>
-          </div>
-        )}
-        {fileSummaries.map((file) => {
+          <section className="git-file-group" aria-label="修改">
+            <h2>修改 <span>{fileSummaries.length}</span></h2>
+            {fileSummaries.map((file) => {
           const isFileExpanded = expandedKeys.has(file.path);
           return (
             <article className="git-review-file" key={file.path}>
@@ -334,26 +385,42 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
                   <span className="git-file-disclosure">
                     <FileDisclosureIcon expanded={isFileExpanded} />
                   </span>
-                  <span className="text-review-file-icon" aria-hidden="true">
-                    <WorkspaceFileIcon name={file.openPath ?? file.path} />
-                  </span>
                   <code>{file.path}</code>
                   <span className="git-file-stats">
                     <span className="git-review-stat--addition">+{file.additions}</span>
                     <span className="git-review-stat--deletion">-{file.deletions}</span>
                   </span>
                 </button>
-                {isFileExpanded && file.openPath && (
-                  <div className="git-file-actions">
+                {file.openPath && (
+                  <>
                     <Button
                       size="small"
                       variant="ghost"
-                      onClick={() => actions?.openFile(file.openPath!)}
-                      title={`在工作区打开 ${file.openPath}`}
+                      className="git-icon-button"
+                      icon={<OpenInEditorIcon />}
+                      aria-label={`在编辑器中打开 ${file.openPath}`}
+                      title={`在编辑器中打开 ${file.openPath}`}
+                      onClick={() => {
+                        setError("");
+                        void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.openPath!).catch((cause: unknown) => {
+                          setError(userFacingError(cause));
+                        });
+                      }}
                     >
-                      在工作区打开
+                      <span className="sr-only">{`在编辑器中打开 ${file.openPath}`}</span>
                     </Button>
-                  </div>
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      className="git-icon-button"
+                      icon={<OpenInWorkspaceIcon />}
+                      aria-label={`在工作区打开 ${file.openPath}`}
+                      title={`在工作区打开 ${file.openPath}`}
+                      onClick={() => actions?.openFile(file.openPath!)}
+                    >
+                      <span className="sr-only">{`在工作区打开 ${file.openPath}`}</span>
+                    </Button>
+                  </>
                 )}
               </header>
 
@@ -398,9 +465,17 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
                                 ? (side === "old" ? lineChange.oldLineNumber : lineChange.newLineNumber)
                                 : lineChange.lineNumber;
                               const call = change.item.toolCall!;
-                              setAnchor(`Run: ${change.item.runId}\nToolCall: ${call.id}\n文件: ${file.openPath ?? file.path}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`);
+                              setDraft({
+                                filePath: file.path,
+                                toolCallId: change.toolCallId,
+                                changeKey: getChangeKey(lineChange),
+                                anchorText: `Run: ${change.item.runId}\nToolCall: ${call.id}\n文件: ${file.openPath ?? file.path}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`,
+                              });
+                              setDraftBody("");
+                              setSendError("");
                             },
                           }}
+                          widgets={draftWidgets(file.path, change.toolCallId)}
                         >
                           {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
                         </Diff>
@@ -420,6 +495,8 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
             </article>
           );
         })}
+          </section>
+        )}
       </div>
       {!fileSummaries.length && (
         <div className="text-review-empty">
@@ -429,50 +506,6 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
       {focusPath && fileSummaries.length > 0 && !hasFocusedChange && (
         <div className="text-review-empty">
           <p>未找到该文件的历史 Diff。</p>
-        </div>
-      )}
-      {anchor && (
-        <div className="text-review-feedback-box" role="region" aria-label="代码审阅反馈">
-          <div className="text-review-feedback-header">
-            <span className="text-review-feedback-title">针对所选代码行的修改意见</span>
-            <button
-              type="button"
-              className="text-review-feedback-close"
-              aria-label="取消反馈"
-              title="取消反馈"
-              onClick={() => { setAnchor(""); setBody(""); }}
-            >
-              ×
-            </button>
-          </div>
-          <pre className="text-review-feedback-anchor">{anchor}</pre>
-          <textarea
-            className="text-review-feedback-input"
-            aria-label="本轮修改反馈"
-            placeholder="输入针对选中代码行的修改意见..."
-            value={body}
-            maxLength={8192}
-            onChange={(event) => setBody(event.target.value)}
-          />
-          <div className="text-review-feedback-actions">
-            <Button
-              variant="ghost"
-              size="small"
-              onClick={() => { setAnchor(""); setBody(""); }}
-            >
-              取消
-            </Button>
-            <Button
-              variant="secondary"
-              size="small"
-              disabled={disabled || busy || !body.trim()}
-              loading={busy}
-              onClick={() => void send()}
-            >
-              发送反馈
-            </Button>
-          </div>
-          {error && <p className="text-review-error" role="alert">{error}</p>}
         </div>
       )}
     </section>

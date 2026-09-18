@@ -839,18 +839,6 @@ class RuntimeServer:
                 request: self._applications_or_error().sessions.read_snapshot(request),
             ),
             (
-                "session/gitReadPatch",
-                method_dtos.SessionGitReadPatchRequestDto,
-                method_dtos.SessionGitReadPatchResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_read_patch(request),
-            ),
-            (
-                "session/gitApplyHunk",
-                method_dtos.SessionGitApplyHunkRequestDto,
-                method_dtos.SessionGitApplyHunkResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_apply_hunk(request),
-            ),
-            (
                 "workspace/listDirectory",
                 method_dtos.WorkspaceListDirectoryRequestDto,
                 method_dtos.WorkspaceListDirectoryResponseDto,
@@ -905,26 +893,10 @@ class RuntimeServer:
                 ),
             ),
             (
-                "session/gitUnstage",
-                method_dtos.SessionGitUnstageRequestDto,
-                method_dtos.SessionGitUnstageResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_unstage(
-                    request
-                ),
-            ),
-            (
                 "session/gitCommit",
                 method_dtos.SessionGitCommitRequestDto,
                 method_dtos.SessionGitCommitResponseDto,
                 lambda _id, request: self._applications_or_error().sessions.git_commit(
-                    request
-                ),
-            ),
-            (
-                "session/gitDiscard",
-                method_dtos.SessionGitDiscardRequestDto,
-                method_dtos.SessionGitDiscardResponseDto,
-                lambda _id, request: self._applications_or_error().sessions.git_discard(
                     request
                 ),
             ),

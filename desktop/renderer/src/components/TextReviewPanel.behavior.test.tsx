@@ -300,9 +300,10 @@ describe("TextReviewPanel", () => {
     );
 
     // Single file is auto-expanded
-    const openBtn = screen.getByRole("button", { name: "在工作区打开" });
+    const openBtn = screen.getByRole("button", { name: "在工作区打开 src/a.ts" });
     fireEvent.click(openBtn);
     expect(artifacts.openFile).toHaveBeenCalledWith("src/a.ts");
+    expect(screen.getByRole("button", { name: "在编辑器中打开 src/a.ts" })).toBeInTheDocument();
   });
 
   it("submits line review feedback with anchor", async () => {

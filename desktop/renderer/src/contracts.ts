@@ -69,8 +69,6 @@ export type {
   BrowserAnnotation,
   BrowserBounds,
   BrowserPageState,
-  GitHunkInput,
-  GitReviewPatch,
   ResponseActionState,
   ResponseFeedbackState,
   ResponseFeedbackValue,

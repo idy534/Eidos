@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EidosRuntimeAPI, Item, WorkspaceFilePreview } from "../contracts.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import { BrowserPanel, resolveBrowserTarget } from "./BrowserPanel.js";
-import { HunkActions } from "./HunkActions.js";
 import { LastTurnChanges } from "./LastTurnChanges.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ResultFiles, toolFilePaths } from "./ResultFiles.js";
@@ -87,9 +86,8 @@ describe("artifact previews and feedback", () => {
         capturedAt: 1_700_000_000_000,
         elements: [{ tag: "button", text: "Save", x: 0, y: 0, width: 20, height: 10 }],
       }),
-      readGitReviewPatch: vi.fn().mockResolvedValue({ patch, diffHash: "d".repeat(64), head: "h".repeat(40) }),
-      applyGitHunk: vi.fn().mockResolvedValue({}),
       readSession: vi.fn().mockResolvedValue({ items: [], runs: [], stepResolutions: [], session: {} }),
+      openWorkspacePathInEditor: vi.fn().mockResolvedValue(undefined),
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
   });
@@ -204,7 +202,7 @@ describe("artifact previews and feedback", () => {
     const fileButton = screen.getByRole("button", { name: "src/index.ts" });
     expect(fileButton).toBeInTheDocument();
     expect(fileButton).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(screen.getByRole("button", { name: "在工作区打开" }));
+    fireEvent.click(screen.getByRole("button", { name: "在工作区打开 src/index.ts" }));
     const gutter = container.querySelector(".diff-gutter");
     expect(gutter).not.toBeNull();
     fireEvent.click(gutter!);
@@ -215,6 +213,8 @@ describe("artifact previews and feedback", () => {
     expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("ToolCall: tool-a"));
     expect(onFeedback).toHaveBeenCalledWith(expect.stringContaining("Base SHA:"));
     expect(value.openFile).toHaveBeenCalledWith("src/index.ts");
+    fireEvent.click(screen.getByRole("button", { name: "在编辑器中打开 src/index.ts" }));
+    await waitFor(() => expect(api.openWorkspacePathInEditor).toHaveBeenCalledWith("session-a", "src/index.ts"));
   });
 
   it("groups headerless runtime diffs by the recorded result path", () => {
@@ -242,27 +242,6 @@ describe("artifact previews and feedback", () => {
     );
 
     expect(screen.getByRole("button", { name: "tests/sample_test.yaml" })).toBeInTheDocument();
-  });
-
-  it("loads and applies a selected Git hunk with a new operation id", async () => {
-    const onChanged = vi.fn();
-    const applyGitHunk = api.applyGitHunk!;
-    render(<HunkActions sessionId="session-a" path="src/index.ts" layer="unstaged" disabled={false} onChanged={onChanged} />);
-
-    fireEvent.click(screen.getByText("按修改块操作 · 未暂存"));
-    fireEvent.click(await screen.findByRole("button", { name: "暂存此块" }));
-
-    await waitFor(() => expect(applyGitHunk).toHaveBeenCalledWith(
-      "session-a",
-      expect.objectContaining({
-        path: "src/index.ts",
-        action: "stage",
-        hunkIndex: 0,
-        diffHash: "d".repeat(64),
-        operationId: "operation-1",
-      }),
-    ));
-    expect(onChanged).toHaveBeenCalledOnce();
   });
 
   it("resolves addresses and search terms for the browser", () => {

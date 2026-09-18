@@ -838,16 +838,6 @@ ipcMain.handle(IPC.SESSION_GIT_CREATE_BRANCH, (
   }
   return clientOrThrow().createSessionGitBranch(sessionId, branch, operationId);
 });
-ipcMain.handle(IPC.SESSION_GIT_READ_PATCH, (event, id: unknown, path: unknown, layer: unknown) => {
-  previewOwner(event);
-  if (layer !== "staged" && layer !== "unstaged") throw new Error("Diff 范围无效。");
-  return clientOrThrow().readGitReviewPatch(previewString(id), previewString(path), layer);
-});
-ipcMain.handle(IPC.SESSION_GIT_APPLY_HUNK, (event, id: unknown, input: unknown) => {
-  previewOwner(event);
-  if (!input || typeof input !== "object" || !["path", "action", "hunkIndex", "diffHash", "operationId"].every((key) => Object.hasOwn(input, key)) || Object.keys(input).length !== 5) throw new Error("分块操作参数无效。");
-  return clientOrThrow().applyGitHunk(previewString(id), input as import("../shared/index.js").GitHunkInput);
-});
 ipcMain.handle(IPC.SESSION_GIT_STAGE, (
   _event,
   sessionId: unknown,
@@ -862,21 +852,6 @@ ipcMain.handle(IPC.SESSION_GIT_STAGE, (
     throw new Error("Git Stage 参数无效。");
   }
   return clientOrThrow().stageSessionGit(sessionId, paths, operationId);
-});
-ipcMain.handle(IPC.SESSION_GIT_UNSTAGE, (
-  _event,
-  sessionId: unknown,
-  paths: unknown,
-  operationId: unknown,
-) => {
-  if (
-    typeof sessionId !== "string"
-    || !isNonEmptyStringArray(paths)
-    || typeof operationId !== "string"
-  ) {
-    throw new Error("Git Unstage 参数无效。");
-  }
-  return clientOrThrow().unstageSessionGit(sessionId, paths, operationId);
 });
 ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
   _event,
@@ -893,21 +868,6 @@ ipcMain.handle(IPC.SESSION_GIT_COMMIT, (
     throw new Error("Git Commit 参数无效。");
   }
   return clientOrThrow().commitSessionGit(sessionId, message, operationId);
-});
-ipcMain.handle(IPC.SESSION_GIT_DISCARD, (
-  _event,
-  sessionId: unknown,
-  relativePath: unknown,
-  operationId: unknown,
-) => {
-  if (
-    typeof sessionId !== "string"
-    || typeof relativePath !== "string"
-    || typeof operationId !== "string"
-  ) {
-    throw new Error("Git Discard 参数无效。");
-  }
-  return clientOrThrow().discardSessionGit(sessionId, relativePath, operationId);
 });
 ipcMain.handle(IPC.REVIEW_LIST_COMMENTS, (
   _event,

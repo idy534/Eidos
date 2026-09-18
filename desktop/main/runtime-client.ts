@@ -179,7 +179,6 @@ import type {
   SessionGitStatus,
   SessionGitMutationResult,
   SessionGitCommitResult,
-  SessionGitDiscardResult,
   ReviewComment,
   ReviewCommentCreateInput,
   GitRemoteStatus,
@@ -580,14 +579,6 @@ export class RuntimeClient {
     );
   }
 
-  readGitReviewPatch(sessionId: string, path: string, layer: "staged" | "unstaged"): Promise<import("../shared/index.js").GitReviewPatch> {
-    return this.validatedRequest("session/gitReadPatch", { sessionId, path, layer }, (value): value is import("../shared/index.js").GitReviewPatch => isRecord(value) && hasOnlyKeys(value, ["patch", "diffHash", "head"]) && typeof value.patch === "string" && typeof value.diffHash === "string" && /^[a-f0-9]{64}$/.test(value.diffHash) && typeof value.head === "string");
-  }
-
-  applyGitHunk(sessionId: string, input: import("../shared/index.js").GitHunkInput): Promise<SessionGitMutationResult> {
-    return this.validatedRequest("session/gitApplyHunk", { sessionId, ...input }, isSessionGitMutationResult);
-  }
-
   stageSessionGit(
     sessionId: string,
     paths: string[],
@@ -598,16 +589,6 @@ export class RuntimeClient {
     );
   }
 
-  unstageSessionGit(
-    sessionId: string,
-    paths: string[],
-    operationId: string,
-  ): Promise<SessionGitMutationResult> {
-    return this.validatedRequest(
-      "session/gitUnstage", { operationId, sessionId, paths }, isSessionGitMutationResult,
-    );
-  }
-
   commitSessionGit(
     sessionId: string,
     message: string,
@@ -615,16 +596,6 @@ export class RuntimeClient {
   ): Promise<SessionGitCommitResult> {
     return this.validatedRequest(
       "session/gitCommit", { operationId, sessionId, message }, isSessionGitCommitResult,
-    );
-  }
-
-  discardSessionGit(
-    sessionId: string,
-    path: string,
-    operationId: string,
-  ): Promise<SessionGitDiscardResult> {
-    return this.validatedRequest(
-      "session/gitDiscard", { operationId, sessionId, path }, isSessionGitMutationResult,
     );
   }
 

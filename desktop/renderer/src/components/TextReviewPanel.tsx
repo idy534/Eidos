@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Diff, Hunk, parseDiff } from "react-diff-view";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Diff, Hunk, getChangeKey, parseDiff } from "react-diff-view";
 import type { Item } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { useArtifacts } from "./ArtifactContext.js";
@@ -77,6 +77,22 @@ function RefreshIcon() {
   );
 }
 
+function OpenInEditorIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M8 4H4v12h12v-4M11 4h5v5M15.5 4.5 9 11" />
+    </svg>
+  );
+}
+
+function OpenInWorkspaceIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15" />
+    </svg>
+  );
+}
+
 function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
   return (
     <svg
@@ -133,10 +149,17 @@ export function TextReviewPanel({
 }: TextReviewPanelProps) {
   const actions = useArtifacts();
   const [scope, setScope] = useState<"turn" | "task">("turn");
-  const [anchor, setAnchor] = useState("");
-  const [body, setBody] = useState("");
+  // 行内草稿与未提交共用同一交互：点 gutter 在该行下方展开。
+  const [draft, setDraft] = useState<{
+    filePath: string;
+    toolCallId: string;
+    changeKey: string;
+    anchorText: string;
+  }>();
+  const [draftBody, setDraftBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
+  const [openError, setOpenError] = useState("");
 
   const scopedItems = useMemo(() => {
     if (scope === "turn") {
@@ -265,19 +288,55 @@ export function TextReviewPanel({
   }, []);
 
   const sendFeedback = async () => {
-    if (!onFeedback || !body.trim()) return;
+    if (!onFeedback || !draft || !draftBody.trim()) return;
     setBusy(true);
     setFeedbackError("");
     try {
-      await onFeedback(`请处理以下文本修改反馈。以下位置属于工具执行时的 Diff，请先核对当前文件。\n${anchor}\n用户意见：${body}`);
-      setBody("");
-      setAnchor("");
+      await onFeedback(`请处理以下文本修改反馈。以下位置属于工具执行时的 Diff，请先核对当前文件。\n${draft.anchorText}\n用户意见：${draftBody}`);
+      setDraftBody("");
+      setDraft(undefined);
     } catch (cause) {
       setFeedbackError(userFacingError(cause));
     } finally {
       setBusy(false);
     }
   };
+
+  function draftWidgets(filePath: string, toolCallId: string): Record<string, ReactNode> {
+    if (!draft || draft.filePath !== filePath || draft.toolCallId !== toolCallId) return {};
+    return {
+      [draft.changeKey]: (
+        <div className="review-comment-draft">
+          <textarea
+            aria-label="本轮修改反馈"
+            value={draftBody}
+            onChange={(event) => setDraftBody(event.target.value)}
+            placeholder="输入针对选中代码行的修改意见..."
+            maxLength={8192}
+          />
+          <div>
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={disabled || busy || !draftBody.trim()}
+              loading={busy}
+              onClick={() => void sendFeedback()}
+            >
+              发送反馈
+            </Button>
+            <Button
+              variant="ghost"
+              size="small"
+              onClick={() => { setDraft(undefined); setDraftBody(""); setFeedbackError(""); }}
+            >
+              取消
+            </Button>
+          </div>
+          {feedbackError && <p className="text-review-error" role="alert">{feedbackError}</p>}
+        </div>
+      ),
+    };
+  }
 
   return (
     <section
@@ -350,6 +409,11 @@ export function TextReviewPanel({
           修改记录尚未完整读取：{error}
         </p>
       )}
+      {openError && (
+        <p className="approval-error git-review-error" role="alert">
+          {openError}
+        </p>
+      )}
 
       <div className="git-review-files">
         {loading && fileSummaries.length === 0 && (
@@ -365,6 +429,7 @@ export function TextReviewPanel({
 
         {fileSummaries.map((file) => {
           const isFileExpanded = expandedKeys.has(file.path);
+          const hasRealPath = file.changes.some((change) => change.parsedFile !== undefined || change.rawDiff !== undefined);
           return (
             <article className="git-review-file" key={file.path}>
               <header className="git-review-file-header">
@@ -388,18 +453,35 @@ export function TextReviewPanel({
                     <span className="git-review-stat--deletion">-{file.deletions}</span>
                   </span>
                 </button>
-                {isFileExpanded && (
-                  <div className="git-file-actions">
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      onClick={() => actions?.openFile(file.path)}
-                      title={`在工作区打开 ${file.path}`}
-                    >
-                      在工作区打开
-                    </Button>
-                  </div>
+                {hasRealPath && (
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    className="git-icon-button"
+                    icon={<OpenInEditorIcon />}
+                    aria-label={`在编辑器中打开 ${file.path}`}
+                    title={`在编辑器中打开 ${file.path}`}
+                    onClick={() => {
+                      setOpenError("");
+                      void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.path).catch((cause: unknown) => {
+                        setOpenError(userFacingError(cause));
+                      });
+                    }}
+                  >
+                    <span className="sr-only">{`在编辑器中打开 ${file.path}`}</span>
+                  </Button>
                 )}
+                <Button
+                  size="small"
+                  variant="ghost"
+                  className="git-icon-button"
+                  icon={<OpenInWorkspaceIcon />}
+                  aria-label={`在工作区打开 ${file.path}`}
+                  title={`在工作区打开 ${file.path}`}
+                  onClick={() => actions?.openFile(file.path)}
+                >
+                  <span className="sr-only">{`在工作区打开 ${file.path}`}</span>
+                </Button>
               </header>
 
               {isFileExpanded && (
@@ -440,9 +522,17 @@ export function TextReviewPanel({
                                 ? (side === "old" ? lineChange.oldLineNumber : lineChange.newLineNumber)
                                 : lineChange.lineNumber;
                               const call = change.item.toolCall!;
-                              setAnchor(`Run: ${change.item.runId}\nToolCall: ${call.id}\n文件: ${file.path}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`);
+                              setDraft({
+                                filePath: file.path,
+                                toolCallId: change.toolCallId,
+                                changeKey: getChangeKey(lineChange),
+                                anchorText: `Run: ${change.item.runId}\nToolCall: ${call.id}\n文件: ${file.path}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`,
+                              });
+                              setDraftBody("");
+                              setFeedbackError("");
                             },
                           }}
+                          widgets={draftWidgets(file.path, change.toolCallId)}
                         >
                           {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
                         </Diff>
@@ -462,51 +552,6 @@ export function TextReviewPanel({
             </article>
           );
         })}
-
-        {anchor && (
-          <div className="text-review-feedback-box" role="region" aria-label="代码审阅反馈">
-            <div className="text-review-feedback-header">
-              <span className="text-review-feedback-title">针对所选代码行的修改意见</span>
-              <button
-                type="button"
-                className="text-review-feedback-close"
-                aria-label="取消反馈"
-                title="取消反馈"
-                onClick={() => { setAnchor(""); setBody(""); }}
-              >
-                ×
-              </button>
-            </div>
-            <pre className="text-review-feedback-anchor">{anchor}</pre>
-            <textarea
-              className="text-review-feedback-input"
-              aria-label="本轮修改反馈"
-              placeholder="输入针对选中代码行的修改意见..."
-              value={body}
-              maxLength={8192}
-              onChange={(event) => setBody(event.target.value)}
-            />
-            <div className="text-review-feedback-actions">
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={() => { setAnchor(""); setBody(""); }}
-              >
-                取消
-              </Button>
-              <Button
-                variant="secondary"
-                size="small"
-                disabled={disabled || busy || !body.trim()}
-                loading={busy}
-                onClick={() => void sendFeedback()}
-              >
-                发送反馈
-              </Button>
-            </div>
-            {feedbackError && <p className="text-review-error" role="alert">{feedbackError}</p>}
-          </div>
-        )}
       </div>
     </section>
   );

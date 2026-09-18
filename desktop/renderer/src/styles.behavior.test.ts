@@ -74,6 +74,16 @@ describe("interactive color tokens", () => {
     expect(dockStyles).toMatch(/\.workbench--sidebar-collapsed\s+\.workspace-dock--expanded\s+\.workspace-dock__header,\s*\.workbench--sidebar-collapsed\s+\.workspace-body--expanded\s+\.workspace-dock__header\s*\{[^}]*padding-left:\s*calc\(86px\s*\+\s*8rem\);/s);
   });
 
+  it("keeps the workspace dock header draggable while keeping tabs clickable", () => {
+    expect(dockStyles).toMatch(/\.workspace-dock__header\s*\{[^}]*-webkit-app-region:\s*drag;/s);
+    expect(dockStyles).toMatch(/\.workspace-dock__header button,/s);
+    expect(dockStyles).toMatch(/\.workspace-dock__header \[role="tab"\]/s);
+  });
+
+  it("keeps the startup gate draggable while keeping its button clickable", () => {
+    expect(styles).toMatch(/\.runtime-gate\s*\{[^}]*-webkit-app-region:\s*drag;/s);
+    expect(styles).toMatch(/\.runtime-gate button,/s);
+  });
   it("places the sidebar scrollbar against the divider", () => {
     expect(styles).toMatch(/\.sidebar nav\s*\{[^}]*margin-right:\s*-0\.875rem;[^}]*padding-right:\s*0\.875rem;/s);
   });

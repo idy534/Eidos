@@ -630,44 +630,6 @@ class GitCli:
         )
         _validate_remote_transport(_single_line(resolved_url.stdout, "remote-url"))
 
-    def unstage(self, cwd: Path, paths: Sequence[str]) -> None:
-        head = self._runner.run(
-            ("rev-parse", "--verify", "HEAD"),
-            cwd=cwd,
-            operation="unstage-head",
-            allow_returncodes=(128,),
-        )
-        if head.returncode == 0:
-            self._runner.run(
-                ("restore", "--staged", "--", *paths),
-                cwd=cwd,
-                operation="unstage",
-                config_overrides=filter_config_overrides(self._runner, cwd),
-            )
-            return
-        self._runner.run(
-            ("rm", "--cached", "-r", "--ignore-unmatch", "--", *paths),
-            cwd=cwd,
-            operation="unstage",
-            config_overrides=filter_config_overrides(self._runner, cwd),
-        )
-
-    def discard(self, cwd: Path, path: str, *, untracked: bool) -> None:
-        if untracked:
-            self._runner.run(
-                ("clean", "-f", "--", path),
-                cwd=cwd,
-                operation="discard-untracked",
-                profile=GitExecutionProfile.LOCAL_MUTATION,
-            )
-            return
-        self._runner.run(
-            ("restore", "--worktree", "--", path),
-            cwd=cwd,
-            operation="discard-tracked",
-            profile=GitExecutionProfile.LOCAL_MUTATION,
-        )
-
     def commit(self, cwd: Path, message: str) -> None:
         conflicts = self._runner.run(
             ("diff", "--cached", "--quiet", "--diff-filter=U", "--"),
@@ -997,22 +959,6 @@ class GitCli:
                 sorted(file_stats, key=lambda stat: stat.path)
             ),
         )
-
-    def review_patch(self, cwd: Path, path: str, *, staged: bool) -> bytes:
-        return self._runner.run(
-            ("diff", "--no-ext-diff", "--no-textconv", "--no-renames",
-             *(("--cached",) if staged else ()), "--", path),
-            cwd=cwd, operation="review-patch", output_limit_bytes=128 * 1024,
-            config_overrides=filter_config_overrides(self._runner, cwd),
-        ).stdout
-
-    def apply_review_hunk(self, cwd: Path, patch: bytes, *, action: str) -> None:
-        options = (("--cached",) if action in {"stage", "unstage"} else ()) + (("--reverse",) if action != "stage" else ())
-        overrides = filter_config_overrides(self._runner, cwd)
-        self._runner.run(("apply", "--check", *options, "--"), cwd=cwd,
-                         operation="review-hunk-check", stdin=patch, config_overrides=overrides)
-        self._runner.run(("apply", *options, "--"), cwd=cwd,
-                         operation="review-hunk-apply", stdin=patch, config_overrides=overrides)
 
     def apply_working_tree_patch(
         self,

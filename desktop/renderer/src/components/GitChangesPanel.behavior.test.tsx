@@ -76,9 +76,6 @@ function renderPanel(
   const readDiff = vi.fn((_: string, __: string, path?: string) => (
     Promise.resolve(path ? fileDiff(path) : summaryDiff())
   ));
-  const stage = vi.fn().mockResolvedValue(undefined);
-  const unstage = vi.fn().mockResolvedValue(undefined);
-  const discard = vi.fn().mockResolvedValue(undefined);
   const openInEditor = vi.fn().mockResolvedValue(undefined);
   const listComments = vi.fn().mockResolvedValue([]);
   const createComment = vi.fn().mockImplementation((sessionId, input) => Promise.resolve({
@@ -102,9 +99,6 @@ function renderPanel(
       onScopeChange={vi.fn()}
       onRefresh={onRefresh}
       readDiff={readDiff}
-      stage={stage}
-      unstage={unstage}
-      discard={discard}
       openInEditor={openInEditor}
       listComments={listComments}
       createComment={createComment}
@@ -114,7 +108,7 @@ function renderPanel(
     />,
   );
   return {
-    result, readDiff, stage, unstage, discard, openInEditor, onRefresh,
+    result, readDiff, openInEditor, onRefresh,
     listComments, createComment, deleteComment,
   };
 }
@@ -129,16 +123,16 @@ describe("GitChangesPanel", () => {
     expect(screen.getByRole("region", { name: "修改" })).toHaveTextContent("src/index.ts");
     expect(screen.getByRole("region", { name: "未跟踪" })).toHaveTextContent("new file.txt");
     expect(screen.getByRole("region", { name: "冲突" })).toHaveTextContent("conflict.txt");
-    expect(screen.getByRole("button", { name: /README\.md/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "README.md" })).toHaveAttribute(
       "aria-expanded", "false",
     );
-    expect(screen.getByRole("button", { name: /README\.md/ })).toHaveTextContent("+1");
-    expect(screen.getByRole("button", { name: /README\.md/ })).toHaveTextContent("-1");
+    expect(screen.getByRole("button", { name: "README.md" })).toHaveTextContent("+1");
+    expect(screen.getByRole("button", { name: "README.md" })).toHaveTextContent("-1");
     expect(readDiff).not.toHaveBeenCalled();
     expect(screen.getByText("+4")).toBeInTheDocument();
     expect(screen.getByText("-4")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /src\/index\.ts/ }));
+    fireEvent.click(screen.getByRole("button", { name: "src/index.ts" }));
     await waitFor(() => expect(readDiff).toHaveBeenLastCalledWith(
       "session-a", "head", "src/index.ts",
     ));
@@ -168,12 +162,12 @@ describe("GitChangesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "展开全部差异" }));
     await waitFor(() => expect(readDiff).toHaveBeenCalledTimes(4));
     for (const path of ["README.md", "src/index.ts", "new file.txt", "conflict.txt"]) {
-      expect(screen.getByRole("button", { name: new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }))
+      expect(screen.getByRole("button", { name: path, exact: true }))
         .toHaveAttribute("aria-expanded", "true");
     }
 
     fireEvent.click(screen.getByRole("button", { name: "折叠全部差异" }));
-    expect(screen.getByRole("button", { name: /README\.md/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "README.md" })).toHaveAttribute(
       "aria-expanded", "false",
     );
   });
@@ -183,7 +177,7 @@ describe("GitChangesPanel", () => {
 
     expect(screen.getByRole("button", { name: "展开全部差异" }).querySelector("path"))
       .toHaveAttribute("d", "M5 8V3m-2 2 2-2 2 2M5 12v5m-2-2 2 2 2-2M10 5h7M10 10h7M10 15h7");
-    expect(screen.getByRole("button", { name: /README\.md/ }).querySelector(".git-file-disclosure-icon"))
+    expect(screen.getByRole("button", { name: "README.md" }).querySelector(".git-file-disclosure-icon"))
       .toHaveAttribute("data-state", "closed");
   });
 
@@ -257,7 +251,74 @@ describe("GitChangesPanel", () => {
 
     expect(await screen.findByText("task.ts")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Diff 范围" })).toHaveTextContent("整个任务");
-    expect(screen.getByText("共 1 个文件修改")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "修改" })).toHaveTextContent("task.ts");
+    expect(screen.getByRole("button", { name: "task.ts" })).toHaveAttribute("aria-expanded", "true");
+    // 与未提交同盒模型：无外层内边距嵌套、无行内类型图标，文件名 x 对齐
+    expect(document.querySelector(".last-turn-changes .text-review-file-icon")).not.toBeInTheDocument();
+    // 总数收到工具栏，与未提交同一位置
+    await waitFor(() => {
+      expect(document.querySelector(".git-changes-toolbar .git-review-stats")).toHaveTextContent("+1");
+      expect(document.querySelector(".git-changes-toolbar .git-review-stats")).toHaveTextContent("-1");
+    });
+  });
+
+  it("expands and collapses item files from the shared toolbar", async () => {
+    const item = {
+      id: "item-1",
+      sessionId: "session-a",
+      runId: "run-1",
+      ordinal: 1,
+      kind: "file_change",
+      status: "completed",
+      createdAt: 1,
+      toolCall: {
+        id: "tool-1",
+        itemId: "item-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "provider-1",
+        toolName: "apply_patch",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        changeDiff: [
+          "diff --git a/a.ts b/a.ts",
+          "--- a/a.ts",
+          "+++ b/a.ts",
+          "@@ -1 +1 @@",
+          "-old",
+          "+new",
+          "",
+        ].join("\n"),
+        baseSha256: "b".repeat(64),
+      },
+    };
+    const item2 = {
+      ...item,
+      id: "item-2",
+      toolCall: { ...item.toolCall, id: "tool-2", itemId: "item-2" },
+    };
+    renderPanel({
+      scope: "head",
+      items: [item, { ...item2, toolCall: { ...item2.toolCall, changeDiff: item.toolCall.changeDiff.replaceAll("a.ts", "b.ts") } }],
+      latestRunId: "run-1",
+    } as Partial<Parameters<typeof GitChangesPanel>[0]>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Diff 范围" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "最近一轮" }));
+
+    expect(await screen.findByText("a.ts")).toBeInTheDocument();
+    // 两文件默认折叠（与未提交一致），工具栏可展开全部
+    expect(screen.getByRole("button", { name: "a.ts" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "展开全部差异" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "a.ts" })).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByRole("button", { name: "b.ts" })).toHaveAttribute("aria-expanded", "true");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "折叠全部差异" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "a.ts" })).toHaveAttribute("aria-expanded", "false");
+    });
   });
 
   it("shows one useful empty state without a zero-file group", () => {
@@ -284,45 +345,32 @@ describe("GitChangesPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("可以切换范围或刷新 Git 状态");
   });
 
-  it("stages, unstages, discards, and opens the exact selected path", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    const { stage, unstage, discard, openInEditor, onRefresh } = renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: /README\.md/ }));
+  it("opens the exact selected path in the editor", async () => {
+    const { openInEditor } = renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "README.md" }));
     await screen.findByText("old");
-
-    fireEvent.click(screen.getByRole("button", { name: "取消暂存" }));
-    await waitFor(() => expect(unstage).toHaveBeenCalledWith(
-      "session-a", ["README.md"], expect.any(String),
-    ));
-
-    fireEvent.click(screen.getByRole("button", { name: /README\.md/ }));
-    fireEvent.click(screen.getByRole("button", { name: /src\/index\.ts/ }));
-    fireEvent.click(screen.getByRole("button", { name: "暂存" }));
-    await waitFor(() => expect(stage).toHaveBeenCalledWith(
-      "session-a", ["src/index.ts"], expect.any(String),
-    ));
-    fireEvent.click(screen.getByRole("button", { name: "丢弃" }));
-    await waitFor(() => expect(discard).toHaveBeenCalledWith(
-      "session-a", "src/index.ts", expect.any(String),
-    ));
-    fireEvent.click(screen.getByRole("button", { name: "在编辑器中打开" }));
-    await waitFor(() => expect(openInEditor).toHaveBeenCalledWith("session-a", "src/index.ts"));
-    expect(onRefresh).toHaveBeenCalledTimes(3);
-  });
-
-  it("does not offer index or discard actions for a conflict", async () => {
-    renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: /conflict\.txt/ }));
 
     expect(screen.queryByRole("button", { name: "暂存" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "取消暂存" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "丢弃" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "在编辑器中打开" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "在编辑器中打开 README.md" }));
+    await waitFor(() => expect(openInEditor).toHaveBeenCalledWith("session-a", "README.md"));
+    expect(screen.getByRole("button", { name: "在工作区打开 README.md" })).toBeInTheDocument();
+  });
+
+  it("does not offer index or discard actions for a conflict", async () => {
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "conflict.txt" }));
+
+    expect(screen.queryByRole("button", { name: "暂存" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "取消暂存" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "丢弃" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "在编辑器中打开 conflict.txt" })).toBeEnabled();
   });
 
   it("creates an inline comment from a Diff gutter and renders it as a widget", async () => {
     const { result, createComment } = renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: /README\.md/ }));
+    fireEvent.click(screen.getByRole("button", { name: "README.md" }));
     await screen.findByText("new");
     const gutters = result.container.querySelectorAll(".diff-gutter");
     fireEvent.click(gutters[gutters.length - 1]!);
@@ -372,7 +420,7 @@ describe("GitChangesPanel", () => {
     const onSendReviewFeedback = vi.fn().mockResolvedValue(undefined);
     renderPanel({ listComments, onSendReviewFeedback, expanded: true });
 
-    fireEvent.click(screen.getByRole("button", { name: /README\.md/ }));
+    fireEvent.click(screen.getByRole("button", { name: "README.md" }));
     expect(await screen.findByText("Add coverage.")).toBeInTheDocument();
     expect(await screen.findByText("Old feedback.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "发送审阅意见" }));

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type {
   GitFetchResult,
@@ -26,6 +27,7 @@ interface GitWorkflowControlsProps {
   openRequest?: number | undefined;
   compact?: boolean | undefined;
   expanded?: boolean | undefined;
+  dialogOnly?: boolean | undefined;
   onCreateBranch?: (() => void) | undefined;
   switchBranch?: (
     sessionId: string, branch: string, operationId: string,
@@ -99,6 +101,7 @@ export function GitWorkflowControls({
   openRequest,
   compact = false,
   expanded = false,
+  dialogOnly = false,
   onCreateBranch,
   switchBranch = defaults.switchBranch,
   readRemoteStatus = defaults.readRemoteStatus,
@@ -305,7 +308,7 @@ export function GitWorkflowControls({
       : []),
   ];
 
-  const dialogContent = workflowOpen && (
+  const dialogNode = workflowOpen && (
     <div
       className="modal-backdrop git-workflow-modal-backdrop"
       onClick={busy === undefined ? () => setWorkflowOpen(false) : undefined}
@@ -453,6 +456,21 @@ export function GitWorkflowControls({
       </div>
     </div>
   );
+
+  // 浮于整个窗口之上：经 Portal 挂到 body，避免被右侧 workspace-drawer
+  //（transform/overflow/backdrop-filter 层叠上下文）捕获裁剪。
+  const dialogContent = dialogNode && typeof document !== "undefined" && document.body
+    ? createPortal(dialogNode, document.body)
+    : dialogNode;
+
+  if (dialogOnly) {
+    return (
+      <div className="git-workflow-controls git-workflow-controls--dialog-only" aria-label="Git workflow">
+        {dialogContent}
+        {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
+      </div>
+    );
+  }
 
   if (compact) {
     return (

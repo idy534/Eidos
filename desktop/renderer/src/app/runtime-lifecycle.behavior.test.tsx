@@ -352,7 +352,11 @@ describe("App & Runtime Lifecycle behavior", () => {
     ));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "更改工作环境" })).not.toBeInTheDocument());
     fireEvent.click(within(reopenedEnvironment).getByRole("button", { name: "提交或推送" }));
-    expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
+    const workflowDialog = await screen.findByRole("dialog", { name: "提交和推送" });
+    expect(workflowDialog).toBeInTheDocument();
+    // 浮于整个窗口之上：经 Portal 挂到 body，不在右侧 workspace-drawer 内。
+    expect(workflowDialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
+    expect(container.querySelector(".workspace-drawer")?.contains(workflowDialog)).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "关闭提交和推送" }));
     expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
 
@@ -361,6 +365,19 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(within(envForReview).getByRole("button", { name: /变更/ })).toBeInTheDocument();
     fireEvent.click(within(envForReview).getByRole("button", { name: /变更/ }));
     expect(await screen.findByRole("tab", { name: "审查" })).toHaveAttribute("aria-selected", "true");
+
+    // 关闭右侧工作区后，环境信息仍能直开全窗口弹窗，不需要打开 Dock。
+    fireEvent.click(screen.getByRole("button", { name: "关闭工作区工具" }));
+    expect(screen.getByRole("button", { name: "打开工作区工具" })).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
+    const envWhenDockClosed = screen.getByRole("region", { name: "环境信息预览" });
+    fireEvent.click(within(envWhenDockClosed).getByRole("button", { name: "提交或推送" }));
+    const globalDialog = await screen.findByRole("dialog", { name: "提交和推送" });
+    expect(globalDialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
+    expect(screen.getByRole("button", { name: "打开工作区工具" })).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".workspace-body")).toHaveClass("workspace-body--session-centered");
+    fireEvent.click(screen.getByRole("button", { name: "关闭提交和推送" }));
+    expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
     unmount();
   });
 

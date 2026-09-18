@@ -15,10 +15,10 @@ import type {
   ReviewCommentCreateInput,
 } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
+import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
-import { HunkActions } from "./HunkActions.js";
-import { LastTurnChanges } from "./LastTurnChanges.js";
+import { LastTurnChanges, type ItemReviewStats } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
 
 
@@ -65,9 +65,6 @@ interface GitChangesPanelProps {
   onScopeChange(scope: GitDiffScope): void;
   onRefresh(): void;
   readDiff?: (sessionId: string, scope: GitDiffScope, path?: string) => Promise<SessionGitDiff>;
-  stage?: (sessionId: string, paths: string[], operationId: string) => Promise<unknown>;
-  unstage?: (sessionId: string, paths: string[], operationId: string) => Promise<unknown>;
-  discard?: (sessionId: string, path: string, operationId: string) => Promise<unknown>;
   openInEditor?: (sessionId: string, path: string) => Promise<void>;
   listComments?: (
     sessionId: string,
@@ -93,15 +90,6 @@ interface GitChangesPanelProps {
 
 const defaultReadDiff: NonNullable<GitChangesPanelProps["readDiff"]> = (id, scope, path) => (
   window.eidosRuntime.readSessionGitDiff(id, scope, path)
-);
-const defaultStage: NonNullable<GitChangesPanelProps["stage"]> = (id, paths, operationId) => (
-  window.eidosRuntime.stageSessionGit(id, paths, operationId)
-);
-const defaultUnstage: NonNullable<GitChangesPanelProps["unstage"]> = (id, paths, operationId) => (
-  window.eidosRuntime.unstageSessionGit(id, paths, operationId)
-);
-const defaultDiscard: NonNullable<GitChangesPanelProps["discard"]> = (id, path, operationId) => (
-  window.eidosRuntime.discardSessionGit(id, path, operationId)
 );
 const defaultOpenInEditor: NonNullable<GitChangesPanelProps["openInEditor"]> = (id, path) => (
   window.eidosRuntime.openWorkspacePathInEditor(id, path)
@@ -180,6 +168,22 @@ function MoreHorizontalIcon() {
   );
 }
 
+function OpenInEditorIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M8 4H4v12h12v-4M11 4h5v5M15.5 4.5 9 11" />
+    </svg>
+  );
+}
+
+function OpenInWorkspaceIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15" />
+    </svg>
+  );
+}
+
 export function GitChangesPanel(props: GitChangesPanelProps) {
   // 三段语义：
   // - 未提交：Git HEAD vs 工作区，与 session/run 无关；
@@ -190,6 +194,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     setReviewTab(props.lastTurnRequest ? "lastRun" : "uncommitted");
   }, [props.lastTurnRequest?.requestId, props.sessionId]);
   const isItemTab = reviewTab !== "uncommitted";
+  const actions = useArtifacts();
   const summaryControlled = Object.prototype.hasOwnProperty.call(props, "summary");
   const {
     sessionId,
@@ -203,9 +208,6 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     onScopeChange,
     onRefresh,
     readDiff = defaultReadDiff,
-    stage = defaultStage,
-    unstage = defaultUnstage,
-    discard = defaultDiscard,
     openInEditor = defaultOpenInEditor,
     listComments = defaultListComments,
     createComment = defaultCreateComment,
@@ -256,11 +258,27 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   );
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
   const [fileStates, setFileStates] = useState<Record<string, ReviewFileState>>({});
-  const [actionLoading, setActionLoading] = useState(false);
   const [localError, setLocalError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState<{ key: string; anchor: CommentAnchor }>();
   const [draftBody, setDraftBody] = useState("");
   const [commentLoading, setCommentLoading] = useState(false);
+  const [itemStats, setItemStats] = useState<ItemReviewStats>({
+    additions: 0,
+    deletions: 0,
+    count: 0,
+    allExpanded: false,
+  });
+  const [itemExpandSignal, setItemExpandSignal] = useState<{ id: number; expand: boolean }>();
+  const handleItemStats = useCallback((next: ItemReviewStats) => {
+    setItemStats((current) => (
+      current.additions === next.additions
+      && current.deletions === next.deletions
+      && current.count === next.count
+      && current.allExpanded === next.allExpanded
+        ? current
+        : next
+    ));
+  }, []);
   const requestVersion = useRef(0);
   const loadingKeys = useRef(new Set<string>());
   const loadedKeys = useRef(new Set<string>());
@@ -274,6 +292,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     setLocalError(undefined);
     setDraft(undefined);
     setDraftBody("");
+    // itemStats 由内层 LastTurnChanges 挂载后上报，不在此重置，
+    // 否则子先报、父后清会把正确值覆盖回零。
   }, [scope, sessionId, reviewTab]);
 
   const loadFile = useCallback((selection: FileSelection): Promise<void> => {
@@ -318,22 +338,6 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       return next;
     });
     if (expanding) void loadFile(selection);
-  };
-
-  const runMutation = async (operation: () => Promise<unknown>): Promise<void> => {
-    setActionLoading(true);
-    setLocalError(undefined);
-    try {
-      await operation();
-      requestVersion.current++;
-      loadingKeys.current.clear(); loadedKeys.current.clear(); setFileStates({});
-      for (const selection of selections) if (expandedKeys.has(selectionKey(selection))) void loadFile(selection);
-      onRefresh();
-    } catch (cause: unknown) {
-      setLocalError(userFacingError(cause));
-    } finally {
-      setActionLoading(false);
-    }
   };
 
   const operationId = (): string => crypto.randomUUID();
@@ -409,6 +413,9 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
   const stats = diffStats(effectiveSummary);
   const allFilesExpanded = selections.length > 0
     && selections.every((selection) => expandedKeys.has(selectionKey(selection)));
+  const toolbarStats = isItemTab ? itemStats : { additions: stats.additions, deletions: stats.deletions };
+  const toolbarAllExpanded = isItemTab ? itemStats.allExpanded : allFilesExpanded;
+  const toolbarExpandDisabled = isItemTab ? itemStats.count === 0 : selections.length === 0;
   const fullScopeLabel = reviewTab === "lastRun"
     ? "最近一轮"
     : reviewTab === "entireTask"
@@ -480,12 +487,10 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             )}
             items={scopeMenuItems}
           />
-          {!isItemTab && (
-            <div className="git-review-stats" aria-label="变更统计">
-              <span className="git-review-stat git-review-stat--addition">+{stats.additions}</span>
-              <span className="git-review-stat git-review-stat--deletion">-{stats.deletions}</span>
-            </div>
-          )}
+          <div className="git-review-stats" aria-label="变更统计">
+            <span className="git-review-stat git-review-stat--addition">+{toolbarStats.additions}</span>
+            <span className="git-review-stat git-review-stat--deletion">-{toolbarStats.deletions}</span>
+          </div>
         </div>
 
         <div className="git-changes-toolbar-right">
@@ -504,11 +509,18 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             variant="ghost"
             size="small"
             className="git-icon-button"
-            icon={<ExpandIcon collapse={allFilesExpanded} />}
-            aria-label={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
-            title={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
-            disabled={isItemTab || selections.length === 0}
+            icon={<ExpandIcon collapse={toolbarAllExpanded} />}
+            aria-label={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
+            title={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
+            disabled={toolbarExpandDisabled}
             onClick={() => {
+              if (isItemTab) {
+                setItemExpandSignal((current) => ({
+                  id: (current?.id ?? 0) + 1,
+                  expand: !itemStats.allExpanded,
+                }));
+                return;
+              }
               if (allFilesExpanded) {
                 setExpandedKeys(new Set());
                 return;
@@ -519,7 +531,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
               })();
             }}
           >
-            <span className="sr-only">{allFilesExpanded ? "折叠全部差异" : "展开全部差异"}</span>
+            <span className="sr-only">{toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}</span>
           </Button>
           <Button
             variant="ghost"
@@ -576,6 +588,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           onFeedback={onSendReviewFeedback}
           disabled={reviewFeedbackDisabled}
           entireTask={reviewTab === "entireTask"}
+          onStats={handleItemStats}
+          expandSignal={itemExpandSignal}
         />
       )}
       <div className="git-review-files" hidden={isItemTab}>
@@ -606,6 +620,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       className="git-file-button"
                       aria-expanded={expanded}
                       aria-controls={`git-review-diff-${encodeURIComponent(key)}`}
+                      aria-label={path}
                       onClick={() => toggleFile(selection)}
                     >
                       <span className="git-file-disclosure"><FileDisclosureIcon expanded={expanded} /></span>
@@ -617,52 +632,39 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                         </span>
                       )}
                     </button>
-                    {expanded && (
-                      <div className="git-file-actions">
-                        {selection.group === "staged" && (
-                          <Button size="small" variant="secondary" disabled={actionLoading}
-                            onClick={() => void runMutation(() => unstage(
-                              sessionId, [path], operationId(),
-                            ))}>
-                            取消暂存
-                          </Button>
-                        )}
-                        {(selection.group === "changes" || selection.group === "untracked") && (
-                          <>
-                            <Button size="small" variant="secondary" disabled={actionLoading}
-                              onClick={() => void runMutation(() => stage(
-                                sessionId, [path], operationId(),
-                              ))}>
-                              暂存
-                            </Button>
-                            <Button size="small" variant="danger" disabled={actionLoading}
-                              onClick={() => {
-                                if (window.confirm(`丢弃 ${path} 中的改动？`)) {
-                                  void runMutation(() => discard(sessionId, path, operationId()));
-                                }
-                              }}>
-                              丢弃
-                            </Button>
-                          </>
-                        )}
-                        <Button size="small" variant="ghost" disabled={actionLoading}
-                          onClick={() => {
-                            setLocalError(undefined);
-                            void openInEditor(sessionId, path).catch((cause: unknown) => {
-                              setLocalError(userFacingError(cause));
-                            });
-                          }}>
-                          在编辑器中打开
-                        </Button>
-                      </div>
-                    )}
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      className="git-icon-button"
+                      icon={<OpenInEditorIcon />}
+                      aria-label={`在编辑器中打开 ${path}`}
+                      title={`在编辑器中打开 ${path}`}
+                      onClick={() => {
+                        setLocalError(undefined);
+                        void openInEditor(sessionId, path).catch((cause: unknown) => {
+                          setLocalError(userFacingError(cause));
+                        });
+                      }}
+                    >
+                      <span className="sr-only">{`在编辑器中打开 ${path}`}</span>
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      className="git-icon-button"
+                      icon={<OpenInWorkspaceIcon />}
+                      aria-label={`在工作区打开 ${path}`}
+                      title={`在工作区打开 ${path}`}
+                      onClick={() => actions?.openFile(path)}
+                    >
+                      <span className="sr-only">{`在工作区打开 ${path}`}</span>
+                    </Button>
                   </header>
                   {expanded && (
                     <div
                       id={`git-review-diff-${encodeURIComponent(key)}`}
                       className="git-file-diff-scroll"
                     >
-                      {(selection.group === "staged" || selection.group === "changes") && <HunkActions sessionId={sessionId} path={path} layer={selection.group === "staged" ? "staged" : "unstaged"} disabled={workflowDisabled || actionLoading} onChanged={() => { requestVersion.current++; loadingKeys.current.clear(); loadedKeys.current.clear(); setFileStates({}); onRefresh(); void loadFile(selection); }} />}
                       {state?.error && <p className="approval-error" role="alert">{state.error}</p>}
                       {state?.diff?.truncated && (
                         <p className="git-diff-truncated" role="status">Diff 已截断</p>
