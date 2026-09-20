@@ -353,6 +353,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
             "justification": None,
         })
         effective_arguments.setdefault("networkAccess", "default")
+        effective_arguments.setdefault("gitWriteAccess", "default")
         item = self.store.create_tool_item(
             self.run["id"], 1, 0, "shell-call", "run_shell",
             json.dumps(effective_arguments),

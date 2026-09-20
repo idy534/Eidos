@@ -55,6 +55,65 @@ def test_filesystem_policy_respects_path_and_recursion(tmp_path):
     assert policy.evaluate(base, requested, requested).disposition == 'allow'
 
 
+def test_verified_git_metadata_write_requires_approval_then_stays_scoped(tmp_path):
+    workspace = tmp_path / 'workspace'
+    git = workspace / '.git'
+    runtime = workspace / '.eidos'
+    git.mkdir(parents=True)
+    runtime.mkdir()
+    base = BasePermissionProfile.for_workspace(
+        workspace_root=workspace,
+        protected_write_paths=(git, runtime),
+        approval_write_roots=(git,),
+    )
+    requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(git), access=FileSystemAccessMode.WRITE,
+    ),))
+    policy = PermissionPolicyEvaluator()
+
+    assert policy.evaluate(base, None, requested).disposition == 'ask'
+    assert policy.evaluate(base, requested, requested).disposition == 'allow'
+    effective = materialize_effective_profile(base, requested)
+    assert effective.allows_file_write(git / 'index.lock')
+    assert not effective.allows_file_write(runtime / 'state.json')
+
+
+def test_arbitrary_git_metadata_write_remains_unrequestable(tmp_path):
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    outside_git = tmp_path / 'other' / '.git'
+    outside_git.mkdir(parents=True)
+    requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(outside_git), access=FileSystemAccessMode.WRITE,
+    ),))
+
+    assert PermissionPolicyEvaluator().evaluate(
+        BasePermissionProfile.for_workspace(workspace_root=workspace),
+        None,
+        requested,
+    ).disposition == 'deny'
+
+
+def test_git_approval_cannot_override_an_overlapping_unapproved_protection(tmp_path):
+    workspace = tmp_path / 'workspace'
+    git = workspace / '.git'
+    git.mkdir(parents=True)
+    base = BasePermissionProfile.for_workspace(
+        workspace_root=workspace,
+        protected_write_paths=(workspace, git),
+        approval_write_roots=(git,),
+    )
+    requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(git), access=FileSystemAccessMode.WRITE,
+    ),))
+
+    assert PermissionPolicyEvaluator().evaluate(
+        base, None, requested,
+    ).disposition == 'deny'
+    with pytest.raises(ValueError):
+        materialize_effective_profile(base, requested)
+
+
 @pytest.mark.parametrize('active', [False, True])
 def test_user_skill_write_requires_approval_then_accepts_run_grant(tmp_path, active):
     data = tmp_path / '.eidos'

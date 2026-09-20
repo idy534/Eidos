@@ -7,6 +7,7 @@ from eidos_runtime.sandbox.permissions import (
     EffectivePermissionProfile,
     FileSystemAccessMode,
     MaterializedFileSystemPermissionEntry,
+    is_approval_protected_write_exception,
     is_approval_write_exception,
 )
 
@@ -115,8 +116,20 @@ class SeatbeltPolicyCompiler:
         for index, path in enumerate(profile.protected_write_paths):
             key = f"PROTECTED_WRITE_{index}"
             parameters[key] = path
+            write_filter = _exclude_filters(
+                f'(subpath (param "{key}"))',
+                tuple(
+                    _filter(allowed, allowed_key)
+                    for allowed, allowed_key in approved_writes
+                    if is_approval_protected_write_exception(
+                        Path(allowed.resolved_path),
+                        Path(path),
+                        profile.approval_write_roots,
+                    )
+                ),
+            )
             sections.append(
-                f'(deny file-write* (subpath (param "{key}")))'
+                f'(deny file-write* {write_filter})'
             )
         for index, path in enumerate(profile.runtime_roots):
             key = f"RUNTIME_ROOT_{index}"

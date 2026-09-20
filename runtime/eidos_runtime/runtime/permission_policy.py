@@ -7,6 +7,7 @@ from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile, BasePermissionProfile, FileSystemAccessMode,
     FileSystemPermissionEntry,
+    is_approval_protected_write_exception,
     is_approval_write_exception,
 )
 
@@ -54,7 +55,15 @@ class PermissionPolicyEvaluator:
                     base.protected_write_paths
                     if entry.access is FileSystemAccessMode.WRITE else ()
                 ))
-                if (entry.access is FileSystemAccessMode.WRITE and ".git" in PurePath(entry.path).parts) or any(
+                if (
+                    entry.access is FileSystemAccessMode.WRITE
+                    and ".git" in PurePath(entry.path).parts
+                    and not any(
+                        PurePath(entry.path) == PurePath(root)
+                        or PurePath(entry.path).is_relative_to(root)
+                        for root in base.approval_write_roots
+                    )
+                ) or any(
                     (_contains(block, entry.path) or _contains(entry, block.path)) and not (
                         block in base.permanent_denies
                         and block not in base.hard_confidentiality_denies
@@ -65,10 +74,20 @@ class PermissionPolicyEvaluator:
                 ) or any(
                     (entry.path == path or PurePath(path) in PurePath(entry.path).parents
                     or (entry.recursive and PurePath(entry.path) in PurePath(path).parents)) and not (
-                        path in base.protected_metadata_paths
-                        and path not in base.protected_write_paths
-                        and entry.access is FileSystemAccessMode.WRITE
-                        and is_approval_write_exception(PurePath(entry.path), PurePath(path), base.approval_write_roots)
+                        entry.access is FileSystemAccessMode.WRITE
+                        and (
+                            is_approval_protected_write_exception(
+                                PurePath(entry.path),
+                                PurePath(path),
+                                base.approval_write_roots,
+                            )
+                            if path in base.protected_write_paths
+                            else is_approval_write_exception(
+                                PurePath(entry.path),
+                                PurePath(path),
+                                base.approval_write_roots,
+                            )
+                        )
                     )
                     for path in protected
                 ):

@@ -73,8 +73,11 @@ from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, Netwo
 from eidos_runtime.tools.request_permissions import RequestPermissionsInput
 from eidos_runtime.workspace.codex_patch import PatchError
 from eidos_runtime.runtime.shell_orchestration import (
+    GitWriteAccessError,
     ShellOrchestrationRequest,
     ShellOrchestrationRuntime,
+    effective_shell_permissions,
+    resolve_git_write_roots,
 )
 from eidos_runtime.runtime.tool_orchestrator import (
     OrchestratorApprovalRequest,
@@ -124,6 +127,7 @@ from eidos_runtime.tools.workspace import (
     WorkspacePathError,
 )
 from eidos_runtime.tools.contracts import (
+    GitWriteAccess,
     RunShellInput,
     WriteStdinInput,
     RuntimeDependencyBindingProvenance,
@@ -634,9 +638,6 @@ class ShellToolHandler:
             json.dumps(call.arguments, ensure_ascii=False)
         )
         effective_sandbox_permissions = shell_input.effective_sandbox_permissions
-        effective_additional_permissions = (
-            shell_input.effective_additional_permissions
-        )
         if (
             effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
@@ -679,6 +680,25 @@ class ShellToolHandler:
                 "failed",
                 "failed",
             )
+        workspace = runtime.implementation.executor.workspace  # type: ignore[attr-defined]
+        git_write_roots: tuple[str, ...] = ()
+        if shell_input.gitWriteAccess is GitWriteAccess.REQUEST:
+            try:
+                git_write_roots = resolve_git_write_roots(workspace)
+            except GitWriteAccessError as error:
+                return HandlerOutcome(
+                    tool_error(
+                        call.name,
+                        str(error),
+                        "Git write access requires the current verified repository",
+                    ),
+                    "failed",
+                    "failed",
+                )
+        effective_additional_permissions = effective_shell_permissions(
+            shell_input,
+            git_write_roots,
+        )
         skill_access = self.dependencies.skill_access
         skill_invocation = (
             skill_access.activate_implicit(command, cwd.path)
@@ -782,6 +802,17 @@ class ShellToolHandler:
                     "failed",
                     "failed",
                 )
+        if git_write_roots:
+            base_permissions = base_permissions.model_copy(update={
+                "approval_write_roots": tuple(dict.fromkeys((
+                    *base_permissions.approval_write_roots,
+                    *git_write_roots,
+                ))),
+                "protected_write_paths": tuple(dict.fromkeys((
+                    *base_permissions.protected_write_paths,
+                    *git_write_roots,
+                ))),
+            })
         if (
             effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
@@ -823,6 +854,8 @@ class ShellToolHandler:
                 )
                 if approved_cwd != cwd:
                     raise WorkspacePathError("workspace_identity_changed")
+                if git_write_roots and resolve_git_write_roots(workspace) != git_write_roots:
+                    raise GitWriteAccessError("git_repository_identity_changed")
             except ToolCancelled:
                 raise RuntimeCancelled from None
             except WorkspacePathError as error:
@@ -831,6 +864,15 @@ class ShellToolHandler:
                         call.name,
                         error.code,
                         "Shell workspace changed before execution",
+                    ),
+                    None,
+                )
+            except GitWriteAccessError as error:
+                return (
+                    tool_error(
+                        call.name,
+                        str(error),
+                        "Git repository changed before execution",
                     ),
                     None,
                 )
@@ -1134,8 +1176,12 @@ class ShellToolHandler:
                 ),
             )
 
-        workspace = runtime.implementation.executor.workspace  # type: ignore[attr-defined]
-        request = ShellOrchestrationRequest(shell_input, workspace, cwd)
+        request = ShellOrchestrationRequest(
+            shell_input,
+            workspace,
+            cwd,
+            git_write_roots,
+        )
         workspace_execution = PreparedToolExecution(
             approval_description={
                 "kind": "command_execution",

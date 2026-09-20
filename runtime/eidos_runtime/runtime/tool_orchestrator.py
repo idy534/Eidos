@@ -112,6 +112,13 @@ class ToolOrchestrator:
                 raise ValueError("additional_permissions are required")
         else:
             additional.validate_for(mode)
+        requirement = runtime.approval_requirement(request, context)
+        if requirement is ExecApprovalRequirement.FORBIDDEN:
+            return OrchestratorResult(
+                _error_result("approval_forbidden", "Execution is forbidden"),
+                0,
+                False,
+            )
         effective = materialize_effective_profile(
             context.base_permissions,
             merge_permissions(context.granted_permissions, additional
@@ -126,7 +133,6 @@ class ToolOrchestrator:
             or not set(workspace_roots).issubset(effective.workspace_roots)
         ):
             raise ValueError("runtime workspace roots exceed effective permissions")
-        requirement = runtime.approval_requirement(request, context)
         explicit_escalation = mode is SandboxPermissions.REQUIRE_ESCALATED
         if explicit_escalation and not unsandboxed_execution_allowed(effective):
             return OrchestratorResult(
@@ -134,12 +140,6 @@ class ToolOrchestrator:
                     "unsandboxed_execution_forbidden",
                     "Unsandboxed execution would discard protected filesystem restrictions",
                 ),
-                0,
-                False,
-            )
-        if requirement is ExecApprovalRequirement.FORBIDDEN:
-            return OrchestratorResult(
-                _error_result("approval_forbidden", "Execution is forbidden"),
                 0,
                 False,
             )

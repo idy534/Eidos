@@ -240,7 +240,7 @@ Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKI
 
 ## 9. Sandbox & Approval
 
-ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。模型可以用 `networkAccess=request` 表达高层联网意图。Shell contract 会把该 intent 规范化为现有 additional network permission。Runtime 会在启动进程前请求 Approval，获批后仍使用 Seatbelt。旧的底层权限输入继续兼容。联网、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数，也不能删除永久拒绝、Runtime 保护路径或 hard confidentiality deny。
+ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。模型可以用 `networkAccess=request` 表达高层联网意图，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以在同一条命令中合并。Shell contract 会把 intent 规范化为现有 additional permission。Runtime 会在启动进程前请求一次 Approval，获批后仍使用 Seatbelt。旧的底层权限输入继续兼容。联网、Git metadata 写入、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数，也不能删除永久拒绝、Runtime 保护路径或 hard confidentiality deny。
 
 默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。Runtime 只有在 hard confidentiality deny 不存在并且 policy 允许时才允许 unsandboxed attempt。
 
@@ -270,9 +270,9 @@ Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本
 
 默认 profile 只允许 Workspace、snapshot `TMPDIR` 和 canonical system temp root `/tmp` 写入。macOS 的 `/tmp` 会规范化为 `/private/tmp`。真实 `HOME` 和其他位置默认只读。
 
-Seatbelt 永久拒绝 Eidos data 和 credential 路径的 read、write 和 map。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。Workspace 的 `.git`、`.agents`、`.eidos`、linked Worktree metadata 和 Git common metadata 只读。普通 Workspace `.env` 和其他敏感命名文件可以读取；命令、cwd 和审批理由在展示层使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。明确的 network denial 不会进入通用 unsandboxed retry。
+Seatbelt 永久拒绝 Eidos data 和 credential 路径的 read、write 和 map。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。Workspace 的 `.git`、`.agents`、`.eidos`、linked Worktree metadata 和 Git common metadata 默认只读。`gitWriteAccess=request` 获批后只把当前 repository 已重新核验的 Git worktree/common metadata roots 加入本次 Shell 的写权限。原 repository working tree、相邻 `.git` 和其他保护路径不会因此开放。普通 Workspace `.env` 和其他敏感命名文件可以读取；命令、cwd 和审批理由在展示层使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。明确的 network denial 不会进入通用 unsandboxed retry。
 
-Managed linked Worktree 会把 Worktree 的已验证 `git_dir` 和 Project 的已验证 `git_common_dir` 传入 Seatbelt。Seatbelt 只允许读取这两个 Git metadata root。它明确拒绝这些路径的写入。原始 repository working tree 不属于该 Thread 的 execution workspace。
+Managed linked Worktree 会把 Worktree 的已验证 `git_dir` 和 Project 的已验证 `git_common_dir` 传入 Seatbelt。这两个 Git metadata root 默认只读，只有当前命令的 `gitWriteAccess=request` 获批后才会写入。原始 repository working tree 不属于该 Thread 的 execution workspace。
 
 Shell launch boundary 只验证 Workspace identity、cwd、Approval、Seatbelt readiness 和进程边界。Workspace-wide manifest observation 在命令执行后用于变化证据和 reconciliation。观察不完整会保留 unknown observation。它不会把已知成功退出自动改成不确定副作用。
 

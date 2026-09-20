@@ -260,17 +260,36 @@ class EffectivePermissionProfile(ClosedModel):
 
     def allows_file_write(self, path: Path) -> bool:
         """Check a canonical file target, including unsandboxed helper targets."""
-        if ".git" in path.parts or any(
-            path.is_relative_to(Path(root))
-            for root in self.protected_write_paths
-        ):
-            return False
         approved = any(
             entry.source == "additional" and entry.access is FileSystemAccessMode.WRITE
             and (path == Path(entry.resolved_path) or (
                 entry.recursive and path.is_relative_to(Path(entry.resolved_path))
             )) for entry in self.entries
         )
+        matching_protected = tuple(
+            Path(protected)
+            for protected in self.protected_write_paths
+            if path == Path(protected) or path.is_relative_to(Path(protected))
+        )
+        approved_exception = approved and all(
+            is_approval_protected_write_exception(
+                path,
+                protected,
+                self.approval_write_roots,
+            )
+            for protected in matching_protected
+        )
+        if (
+            ".git" in path.parts
+            and not any(
+                path == Path(root) or path.is_relative_to(Path(root))
+                for root in self.approval_write_roots
+            )
+        ) or (
+            matching_protected
+            and not approved_exception
+        ):
+            return False
         if any(path.is_relative_to(Path(root)) for root in (
             *self.approval_write_roots, *self.active_skill_roots,
         )) and not approved:
@@ -348,7 +367,13 @@ def materialize_effective_profile(
             ):
                 raise ValueError("additional permission targets protected Eidos state")
             if requested.access is FileSystemAccessMode.WRITE and any(
-                _paths_overlap(resolved, path) for path in protected_write
+                _paths_overlap(resolved, path)
+                and not is_approval_protected_write_exception(
+                    resolved,
+                    path,
+                    base.approval_write_roots,
+                )
+                for path in protected_write
             ):
                 raise ValueError("additional permission would modify Eidos runtime")
         entries += _materialize_entries(additional.file_system, "additional")
@@ -427,12 +452,20 @@ def unsandboxed_execution_allowed(
 def is_approval_write_exception(
     path: PurePath, protected: PurePath, roots: tuple[str, ...],
 ) -> bool:
-    """Only explicit writes inside configured user Skill storage may bypass its data deny."""
+    """Allow explicit writes only inside configured approval roots."""
     return any(
-        PurePath(root) != protected
-        and PurePath(root).is_relative_to(protected)
-        and path.is_relative_to(PurePath(root))
+        (PurePath(root) == protected or PurePath(root).is_relative_to(protected))
+        and (path == PurePath(root) or path.is_relative_to(PurePath(root)))
         for root in roots
+    )
+
+
+def is_approval_protected_write_exception(
+    path: PurePath, protected: PurePath, roots: tuple[str, ...],
+) -> bool:
+    """Allow a protected-write root only when that exact root was approved."""
+    return protected in (PurePath(root) for root in roots) and (
+        path == protected or path.is_relative_to(protected)
     )
 
 

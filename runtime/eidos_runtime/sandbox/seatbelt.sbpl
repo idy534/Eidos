@@ -94,13 +94,7 @@
 ; The original repository working tree is not granted by this rule.
 (allow file-read* file-read-metadata file-test-existence
   (subpath (param "GIT_WORKTREE_DIR")))
-(deny file-write*
-  (literal (param "GIT_WORKTREE_DIR"))
-  (subpath (param "GIT_WORKTREE_DIR")))
 (allow file-read* file-read-metadata file-test-existence
-  (subpath (param "GIT_COMMON_DIR")))
-(deny file-write*
-  (literal (param "GIT_COMMON_DIR"))
   (subpath (param "GIT_COMMON_DIR")))
 
 ; Workspace is writable except for Git metadata.

@@ -4,11 +4,16 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+import subprocess
+
+from dulwich.repo import Repo
 
 from eidos_runtime.db.storage import WorkspaceIdentity
+from eidos_runtime.git.backend import DulwichGitBackend
 from eidos_runtime.runtime.shell_orchestration import (
     ShellOrchestrationRequest,
     ShellOrchestrationRuntime,
+    resolve_git_write_roots,
 )
 from eidos_runtime.runtime.tool_orchestrator import (
     ExecApprovalRequirement,
@@ -18,10 +23,12 @@ from eidos_runtime.runtime.tool_orchestrator import (
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
     BasePermissionProfile,
+    FileSystemAccessMode,
+    FileSystemPermissionEntry,
     NetworkPermissions,
     SandboxPermissions,
 )
-from eidos_runtime.tools.contracts import NetworkAccess, RunShellInput
+from eidos_runtime.tools.contracts import GitWriteAccess, NetworkAccess, RunShellInput
 
 
 class ShellApprovalPolicyTests(unittest.TestCase):
@@ -139,6 +146,111 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         assert approvals[0].additional_permissions.network is not None
         self.assertTrue(approvals[0].additional_permissions.network.enabled)
 
+    def test_git_and_network_intents_share_one_scoped_approval(self) -> None:
+        git = self.root / ".git"
+        git.mkdir()
+        context = OrchestratorContext(
+            **{
+                **self.context.__dict__,
+                "base_permissions": BasePermissionProfile.for_workspace(
+                    workspace_root=self.root,
+                    protected_write_paths=(git,),
+                    approval_write_roots=(git,),
+                ),
+            }
+        )
+        request = ShellOrchestrationRequest(
+            RunShellInput(
+                command="git push -u origin HEAD",
+                gitWriteAccess=GitWriteAccess.REQUEST,
+                networkAccess=NetworkAccess.REQUEST,
+                justification="Push the current branch",
+            ),
+            self.identity,
+            self.identity,
+            (str(git.resolve()),),
+        )
+        attempts: list[object] = []
+        approvals: list[object] = []
+        runtime = ShellOrchestrationRuntime(
+            lambda attempt: attempts.append(attempt)
+            or ({"outcome": "success", "code": "ok"}, None)
+        )
+
+        result = ToolOrchestrator().run(
+            runtime,
+            request,
+            context,
+            approve=lambda approval: approvals.append(approval) or True,
+        )
+
+        self.assertEqual(result.result["outcome"], "success")
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(len(attempts), 1)
+        additional = approvals[0].additional_permissions
+        self.assertIsNotNone(additional)
+        assert additional is not None and additional.network is not None
+        self.assertTrue(additional.network.enabled)
+        self.assertEqual(additional.file_system[0].access, FileSystemAccessMode.WRITE)
+        self.assertEqual(additional.file_system[0].path, str(git.resolve()))
+        self.assertTrue(attempts[0].permissions.allows_file_write(git / "index.lock"))
+
+    def test_git_write_roots_come_from_the_verified_repository(self) -> None:
+        Repo.init(self.root)
+
+        roots = resolve_git_write_roots(self.identity)
+
+        self.assertEqual(roots, (str((self.root / ".git").resolve()),))
+
+    def test_linked_worktree_uses_verified_worktree_and_common_git_roots(self) -> None:
+        source = self.root / "source"
+        linked = self.root / "linked"
+        source.mkdir()
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main"],
+            cwd=source,
+            check=True,
+        )
+        (source / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=source, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Eidos Test",
+                "-c",
+                "user.email=eidos@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "initial",
+            ],
+            cwd=source,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(linked), "HEAD"],
+            cwd=source,
+            check=True,
+        )
+        discovery = DulwichGitBackend().discover(linked)
+        metadata = linked.stat()
+        identity = WorkspaceIdentity(
+            linked,
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_uid,
+            git_dir=Path(discovery.git_dir),
+            git_common_dir=Path(discovery.git_common_dir),
+        )
+
+        roots = resolve_git_write_roots(identity)
+
+        self.assertEqual(
+            roots,
+            tuple(dict.fromkeys((discovery.git_dir, discovery.git_common_dir))),
+        )
+
     def test_rejected_network_intent_never_executes(self) -> None:
         request = ShellOrchestrationRequest(
             RunShellInput(
@@ -163,6 +275,50 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.result["code"], "user_rejected")
+        self.assertEqual(attempts, [])
+
+    def test_forbidden_legacy_git_path_does_not_start_or_require_reconciliation(self) -> None:
+        git_dir = self.root / ".git"
+        git_dir.mkdir()
+        request = ShellOrchestrationRequest(
+            RunShellInput(
+                command="git add .",
+                sandboxPermissions=SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+                additionalPermissions=AdditionalPermissionProfile(
+                    fileSystem=(FileSystemPermissionEntry(
+                        path=str(git_dir),
+                        access=FileSystemAccessMode.WRITE,
+                    ),),
+                ),
+                justification="Legacy Git metadata request",
+            ),
+            self.identity,
+            self.identity,
+        )
+        attempts: list[object] = []
+        context = OrchestratorContext(
+            **{
+                **self.context.__dict__,
+                "base_permissions": BasePermissionProfile.for_workspace(
+                    workspace_root=self.root,
+                    protected_write_paths=(git_dir,),
+                ),
+            }
+        )
+
+        result = ToolOrchestrator().run(
+            ShellOrchestrationRuntime(
+                lambda attempt: attempts.append(attempt)
+                or ({"outcome": "success", "code": "ok"}, None)
+            ),
+            request,
+            context,
+            approve=lambda _approval: True,
+        )
+
+        self.assertEqual(result.result["code"], "approval_forbidden")
+        self.assertFalse(result.result["reconciliationRequired"])
+        self.assertEqual(result.attempt_count, 0)
         self.assertEqual(attempts, [])
 
     def test_unsandboxed_execution_requires_approval(self) -> None:

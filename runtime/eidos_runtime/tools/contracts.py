@@ -274,6 +274,11 @@ class NetworkAccess(StrEnum):
     REQUEST = "request"
 
 
+class GitWriteAccess(StrEnum):
+    DEFAULT = "default"
+    REQUEST = "request"
+
+
 class RunShellInput(StrictToolModel):
     command: StrictStr = Field(min_length=1, max_length=16 * 1024)
     cwd: StrictStr = Field(
@@ -307,6 +312,14 @@ class RunShellInput(StrictToolModel):
             "access; Eidos will request approval and keep macOS Seatbelt."
         ),
     )
+    gitWriteAccess: GitWriteAccess = Field(
+        default=GitWriteAccess.DEFAULT,
+        description=(
+            "Git metadata write intent. Use 'request' for Git commands that "
+            "modify the current repository; Eidos will request approval and "
+            "keep macOS Seatbelt."
+        ),
+    )
     sandboxPermissions: SandboxPermissions = SandboxPermissions.USE_DEFAULT
     additionalPermissions: AdditionalPermissionProfile | None = None
     justification: StrictStr | None = Field(default=None, max_length=2_000)
@@ -323,7 +336,11 @@ class RunShellInput(StrictToolModel):
 
     @model_validator(mode="after")
     def validate_permissions(self):
-        if self.networkAccess is NetworkAccess.REQUEST:
+        high_level_request = (
+            self.networkAccess is NetworkAccess.REQUEST
+            or self.gitWriteAccess is GitWriteAccess.REQUEST
+        )
+        if high_level_request:
             if (
                 self.sandboxPermissions is not SandboxPermissions.USE_DEFAULT
                 or (
@@ -331,9 +348,22 @@ class RunShellInput(StrictToolModel):
                     and not self.additionalPermissions.is_empty
                 )
             ):
-                raise ValueError("network_access_conflict")
+                raise ValueError(
+                    "network_access_conflict"
+                    if self.networkAccess is NetworkAccess.REQUEST
+                    and self.gitWriteAccess is GitWriteAccess.DEFAULT
+                    else "permission_intent_conflict"
+                )
             if not self.justification:
-                raise ValueError("network_access_justification_required")
+                raise ValueError(
+                    "network_access_justification_required"
+                    if self.networkAccess is NetworkAccess.REQUEST
+                    and self.gitWriteAccess is GitWriteAccess.DEFAULT
+                    else "git_write_access_justification_required"
+                    if self.gitWriteAccess is GitWriteAccess.REQUEST
+                    and self.networkAccess is NetworkAccess.DEFAULT
+                    else "permission_intent_justification_required"
+                )
             return self
         if self.additionalPermissions is None:
             if (
@@ -352,7 +382,10 @@ class RunShellInput(StrictToolModel):
 
     @property
     def effective_sandbox_permissions(self) -> SandboxPermissions:
-        if self.networkAccess is NetworkAccess.REQUEST:
+        if (
+            self.networkAccess is NetworkAccess.REQUEST
+            or self.gitWriteAccess is GitWriteAccess.REQUEST
+        ):
             return SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS
         return self.sandboxPermissions
 

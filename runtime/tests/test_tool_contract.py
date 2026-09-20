@@ -12,6 +12,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.tools.contracts import (  # noqa: E402
+    GitWriteAccess,
     ListFilesInput,
     NetworkAccess,
     RunShellInput,
@@ -202,6 +203,12 @@ class ToolContractTests(unittest.TestCase):
             "networkAccess": "request",
             "justification": "Install project dependencies",
         }))
+        git_network_request = RunShellInput.model_validate_json(json.dumps({
+            "command": "git push -u origin HEAD",
+            "gitWriteAccess": "request",
+            "networkAccess": "request",
+            "justification": "Push the current branch",
+        }))
         empty_permission_requests = (
             RunShellInput.model_validate_json(json.dumps({
                 "command": "npm install",
@@ -235,7 +242,12 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(default.sandboxPermissions.value, "use_default")
         self.assertIsNone(default.additionalPermissions)
         self.assertIs(default.networkAccess, NetworkAccess.DEFAULT)
+        self.assertIs(default.gitWriteAccess, GitWriteAccess.DEFAULT)
         self.assertIs(network_request.networkAccess, NetworkAccess.REQUEST)
+        self.assertIs(
+            git_network_request.gitWriteAccess,
+            GitWriteAccess.REQUEST,
+        )
         self.assertEqual(
             network_request.effective_sandbox_permissions.value,
             "with_additional_permissions",
@@ -244,6 +256,15 @@ class ToolContractTests(unittest.TestCase):
         assert network_request.effective_additional_permissions is not None
         assert network_request.effective_additional_permissions.network is not None
         self.assertTrue(network_request.effective_additional_permissions.network.enabled)
+        self.assertEqual(
+            git_network_request.effective_sandbox_permissions.value,
+            "with_additional_permissions",
+        )
+        assert git_network_request.effective_additional_permissions is not None
+        assert git_network_request.effective_additional_permissions.network is not None
+        self.assertTrue(
+            git_network_request.effective_additional_permissions.network.enabled
+        )
         for empty_request in empty_permission_requests:
             self.assertEqual(
                 empty_request.effective_sandbox_permissions,
@@ -290,6 +311,14 @@ class ToolContractTests(unittest.TestCase):
                 "sandboxPermissions": "with_additional_permissions",
                 "additionalPermissions": {"network": {"enabled": True}},
                 "justification": "Install project dependencies",
+            }))
+        with self.assertRaisesRegex(
+            ValidationError,
+            "git_write_access_justification_required",
+        ):
+            RunShellInput.model_validate_json(json.dumps({
+                "command": "git add .",
+                "gitWriteAccess": "request",
             }))
 
         normalized = network_request.model_dump(mode="json", by_alias=True)
@@ -340,6 +369,7 @@ class ToolContractTests(unittest.TestCase):
         )
 
         self.assertIn("networkAccess=request", description)
+        self.assertIn("gitWriteAccess=request", description)
         self.assertIn("justification", description)
         self.assertIn("macOS Seatbelt", description)
         self.assertIn("sandboxPermissions", description)

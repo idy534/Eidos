@@ -257,6 +257,7 @@ def _shell_arguments(binding_id: str, **overrides: object) -> dict[str, object]:
         "dependencyBindingId": binding_id,
         "yieldTimeMs": 30_000,
         "networkAccess": "default",
+        "gitWriteAccess": "default",
         "sandboxPermissions": "use_default",
         "additionalPermissions": None,
         "justification": None,

@@ -38,7 +38,7 @@
 ### Workspace 与工具
 
 - 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件。写入工具支持普通 Workspace 写入和经审批的外部普通文件写入；普通 Skill 需要明确写入授权，`skills/.system` 始终禁写。已有文件使用受控原地写入，新文件使用排他提交；工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
-- 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录继续受到写入保护。Workspace 外的 Eidos data 和 credential 路径仍由永久拒绝保护。
+- 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录默认受到写入保护。只有获批的 `run_shell.gitWriteAccess` 可以写当前 repository 的 Git metadata。Workspace 外的 Eidos data 和 credential 路径仍由永久拒绝保护。
 - `apply_patch` 统一使用 Codex Patch：支持 Custom 和 Grammar 的相应 profile 直接提交原文；Function profile 提交 `{ "patch": "..." }`。旧的 `{ "changes": [...] }` 不再接受。两条路径的 Patch 原文预算统一为 8 MiB，Function 外层 JSON 另留转义空间。`apply_patch` 不再按内容模式或敏感文件名拒绝 Patch。单文件读取、准备和提交校验上限统一为 16 MiB；一次 Patch 的准备内容预算为 64 MiB，Diff 和结果各有 64 MiB 上限。预算约束 Runtime 资源，工具说明不规定文件拆分、补丁大小偏好或分批时机。JSON 类型、Patch 语法、当前文件匹配和最终写入验证是不同阶段；单个阶段通过不代表编辑成功。离线回归验证契约和安全行为，不能代表真实 Provider/模型的成功率；模型成功率需要另行使用相同任务集测量。
 - Custom Tool 的 input delta 在 Responses adapter 内部重组。Desktop 在完整参数通过解析并完成 Prepare 后显示持久补丁更新；它不展示尚未校验的逐 token 补丁。Prepare 完成不代表文件提交成功。
 - Add 内容会统一规范化为 LF，并按 Codex 行语义补尾部 LF。Add File 可以没有内容行；显式的 `+` 表示一条空内容行。因此空字符串、单个换行和两个换行会保持不同的解析结果。Parser 接受 CRLF 和外层空白，但不会猜测缺失的 envelope、marker 或行前缀。
@@ -57,6 +57,7 @@
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
 - Shell post-execution observation 在超时或不完整 Workspace manifest 时可能是 `unknown`。这类 observation 不能替代 Runtime 明确报告的执行 uncertainty，也不会单独限制已明确退出的 Shell。对于仍由 Runtime 管理、结果带有有效 `sessionId` 且明确报告 `reconciliationRequired=false` 的 `executionStatus=running` Shell，Workspace observation 不完整不会单独建立 reconciliation。Runtime 仍会保留 `workspaceChangeState=unknown`、`workspaceDiffIncomplete=true` 和 `sideEffectsMayExist=true`。完整的 Workspace 状态与安全事实仍需要后置核验。
+- `gitWriteAccess=request` 授权的是一条获批 Shell 命令对当前 repository Git metadata 的写入。Runtime 不解析或重写 Shell 命令。原生 Git 仍可能读取用户 Git 配置，并可能执行 repository hooks、credential helper 或命令中显式启动的程序。需要禁用这些机制的产品 Git 操作继续使用独立的 `HardenedGitRunner` typed API。首次 `gh` 登录和凭据配置不由 `run_shell` 自动完成。
 
 ### Agent Shell
 
@@ -92,7 +93,7 @@
 - Runtime 可以持久化 Long Task 控制、pause/resume/cancel、restart verification 结果和 reconciliation 状态。启动时，没有未完成 Tool 执行或不确定副作用的 active Run，且同时没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent 和没有 running ToolAttempt 时，才可以重新排队。更广泛的 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall、Durable Intent 和 Checkpoint 兼容性集合。
 - Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Managed 和 Local Git Checkpoint 会保存 HEAD、staged、unstaged 和 untracked Git 状态。Managed Fork 会恢复独立 Worktree 的完整 checkpoint Git 状态。Managed 和 Local Rewind 会恢复原 checkout 的完整 checkpoint Git 状态。Local Rewind 只允许用户显式调用。Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshots。Ignored 文件不进入 Checkpoint artifact。
 - Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前仍不提供 Permanent Worktree、Pinned Chat、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
-- Linked Worktree 的 Git metadata read 已在真实 macOS Seatbelt 中验证。Git metadata write、原始 repository working-tree access 和不匹配的 Worktree recovery 会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
+- Linked Worktree 的 Git metadata read 和获批后的精确 write 已在真实 macOS Seatbelt 中验证。默认 write、原始 repository working-tree access 和不匹配的 Worktree recovery 仍会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
 - Parallel Agent / subagent 尚未实现。本次不为未来 subagent 预设并发上限。cross-worktree Repository Intelligence sharing 尚未实现。
 - Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用且执行状态未知的操作必须先进入 reconciliation，Runtime 不会自动重放。已明确 `termination=exit` 且有 `exitCode` 的 Shell 即使 Workspace observation 不完整，也不会因此进入只读模式或阻止后续 ToolCall。取消已停止的 Run 正常返回。未清除的 reconciliation barrier 保留在 `interrupted` 终态中；`sideEffectsMayExist` 不会单独阻断取消。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果仍然 fail closed。
 
@@ -163,7 +164,7 @@
 - Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。
 
 - 已有文件的原地写入不是原子内容替换。外部读者可能看到中间内容；写前版本检查不能阻止外部编辑器在检查后并发写入。异常终止可能留下部分文件；Runtime 不会自动覆盖回旧内容或重放补丁。
-- 工作区外的已有文件按具体文件申请写权限。新文件使用目标最近的已存在父目录作为请求范围，审批会展示目录和具体文件。不存在的父目录可在批准后创建。永久拒绝路径、链接、`.git`、`.agents` 和 `.eidos` 仍不能写入。无沙盒审批不会绕过操作系统 ACL、只读权限或系统隐私权限。
+- 工作区外的已有文件按具体文件申请写权限。新文件使用目标最近的已存在父目录作为请求范围，审批会展示目录和具体文件。不存在的父目录可在批准后创建。受控文件工具仍不能写入永久拒绝路径、链接、`.git`、`.agents` 和 `.eidos`；Git metadata 的单次 Shell 授权只走 `gitWriteAccess`。无沙盒审批不会绕过操作系统 ACL、只读权限或系统隐私权限。
 
 - 外部文件写入的不确定结果需要对外部目标另行核实。当前 Workspace 刷新不覆盖外部文件，因此不能自动清除此类 Reconciliation；Runtime 不自动重放或回滚。
 

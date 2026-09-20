@@ -1379,6 +1379,98 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "success")
         self.assertEqual(result["data"]["stdout"], "network-request-approved")
 
+    def test_approved_shell_git_write_commits_inside_seatbelt(self) -> None:
+        if not is_seatbelt_ready():
+            self.skipTest(
+                "Seatbelt Git integration requires a currently usable sandbox-exec"
+            )
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main"],
+            cwd=self.workspace,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Eidos Test"],
+            cwd=self.workspace,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "eidos@example.com"],
+            cwd=self.workspace,
+            check=True,
+        )
+        run, _ = self.store.create_run(
+            self.session["id"],
+            "Commit the workspace change",
+        )
+        model = ScriptedModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "call-shell",
+                            "run_shell",
+                            {
+                                "command": (
+                                    "git add hello.txt && "
+                                    "git commit -m 'Commit from approved shell'"
+                                ),
+                                "gitWriteAccess": "request",
+                                "justification": "Commit the requested workspace change",
+                                "yieldTimeMs": 5000,
+                            },
+                        ),
+                    )
+                ),
+                ModelResponse(text="Commit completed."),
+            ]
+        )
+        approvals: list[dict[str, object]] = []
+
+        RuntimeLoop(
+            self.store,
+            model,
+            lambda _message: None,
+            lambda request, _cancel: (
+                approvals.append(request) or ApprovalDecision("approve")
+            ),
+            shell_available=True,
+        ).run(run["id"], threading.Event())
+
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(
+            approvals[0]["additionalWriteAccess"],
+            [str((self.workspace / ".git").resolve())],
+        )
+        subject = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=self.workspace,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(subject, "Commit from approved shell")
+        attempt = self.store.connection.execute(
+            """
+            SELECT sandbox_type, effective_permissions_json
+            FROM tool_attempts
+            JOIN tool_calls ON tool_calls.id = tool_attempts.tool_call_id
+            JOIN items ON items.id = tool_calls.item_id
+            WHERE items.run_id = ?
+            """,
+            (run["id"],),
+        ).fetchone()
+        self.assertEqual(attempt["sandbox_type"], "macos_seatbelt")
+        self.assertTrue(
+            any(
+                entry["resolvedPath"] == str((self.workspace / ".git").resolve())
+                and entry["access"] == "write"
+                for entry in json.loads(
+                    attempt["effective_permissions_json"]
+                )["entries"]
+            )
+        )
+
     def test_shell_workspace_rebind_before_execution_never_runs_in_replacement(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Run safely")
         replacement = self.workspace.parent / "replacement"

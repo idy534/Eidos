@@ -852,6 +852,53 @@ class SeatbeltSmokeTests(unittest.TestCase):
             self.assertEqual(protected.read_text(), "original")
             self.assertFalse((git / "config").exists())
 
+    def test_dynamic_profile_allows_only_approved_git_metadata_write(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="eidos-approved-git-") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            home = root / "home"
+            sandbox_tmp = root / "tmp"
+            git = workspace / ".git"
+            runtime = workspace / ".eidos"
+            for directory in (workspace, home, sandbox_tmp, git, runtime):
+                directory.mkdir(parents=True, exist_ok=True)
+            additional = AdditionalPermissionProfile(fileSystem=(
+                FileSystemPermissionEntry(
+                    path=str(git),
+                    access=FileSystemAccessMode.WRITE,
+                ),
+            ))
+            effective = materialize_effective_profile(
+                BasePermissionProfile.for_workspace(
+                    workspace_root=workspace,
+                    protected_write_paths=(git, runtime),
+                    approval_write_roots=(git,),
+                ),
+                additional,
+            )
+            profile = SeatbeltProfile.create(
+                workspace_root=workspace,
+                sandbox_home=home,
+                sandbox_tmp=sandbox_tmp,
+                effective_permissions=effective,
+            )
+
+            result = run_sandboxed(
+                profile,
+                [
+                    "/bin/sh",
+                    "-c",
+                    'printf lock > "$1"; printf blocked > "$2"',
+                    "sh",
+                    str(git / "index.lock"),
+                    str(runtime / "state.json"),
+                ],
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual((git / "index.lock").read_text(), "lock")
+            self.assertFalse((runtime / "state.json").exists())
+
     def test_managed_workspace_inside_data_keeps_data_state_denied(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-managed-data-") as temporary:
             root = Path(temporary)
