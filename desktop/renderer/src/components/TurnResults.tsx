@@ -353,6 +353,7 @@ function artifactOpenItems(
   actions: ReturnType<typeof useArtifacts>,
   openBuiltInPreview: () => void,
   openExternal: () => void,
+  showInFinder?: () => void,
 ): DropdownMenuItem[] {
   const items: DropdownMenuItem[] = [];
   if (!isOfficeArtifact(artifact.path) && actions?.openFile) {
@@ -367,6 +368,13 @@ function artifactOpenItems(
       key: "external",
       label: "系统应用打开",
       onClick: openExternal,
+    });
+  }
+  if (actions?.showInFinder && showInFinder) {
+    items.push({
+      key: "finder",
+      label: "在 Finder 中显示",
+      onClick: showInFinder,
     });
   }
   return items;
@@ -449,7 +457,29 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
       if (sequence === openSequence.current) setOpening(false);
     }
   };
-  const openItems = artifactOpenItems(artifact, actions, () => { void open(); }, () => { void open(true); });
+  const revealInFinder = async () => {
+    if (!actions || wrongWorkspace || opening) return;
+    const sequence = ++openSequence.current;
+    setOpening(true);
+    setOpenError(undefined);
+    try {
+      if (!actions.showInFinder) throw new Error("当前没有在 Finder 中显示入口。");
+      await actions.showInFinder(artifact.path);
+    } catch (error) {
+      if (sequence === openSequence.current) setOpenError(
+        `无法在 Finder 中显示文件。${error instanceof Error ? error.message : "文件可能已删除或无法访问。"}`
+      );
+    } finally {
+      if (sequence === openSequence.current) setOpening(false);
+    }
+  };
+  const openItems = artifactOpenItems(
+    artifact,
+    actions,
+    () => { void open(); },
+    () => { void open(true); },
+    () => { void revealInFinder(); },
+  );
   return (
     <>
       <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>

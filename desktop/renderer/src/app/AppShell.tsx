@@ -847,6 +847,14 @@ export function AppShell({ runtime }: AppShellProps) {
     await window.eidosRuntime.openWorkspacePathInEditor(currentSnapshot.session.id, resolved);
   }
 
+  async function handleShowInFinder(path: string): Promise<void> {
+    if (!currentSnapshot) return;
+    const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
+    const resolved = artifactPath(path, root, undefined, true);
+    if (!resolved) throw new Error("文件不在当前工作区内。");
+    await window.eidosRuntime.showItemInFolder(`${root.replace(/\/$/, "")}/${resolved}`);
+  }
+
   function handleOpenFileInDock(path: string): void {
     if (!currentSnapshot) return;
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
@@ -980,6 +988,7 @@ export function AppShell({ runtime }: AppShellProps) {
       openBrowser: handleOpenBrowser,
       openExternal: handleOpenExternal,
       openReview: handleOpenReview,
+      showInFinder: handleShowInFinder,
     } : undefined}>
     <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
       <SessionSidebar

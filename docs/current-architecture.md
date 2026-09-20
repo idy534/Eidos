@@ -576,7 +576,7 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 声明结果包含 executionRoot、outputs（path、可选 title、sizeBytes、version）。version 沿用文件身份、大小和修改时间生成的版本标识，不是内容快照或质量证明。输入每批最多 20 项，路径沿用 512 UTF-8 字节上限，标题最多 120 个字符。任一核验失败时，整个调用没有成功声明；后续成功调用按文件新增或更新，省略其他文件不撤销其声明。Renderer 只接收 builtin/eidos.declare-outputs 的成功结果；Shell 观察、Diff、文件后缀和回复标记不产生交付事实。工具结果仍通过现有 resultJson 传递，不修改 RPC Envelope 或 SQLite Schema。
 
-修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览和 Main 的受控系统应用打开入口；DOCX 没有内置预览时只展示系统应用打开。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
+修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览、Main 的受控系统应用打开入口和 Finder 显示能力；DOCX 等没有内置预览的 Office 产物只展示系统应用打开和在 Finder 中显示。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
 
 本轮没有数据库迁移或第二套 Artifact 表；浏览器地址识别新增直接依赖 `tldts`。
 

@@ -314,6 +314,82 @@ describe("TurnResults", () => {
     }
   });
 
+  it("shows '在 Finder 中显示' in open options and calls showInFinder", async () => {
+    const openFile = vi.fn();
+    const openExternal = vi.fn();
+    const showInFinder = vi.fn();
+    const items = [
+      declaredItem("item-1", [
+        { path: "docs/slides.pptx" },
+        { path: "images/logo.png" },
+      ]),
+    ];
+
+    render(
+      <ArtifactProvider
+        value={{
+          sessionId: run.sessionId,
+          executionRoot: "/workspace",
+          openFile,
+          openBrowser: vi.fn(),
+          openExternal,
+          showInFinder,
+        }}
+      >
+        <TurnResults run={run} items={items} />
+      </ArtifactProvider>,
+    );
+
+    // Office artifact (slides.pptx): only external and finder options, no preview
+    const dropdowns = screen.getAllByRole("button", { name: "打开方式" });
+    fireEvent.click(dropdowns[0]!);
+    expect(screen.getByRole("menuitem", { name: "系统应用打开" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "在 Finder 中显示" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "内置预览" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "打开文件" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "在 Finder 中显示" }));
+    await waitFor(() => expect(showInFinder).toHaveBeenCalledWith("docs/slides.pptx"));
+
+    // Normal artifact (logo.png): preview, external and finder options
+    fireEvent.click(dropdowns[1]!);
+    expect(screen.getByRole("menuitem", { name: "内置预览" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "系统应用打开" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "在 Finder 中显示" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "在 Finder 中显示" }));
+    await waitFor(() => expect(showInFinder).toHaveBeenCalledWith("images/logo.png"));
+  });
+
+  it("handles showInFinder errors gracefully", async () => {
+    const showInFinder = vi.fn().mockRejectedValue(new Error("文件已删除"));
+    const items = [
+      declaredItem("item-1", [{ path: "missing.docx" }]),
+    ];
+
+    render(
+      <ArtifactProvider
+        value={{
+          sessionId: run.sessionId,
+          executionRoot: "/workspace",
+          openFile: vi.fn(),
+          openBrowser: vi.fn(),
+          openExternal: vi.fn(),
+          showInFinder,
+        }}
+      >
+        <TurnResults run={run} items={items} />
+      </ArtifactProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "打开方式" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "在 Finder 中显示" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("无法在 Finder 中显示文件。文件已删除");
+    });
+  });
+
   it("keeps the latest declaration and preserves omitted output history", () => {
     const first = declaredItem("item-1", [
       { path: "report.pdf", title: "Draft" },

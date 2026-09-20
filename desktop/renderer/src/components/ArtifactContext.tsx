@@ -7,6 +7,7 @@ export interface ArtifactActions {
   openBrowser(url: string): void;
   openExternal?: ((path: string) => void | Promise<void>) | undefined;
   openReview?: ((request: { runId: string; path?: string; itemId?: string }) => void) | undefined;
+  showInFinder?: ((path: string) => void | Promise<void>) | undefined;
 }
 const Context = createContext<ArtifactActions | undefined>(undefined);
 export const ArtifactProvider = Context.Provider;
