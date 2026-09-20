@@ -169,7 +169,7 @@ Runtime dependency contract 使用 Bundle 根目录下的 `runtime.json`。文�
 
 资源分为三层。Skill 内容位于 `runtime/eidos_runtime/resources/skills/`，包括 `SKILL.md`、`agents/eidos.yaml`、脚本和其他资源。产品依赖位于 `resources/runtime-dependencies/`，构建后进入 Bundle 的 `dependencies/` 目录。Bundle 根目录的 `runtime.json` 是由构建脚本生成并校验的依赖清单。系统 Python、Node 和包文件不放进 Skill 目录。`agents/eidos.yaml` 只声明 typed requirements。Skill 不能安装包，也不能写入受保护的 Bundle 或 Skill root。默认 Agent Shell 仍然使用 Workspace cwd、默认禁网和现有 Approval/Sandbox 流程。没有 dependency binding 的普通 Shell 行为不变。
 
-`workspace_dependencies` 成功结果的 `data` 包含 `activeSkillDependencyBindings`，也可以包含 `defaultDependencyBindingId`。`run_shell` 输入使用 `dependencyBindingId`。plugin-creator consumer 必须选择 `skillQualifiedId` 为 `system:plugin-creator` 且状态为 `ready` 的 active binding，并把它传给每个 `run_shell` 调用。它不能使用顶层默认 binding。它必须使用 `$RUNTIME_PYTHON`、catalog 提供的 canonical absolute Skill root 和 Workspace cwd `.`。源码环境中的 `.venv` 只能用于源码开发。它不代表目标 App 的 bundled dependency。
+`run_shell` 会为已识别的 Skill 脚本自动选择该 Skill 声明的已验证依赖；模型无需查询或传入 binding ID。普通项目命令不会因为 Skill 已激活而切换环境。`dependencyBindingId` 输入仍保留兼容，显式值仍校验 Run 和 Skill 归属。plugin-creator 等 Skill 脚本使用 `$RUNTIME_PYTHON`、catalog 提供的 canonical absolute Skill root 和 Workspace cwd `.`。源码环境中的 `.venv` 只能用于源码开发。它不代表目标 App 的 bundled dependency。
 
 构建和签名的顺序必须保持：先复制并校验 Bundle 文件，再生成并校验 `runtime.json`；然后运行 bundled smoke 和 Seatbelt smoke；再把 Bundle 放进 App resources；最后执行签名、notarization、stapling 和签名后校验。签名会改变嵌套文件，所以签名后的 manifest refresh 和 hash 校验必须在最终 `codesign` 校验前完成。没有 Apple signing 或 notarization credentials 时，不能把真实签名结果写成已验证。
 

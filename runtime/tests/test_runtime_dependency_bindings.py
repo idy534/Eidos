@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shlex
+import sys
 import threading
 from unittest.mock import Mock, patch
 
@@ -10,6 +12,9 @@ import pytest
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skill_manifest import SkillAgentMetadata
+from eidos_runtime.extensions.plugins import PluginCatalog
+from eidos_runtime.extensions.skill_access import SkillAccess
+from eidos_runtime.extensions.skills import SkillCatalog, deploy_system_skills
 from eidos_runtime.infrastructure.runtime_dependencies import (
     RuntimeDependencyCatalog,
 )
@@ -63,10 +68,14 @@ def _write_file(
     return path
 
 
-def _make_bundle(tmp_path: Path) -> tuple[Path, Path]:
+def _make_bundle(tmp_path: Path, *, real_python: bool = False) -> tuple[Path, Path]:
     root = tmp_path / "runtime-bundle"
     root.mkdir()
-    _write_file(root, "bin/python3", b"#!/bin/sh\n", executable=True)
+    python = (
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n'.encode()
+        if real_python else b"#!/bin/sh\n"
+    )
+    _write_file(root, "bin/python3", python, executable=True)
     _write_file(root, "bin/node", b"#!/bin/sh\n", executable=True)
     _write_file(root, "dependencies/node/runtime-loader.mjs", b"export {};\n")
     _write_file(
@@ -183,6 +192,7 @@ def _make_shell_controller(
     catalog: RuntimeDependencyCatalog,
     *,
     approval_request=None,
+    with_skills: bool = False,
 ):
     store, run_id = _make_run(tmp_path)
     store.increment_model_step(run_id)
@@ -213,11 +223,21 @@ def _make_shell_controller(
         default_scanner(),
         approval=approval,
     )
+    if with_skills:
+        deploy_system_skills(store.data_directory)
+    skills = SkillCatalog(PluginCatalog(store)) if with_skills else None
+    skill_snapshot = skills.catalog_snapshot(skills.extension_snapshot()) if skills else None
+    skill_access = SkillAccess.from_snapshot(skill_snapshot) if skill_snapshot else None
+    if skill_access is not None:
+        # Reading a Skill must not switch unrelated project commands to its runtime.
+        skill_access.activate_model_read("system:plugin-creator")
     coordinator = RuntimeDependencyCoordinator.for_run(
         store,
         run_id,
         catalog=catalog,
         events=events,
+        skills=skills,
+        skill_snapshot=skill_snapshot,
     )
     binding = coordinator.default_binding()
     assert binding is not None
@@ -237,6 +257,7 @@ def _make_shell_controller(
             workspace_root=workspace
         ),
         runtime_dependencies=coordinator,
+        skill_access=skill_access,
     )
     context.handler = ShellToolHandler(dependencies)
     return (
@@ -466,6 +487,74 @@ def test_bound_shell_passes_verified_environment_and_result_provenance(
         store.close()
 
 
+@pytest.mark.parametrize("scenario", ["skill", "real", "project", "invalid", "incompatible", "unsandboxed"])
+def test_skill_script_selects_its_runtime_without_a_model_binding_id(
+    tmp_path: Path, scenario: str,
+) -> None:
+    bundle, manifest = _make_bundle(tmp_path, real_python=scenario == "real")
+    if scenario == "incompatible":
+        payload = json.loads(manifest.read_text())
+        payload["executables"][0]["version"] = "3.10.0"
+        manifest.write_text(json.dumps(payload))
+    catalog = RuntimeDependencyCatalog.from_manifest(manifest)
+    store, run_id, executor, manager, controller, dispatcher, _binding = (
+        _make_shell_controller(tmp_path, catalog, with_skills=True)
+    )
+    script = tmp_path / "data/skills/.system/plugin-creator/scripts/create_basic_plugin.py"
+    arguments = _shell_arguments(
+        _binding.binding_id,
+        command=f'"$RUNTIME_PYTHON" "{script}" example --path generated',
+    )
+    del arguments["dependencyBindingId"]
+    if scenario == "project":
+        arguments["command"] = "python3 tests.py"
+    elif scenario == "invalid":
+        (bundle / "bin/python3").write_text("changed\n")
+    elif scenario == "unsandboxed":
+        arguments.update(sandboxPermissions="require_escalated", justification="probe")
+    launches = []
+
+    def fake_shell(launch, **_kwargs):
+        launches.append(launch)
+        return {
+            "outcome": "success", "code": "ok", "summary": "Completed",
+            "data": {"exitCode": 0, "stdout": "", "stderr": "", "truncated": False,
+                     "termination": "exit", "executionStatus": "exited"},
+            "sideEffectsMayExist": True,
+        }
+
+    try:
+        with patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True):
+            outcome = _execute_shell(
+                store, run_id, controller, dispatcher, arguments,
+                manager.start if scenario == "real" else fake_shell,
+            )
+        if scenario in {"invalid", "incompatible", "unsandboxed"}:
+            assert not launches
+            assert outcome.result["outcome"] == "error"
+            assert outcome.result["data"]["termination"] == "not_started"
+            assert outcome.result["sideEffectsMayExist"] is False
+        elif scenario in {"skill", "real"}:
+            assert outcome.result["code"] == "ok", outcome.result
+            if scenario == "real":
+                plugin = tmp_path / "workspace/generated/example/plugin.json"
+                assert json.loads(plugin.read_text())["id"] == "example"
+            else:
+                assert launches[0].environment["RUNTIME_PYTHON"] == str(bundle / "bin/python3")
+            provenance = outcome.result["data"]["dependencyBinding"]
+            assert provenance["skillQualifiedId"] == "system:plugin-creator"
+            assert provenance["bindingId"] != _binding.binding_id
+        else:
+            assert outcome.result["code"] == "ok", outcome.result
+            assert "RUNTIME_PYTHON" not in launches[0].environment
+            assert "dependencyBinding" not in outcome.result["data"]
+        assert outcome.result["reconciliationRequired"] is False
+    finally:
+        manager.close()
+        executor.close()
+        store.close()
+
+
 def test_invalid_bound_shell_is_not_started_and_never_reconciles(
     tmp_path: Path,
 ) -> None:
@@ -541,7 +630,8 @@ def test_bound_shell_rejects_unsandboxed_execution_without_starting(
         store.close()
 
 
-def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path) -> None:
+@pytest.mark.parametrize("automatic", [False, True])
+def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path, automatic: bool) -> None:
     _bundle, manifest = _make_bundle(tmp_path)
     catalog = RuntimeDependencyCatalog.from_manifest(manifest)
     loader = tmp_path / "runtime-bundle" / "dependencies/node/runtime-loader.mjs"
@@ -554,6 +644,7 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path) -> N
         tmp_path,
         catalog,
         approval_request=approve,
+        with_skills=automatic,
     )
     calls: list[object] = []
 
@@ -575,6 +666,10 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path) -> N
             },
             justification="read workspace",
         )
+        if automatic:
+            del arguments["dependencyBindingId"]
+            script = tmp_path / "data/skills/.system/plugin-creator/scripts/create_basic_plugin.py"
+            arguments["command"] = f'"$RUNTIME_PYTHON" "{script}" example --path generated'
         with patch(
             "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
             return_value=True,

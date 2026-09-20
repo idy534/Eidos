@@ -107,13 +107,11 @@ class SystemSkillScriptTests(unittest.TestCase):
             SYSTEM / "plugin-creator" / "SKILL.md"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("workspace_dependencies", instructions)
-        self.assertIn("dependencyBindingId", instructions)
+        self.assertNotIn("workspace_dependencies", instructions)
+        self.assertNotIn("dependencyBindingId", instructions)
+        self.assertIn("automatically selects", instructions)
         self.assertIn("$RUNTIME_PYTHON", instructions)
         self.assertIn("<absolute skill root>/scripts/", instructions)
-        self.assertIn("data.activeSkillDependencyBindings", instructions)
-        self.assertIn("system:plugin-creator", instructions)
-        self.assertIn('status` is `"ready"`', instructions)
         self.assertIn("canonical absolute Skill root", instructions)
         self.assertIn('"cwd": "."', instructions)
         self.assertIn("never write", instructions.lower())

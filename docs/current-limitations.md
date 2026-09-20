@@ -70,6 +70,7 @@
 - Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 会阻止该 Run 启动新的副作用。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
+- Skill 依赖自动绑定只适用于现有识别器能识别的直接脚本调用，包括 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE`。Runtime 不会从任意 Shell 包装、变量脚本路径或已激活 Skill 列表推断普通命令的依赖，也不会自动安装缺失包。
 - Shell cwd 必须解析到 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。Workspace 外的 absolute cwd 会返回 Tool Error。
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
 - Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的展示脱敏片段顺序，并把 ANSI/OSC 控制序列按纯文本处理；聚合结果仍保留原始 stdout/stderr。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。

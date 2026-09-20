@@ -117,6 +117,12 @@ class SkillAccessTests(unittest.TestCase):
             access.activate_explicit("user:review").activation_kind,
             SkillActivationKind.EXPLICIT,
         )
+        invocation = access.activate_implicit(
+            "python3 scripts/run.py", self.root / "review"
+        )
+        assert invocation is not None
+        self.assertEqual(invocation.activation_kind, SkillActivationKind.EXPLICIT)
+        self.assertEqual(invocation.script_path, (self.root / "review/scripts/run.py").resolve())
 
     def test_activation_snapshot_is_deterministic_and_thread_safe(self) -> None:
         access = SkillAccess.from_snapshot(self._snapshot("zeta", "alpha"))

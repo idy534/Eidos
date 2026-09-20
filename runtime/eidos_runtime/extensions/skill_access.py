@@ -152,7 +152,10 @@ class SkillAccess:
         with self._lock:
             matches: list[tuple[str, object, Path, str]] = []
             for qualified_id, entry in self._entries.items():
-                if getattr(entry, "allow_implicit_invocation", None) is False:
+                if (
+                    getattr(entry, "allow_implicit_invocation", None) is False
+                    and qualified_id not in self._records
+                ):
                     continue
                 try:
                     root, content_hash = _trusted_skill_root(entry)

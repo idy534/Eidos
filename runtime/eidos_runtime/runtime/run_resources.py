@@ -38,7 +38,6 @@ from eidos_runtime.tools.declare_outputs import declare_outputs_entry
 from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
 from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_entry
-from eidos_runtime.tools.workspace_dependencies import workspace_dependencies_entry
 
 
 class RunResourceError(RuntimeError):
@@ -223,9 +222,6 @@ class RunResources:
                 read_tool_output_entry(self.store, self.run_id),
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
-                workspace_dependencies_entry(
-                    metadata_provider=self._workspace_dependency_metadata,
-                ),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
                     activate_model_read=self.activate_skill_model_read,
@@ -336,13 +332,3 @@ class RunResources:
             # An invalid or missing Skill declaration is model-visible when
             # its script is attempted. It must not fail the whole Run.
             return
-
-    def _workspace_dependency_metadata(self) -> dict[str, object]:
-        if self.runtime_dependencies is None or self.skill_access is None:
-            return {
-                "defaultDependencyBindingId": None,
-                "activeSkillDependencyBindings": [],
-            }
-        return self.runtime_dependencies.workspace_dependencies_metadata(
-            tuple(record.qualified_id for record in self.skill_access.records())
-        )

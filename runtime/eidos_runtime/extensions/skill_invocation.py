@@ -98,7 +98,11 @@ def parse_skill_script_invocation(
     if not tokens:
         return None
 
-    runner = Path(tokens[0]).name.removesuffix(".exe").lower()
+    runtime_runner = {
+        "$RUNTIME_PYTHON": "python3", "${RUNTIME_PYTHON}": "python3",
+        "$RUNTIME_NODE": "node", "${RUNTIME_NODE}": "node",
+    }.get(tokens[0])
+    runner = runtime_runner or Path(tokens[0]).name.removesuffix(".exe").lower()
     if runner not in SUPPORTED_RUNNERS:
         return None
 

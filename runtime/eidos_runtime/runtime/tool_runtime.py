@@ -713,6 +713,25 @@ class ShellToolHandler:
         dependency_environment = None
         dependency_provenance: RuntimeDependencyBindingProvenance | None = None
         dependency_binding_id = shell_input.dependencyBindingId
+        if dependency_binding_id is None and skill_invocation is not None:
+            coordinator = self.dependencies.runtime_dependencies
+            if coordinator is None:
+                return HandlerOutcome(
+                    _dependency_binding_error_result(
+                        call.name, "catalog_unavailable",
+                        "Runtime dependency bindings are unavailable",
+                    ), "failed", "failed",
+                )
+            try:
+                selected = coordinator.binding_for_skill(skill_invocation.qualified_id)
+                if selected is not None:
+                    dependency_binding_id = selected.binding_id
+            except RuntimeDependencyCatalogError as error:
+                return HandlerOutcome(
+                    _dependency_binding_error_result(
+                        call.name, error.code, "Runtime dependency binding is invalid",
+                    ), "failed", "failed",
+                )
         if dependency_binding_id is not None:
             if (
                 effective_sandbox_permissions

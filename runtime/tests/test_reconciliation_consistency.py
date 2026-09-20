@@ -670,8 +670,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertEqual(json.loads(rows[0]["result_json"])["code"], "shell_exit_nonzero")
         self.assertEqual(json.loads(rows[1]["result_json"])["code"], "ok")
 
-    def _assert_shell_refresh_error_interrupts_after_final_text(
-        self, error_code: str
+    def _assert_shell_refresh_error(
+        self, error_code: str, *, blocked: bool = True
     ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
             ModelResponse(tool_calls=(ModelToolCall(
@@ -681,6 +681,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ),)),
             ModelResponse(tool_calls=(ModelToolCall(
                 "observe-workspace", "list_files", {}
+            ),)),
+            ModelResponse(tool_calls=(ModelToolCall(
+                "next-shell", "run_shell", {"command": "printf next", "yieldTimeMs": 5000}
             ),)),
             ModelResponse(text="must not complete before verification"),
         ])
@@ -706,7 +709,11 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
             patch(
                 "eidos_runtime.runtime.shell_process_manager.ShellProcessManager.start",
-                return_value=shell_result,
+                side_effect=lambda *_args, **_kwargs: {**shell_result, "data": dict(shell_result["data"])},
+            ) as start,
+            patch(
+                "eidos_runtime.sandbox.workspace_index.WorkspaceIndex.manifest",
+                return_value=WorkspaceManifest((), True, False),
             ),
             patch(
                 "eidos_runtime.tools.runtime_workspace.ToolExecutor.refresh_workspace_index",
@@ -721,8 +728,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(persisted["status"], "interrupted" if blocked else "succeeded")
+        self.assertEqual(self.store.side_effects_blocked(self.run["id"]), blocked)
+        self.assertEqual(start.call_count, 1 if blocked else 2)
         self.assertGreaterEqual(len(model.run_statuses), 2)
         self.assertEqual(model.run_statuses[1], "running")
         read_only_tools = {
@@ -734,27 +742,31 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "SELECT COUNT(*) FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
         ).fetchone()[0]
-        self.assertEqual(shell_calls, 1)
+        self.assertEqual(shell_calls, 2)
         row = self.store.connection.execute(
             "SELECT result_json FROM tool_calls WHERE tool_name = ?",
             ("run_shell",),
         ).fetchone()
         assert row is not None
-        self.assertTrue(json.loads(row["result_json"])["reconciliationRequired"])
+        result = json.loads(row["result_json"])
+        self.assertEqual(result["reconciliationRequired"], blocked)
+        self.assertFalse(result["data"]["workspaceManifestComplete"])
+        self.assertTrue(result["data"]["workspaceDiffIncomplete"])
+        self.assertEqual(result["data"]["workspaceChangeState"], "unknown")
 
     def test_workspace_identity_refresh_error_interrupts_after_final_text(self) -> None:
-        self._assert_shell_refresh_error_interrupts_after_final_text(
+        self._assert_shell_refresh_error(
             "workspace_identity_changed"
         )
 
-    def test_unsupported_workspace_hardlink_refresh_error_interrupts_after_final_text(self) -> None:
-        self._assert_shell_refresh_error_interrupts_after_final_text(
-            "unsupported_workspace_hardlink"
+    def test_unsupported_workspace_hardlink_does_not_block_next_shell(self) -> None:
+        self._assert_shell_refresh_error(
+            "unsupported_workspace_hardlink", blocked=False
         )
 
-    def test_unsupported_workspace_entry_refresh_error_interrupts_after_final_text(self) -> None:
-        self._assert_shell_refresh_error_interrupts_after_final_text(
-            "unsupported_workspace_entry"
+    def test_unsupported_workspace_entry_does_not_block_next_shell(self) -> None:
+        self._assert_shell_refresh_error(
+            "unsupported_workspace_entry", blocked=False
         )
 
     def _assert_default_seatbelt_shell_fails_closed_after_list_files(

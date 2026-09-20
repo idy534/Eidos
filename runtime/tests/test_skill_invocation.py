@@ -23,6 +23,10 @@ class SkillInvocationTests(unittest.TestCase):
             commands = {
                 "python scripts/run.py": "run.py",
                 "python3 scripts/run.py": "run.py",
+                '"$RUNTIME_PYTHON" scripts/run.py': "run.py",
+                '"${RUNTIME_PYTHON}" scripts/run.py': "run.py",
+                '"$RUNTIME_NODE" scripts/run.js': "run.js",
+                '"${RUNTIME_NODE}" scripts/run.js': "run.js",
                 "bash scripts/run.sh": "run.sh",
                 "sh scripts/run.sh": "run.sh",
                 "zsh scripts/run.sh": "run.sh",

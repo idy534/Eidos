@@ -420,7 +420,7 @@ describe("WorkspaceExplorer", () => {
       .toHaveTextContent("console.log('other');"));
   });
 
-  it("does not preview a stale requested path that is absent from the current workspace", async () => {
+  it("previews a requested file even when its parent cannot be listed", async () => {
     const listDirectory = vi.fn(async (_sessionId: string, path: string) => {
       if (path === "old") {
         throw new Error("EIDOS_RUNTIME_ERROR:WORKSPACE_BOUNDARY_VIOLATION");
@@ -431,9 +431,14 @@ describe("WorkspaceExplorer", () => {
         truncated: false,
       };
     });
-    const readPreview = vi.fn(async () => {
-      throw new Error("stale path must not be previewed");
-    });
+    const readPreview = vi.fn(async () => ({
+      path: "old/present.ts",
+      kind: "code" as const,
+      sizeBytes: 12,
+      truncated: false,
+      content: "const present = true;",
+      language: "typescript",
+    }));
 
     render(
       <WorkspaceExplorer
@@ -444,9 +449,9 @@ describe("WorkspaceExplorer", () => {
       />,
     );
 
-    expect(await screen.findByText("文件不存在或已过期。请从当前文件树重新选择。"))
-      .toBeInTheDocument();
-    expect(readPreview).not.toHaveBeenCalled();
+    await waitFor(() => expect(readPreview).toHaveBeenCalledWith("session-a", "old/present.ts"));
+    expect(listDirectory).not.toHaveBeenCalledWith("session-a", "old");
+    expect(await screen.findByRole("tab", { name: "old/present.ts" })).toBeInTheDocument();
   });
 
   it("rejects an absolute requested path before requesting its preview", async () => {
