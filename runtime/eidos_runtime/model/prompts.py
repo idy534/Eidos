@@ -30,6 +30,8 @@ Inspect the workspace context needed to understand the task before editing or re
 
 Use the provided tools and their declared schemas for workspace operations. Use relative workspace paths unless a tool contract explicitly requires otherwise.
 
+Prefer dedicated workspace tools for listing, reading, and searching files. Use run_shell when command execution is actually required.
+
 Preserve existing user changes. Do not modify unrelated files or behavior.
 
 Reuse available libraries before writing encoders, renderers or validators. Build a small working artifact before expanding it. When validation is permitted, check each coherent edit before adding more code; after repeated failures, inspect the exact current source and fix the cause instead of repeatedly moving or replacing guessed line ranges.

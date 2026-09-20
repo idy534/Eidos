@@ -213,34 +213,31 @@ class _SearchSession:
     error: SearchDriverError | DiscoveryScopeError | WorkspacePathError | None = None
 
 
-# Both transports teach the same edit language. Transport-specific wrapping is
-# added separately so a function model never receives FREEFORM instructions.
+# Function fallback has no grammar constraint, so its description carries a
+# compact but complete Patch protocol. The custom/FREEFORM transport adds its
+# own wrapping below so a function model never receives FREEFORM
+# instructions and a custom model never receives JSON field instructions.
 _APPLY_PATCH_DESCRIPTION = (
-    "Edit text files using Codex Patch. Read the relevant current lines before editing. "
-    "Copy context exactly, including indentation; include enough unchanged lines to "
-    "identify the intended location. Do not use numbered unified-diff headers. "
-    "Start with *** Begin Patch and end with *** End Patch. "
-    "For Add File, prefix every content line with + (no content lines creates an empty file). "
-    "For Update File, use @@ or @@ followed by a context line; prefix unchanged lines "
-    "with a space, removed lines with -, and added lines with +. "
-    "Use *** Move to: destination after Update File to rename. "
-    "Use *** Delete File: path to delete. Multiple files and hunks are allowed. "
-    "Use *** End of File only to anchor the final hunk at the file end. "
-    "Example:\n*** Begin Patch\n*** Update File: example.py\n@@\n def greet():\n"
-    "-    return 'old'\n+    return 'new'\n*** End Patch\n"
-    "Use workspace-relative or canonical absolute paths. Writes outside the workspace "
-    "require approval or an existing run grant. Paths, base hashes and final contents "
-    "are verified. Choose file organization and the scope of each edit according to the task."
+    "Edit files using Codex Patch. Pass the complete patch text in `patch`. "
+    "Patch format: start with `*** Begin Patch` and end with `*** End Patch`. "
+    "Use `*** Add File: path`, `*** Update File: path`, or `*** Delete File: path`. "
+    "For updates, use `@@` hunks with exact surrounding context. "
+    "Prefix unchanged lines with a space, removed lines with `-`, and added lines with `+`. "
+    "Use `*** Move to: path` after an Update File header when renaming. "
+    "Multiple files and hunks are allowed. "
+    "Read the relevant current lines before editing and copy update context exactly. "
+    "Example:\n*** Begin Patch\n*** Update File: app.py\n@@\n def f():\n"
+    "-    return old\n+    return new\n*** End Patch"
 )
 
 
 _BUILTIN_CONTRACTS = (
-    ("list_files", "List bounded regular files under a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.'); supports maxDepth and maxEntries. Results are relative to the selected root and may be truncated.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
-    ("read_file", "Read one bounded UTF-8 file from the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
-    ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
-    ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, includeGlobs, and yieldTimeMs. If the wait window ends first, use search_text_wait with the returned sessionId. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 35, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
-    ("search_text_wait", "Continue waiting for a search_text session in this Run. yieldTimeMs bounds this wait, not the Ripgrep process lifetime. Repeat while the result code is search_running.", "none", False, 65, "single", SearchTextWaitInput, SearchTextResultData, "search_text"),
-    ("apply_patch", "Pass the Patch text in the single JSON field `patch`. The old `changes` format in historical calls is no longer accepted. " + _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
+    ("list_files", "List regular files under a workspace or active Skill directory.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
+    ("read_file", "Read a UTF-8 text file from the workspace or an active Skill root. For truncated results, continue with read_file_range.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
+    ("read_file_range", "Read an inclusive line range from a UTF-8 text file.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
+    ("search_text", "Search text across workspace or active Skill files.", "none", False, 35, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
+    ("search_text_wait", "Wait for additional results from a running search_text session.", "none", False, 65, "single", SearchTextWaitInput, SearchTextResultData, "search_text"),
+    ("apply_patch", _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run a shell command in the macOS workspace sandbox. Returns command output, or a sessionId if the command is still running.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
     ("write_stdin", "Write input to a running shell session or wait for additional output. Use empty input to poll for output.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
@@ -282,8 +279,10 @@ def _tool_specs(
     return tuple(
         spec.model_copy(update={
             "description": (
-                "This is a FREEFORM tool. Submit raw Patch text, not JSON or Markdown fences. "
-                + _APPLY_PATCH_DESCRIPTION
+                "This is a FREEFORM tool. Edit files using Codex Patch. "
+                "Read the relevant current lines before editing and use exact "
+                "surrounding context for updates. "
+                "Submit raw Patch text, not JSON or Markdown fences. "
             ),
             "input_kind": "custom",
             "input_schema": None,

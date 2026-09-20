@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { useMemo, type ComponentProps } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArtifactImage, ArtifactLink, artifactPath, useArtifacts } from "./ArtifactContext.js";
@@ -79,8 +79,10 @@ function rehypeStreamingFade() {
 }
 
 type MarkdownRehypePlugins = NonNullable<ComponentProps<typeof Markdown>["rehypePlugins"]>;
+type MarkdownRemarkPlugins = NonNullable<ComponentProps<typeof Markdown>["remarkPlugins"]>;
 const EMPTY_REHYPE_PLUGINS: MarkdownRehypePlugins = [];
 const STREAMING_REHYPE_PLUGINS: MarkdownRehypePlugins = [rehypeStreamingFade as unknown as MarkdownRehypePlugins[number]];
+const REMARK_GFM_PLUGINS: MarkdownRemarkPlugins = [remarkGfm];
 
 export function MarkdownContent({
   content,
@@ -92,12 +94,16 @@ export function MarkdownContent({
   isStreaming?: boolean;
 }) {
   const actions = useArtifacts();
-  const rehypePlugins = isStreaming ? STREAMING_REHYPE_PLUGINS : EMPTY_REHYPE_PLUGINS;
+  const remarkPlugins = useMemo(() => REMARK_GFM_PLUGINS, []);
+  const rehypePlugins = useMemo(
+    () => (isStreaming ? STREAMING_REHYPE_PLUGINS : EMPTY_REHYPE_PLUGINS),
+    [isStreaming],
+  );
 
   return (
     <div className="markdown-body">
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
         skipHtml
         urlTransform={(url) => /^(?:javascript|vbscript|data):/i.test(url) ? "" : url}

@@ -269,6 +269,13 @@ def test_view_image_registry_entry_is_gated_by_model_capability(tmp_path: Path) 
     entry = _entry(authority)
     assert entry is not None
     assert ToolRegistry((entry,)).names == frozenset({"view_image"})
+    assert entry.spec.description == (
+        "View a local PNG or JPEG image when visual inspection is needed."
+    )
+    assert "authorized" not in entry.spec.description
+    assert entry.spec.input_schema["properties"]["path"]["description"] == (
+        "Path to an image in the workspace or an active Skill root."
+    )
 
 
 def test_view_image_projection_keeps_metadata_without_binary_data() -> None:

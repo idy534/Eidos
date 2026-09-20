@@ -108,6 +108,7 @@ export function ExecutionFeed({
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const isAtBottomRef = useRef(true);
+  const followRafRef = useRef<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
 
   const handleScroll = useCallback((event: React.UIEvent<HTMLElement>) => {
@@ -116,9 +117,25 @@ export function ExecutionFeed({
     setAtBottom(bottom);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (followRafRef.current !== null) {
+        cancelAnimationFrame(followRafRef.current);
+        followRafRef.current = null;
+      }
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const feed = feedRef.current;
-    if (feed && isAtBottomRef.current) feed.scrollTop = feed.scrollHeight;
+    if (!feed || !isAtBottomRef.current) return;
+    if (followRafRef.current !== null) return;
+    followRafRef.current = requestAnimationFrame(() => {
+      followRafRef.current = null;
+      const target = feedRef.current;
+      if (!target || !isAtBottomRef.current) return;
+      target.scrollTop = target.scrollHeight;
+    });
   }, [items, responseActionState.revisions]);
 
   const supersededRunIds = useMemo(

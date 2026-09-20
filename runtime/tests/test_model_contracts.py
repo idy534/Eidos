@@ -89,6 +89,14 @@ class ModelContractTests(unittest.TestCase):
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
         self.assertIn("Eidos", SYSTEM_SAFETY_INSTRUCTIONS)
         self.assertIn("smallest coherent set of changes", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn(
+            "Prefer dedicated workspace tools for listing, reading, and searching files.",
+            BASE_AGENT_INSTRUCTIONS,
+        )
+        self.assertIn(
+            "Use run_shell when command execution is actually required.",
+            BASE_AGENT_INSTRUCTIONS,
+        )
         self.assertIn("Progress communication", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("confirmed findings", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("not required in every response", BASE_AGENT_INSTRUCTIONS)

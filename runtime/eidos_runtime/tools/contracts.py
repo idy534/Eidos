@@ -86,19 +86,19 @@ def _utf8_limit(value: str, limit: int, code: str) -> str:
 class ListFilesInput(StrictToolModel):
     path: StrictStr = Field(
         default=".",
-        description="Workspace-relative or authorized absolute directory scope; defaults to '.'.",
+        description='Directory to list. Defaults to ".".',
     )
     maxDepth: StrictInt = Field(
         default=LIST_FILES_MAX_DEPTH,
         ge=1,
         le=LIST_FILES_MAX_DEPTH,
-        description="Maximum directory depth below path.",
+        description="Maximum directory depth to traverse.",
     )
     maxEntries: StrictInt = Field(
         default=LIST_FILES_MAX_ENTRIES,
         ge=1,
         le=LIST_FILES_MAX_ENTRIES,
-        description="Maximum workspace-relative entries to return.",
+        description="Maximum number of entries to return.",
     )
 
     @field_validator("path")
@@ -122,7 +122,7 @@ class ViewImageInput(StrictToolModel):
     path: StrictStr = Field(
         min_length=1,
         max_length=4_096,
-        description="Path to an image under the authorized workspace or active Skill roots.",
+        description="Path to an image in the workspace or an active Skill root.",
     )
 
     @field_validator("path")
@@ -143,8 +143,8 @@ class ViewImageInput(StrictToolModel):
 
 
 class ReadFileRangeInput(ReadFileInput):
-    startLine: StrictInt = Field(ge=1, description="First line, one-based.")
-    endLine: StrictInt = Field(ge=1, description="Last requested line, inclusive.")
+    startLine: StrictInt = Field(ge=1, description="First line to read, one-based.")
+    endLine: StrictInt = Field(ge=1, description="Last line to read, inclusive.")
 
     @model_validator(mode="after")
     def validate_range(self):
@@ -225,7 +225,7 @@ class SearchTextWaitInput(StrictToolModel):
         default=30_000,
         ge=250,
         le=60_000,
-        description="How long to wait for the running search.",
+        description="How long to wait for additional search results.",
     )
 
 
@@ -248,9 +248,8 @@ class ApplyPatchInput(StrictToolModel):
     patch: StrictStr = Field(
         min_length=1,
         description=(
-            "Complete Codex Patch text, from *** Begin Patch to *** End Patch. "
-            "Use actual newlines in the decoded string. Do not include Markdown fences. "
-            "The text may include multiple files and multiple hunks."
+            "Complete Codex Patch text from *** Begin Patch to *** End Patch. "
+            "Use actual newlines and do not include Markdown fences."
         ),
     )
 
@@ -554,8 +553,17 @@ class SkillInstallInput(StrictToolModel):
 
 
 class ToolSearchInput(StrictToolModel):
-    query: StrictStr = Field(min_length=1, max_length=256)
-    limit: StrictInt = Field(default=10, ge=1, le=16)
+    query: StrictStr = Field(
+        min_length=1,
+        max_length=256,
+        description="Tool name, capability keywords, description text, or source metadata to search for.",
+    )
+    limit: StrictInt = Field(
+        default=10,
+        ge=1,
+        le=16,
+        description="Maximum number of matching tools to return. Defaults to 10.",
+    )
 
     @field_validator("query")
     @classmethod

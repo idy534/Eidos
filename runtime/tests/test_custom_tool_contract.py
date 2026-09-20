@@ -374,6 +374,23 @@ def test_apply_patch_capability_routing_keeps_legacy_function_fallback(
         assert legacy_spec is not None
         assert legacy_spec.spec.input_kind == "function"
         assert legacy_spec.spec.input_schema is not None
+        assert (
+            "Pass the complete patch text in `patch`"
+            in legacy_spec.spec.description
+        )
+        for marker in (
+            "*** Begin Patch",
+            "*** End Patch",
+            "*** Add File: path",
+            "*** Update File: path",
+            "*** Delete File: path",
+            "@@",
+            "*** Move to: path",
+            "*** Update File: app.py",
+        ):
+            assert marker in legacy_spec.spec.description
+        assert "FREEFORM" not in legacy_spec.spec.description
+        assert set(legacy_spec.spec.input_schema["properties"]) == {"patch"}
     with ToolExecutor(
         tmp_path,
         supports_custom_tools=True,
@@ -385,6 +402,12 @@ def test_apply_patch_capability_routing_keeps_legacy_function_fallback(
         assert native_spec.spec.input_schema is None
         assert native_spec.spec.input_format is not None
         assert native_spec.spec.input_format.definition == patch_grammar()
+        assert "FREEFORM" in native_spec.spec.description
+        assert "raw Patch text" in native_spec.spec.description
+        assert "relevant current lines" in native_spec.spec.description
+        assert "exact surrounding context" in native_spec.spec.description
+        assert "`patch`" not in native_spec.spec.description
+        assert native_spec.spec.description != legacy_spec.spec.description
 
 
 @pytest.mark.parametrize(

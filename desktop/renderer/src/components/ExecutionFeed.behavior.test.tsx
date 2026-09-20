@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Item, Run } from "../contracts.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
@@ -192,6 +192,148 @@ describe("ExecutionFeed shell output", () => {
     const detailsAfter = container.querySelector("details.tool-item--shell");
     expect(detailsAfter).not.toBeNull();
     expect(detailsAfter!.open).toBe(false);
+  });
+});
+
+describe("ExecutionFeed streaming follow", () => {
+  function assistantItem(content: string): Item {
+    return {
+      id: "streaming-answer",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "assistant_message",
+      status: "in_progress",
+      createdAt: 1_000,
+      content,
+    };
+  }
+
+  function renderStreamingFeed(content: string) {
+    return render(
+      <ExecutionFeed
+        items={[assistantItem(content)]}
+        runs={[baseRun]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+  }
+
+  function mockFeedMetrics(feed: HTMLElement, metrics: { scrollHeight: number; scrollTop: number; clientHeight: number }) {
+    Object.defineProperty(feed, "scrollHeight", { value: metrics.scrollHeight, configurable: true });
+    Object.defineProperty(feed, "clientHeight", { value: metrics.clientHeight, configurable: true });
+    feed.scrollTop = metrics.scrollTop;
+  }
+
+  it("coalesces rapid deltas into a single frame follow while at the bottom", () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const requestSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      rafQueue.push(callback);
+      return rafQueue.length;
+    });
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    try {
+      const { container, rerender } = renderStreamingFeed("hello");
+      const feed = container.querySelector(".feed") as HTMLElement;
+      mockFeedMetrics(feed, { scrollHeight: 1_000, scrollTop: 400, clientHeight: 600 });
+      while (rafQueue.length > 0) rafQueue.shift()!(16);
+      expect(feed.scrollTop).toBe(1_000);
+      requestSpy.mockClear();
+
+      mockFeedMetrics(feed, { scrollHeight: 1_200, scrollTop: 1_000, clientHeight: 600 });
+      rerender(
+        <ExecutionFeed
+          items={[assistantItem("hello wo")]}
+          runs={[baseRun]}
+          approvals={[]}
+          respondingApprovalIds={new Set()}
+          respondingKindByApprovalId={{}}
+          onApprove={() => {}}
+          onReject={() => {}}
+        />,
+      );
+      rerender(
+        <ExecutionFeed
+          items={[assistantItem("hello world")]}
+          runs={[baseRun]}
+          approvals={[]}
+          respondingApprovalIds={new Set()}
+          respondingKindByApprovalId={{}}
+          onApprove={() => {}}
+          onReject={() => {}}
+        />,
+      );
+      expect(requestSpy).toHaveBeenCalledTimes(1);
+
+      mockFeedMetrics(feed, { scrollHeight: 1_200, scrollTop: 1_000, clientHeight: 600 });
+      while (rafQueue.length > 0) rafQueue.shift()!(16);
+      expect(feed.scrollTop).toBe(1_200);
+      expect(cancelSpy).not.toHaveBeenCalled();
+    } finally {
+      requestSpy.mockRestore();
+      cancelSpy.mockRestore();
+    }
+  });
+
+  it("does not yank the viewport after the user scrolls up", () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const requestSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      rafQueue.push(callback);
+      return rafQueue.length;
+    });
+    try {
+      const { container, rerender } = renderStreamingFeed("hello");
+      const feed = container.querySelector(".feed") as HTMLElement;
+      mockFeedMetrics(feed, { scrollHeight: 1_000, scrollTop: 400, clientHeight: 600 });
+      while (rafQueue.length > 0) rafQueue.shift()!(16);
+      requestSpy.mockClear();
+
+      mockFeedMetrics(feed, { scrollHeight: 2_000, scrollTop: 0, clientHeight: 600 });
+      fireEvent.scroll(feed);
+      expect(screen.getByRole("button", { name: "滚动到最新内容" })).not.toHaveAttribute("hidden");
+
+      mockFeedMetrics(feed, { scrollHeight: 2_200, scrollTop: 0, clientHeight: 600 });
+      rerender(
+        <ExecutionFeed
+          items={[assistantItem("hello world, still streaming")]}
+          runs={[baseRun]}
+          approvals={[]}
+          respondingApprovalIds={new Set()}
+          respondingKindByApprovalId={{}}
+          onApprove={() => {}}
+          onReject={() => {}}
+        />,
+      );
+      expect(requestSpy).not.toHaveBeenCalled();
+      while (rafQueue.length > 0) rafQueue.shift()!(16);
+      expect(feed.scrollTop).toBe(0);
+    } finally {
+      requestSpy.mockRestore();
+    }
+  });
+
+  it("cancels a pending follow when unmounted", () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const requestSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      rafQueue.push(callback);
+      return rafQueue.length;
+    });
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {
+      rafQueue.length = 0;
+    });
+    try {
+      const { unmount } = renderStreamingFeed("hello");
+      expect(requestSpy).toHaveBeenCalled();
+      unmount();
+      expect(cancelSpy).toHaveBeenCalled();
+    } finally {
+      requestSpy.mockRestore();
+      cancelSpy.mockRestore();
+    }
   });
 });
 

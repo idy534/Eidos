@@ -12,11 +12,14 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.tools.contracts import (  # noqa: E402
+    ApplyPatchInput,
     GitWriteAccess,
     ListFilesInput,
     NetworkAccess,
+    ReadFileRangeInput,
     RunShellInput,
     SearchTextInput,
+    SearchTextWaitInput,
     WriteStdinInput,
 )
 from eidos_runtime.tools.workspace import (  # noqa: E402
@@ -436,26 +439,106 @@ class ToolContractTests(unittest.TestCase):
         self.assertFalse(search_default.regex)
         self.assertEqual(search_default.includeGlobs, ())
 
-        list_spec = next(spec for spec in TOOL_SPECS if spec.name == "list_files")
-        read_spec = next(spec for spec in TOOL_SPECS if spec.name == "read_file")
-        search_spec = next(spec for spec in TOOL_SPECS if spec.name == "search_text")
-        self.assertIn("path", list_spec.description)
-        self.assertIn("maxDepth", list_spec.description)
-        self.assertIn("maxEntries", list_spec.description)
-        self.assertIn("path", search_spec.description)
-        self.assertIn("workspace-relative", read_spec.description)
-        self.assertIn("skill_read_resource", read_spec.description)
-        self.assertIn("maxResults", search_spec.description)
-        self.assertIn("regex", search_spec.description)
-        self.assertIn("includeGlobs", search_spec.description)
-        self.assertIn("yieldTimeMs", search_spec.description)
-        self.assertIn("search_text_wait", {spec.name for spec in TOOL_SPECS})
+        descriptions = {spec.name: spec.description for spec in TOOL_SPECS}
         self.assertEqual(
-            set(list_spec.input_schema["properties"]),
+            descriptions["list_files"],
+            "List regular files under a workspace or active Skill directory.",
+        )
+        self.assertEqual(
+            descriptions["read_file"],
+            "Read a UTF-8 text file from the workspace or an active Skill root. "
+            "For truncated results, continue with read_file_range.",
+        )
+        self.assertEqual(
+            descriptions["read_file_range"],
+            "Read an inclusive line range from a UTF-8 text file.",
+        )
+        self.assertEqual(
+            descriptions["search_text"],
+            "Search text across workspace or active Skill files.",
+        )
+        self.assertEqual(
+            descriptions["search_text_wait"],
+            "Wait for additional results from a running search_text session.",
+        )
+        self.assertIn("*** Begin Patch", descriptions["apply_patch"])
+        self.assertIn("`patch`", descriptions["apply_patch"])
+        self.assertIn("*** Add File: path", descriptions["apply_patch"])
+        self.assertIn("*** Update File: path", descriptions["apply_patch"])
+        self.assertIn("*** Delete File: path", descriptions["apply_patch"])
+        self.assertIn("@@", descriptions["apply_patch"])
+        self.assertIn("*** Move to: path", descriptions["apply_patch"])
+        self.assertIn("*** Update File: app.py", descriptions["apply_patch"])
+        for name in (
+            "list_files",
+            "read_file",
+            "read_file_range",
+            "search_text",
+            "search_text_wait",
+        ):
+            for fragment in (
+                "bounded",
+                "skill_read_resource",
+                "search_running",
+                "Ripgrep",
+                "wait window",
+            ):
+                self.assertNotIn(fragment, descriptions[name])
+
+        list_properties = ListFilesInput.model_json_schema(by_alias=True)[
+            "properties"
+        ]
+        self.assertEqual(
+            list_properties["path"]["description"],
+            'Directory to list. Defaults to ".".',
+        )
+        self.assertEqual(
+            list_properties["maxDepth"]["description"],
+            "Maximum directory depth to traverse.",
+        )
+        self.assertEqual(
+            list_properties["maxEntries"]["description"],
+            "Maximum number of entries to return.",
+        )
+        range_properties = ReadFileRangeInput.model_json_schema(by_alias=True)[
+            "properties"
+        ]
+        self.assertEqual(
+            range_properties["startLine"]["description"],
+            "First line to read, one-based.",
+        )
+        self.assertEqual(
+            range_properties["endLine"]["description"],
+            "Last line to read, inclusive.",
+        )
+        search_properties = SearchTextInput.model_json_schema(by_alias=True)[
+            "properties"
+        ]
+        self.assertIn("regular expression", search_properties["query"]["description"])
+        wait_properties = SearchTextWaitInput.model_json_schema(by_alias=True)[
+            "properties"
+        ]
+        self.assertEqual(
+            wait_properties["sessionId"]["description"],
+            "Running search session returned by search_text.",
+        )
+        self.assertEqual(
+            wait_properties["yieldTimeMs"]["description"],
+            "How long to wait for additional search results.",
+        )
+        patch_properties = ApplyPatchInput.model_json_schema(by_alias=True)[
+            "properties"
+        ]
+        self.assertIn("*** Begin Patch", patch_properties["patch"]["description"])
+        self.assertIn("Markdown fences", patch_properties["patch"]["description"])
+        self.assertIn("search_text_wait", {spec.name for spec in TOOL_SPECS})
+        specs = {spec.name: spec for spec in TOOL_SPECS}
+        self.assertEqual(
+            set(specs["list_files"].input_schema["properties"]),
             {"path", "maxDepth", "maxEntries"},
         )
         self.assertEqual(
-            set(search_spec.input_schema["properties"]),
+            set(specs["search_text"].input_schema["properties"]),
             {
                 "query",
                 "path",
@@ -465,6 +548,69 @@ class ToolContractTests(unittest.TestCase):
                 "yieldTimeMs",
             },
         )
+
+
+    def test_truncated_read_file_points_model_at_read_file_range(self) -> None:
+        result = canonical_tool_result("read_file", {
+            "outcome": "success",
+            "code": "ok",
+            "summary": "Read file",
+            "data": {
+                "path": "big.txt",
+                "content": "head\n[...truncated...]\ntail\n",
+                "sizeBytes": 999_999,
+                "sha256": "a" * 64,
+                "truncated": True,
+                "truncationReason": "head_tail",
+            },
+            "sideEffectsMayExist": False,
+        })
+        projection = project_tool_result("read_file", result)
+
+        # The truncated result itself carries no next-step pointer, so the
+        # description must name the continuation tool.
+        self.assertTrue(projection.model_result["data"]["truncated"])
+        description = next(
+            spec.description for spec in TOOL_SPECS if spec.name == "read_file"
+        )
+        self.assertIn("read_file_range", description)
+
+    def test_search_running_result_points_model_at_search_text_wait(self) -> None:
+        result = canonical_tool_result("search_text", {
+            "outcome": "success",
+            "code": "search_running",
+            "summary": "Search is still running",
+            "data": {
+                "matches": [],
+                "scannedBytes": 0,
+                "truncated": True,
+                "truncationReason": "search_running",
+                "sessionId": "search-1",
+                "continuation": (
+                    "Use search_text_wait with this sessionId; do not restart "
+                    "the search."
+                ),
+            },
+            "sideEffectsMayExist": False,
+        })
+        projection = project_tool_result("search_text", result)
+        visible = json.dumps(projection.model_result)
+
+        self.assertIn("search_text_wait", visible)
+        self.assertIn("search-1", visible)
+
+    def test_running_shell_result_points_model_at_write_stdin(self) -> None:
+        description = next(
+            spec.description for spec in TOOL_SPECS if spec.name == "run_shell"
+        )
+        stdin_description = next(
+            spec.description for spec in TOOL_SPECS if spec.name == "write_stdin"
+        )
+
+        self.assertIn("sessionId", description)
+        self.assertIn("session", stdin_description)
+        properties = RunShellInput.model_json_schema(by_alias=True)["properties"]
+        self.assertIn("write_stdin", properties["yieldTimeMs"]["description"])
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from eidos_runtime.tools.registry import (  # noqa: E402
 )
 from eidos_runtime.model.client import ModelToolDefinition  # noqa: E402
 from eidos_runtime.tools.search import tool_search_entry  # noqa: E402
+from eidos_runtime.tools.contracts import ToolSearchInput  # noqa: E402
 
 
 RESULT_SCHEMA = {
@@ -121,6 +122,30 @@ class ToolRegistryTests(unittest.TestCase):
         )
         self.assertEqual(hidden.error_code, "invalid_tool_call")
 
+    def test_tool_search_description_routes_deferred_tools_without_semantic_claims(
+        self,
+    ) -> None:
+        search = tool_search_entry(())
+
+        self.assertEqual(
+            search.spec.description,
+            "Search deferred tools by name, description, or source metadata "
+            "and make matching tools available for subsequent calls. "
+            "Use this when the required tool is not currently available.",
+        )
+        self.assertNotIn("semantic", search.spec.description.lower())
+        self.assertNotIn("BM25", search.spec.description)
+        properties = ToolSearchInput.model_json_schema(by_alias=True)["properties"]
+        self.assertEqual(
+            properties["query"]["description"],
+            "Tool name, capability keywords, description text, "
+            "or source metadata to search for.",
+        )
+        self.assertEqual(
+            properties["limit"]["description"],
+            "Maximum number of matching tools to return. Defaults to 10.",
+        )
+        self.assertEqual(set(properties), {"query", "limit"})
     def test_memory_adapter_dispatches_without_a_runtime_name_branch(self) -> None:
         dispatcher = ToolDispatcher(ToolRegistry((memory_entry(),)))
         call = ModelToolCall("call-1", "memory_echo", {"value": "hello"})

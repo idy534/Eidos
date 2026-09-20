@@ -4121,6 +4121,8 @@ input:focus, textarea:focus {
   height: 100%;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: auto;
+  scrollbar-gutter: stable;
   padding: 1.25rem max(1.75rem, calc((100% - var(--session-content-width)) / 2));
   font-family: var(--font-ui);
   font-size: var(--font-size-body);
@@ -4235,6 +4237,7 @@ input:focus, textarea:focus {
   margin-inline: auto;
   padding-left: 0.75rem;
   box-sizing: border-box;
+  overflow-anchor: none;
 }
 
 .feed-item-footer {

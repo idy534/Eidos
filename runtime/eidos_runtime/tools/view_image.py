@@ -155,7 +155,7 @@ def view_image_entry(
         spec=ToolSpec.model_validate({
             "name": "view_image",
             "description": (
-                "View a local PNG or JPEG image from the authorized workspace or active Skill roots."
+                "View a local PNG or JPEG image when visual inspection is needed."
             ),
             "sideEffect": "none",
             "approvalRequired": False,

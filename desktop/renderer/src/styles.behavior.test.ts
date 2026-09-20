@@ -99,4 +99,9 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.git-file-diff-scroll \.diff-code\s*\{[^}]*tab-size:\s*2;/s);
     expect(styles).toMatch(/\.git-review-stat\s*\{[^}]*font-size:\s*var\(--font-size-sidebar\);[^}]*font-variant-numeric:\s*tabular-nums;/s);
   });
+
+  it("anchors streaming scroll to avoid viewport jumps", () => {
+    expect(styles).toMatch(/\.feed\s*\{[^}]*overflow-anchor:\s*auto;[^}]*scrollbar-gutter:\s*stable;/s);
+    expect(styles).toMatch(/\.feed-item--assistant\s*\{[^}]*overflow-anchor:\s*none;/s);
+  });
 });

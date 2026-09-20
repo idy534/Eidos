@@ -242,7 +242,9 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             if tool.name == "apply_patch"
         )
         assert set(definition.parameters_json_schema["properties"]) == {"patch"}
-        assert "historical calls" in definition.description
+        assert "Pass the complete patch text in `patch`" in definition.description
+        assert "*** Begin Patch" in definition.description
+        assert "*** Update File: app.py" in definition.description
 
     def test_valid_and_invalid_read_calls_keep_batch_order(self) -> None:
         (self.workspace / "hello.txt").write_text("hello\n", encoding="utf-8")

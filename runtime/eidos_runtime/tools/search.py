@@ -104,7 +104,11 @@ def tool_search_entry(candidates: tuple[ToolRegistryEntry, ...]) -> ToolRegistry
     adapter = ToolSearchAdapter(candidates)
     spec = ToolSpec.model_validate({
         "name": name,
-        "description": "Search available deferred tools by capability and source",
+        "description": (
+            "Search deferred tools by name, description, or source metadata "
+            "and make matching tools available for subsequent calls. "
+            "Use this when the required tool is not currently available."
+        ),
         "sideEffect": "none",
         "approvalRequired": False,
         "timeoutSeconds": 5,
