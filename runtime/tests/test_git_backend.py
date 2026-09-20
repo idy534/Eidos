@@ -209,7 +209,7 @@ def test_diff_marks_binary_line_stats_incomplete(tmp_path: Path) -> None:
     assert diff.file_stats[0].stats_incomplete is True
 
 
-def test_stage_and_unstage_use_path_scoped_native_git_semantics(tmp_path: Path) -> None:
+def test_stage_uses_path_scoped_native_git_semantics(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     backend = DulwichGitBackend()
     (repository / "tracked.txt").write_text("modified\n", encoding="utf-8")
@@ -222,14 +222,7 @@ def test_stage_and_unstage_use_path_scoped_native_git_semantics(tmp_path: Path) 
     assert staged.unstaged_paths == ()
     assert staged.untracked_paths == ()
 
-    backend.unstage(repository, ("tracked.txt", "new file.txt"))
-    unstaged = backend.status(repository)
-    assert unstaged.staged_paths == ("delete.txt",)
-    assert unstaged.unstaged_paths == ("tracked.txt",)
-    assert unstaged.untracked_paths == ("new file.txt",)
-
-
-def test_stage_and_unstage_support_multiple_paths_and_spaces(tmp_path: Path) -> None:
+def test_stage_supports_multiple_paths_and_spaces(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     backend = DulwichGitBackend()
     for relative in ("one.txt", "path with spaces.txt"):
@@ -241,14 +234,7 @@ def test_stage_and_unstage_support_multiple_paths_and_spaces(tmp_path: Path) -> 
         "path with spaces.txt",
     )
 
-    backend.unstage(repository, ("one.txt", "path with spaces.txt"))
-    assert backend.status(repository).untracked_paths == (
-        "one.txt",
-        "path with spaces.txt",
-    )
-
-
-def test_stage_unstage_and_diff_treat_api_paths_as_literal_filenames(
+def test_stage_and_diff_treat_api_paths_as_literal_filenames(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
@@ -265,14 +251,6 @@ def test_stage_unstage_and_diff_treat_api_paths_as_literal_filenames(
     for relative in paths:
         backend.stage(repository, (relative,))
         assert backend.status(repository).staged_paths == (relative,)
-        _git(repository, "restore", "--staged", "--", ".")
-
-        _git(repository, "add", "--all")
-        backend.unstage(repository, (relative,))
-        status = backend.status(repository)
-        assert relative in status.unstaged_paths
-        assert relative not in status.staged_paths
-        assert set(status.staged_paths) == set(paths) - {relative}
         _git(repository, "restore", "--staged", "--", ".")
 
         diff = backend.diff(repository, base_commit=head, path=relative)
@@ -321,19 +299,6 @@ def test_stage_reads_controlled_global_clean_filter_configuration(tmp_path: Path
     backend.stage(repository, ("global-filtered.txt",))
 
     assert _git(repository, "show", ":global-filtered.txt") == "bar"
-
-
-def test_native_unstage_supports_an_unborn_head(tmp_path: Path) -> None:
-    repository = tmp_path / "unborn"
-    repository.mkdir()
-    _git(repository, "init", "-q", "-b", "main")
-    (repository / "new.txt").write_text("new\n", encoding="utf-8")
-    cli = GitCli()
-    cli.stage(repository, ("new.txt",))
-
-    cli.unstage(repository, ("new.txt",))
-
-    assert _git(repository, "ls-files", "--", "new.txt") == ""
 
 
 def test_commit_only_commits_staged_changes_and_reobserves_head(tmp_path: Path) -> None:

@@ -360,6 +360,7 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(list_default.maxEntries, 2_000)
         self.assertEqual(search_default.path, ".")
         self.assertEqual(search_default.maxResults, 100)
+        self.assertEqual(search_default.yieldTimeMs, 10_000)
         self.assertFalse(search_default.regex)
         self.assertEqual(search_default.includeGlobs, ())
 
@@ -375,13 +376,22 @@ class ToolContractTests(unittest.TestCase):
         self.assertIn("maxResults", search_spec.description)
         self.assertIn("regex", search_spec.description)
         self.assertIn("includeGlobs", search_spec.description)
+        self.assertIn("yieldTimeMs", search_spec.description)
+        self.assertIn("search_text_wait", {spec.name for spec in TOOL_SPECS})
         self.assertEqual(
             set(list_spec.input_schema["properties"]),
             {"path", "maxDepth", "maxEntries"},
         )
         self.assertEqual(
             set(search_spec.input_schema["properties"]),
-            {"query", "path", "regex", "includeGlobs", "maxResults"},
+            {
+                "query",
+                "path",
+                "regex",
+                "includeGlobs",
+                "maxResults",
+                "yieldTimeMs",
+            },
         )
 
 

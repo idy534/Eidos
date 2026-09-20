@@ -202,6 +202,8 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。`apply_patch` 不执行敏感内容扫描，但仍执行输入类型、Patch 语法、Workspace 边界、权限、版本、受控写入和最终内容校验。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并受控提交已有文件的原地写入或新文件的排他创建。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
 
+`search_text` 在 Run 内把 Ripgrep 进程寿命和 ToolCall 等待窗口分开。首次调用默认等待 10 秒，`search_text_wait` 默认等待 30 秒。等待窗口结束只返回 `search_running` 和 `sessionId`。后台搜索继续使用原来的受管 Ripgrep、授权根、ignore 规则、文件验证、输出边界和结果解析。搜索完成后，续接调用读取同一个有界结构化结果。Run 关闭时，`ToolExecutor` 会取消并回收未完成的搜索。搜索会话不持久化，也不能跨 Run 使用。
+
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
 
 `list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。结果投影也遵循这个 authority：Workspace 结果保持 Workspace-relative，active Skill 结果返回 canonical absolute path，目录结果保留末尾 `/`，因此只读 Tool 结果可以直接 round-trip 到下一次只读 Tool。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 使用 Workspace-relative 路径；`run_shell.cwd` 还接受 Workspace 内的 canonical absolute path，并在 shell launch boundary 归一化为 Workspace-relative 路径。active Skill root 和 Workspace 外路径不能成为 Shell cwd。

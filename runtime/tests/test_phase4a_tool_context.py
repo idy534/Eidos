@@ -321,6 +321,9 @@ class Phase4ASkillContextTests(unittest.TestCase):
                     "search_text": {
                         "matches": [], "scannedBytes": 0, "truncated": False,
                     },
+                    "search_text_wait": {
+                        "matches": [], "scannedBytes": 0, "truncated": False,
+                    },
                     "write_file": {"path": "a"},
                     "apply_patch": {"path": "a", "changes": []},
                     "delete_file": {"path": "a"},

@@ -56,6 +56,7 @@ from eidos_runtime.workspace.search_driver import (
     SearchDriverError,
     WorkspaceSearchDriver,
     WorkspaceSearchRequest,
+    WorkspaceSearchResult,
 )
 from eidos_runtime.workspace.reader import WorkspacePathError, WorkspaceReader
 from eidos_runtime.tools.registry import (
@@ -83,6 +84,7 @@ from eidos_runtime.tools.contracts import (
     WriteStdinResultData,
     SEARCH_TEXT_MAX_RESULTS,
     SearchTextInput,
+    SearchTextWaitInput,
     SearchTextResultData,
     result_model,
 )
@@ -97,6 +99,9 @@ MAX_SEARCH_RESULTS = SEARCH_TEXT_MAX_RESULTS
 MAX_FILE_CHANGE_BYTES = MAX_EDIT_FILE_BYTES
 MAX_DIFF_BYTES = MAX_PATCH_WORKING_BYTES
 TOOL_DEADLINE_SECONDS = 5.0
+SEARCH_LIFETIME_SECONDS = 600.0
+MAX_ACTIVE_SEARCHES = 4
+MAX_RETAINED_SEARCHES = 16
 SHELL_PREFLIGHT_DEADLINE_SECONDS = 10.0
 MAX_SHELL_PREFLIGHT_ENTRIES = 250_000
 SHELL_SOURCE_SUFFIXES = {
@@ -197,6 +202,17 @@ class ResolvedAuthorizedPath:
     writable: bool
 
 
+@dataclass
+class _SearchSession:
+    session_id: str
+    resolved: ResolvedAuthorizedPath
+    cancel: threading.Event
+    done: threading.Event
+    thread: threading.Thread | None = None
+    result: WorkspaceSearchResult | None = None
+    error: SearchDriverError | DiscoveryScopeError | WorkspacePathError | None = None
+
+
 # Both transports teach the same edit language. Transport-specific wrapping is
 # added separately so a function model never receives FREEFORM instructions.
 _APPLY_PATCH_DESCRIPTION = (
@@ -222,7 +238,8 @@ _BUILTIN_CONTRACTS = (
     ("list_files", "List bounded regular files under a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.'); supports maxDepth and maxEntries. Results are relative to the selected root and may be truncated.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
     ("read_file", "Read one bounded UTF-8 file from the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Large files return head/tail content; use read_file_range to continue.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
     ("read_file_range", "Read an inclusive bounded line range from one UTF-8 file in the workspace or an active Skill root. The path may be workspace-relative or an authorized absolute path; active Skill roots are read-only. For other Skill resources, use skill_read_resource. Continue from nextLine when present.", "none", False, 5, "parallel", ReadFileRangeInput, ReadFileRangeResultData, "read_file_range"),
-    ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, and includeGlobs. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 5, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
+    ("search_text", "Search a workspace-relative path or an absolute path inside the workspace or active Skill root (default '.') for a single-line query; supports maxResults, regex, includeGlobs, and yieldTimeMs. If the wait window ends first, use search_text_wait with the returned sessionId. Results are relative to the selected root, bounded, and may be truncated.", "none", False, 35, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
+    ("search_text_wait", "Continue waiting for a search_text session in this Run. yieldTimeMs bounds this wait, not the Ripgrep process lifetime. Repeat while the result code is search_running.", "none", False, 65, "single", SearchTextWaitInput, SearchTextResultData, "search_text"),
     ("apply_patch", "Pass the Patch text in the single JSON field `patch`. The old `changes` format in historical calls is no longer accepted. " + _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", "Run one shell command in the macOS workspace sandbox. The Runtime returns after yieldTimeMs with either an exit result or shell_running and sessionId. For a running command, use write_stdin with empty chars to wait and read progress, or chars=\\u0003 to interrupt. Choose whether to keep waiting from the output and user intent. The command has no default lifetime deadline. Finish or stop the command before a final answer; another side effect cannot start while it runs. Use request_permissions for network access for the current run, or set networkAccess=request with justification for this command. Ordinary commands inherit approved run permissions. Eidos keeps macOS Seatbelt. Additional path access and unsandboxed execution also require approval. The legacy sandboxPermissions and additionalPermissions fields remain supported for compatibility. Do not assume GNU timeout, zsh glob behavior, or use tail/head as output boundaries; do not add pipefail unless the command requires it. Eidos bounds and verifies output and workspace changes without rewriting the command.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
     ("write_stdin", "Continue an existing Shell session in this Run. Empty chars waits and reads new output; chars=\\u0003 interrupts the command. Other chars send stdin under the original command permissions. yieldTimeMs bounds this wait, not the command lifetime. Repeated waiting is valid while the process is running. Stop waiting after executionStatus=exited. Read persisted terminal output with read_tool_output using the original run_shell outputCallId, never sessionId.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
@@ -322,7 +339,9 @@ def builtin_tool_registry(
     supports_custom_tools: bool = False,
     supports_tool_grammar: bool = False,
 ) -> ToolRegistry:
-    operations = ("list", "read", "range", "search", "patch", "shell", "shell")
+    operations = (
+        "list", "read", "range", "search", "search_wait", "patch", "shell", "shell"
+    )
     specs = _tool_specs(
         supports_custom_tools=supports_custom_tools,
         supports_tool_grammar=supports_tool_grammar,
@@ -455,6 +474,8 @@ class ToolExecutor:
         self.reader = WorkspaceReader(identity)
         self.workspace_index = WorkspaceIndex(identity)
         self.search_driver = search_driver or RipgrepSearchDriver()
+        self._search_lock = threading.Lock()
+        self._search_sessions: dict[str, _SearchSession] = {}
         self._active_skill_roots: Callable[[], tuple[Path, ...]] = lambda: ()
         self.supports_custom_tools = supports_custom_tools
         self.supports_tool_grammar = supports_tool_grammar
@@ -545,6 +566,14 @@ class ToolExecutor:
         self.close()
 
     def close(self) -> None:
+        with self._search_lock:
+            sessions = tuple(self._search_sessions.values())
+            self._search_sessions.clear()
+        for session in sessions:
+            session.cancel.set()
+        for session in sessions:
+            if session.thread is not None:
+                session.thread.join(timeout=2)
         self.reader.close()
         if self.root_fd >= 0:
             os.close(self.root_fd)
@@ -554,6 +583,10 @@ class ToolExecutor:
         self, roots: Callable[[], tuple[Path, ...]]
     ) -> None:
         self._active_skill_roots = roots
+
+    def has_search_session(self, session_id: str) -> bool:
+        with self._search_lock:
+            return session_id in self._search_sessions
 
     def execute(
         self,
@@ -678,6 +711,7 @@ class ToolExecutor:
             "read": self._read_file,
             "range": self._read_file_range,
             "search": self._search_text,
+            "search_wait": self._search_text_wait,
         }.get(operation)
         if tool is None:
             return _error(tool_name, "tool_not_found", "Tool is not available")
@@ -1440,50 +1474,164 @@ class ToolExecutor:
         regex = arguments["regex"]
         include_globs = arguments["includeGlobs"]
         max_results = arguments["maxResults"]
+        yield_time_ms = arguments.get("yieldTimeMs", 10_000)
         assert isinstance(query, str)
         assert isinstance(path, str)
         assert isinstance(regex, bool)
         assert isinstance(include_globs, (list, tuple))
         assert isinstance(max_results, int) and not isinstance(max_results, bool)
+        assert isinstance(yield_time_ms, int) and not isinstance(yield_time_ms, bool)
         assert isinstance(path, str)
         resolved = self._resolve_read_path(path)
-        with self._authorized_reader(resolved) as reader:
-            scope = WorkspaceDiscoveryScope.load(reader.root_fd)
-            result = self.search_driver.search(
-                WorkspaceSearchRequest(
-                    query=query,
-                    workspace_path=resolved.root,
-                    deadline=time.monotonic() + TOOL_DEADLINE_SECONDS,
-                    max_results=max_results,
-                    max_preview_characters=MAX_RG_PREVIEW_CHARACTERS,
-                    discovery_scope=scope,
-                    path=resolved.relative_path,
-                    regex=regex,
-                    include_globs=tuple(include_globs),
+        with self._search_lock:
+            completed = tuple(
+                session_id
+                for session_id, existing in self._search_sessions.items()
+                if existing.done.is_set()
+            )
+            while (
+                len(self._search_sessions) >= MAX_RETAINED_SEARCHES
+                and completed
+            ):
+                self._search_sessions.pop(completed[0], None)
+                completed = completed[1:]
+            active_searches = sum(
+                not existing.done.is_set()
+                for existing in self._search_sessions.values()
+            )
+            if active_searches >= MAX_ACTIVE_SEARCHES:
+                return _error(
+                    "search_text", "search_session_limit", "Too many searches are running"
+                )
+            session = _SearchSession(
+                session_id=str(uuid.uuid4()),
+                resolved=resolved,
+                cancel=threading.Event(),
+                done=threading.Event(),
+            )
+            session.thread = threading.Thread(
+                target=self._run_search,
+                args=(session, query, regex, tuple(include_globs), max_results),
+                name=f"eidos-search-{session.session_id[:8]}",
+                daemon=True,
+            )
+            self._search_sessions[session.session_id] = session
+            session.thread.start()
+        return self._wait_for_search("search_text", session, yield_time_ms, cancel)
+
+    def _search_text_wait(
+        self, arguments: dict[str, object], cancel: threading.Event
+    ) -> dict[str, object]:
+        session_id = arguments["sessionId"]
+        yield_time_ms = arguments["yieldTimeMs"]
+        assert isinstance(session_id, str)
+        assert isinstance(yield_time_ms, int) and not isinstance(yield_time_ms, bool)
+        with self._search_lock:
+            session = self._search_sessions.get(session_id)
+        if session is None:
+            return _error(
+                "search_text_wait", "search_session_unavailable", "Search session is unavailable"
+            )
+        return self._wait_for_search("search_text_wait", session, yield_time_ms, cancel)
+
+    def _run_search(
+        self,
+        session: _SearchSession,
+        query: str,
+        regex: bool,
+        include_globs: tuple[str, ...],
+        max_results: int,
+    ) -> None:
+        try:
+            with self._authorized_reader(session.resolved) as reader:
+                scope = WorkspaceDiscoveryScope.load(reader.root_fd)
+                session.result = self.search_driver.search(
+                    WorkspaceSearchRequest(
+                        query=query,
+                        workspace_path=session.resolved.root,
+                        deadline=time.monotonic() + SEARCH_LIFETIME_SECONDS,
+                        max_results=max_results,
+                        max_preview_characters=MAX_RG_PREVIEW_CHARACTERS,
+                        discovery_scope=scope,
+                        path=session.resolved.relative_path,
+                        regex=regex,
+                        include_globs=include_globs,
+                    ),
+                    session.cancel,
+                )
+                reader._verify_root()
+                if session.resolved.authority == "workspace":
+                    self._verify_root()
+        except (SearchDriverError, DiscoveryScopeError, WorkspacePathError) as error:
+            session.error = error
+        finally:
+            session.done.set()
+
+    def _wait_for_search(
+        self,
+        tool_name: str,
+        session: _SearchSession,
+        yield_time_ms: int,
+        cancel: threading.Event,
+    ) -> dict[str, object]:
+        deadline = time.monotonic() + yield_time_ms / 1000
+        while not session.done.is_set() and not cancel.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            session.done.wait(min(0.1, remaining))
+        if cancel.is_set():
+            session.cancel.set()
+            session.done.wait(2)
+            if session.done.is_set():
+                with self._search_lock:
+                    self._search_sessions.pop(session.session_id, None)
+            raise ToolCancelled
+        if not session.done.is_set():
+            return {
+                **_success(
+                    tool_name,
+                    "Search is still running",
+                    {
+                        "matches": [],
+                        "scannedBytes": 0,
+                        "truncated": True,
+                        "truncationReason": "search_running",
+                        "sessionId": session.session_id,
+                        "continuation": (
+                            "Use search_text_wait with this sessionId; do not restart "
+                            "the search."
+                        ),
+                    },
                 ),
-                cancel,
-            )
-            reader._verify_root()
-            if resolved.authority == "workspace":
-                self._verify_root()
-            return _success(
-                "search_text",
-                "Searched text",
-                {
-                    "matches": [
-                        {
-                            "path": _project_read_path(resolved, match.path),
-                            "line": match.line,
-                            "column": match.column,
-                            "preview": match.preview,
-                        }
-                        for match in result.matches
-                    ],
-                    "scannedBytes": result.scanned_bytes,
-                    "truncated": result.truncated,
-                    "truncationReason": result.truncation_reason,
-                },
-            )
+                "code": "search_running",
+            }
+        with self._search_lock:
+            self._search_sessions.pop(session.session_id, None)
+        if session.thread is not None:
+            session.thread.join(timeout=0)
+        if session.error is not None:
+            raise session.error
+        result = session.result
+        assert result is not None
+        return _success(
+            tool_name,
+            "Searched text",
+            {
+                "matches": [
+                    {
+                        "path": _project_read_path(session.resolved, match.path),
+                        "line": match.line,
+                        "column": match.column,
+                        "preview": match.preview,
+                    }
+                    for match in result.matches
+                ],
+                "scannedBytes": result.scanned_bytes,
+                "truncated": result.truncated,
+                "truncationReason": result.truncation_reason,
+            },
+        )
 
     def _resolve_read_path(self, value: str) -> ResolvedAuthorizedPath:
         return resolve_read_path(

@@ -178,6 +178,12 @@ class SearchTextInput(StrictToolModel):
         le=SEARCH_TEXT_MAX_RESULTS,
         description="Maximum matching lines to return.",
     )
+    yieldTimeMs: StrictInt = Field(
+        default=10_000,
+        ge=250,
+        le=30_000,
+        description="How long to wait for this search before returning a sessionId.",
+    )
 
     @field_validator("path")
     @classmethod
@@ -207,6 +213,20 @@ class SearchTextInput(StrictToolModel):
                 raise ValueError("invalid_include_glob")
             _utf8_limit(value, 512, "include_glob_too_large")
         return values
+
+
+class SearchTextWaitInput(StrictToolModel):
+    sessionId: StrictStr = Field(
+        min_length=1,
+        max_length=128,
+        description="Running search session returned by search_text.",
+    )
+    yieldTimeMs: StrictInt = Field(
+        default=30_000,
+        ge=250,
+        le=60_000,
+        description="How long to wait for the running search.",
+    )
 
 
 class WriteFileInput(ReadFileInput):
@@ -592,6 +612,8 @@ class SearchTextResultData(StrictToolModel):
     scannedBytes: StrictInt | None = Field(default=None, ge=0)
     truncated: bool | None = None
     truncationReason: StrictStr | None = None
+    sessionId: StrictStr | None = None
+    continuation: StrictStr | None = None
 
 
 class WorkspaceResultData(StrictToolModel):
@@ -980,6 +1002,7 @@ def project_tool_result(
         "read_file": "read_file",
         "read_file_range": "read_file_range",
         "search_text": "search_text",
+        "search_text_wait": "search_text",
         "write_file": "file_change",
         "apply_patch": "file_change",
         "delete_file": "file_change",
@@ -1281,13 +1304,19 @@ def _fit_shell_serialized_budget(
 
 
 def _continuation(tool_name: str, data: dict[str, object]) -> str:
+    if (
+        tool_name in {"search_text", "search_text_wait"}
+        and data.get("truncationReason") == "search_running"
+        and data.get("sessionId") is not None
+    ):
+        return f"Continue with search_text_wait using sessionId={data['sessionId']}."
     if tool_name in {"skill_read", "skill_read_resource"}:
         return "Continue the same Skill resource using offset=nextOffset; do not restart at offset=0."
     if tool_name == "read_file":
         return "Use read_file_range to continue with a narrower line range."
     if tool_name == "read_file_range" and data.get("nextLine") is not None:
         return f"Continue at startLine={data['nextLine']}."
-    if tool_name in {"list_files", "search_text"}:
+    if tool_name in {"list_files", "search_text", "search_text_wait"}:
         return "Refine the path or query to retrieve a smaller result."
     return "Run a narrower command or request to continue."
 

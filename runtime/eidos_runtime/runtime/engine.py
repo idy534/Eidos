@@ -876,14 +876,31 @@ class RuntimeEngine:
                 return
 
             permission_frontier = self.store.run_permission_grants(run.run_id).model_dump(mode="json")
-            managed_poll = (
-                len(validation.tool_calls) == 1
-                and validation.tool_calls[0].name == "write_stdin"
-                and validation.tool_calls[0].arguments.get("chars", "") == ""
-                and resources.shell_process_manager.is_running(str(validation.tool_calls[0].arguments.get("sessionId", "")))
+            poll_call = validation.tool_calls[0] if len(validation.tool_calls) == 1 else None
+            managed_poll = bool(
+                poll_call is not None
+                and (
+                    (
+                        poll_call.name == "write_stdin"
+                        and poll_call.arguments.get("chars", "") == ""
+                        and resources.shell_process_manager.is_running(
+                            str(poll_call.arguments.get("sessionId", ""))
+                        )
+                    )
+                    or (
+                        poll_call.name == "search_text_wait"
+                        and resources.tool_executor is not None
+                        and resources.tool_executor.has_search_session(
+                            str(poll_call.arguments.get("sessionId", ""))
+                        )
+                    )
+                )
                 and dispatcher.validate_execution(
-                    validation.tool_calls[0],
-                    dispatcher.plan(validation.tool_calls[0], step.tool_snapshot.binding("write_stdin") or "missing"),
+                    poll_call,
+                    dispatcher.plan(
+                        poll_call,
+                        step.tool_snapshot.binding(poll_call.name) or "missing",
+                    ),
                 )
             )
             repeated = None if managed_poll or built.facts.reconciliation_required else guard.observe_tool_calls(

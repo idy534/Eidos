@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch as mock_patch
 
@@ -32,6 +33,10 @@ from eidos_runtime.tools.workspace import (  # noqa: E402
     ToolCancelled,
     ToolExecutor,
     WorkspacePathError,
+)
+from eidos_runtime.workspace.search_driver import (  # noqa: E402
+    WorkspaceSearchMatch,
+    WorkspaceSearchResult,
 )
 
 
@@ -739,6 +744,92 @@ class RuntimeLoopTests(unittest.TestCase):
         polls = [item for item in snapshot["items"] if item.get("toolCall", {}).get("toolName") == "write_stdin"]
         self.assertGreaterEqual(len(polls), 3)
         self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM durable_intents WHERE run_id = ? AND status != 'completed'", (run["id"],)).fetchone()[0], 0)
+
+    def test_managed_search_polls_do_not_trigger_loop_guard(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "Wait for search")
+        store = self.store
+        session_id = self.session["id"]
+
+        class SlowSearchDriver:
+            def search(driver, request, cancel):
+                deadline = time.monotonic() + 0.8
+                while time.monotonic() < deadline:
+                    if cancel.is_set():
+                        raise AssertionError("Search was canceled during polling")
+                    time.sleep(0.01)
+                return WorkspaceSearchResult(
+                    (WorkspaceSearchMatch("hello.txt", 1, 1, "hello"),),
+                    21,
+                    False,
+                    None,
+                )
+
+        original_init = ToolExecutor.__init__
+
+        def initialize(executor, workspace, search_driver=None, **kwargs):
+            original_init(
+                executor,
+                workspace,
+                search_driver=SlowSearchDriver(),
+                **kwargs,
+            )
+
+        class PollingModel(ScriptedModel):
+            def complete(model, *args, **kwargs):
+                if model._index:
+                    snapshot = store.read_session_snapshot(session_id)
+                    tool_items = [
+                        item
+                        for item in snapshot["items"]
+                        if item.get("toolCall", {}).get("toolName")
+                        in {"search_text", "search_text_wait"}
+                    ]
+                    result = json.loads(tool_items[-1]["toolCall"]["resultJson"])
+                    response = (
+                        ModelResponse(text="Search finished.")
+                        if result["code"] == "ok"
+                        else ModelResponse(
+                            tool_calls=(
+                                ModelToolCall(
+                                    f"poll-search-{model._index}",
+                                    "search_text_wait",
+                                    {
+                                        "sessionId": result["data"]["sessionId"],
+                                        "yieldTimeMs": 250,
+                                    },
+                                ),
+                            )
+                        )
+                    )
+                    model.responses = (*model.responses, response)
+                return super().complete(*args, **kwargs)
+
+        model = PollingModel(
+            [
+                ModelResponse(
+                    tool_calls=(
+                        ModelToolCall(
+                            "start-search",
+                            "search_text",
+                            {"query": "hello", "yieldTimeMs": 250},
+                        ),
+                    )
+                )
+            ]
+        )
+        with mock_patch.object(ToolExecutor, "__init__", initialize):
+            RuntimeLoop(self.store, model, lambda _message: None).run(
+                run["id"], threading.Event()
+            )
+
+        snapshot = self.store.read_session_snapshot(session_id)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        polls = [
+            item
+            for item in snapshot["items"]
+            if item.get("toolCall", {}).get("toolName") == "search_text_wait"
+        ]
+        self.assertGreaterEqual(len(polls), 2)
 
     def test_default_shell_runs_in_sandbox_without_approval(self) -> None:
         if not is_seatbelt_ready():

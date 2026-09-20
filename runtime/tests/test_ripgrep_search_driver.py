@@ -89,6 +89,30 @@ class _FakeSearchDriver:
         return self.result
 
 
+class _BlockingSearchDriver:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.canceled = threading.Event()
+
+    def search(
+        self,
+        request: WorkspaceSearchRequest,
+        cancel: threading.Event,
+    ) -> WorkspaceSearchResult:
+        self.started.set()
+        while not self.release.wait(0.01):
+            if cancel.is_set():
+                self.canceled.set()
+                raise SearchDriverError("search_backend_canceled")
+        return WorkspaceSearchResult(
+            matches=(WorkspaceSearchMatch("result.txt", 1, 1, "needle"),),
+            scanned_bytes=6,
+            truncated=False,
+            truncation_reason=None,
+        )
+
+
 def test_tool_executor_maps_driver_result_without_changing_contract(tmp_path: Path) -> None:
     fake = _FakeSearchDriver(
         WorkspaceSearchResult(
@@ -160,6 +184,35 @@ def test_tool_executor_passes_scoped_search_options_to_driver(tmp_path: Path) ->
     assert request.regex is True
     assert request.include_globs == ("*.rs",)
     assert request.max_results == 7
+
+
+def test_search_wait_window_does_not_end_search_process(tmp_path: Path) -> None:
+    driver = _BlockingSearchDriver()
+    with ToolExecutor(tmp_path, search_driver=driver) as executor:
+        running = executor.execute(
+            "search_text",
+            {"query": "needle", "yieldTimeMs": 250},
+            threading.Event(),
+        )
+        assert driver.started.is_set()
+        assert running["code"] == "search_running"
+        assert "search_text_wait" in running["data"]["continuation"]
+        session_id = running["data"]["sessionId"]
+        assert executor.has_search_session(session_id)
+
+        driver.release.set()
+        completed = executor.execute(
+            "search_text_wait",
+            {"sessionId": session_id, "yieldTimeMs": 1_000},
+            threading.Event(),
+        )
+
+    assert completed["outcome"] == "success"
+    assert completed["code"] == "ok"
+    assert executor.has_search_session(session_id) is False
+    assert completed["data"]["matches"] == [
+        {"path": "result.txt", "line": 1, "column": 1, "preview": "needle"}
+    ]
 
 
 @pytest.mark.parametrize(

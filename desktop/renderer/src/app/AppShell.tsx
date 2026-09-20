@@ -73,6 +73,9 @@ function loadSidebarOpen(): boolean {
 
 const DOCK_MIN_WIDTH = 20 * 16;
 const MAIN_MIN_WIDTH = 16 * 16;
+// Body width below which the side-by-side dock auto-collapses to protect the
+// session column (composer project/mode/branch row) from horizontal squeezing.
+const DOCK_AUTO_COLLAPSE_BODY_WIDTH = 40 * 16;
 
 const TerminalPanel = lazy(() => import("../components/TerminalPanel.js").then((module) => ({
   default: module.TerminalPanel,
@@ -158,6 +161,38 @@ export function AppShell({ runtime }: AppShellProps) {
   }, [dockOpen]);
   const [dockExpanded, setDockExpanded] = useState(false);
   const [dockWidth, setDockWidth] = useState<number>();
+  const wasNarrowRef = useRef(false);
+  // Auto-collapse the side-by-side dock when the workspace body becomes too
+  // narrow. Only triggers on the wide -> narrow transition so a user can still
+  // manually reopen the dock while narrow without it snapping shut on every
+  // resize event. Expanded (fullscreen) dock is left alone.
+  useEffect(() => {
+    const checkNarrow = () => {
+      const measured = workspaceBodyRef.current?.getBoundingClientRect().width ?? 0;
+      // jsdom / unlaid-out state reports 0; fall back to window width so tests
+      // and first paint don't falsely count as narrow.
+      const bodyWidth = measured > 0 ? measured : window.innerWidth;
+      if (bodyWidth <= 0) return;
+      const narrow = bodyWidth < DOCK_AUTO_COLLAPSE_BODY_WIDTH;
+      const wasNarrow = wasNarrowRef.current;
+      wasNarrowRef.current = narrow;
+      if (narrow && !wasNarrow && dockOpen && !dockExpanded) {
+        setDockOpen(false);
+        setDockExpanded(false);
+      }
+    };
+    checkNarrow();
+    window.addEventListener("resize", checkNarrow);
+    const body = workspaceBodyRef.current;
+    const observer = typeof ResizeObserver !== "undefined" && body
+      ? new ResizeObserver(checkNarrow)
+      : undefined;
+    if (body && observer) observer.observe(body);
+    return () => {
+      window.removeEventListener("resize", checkNarrow);
+      observer?.disconnect();
+    };
+  }, [dockOpen, dockExpanded]);
   const [environmentPopoverOpen, setEnvironmentPopoverOpen] = useState(false);
   const [openTabs, setOpenTabs] = useState<WorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | undefined>(undefined);
