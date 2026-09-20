@@ -50,7 +50,6 @@ type ExplorerLayout = "side" | "expanded";
 const SIDE_SPLIT_MIN = 5.5 * 16;
 const EXPANDED_SPLIT_MIN = 13 * 16;
 const EXPANDED_SPLIT_MAX = 24 * 16;
-const STALE_FILE_ERROR = "文件不存在或已过期。请从当前文件树重新选择。";
 const INVALID_FILE_PATH_ERROR = "文件路径无效。请从当前文件树重新选择。";
 
 const defaultListDirectory = (sessionId: string, path: string) =>
@@ -129,15 +128,6 @@ function isValidProgrammaticFilePath(value: string): boolean {
 function parentPath(value: string): string {
   const slash = value.lastIndexOf("/");
   return slash < 0 ? "." : value.slice(0, slash);
-}
-
-function programmaticOpenError(cause: unknown): string {
-  const code = runtimeBusinessCode(cause);
-  if (code === "WORKSPACE_BOUNDARY_VIOLATION" || code === "WORKSPACE_FILE_NOT_FOUND") {
-    return STALE_FILE_ERROR;
-  }
-  if (code) return userFacingError(cause);
-  return "无法确认文件是否存在。请刷新 Workspace 后重试。";
 }
 
 function previewReadError(cause: unknown): string {
@@ -301,37 +291,13 @@ export function WorkspaceExplorer({
   loadDirectoryRef.current = loadDirectory;
   openFileRef.current = openFile;
 
-  const openRequestedFile = useCallback(async (request: WorkspaceFileOpenRequest) => {
-    const version = requestVersion.current;
-    const isCurrentRequest = () => (
-      requestVersion.current === version
-      && handledRequestIdRef.current === request.requestId
-    );
+  const openRequestedFile = useCallback((request: WorkspaceFileOpenRequest) => {
     if (!isValidProgrammaticFilePath(request.path)) {
-      if (isCurrentRequest()) setError(INVALID_FILE_PATH_ERROR);
+      setError(INVALID_FILE_PATH_ERROR);
       return;
     }
-
-    const currentNode = findNode(nodesRef.current, request.path);
-    if (currentNode?.kind === "file") {
-      if (isCurrentRequest()) openFile(request.path);
-      return;
-    }
-
-    try {
-      const listing = await listDirectory(sessionId, parentPath(request.path));
-      if (!isCurrentRequest()) return;
-      const entry = listing.entries.find((candidate) => candidate.relativePath === request.path);
-      if ((!entry || entry.kind !== "file") && !listing.truncated) {
-        setError(STALE_FILE_ERROR);
-        return;
-      }
-    } catch (cause: unknown) {
-      if (isCurrentRequest()) setError(programmaticOpenError(cause));
-      return;
-    }
-    if (isCurrentRequest()) openFile(request.path);
-  }, [listDirectory, openFile, sessionId]);
+    openFile(request.path);
+  }, [openFile]);
 
   // Respond to programmatic file open requests from parent
   useEffect(() => {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from contextlib import ExitStack
 import errno
 import hashlib
@@ -117,6 +117,7 @@ from eidos_runtime.sandbox.shell import (
     sandbox_unavailable_result,
 )
 from eidos_runtime.sandbox.workspace_manifest import (
+    WorkspaceDiff,
     attach_workspace_diff,
     diff_workspace_manifests,
 )
@@ -860,6 +861,31 @@ class ShellToolHandler:
         manifest_after = manifest_before
         refresh_error_code: str | None = None
 
+        def observe_workspace(
+            result: dict[str, object], observation_cancel: threading.Event,
+        ) -> WorkspaceDiff:
+            nonlocal manifest_after, refresh_error_code
+            try:
+                manifest_after = runtime.implementation.executor.refresh_workspace_index(observation_cancel)  # type: ignore[attr-defined]
+            except WorkspacePathError as error:
+                refresh_error_code = error.code
+                # A failed scan may leave a cached complete manifest. It is not
+                # evidence that the command left the workspace unchanged.
+                manifest_after = replace(
+                    runtime.implementation.executor.workspace_index.manifest(),  # type: ignore[attr-defined]
+                    complete=False,
+                )
+                if error.code not in {
+                    "WORKSPACE_INDEX_INCOMPLETE", "sensitive_workspace_content",
+                    "unsupported_workspace_hardlink", "unsupported_workspace_entry",
+                }:
+                    result["reconciliationRequired"] = True
+                logger.warning("shell_workspace_observation_incomplete", extra={
+                    "run_id": run_id, "tool_call_id": item["toolCall"]["id"],
+                    "reason_code": error.code,
+                })
+            return diff_workspace_manifests(manifest_before, manifest_after)
+
         def execute_shell_attempt(
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
@@ -1010,25 +1036,7 @@ class ShellToolHandler:
                 return result, denial
             if raw_result.get("data", {}).get("executionStatus") == "running":
                 return bounded_tool_result(call.name, raw_result), None
-            try:
-                manifest_after = (
-                    runtime.implementation.executor.refresh_workspace_index(  # type: ignore[attr-defined]
-                        cancel
-                    )
-                )
-            except WorkspacePathError as error:
-                manifest_after = (
-                    runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
-                )
-                refresh_error_code = error.code
-                if error.code not in {
-                    "WORKSPACE_INDEX_INCOMPLETE",
-                    "sensitive_workspace_content",
-                }:
-                    raw_result["reconciliationRequired"] = True
-            workspace_diff = diff_workspace_manifests(
-                manifest_before, manifest_after
-            )
+            workspace_diff = observe_workspace(raw_result, cancel)
             raw_data = raw_result.get("data")
             if (
                 raw_result.get("outcome") == "success"
@@ -1270,16 +1278,9 @@ class ShellToolHandler:
 
             def complete_command(terminal: dict[str, object]) -> dict[str, object]:
                 terminal = {**initial_result, **terminal, "data": {**initial_result["data"], **terminal["data"]}}
-                changed = False
-                diff_hash = None
-                try:
-                    after = runtime.implementation.executor.refresh_workspace_index(threading.Event())  # type: ignore[attr-defined]
-                    diff = diff_workspace_manifests(manifest_before, after)
-                    terminal = attach_workspace_diff(terminal, diff)
-                    changed, diff_hash = diff.changed, diff.diff_hash
-                except WorkspacePathError as error:
-                    if error.code not in {"WORKSPACE_INDEX_INCOMPLETE", "sensitive_workspace_content"}:
-                        terminal["reconciliationRequired"] = True
+                diff = observe_workspace(terminal, threading.Event())
+                terminal = attach_workspace_diff(terminal, diff)
+                changed, diff_hash = diff.changed, diff.diff_hash
                 exit_data = terminal["data"]
                 terminal = safe_tool_result(
                     self.dependencies.sensitive,
