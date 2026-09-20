@@ -4599,7 +4599,7 @@ span.tool-file-link:hover {
   font-size: 0.875rem;
   font-weight: 400;
 }
-.composer-context-project { flex: 1 1 auto; overflow: hidden; }
+.composer-context-project { flex: 0 1 auto; max-width: 12rem; overflow: hidden; }
 .composer-context-mode,
 .composer-context-branch { flex: 0 1 auto; overflow: hidden; }
 .composer-context-project > span,
