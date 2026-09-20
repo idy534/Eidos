@@ -604,10 +604,10 @@ class RunSupervisor:
         cancellation = threading.Event()
         registered = threading.Event()
 
-        async def run() -> None:
-            await anyio.to_thread.run_sync(registered.wait)
+        def run_in_worker() -> None:
+            registered.wait()
             try:
-                await anyio.to_thread.run_sync(target, cancellation)
+                target(cancellation)
             except Exception:
                 resource.fail("MANAGED_TASK_FAILED")
                 if async_resource is not None:
@@ -620,6 +620,15 @@ class RunSupervisor:
                 resource.close()
                 with self.lock:
                     self._managed_tasks.pop(task_id, None)
+
+        async def run() -> None:
+            # Task submission holds self.lock while the portal schedules us.
+            # Cleanup must stay on the worker: taking that lock on the event
+            # loop can deadlock the portal against a concurrent submission.
+            # Accepted work owns its cleanup even if kernel cancellation arrives
+            # before a worker is available; cancellation is cooperative via Event.
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(run_in_worker)
 
         resource = self.resources.register(
             RuntimeResourceKind.MANAGED_TASK,

@@ -39,6 +39,7 @@
 - `session/handoff` 在不创建新 Session 的情况下切换同一个 Session 的 execution binding。Session 保存 `associatedWorktreeId`，因此 Worktree → Local → Worktree 会回到同一个 Worktree。Handoff 会保存 current HEAD、committed movement、staged、unstaged、untracked、binary 和 dirty fingerprint，并拒绝 active Run、Local conflict、source/target drift、Git common directory mismatch 和缺失 Worktree。
 - `session/restoreWorktree` 只恢复 Session 的 `associatedWorktreeId`。Deleted Worktree 会返回 `WORKTREE_RESTORE_REQUIRED`，invalid Worktree 会返回 `WORKTREE_RECOVERY_REQUIRED`。Restore 成功后，Run admission 可以重新使用原 Worktree；Runtime 不创建第二个 Worktree。
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
+- Git 观察、标题生成和其他 Managed Task 共用的入口已把执行与清理统一放到 AnyIO worker。该修订移除了任务清理在事件循环上等待 Supervisor 锁的路径，保留资源登记、协作取消和异常传播。该修订尚未通过回归测试，不能据此宣称 Runtime 无响应问题已完成验收。
 - Run 按 Session 分别使用持久 FIFO。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
 - 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消会停止执行。未清除的 reconciliation barrier 会使 Run 返回 `interrupted`，并保留副作用事实；Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。

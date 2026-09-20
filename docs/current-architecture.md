@@ -58,6 +58,8 @@ Electron Main → Renderer
 
 Python Runtime 的 stdout 只输出有界的 JSON-RPC 行。Runtime 日志写入 stderr 或受控本地日志。RuntimeServer 的 `initialize`、`runtime/health` 和 `runtime/shutdown` 负责握手、健康状态和有序关闭。
 
+`RunSupervisor.start_managed_task()` 在 AnyIO worker 中完成登记等待、目标执行、错误记录和资源清理。任务清理不再在 AnyIO 事件循环中获取 Supervisor 的同步锁。提交线程仍在锁内通过 BlockingPortal 登记任务；worker 中的清理等待不会挡住 portal 的调度。受保护的等待保留已接纳任务的资源所有权，取消继续通过 `threading.Event` 协作传播，系统不会丢弃仍在执行的线程来冒充资源静止。这项死锁修订尚未进入测试阶段。
+
 `runtime/eidos_runtime/runtime/loop.py` 只导出 `RuntimeEngine` 的兼容名称。它不是当前 Runtime Loop 的第二套实现。
 
 ## 3. Desktop Boundary
