@@ -17,6 +17,7 @@ from eidos_runtime.tools.contracts import (  # noqa: E402
     NetworkAccess,
     RunShellInput,
     SearchTextInput,
+    WriteStdinInput,
 )
 from eidos_runtime.tools.workspace import (  # noqa: E402
     TOOL_SPECS,
@@ -368,18 +369,59 @@ class ToolContractTests(unittest.TestCase):
             spec.description for spec in TOOL_SPECS if spec.name == "run_shell"
         )
 
-        self.assertIn("networkAccess=request", description)
-        self.assertIn("gitWriteAccess=request", description)
-        self.assertIn("justification", description)
-        self.assertIn("macOS Seatbelt", description)
-        self.assertIn("sandboxPermissions", description)
-        self.assertIn("returns after yieldTimeMs", description)
-        self.assertIn("shell_running", description)
-        self.assertIn("write_stdin", description)
-        self.assertNotIn("timeoutSeconds", description)
-        self.assertIn("pipefail", description)
-        self.assertIn("glob", description)
-        self.assertNotIn("network-disabled", description)
+        self.assertEqual(
+            description,
+            "Run a shell command in the macOS workspace sandbox. "
+            "Returns command output, or a sessionId if the command is still running.",
+        )
+        for fragment in (
+            "gitWriteAccess",
+            "networkAccess",
+            "justification",
+            "request_permissions",
+            "additionalPermissions",
+            "sandboxPermissions",
+            "write_stdin",
+            "shell_running",
+            "yieldTimeMs",
+            "pipefail",
+            "glob",
+            ".git",
+            "Seatbelt",
+            "timeoutSeconds",
+        ):
+            self.assertNotIn(fragment, description)
+
+        properties = RunShellInput.model_json_schema(by_alias=True)["properties"]
+        self.assertEqual(
+            properties["gitWriteAccess"]["description"],
+            'Set to "request" when the command requires writing Git metadata '
+            "for the current repository.",
+        )
+        self.assertEqual(
+            properties["networkAccess"]["description"],
+            'Set to "request" when the command requires network access.',
+        )
+        self.assertEqual(
+            properties["justification"]["description"],
+            "Short user-facing reason for the requested permission.",
+        )
+        self.assertIn("sessionId", properties["yieldTimeMs"]["description"])
+
+        stdin_description = next(
+            spec.description for spec in TOOL_SPECS if spec.name == "write_stdin"
+        )
+        self.assertEqual(
+            stdin_description,
+            "Write input to a running shell session or wait for additional "
+            "output. Use empty input to poll for output.",
+        )
+        stdin_properties = WriteStdinInput.model_json_schema(by_alias=True)[
+            "properties"
+        ]
+        self.assertIn("run_shell", stdin_properties["sessionId"]["description"])
+        self.assertIn("poll", stdin_properties["chars"]["description"])
+        self.assertIn("wait", stdin_properties["yieldTimeMs"]["description"].lower())
 
     def test_discovery_contracts_describe_and_validate_scopes(self) -> None:
         list_default = ListFilesInput.model_validate({})

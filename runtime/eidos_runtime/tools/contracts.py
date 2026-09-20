@@ -307,22 +307,19 @@ class RunShellInput(StrictToolModel):
     )
     networkAccess: NetworkAccess = Field(
         default=NetworkAccess.DEFAULT,
-        description=(
-            "Network intent. Use 'request' when the command needs network "
-            "access; Eidos will request approval and keep macOS Seatbelt."
-        ),
+        description='Set to "request" when the command requires network access.',
     )
     gitWriteAccess: GitWriteAccess = Field(
         default=GitWriteAccess.DEFAULT,
-        description=(
-            "Git metadata write intent. Use 'request' for Git commands that "
-            "modify the current repository; Eidos will request approval and "
-            "keep macOS Seatbelt."
-        ),
+        description='Set to "request" when the command requires writing Git metadata for the current repository.',
     )
     sandboxPermissions: SandboxPermissions = SandboxPermissions.USE_DEFAULT
     additionalPermissions: AdditionalPermissionProfile | None = None
-    justification: StrictStr | None = Field(default=None, max_length=2_000)
+    justification: StrictStr | None = Field(
+        default=None,
+        max_length=2_000,
+        description="Short user-facing reason for the requested permission.",
+    )
 
     @field_validator("command")
     @classmethod
@@ -399,13 +396,21 @@ class RunShellInput(StrictToolModel):
 
 
 class WriteStdinInput(StrictToolModel):
-    sessionId: StrictStr = Field(min_length=1, max_length=256)
-    chars: StrictStr = Field(default="", max_length=16 * 1024)
+    sessionId: StrictStr = Field(
+        min_length=1,
+        max_length=256,
+        description="Running shell session identifier returned by run_shell.",
+    )
+    chars: StrictStr = Field(
+        default="",
+        max_length=16 * 1024,
+        description="Input to write to the session. Empty input polls for additional output; \u0003 interrupts the command.",
+    )
     yieldTimeMs: StrictInt = Field(
         default=30_000,
         ge=250,
         le=60_000,
-        description="Maximum time to wait for the Shell process during this ToolCall.",
+        description="How long to wait for the running shell session before returning.",
     )
 
     @field_validator("chars")

@@ -105,9 +105,19 @@ class ModelContractTests(unittest.TestCase):
             BASE_AGENT_INSTRUCTIONS,
         )
         self.assertIn("instead of repeating the rejected request", RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertIn("run_shell.gitWriteAccess=request", RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertIn("run_shell.networkAccess=request", RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertIn("instead of requesting a .git path", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertIn("request_permissions", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertIn(
+            "or directly on run_shell when required by a specific command",
+            RUNTIME_POLICY_INSTRUCTIONS,
+        )
+        self.assertIn(
+            "Request only the permissions needed for the action.",
+            RUNTIME_POLICY_INSTRUCTIONS,
+        )
+        self.assertNotIn("gitWriteAccess", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertNotIn("networkAccess", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertNotIn(".git", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertNotIn("push, fetch", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertIn(
             "Describe the task, not the wording of the user's request.",
             TITLE_SYSTEM_INSTRUCTIONS,
