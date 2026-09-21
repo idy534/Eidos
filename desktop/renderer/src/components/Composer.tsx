@@ -118,7 +118,19 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     const maxHeight = 168;
     const targetHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
     el.style.height = `${targetHeight}px`;
-  }, [input]);
+  }, [input, references.length]);
+
+  const [showBusyHint, setShowBusyHint] = useState(false);
+  useEffect(() => {
+    if (!context?.busy) {
+      setShowBusyHint(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setShowBusyHint(true);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [context?.busy]);
 
   const isReadOnly = composerMode === "read_only";
   const isIdle = composerMode === "idle";
@@ -277,7 +289,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       )}
       {references.length > 0 && <InputReferenceCards references={references} {...(onRemoveReference ? { onRemove: onRemoveReference } : {})} />}
       {unsupportedImage && <p className="input-reference-error" role="alert">当前模型不支持图片。请选择支持图片的模型，或移除图片引用。</p>}
-      {context?.busy && <p className="input-reference-hint" role="status">正在准备引用…</p>}
+      {showBusyHint && <p className="input-reference-hint" role="status">正在准备引用…</p>}
       {context?.error && <p className="input-reference-error" role="alert">{context.error}</p>}
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}

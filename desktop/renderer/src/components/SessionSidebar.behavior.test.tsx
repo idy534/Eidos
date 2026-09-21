@@ -662,4 +662,36 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     rerender(<SessionSidebar {...props} selectedId={managedSession.id} />);
     expect(projectToggle).toHaveAttribute("aria-expanded", "false");
   });
+
+  it("scrolls active session into view when selectedId changes", async () => {
+    const scrollIntoViewSpy = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoViewSpy;
+
+    const props = {
+      sessions: [managedSession],
+      projects: [],
+      selectedId: undefined,
+      disabled: false,
+      readCompletedSessions: new Set<string>(),
+      runtimePresentation: { tone: "success", label: "Ready" } as const,
+      onCreate: vi.fn(),
+      onCreateInProject: vi.fn(),
+      onSelect: vi.fn(),
+      onRename: vi.fn(),
+      onDelete: vi.fn(),
+      onDeleteProject: vi.fn(),
+      onOpenSettings: vi.fn(),
+    };
+
+    const { rerender } = render(<SessionSidebar {...props} />);
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+
+    rerender(<SessionSidebar {...props} selectedId={managedSession.id} />);
+
+    await vi.waitFor(() => {
+      expect(scrollIntoViewSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ behavior: "smooth", block: "center" }),
+      );
+    });
+  });
 });

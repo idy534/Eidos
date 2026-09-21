@@ -151,7 +151,10 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
                 className="input-reference-remove"
                 aria-label={`移除 ${reference.label}`}
                 title={`移除 ${reference.label}`}
-                onClick={() => onRemove(reference.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(reference.id);
+                }}
               >
                 <CloseIcon />
               </button>
@@ -185,13 +188,7 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
             readOnly
             onClose={() => setPreview(undefined)}
           />
-        ) : (
-          <ReferencePreviewModal
-            preview={preview}
-            onClose={() => setPreview(undefined)}
-            onReuse={context ? () => context.reuse(preview.reference) : undefined}
-          />
-        )
+        ) : null
       )}
     </>
   );
@@ -252,7 +249,7 @@ function ImageLightboxModal({
             <div className="ref-image-lightbox__actions">
               <button
                 type="button"
-                className="ref-preview-btn ref-preview-btn--primary"
+                className="ref-image-lightbox__action-btn"
                 onClick={() => {
                   onReuse();
                   onClose();
@@ -262,235 +259,6 @@ function ImageLightboxModal({
               </button>
             </div>
           )}
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-function ReferencePreviewModal({
-  preview,
-  onClose,
-  onReuse,
-}: {
-  preview: InputPreview;
-  onClose(): void;
-  onReuse?: (() => void) | undefined;
-}) {
-  const lines = preview.text ? preview.text.split("\n") : [];
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  const handleCopyPath = async () => {
-    try {
-      await navigator.clipboard.writeText(preview.reference.source);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Ignore clipboard write failure
-    }
-  };
-
-  const renderBodyContent = () => {
-    const kind = preview.reference.kind;
-    if (kind === "file" || kind === "excerpt") {
-      return (
-        <div className="ref-preview-code-viewer">
-          <div className="ref-preview-gutter" aria-hidden="true">
-            {lines.map((_, index) => (
-              <span
-                key={index}
-                className="ref-preview-line-number"
-              >
-                {index + 1}
-              </span>
-            ))}
-          </div>
-          <pre className="ref-preview-code">
-            <code>
-              {lines.map((line, index) => (
-                <div
-                  key={index}
-                  className="ref-preview-code-line"
-                >
-                  {line || " "}
-                </div>
-              ))}
-            </code>
-          </pre>
-        </div>
-      );
-    }
-
-    if (kind === "directory") {
-      const rawLines = preview.text.split("\n");
-      const notice = rawLines[0];
-      const items = rawLines.slice(1).filter(Boolean);
-      return (
-        <div className="ref-preview-directory">
-          {notice && <p className="ref-preview-notice">{notice}</p>}
-          <div className="ref-preview-dir-list" role="list">
-            {items.length === 0 ? (
-              <div className="ref-preview-empty">空目录</div>
-            ) : (
-              items.map((item, index) => {
-                const isDir = item.endsWith("/");
-                const cleanName = isDir ? item.slice(0, -1) : item;
-                return (
-                  <div className="ref-preview-dir-item" key={index} role="listitem">
-                    <span className={`ref-preview-dir-item__icon ref-preview-dir-item__icon--${isDir ? "dir" : "file"}`}>
-                      {isDir ? <FolderIcon /> : <FileIcon />}
-                    </span>
-                    <span className="ref-preview-dir-item__name">{cleanName}</span>
-                    <span className="ref-preview-dir-item__type">{isDir ? "目录" : "文件"}</span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    if (kind === "skill" || kind === "mcp" || kind === "plugin") {
-      return (
-        <div className="ref-preview-extension">
-          <div className="ref-preview-card">
-            <h4>功能描述</h4>
-            <p className="ref-preview-desc">{preview.text || "暂无描述"}</p>
-          </div>
-          <div className="ref-preview-card">
-            <h4>配置与校验</h4>
-            <div className="ref-preview-key-values">
-              <div className="ref-preview-kv">
-                <span className="ref-preview-k">标识来源</span>
-                <span className="ref-preview-v">{preview.reference.source}</span>
-              </div>
-              <div className="ref-preview-kv">
-                <span className="ref-preview-k">扩展类别</span>
-                <span className="ref-preview-v">{kindLabel(preview.reference.kind)}</span>
-              </div>
-              {preview.reference.sha256 && (
-                <div className="ref-preview-kv">
-                  <span className="ref-preview-k">内容校验 (SHA-256)</span>
-                  <span className="ref-preview-v ref-preview-v--code">{preview.reference.sha256.slice(0, 16)}…</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (kind === "history") {
-      return (
-        <div className="ref-preview-history">
-          <div className="ref-preview-history__content">
-            <pre className="ref-preview-transcript">{preview.text}</pre>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="ref-preview-default">
-        <pre>{preview.text}</pre>
-      </div>
-    );
-  };
-
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="ref-preview-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label={preview.reference.label}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className="ref-preview-modal" role="document">
-        <div className="ref-preview-header">
-          <div className="ref-preview-header__main">
-            <div className="ref-preview-header__title-row">
-              <span className={`ref-preview-header__icon ref-preview-header__icon--${preview.reference.kind}`}>
-                {renderReferenceIcon(preview.reference)}
-              </span>
-              <h3 className="ref-preview-header__title">{preview.reference.label}</h3>
-              <span className="ref-preview-header__badge">{kindLabel(preview.reference.kind)}</span>
-            </div>
-            <div className="ref-preview-header__path-row">
-              <span className="ref-preview-header__path" title={preview.reference.source}>
-                {preview.reference.source}
-              </span>
-              <button
-                type="button"
-                className="ref-preview-header__copy-btn"
-                onClick={handleCopyPath}
-                title="复制完整路径"
-              >
-                {copied ? <CheckIcon /> : <CopyIcon />}
-                <span>{copied ? "已复制" : "复制路径"}</span>
-              </button>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="ref-preview-header__close-btn"
-            aria-label="关闭预览"
-            autoFocus
-            onClick={onClose}
-          >
-            <CloseIcon />
-          </button>
-        </div>
-
-        <div className="ref-preview-body">
-          {renderBodyContent()}
-        </div>
-
-        <div className="ref-preview-footer">
-          <div className="ref-preview-footer__meta">
-            <span className="ref-preview-meta-pill">
-              {preview.reference.status === "content" ? "全文快照" : "位置引用"}
-            </span>
-            {preview.reference.size > 0 && (
-              <span className="ref-preview-meta-text">
-                大小：{formatFileSize(preview.reference.size)}
-              </span>
-            )}
-          </div>
-          <div className="ref-preview-footer__actions">
-            <button
-              type="button"
-              className="ref-preview-btn ref-preview-btn--secondary"
-              onClick={onClose}
-            >
-              关闭
-            </button>
-            {onReuse && (
-              <button
-                type="button"
-                className="ref-preview-btn ref-preview-btn--primary"
-                onClick={() => {
-                  onReuse();
-                  onClose();
-                }}
-              >
-                添加到当前输入
-              </button>
-            )}
-          </div>
         </div>
       </div>
     </div>,
@@ -554,51 +322,5 @@ function InputThumbnail({ id, label }: { id: string; label: string }) {
     return () => { active = false; observer.disconnect(); };
   }, [id]);
   return <span ref={root} className="input-thumbnail">{source ? <img src={source} alt={label} /> : <ImageIcon />}</span>;
-}
-
-function kindLabel(kind: InputReference["kind"]): string {
-  switch (kind) {
-    case "file":
-      return "文件";
-    case "directory":
-      return "文件夹";
-    case "image":
-      return "图片";
-    case "skill":
-      return "Skill";
-    case "mcp":
-      return "MCP";
-    case "plugin":
-      return "Plugin";
-    case "history":
-      return "历史对话";
-    case "excerpt":
-      return "代码片段";
-    default:
-      return "引用";
-  }
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function CopyIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
-      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
-      <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
 }
 
