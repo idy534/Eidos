@@ -6113,77 +6113,6 @@ button.composer-context-project--empty:hover:not(:disabled) {
   font-size: 12.5px;
 }
 
-/* Line Selection Toolbar */
-.ref-preview-lines-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.6rem 1.25rem;
-  background: var(--surface-muted);
-  border-top: 1px solid var(--line);
-  flex-wrap: wrap;
-}
-.ref-preview-lines-bar__label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-}
-.ref-preview-lines-bar__label small {
-  color: var(--text-tertiary);
-  font-weight: 400;
-}
-.ref-preview-lines-bar__inputs {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.ref-preview-lines-bar__inputs label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.ref-preview-lines-bar__inputs input {
-  width: 5.5em;
-  padding: 3px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--surface-raised);
-  color: var(--text);
-  font-size: 12px;
-  font-family: var(--font-code);
-  text-align: center;
-}
-.ref-preview-lines-bar__inputs input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
-}
-.ref-preview-lines-bar__sep {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-.ref-preview-action-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border: 1px solid var(--primary-action-border);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--primary-action-bg);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 120ms ease;
-}
-.ref-preview-action-btn:hover:not(:disabled) {
-  background: var(--primary-action-bg-hover);
-}
-.ref-preview-action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* Modal Footer */
 .ref-preview-footer {
@@ -6250,8 +6179,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
   left: 0;
   bottom: calc(100% + 10px);
   z-index: 50;
-  width: min(460px, calc(100vw - 2rem));
-  max-height: min(520px, 72vh);
+  width: min(390px, calc(100vw - 2rem));
+  height: min(400px, 60vh);
   display: flex;
   flex-direction: column;
   background: var(--surface-raised, #ffffff);
@@ -6480,9 +6409,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
 
 /* List & Items */
 .input-picker__list {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
-  max-height: 320px;
   overflow-y: auto;
   padding: 6px 8px;
   scrollbar-width: thin;
@@ -6501,6 +6429,15 @@ button.composer-context-project--empty:hover:not(:disabled) {
   align-items: center;
   margin-bottom: 2px;
   position: relative;
+  border-radius: var(--radius-sm, 6px);
+  transition: background 80ms ease;
+}
+.input-picker__item-row:hover:not(:has(.is-disabled)),
+.input-picker__item-row.is-selected {
+  background: var(--surface-hover);
+}
+.input-picker__item-row.is-selected {
+  background: var(--surface-selected, var(--accent-soft));
 }
 
 .input-picker__item {
@@ -6517,14 +6454,11 @@ button.composer-context-project--empty:hover:not(:disabled) {
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition: background 80ms ease;
   white-space: nowrap;
 }
-.input-picker__item:hover:not(.is-disabled) {
-  background: var(--surface-hover);
-}
+.input-picker__item:hover:not(.is-disabled),
 .input-picker__item.is-selected {
-  background: var(--surface-selected, var(--accent-soft));
+  background: transparent;
 }
 .input-picker__item.is-disabled {
   opacity: 0.5;
@@ -6590,7 +6524,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.input-picker__item.is-selected .input-picker__item-detail {
+.input-picker__item.is-selected .input-picker__item-detail,
+.input-picker__item-row.is-selected .input-picker__item-detail {
   color: var(--text-secondary);
 }
 
@@ -6613,7 +6548,7 @@ button.composer-context-project--empty:hover:not(:disabled) {
   width: 22px;
   height: 22px;
   padding: 0;
-  margin-right: 4px;
+  margin-right: 6px;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
@@ -6624,11 +6559,12 @@ button.composer-context-project--empty:hover:not(:disabled) {
 }
 .input-picker__item-row:hover .input-picker__drilldown-btn,
 .input-picker__item-row:focus-within .input-picker__drilldown-btn,
+.input-picker__item-row.is-selected .input-picker__drilldown-btn,
 .input-picker__item-row:has(.is-selected) .input-picker__drilldown-btn {
   opacity: 1;
 }
 .input-picker__drilldown-btn:hover {
-  background: var(--surface-hover);
+  background: rgba(0, 0, 0, 0.08);
   color: var(--accent);
 }
 

@@ -891,7 +891,11 @@ export function AppShell({ runtime }: AppShellProps) {
     setOpenTabs((current) => {
       const index = current.findIndex((tab) => tab.id === tabId);
       const next = current.filter((tab) => tab.id !== tabId);
-      if (activeTabId === tabId) {
+      if (next.length === 0) {
+        setActiveTabId(undefined);
+        setDockOpen(false);
+        setDockExpanded(false);
+      } else if (activeTabId === tabId) {
         setActiveTabId(next[Math.min(index, next.length - 1)]?.id);
       }
       return next;
@@ -1004,7 +1008,12 @@ export function AppShell({ runtime }: AppShellProps) {
       showInFinder: handleShowInFinder,
     } : undefined}>
     <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
-      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}>
+      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
+      onNavigateToSession={(target) => {
+        if (settingsOpen) setSettingsOpen(false);
+        navHistoryActions.navigateTo(target);
+        handleNavigateToSession(target);
+      }}>
     <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
       <SessionSidebar
         collapsed={!sidebarOpen || settingsOpen}

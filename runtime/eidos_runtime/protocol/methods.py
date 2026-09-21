@@ -1119,6 +1119,7 @@ class ManagedSkillDto(MethodResultDto, SkillMetadataDto):
     source_kind: Literal["user", "system", "plugin"] = Field(alias="sourceKind")
     enabled: bool
     available: bool
+    icon: StrictStr | None = None
 
 
 class SkillDetailResponseDto(MethodResultDto):

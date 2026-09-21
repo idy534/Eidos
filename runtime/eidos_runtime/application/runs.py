@@ -620,9 +620,14 @@ class RunApplication:
         environment: RunStartEnvironmentPort,
     ) -> tuple[str, ModelProfileSnapshot, ModelConfig | None]:
         model_id = request.model_id
+        config: ModelConfig | None = None
+        try:
+            config = environment.model_config(model_id)
+        except Exception:
+            config = None
         try:
             selected_reasoning = MODEL_CATALOG.reasoning_selection(
-                model_id, request.reasoning_selection
+                model_id, request.reasoning_selection, config=config
             )
         except ModelConfigError as error:
             raise ApplicationError(
@@ -646,17 +651,15 @@ class RunApplication:
                 }),
                 None,
             )
-        try:
-            config = environment.model_config(model_id)
+        if config is not None:
             return (
                 model_id,
-                MODEL_CATALOG.profile(model_id).snapshot(
+                MODEL_CATALOG.profile(model_id, config=config).snapshot(
                     config, reasoning_selection=selected_reasoning
                 ),
                 config,
             )
-        except (ModelConfigError, ValueError) as error:
-            raise ApplicationError("MODEL_NOT_AVAILABLE", "model is unavailable") from error
+        raise ApplicationError("MODEL_NOT_AVAILABLE", "model is unavailable")
 
     @staticmethod
     def _abort_before_response(

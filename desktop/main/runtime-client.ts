@@ -2189,11 +2189,12 @@ function isSkillMetadata(value: unknown): value is SkillMetadata {
     isRecord(value)
     && hasOnlyKeys(value, [
       "schemaVersion", "qualifiedId", "name", "description", "pluginId",
-      "pluginVersion", "pluginHash", "contentHash", "sourceKind", "enabled", "available",
+      "pluginVersion", "pluginHash", "contentHash", "sourceKind", "enabled", "available", "icon",
     ])
     && ["system", "user", "plugin"].includes(String(value.sourceKind))
     && typeof value.enabled === "boolean"
     && typeof value.available === "boolean"
+    && (value.icon === undefined || value.icon === null || typeof value.icon === "string")
     && value.schemaVersion === 1
     && [
       "qualifiedId", "name", "description", "pluginId",

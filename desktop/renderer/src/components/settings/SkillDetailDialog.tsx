@@ -14,22 +14,46 @@ export function SkillInitial({ name }: { name: string }) {
   return <span className="skill-initial" aria-hidden="true">{Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "S"}</span>;
 }
 
-interface SkillDetailDialogProps {
-  skill: SkillMetadata | undefined;
-  pendingAction: SettingsPendingAction;
-  storageReady: boolean;
-  onToggleSkill: (id: string, enabled: boolean) => Promise<void>;
-  onRemoveSkill: (id: string) => Promise<SkillRemoval>;
-  onShowToast: (message: string, type?: "success" | "info" | "error") => void;
+export function SkillIcon({ name, icon }: { name: string; icon?: string | null | undefined }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+  }, [icon]);
+  if (icon && !failed) {
+    return (
+      <span className="skill-icon" aria-hidden="true">
+        <img src={icon} alt="" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
+  return <SkillInitial name={name} />;
+}
+
+export interface SkillDetailDialogProps {
+  skill: SkillMetadata | { qualifiedId: string; name: string; description?: string; sourceKind?: "system" | "user" | "plugin"; enabled?: boolean; available?: boolean; icon?: string | null | undefined } | undefined;
+  pendingAction?: SettingsPendingAction | undefined;
+  storageReady?: boolean | undefined;
+  onToggleSkill?: ((id: string, enabled: boolean) => Promise<void>) | undefined;
+  onRemoveSkill?: ((id: string) => Promise<SkillRemoval>) | undefined;
+  onShowToast?: ((message: string, type?: "success" | "info" | "error") => void) | undefined;
   onClose: () => void;
-  getFallbackFocus: () => HTMLElement | null;
+  getFallbackFocus?: (() => HTMLElement | null) | undefined;
+  readOnly?: boolean | undefined;
 }
 
 export function SkillDetailDialog({
-  skill, pendingAction, storageReady, onToggleSkill, onRemoveSkill,
-  onShowToast, onClose, getFallbackFocus,
+  skill,
+  pendingAction,
+  storageReady = true,
+  onToggleSkill,
+  onRemoveSkill,
+  onShowToast = () => {},
+  onClose,
+  getFallbackFocus = () => null,
+  readOnly = false,
 }: SkillDetailDialogProps) {
   const [detail, setDetail] = useState<SkillDetail>();
+  const [icon, setIcon] = useState<string | null | undefined>(skill?.icon);
   const [error, setError] = useState<string>();
   const [loadError, setLoadError] = useState<string>();
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -40,6 +64,27 @@ export function SkillDetailDialog({
   const id = skill?.qualifiedId;
   const currentDetail = detail?.qualifiedId === id ? detail : undefined;
   useDialogFocusLifecycle({ open: Boolean(skill), initialFocusRef: closeRef, getFallbackFocus });
+
+  useEffect(() => {
+    setIcon(skill?.icon);
+    if (!id || skill?.icon) return;
+    if (typeof window !== "undefined" && window.eidosRuntime?.listSkills) {
+      let active = true;
+      void window.eidosRuntime.listSkills().then(
+        (result) => {
+          if (!active) return;
+          const match = result?.skills?.find((s) => s.qualifiedId === id);
+          if (match?.icon) {
+            setIcon(match.icon);
+          }
+        },
+        () => {},
+      );
+      return () => {
+        active = false;
+      };
+    }
+  }, [id, skill?.icon]);
 
   useEffect(() => {
     setDetail(undefined);
@@ -81,7 +126,7 @@ export function SkillDetailDialog({
   }, [id, confirmRemove, busy, onClose]);
 
   async function toggle(enabled: boolean) {
-    if (!skill || busy) return;
+    if (!skill || busy || !onToggleSkill) return;
     setError(undefined);
     try {
       await onToggleSkill(skill.qualifiedId, enabled);
@@ -90,7 +135,7 @@ export function SkillDetailDialog({
   }
 
   async function remove() {
-    if (!skill || busy) return;
+    if (!skill || busy || !onRemoveSkill) return;
     setError(undefined);
     try {
       const result = await onRemoveSkill(skill.qualifiedId);
@@ -127,26 +172,49 @@ export function SkillDetailDialog({
           aria-labelledby="skill-detail-title"
           onClick={(event) => event.stopPropagation()}
         >
-          <div className="skill-detail-toolbar">
-            <Toggle checked={skill.enabled} disabled={busy || !storageReady} label={`启用或禁用 ${skill.name}`} onChange={(enabled) => void toggle(enabled)} />
-            <div className="skill-detail-actions">
-              <DropdownMenu trigger="⋯" label="技能选项" triggerAriaLabel="技能选项" items={[
-                { key: "finder", label: "在 Finder 中显示", disabled: !currentDetail || busy, onClick: () => void moreAction("finder") },
-                { key: "copy", label: "复制 Markdown", disabled: !currentDetail || busy, onClick: () => void moreAction("copy") },
-              ]} />
-              <Button ref={closeRef} variant="ghost" size="small" aria-label="关闭技能详情" disabled={busy} onClick={onClose}>×</Button>
+          <div className="skill-detail-header">
+            <div className="skill-detail-header-left">
+              <SkillIcon name={skill.name} icon={icon ?? skill.icon} />
+              <div className="skill-detail-title-group">
+                <h2 id="skill-detail-title">{skill.name}</h2>
+                <span className="skill-type-label">Skill</span>
+              </div>
+            </div>
+            <div className="skill-detail-header-right">
+              {!readOnly && onToggleSkill && (
+                <Toggle
+                  checked={Boolean(skill.enabled)}
+                  disabled={busy || !storageReady}
+                  label={`启用或禁用 ${skill.name}`}
+                  onChange={(enabled) => void toggle(enabled)}
+                />
+              )}
+              <div className="skill-detail-actions">
+                <DropdownMenu
+                  trigger="⋯"
+                  label="技能选项"
+                  triggerAriaLabel="技能选项"
+                  className="skill-detail-menu"
+                  items={[
+                    { key: "finder", label: "在 Finder 中显示", disabled: !currentDetail || busy, onClick: () => void moreAction("finder") },
+                    { key: "copy", label: "复制 Markdown", disabled: !currentDetail || busy, onClick: () => void moreAction("copy") },
+                  ]}
+                />
+                <button
+                  ref={closeRef}
+                  type="button"
+                  className="skill-detail-close-btn"
+                  aria-label="关闭技能详情"
+                  disabled={busy}
+                  onClick={onClose}
+                >
+                  ×
+                </button>
+              </div>
             </div>
           </div>
-          <div className="skill-detail-heading">
-            <SkillInitial name={skill.name} />
-            <div className="skill-detail-title-row">
-              <h2 id="skill-detail-title">{skill.name}</h2>
-              <span className="skill-status">{skill.enabled ? "已启用" : "已禁用"}</span>
-              <span className="skill-type-label">Skill</span>
-            </div>
-            <p className="skill-detail-description">{skill.description || "未提供技能说明"}</p>
-            {!skill.available && <p className="skill-availability" role="status">所属插件尚未启用。你可以保存技能开关状态，插件启用后才会生效。</p>}
-          </div>
+          <p className="skill-detail-description">{skill.description || "未提供技能说明"}</p>
+          {!skill.available && <p className="skill-availability" role="status">所属插件尚未启用。你可以保存技能开关状态，插件启用后才会生效。</p>}
           {error && !confirmRemove && <p className="setting-field-error" role="alert">{error}</p>}
           <div className="skill-detail-body" tabIndex={0} aria-label="技能说明" aria-busy={!currentDetail && !loadError}>
             {currentDetail ? (
@@ -155,27 +223,30 @@ export function SkillDetailDialog({
               <div role="alert"><p>{loadError}</p><Button variant="secondary" size="small" onClick={() => setReload((value) => value + 1)}>重试</Button></div>
             ) : <p role="status">正在读取技能说明…</p>}
           </div>
-          {skill.sourceKind !== "system" && (
+          {!readOnly && skill.sourceKind !== "system" && onRemoveSkill && (
             <div className="skill-detail-footer">
               <Button variant="danger" size="small" disabled={busy || !storageReady} onClick={() => { setError(undefined); setConfirmRemove(true); }}>卸载</Button>
             </div>
           )}
         </div>
       </div>
-      <ConfirmDialog
-        open={confirmRemove}
-        title={`卸载“${skill.name}”？`}
-        description={skill.sourceKind === "plugin"
-          ? "该技能将从列表和后续任务中移除。插件包文件会保留，插件的其他技能和 MCP 不受影响。"
-          : "该技能将从列表和后续任务中移除，技能目录也会删除。如果任务仍在运行，文件清理会延后。"}
-        confirmLabel="卸载"
-        isDestructive
-        busy={busy}
-        error={error}
-        getFallbackFocus={getFallbackFocus}
-        onConfirm={() => void remove()}
-        onCancel={() => { setConfirmRemove(false); setError(undefined); }}
-      />
+      {!readOnly && onRemoveSkill && (
+        <ConfirmDialog
+          open={confirmRemove}
+          title={`卸载“${skill.name}”？`}
+          description={skill.sourceKind === "plugin"
+            ? "该技能将从列表和后续任务中移除。插件包文件会保留，插件的其他技能和 MCP 不受影响。"
+            : "该技能将从列表和后续任务中移除，技能目录也会删除。如果任务仍在运行，文件清理会延后。"}
+          confirmLabel="卸载"
+          isDestructive
+          busy={busy}
+          error={error}
+          getFallbackFocus={getFallbackFocus}
+          onConfirm={() => void remove()}
+          onCancel={() => { setConfirmRemove(false); setError(undefined); }}
+        />
+      )}
     </>
   );
 }
+

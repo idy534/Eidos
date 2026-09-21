@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { SkillMetadata, SkillRemoval } from "../../contracts.js";
 import type { SettingsPendingAction } from "./settings-types.js";
 import { EmptySettingsState } from "./EmptySettingsState.js";
-import { SkillDetailDialog, SkillInitial } from "./SkillDetailDialog.js";
+import { SkillDetailDialog, SkillIcon, SkillInitial } from "./SkillDetailDialog.js";
 import "./SkillSettings.css";
 
 interface SkillSettingsProps {
@@ -55,7 +55,7 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
               aria-label={`${skill.name}，${skill.enabled ? "已启用" : "已禁用"}，查看详情`}
               onClick={() => setSelectedId(skill.qualifiedId)}
             >
-              <SkillInitial name={skill.name} />
+              <SkillIcon name={skill.name} icon={skill.icon} />
               <span className="skill-card-copy">
                 <span className="skill-card-name">{skill.name}</span>
                 <span className="skill-card-description">{skill.description || "未提供技能说明"}</span>

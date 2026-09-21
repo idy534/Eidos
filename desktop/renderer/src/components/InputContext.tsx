@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { userFacingError } from "../session-state.js";
 import { FileIcon, FolderIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
+import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 interface InputContextValue {
   sessionId: string;
@@ -14,14 +15,27 @@ interface InputContextValue {
   paste(): Promise<void>;
   settings(section?: string): void;
   reuse(reference: InputReference): void;
+  navigateToSession?: ((sessionId: string) => void) | undefined;
 }
 const Context = createContext<InputContextValue | null>(null);
 export const useInputContext = () => useContext(Context);
 
-export function InputContextProvider({ sessionId, workspaceRoot, ready, onAdd, onSettings, children }: {
-  sessionId: string | undefined; workspaceRoot: string | undefined; ready: boolean;
+export function InputContextProvider({
+  sessionId,
+  workspaceRoot,
+  ready,
+  onAdd,
+  onSettings,
+  onNavigateToSession,
+  children,
+}: {
+  sessionId: string | undefined;
+  workspaceRoot: string | undefined;
+  ready: boolean;
   onAdd(id: string, reference: InputReference): void;
-  onSettings(section?: string): void; children: ReactNode;
+  onSettings(section?: string): void;
+  onNavigateToSession?: ((sessionId: string) => void) | undefined;
+  children: ReactNode;
 }) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
@@ -59,6 +73,7 @@ export function InputContextProvider({ sessionId, workspaceRoot, ready, onAdd, o
     sessionId, workspaceRoot: workspaceRoot ?? "", busy: Boolean(counts[sessionId]), error: errors[sessionId], add, paths,
     paste: () => work(() => window.eidosRuntime.pasteInputImage()), settings: onSettings,
     reuse: (reference) => { if (ready) addRef.current(sessionId, reference); },
+    navigateToSession: onNavigateToSession,
   } : null}>{children}</Context.Provider>;
 }
 
@@ -96,8 +111,26 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
             <button
               type="button"
               className="input-reference__btn"
-              title={reference.source}
-              onClick={() => {
+              title={
+                reference.kind === "history"
+                  ? "跳转到该对话"
+                  : reference.kind === "file" || reference.kind === "directory"
+                    ? `在 Finder 中显示：${reference.source}`
+                    : reference.source
+              }
+              onClick={async () => {
+                if (reference.kind === "history") {
+                  context?.navigateToSession?.(reference.source);
+                  return;
+                }
+                if (reference.kind === "file" || reference.kind === "directory") {
+                  try {
+                    await window.eidosRuntime.showItemInFolder(reference.source);
+                  } catch (cause) {
+                    setError(userFacingError(cause));
+                  }
+                  return;
+                }
                 const token = ++request.current;
                 setError(undefined);
                 void window.eidosRuntime.readInput(reference.id).then((value) => {
@@ -134,19 +167,29 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
             onClose={() => setPreview(undefined)}
             onReuse={context ? () => context.reuse(preview.reference) : undefined}
           />
+        ) : preview.reference.kind === "skill" ? (
+          <SkillDetailDialog
+            skill={{
+              qualifiedId: preview.reference.source,
+              name: preview.reference.label,
+              description: preview.text,
+              sourceKind: "user",
+              enabled: true,
+              available: true,
+              schemaVersion: 1,
+              pluginId: "",
+              pluginVersion: "",
+              pluginHash: "",
+              contentHash: preview.reference.sha256 || "",
+            }}
+            readOnly
+            onClose={() => setPreview(undefined)}
+          />
         ) : (
           <ReferencePreviewModal
             preview={preview}
             onClose={() => setPreview(undefined)}
             onReuse={context ? () => context.reuse(preview.reference) : undefined}
-            onAddLineRange={context && preview.reference.kind === "file" && preview.reference.status === "content" ? (startLine, endLine) => {
-              void context.add({
-                kind: "file",
-                source: preview.reference.source,
-                startLine,
-                endLine,
-              });
-            } : undefined}
           />
         )
       )}
@@ -230,17 +273,12 @@ function ReferencePreviewModal({
   preview,
   onClose,
   onReuse,
-  onAddLineRange,
 }: {
   preview: InputPreview;
   onClose(): void;
   onReuse?: (() => void) | undefined;
-  onAddLineRange?: ((startLine: number, endLine: number) => void) | undefined;
 }) {
   const lines = preview.text ? preview.text.split("\n") : [];
-  const totalLines = lines.length;
-  const [firstLine, setFirstLine] = useState(1);
-  const [lastLine, setLastLine] = useState(Math.max(1, totalLines));
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -261,11 +299,6 @@ function ReferencePreviewModal({
     }
   };
 
-  const isLineHighlighted = (lineNum: number) => {
-    if (!onAddLineRange) return false;
-    return lineNum >= firstLine && lineNum <= lastLine;
-  };
-
   const renderBodyContent = () => {
     const kind = preview.reference.kind;
     if (kind === "file" || kind === "excerpt") {
@@ -275,7 +308,7 @@ function ReferencePreviewModal({
             {lines.map((_, index) => (
               <span
                 key={index}
-                className={`ref-preview-line-number${isLineHighlighted(index + 1) ? " is-highlighted" : ""}`}
+                className="ref-preview-line-number"
               >
                 {index + 1}
               </span>
@@ -286,7 +319,7 @@ function ReferencePreviewModal({
               {lines.map((line, index) => (
                 <div
                   key={index}
-                  className={`ref-preview-code-line${isLineHighlighted(index + 1) ? " is-highlighted" : ""}`}
+                  className="ref-preview-code-line"
                 >
                   {line || " "}
                 </div>
@@ -425,48 +458,6 @@ function ReferencePreviewModal({
         <div className="ref-preview-body">
           {renderBodyContent()}
         </div>
-
-        {onAddLineRange && (
-          <div className="ref-preview-lines-bar">
-            <span className="ref-preview-lines-bar__label">
-              截取行范围 <small>(共 {totalLines} 行)</small>
-            </span>
-            <div className="ref-preview-lines-bar__inputs">
-              <label>
-                <span>起始</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={totalLines}
-                  value={firstLine}
-                  onChange={(e) => setFirstLine(Number(e.target.value))}
-                />
-              </label>
-              <span className="ref-preview-lines-bar__sep">至</span>
-              <label>
-                <span>结束</span>
-                <input
-                  type="number"
-                  min={firstLine}
-                  max={totalLines}
-                  value={lastLine}
-                  onChange={(e) => setLastLine(Number(e.target.value))}
-                />
-              </label>
-            </div>
-            <button
-              type="button"
-              className="ref-preview-action-btn"
-              disabled={!Number.isSafeInteger(firstLine) || firstLine < 1 || !Number.isSafeInteger(lastLine) || lastLine < firstLine}
-              onClick={() => {
-                onAddLineRange(firstLine, lastLine);
-                onClose();
-              }}
-            >
-              引用选定行范围 ({lastLine - firstLine + 1} 行)
-            </button>
-          </div>
-        )}
 
         <div className="ref-preview-footer">
           <div className="ref-preview-footer__meta">

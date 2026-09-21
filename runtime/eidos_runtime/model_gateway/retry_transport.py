@@ -149,7 +149,9 @@ class RetryTransportClient:
             "model transport retry provider=%s model_id=%s wire_api=%s "
             "transport_attempt_number=%s max_attempts=%s failure_classification=%s "
             "http_status=%s selected_backoff_seconds=%s retry_after_applied=%s",
-            MODEL_CATALOG.provider_id_for(self._profile.id),
+            MODEL_CATALOG.provider_id_for(
+                self._profile.id, vendor=self._profile.vendor
+            ),
             self._profile.id,
             self._wire_api,
             state.attempt_number,

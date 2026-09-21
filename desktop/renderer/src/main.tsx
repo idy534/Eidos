@@ -6,6 +6,7 @@ import { App } from "./App";
 import "./styles.css";
 import "./components/response-actions.css";
 import "./components/TurnResults.css";
+import "./components/settings/SkillSettings.css";
 
 
 createRoot(document.getElementById("root")!).render(

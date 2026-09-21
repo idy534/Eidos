@@ -77,21 +77,16 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
   useEffect(() => {
     let active = true;
     if (mode !== "all" || !context || context.sessionId.startsWith("draft-")) { setFiles([]); return; }
-    const slash = query.lastIndexOf("/");
-    const directory = slash < 0 ? "." : query.slice(0, slash) || ".";
-    if (directory.startsWith("/") || directory.split("/").includes("..")) { setFiles([]); return; }
-    const timer = setTimeout(() => {
-      void window.eidosRuntime.listWorkspaceDirectory(context.sessionId, directory, 200).then((result) => {
-        if (!active) return;
-        setFiles(result.entries.map((entry) => ({ id: `file:${entry.relativePath}`, label: entry.name,
-          detail: entry.kind === "directory" ? "文件夹" : "文件",
-          request: { kind: entry.kind === "directory" ? "directory" : "file", source: `${context.workspaceRoot}/${entry.relativePath}` },
-        })));
-        if (result.truncated) setError("当前目录结果较多，请输入子目录路径缩小范围。");
-      }, (cause) => { if (active) { setFiles([]); setError(userFacingError(cause)); } });
-    }, 150);
-    return () => { active = false; clearTimeout(timer); };
-  }, [mode, query, context?.sessionId, context?.workspaceRoot]);
+    void window.eidosRuntime.listWorkspaceDirectory(context.sessionId, ".", 200).then((result) => {
+      if (!active) return;
+      setFiles(result.entries.map((entry) => ({ id: `file:${entry.relativePath}`, label: entry.name,
+        detail: entry.kind === "directory" ? "文件夹" : "文件",
+        request: { kind: entry.kind === "directory" ? "directory" : "file", source: `${context.workspaceRoot}/${entry.relativePath}` },
+      })));
+      if (result.truncated) setError("当前目录结果较多。");
+    }, (cause) => { if (active) { setFiles([]); setError(userFacingError(cause)); } });
+    return () => { active = false; };
+  }, [mode, context?.sessionId, context?.workspaceRoot]);
 
   const needle = query.toLocaleLowerCase();
   const candidates = (history ?? [...files, ...catalog]).filter((value) =>
@@ -141,7 +136,7 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
             <input
               autoFocus
               aria-label="搜索引用"
-              placeholder="搜索名称，或输入 src/ 查看目录…"
+              placeholder="搜索名称…"
               value={query}
               onChange={(event) => onQuery(event.target.value)}
             />
@@ -251,7 +246,11 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
 
       <div id={listId} role="listbox" aria-label="引用候选" className="input-picker__list">
         {candidates.map((candidate, row) => (
-          <div key={candidate.id} className="input-picker__item-row">
+          <div
+            key={candidate.id}
+            className={`input-picker__item-row${index === row ? " is-selected" : ""}`}
+            onPointerMove={() => setIndex(row)}
+          >
             <button
               type="button"
               id={`${listId}-${row}`}
@@ -278,7 +277,8 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 className="input-picker__drilldown-btn"
                 title="选择消息"
                 aria-label="选择消息"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   const source = candidate.request!.source;
                   void window.eidosRuntime.readSession(source, { itemLimit: 100 }).then((snapshot) => {
                     setCategory("all");

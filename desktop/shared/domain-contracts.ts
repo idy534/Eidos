@@ -601,6 +601,7 @@ export interface SkillMetadata {
   pluginVersion: string;
   pluginHash: string;
   contentHash: string;
+  icon?: string | null | undefined;
 }
 
 export interface SkillListResult {
