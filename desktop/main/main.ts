@@ -206,6 +206,11 @@ function clientOrThrow(): RuntimeClient {
 
 const terminalManager = new TerminalManager({
   readSession: (sessionId) => clientOrThrow().readSession(sessionId),
+  resolveProjectRoot: async (projectId) => {
+    const project = (await clientOrThrow().listProjects()).items.find((item) => item.id === projectId);
+    if (!project) throw new Error("Project 当前不可用。");
+    return project.workspaceRoot;
+  },
   spawn: (file, args, options) => nodePty.spawn(file, args, options),
 });
 
@@ -776,7 +781,22 @@ ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (
   );
 });
 ipcMain.handle(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
-ipcMain.handle(IPC.BROWSER_OPEN, (event, id: unknown, browserId: unknown, url: unknown) => artifactPreview.open(previewOwner(event), previewString(id), previewString(browserId), previewString(url)));
+ipcMain.handle(IPC.BROWSER_OPEN, (
+  event,
+  id: unknown,
+  browserId: unknown,
+  url: unknown,
+  workspaceRoot: unknown,
+) => {
+  if (workspaceRoot !== undefined && typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
+  return artifactPreview.open(
+    previewOwner(event),
+    previewString(id),
+    previewString(browserId),
+    previewString(url),
+    typeof workspaceRoot === "string" ? workspaceRoot : undefined,
+  );
+});
 ipcMain.handle(IPC.BROWSER_CLOSE, (event, id: unknown, browserId: unknown) => artifactPreview.close(previewOwner(event), previewString(id), previewString(browserId)));
 ipcMain.handle(IPC.BROWSER_STATE, (event, id: unknown, browserId: unknown) => artifactPreview.state(previewOwner(event), previewString(id), previewString(browserId)));
 ipcMain.handle(IPC.BROWSER_ANNOTATE, (event, id: unknown, browserId: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id), previewString(browserId)));
@@ -813,9 +833,23 @@ ipcMain.handle(IPC.WORKSPACE_SHOW_IN_FINDER, async (_event, targetPath: unknown)
     throw new Error("无法在 Finder 中显示该路径。");
   }
 });
-ipcMain.handle(IPC.TERMINAL_CREATE, (event, sessionId: unknown) => {
-  if (typeof sessionId !== "string") throw new Error("Session 参数无效。");
-  return terminalManager.create(event.sender, sessionId);
+ipcMain.handle(IPC.TERMINAL_CREATE, (
+  event,
+  sessionId: unknown,
+  workspaceRoot: unknown,
+  projectId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || (workspaceRoot !== undefined && typeof workspaceRoot !== "string")
+    || (projectId !== undefined && typeof projectId !== "string")
+  ) throw new Error("Terminal 参数无效。");
+  return terminalManager.create(
+    event.sender,
+    sessionId,
+    typeof workspaceRoot === "string" ? workspaceRoot : undefined,
+    typeof projectId === "string" ? projectId : undefined,
+  );
 });
 ipcMain.handle(IPC.TERMINAL_WRITE, (event, terminalId: unknown, data: unknown) => {
   if (typeof terminalId !== "string" || typeof data !== "string") {

@@ -92,7 +92,12 @@ export interface EidosRuntimeAPI {
     projectId?: string,
   ): Promise<string>;
   releaseWorkspacePreview(url: string): Promise<void>;
-  openBrowser(sessionId: string, browserId: string, url: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  openBrowser(
+    sessionId: string,
+    browserId: string,
+    url: string,
+    workspaceRoot?: string,
+  ): Promise<import("./domain-contracts.js").BrowserPageState>;
   setBrowserBounds(sessionId: string, browserId: string, bounds: import("./domain-contracts.js").BrowserBounds | null): Promise<void>;
   closeBrowser(sessionId: string, browserId: string): Promise<void>;
   readBrowserState(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
@@ -107,7 +112,7 @@ export interface EidosRuntimeAPI {
   showItemInFolder(path: string): Promise<void>;
 
   // User terminal
-  createTerminal(sessionId: string): Promise<TerminalSessionInfo>;
+  createTerminal(sessionId: string, workspaceRoot?: string, projectId?: string): Promise<TerminalSessionInfo>;
   writeTerminal(terminalId: string, data: string): Promise<void>;
   resizeTerminal(terminalId: string, columns: number, rows: number): Promise<void>;
   closeTerminal(terminalId: string): Promise<void>;

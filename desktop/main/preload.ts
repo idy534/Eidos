@@ -99,7 +99,12 @@ const api: EidosRuntimeAPI = {
     projectId?: string,
   ) => ipcRenderer.invoke(IPC.WORKSPACE_PREVIEW_URL, sessionId, path, version, workspaceRoot, projectId),
   releaseWorkspacePreview: (url: string) => ipcRenderer.invoke(IPC.WORKSPACE_RELEASE_PREVIEW, url),
-  openBrowser: (sessionId: string, browserId: string, url: string) => ipcRenderer.invoke(IPC.BROWSER_OPEN, sessionId, browserId, url),
+  openBrowser: (
+    sessionId: string,
+    browserId: string,
+    url: string,
+    workspaceRoot?: string,
+  ) => ipcRenderer.invoke(IPC.BROWSER_OPEN, sessionId, browserId, url, workspaceRoot),
   setBrowserBounds: (sessionId: string, browserId: string, bounds: import("../shared/domain-contracts.js").BrowserBounds | null) => ipcRenderer.invoke(IPC.BROWSER_BOUNDS, sessionId, browserId, bounds),
   closeBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_CLOSE, sessionId, browserId),
   readBrowserState: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_STATE, sessionId, browserId),
@@ -117,8 +122,12 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.WORKSPACE_SHOW_IN_FINDER, path),
 
   // User terminal
-  createTerminal: (sessionId: string): Promise<TerminalSessionInfo> =>
-    ipcRenderer.invoke(IPC.TERMINAL_CREATE, sessionId),
+  createTerminal: (
+    sessionId: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<TerminalSessionInfo> =>
+    ipcRenderer.invoke(IPC.TERMINAL_CREATE, sessionId, workspaceRoot, projectId),
   writeTerminal: (terminalId: string, data: string): Promise<void> =>
     ipcRenderer.invoke(IPC.TERMINAL_WRITE, terminalId, data),
   resizeTerminal: (terminalId: string, columns: number, rows: number): Promise<void> =>

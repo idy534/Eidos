@@ -42,6 +42,7 @@ export interface TerminalSpawnOptions {
 
 export interface TerminalManagerDependencies {
   readSession(sessionId: string): Promise<SessionSnapshot>;
+  resolveProjectRoot?(projectId: string): Promise<string>;
   spawn(file: string, args: string[], options: TerminalSpawnOptions): TerminalProcess;
   resolveDirectory?(root: string): Promise<string>;
   environment?: NodeJS.ProcessEnv;
@@ -102,14 +103,20 @@ export class TerminalManager {
     this.createId = deps.createId ?? randomUUID;
   }
 
-  async create(owner: TerminalOwner, sessionId: string): Promise<TerminalSessionInfo> {
+  async create(
+    owner: TerminalOwner,
+    sessionId: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<TerminalSessionInfo> {
     validateIdentifier(sessionId, "Session ");
     if (owner.isDestroyed()) throw new Error("终端窗口已经关闭。");
     this.reserveOwner(owner.id);
 
     try {
-      const snapshot = await this.deps.readSession(sessionId);
-      const root = this.executionRoot(snapshot);
+      const root = sessionId.startsWith("draft-")
+        ? await this.draftExecutionRoot(workspaceRoot, projectId)
+        : this.executionRoot(await this.deps.readSession(sessionId));
       let cwd: string;
       try {
         cwd = await this.resolveDirectory(root);
@@ -204,6 +211,18 @@ export class TerminalManager {
       throw new Error("Worktree 当前不可用。");
     }
     return worktree.worktreeRoot;
+  }
+
+  private async draftExecutionRoot(
+    workspaceRoot: string | undefined,
+    projectId: string | undefined,
+  ): Promise<string> {
+    if (!projectId) throw new Error("Projectless 会话不提供终端。");
+    const root = this.deps.resolveProjectRoot
+      ? await this.deps.resolveProjectRoot(projectId)
+      : workspaceRoot;
+    if (!root) throw new Error("Workspace 当前不可用。");
+    return root;
   }
 
   private reserveOwner(ownerId: number): void {

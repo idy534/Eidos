@@ -716,14 +716,13 @@ export function AppShell({ runtime }: AppShellProps) {
         currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
       ].join(":")
     : "empty";
-  // Draft 只在已选择 Project 时提供 Files。Projectless draft 没有可绑定的工作区。
-  const availableTools: WorkspaceToolKind[] = isDraft
-    ? (currentSnapshot?.session.project?.id && currentSnapshot.session.workspaceRoot ? ["files"] : [])
-    : sessionHasProject
-      ? sessionHasGit
-        ? ["review", "terminal", "files", "browser"]
-        : ["terminal", "files", "browser"]
-      : currentSnapshot ? ["files", "browser"] : [];
+  const availableTools: WorkspaceToolKind[] = currentSnapshot
+    ? [
+        ...(sessionHasGit ? ["review" as const] : []),
+        ...(sessionHasProject ? ["terminal", "files"] as const : []),
+        "browser",
+      ]
+    : [];
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -1348,14 +1347,15 @@ export function AppShell({ runtime }: AppShellProps) {
                         onSendReviewFeedback={handleReviewFeedback}
                         reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
                         workflowDisabled={
-                          Boolean(activeRun)
+                          isDraft
+                          || Boolean(activeRun)
                           || runState.isSubmitting
                           || handoffBusy
                           || sessionState.pending.branchSessionId === currentSnapshot.session.id
                           || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
                         }
                         onCreateBranch={
-                          sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
+                          !isDraft && (sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null))
                             ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")
                             : undefined
                         }
@@ -1369,6 +1369,10 @@ export function AppShell({ runtime }: AppShellProps) {
                         <TerminalPanel
                           key={tab.id}
                           sessionId={currentSnapshot.session.id}
+                          workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
+                          {...(currentSnapshot.session.project?.id
+                            ? { projectId: currentSnapshot.session.project.id }
+                            : {})}
                           active={activeTabId === tab.id}
                         />
                       </Suspense>
@@ -1376,6 +1380,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   }
                   if (tab.kind === "browser") return <BrowserPanel
                     key={executionKey} browserId={tab.id} sessionId={currentSnapshot.session.id} executionKey={executionKey}
+                    workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
                     active={dockOpen && activeTabId === tab.id}
                     request={browserRequest?.browserId === tab.id ? { url: browserRequest.url, id: browserRequest.id } : undefined}
                   />;

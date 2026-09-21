@@ -6,9 +6,11 @@ import "@xterm/xterm/css/xterm.css";
 interface TerminalPanelProps {
   sessionId: string;
   active: boolean;
+  workspaceRoot?: string;
+  projectId?: string;
 }
 
-export function TerminalPanel({ sessionId, active }: TerminalPanelProps) {
+export function TerminalPanel({ sessionId, active, workspaceRoot, projectId }: TerminalPanelProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -76,7 +78,7 @@ export function TerminalPanel({ sessionId, active }: TerminalPanelProps) {
       : new ResizeObserver(fit);
     resizeObserver?.observe(host);
 
-    void window.eidosRuntime.createTerminal(sessionId).then((created) => {
+    void window.eidosRuntime.createTerminal(sessionId, workspaceRoot, projectId).then((created) => {
       if (disposed) {
         void window.eidosRuntime.closeTerminal(created.terminalId).catch(() => undefined);
         return;
@@ -109,7 +111,7 @@ export function TerminalPanel({ sessionId, active }: TerminalPanelProps) {
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, workspaceRoot, projectId]);
 
   useEffect(() => {
     if (!active) return;

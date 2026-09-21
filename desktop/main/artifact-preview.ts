@@ -35,6 +35,11 @@ export class ArtifactPreviewManager {
     return root;
   }
 
+  private async browserRoot(sessionId: string, workspaceRoot?: string): Promise<string> {
+    if (workspaceRoot || !sessionId.startsWith("draft-")) return this.root(sessionId, workspaceRoot);
+    return "";
+  }
+
   async prepare(
     owner: WebContents,
     sessionId: string,
@@ -137,19 +142,36 @@ export class ArtifactPreviewManager {
     });
   }
 
-  async open(owner: WebContents, sessionId: string, browserId: string, target: string): Promise<BrowserPageState> {
+  async open(
+    owner: WebContents,
+    sessionId: string,
+    browserId: string,
+    target: string,
+    workspaceRoot?: string,
+  ): Promise<BrowserPageState> {
     const key = this.key(owner, sessionId, browserId);
     const generation = (this.generation.get(key) ?? 0) + 1;
     this.generation.set(key, generation);
-    const root = await this.root(sessionId);
+    const parsed = new URL(target);
+    if (![
+      "http:",
+      "https:",
+      "eidos-preview:",
+    ].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error("仅支持网页地址或当前文件预览。");
+    }
+    const source = parsed.protocol === "eidos-preview:" ? this.grants.get(parsed.hostname) : undefined;
+    if (parsed.protocol === "eidos-preview:" && (
+      !source
+      || source.owner !== owner.id
+      || source.sessionId !== sessionId
+    )) throw new Error("文件预览已失效。");
+    const root = source?.root ?? await this.browserRoot(sessionId, workspaceRoot);
     if (owner.isDestroyed() || this.generation.get(key) !== generation) throw new Error("页面请求已取消。");
     let entry = this.browsers.get(key);
     if (entry && entry.root !== root) { this.close(owner, sessionId, browserId); this.generation.set(key, generation); entry = undefined; }
-    const parsed = new URL(target);
-    if (!["http:", "https:", "eidos-preview:"].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error("仅支持网页地址或当前文件预览。");
     if (parsed.protocol === "eidos-preview:") {
-      const grant = this.grants.get(parsed.hostname);
-      if (!grant || grant.owner !== owner.id || grant.sessionId !== sessionId || grant.root !== root) throw new Error("文件预览已失效。");
+      if (source!.root !== root) throw new Error("文件预览已失效。");
     }
     if (!entry) {
       if (this.browsers.size >= 8) throw new Error("打开的网页过多。");
@@ -222,7 +244,7 @@ export class ArtifactPreviewManager {
 
   async annotate(owner: WebContents, sessionId: string, browserId: string): Promise<BrowserAnnotation> {
     const entry = this.browsers.get(this.key(owner, sessionId, browserId));
-    if (!entry || await this.root(sessionId) !== entry.root) throw new Error("页面已失效。");
+    if (!entry || (!sessionId.startsWith("draft-") && await this.root(sessionId) !== entry.root)) throw new Error("页面已失效。");
     const wc = entry.view.webContents;
     const url = wc.getURL();
     const selection: unknown = await wc.executeJavaScript("String(window.getSelection()?.toString() || '').slice(0, 4096)");
