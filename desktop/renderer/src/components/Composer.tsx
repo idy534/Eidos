@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } f
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
+import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
 import { ReasoningSelector } from "./ReasoningSelector.js";
@@ -256,6 +257,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       />
       <div className="composer-actions">
         <div className="composer-meta">
+          {onApprovalModeChange && (
+            <ApprovalModeSelector
+              mode={approvalMode}
+              disabled={composerMode !== "idle" || isSubmitting}
+              onChange={onApprovalModeChange}
+            />
+          )}
           {!isIdle && <span>{statusLabel}</span>}
           {!modelConfigured && (
             <Button type="button" variant="ghost" size="small" onClick={onOpenModelSettings}>
@@ -265,22 +273,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         </div>
 
         <div className="composer-options">
-          {onApprovalModeChange && <select
-            aria-label="审批模式"
-            className="composer-approval-mode"
-            value={approvalMode}
-            disabled={composerMode !== "idle" || isSubmitting}
-            title={approvalMode === "auto_review"
-              ? "模型处理原本需要审批的操作；拒绝后返回理由，不弹出人工审批窗口。"
-              : approvalMode === "full_access"
-                ? "任务启动前需要确认风险；本次任务不再逐项审批。"
-                : "需要审批时由你批准或拒绝。"}
-            onChange={(event) => onApprovalModeChange(event.target.value as ApprovalMode)}
-          >
-            <option value="manual">人工审批</option>
-            <option value="auto_review">替我审批（推荐）</option>
-            <option value="full_access">完全访问</option>
-          </select>}
           {showContextIndicator && <ContextIndicator usage={contextUsage} />}
           {modelList && modelList.models.length > 0 && (
             <ReasoningSelector

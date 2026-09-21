@@ -5222,4 +5222,299 @@ button.composer-context-project--empty:hover:not(:disabled) {
   }
 }
 
-.composer-approval-mode { font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; padding: 4px 6px; max-width: 11rem; }
+/* Approval Mode Selector */
+.approval-mode-selector {
+  position: relative;
+  flex: none;
+  color: var(--text);
+}
+
+.approval-mode-selector__trigger {
+  display: inline-flex;
+  max-width: min(16rem, 42vw);
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  border-radius: 0.55rem;
+  padding: 0.3rem 0.55rem;
+  background: white;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.approval-mode-selector__trigger-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.approval-mode-selector__trigger svg {
+  flex: none;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.approval-mode-selector__trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.approval-mode-selector__trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.approval-mode-selector__trigger:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.approval-mode-selector__panel {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  bottom: calc(100% + 0.5rem);
+  width: min(20rem, calc(100vw - 2rem));
+  box-sizing: border-box;
+  padding: 0.55rem 0.7rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: white;
+  box-shadow: 0 0.7rem 2rem rgb(25 30 26 / 16%);
+}
+
+.approval-mode-selector__header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.25rem;
+  padding: 0.1rem 0.2rem 0.1rem;
+}
+
+.approval-mode-selector__header h2 {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.approval-mode-selector__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.approval-mode-selector__choice {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.approval-mode-selector__choice input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.approval-mode-selector__choice:hover:not(.is-selected) {
+  background: var(--surface-hover);
+}
+
+.approval-mode-selector__choice.is-selected {
+  background: var(--surface-muted);
+}
+
+.approval-mode-selector__choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.approval-mode-selector__choice-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
+
+.approval-mode-selector__choice-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.approval-mode-selector__choice-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.approval-mode-selector__choice-name--danger {
+  color: var(--danger);
+}
+
+.approval-mode-selector__choice-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  line-height: 1.2;
+}
+
+.approval-mode-selector__choice-badge--danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.approval-mode-selector__choice-desc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.35;
+}
+
+.approval-mode-selector__check {
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  flex: none;
+  margin-top: 0.1rem;
+}
+
+.approval-mode-selector__trigger--danger {
+  color: var(--danger);
+}
+
+.approval-mode-selector__trigger--danger .approval-mode-selector__trigger-text {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.approval-mode-selector__trigger--danger svg {
+  color: var(--danger);
+}
+
+.approval-mode-selector__choice--full-access.is-selected .approval-mode-selector__check {
+  color: var(--danger);
+}
+
+/* Approval Resolving / Status Banner */
+.approval-status-banner {
+  flex: none;
+  width: min(calc(100% - 3.5rem), var(--session-content-width));
+  margin: 0 auto 0.75rem;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding: 0.6rem 0.95rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(49, 95, 74, 0.16);
+  background: linear-gradient(135deg, rgba(223, 233, 226, 0.45) 0%, rgba(255, 255, 255, 0.9) 100%);
+  box-shadow: 0 2px 10px rgba(25, 30, 26, 0.05);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: modal-fade-in 160ms ease-out;
+}
+
+.approval-status-banner--danger {
+  border-color: rgba(145, 61, 52, 0.22);
+  background: linear-gradient(135deg, rgba(244, 226, 223, 0.5) 0%, rgba(255, 255, 255, 0.9) 100%);
+}
+
+.approval-status-banner__main {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.approval-status-banner__icon-wrap {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.approval-status-banner--danger .approval-status-banner__icon-wrap {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.approval-status-banner__spinner {
+  animation: btn-spin 0.9s linear infinite;
+  flex: none;
+}
+
+.approval-status-banner__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.approval-status-banner__title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.approval-status-banner__hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.3;
+}
+
+.approval-status-banner__badge {
+  flex: none;
+}
+
+.approval-status-banner__badge span {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  line-height: 1.25;
+}
+
+.approval-status-banner--danger .approval-status-banner__badge span {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+
+

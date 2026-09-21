@@ -233,6 +233,45 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
   });
 
+  it("shows the approval mode selector and reports the next Run mode", () => {
+    const onApprovalModeChange = vi.fn();
+    const { rerender } = render(
+      <Composer
+        {...defaultProps}
+        approvalMode="manual"
+        onApprovalModeChange={onApprovalModeChange}
+      />,
+    );
+
+    const selector = screen.getByRole("button", { name: "审批模式：人工审批" });
+    expect(selector).toHaveTextContent("人工审批");
+
+    fireEvent.click(selector);
+    const autoReview = screen.getByRole("radio", { name: /替我审批.*推荐/ });
+    expect(autoReview).toBeInTheDocument();
+    fireEvent.click(autoReview);
+    expect(onApprovalModeChange).toHaveBeenCalledWith("auto_review");
+
+    rerender(
+      <Composer
+        {...defaultProps}
+        approvalMode="full_access"
+        onApprovalModeChange={onApprovalModeChange}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "审批模式：完全访问" })).toBeInTheDocument();
+
+    rerender(
+      <Composer
+        {...defaultProps}
+        composerMode="waiting_approval"
+        approvalMode="auto_review"
+        onApprovalModeChange={onApprovalModeChange}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "审批模式：替我审批" })).toBeDisabled();
+  });
+
   it("starting mode presents starting loading state", () => {
     render(
       <Composer

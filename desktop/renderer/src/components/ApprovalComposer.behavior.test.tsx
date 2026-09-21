@@ -24,6 +24,25 @@ describe("Approval composer slot", () => {
     </ComposerSlot>);
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
+
+  it.each([
+    ["auto_review", "模型正在审查操作…"],
+    ["full_access", "正在处理完全访问授权…"],
+  ] as const)("does not show manual buttons while %s is resolving", (approvalMode, message) => {
+    render(
+      <ComposerSlot
+        run={{ ...run, approvalMode }}
+        approval={approval}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      >
+        <textarea aria-label="message" />
+      </ComposerSlot>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(message);
+    expect(screen.queryByRole("button", { name: "批准" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
+  });
 });
 
 it.each(["approve", "reject"] as const)("disables both buttons while responding %s", (kind) => {

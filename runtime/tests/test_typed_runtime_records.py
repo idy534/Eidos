@@ -27,6 +27,7 @@ def _run_row() -> dict[str, object]:
         "session_id": "session-1",
         "user_input": "Inspect the repository",
         "model_id": "model-1",
+        "approval_mode": "manual",
         "status": "running",
         "model_step_count": 2,
         "reconciliation_required": 0,
@@ -107,6 +108,7 @@ def test_core_mappers_return_frozen_domain_records_and_preserve_nullable_facts()
         "approval_kind": "tool",
         "decision": None,
         "feedback": None,
+        "review_json": None,
         "created_at": 1000,
         "decided_at": None,
     })

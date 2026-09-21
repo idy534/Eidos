@@ -745,12 +745,25 @@ class RunRepository(Repository):
     ]:
         with self.lock, self._connection() as connection:
             run_row = connection.execute(
-                "SELECT session_id, status FROM runs WHERE id = ?", (run_id,)
+                """
+                SELECT session_id, status, reconciliation_required
+                FROM runs WHERE id = ?
+                """,
+                (run_id,),
             ).fetchone()
             if run_row is None:
                 raise ResourceNotFoundError("run not found")
             if run_row["status"] != RunStatus.FINALIZING.value:
                 raise InvalidRunStateError("run status changed")
+            reconciliation_required = bool(run_row["reconciliation_required"])
+            terminal_status = (
+                RunStatus.INTERRUPTED if reconciliation_required else RunStatus.STOPPED
+            )
+            terminal_reason = (
+                "side_effect_reconciliation_required"
+                if reconciliation_required
+                else stop_reason
+            )
             item: dict[str, object] | None = None
             item_event: dict[str, object] | None = None
             attempt_event: dict[str, object] | None = None
@@ -836,16 +849,20 @@ class RunRepository(Repository):
                 connection,
                 run_id,
                 frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.COMPLETED,
+                (
+                    SegmentStatus.FAILED
+                    if reconciliation_required
+                    else SegmentStatus.COMPLETED
+                ),
                 now,
-                "run_stopped",
+                terminal_reason,
             )
             run, run_event = transition_run(
                 connection,
                 run_id,
                 frozenset({RunStatus.FINALIZING}),
-                RunStatus.STOPPED,
-                stop_reason,
+                terminal_status,
+                terminal_reason,
             )
         events = (
             *((attempt_event,) if attempt_event is not None else ()),

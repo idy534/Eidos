@@ -1056,17 +1056,6 @@ ipcMain.handle(IPC.RUN_START, async (
   ) {
     throw new Error("Run 参数无效。");
   }
-  if (approvalMode === "full_access") {
-    const { response } = await dialog.showMessageBox({
-      type: "warning",
-      title: "开启完全访问？",
-      message: "Eidos 将不再逐项请求批准",
-      detail: "本次任务将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任当前任务时开启。",
-      buttons: ["取消", "开启完全访问并开始"],
-      defaultId: 0, cancelId: 0, noLink: true,
-    });
-    if (response !== 1) throw new Error("你已取消开启完全访问，任务未启动。");
-  }
   return clientOrThrow().startRun(
     sessionId,
     userInput,

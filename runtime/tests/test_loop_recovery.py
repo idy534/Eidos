@@ -29,7 +29,7 @@ class LoopRecoveryTests(unittest.TestCase):
         self.store.close()
         self.temporary.cleanup()
 
-    def test_unresolved_shell_stops_after_three_distinct_read_rounds(self) -> None:
+    def test_unresolved_shell_interrupts_after_three_distinct_read_rounds(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect failed test evidence")
         original = self.store.create_tool_item(run["id"], 0, 0, "original-shell", "run_shell", "{}")
         self.store.begin_durable_intent(original["id"], preconditions={}, approval_required=False)
@@ -49,10 +49,11 @@ class LoopRecoveryTests(unittest.TestCase):
 
         RuntimeLoop(self.store, model, lambda _message: None).run(run["id"], threading.Event())
 
-        stopped = self.store.read_run(run["id"])
-        self.assertEqual(stopped["stopReason"], "reconciliation_required")
-        self.assertTrue(stopped["reconciliationRequired"])
-        self.assertEqual(stopped["modelStepCount"], 3)
+        interrupted = self.store.read_run(run["id"])
+        self.assertEqual(interrupted["status"], "interrupted")
+        self.assertEqual(interrupted["errorCode"], "RUNTIME_INTERRUPTED")
+        self.assertTrue(interrupted["reconciliationRequired"])
+        self.assertEqual(interrupted["modelStepCount"], 3)
         self.assertEqual(len(model.contexts), 4)
         state = " ".join(str(part.get("content", "")) for part in model.contexts[0])
         self.assertIn("original-shell", state)

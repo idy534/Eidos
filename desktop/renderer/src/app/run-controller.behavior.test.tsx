@@ -146,7 +146,27 @@ describe("useRunController real behavior", () => {
       });
 
       expect(startRunSpy).toHaveBeenCalledWith(
-        "session-A", "Use the strongest reasoning level", "deepseek-v4-flash", "max",
+        "session-A", "Use the strongest reasoning level", "deepseek-v4-flash", "max", undefined,
+      );
+    });
+
+    it("passes the selected approval mode to startRun", async () => {
+      const startRunSpy = vi.fn().mockResolvedValue(mockRunA);
+      setupMockRuntime({ startRun: startRunSpy });
+      const { result } = renderHook(() => useRunController(mockSnapshotA, true));
+      act(() => result.current[1].setInput("Use automatic approval review"));
+
+      await act(async () => {
+        await result.current[1].submitInput({
+          snapshot: mockSnapshotA,
+          selectedModelId: "deepseek-v4-flash",
+          approvalMode: "auto_review",
+          isStorageReady: true,
+        });
+      });
+
+      expect(startRunSpy).toHaveBeenCalledWith(
+        "session-A", "Use automatic approval review", "deepseek-v4-flash", undefined, "auto_review",
       );
     });
 
@@ -166,7 +186,7 @@ describe("useRunController real behavior", () => {
       });
 
       expect(startRunSpy).toHaveBeenCalledWith(
-        "session-A", "Please address review feedback", "deepseek-v4-flash",
+        "session-A", "Please address review feedback", "deepseek-v4-flash", undefined, undefined,
       );
       expect(result.current[0].input).toBe("Keep this draft");
     });
