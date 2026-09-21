@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 export interface ArtifactActions {
   sessionId: string;
   executionRoot: string;
+  projectId?: string;
   openFile(path: string): void;
   openBrowser(url: string): void;
   openExternal?: ((path: string) => void | Promise<void>) | undefined;
@@ -47,14 +48,20 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
       if (event.method === "workspace/changed" && event.params.sessionId === actions.sessionId && event.params.paths.some((changed) => changed === path || path.startsWith(changed + "/"))) setRevision((value) => value + 1);
     });
   }, [actions?.sessionId, path, version]);
-  const key = JSON.stringify([actions?.sessionId, actions?.executionRoot, path, version, revision]);
+  const key = JSON.stringify([actions?.sessionId, actions?.executionRoot, actions?.projectId, path, version, revision]);
   const [state, setState] = useState<{ key?: string; url?: string; error?: string }>({});
   useEffect(() => {
     let current = true;
     let created: string | undefined;
     setState({});
     if (!actions || !path || typeof window.eidosRuntime?.prepareWorkspacePreview !== "function") return;
-    void window.eidosRuntime.prepareWorkspacePreview(actions.sessionId, path, version).then((url) => {
+    void window.eidosRuntime.prepareWorkspacePreview(
+      actions.sessionId,
+      path,
+      version,
+      actions.executionRoot,
+      actions.projectId,
+    ).then((url) => {
       created = url;
       if (current) setState({ key, url });
       else if (typeof window.eidosRuntime?.releaseWorkspacePreview === "function") void window.eidosRuntime.releaseWorkspacePreview(url).catch(() => {});
@@ -65,7 +72,7 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
         void window.eidosRuntime.releaseWorkspacePreview(created).catch(() => {});
       }
     };
-  }, [actions?.sessionId, actions?.executionRoot, path, version, revision, key]);
+  }, [actions?.sessionId, actions?.executionRoot, actions?.projectId, path, version, revision, key]);
   return state.key === key ? state : {};
 }
 

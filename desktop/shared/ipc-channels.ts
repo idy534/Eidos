@@ -76,6 +76,13 @@ export const IPC = {
   EVENT_LIST: "event:list",
 
   // Run
+  INPUT_QUOTE: "input:quote",
+  INPUT_PICK: "input:pick",
+  INPUT_PREPARE: "input:prepare",
+  INPUT_READ: "input:read",
+  INPUT_PASTE_IMAGE: "input:pasteImage",
+  INPUT_DRAFT_READ: "input:draftRead",
+  INPUT_DRAFT_WRITE: "input:draftWrite",
   RUN_START: "run:start",
   RUN_CANCEL: "run:cancel",
   RUN_REVISE: "run:revise",

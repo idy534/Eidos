@@ -1,3 +1,4 @@
+import { InputReferenceCards } from "./InputContext.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -27,7 +28,7 @@ type FeedbackHandler = (
   feedback: ResponseFeedbackValue | null,
 ) => Promise<void>;
 type RegenerateHandler = (run: Run) => Promise<void>;
-type EditResendHandler = (run: Run, editedInput: string) => Promise<void>;
+type EditResendHandler = (run: Run, editedInput: string, references?: string[]) => Promise<boolean | void>;
 
 interface Props {
   items: Item[];
@@ -468,21 +469,23 @@ function UserMessage({
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.content ?? "");
+  const [draftReferences, setDraftReferences] = useState(item.references ?? []);
 
   useEffect(() => {
-    if (!editing) setDraft(item.content ?? "");
-  }, [editing, item.content]);
+    if (!editing) { setDraft(item.content ?? ""); setDraftReferences(item.references ?? []); }
+  }, [editing, item.content, item.references]);
 
   async function submitEdit(): Promise<void> {
     const value = draft.trim();
-    if (!value || revisionSubmitting) return;
-    await onEditResend(run, value);
-    setEditing(false);
+    if ((!value && !draftReferences.length) || revisionSubmitting) return;
+    const accepted = await onEditResend(run, value, draftReferences.map((reference) => reference.id));
+    if (accepted !== false) setEditing(false);
   }
 
   return (
     <div className="feed-item feed-item--user">
       <div className="user-message-bubble">
+        {(editing ? draftReferences : item.references)?.length ? <InputReferenceCards references={editing ? draftReferences : item.references ?? []} {...(editing ? { onRemove: (id: string) => setDraftReferences((previous) => previous.filter((reference) => reference.id !== id)) } : {})} /> : null}
         {editing ? (
           <div className="user-message-editor">
             <textarea
@@ -504,7 +507,7 @@ function UserMessage({
               <button
                 type="button"
                 className="user-message-editor-submit"
-                disabled={revisionSubmitting || !draft.trim()}
+                disabled={revisionSubmitting || (!draft.trim() && !draftReferences.length)}
                 onClick={() => void submitEdit()}
               >
                 {revisionSubmitting ? "发送中…" : "发送"}
@@ -519,7 +522,7 @@ function UserMessage({
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
             {item.content && <CopyButton content={item.content} />}
-            {canEdit && item.content && (
+            {canEdit && (item.content || item.references?.length) && (
               <ActionButton
                 label="编辑并重新发送"
                 disabled={revisionSubmitting}

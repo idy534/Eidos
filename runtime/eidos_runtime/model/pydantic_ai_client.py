@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import asyncio
 from contextlib import nullcontext, suppress
 from dataclasses import replace
@@ -452,7 +454,17 @@ def encode_context(
         if item_type == "user":
             content = item.get("content")
             if isinstance(content, str):
-                messages.append(PAIModelRequest([UserPromptPart(content)]))
+                image = item.get("inputImage")
+                mime = item.get("mime")
+                if isinstance(image, str) and mime in {"image/png", "image/jpeg"}:
+                    if supports_images:
+                        messages.append(PAIModelRequest([UserPromptPart([
+                            content, BinaryContent(data=base64.b64decode(image, validate=True), media_type=mime),
+                        ])]))
+                    else:
+                        messages.append(PAIModelRequest([UserPromptPart(content + "\n[当前模型不支持历史图片内容]")]))
+                else:
+                    messages.append(PAIModelRequest([UserPromptPart(content)]))
         elif item_type == "assistant":
             content = item.get("content")
             if isinstance(content, str):

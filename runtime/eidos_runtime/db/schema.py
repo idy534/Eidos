@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
+V13_SCHEMA_VERSION = 13
 V12_SCHEMA_VERSION = 12
 V11_SCHEMA_VERSION = 11
 V10_SCHEMA_VERSION = 10
@@ -10,7 +11,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V12_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V13_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1400,7 +1401,23 @@ ALTER TABLE runs ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'manual'
     CHECK (approval_mode IN ('manual', 'auto_review', 'full_access'));
 ALTER TABLE approvals ADD COLUMN review_json TEXT;
 """
-SCHEMA_SQL = V12_SCHEMA_SQL + V12_TO_V13_MIGRATION_SQL
+V13_TO_V14_MIGRATION_SQL = """
+ALTER TABLE items ADD COLUMN input_references_json TEXT NOT NULL DEFAULT '[]';
+CREATE TABLE input_references (
+    id TEXT PRIMARY KEY,
+    snapshot_json TEXT NOT NULL,
+    reference_json TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE input_drafts (
+    key TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    reference_ids_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+"""
+SCHEMA_SQL = V12_SCHEMA_SQL + V12_TO_V13_MIGRATION_SQL + V13_TO_V14_MIGRATION_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

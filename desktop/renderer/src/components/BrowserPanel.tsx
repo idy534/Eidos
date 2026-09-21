@@ -44,8 +44,9 @@ export function resolveBrowserTarget(input: string): string | undefined {
   return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
 }
 
-export function BrowserPanel({ browserId, sessionId, executionKey, active, request }: {
+export function BrowserPanel({ browserId, sessionId, executionKey, active, request, workspaceRoot }: {
   browserId: string; sessionId: string; executionKey: string; active: boolean;
+  workspaceRoot?: string;
   request?: { url: string; id: number } | undefined;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
@@ -70,7 +71,7 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
     const token = ++generation.current;
     setError(""); setPage((current) => ({ ...current, loading: true }));
     try {
-      const next = await window.eidosRuntime.openBrowser(sessionId, browserId, target);
+      const next = await window.eidosRuntime.openBrowser(sessionId, browserId, target, workspaceRoot);
       if (token === generation.current) {
         addressDirty.current = false;
         setPage(next);

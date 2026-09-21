@@ -1,3 +1,4 @@
+import { useInputContext } from "./InputContext.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
@@ -362,7 +363,7 @@ export function WorkspaceExplorer({
     if (!drag || drag.pointerId !== event.pointerId) return;
     const delta = drag.layout === "side"
       ? event.clientY - drag.startCoordinate
-      : drag.startCoordinate - event.clientX;
+      : event.clientX - drag.startCoordinate;
     setSplitSize(drag.startSize + delta, drag.layout);
   }
 
@@ -371,8 +372,8 @@ export function WorkspaceExplorer({
   }
 
   function handleSplitterKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    const increase = layout === "side" ? event.key === "ArrowDown" : event.key === "ArrowLeft";
-    const decrease = layout === "side" ? event.key === "ArrowUp" : event.key === "ArrowRight";
+    const increase = layout === "side" ? event.key === "ArrowDown" : event.key === "ArrowRight";
+    const decrease = layout === "side" ? event.key === "ArrowUp" : event.key === "ArrowLeft";
     if (increase) {
       event.preventDefault();
       setSplitSize(getSplitSize() + 16);
@@ -525,6 +526,7 @@ function WorkspaceTreeRow({
   onOpenDirectory(path: string): void;
   onOpenFile(path: string): void;
 }) {
+  const inputContext = useInputContext();
   return (
     <div
       ref={dragHandle}
@@ -572,6 +574,23 @@ function WorkspaceTreeRow({
       </span>
       <span className="workspace-tree-name">{node.data.name}</span>
       {loading && <span className="workspace-tree-loading" aria-label="正在读取">…</span>}
+      {inputContext && (
+        <button
+          type="button"
+          className="workspace-reference-button"
+          aria-label={`引用 ${node.data.name}`}
+          title="添加到当前输入"
+          onClick={(event) => {
+            event.stopPropagation();
+            void inputContext.add({
+              kind: node.data.kind === "directory" ? "directory" : "file",
+              source: `${inputContext.workspaceRoot}/${node.id}`,
+            });
+          }}
+        >
+          ＋
+        </button>
+      )}
     </div>
   );
 }

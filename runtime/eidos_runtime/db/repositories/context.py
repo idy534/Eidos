@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.input_reference import InputReference
+
 import json
 import sqlite3
 
@@ -229,7 +231,7 @@ class ContextRepository(Repository):
                     item_rows = connection.execute(
                         f"""
                         SELECT creation_seq, id, session_id, run_id, ordinal,
-                               model_step_index, kind, status,
+                               model_step_index, kind, status, input_references_json,
                                substr(content, 1, ?) AS content,
                                incomplete, created_at, completed_at
                         FROM items WHERE id IN ({placeholders})
@@ -321,6 +323,7 @@ class ContextRepository(Repository):
                 kind=str(row["kind"]),
                 status=str(row["status"]),
                 content=row["content"],
+                input_references=tuple(InputReference.model_validate(value) for value in json.loads(row["input_references_json"])),
                 provider_call_id=str(tool["provider_call_id"]) if tool else None,
                 tool_name=str(tool["tool_name"]) if tool else None,
                 payload_kind=str(tool["payload_kind"]) if tool else None,

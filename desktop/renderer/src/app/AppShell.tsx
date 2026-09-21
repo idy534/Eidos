@@ -1,3 +1,5 @@
+import type { SettingsCategory } from "../components/settings/settings-types.js";
+import { InputContextProvider, InputDropZone } from "../components/InputContext.js";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type {
   CSSProperties,
@@ -130,6 +132,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("model");
   const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
   const [titleDraft, setTitleDraft] = useState("");
   const [renameError, setRenameError] = useState<string | undefined>(undefined);
@@ -609,7 +612,8 @@ export function AppShell({ runtime }: AppShellProps) {
     const draftSnapshot = sessionState.draft;
     if (draftSnapshot && !sessionState.snapshot) {
       const draftInput = runState.input;
-      if (!draftInput.trim()) return;
+      const draftReferences = runState.references;
+      if (!draftInput.trim() && !draftReferences.length) return;
       const materialized = await sessionActions.materializeDraft();
       if (!materialized) return;
       navHistoryActions.replaceCurrent(materialized.session.id);
@@ -620,10 +624,11 @@ export function AppShell({ runtime }: AppShellProps) {
         approvalMode,
         isStorageReady,
         inputOverride: draftInput,
+        referencesOverride: draftReferences,
         onRunProjected: sessionActions.projectRun,
       });
       if (started) {
-        runActions.setInputForSession(draftSnapshot.session.id, "");
+        runActions.clearDraftIfUnchanged(draftSnapshot.session.id, draftInput, draftReferences);
         sessionActions.discardDraft();
       } else {
         const rolledBack = await sessionActions.rollbackMaterializedSession(materialized.session, draftSnapshot);
@@ -655,13 +660,14 @@ export function AppShell({ runtime }: AppShellProps) {
     });
   }
 
-  async function reviseLatestRun(run: Run, userInput?: string): Promise<void> {
+  async function reviseLatestRun(run: Run, userInput?: string, references?: string[]): Promise<boolean> {
     const snapshot = sessionState.snapshot;
-    if (!snapshot || run.sessionId !== snapshot.session.id) return;
-    await runActions.reviseRun({
+    if (!snapshot || run.sessionId !== snapshot.session.id) return false;
+    return runActions.reviseRun({
       snapshot,
       sourceRunId: run.id,
       ...(userInput !== undefined ? { userInput } : {}),
+      ...(references !== undefined ? { references } : {}),
       isStorageReady,
       onRunProjected: sessionActions.projectRun,
       onRevisionProjected: (revision) => {
@@ -692,8 +698,10 @@ export function AppShell({ runtime }: AppShellProps) {
     ? sessionState.projects.find((project) => project.id === currentSnapshot.session.project?.id)
     : undefined;
   const sessionProject = selectedProject ?? currentSnapshot?.session.project;
-  const sessionHasProject = Boolean(!isDraft && currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
-  const sessionHasGit = !isDraft && sessionProject?.gitAvailable === true;
+  // Draft 状态下也允许根据关联项目类型计算 hasProject/hasGit，
+  // 使环境信息在新会话有项目时也能显示。
+  const sessionHasProject = Boolean(currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
+  const sessionHasGit = sessionProject?.gitAvailable === true;
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
   const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
   const restoreBusy = Boolean(snapshot && sessionState.pending.restoringWorktreeSessionId === snapshot.session.id);
@@ -708,11 +716,13 @@ export function AppShell({ runtime }: AppShellProps) {
         currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
       ].join(":")
     : "empty";
-  const availableTools: WorkspaceToolKind[] = sessionHasProject
-    ? sessionHasGit
-      ? ["review", "terminal", "files", "browser"]
-      : ["terminal", "files", "browser"]
-    : currentSnapshot && !isDraft ? ["files", "browser"] : [];
+  const availableTools: WorkspaceToolKind[] = currentSnapshot
+    ? [
+        ...(sessionHasGit ? ["review" as const] : []),
+        ...(sessionHasProject ? ["terminal", "files"] as const : []),
+        "browser",
+      ]
+    : [];
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -810,7 +820,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function openTool(tool: WorkspaceToolKind): string | undefined {
-    if (!availableTools.includes(tool) && !(tool === "review" && sessionHasGit)) return;
+    if (!availableTools.includes(tool)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
     const existing = tool === "terminal" || tool === "browser"
@@ -839,7 +849,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function handleOpenReview(request: { runId: string; path?: string; itemId?: string }): void {
-    if (!currentSnapshot) return;
+    if (!currentSnapshot || !availableTools.includes("review")) return;
     setOpenTabs((tabs) => tabs.some((tab) => tab.kind === "text-review") ? tabs : [...tabs, { id: "text-review", kind: "text-review" }]);
     setActiveTabId("text-review");
     setDockOpen(true);
@@ -885,7 +895,11 @@ export function AppShell({ runtime }: AppShellProps) {
     setOpenTabs((current) => {
       const index = current.findIndex((tab) => tab.id === tabId);
       const next = current.filter((tab) => tab.id !== tabId);
-      if (activeTabId === tabId) {
+      if (next.length === 0) {
+        setActiveTabId(undefined);
+        setDockOpen(false);
+        setDockExpanded(false);
+      } else if (activeTabId === tabId) {
         setActiveTabId(next[Math.min(index, next.length - 1)]?.id);
       }
       return next;
@@ -982,7 +996,7 @@ export function AppShell({ runtime }: AppShellProps) {
     </div>
   ) : null;
 
-  const workspaceToggle = currentSnapshot && !isDraft
+  const workspaceToggle = availableTools.length > 0
     ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
     : null;
 
@@ -991,12 +1005,22 @@ export function AppShell({ runtime }: AppShellProps) {
     <ArtifactProvider value={currentSnapshot ? {
       sessionId: currentSnapshot.session.id,
       executionRoot: currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
+      ...(currentSnapshot.session.project?.id
+        ? { projectId: currentSnapshot.session.project.id }
+        : {}),
       openFile: handleOpenFileInDock,
       openBrowser: handleOpenBrowser,
       openExternal: handleOpenExternal,
       openReview: handleOpenReview,
       showInFinder: handleShowInFinder,
     } : undefined}>
+    <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
+      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
+      onNavigateToSession={(target) => {
+        if (settingsOpen) setSettingsOpen(false);
+        navHistoryActions.navigateTo(target);
+        handleNavigateToSession(target);
+      }}>
     <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
       <SessionSidebar
         collapsed={!sidebarOpen || settingsOpen}
@@ -1062,6 +1086,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
         {settingsOpen ? (
           <SettingsPage
+            initialCategory={settingsCategory}
             runtime={runtimeStatus}
             modelList={modelState.list}
             modelLoading={modelState.loading}
@@ -1162,6 +1187,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
             <div className="workspace-content">
               <div className="workspace-main">
+                <InputDropZone>
                 {responseActionState.error && (
                   <p className="approval-error response-action-error" role="alert">
                     {responseActionState.error}
@@ -1192,8 +1218,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   onReject={(request) => void approvalActions.reject(request)}
                   onFeedback={(itemId, feedback) =>
                     responseActionActions.setFeedback(currentSnapshot.session.id, itemId, feedback)}
-                  onRegenerate={(run) => reviseLatestRun(run)}
-                  onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
+                  onRegenerate={async (run) => { await reviseLatestRun(run); }}
+                  onEditResend={(run, editedInput, references) => reviseLatestRun(run, editedInput, references)}
                   onOpenFile={handleOpenFileInDock}
                 />
 
@@ -1212,6 +1238,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   composerMode={worktreeRestoreRequired ? "read_only" : composerMode}
                   activeRun={activeRun}
                   input={input}
+                  references={runState.references}
+                  onRemoveReference={runActions.removeReference}
+                  draftReady={runState.draftReady}
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
                   approvalMode={activeRun?.approvalMode ?? approvalMode}
@@ -1253,6 +1282,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onExecutionModeChange={sessionProject?.gitAvailable === true ? requestExecutionModeChange : undefined}
                 />
                 </ComposerSlot>
+                </InputDropZone>
               </div>
 
             </div>
@@ -1317,14 +1347,15 @@ export function AppShell({ runtime }: AppShellProps) {
                         onSendReviewFeedback={handleReviewFeedback}
                         reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
                         workflowDisabled={
-                          Boolean(activeRun)
+                          isDraft
+                          || Boolean(activeRun)
                           || runState.isSubmitting
                           || handoffBusy
                           || sessionState.pending.branchSessionId === currentSnapshot.session.id
                           || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
                         }
                         onCreateBranch={
-                          sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
+                          !isDraft && (sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null))
                             ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")
                             : undefined
                         }
@@ -1338,6 +1369,10 @@ export function AppShell({ runtime }: AppShellProps) {
                         <TerminalPanel
                           key={tab.id}
                           sessionId={currentSnapshot.session.id}
+                          workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
+                          {...(currentSnapshot.session.project?.id
+                            ? { projectId: currentSnapshot.session.project.id }
+                            : {})}
                           active={activeTabId === tab.id}
                         />
                       </Suspense>
@@ -1345,6 +1380,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   }
                   if (tab.kind === "browser") return <BrowserPanel
                     key={executionKey} browserId={tab.id} sessionId={currentSnapshot.session.id} executionKey={executionKey}
+                    workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
                     active={dockOpen && activeTabId === tab.id}
                     request={browserRequest?.browserId === tab.id ? { url: browserRequest.url, id: browserRequest.id } : undefined}
                   />;
@@ -1354,6 +1390,23 @@ export function AppShell({ runtime }: AppShellProps) {
                       executionKey={executionKey}
                       layout={dockExpanded ? "expanded" : "side"}
                       openRequest={explorerOpenRequest}
+                      {...(isDraft && currentSnapshot.session.workspaceRoot ? {
+                        listDirectory: (sid: string, path: string) =>
+                          window.eidosRuntime.listWorkspaceDirectory(
+                            sid,
+                            path,
+                            undefined,
+                            currentSnapshot.session.workspaceRoot,
+                            currentSnapshot.session.project?.id,
+                          ),
+                        readPreview: (sid: string, path: string) =>
+                          window.eidosRuntime.readWorkspaceFilePreview(
+                            sid,
+                            path,
+                            currentSnapshot.session.workspaceRoot,
+                            currentSnapshot.session.project?.id,
+                          ),
+                      } : {})}
                     />
                   );
                 }}
@@ -1511,6 +1564,7 @@ export function AppShell({ runtime }: AppShellProps) {
         onCancel={() => { setProjectToDelete(undefined); setProjectDeleteError(undefined); }}
       />
     </main>
+    </InputContextProvider>
     </ArtifactProvider>
   );
 }

@@ -33,7 +33,7 @@ class ModelGatewayLease(ModelClientLease):
     ) -> None:
         self.lease_id = str(uuid.uuid4())
         self.model_id = config.id
-        self.provider = MODEL_CATALOG.provider_id_for(config.id)
+        self.provider = MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
         super().__init__(
             client,
             client.close,
@@ -70,7 +70,7 @@ class ModelGateway:
         *,
         reasoning_selection: ModelReasoningSelection | None = None,
     ) -> ModelGatewayLease:
-        spec = MODEL_CATALOG.profile(config.id)
+        spec = MODEL_CATALOG.profile(config.id, config=config)
         built = build_pydantic_model(config, wire_api=spec.wire_api)
         profile_snapshot = spec.snapshot(
             config, reasoning_selection=reasoning_selection

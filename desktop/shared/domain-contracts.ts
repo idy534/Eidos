@@ -353,6 +353,7 @@ export interface ToolTextPage {
 }
 
 export interface Item {
+  references?: import("./input-context.js").InputReference[];
   id: string;
   sessionId: string;
   runId: string;
@@ -600,6 +601,7 @@ export interface SkillMetadata {
   pluginVersion: string;
   pluginHash: string;
   contentHash: string;
+  icon?: string | null | undefined;
 }
 
 export interface SkillListResult {

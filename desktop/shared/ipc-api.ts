@@ -1,3 +1,4 @@
+import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
 import type {
   RuntimeStatus,
   RuntimeHealth,
@@ -80,10 +81,23 @@ export interface EidosRuntimeAPI {
     sessionId: string,
     path: string,
     limit?: number,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceDirectoryListing>;
-  prepareWorkspacePreview(sessionId: string, path: string, version?: string): Promise<string>;
+  prepareWorkspacePreview(
+    sessionId: string,
+    path: string,
+    version?: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<string>;
   releaseWorkspacePreview(url: string): Promise<void>;
-  openBrowser(sessionId: string, browserId: string, url: string): Promise<import("./domain-contracts.js").BrowserPageState>;
+  openBrowser(
+    sessionId: string,
+    browserId: string,
+    url: string,
+    workspaceRoot?: string,
+  ): Promise<import("./domain-contracts.js").BrowserPageState>;
   setBrowserBounds(sessionId: string, browserId: string, bounds: import("./domain-contracts.js").BrowserBounds | null): Promise<void>;
   closeBrowser(sessionId: string, browserId: string): Promise<void>;
   readBrowserState(sessionId: string, browserId: string): Promise<import("./domain-contracts.js").BrowserPageState>;
@@ -91,12 +105,14 @@ export interface EidosRuntimeAPI {
   readWorkspaceFilePreview(
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceFilePreview>;
   openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;
 
   // User terminal
-  createTerminal(sessionId: string): Promise<TerminalSessionInfo>;
+  createTerminal(sessionId: string, workspaceRoot?: string, projectId?: string): Promise<TerminalSessionInfo>;
   writeTerminal(terminalId: string, data: string): Promise<void>;
   resizeTerminal(terminalId: string, columns: number, rows: number): Promise<void>;
   closeTerminal(terminalId: string): Promise<void>;
@@ -210,6 +226,15 @@ export interface EidosRuntimeAPI {
     operationId: string,
   ): Promise<GitRebaseResult>;
 
+  onInputQuote(callback: (text: string) => void): Unsubscribe;
+  pickInputPaths(directory?: boolean): Promise<string[]>;
+  inputPathForFile(file: File): string;
+  prepareInput(request: InputPrepareRequest): Promise<InputReference>;
+  readInput(id: string): Promise<InputPreview>;
+  pasteInputImage(): Promise<InputReference | null>;
+  readInputDraft(key: string): Promise<InputDraft>;
+  writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;
+
   // Runs
   startRun(
     sessionId: string,
@@ -217,10 +242,11 @@ export interface EidosRuntimeAPI {
     modelId: ModelId,
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
+    references?: string[],
   ): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
   readContextUsage(runId: string): Promise<ContextUsage | null>;
-  reviseRun(sourceRunId: string, userInput?: string): Promise<RunRevisionResult>;
+  reviseRun(sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult>;
 
   // Response actions
   readResponseActionState(sessionId: string): Promise<ResponseActionState>;

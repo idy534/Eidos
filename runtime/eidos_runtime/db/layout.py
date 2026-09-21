@@ -27,6 +27,8 @@ from eidos_runtime.db.schema import (
     V11_TO_V12_MIGRATION_SQL,
     V11_SCHEMA_VERSION,
     V12_SCHEMA_VERSION,
+    V13_SCHEMA_VERSION,
+    V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
 )
 from eidos_runtime.db.thread_history import ThreadHistoryStore
@@ -417,7 +419,7 @@ class PersistenceLayout:
             references: list[str] = []
             connection = state.connection()
             tables = _table_names(connection)
-            for table in ("context_snapshots", "step_resolution_snapshots"):
+            for table in ("context_snapshots", "step_resolution_snapshots", "input_references"):
                 if table not in tables:
                     continue
                 references.extend(
@@ -604,6 +606,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V10_SCHEMA_VERSION,
         V11_SCHEMA_VERSION,
         V12_SCHEMA_VERSION,
+        V13_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     migration = ""
@@ -623,6 +626,8 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         migration += V11_TO_V12_MIGRATION_SQL
     if revision <= V12_SCHEMA_VERSION:
         migration += V12_TO_V13_MIGRATION_SQL
+    if revision <= V13_SCHEMA_VERSION:
+        migration += V13_TO_V14_MIGRATION_SQL
     try:
         with state.lock:
             connection = state.connection()

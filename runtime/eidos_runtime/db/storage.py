@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.input_reference import InputReference
+from eidos_runtime.persistence.input_context import InputContextRepository
+
 from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.domain.tool import Approval
 
@@ -540,6 +543,7 @@ class SessionStore:
             session_id,
             operation_id=operation_id,
         )
+        InputContextRepository(self._database).delete_draft(session_id)
         layout.thread_history_store.delete_session(session_id)
         layout.garbage_collect_blobs(self._database)
         return deleted_session_to_legacy_dict(deleted)
@@ -548,6 +552,7 @@ class SessionStore:
         self,
         session_id: str,
         user_input: str,
+        references: list[InputReference] | None = None,
         *,
         operation_id: str | None = None,
         queued: bool = False,
@@ -563,6 +568,7 @@ class SessionStore:
         return self._repository(self._runs).create_run(
             session_id,
             user_input,
+            references=references,
             operation_id=operation_id,
             queued=queued,
             session_title=session_title,
@@ -579,6 +585,7 @@ class SessionStore:
         self,
         session_id: str,
         user_input: str,
+        references: list[InputReference] | None = None,
         *,
         operation_id: str | None = None,
         session_title: str | None = None,
@@ -593,6 +600,7 @@ class SessionStore:
         return self._repository(self._runs).enqueue_run(
             session_id,
             user_input,
+            references=references,
             operation_id=operation_id,
             session_title=session_title,
             model_id=model_id,

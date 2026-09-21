@@ -15,6 +15,8 @@ from pathlib import Path
 import re
 from typing import ClassVar, Literal
 
+from eidos_runtime.domain.input_reference import InputReferenceId
+
 from pydantic import Field, JsonValue, StrictInt, StrictStr
 from pydantic import field_validator, model_validator
 
@@ -68,6 +70,30 @@ class _CanonicalIdRequest(MethodRequestDto):
                     raise ValueError
             except ValueError as error:
                 raise ValueError(f"{field_name} must be a canonical UUID") from error
+        return self
+
+
+class _WorkspaceSessionRequest(MethodRequestDto):
+    session_id: StrictStr = Field(alias="sessionId")
+    workspace_root: StrictStr | None = Field(
+        default=None, alias="workspaceRoot", min_length=1, max_length=4096
+    )
+    project_id: StrictStr | None = Field(
+        default=None, alias="projectId", min_length=1, max_length=256
+    )
+
+    @model_validator(mode="after")
+    def _validate_workspace_session_id(self) -> "_WorkspaceSessionRequest":
+        value = self.session_id.removeprefix("draft-")
+        try:
+            if str(uuid.UUID(value)) != value:
+                raise ValueError
+        except ValueError as error:
+            raise ValueError(
+                "session_id must be a canonical UUID or draft UUID"
+            ) from error
+        if self.session_id.startswith("draft-") and not self.project_id:
+            raise ValueError("draft workspace requires a project binding")
         return self
 
 
@@ -197,17 +223,13 @@ class SessionGitDiffRequestDto(_CanonicalIdRequest):
         return None if value is None else _git_relative_path(value)
 
 
-class WorkspaceListDirectoryRequestDto(_CanonicalIdRequest):
-    session_id: StrictStr = Field(alias="sessionId")
+class WorkspaceListDirectoryRequestDto(_WorkspaceSessionRequest):
     path: StrictStr = Field(default=".", min_length=1, max_length=4096)
     limit: StrictInt = Field(default=500, ge=1, le=2_000)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
-class WorkspaceReadFilePreviewRequestDto(_CanonicalIdRequest):
-    session_id: StrictStr = Field(alias="sessionId")
+class WorkspaceReadFilePreviewRequestDto(_WorkspaceSessionRequest):
     path: StrictStr = Field(min_length=1, max_length=4096)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
 class WorkspaceReadAssetRequestDto(WorkspaceReadFilePreviewRequestDto):
@@ -395,12 +417,13 @@ class EventListRequestDto(_CanonicalIdRequest):
 
 
 class RunStartRequestDto(_OperationRequest):
+    references: list[InputReferenceId] = Field(default_factory=list, max_length=20)
     approval_mode: ApprovalMode = Field(default="manual", alias="approvalMode")
     full_access_confirmation: Literal["full-access-v1"] | None = Field(
         default=None, alias="fullAccessConfirmation"
     )
     session_id: StrictStr = Field(alias="sessionId")
-    user_input: StrictStr = Field(alias="userInput", min_length=1, max_length=64 * 1024)
+    user_input: StrictStr = Field(alias="userInput", max_length=64 * 1024)
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     reasoning_selection: ModelReasoningSelection | None = Field(
         default=None, alias="reasoningSelection"
@@ -414,7 +437,7 @@ class RunStartRequestDto(_OperationRequest):
             raise ValueError("full access requires explicit confirmation")
         if self.approval_mode != "full_access" and self.full_access_confirmation is not None:
             raise ValueError("full access confirmation does not match approval mode")
-        if not self.user_input.strip():
+        if not self.user_input.strip() and not self.references:
             raise ValueError("userInput must not be blank")
         return self
 
@@ -1116,6 +1139,7 @@ class ManagedSkillDto(MethodResultDto, SkillMetadataDto):
     source_kind: Literal["user", "system", "plugin"] = Field(alias="sourceKind")
     enabled: bool
     available: bool
+    icon: StrictStr | None = None
 
 
 class SkillDetailResponseDto(MethodResultDto):

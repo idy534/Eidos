@@ -17,8 +17,8 @@
 
 ### Model Provider
 
-- ModelConfigStore 只接受内置 DeepSeek、MiniMax、Kimi 和火山引擎 Catalog 中的九个 Model ID，包括火山引擎目录项 `glm-5.3-flash`。
-- 当前不支持 arbitrary custom provider、arbitrary base URL、arbitrary model ID、连接测试或主动 capability probe。当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
+- ModelConfigStore 以 `models.json` 为事实来源。内置 Catalog 覆盖 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 中的九个推荐 Model ID；用户在 `models.json` 中配置的有效自定义模型通过标准 OpenAI-compatible 协议适配。
+- 当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - 思考强度选项和默认值按模型配置。当前 Catalog 中的选择项不证明 Provider 已接受对应请求参数。Volcengine Coding Plan `/api/coding/v3` 的模型专属 wire 字段、值和默认行为尚未通过可独立读取的官方端点文档或受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
 - 用户要求分阶段验收：生产代码修改完成后先等待用户确认；确认后再编写测试并集中验证。等待期间不新增测试，也不把尚未做的 Provider endpoint 验证写成通过。
@@ -211,3 +211,17 @@
 - 完全访问会失去 Eidos 自身路径的沙盒保护。用户可以通过 Shell 改动 Eidos 数据、系统 Skill 或 Git metadata。macOS 的系统权限仍然有效，内置文件工具的普通文件约束仍然有效。
 - 当前模式作用于单个 Run。用户不能在 Run 执行中切换模式。重新生成完全访问 Run 的回答会回到人工模式；用户可以在 Composer 重新选择完全访问并确认。
 - 本期不实现自定义审批规则、`config.toml` 权限解析、域名代理或持久 allowlist。审批元数据保存可取得的审查 Token Usage，当前 UI 不提供独立的审查费用汇总。
+
+## 输入引用的当前边界
+
+输入入口生产代码尚未经过本批测试或 UI 验收。以下限制是当前实现边界。
+
+- 每轮最多包含 20 个引用。单个文件或图片最多 10 MiB。引用存储记录的总预算为 512 MiB；预算用尽时，界面会报告添加失败。
+- Runtime 会尝试解码最多 256 KiB 的文本文件。每个文本快照最多保留约 64 Ki 字符，超过部分会显示截断标记。当前 Run 的引用正文合计最多 256 Ki 字符。
+- 图片输入支持 PNG 和 JPEG。当前 Run 图片 base64 合计最多 16 MiB。图片预算使用尺寸估算，不能代表 Provider 的实际计费 token。
+- 目录只保存一层、最多 200 项的摘要。PDF、Office、压缩包和无法解码的文件只保存位置及版本信息。Runtime 不复制这些二进制文件，也不承诺原路径在以后仍可访问。模型后续读取这些路径仍受当前 Run 权限约束。
+- 文件选择器支持本地路径；工作区内的快捷搜索按工作区根目录列举名称，不再支持输入子目录路径查看目录。它还不是全仓模糊搜索。历史消息选择器展示最近 100 条加载结果，单次最多引用 20 条用户或助手消息。历史引用不递归导入其中的附件、工具输出或权限。
+- 历史引用正文与图片受上下文预算限制。超出时，Context 会保留说明，原始快照仍在存储中。用户可以重新引用当前需要的内容。
+- 尚未创建 Session 的输入共用一个持久草稿槽。Session 草稿相互独立。保存失败时，界面保留当前文字并提示重试；应用异常退出前尚未完成持久化的编辑仍可能丢失。
+- Runtime 在添加新引用时清理超过 7 天、且没有被消息或草稿引用的记录。物理 Blob 回收沿用现有 GC 时机。界面暂未提供附件存储管理页。
+- MCP、Plugin 选择只使用已安装、已启用且已授权的扩展。安装、配置和授权继续在设置中完成。运行中消息追加、发送队列和网页引用不在本批范围内。

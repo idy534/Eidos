@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.input_reference import InputReference
+
 import json
 import sqlite3
 import time
@@ -240,6 +242,7 @@ class VerifiedCompactionRepository(Repository):
             "items": tuple(ContextItemFact(
                 item_id=str(row["id"]), run_id=str(row["run_id"]), kind=str(row["kind"]),
                 status=str(row["status"]), content=row["content"],
+                input_references=tuple(InputReference.model_validate(value) for value in json.loads(row["input_references_json"])),
                 provider_call_id=row["provider_call_id"],
                 tool_name=row["tool_name"], arguments_json=row["arguments_json"],
                 payload_kind=row["payload_kind"],

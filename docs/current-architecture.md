@@ -25,13 +25,13 @@ Project
                     └── Worktree Execution → Managed Worktree → Run
 ```
 
-Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 Local 或 Worktree Execution Session。Desktop 的新建会话入口先保留本地草稿，首次提交时才物化 Session。Local Session 的 `execution_mode` 是 `local`，`worktree_id` 是 NULL，Run 直接使用 `Project.workspace_root`。Worktree Session 的 `execution_mode` 是 `worktree`，它绑定 Managed Worktree，Run 使用该 Worktree root。Git Project 的 Session Git status 和 diff API 会读取当前 execution root。
+Non-Git Project 只能创建 Local Execution Session。Git Project 可以创建 Local 或 Worktree Execution Session。Desktop 的新建会话入口先保留本地草稿，首次提交时才物化 Session。Workspace Dock 的 Review 只对 Git Project 展示，Terminal 和 Files 只对有 Project 的会话展示，Browser 对所有会话展示。Local Session 的 `execution_mode` 是 `local`，`worktree_id` 是 NULL，Run 直接使用 `Project.workspace_root`。Worktree Session 的 `execution_mode` 是 `worktree`，它绑定 Managed Worktree，Run 使用该 Worktree root。Git Project 的 Session Git status 和 diff API 会读取当前 execution root。
 
 文件读写、Shell、Skill、MCP、Context、Long Task、Sandbox 和 Checkpoint 属于 Workspace 或 Runtime 能力。它们不因为 Project 没有 Git 而失效。Git status 和 Git diff 在 Git Project 的当前 execution root 上提供。Managed Worktree 和 Git-based Fork 仍然只在 Git Project 中提供。
 
-Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、hard discovery directory 和 root ignore 规则。普通敏感文件名和内容可以读取；`.git`、`.agents`、`.eidos` 只在写入侧保护，显式路径可以列举、搜索和读取，默认发现仍隐藏这些元数据目录。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 使用当前 Session 的私有 Workspace，仍经过同一个 Reader。Renderer 对 Conversation 传来的历史文件路径先检查当前目录项；目录项明确缺失时，Renderer 不直接调用预览接口。目录列表截断时，Runtime 继续负责最终验证。Renderer 不直接读取 filesystem。
+Desktop Workspace Explorer 也只读取当前 Session execution root。`WorkspaceExplorerApplication` 先解析 Local root 或验证 Managed Worktree identity，再调用共享 `WorkspaceReader`。Draft 在 Session 尚未物化时使用请求中的 Project binding；Runtime 从持久化 Project 解析 root，并在请求同时提供 root 时核对 workspace identity。Workspace Dock 不对 Projectless 会话展示 Files。`WorkspaceReader` 与 Agent 文件工具共用 fd-relative、`O_NOFOLLOW`、hard discovery directory 和 root ignore 规则。普通敏感文件名和内容可以读取；`.git`、`.agents`、`.eidos` 只在写入侧保护，显式路径可以列举、搜索和读取，默认发现仍隐藏这些元数据目录。`workspace/listDirectory` 只返回一层子项。`workspace/readFilePreview` 返回有界 UTF-8 预览或图片/PDF/HTML 元数据。`workspace/readAsset` 按块读取受控资源。Projectless 的 Runtime 文件能力仍经过同一个 Reader。Renderer 对 Conversation 传来的历史文件路径先检查当前目录项；目录项明确缺失时，Renderer 不直接调用预览接口。目录列表截断时，Runtime 继续负责最终验证。Renderer 不直接读取 filesystem。
 
-Desktop 会让 Conversation 始终保持挂载。Session header 右侧固定显示环境信息入口；用户可以通过工作区开关打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab 保留在预览栏中，预览区不显示当前路径、文件大小或手动刷新入口，侧栏布局默认给预览区更多空间。产物卡的图片会直接进入全屏预览，HTML 会直接打开隔离网页面板，PDF 会进入 Files 的内置预览，系统应用打开入口保持可用。Dock 普通展开时环境信息入口仍在 Session header，完全展开时入口显示在 Dock header。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。Dock 支持 Tab 切换、关闭、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
+Desktop 会让 Conversation 始终保持挂载。Session header 右侧固定显示环境信息入口；用户可以通过工作区开关打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab 保留在预览栏中，预览区不显示当前路径、文件大小或手动刷新入口，侧栏布局默认给预览区更多空间。产物卡的图片会直接进入全屏预览，HTML 会直接打开隔离网页面板，PDF 会进入 Files 的内置预览，系统应用打开入口保持可用。Dock 普通展开时环境信息入口仍在 Session header，完全展开时入口显示在 Dock header。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。Dock 支持 Tab 切换、关闭、关闭最后一个 Tab 时自动折叠工作区、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
 
 ## 2. Process Architecture
 
@@ -189,7 +189,7 @@ Volcengine Coding Plan 表格依据当前任务提供的官方文档检索结果
 
 `run/start` 接受所选模型允许的思考设置。Runtime 会拒绝该模型未声明的设置；请求没有设置时，Runtime 使用 Catalog 默认值。Runtime 将解析后的设置放入 Run 的不可变 `ModelProfileSnapshot`，并写入现有 `runs.model_profile_json`。这项改动不增加 SQLite 列，也不改变 schema 版本。
 
-ModelConfigStore 要求配置与内置 Catalog 严格匹配。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Chat Completions 是不支持 Responses、Custom Tool 或 Grammar 的模型的兼容路径，不是废弃路径。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。Responses stream 只有 `response.completed` 可以产生可执行的 normalized response。`response.failed`、`response.incomplete`、`error` 和没有 terminal event 的 EOF 都 fail closed。模型请求取消覆盖流式上下文建立和 SSE 等待阶段。流建立后，Runtime 关闭 Responses stream，并取消等待中的 `anext` task。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供 arbitrary custom provider、arbitrary base URL、arbitrary model ID 或主动 capability probe。
+`models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。ModelConfigStore 负责从 `models.json` 读取模型配置，校验文件权限、格式与 ID 唯一性，内置 Catalog 仅作为新建模型时的推荐预设模板，不再强制全等校验。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Chat Completions 是不支持 Responses、Custom Tool 或 Grammar 的模型的兼容路径，不是废弃路径。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。Responses stream 只有 `response.completed` 可以产生可执行的 normalized response。`response.failed`、`response.incomplete`、`error` 和没有 terminal event 的 EOF 都 fail closed。模型请求取消覆盖流式上下文建立和 SSE 等待阶段。流建立后，Runtime 关闭 Responses stream，并取消等待中的 `anext` task。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供主动 capability probe。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
@@ -369,7 +369,7 @@ Project
 ```
 
 新的 `project/create` 接收可选的 `name` 和必需的 `workspaceRoot`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再保存 Project 元数据。名称缺省时，Runtime 使用 canonical Workspace 的文件夹名。这个调用不创建 Session。新的 `session/create` 接收 `workspaceRoot`、`executionMode`、可选的 `baseRef` 和显式的 `includeLocalChanges`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再检测可选 Git capability。`executionMode = local` 时，Runtime 创建 `worktree_id = NULL` 的 Local Session，不创建 Git side effect，也不创建 Worktree lifecycle intent。`executionMode = worktree` 时，Runtime 要求 Git capability，通过 `GitBackend` 将 `baseRef` 解析为 immutable `base_commit`，确定 `project_id`、`worktree_id`、`worktree_root` 和 `branch = NULL`，写入 durable lifecycle intent，然后通过唯一的 hardened Git CLI `worktree add --detach` 创建 Worktree。Runtime 只复制 ignored 且命中 source `.worktreeinclude` 的文件、自动复制 ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md`，以及可选的 Git patch bytes。没有 Git 时，Worktree 请求返回 typed `WORKTREE_REQUIRES_GIT`。没有显式 `baseRef` 时，Runtime 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。Local Run 使用 `Project.workspace_root`，Worktree Run 使用 Worktree root。
-`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。该 Session 使用 Runtime 数据目录内的私有锚点目录作为内部执行 workspace 和 identity。默认路径是 `~/.eidos/.eidos-projectless/<session_id>`。自定义 `EIDOS_DATA_DIR` 时，锚点目录仍位于该数据目录内。该 Session 不会创建 Project、Worktree 或 Repository workspace。它固定为 Local execution。Run resolution 为这个系统 workspace 生成普通的 workspace permission profile，并保留数据目录保护。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules、Repository Context 或 workspace-environment。Desktop 仍提供当前 Session 的 Files、输出内容和文件预览，但不提供 Git Review。
+`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。该 Session 使用 Runtime 数据目录内的私有锚点目录作为内部执行 workspace 和 identity。默认路径是 `~/.eidos/.eidos-projectless/<session_id>`。自定义 `EIDOS_DATA_DIR` 时，锚点目录仍位于该数据目录内。该 Session 不会创建 Project、Worktree 或 Repository workspace。它固定为 Local execution。Run resolution 为这个系统 workspace 生成普通的 workspace permission profile，并保留数据目录保护。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules、Repository Context 或 workspace-environment。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
 
 ### Local ↔ Managed Worktree Handoff
 
@@ -596,7 +596,7 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 ### Skill 设置管理
 
-Desktop 的技能设置沿用 Renderer → typed preload IPC → Main → RuntimeClient → ExtensionApplication 链路。`SkillManagement` 复用 `SkillCatalog` 的目录发现和内容校验。`skill/list` 与 `extension/read` 返回管理列表，包含已禁用技能和未启用插件提供的技能。管理数据增加 `sourceKind`、`enabled` 和 `available`。`enabled` 表示技能自身开关，`available` 表示所属插件是否可用；技能开关不替代插件授权。
+Desktop 的技能设置沿用 Renderer → typed preload IPC → Main → RuntimeClient → ExtensionApplication 链路。`SkillManagement` 复用 `SkillCatalog` 的目录发现和内容校验。`skill/list` 与 `extension/read` 返回管理列表，包含已禁用技能和未启用插件提供的技能。管理数据增加 `sourceKind`、`enabled`、`available` 与可选 `icon`。技能图标优先从技能根目录下 `assets`（及兼容 `assents`）目录读取 `<skill-name>-small.svg`，若不存在则读取 `<skill-name>.png`，并转为 base64 Data URL 随 `skill/list` 返回；两者均不存在时为 `None`，前端无缝回退为首字母占位符。`enabled` 表示技能自身开关，`available` 表示所属插件是否可用；技能开关不替代插件授权。
 
 Runtime 的 `skill/detail` 返回完整 Markdown、去掉 frontmatter 的正文和经过目录发现校验的 canonical 技能目录。Desktop 按需读取详情，复用 Markdown 渲染、剪贴板和 Main 的 Finder 能力。详情的 Markdown 不继承当前 Session 的 Workspace 链接处理上下文。原有 `skill/read` 与 Run 内技能读取仍按可用 Catalog 工作。
 
@@ -626,3 +626,19 @@ Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 �
 审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后不会重新采样未完成的自动审批，而是拒绝原请求并报告中断。Desktop 在自动审查时通过位于底栏上方的状态胶囊（ApprovalStatusBanner）展示“模型正在审查操作…”与动效进度，并保留取消入口；Feed 展示审批来源与拒绝理由。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
 
 完全访问使用 `fullAccess` 权限快照，启用网络并移除 Eidos 路径 deny。Shell、受控文件 helper 和 MCP 执行不使用 Seatbelt。普通操作跳过逐项审批；仍经过原 Coordinator 的操作以模式授权记录批准，不调用审查模型或人工窗口。文件工具允许绝对路径访问，但仍拒绝不支持的链接和特殊文件；Shell 使用当前 macOS 用户的权限，不能绕过操作系统 ACL、TCC 或只读卷。该模式没有管理员提权，也没有无界输出或自动重放不确定副作用。
+
+## 输入引用与草稿
+
+本节描述新增生产代码。用户要求先完成生产代码和文档，再确认测试阶段。因此，本节不代表测试或验收通过。
+
+输入链路是 `Composer / WorkspaceExplorer → InputContext → preload typed IPC → Main → input/* RPC → InputContextApplication → InputContextRepository`。Main 提供系统文件选择、剪贴板图片、右键菜单和拖放文件路径转换。Renderer 不直接读取文件。Runtime 读取选中的内容，检查文件身份、大小和敏感内容，并生成带来源、摘要和类型的不可变引用。
+
+Schema v14 在 `items` 增加 `input_references_json`，并增加 `input_references` 与 `input_drafts`。v13 → v14 升级通过现有事务执行；此前受支持的版本沿原有升级链进入 v14。引用正文与图片使用现有 JSON Blob 存储。SQLite 保存引用元数据和 Blob 指针。Blob GC 保留这些指针。每个 Session 的草稿保存文字与引用 ID；尚未创建 Session 的输入使用 `new-conversation` 草稿。Renderer 的草稿状态只是编辑缓存，持久事实仍由 Runtime 管理。
+
+`input/prepare` 固定引用，`input/read` 返回预览，`input/draftRead` 与 `input/draftWrite` 读写草稿。`run/start` 接收引用 ID。Runtime 在接纳 Run 前解析这些 ID、检查总量和模型图片能力，并重新核对 Skill、MCP、Plugin 的可用状态和版本。Run 的用户消息与引用元数据在同一现有事务中提交，并经 Event/Outbox 投影。编辑重发、重新生成和 Fork 保留原引用；编辑重发可以显式移除引用。引用不会复制审批或权限授权。
+
+文本和 PNG/JPEG 图片使用内容快照。目录使用最多 200 项的一层目录摘要。未解析的二进制文件和较大的文本使用位置引用。目录和位置引用不代表子文件或二进制正文已经进入模型上下文。Runtime 不会因为引用而赋予模型额外写权限。后续工具读取和操作继续使用现有权限流程。
+
+Context Builder 从用户消息关联的持久引用读取内容，并标记来源、SHA256 和资料边界。图片通过现有 Pydantic AI `BinaryContent` 进入支持图片的 Provider。Context 预算排除 base64 字符串的文本计数，并加入按尺寸估算的图片开销。压缩事实保留引用来源和 ID。Skill 使用现有 Catalog、Activation、Resource 流程；MCP 和 Plugin 选择激活现有 deferred tools，不安装扩展、不绕过授权，也不在运行中替换快照。
+
+Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `desktop/shared/input-context.generated.ts`。生成器使用现有 Python 环境和已锁定的 `json-schema-to-typescript`，没有引入生产依赖。Main 与 RuntimeClient 继续执行边界校验。

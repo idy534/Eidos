@@ -1,3 +1,4 @@
+import { isInputReference, isInputDraft, isInputPreview, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference } from "../shared/input-context.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -497,10 +498,18 @@ export class RuntimeClient {
     sessionId: string,
     path: string,
     limit = 500,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceDirectoryListing> {
     return this.validatedRequest(
       "workspace/listDirectory",
-      { sessionId, path, limit },
+      {
+        sessionId,
+        path,
+        limit,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+        ...(projectId ? { projectId } : {}),
+      },
       isWorkspaceDirectoryListing,
     );
   }
@@ -508,16 +517,41 @@ export class RuntimeClient {
   readWorkspaceFilePreview(
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceFilePreview> {
     return this.validatedRequest(
       "workspace/readFilePreview",
-      { sessionId, path },
+      {
+        sessionId,
+        path,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+        ...(projectId ? { projectId } : {}),
+      },
       isWorkspaceFilePreview,
     );
   }
 
-  readWorkspaceAsset(sessionId: string, path: string, executionRoot: string, offset = 0, version?: string, workspaceVersion?: string): Promise<WorkspaceAssetChunk> {
-    return this.validatedRequest("workspace/readAsset", { sessionId, path, executionRoot, offset, ...(version ? { version } : {}), ...(workspaceVersion ? { workspaceVersion } : {}) }, isWorkspaceAssetChunk);
+  readWorkspaceAsset(
+    sessionId: string,
+    path: string,
+    executionRoot: string,
+    offset = 0,
+    version?: string,
+    workspaceVersion?: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<WorkspaceAssetChunk> {
+    return this.validatedRequest("workspace/readAsset", {
+      sessionId,
+      path,
+      executionRoot,
+      offset,
+      ...(version ? { version } : {}),
+      ...(workspaceVersion ? { workspaceVersion } : {}),
+      ...(workspaceRoot ? { workspaceRoot } : {}),
+      ...(projectId ? { projectId } : {}),
+    }, isWorkspaceAssetChunk);
   }
 
   renameSession(
@@ -755,6 +789,21 @@ export class RuntimeClient {
     return this.validatedRequest("runtime/health", {}, isRuntimeHealth);
   }
 
+  async prepareInput(request: InputPrepareRequest): Promise<InputReference> {
+    const value = await this.validatedRequest("input/prepare", { ...request }, (v): v is { reference: InputReference } =>
+      isRecord(v) && Object.keys(v).length === 1 && isInputReference(v.reference));
+    return value.reference;
+  }
+  readInput(id: string): Promise<InputPreview> {
+    return this.validatedRequest("input/read", { id }, isInputPreview);
+  }
+  readInputDraft(key: string): Promise<InputDraft> {
+    return this.validatedRequest("input/draftRead", { key }, isInputDraft);
+  }
+  writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft> {
+    return this.validatedRequest("input/draftWrite", { key, text: draft.text, references: draft.references.map((value) => value.id) }, isInputDraft);
+  }
+
   startRun(
     sessionId: string,
     userInput: string,
@@ -763,6 +812,7 @@ export class RuntimeClient {
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
     fullAccessConfirmation?: "full-access-v1",
+    references?: string[],
   ): Promise<Run> {
     return this.validatedRequest(
       "run/start",
@@ -771,6 +821,7 @@ export class RuntimeClient {
         userInput,
         modelId,
         operationId,
+        ...(references?.length ? { references } : {}),
         ...(reasoningSelection !== undefined ? { reasoningSelection } : {}),
         ...(approvalMode !== undefined ? { approvalMode } : {}),
         ...(fullAccessConfirmation !== undefined ? { fullAccessConfirmation } : {}),
@@ -1980,12 +2031,14 @@ function isItem(value: unknown): value is Item {
       "createdAt",
       "completedAt",
       "toolCall",
+      "references",
     ])
   ) {
     return false;
   }
   const valid = (
-    typeof value.id === "string"
+    (value.references === undefined || (Array.isArray(value.references) && value.references.length <= 20 && value.references.every(isInputReference)))
+    && typeof value.id === "string"
     && typeof value.sessionId === "string"
     && typeof value.runId === "string"
     && isNonNegativeInteger(value.ordinal)
@@ -2169,11 +2222,12 @@ function isSkillMetadata(value: unknown): value is SkillMetadata {
     isRecord(value)
     && hasOnlyKeys(value, [
       "schemaVersion", "qualifiedId", "name", "description", "pluginId",
-      "pluginVersion", "pluginHash", "contentHash", "sourceKind", "enabled", "available",
+      "pluginVersion", "pluginHash", "contentHash", "sourceKind", "enabled", "available", "icon",
     ])
     && ["system", "user", "plugin"].includes(String(value.sourceKind))
     && typeof value.enabled === "boolean"
     && typeof value.available === "boolean"
+    && (value.icon === undefined || value.icon === null || typeof value.icon === "string")
     && value.schemaVersion === 1
     && [
       "qualifiedId", "name", "description", "pluginId",

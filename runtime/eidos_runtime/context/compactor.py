@@ -71,6 +71,10 @@ class ContextCompactor:
             *(item.item_id for item in eligible),
         )))
         users = [item.content or "" for item in eligible if item.kind == "user_message"]
+        input_references = tuple(
+            f"用户引用：{reference.label}；来源：{reference.source}；ID：{reference.id}；SHA256：{reference.sha256}"
+            for item in eligible for reference in item.input_references
+        )
         assistants = [item.content or "" for item in eligible if item.kind == "assistant_message"]
         tools = [item for item in eligible if item.provider_call_id is not None]
         tool_records = tuple((_tool_text(item), item) for item in tools)
@@ -113,7 +117,7 @@ class ContextCompactor:
             ),
             important_facts=_merge(
                 existing.important_facts if existing else (),
-                (workspace_state, *successful_tools),
+                (workspace_state, *input_references, *successful_tools),
             ),
             unresolved_problems=_merge(
                 existing.unresolved_problems if existing else (),

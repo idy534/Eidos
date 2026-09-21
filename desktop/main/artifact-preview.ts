@@ -5,7 +5,15 @@ import type { BrowserAnnotation, BrowserBounds, BrowserPageState } from "../shar
 
 protocol.registerSchemesAsPrivileged([{ scheme: "eidos-preview", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
-interface PreviewGrant { owner: number; sessionId: string; root: string; path: string; workspaceVersion: string; version?: string }
+interface PreviewGrant {
+  owner: number;
+  sessionId: string;
+  root: string;
+  path: string;
+  workspaceVersion: string;
+  version?: string;
+  projectId?: string;
+}
 interface BrowserEntry { owner: number; sessionId: string; browserId: string; root: string; view: WebContentsView; error?: string | undefined; token?: string | undefined }
 
 /** Desktop views own no file authority: every resource is read through Runtime. */
@@ -19,20 +27,43 @@ export class ArtifactPreviewManager {
     session.defaultSession.protocol.handle("eidos-preview", (request) => this.resource(request, false));
   }
 
-  private async root(sessionId: string): Promise<string> {
+  private async root(sessionId: string, workspaceRoot?: string): Promise<string> {
+    if (workspaceRoot) return workspaceRoot;
     const { session: current } = await this.client().readSession(sessionId);
     const root = current.executionMode === "worktree" ? current.worktree?.worktreeRoot : current.workspaceRoot;
     if (!root) throw new Error("工作目录当前不可用。");
     return root;
   }
 
-  async prepare(owner: WebContents, sessionId: string, path: string, version?: string): Promise<string> {
+  private async browserRoot(sessionId: string, workspaceRoot?: string): Promise<string> {
+    if (workspaceRoot || !sessionId.startsWith("draft-")) return this.root(sessionId, workspaceRoot);
+    return "";
+  }
+
+  async prepare(
+    owner: WebContents,
+    sessionId: string,
+    path: string,
+    version?: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<string> {
     if (this.grants.size >= 256) throw new Error("打开的预览过多，请先关闭部分文件。");
-    const root = await this.root(sessionId);
-    const first = await this.client().readWorkspaceAsset(sessionId, path, root, 0, version);
+    const root = await this.root(sessionId, workspaceRoot);
+    const first = await this.client().readWorkspaceAsset(
+      sessionId, path, root, 0, version, undefined, root, projectId,
+    );
     if (owner.isDestroyed()) throw new Error("窗口已关闭。");
     const token = randomUUID();
-    this.grants.set(token, { owner: owner.id, sessionId, root, path, workspaceVersion: first.workspaceVersion, version: first.version });
+    this.grants.set(token, {
+      owner: owner.id,
+      sessionId,
+      root,
+      path,
+      workspaceVersion: first.workspaceVersion,
+      version: first.version,
+      ...(projectId ? { projectId } : {}),
+    });
     return `eidos-preview://${token}/${path.split("/").map(encodeURIComponent).join("/")}`;
   }
 
@@ -49,7 +80,16 @@ export class ArtifactPreviewManager {
       const path = decodeURIComponent(url.pathname.slice(1));
       // Passive previews can only load the selected asset. Browser grants permit its workspace resources.
       if (!executable && path !== grant.path) return new Response(null, { status: 403 });
-      let chunk = await this.client().readWorkspaceAsset(grant.sessionId, path, grant.root, 0, path === grant.path ? grant.version : undefined, grant.workspaceVersion);
+      let chunk = await this.client().readWorkspaceAsset(
+        grant.sessionId,
+        path,
+        grant.root,
+        0,
+        path === grant.path ? grant.version : undefined,
+        grant.workspaceVersion,
+        grant.root,
+        grant.projectId,
+      );
       if (!executable && !chunk.mimeType.startsWith("image/") && chunk.mimeType !== "application/pdf") return new Response(null, { status: 415 });
       let done = false;
       const stream = new ReadableStream<Uint8Array>({
@@ -59,7 +99,16 @@ export class ArtifactPreviewManager {
             controller.enqueue(Buffer.from(chunk.data, "base64"));
             if (chunk.complete) { done = true; controller.close(); return; }
             const offset = chunk.nextOffset;
-            chunk = await this.client().readWorkspaceAsset(grant.sessionId, path, grant.root, offset, chunk.version, grant.workspaceVersion);
+            chunk = await this.client().readWorkspaceAsset(
+              grant.sessionId,
+              path,
+              grant.root,
+              offset,
+              chunk.version,
+              grant.workspaceVersion,
+              grant.root,
+              grant.projectId,
+            );
             if (chunk.nextOffset <= offset && !chunk.complete) throw new Error("文件读取没有进展。");
           } catch (error) { done = true; controller.error(error); }
         },
@@ -93,19 +142,36 @@ export class ArtifactPreviewManager {
     });
   }
 
-  async open(owner: WebContents, sessionId: string, browserId: string, target: string): Promise<BrowserPageState> {
+  async open(
+    owner: WebContents,
+    sessionId: string,
+    browserId: string,
+    target: string,
+    workspaceRoot?: string,
+  ): Promise<BrowserPageState> {
     const key = this.key(owner, sessionId, browserId);
     const generation = (this.generation.get(key) ?? 0) + 1;
     this.generation.set(key, generation);
-    const root = await this.root(sessionId);
+    const parsed = new URL(target);
+    if (![
+      "http:",
+      "https:",
+      "eidos-preview:",
+    ].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error("仅支持网页地址或当前文件预览。");
+    }
+    const source = parsed.protocol === "eidos-preview:" ? this.grants.get(parsed.hostname) : undefined;
+    if (parsed.protocol === "eidos-preview:" && (
+      !source
+      || source.owner !== owner.id
+      || source.sessionId !== sessionId
+    )) throw new Error("文件预览已失效。");
+    const root = source?.root ?? await this.browserRoot(sessionId, workspaceRoot);
     if (owner.isDestroyed() || this.generation.get(key) !== generation) throw new Error("页面请求已取消。");
     let entry = this.browsers.get(key);
     if (entry && entry.root !== root) { this.close(owner, sessionId, browserId); this.generation.set(key, generation); entry = undefined; }
-    const parsed = new URL(target);
-    if (!["http:", "https:", "eidos-preview:"].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error("仅支持网页地址或当前文件预览。");
     if (parsed.protocol === "eidos-preview:") {
-      const grant = this.grants.get(parsed.hostname);
-      if (!grant || grant.owner !== owner.id || grant.sessionId !== sessionId || grant.root !== root) throw new Error("文件预览已失效。");
+      if (source!.root !== root) throw new Error("文件预览已失效。");
     }
     if (!entry) {
       if (this.browsers.size >= 8) throw new Error("打开的网页过多。");
@@ -130,7 +196,16 @@ export class ArtifactPreviewManager {
     if (parsed.protocol === "eidos-preview:") {
       const source = this.grants.get(parsed.hostname)!;
       const path = decodeURIComponent(parsed.pathname.slice(1));
-      const refreshed = await this.client().readWorkspaceAsset(sessionId, path, root, 0, entry.token === parsed.hostname || path !== source.path ? undefined : source.version, source.workspaceVersion);
+      const refreshed = await this.client().readWorkspaceAsset(
+        sessionId,
+        path,
+        root,
+        0,
+        entry.token === parsed.hostname || path !== source.path ? undefined : source.version,
+        source.workspaceVersion,
+        source.root,
+        source.projectId,
+      );
       if (owner.isDestroyed() || this.generation.get(key) !== generation) throw new Error("页面请求已取消。");
       const token = randomUUID();
       this.grants.set(token, { ...source, path, version: refreshed.version });
@@ -169,7 +244,7 @@ export class ArtifactPreviewManager {
 
   async annotate(owner: WebContents, sessionId: string, browserId: string): Promise<BrowserAnnotation> {
     const entry = this.browsers.get(this.key(owner, sessionId, browserId));
-    if (!entry || await this.root(sessionId) !== entry.root) throw new Error("页面已失效。");
+    if (!entry || (!sessionId.startsWith("draft-") && await this.root(sessionId) !== entry.root)) throw new Error("页面已失效。");
     const wc = entry.view.webContents;
     const url = wc.getURL();
     const selection: unknown = await wc.executeJavaScript("String(window.getSelection()?.toString() || '').slice(0, 4096)");

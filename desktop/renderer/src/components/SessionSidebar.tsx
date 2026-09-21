@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
 import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
@@ -85,6 +85,7 @@ export function SessionSidebar({
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(loadCollapsedProjects);
   const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
+  const navRef = useRef<HTMLElement | null>(null);
 
   const toggleProject = (projectKey: string) => {
     setCollapsedProjects((current) => {
@@ -120,6 +121,49 @@ export function SessionSidebar({
   }, [selectedId, projects, collapsedProjects]);
 
   useEffect(() => {
+    if (!selectedId) return;
+
+    const scrollToSelected = () => {
+      const container = navRef.current;
+      const activeElement = document.querySelector<HTMLElement>(
+        `.session-item button.selected, [data-session-id="${selectedId}"] button`
+      );
+      if (!activeElement || !container) return;
+
+      const elemRect = activeElement.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+
+      if (containerRect.height > 0) {
+        const isFullyVisible =
+          elemRect.top >= containerRect.top + 8 &&
+          elemRect.bottom <= containerRect.bottom - 8;
+
+        if (!isFullyVisible && typeof activeElement.scrollIntoView === "function") {
+          activeElement.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+            inline: "nearest",
+          });
+        }
+      } else if (typeof activeElement.scrollIntoView === "function") {
+        activeElement.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+          inline: "nearest",
+        });
+      }
+    };
+
+    const frame = requestAnimationFrame(scrollToSelected);
+    const timer = setTimeout(scrollToSelected, 250);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [selectedId, collapsedProjects]);
+
+  useEffect(() => {
     if (!contextMenu) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setContextMenu(undefined);
@@ -150,7 +194,7 @@ export function SessionSidebar({
         disabled={disabled}
         onClick={onCreate}
       />
-      <nav aria-label="项目与最近">
+      <nav ref={navRef} aria-label="项目与最近">
         <p className="nav-label">项目</p>
         {projects.length === 0 ? (
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
@@ -403,7 +447,7 @@ function ProjectSessionList({
           const isLoading = session.id === isSelectingSessionId;
           const gitStatus = gitStatusBySessionId.get(session.id);
           return (
-            <li className="session-item" key={session.id}>
+            <li className="session-item" key={session.id} data-session-id={session.id}>
               <button
                 className={isSelected ? "selected" : ""}
                 aria-current={isSelected ? "page" : undefined}

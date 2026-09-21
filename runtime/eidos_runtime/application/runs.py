@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.persistence.input_context import InputContextRepository
+from eidos_runtime.domain.input_reference import InputSnapshot
+
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -164,6 +167,8 @@ class RunStartEnvironmentPort(Protocol):
 
     def extension_snapshot(self) -> dict[str, object]: ...
 
+    def validate_input_selections(self, snapshots: list[InputSnapshot]) -> None: ...
+
     def schedule_title_generation(
         self, session_id: str, user_input: str, model_id: str
     ) -> None: ...
@@ -287,6 +292,11 @@ class RunApplication:
             raise RuntimeError("RunApplication store is not configured")
         return self._store.read_model_profile(run_id)
 
+    def input_reference_ids(self, run_id: str) -> list[str]:
+        if self._store is None:
+            raise RuntimeError("store is not configured")
+        return [value.reference.id for value in InputContextRepository(self._store.database).for_run(run_id)]
+
     def start(self, request: RunStartRequestDto) -> RunStartOutcome:
         store, runtime, environment, scan_text = self._start_dependencies()
         if not environment.model_is_configured():
@@ -307,10 +317,21 @@ class RunApplication:
             store=store,
             environment=environment,
         )
+        try:
+            input_snapshots = [InputContextRepository(store.database).read(identifier) for identifier in dict.fromkeys(request.references)]
+        except ValueError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", "引用已失效。") from error
+        if sum(len(value.image or "") for value in input_snapshots) > 16 * 1024 * 1024:
+            raise ApplicationError("INVALID_PARAMS", "图片总量过大。")
+        if sum(len(value.text) for value in input_snapshots) > 256 * 1024:
+            raise ApplicationError("INVALID_PARAMS", "引用内容总量过大。")
+        if any(value.image for value in input_snapshots) and not model_profile.supports_images:
+            raise ApplicationError("INVALID_PARAMS", "当前模型不支持图片输入。")
         extension_snapshot = environment.extension_snapshot()
         operation_request: dict[str, object] = {
             "sessionId": request.session_id,
             "userInput": user_input,
+            **({"references": [value.reference.id for value in input_snapshots]} if input_snapshots else {}),
             "modelId": model_id,
             "reasoningSelection": model_profile.reasoning_selection,
             "extensionSnapshot": extension_snapshot,
@@ -337,6 +358,9 @@ class RunApplication:
                     _run_id=str(response.root["id"]),
                     _environment=environment,
                 )
+
+        if input_snapshots:
+            environment.validate_input_selections(input_snapshots)
 
         try:
             if self._session_repository is not None:
@@ -377,6 +401,7 @@ class RunApplication:
                     created, _user_item = store.enqueue_run(
                         request.session_id,
                         user_input,
+                        references=[value.reference for value in input_snapshots],
                         operation_id=request.operation_id,
                         session_title=None,
                         model_id=model_id,
@@ -431,7 +456,7 @@ class RunApplication:
             _title_request=(
                 _TitleGenerationRequest(
                     session_id=request.session_id,
-                    user_input=user_input,
+                    user_input=user_input or ", ".join(value.reference.label for value in input_snapshots),
                     model_id=model_id,
                 )
                 if needs_title
@@ -595,9 +620,14 @@ class RunApplication:
         environment: RunStartEnvironmentPort,
     ) -> tuple[str, ModelProfileSnapshot, ModelConfig | None]:
         model_id = request.model_id
+        config: ModelConfig | None = None
+        try:
+            config = environment.model_config(model_id)
+        except Exception:
+            config = None
         try:
             selected_reasoning = MODEL_CATALOG.reasoning_selection(
-                model_id, request.reasoning_selection
+                model_id, request.reasoning_selection, config=config
             )
         except ModelConfigError as error:
             raise ApplicationError(
@@ -621,17 +651,15 @@ class RunApplication:
                 }),
                 None,
             )
-        try:
-            config = environment.model_config(model_id)
+        if config is not None:
             return (
                 model_id,
-                MODEL_CATALOG.profile(model_id).snapshot(
+                MODEL_CATALOG.profile(model_id, config=config).snapshot(
                     config, reasoning_selection=selected_reasoning
                 ),
                 config,
             )
-        except (ModelConfigError, ValueError) as error:
-            raise ApplicationError("MODEL_NOT_AVAILABLE", "model is unavailable") from error
+        raise ApplicationError("MODEL_NOT_AVAILABLE", "model is unavailable")
 
     @staticmethod
     def _abort_before_response(

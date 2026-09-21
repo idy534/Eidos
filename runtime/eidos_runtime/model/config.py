@@ -216,7 +216,7 @@ MODEL_PROVIDERS = (
                 name="MiniMax M3",
                 url="https://api.minimaxi.com/v1/chat/completions",
                 supportsToolCall=True,
-                supportsImages=False,
+                supportsImages=True,
                 supportsReasoning=True,
                 reasoning=ModelReasoningConfig(
                     defaultSelection="thinking",
@@ -235,7 +235,7 @@ MODEL_PROVIDERS = (
                 name="Kimi K3",
                 url="https://api.moonshot.cn/v1/chat/completions",
                 supportsToolCall=True,
-                supportsImages=False,
+                supportsImages=True,
                 supportsReasoning=True,
                 reasoning=ModelReasoningConfig(
                     defaultSelection="max",
@@ -247,7 +247,7 @@ MODEL_PROVIDERS = (
                 name="Kimi K2.7 Code",
                 url="https://api.moonshot.cn/v1/chat/completions",
                 supportsToolCall=True,
-                supportsImages=False,
+                supportsImages=True,
                 supportsReasoning=True,
                 reasoning=None,
             ),
@@ -303,7 +303,7 @@ MODEL_PROVIDERS = (
                 name="GLM 5.3 Flash",
                 url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
                 supportsToolCall=True,
-                supportsImages=False,
+                supportsImages=True,
                 supportsReasoning=True,
                 reasoning=ModelReasoningConfig(
                     defaultSelection="max",
@@ -368,33 +368,69 @@ class ModelCatalog:
             raise ModelConfigError("model is unsupported")
         return selected
 
-    def provider_id_for(self, model_id: str) -> str:
+    def provider_id_for(self, model_id: str, *, vendor: str | None = None) -> str:
         selected = self._models.get(self.canonical_id(model_id))
-        if selected is None:
-            raise ModelConfigError("model is unsupported")
-        return selected[0].id
+        if selected is not None:
+            return selected[0].id
+        if vendor:
+            vendor_normalized = vendor.strip().lower()
+            for provider in self.providers:
+                if (
+                    provider.id == vendor_normalized
+                    or provider.vendor.lower() == vendor_normalized
+                ):
+                    return provider.id
+            return vendor_normalized
+        raise ModelConfigError("model is unsupported")
 
-    def profile(self, model_id: str) -> ModelProfileSpec:
-        provider, model = self.lookup(self.provider_id_for(model_id), model_id)
+    def profile(
+        self, model_id: str, *, config: ModelConfig | None = None
+    ) -> ModelProfileSpec:
+        selected = self._models.get(self.canonical_id(model_id))
+        if selected is not None:
+            provider, model = selected
+            return ModelProfileSpec(
+                provider_id=provider.id,
+                model_id=model_id,
+                context_window_tokens=model.context_window_tokens,
+                max_output_tokens=model.max_output_tokens,
+                request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                supports_images=(
+                    config.supports_images
+                    if config is not None
+                    else model.supports_images
+                ),
+                wire_api=model.wire_api,
+                supports_custom_tools=model.supports_custom_tools,
+                supports_tool_grammar=model.supports_tool_grammar,
+            )
+        vendor = config.vendor if config is not None else None
+        provider_id = self.provider_id_for(model_id, vendor=vendor)
         return ModelProfileSpec(
-            provider_id=provider.id,
+            provider_id=provider_id,
             model_id=model_id,
-            context_window_tokens=model.context_window_tokens,
-            max_output_tokens=model.max_output_tokens,
+            context_window_tokens=DEFAULT_CONTEXT_WINDOW_TOKENS,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
             request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
-            supports_images=model.supports_images,
-            wire_api=model.wire_api,
-            supports_custom_tools=model.supports_custom_tools,
-            supports_tool_grammar=model.supports_tool_grammar,
+            supports_images=config.supports_images if config is not None else False,
+            wire_api="chat_completions",
+            supports_custom_tools=False,
+            supports_tool_grammar=False,
         )
 
     def reasoning_selection(
         self,
         model_id: str,
         requested: ModelReasoningSelection | None,
+        *,
+        config: ModelConfig | None = None,
     ) -> ModelReasoningSelection | None:
-        _, model = self.lookup(self.provider_id_for(model_id), model_id)
-        reasoning = model.reasoning
+        reasoning = None
+        selected = self._models.get(self.canonical_id(model_id))
+        if selected is not None:
+            reasoning = selected[1].reasoning
+        elif config is not None:
+            reasoning = config.reasoning
         if requested is None:
             return reasoning.default_selection if reasoning else None
         if reasoning is None or requested not in reasoning.selections:
@@ -476,16 +512,15 @@ class ModelConfigStore:
         seen: set[str] = set()
         changed = False
         for value in values:
-            model_id = MODEL_CATALOG.canonical_id(value.id)
-            if model_id in seen:
+            canonical_id = MODEL_CATALOG.canonical_id(value.id)
+            if canonical_id in seen:
                 raise ModelConfigError("model configuration migration conflict")
-            seen.add(model_id)
-            provider_id = MODEL_CATALOG.provider_id_for(model_id)
-            refreshed = MODEL_CATALOG.materialize(
-                provider_id, model_id, value.api_key
-            )
-            migrated.append(refreshed)
-            changed = changed or model_id != value.id or refreshed != value
+            seen.add(canonical_id)
+            if canonical_id != value.id:
+                migrated.append(value.model_copy(update={"id": canonical_id}))
+                changed = True
+            else:
+                migrated.append(value)
         if changed:
             self._write(migrated)
 
@@ -504,11 +539,6 @@ class ModelConfigStore:
         ids = [value.id for value in values]
         if len(ids) != len(set(ids)):
             raise ModelConfigError("model configuration contains duplicate IDs")
-        for value in values:
-            provider_id = MODEL_CATALOG.provider_id_for(value.id)
-            expected = MODEL_CATALOG.materialize(provider_id, value.id, value.api_key)
-            if value != expected:
-                raise ModelConfigError("model configuration is invalid")
         return values
 
     def get(self, model_id: str) -> ModelConfig | None:
@@ -632,7 +662,7 @@ class ModelConfigStore:
 def public_model_config(config: ModelConfig) -> ModelPublicConfig:
     return ModelPublicConfig(
         **config.model_dump(mode="json", by_alias=True, exclude={"api_key"}),
-        provider=MODEL_CATALOG.provider_id_for(config.id),
+        provider=MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor),
     )
 
 

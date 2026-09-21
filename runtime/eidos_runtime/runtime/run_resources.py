@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.persistence.input_context import InputContextRepository
+from eidos_runtime.extensions.skills import SelectedSkillSet
+
 import hashlib
 import re
 
@@ -247,11 +250,15 @@ class RunResources:
                 user_input,
             )
         }
+        selections = InputContextRepository(self.store.database).for_run(self.run_id)
+        mentioned_plugins.update(value.selection_id for value in selections if value.reference.kind == "plugin")
+        mentioned_servers = {(value.plugin_id, value.selection_id) for value in selections if value.reference.kind == "mcp"}
         mentioned_tools = tuple(
             entry.spec.name
             for entry in self.registry.entries
             if entry.spec.visibility == "deferred"
-            and entry.provenance.plugin_id in mentioned_plugins
+            and (entry.provenance.plugin_id in mentioned_plugins
+                 or (entry.provenance.plugin_id, entry.provenance.server_id) in mentioned_servers)
         )
         if mentioned_tools:
             self.store.activate_tools(self.run_id, mentioned_tools)
@@ -262,6 +269,17 @@ class RunResources:
         selected = self.skills.select_explicit(
             self.skill_catalog_snapshot, turn_id, user_input
         )
+        explicit_ids = {
+            value.selection_id for value in InputContextRepository(self.store.database).for_run(self.run_id)
+            if value.reference.kind == "skill" and value.selection_id is not None
+        }
+        if explicit_ids:
+            available = {str(entry["qualifiedId"]) for entry in self.skills.catalog(self.skill_catalog_snapshot)}
+            if not explicit_ids.issubset(available):
+                raise SkillReadError("skill_unavailable")
+            selected = SelectedSkillSet(turn_id=turn_id, selected_qualified_ids=tuple(sorted(
+                set(selected.selected_qualified_ids) | explicit_ids
+            )))
         self.selected_skill_context = (
             self.skills.render_selected(self.skill_catalog_snapshot, selected)
             if selected.selected_qualified_ids

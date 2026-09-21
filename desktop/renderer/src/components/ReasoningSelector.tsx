@@ -35,6 +35,48 @@ export interface ReasoningSelectorProps {
   onChange: (selection: ModelReasoningSelection) => void;
 }
 
+const FULL_MULTIMODAL_MODELS = new Set([
+  "glm-5.3-flash",
+  "minimax-m3",
+  "MiniMax-M3",
+  "kimi-k3",
+  "kimi-k2.7-code-highspeed",
+]);
+
+const MODEL_CONTEXT_LIMITS: Record<string, string> = {
+  "glm-5.3-flash": "1M",
+  "glm-5.3": "1M",
+  "deepseek-v4-flash-ga-260731": "1M",
+  "deepseek-v4-pro-ga-260813": "1M",
+  "deepseek-flash": "800K",
+  "minimax-m3": "1M",
+  "MiniMax-M3": "1M",
+  "kimi-k3": "1M",
+  "kimi-k2.7-code-highspeed": "256K",
+};
+
+function getModelProviderDisplay(model: ModelOption): string {
+  return getProviderName(model.provider) || model.vendor;
+}
+
+function getModelInputDisplay(model: ModelOption): string {
+  if (FULL_MULTIMODAL_MODELS.has(model.id)) {
+    return "文本, 图像, 视频, PDF";
+  }
+  if (model.supportsImages) {
+    return "文本, 图像";
+  }
+  return "文本";
+}
+
+function getModelReasoningDisplay(model: ModelOption): string {
+  return model.supportsReasoning ? "支持推理" : "不支持推理";
+}
+
+function getModelContextDisplay(model: ModelOption): string {
+  return MODEL_CONTEXT_LIMITS[model.id] ?? "128K";
+}
+
 export function ReasoningSelector({
   models,
   selectedModelId,
@@ -46,11 +88,15 @@ export function ReasoningSelector({
   const panelId = useId();
   const modelRadioName = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const sliderRef = useRef<HTMLInputElement>(null);
   const modelHeadingRef = useRef<HTMLHeadingElement>(null);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<PickerView>("reasoning");
+  const [hoveredModel, setHoveredModel] = useState<ModelOption | null>(null);
+  const [cardTop, setCardTop] = useState(0);
+  const [cardPlacement, setCardPlacement] = useState<"right" | "left">("right");
 
   const selectedModel = models.find((model) => model.id === selectedModelId);
   const selections = getSelections(selectedModel?.reasoning);
@@ -85,7 +131,10 @@ export function ReasoningSelector({
   }, [selectedIndex, selectedModelId]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setHoveredModel(null);
+      return;
+    }
 
     const closeOnOutsideInteraction = (event: Event) => {
       if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
@@ -120,6 +169,7 @@ export function ReasoningSelector({
   }, [open, selectedModelId, view]);
 
   const selectModel = (modelId: ModelId) => {
+    setHoveredModel(null);
     const nextModel = models.find((model) => model.id === modelId);
     const nextCanAdjustReasoning = getSelections(nextModel?.reasoning).length > 1;
     onModelChange(modelId);
@@ -130,6 +180,31 @@ export function ReasoningSelector({
       setOpen(false);
       triggerRef.current?.focus();
     }
+  };
+
+  const handleModelHover = (model: ModelOption, element: HTMLElement | null) => {
+    setHoveredModel(model);
+    if (element && panelRef.current) {
+      const panelRect = panelRef.current.getBoundingClientRect();
+      const spaceOnRight = window.innerWidth - panelRect.right;
+      setCardPlacement(spaceOnRight >= 230 ? "right" : "left");
+
+      const cardHeight = 148;
+      const viewportMargin = 8;
+      const itemTop = element.offsetTop;
+      let top = itemTop - 4;
+
+      const cardBottomInViewport = panelRect.top + top + cardHeight;
+      if (cardBottomInViewport > window.innerHeight - viewportMargin) {
+        top = window.innerHeight - viewportMargin - panelRect.top - cardHeight;
+      }
+
+      setCardTop(Math.max(0, top));
+    }
+  };
+
+  const handleModelLeave = (modelId: ModelId) => {
+    setHoveredModel((current) => (current?.id === modelId ? null : current));
   };
 
   const commitSliderPosition = (position: number) => {
@@ -190,6 +265,7 @@ export function ReasoningSelector({
       {open && (
         <div
           id={panelId}
+          ref={panelRef}
           className="reasoning-selector__panel"
           role="dialog"
           aria-label={view === "models" ? "选择模型" : `${modelName} 思考强度`}
@@ -204,6 +280,10 @@ export function ReasoningSelector({
                   <label
                     key={model.id}
                     className={`reasoning-selector__model-choice${model.id === selectedModelId ? " is-selected" : ""}`}
+                    onMouseEnter={(event) => handleModelHover(model, event.currentTarget)}
+                    onMouseLeave={() => handleModelLeave(model.id)}
+                    onFocus={(event) => handleModelHover(model, event.currentTarget)}
+                    onBlur={() => handleModelLeave(model.id)}
                   >
                     <input
                       type="radio"
@@ -222,6 +302,45 @@ export function ReasoningSelector({
                   </label>
                 ))}
               </fieldset>
+              {hoveredModel && (
+                <div
+                  className={`reasoning-selector__info-card reasoning-selector__info-card--${cardPlacement}`}
+                  style={{ top: `${cardTop}px` }}
+                  role="tooltip"
+                  aria-live="polite"
+                >
+                  <div className="reasoning-selector__info-row">
+                    <span className="reasoning-selector__info-label">模型</span>
+                    <span className="reasoning-selector__info-value" title={hoveredModel.name}>
+                      {hoveredModel.name}
+                    </span>
+                  </div>
+                  <div className="reasoning-selector__info-row">
+                    <span className="reasoning-selector__info-label">提供商</span>
+                    <span className="reasoning-selector__info-value" title={getModelProviderDisplay(hoveredModel)}>
+                      {getModelProviderDisplay(hoveredModel)}
+                    </span>
+                  </div>
+                  <div className="reasoning-selector__info-row">
+                    <span className="reasoning-selector__info-label">输入</span>
+                    <span className="reasoning-selector__info-value">
+                      {getModelInputDisplay(hoveredModel)}
+                    </span>
+                  </div>
+                  <div className="reasoning-selector__info-row">
+                    <span className="reasoning-selector__info-label">推理</span>
+                    <span className="reasoning-selector__info-value">
+                      {getModelReasoningDisplay(hoveredModel)}
+                    </span>
+                  </div>
+                  <div className="reasoning-selector__info-row">
+                    <span className="reasoning-selector__info-label">上下文</span>
+                    <span className="reasoning-selector__info-value">
+                      {getModelContextDisplay(hoveredModel)}
+                    </span>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <>

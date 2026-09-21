@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from eidos_runtime.domain.input_reference import InputReference
+
 
 class ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
@@ -316,7 +318,10 @@ class ToolCallDto(ClosedModel):
     completed_at: StrictInt | None = Field(default=None, alias="completedAt")
 
 
+
+
 class ItemDto(ClosedModel):
+    references: list[InputReference] = Field(default_factory=list)
     id: StrictStr
     session_id: StrictStr = Field(alias="sessionId")
     run_id: StrictStr = Field(alias="runId")

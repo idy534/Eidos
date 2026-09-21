@@ -271,6 +271,8 @@ def _item_from_row(
         "status": row["status"],
         "createdAt": row["created_at"],
     }
+    if "input_references_json" in row.keys() and row["input_references_json"] != "[]":
+        item["references"] = json.loads(row["input_references_json"])
     if row["model_step_index"] is not None:
         item["modelStepIndex"] = row["model_step_index"]
     if row["content"] is not None:

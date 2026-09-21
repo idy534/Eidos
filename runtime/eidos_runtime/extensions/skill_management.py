@@ -1,6 +1,7 @@
 """Skill management outside the immutable Run catalog."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 import os
@@ -18,6 +19,35 @@ from eidos_runtime.models.skill_settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+MAX_ICON_BYTES = 256 * 1024
+
+
+def _read_skill_icon(skill_root: Path, skill_name: str) -> str | None:
+    candidates = [
+        (f"{skill_name}-small.svg", "image/svg+xml"),
+        (f"{skill_name}.png", "image/png"),
+    ]
+    subdirs = ["assets", "assents"]
+    for filename, mime_type in candidates:
+        for subdir in subdirs:
+            candidate_path = skill_root / subdir / filename
+            try:
+                stat_result = candidate_path.lstat()
+                if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISREG(stat_result.st_mode):
+                    continue
+                if stat_result.st_size == 0 or stat_result.st_size > MAX_ICON_BYTES:
+                    continue
+                canonical_root = skill_root.resolve(strict=True)
+                canonical_candidate = candidate_path.resolve(strict=True)
+                if not canonical_candidate.is_relative_to(canonical_root):
+                    continue
+                data = candidate_path.read_bytes()
+                encoded = base64.b64encode(data).decode("ascii")
+                return f"data:{mime_type};base64,{encoded}"
+            except (OSError, ValueError):
+                continue
+    return None
 
 
 class SkillManagement:
@@ -51,12 +81,14 @@ class SkillManagement:
             if state and state.removed:
                 continue
             available = source.source_kind != "plugin" or source.source_id in enabled_plugins
+            icon = _read_skill_icon(source.root, source.name)
             result.append(ManagedSkill(
                 qualified_id=source.qualified_id, name=source.name,
                 description=source.description, plugin_id=source.source_id,
                 plugin_version=source.source_version, plugin_hash=source.source_hash,
                 content_hash=source.content_hash, source_kind=source.source_kind,
                 enabled=state.enabled if state else True, available=available,
+                icon=icon,
             ))
         return tuple(result)
 

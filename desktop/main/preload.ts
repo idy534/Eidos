@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from "electron";
+import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/index.js";
 import type { EidosRuntimeAPI, Unsubscribe } from "../shared/ipc-api.js";
 import type {
@@ -86,11 +87,24 @@ const api: EidosRuntimeAPI = {
     sessionId: string,
     path: string,
     limit?: number,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceDirectoryListing> =>
-    ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit),
-  prepareWorkspacePreview: (sessionId: string, path: string, version?: string) => ipcRenderer.invoke(IPC.WORKSPACE_PREVIEW_URL, sessionId, path, version),
+    ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit, workspaceRoot, projectId),
+  prepareWorkspacePreview: (
+    sessionId: string,
+    path: string,
+    version?: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ) => ipcRenderer.invoke(IPC.WORKSPACE_PREVIEW_URL, sessionId, path, version, workspaceRoot, projectId),
   releaseWorkspacePreview: (url: string) => ipcRenderer.invoke(IPC.WORKSPACE_RELEASE_PREVIEW, url),
-  openBrowser: (sessionId: string, browserId: string, url: string) => ipcRenderer.invoke(IPC.BROWSER_OPEN, sessionId, browserId, url),
+  openBrowser: (
+    sessionId: string,
+    browserId: string,
+    url: string,
+    workspaceRoot?: string,
+  ) => ipcRenderer.invoke(IPC.BROWSER_OPEN, sessionId, browserId, url, workspaceRoot),
   setBrowserBounds: (sessionId: string, browserId: string, bounds: import("../shared/domain-contracts.js").BrowserBounds | null) => ipcRenderer.invoke(IPC.BROWSER_BOUNDS, sessionId, browserId, bounds),
   closeBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_CLOSE, sessionId, browserId),
   readBrowserState: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_STATE, sessionId, browserId),
@@ -98,16 +112,22 @@ const api: EidosRuntimeAPI = {
   readWorkspaceFilePreview: (
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceFilePreview> =>
-    ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path),
+    ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path, workspaceRoot, projectId),
   openWorkspacePathInEditor: (sessionId: string, path: string): Promise<void> =>
     ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
   showItemInFolder: (path: string): Promise<void> =>
     ipcRenderer.invoke(IPC.WORKSPACE_SHOW_IN_FINDER, path),
 
   // User terminal
-  createTerminal: (sessionId: string): Promise<TerminalSessionInfo> =>
-    ipcRenderer.invoke(IPC.TERMINAL_CREATE, sessionId),
+  createTerminal: (
+    sessionId: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<TerminalSessionInfo> =>
+    ipcRenderer.invoke(IPC.TERMINAL_CREATE, sessionId, workspaceRoot, projectId),
   writeTerminal: (terminalId: string, data: string): Promise<void> =>
     ipcRenderer.invoke(IPC.TERMINAL_WRITE, terminalId, data),
   resizeTerminal: (terminalId: string, columns: number, rows: number): Promise<void> =>
@@ -265,12 +285,25 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.SESSION_GIT_REBASE_ABORT, sessionId, operationId),
 
   // Runs
+  onInputQuote: (callback: (text: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, text: string) => callback(text);
+    ipcRenderer.on(IPC.INPUT_QUOTE, listener);
+    return () => ipcRenderer.removeListener(IPC.INPUT_QUOTE, listener);
+  },
+  pickInputPaths: (directory = false) => ipcRenderer.invoke(IPC.INPUT_PICK, directory),
+  inputPathForFile: (file: File) => webUtils.getPathForFile(file),
+  prepareInput: (request: InputPrepareRequest) => ipcRenderer.invoke(IPC.INPUT_PREPARE, request),
+  readInput: (id: string) => ipcRenderer.invoke(IPC.INPUT_READ, id),
+  pasteInputImage: () => ipcRenderer.invoke(IPC.INPUT_PASTE_IMAGE),
+  readInputDraft: (key: string) => ipcRenderer.invoke(IPC.INPUT_DRAFT_READ, key),
+  writeInputDraft: (key: string, draft: InputDraft) => ipcRenderer.invoke(IPC.INPUT_DRAFT_WRITE, key, draft),
   startRun: (
     sessionId: string,
     userInput: string,
     modelId: ModelId,
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
+    references?: string[],
   ): Promise<Run> => ipcRenderer.invoke(
     IPC.RUN_START,
     sessionId,
@@ -278,12 +311,13 @@ const api: EidosRuntimeAPI = {
     modelId,
     reasoningSelection,
     approvalMode,
+    references,
   ),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
   readContextUsage: (runId: string): Promise<ContextUsage | null> =>
     ipcRenderer.invoke(IPC.CONTEXT_USAGE, runId),
-  reviseRun: (sourceRunId: string, userInput?: string): Promise<RunRevisionResult> =>
-    ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput),
+  reviseRun: (sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult> =>
+    ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput, references),
 
   // Response actions
   readResponseActionState: (sessionId: string): Promise<ResponseActionState> =>

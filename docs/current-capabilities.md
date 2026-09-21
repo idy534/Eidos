@@ -14,7 +14,7 @@
 - Session 首屏和历史分页的读取代码不再构建 Step Resolution Review。响应保留空的 `stepResolutions` 字段。Items、Runs 和事件游标继续使用原有读取路径。本项代码修订尚未进入测试和性能验收阶段。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
 - 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
-- 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Projectless Session 提供 Files 和文件树，读取范围是当前 Session 的私有 Workspace。
+- 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Workspace Dock 的 Review 只对 Git Project 展示，Terminal 和 Files 只对有 Project 的会话展示，Browser 对所有会话展示。Projectless Session 的 Runtime 仍使用当前 Session 的私有 Workspace。
 - Desktop 的“更改工作环境”弹窗使用中文展示“本地”和“新建本地工作树”。当前环境是本地时，用户也可以在弹窗中切换本地分支。切换到本地工作树时，Runtime 会创建或复用这个 Session 已关联的工作树；切换回本地时，Runtime 会安全迁移当前 Git 状态。整个过程不会创建新 Session。环境切换期间，Desktop 会禁用输入、创建分支、删除和 Session 导航；完成后只刷新当前 Session 的执行绑定和 Git 审阅状态。
 - Desktop 的 Review Dock 会按 Dock 自身宽度切换布局。窄 Dock 会把分支观察、Git 操作、Diff 范围和审阅操作分成稳定的行。分支与比较目标保持单行省略。空范围只显示一个可读空状态，不再显示零文件分组。
 - Review 的 Git status、diff 和 project context 刷新会合并进行中的请求，并只保留最新的后续刷新，避免同一个 Git 观察周期长期堆积 RPC。
@@ -34,7 +34,7 @@
 - `session/create` 的协议默认 `executionMode` 是 `local`。Desktop 只在首次提交时调用它。Worktree 请求会先解析可选 `baseRef` 为 immutable `baseCommit`，并接受显式的 `includeLocalChanges`。缺省 `baseRef` 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。不存在的 ref 返回 `BASE_REF_NOT_FOUND`。
 - `session/create` 允许省略或传入空的 `workspaceRoot` 来创建 projectless Session。Projectless Session 只接受 `executionMode = local`，不创建 Project 或 Worktree binding。
 - Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录都位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
-- Projectless Run 使用系统私有锚点作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 提供当前 Session 私有 Workspace 的 Files、环境信息中的“输出内容”和文件预览。Projectless 对话不展示文本修改卡，但仍可以展示产物卡。
+- Projectless Run 使用系统私有锚点作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 保留环境信息中的“输出内容”和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。Projectless 对话不展示文本修改卡，但仍可以展示产物卡。
 - Local Session 和 Worktree Session 都是正式 Session projection。Worktree Session 默认使用 detached HEAD，`worktree.branch` 为 NULL。Git Project 的 Local Session 通过当前 Local checkout 提供 Git status 和 Git diff。
 - Worktree 创建只会从 source repository root 的 `.worktreeinclude` 复制同时命中 `pathspec.GitIgnoreSpec` 且由 Git ignore 判定为 ignored 的 local files。Tracked files 和 untracked non-ignored files 不由 `.worktreeinclude` 复制。Runtime 只在 matched concrete path 上执行 `.git`、target boundary、source symlink、target parent、atomic replacement、fsync 和 permission safety；Runtime 不重新限制 Git pattern grammar。Managed Worktree 内的 `.worktreeinclude` 不具有 authority。Ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md` 会自动 materialize；tracked override 只使用 Git checkout 内容。
 - `includeLocalChanges = true` 要求 source `HEAD == baseCommit`。Runtime 使用 hardened Git CLI capture/apply full patch 和 staged patch，覆盖 tracked modified/deleted、staged、unstaged、binary、symlink、mode 和 untracked state。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Local-change state conflict、source change 和 materialization failure 会 rollback Worktree，无法安全清理时进入 `cleanup_required`。Dirty submodule checkout 不属于当前 transfer contract，Runtime 返回 `worktree_gitlink_unsupported`。
@@ -53,7 +53,8 @@
 - 回答流式输出已完成代码修订，尚未进入测试阶段。普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。本次没有新增模型请求、工具参数流式展示或传输服务。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
-- ModelConfigStore 支持内置 Catalog 中的九个 Model，包括 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的模型。
+- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的九个推荐模型预设模板，不再强制全等校验。
+- 内置多模态支持模型包括 `glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码模型包括 `glm-5.3` 以及 DeepSeek 系列。
 - 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/coding/v3`，包含 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
@@ -106,9 +107,9 @@
 - 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录默认受到写入保护，只有获批的 `run_shell.gitWriteAccess` 可以写当前 repository 的 Git metadata。
 - `apply_patch` 的 Function 和 Custom 输入都接受 Workspace-relative path 和 Workspace 内的 canonical absolute path。Runtime 会在统一的 Workspace write resolver 中把模型 absolute path 归一化为内部 relative path。Move 的 source 和 destination 分别参与路径授权。Workspace 外普通路径及普通 Skill 路径可以经审批或有效 Run Grant 授权写入。数据目录内 `skills/.system` 始终禁止工具修改。
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
-- Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。预览区保留打开文件的 Tab，不额外显示当前路径、文件大小或手动刷新入口。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。图片和 PDF 使用有界资源预览，HTML 可以在隔离网页面板中运行或查看源码；其他二进制、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
+- Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 只对有 Project 的会话显示。已选择 Project 的 draft 在 Session 物化前也可以浏览 Files。Projectless 会话不显示 Files。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。预览区保留打开文件的 Tab，不额外显示当前路径、文件大小或手动刷新入口。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。图片和 PDF 使用有界资源预览，HTML 可以在隔离网页面板中运行或查看源码；其他二进制、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
-- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口展示当前执行方式、分支、对比分支、增删行数和当前会话的输出产物。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。产物卡只展示成功的内置交付声明，标题使用声明标题或真实文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
+- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口展示当前执行方式、分支、对比分支、增删行数和当前会话的输出产物。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。产物卡只展示成功的内置交付声明，标题使用声明标题或真实文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，关闭最后一个 Tab 时会自动折叠右侧工作区，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
 - Desktop Review 提供三个范围：未提交使用 `session/gitStatus` 和 `session/gitDiff(scope=head)` 建立文件手风琴，反映当前分支相对 HEAD 的待提交改动，同一 execution root 下各 Session 看到一致；最近一轮展示最近一次 Run 的持久化文件补丁；整个任务展示本 Session 全部 Run 的持久化补丁历史，后两者不依赖 Git baseline。三者共用同一套文件手风琴：文件名 + 增删行数，点开展开绿增红删的统一 Diff，大补丁经 `ToolTextView` 分页读取。Renderer 在文件展开时才请求 `session/gitDiff(path)`，并用 `react-diff-view` 显示 native Git patch。Review 支持展开全部差异和折叠全部差异。文件列表为只读审查；Stage 只在提交弹层中用于“包含未暂存的更改”后再提交。Open in Editor 只把相对路径交给 Main，Main 会按当前 Session execution root 重新验证真实路径。
 - Review 支持在 Diff gutter 上创建行级 Review Comment。Comment 绑定 Session、path、scope、old/new side、line、观察到的 HEAD 和 Diff hash。Diff 变化后，Runtime 会把无法精确证明仍有效的 Comment 标成 stale。用户点击 Send Review Feedback 后，Desktop 只把 active Comment 格式化成普通用户输入，并复用现有 Run 启动链路。创建 Comment 本身不会启动 Agent。
 - Review 的提交弹层经 Portal 浮于整个窗口之上，不属于右侧 Dock，不需要打开 Dock。环境信息中的“提交或推送”直开该全窗口弹层。弹层展示 branch、upstream 和 ahead/behind。它可以先 Stage 未暂存文件，再执行 Commit，也可以顺序执行 Commit 和 Push。弹层继续提供 Fetch、fast-forward-only Pull、Push、Merge、Rebase 和对应 abort/continue。每个操作复用现有 typed Runtime API 和 `operationId` 语义。Detached managed Worktree 可以继续使用 Create Branch Here。Advanced Git target 只来自 typed local branch observation。
@@ -378,7 +379,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ### 技能设置页面（生产实现，待测试验收）
 
-- 设置页铺满当前应用窗口。项目侧栏、侧栏折叠按钮和浮动导航在设置期间隐藏；侧栏快捷键不会展开侧栏。用户退出设置后，侧栏恢复此前状态。设置分类导航继续保留。
+- 设置页铺满当前应用窗口。项目侧栏、侧栏折叠按钮和浮动导航在设置期间隐藏；侧栏快捷键不会展开侧栏。用户退出设置后，侧栏恢复此前状态。设置分类导航继续保留。设置页顶部标题栏高度（2.75rem）与标题字体规格（0.85rem / 600）与 Session 标题栏保持对齐。
 - 技能页面提供搜索、个人/系统分类和双列列表，窄窗口改为单列。列表使用首字母图标、名称、简短说明和技能自身启用勾选，不展示 ID、只读、来源或版本。
 - 技能详情展示描述、状态与可滚动 Markdown 正文。左上角开关控制技能自身状态；右上角菜单提供“在 Finder 中显示”和“复制 Markdown”。复制内容包含原始 frontmatter。所属插件未启用时，详情会说明该限制，保存技能开关不会自动启用插件。
 - 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理会避开运行中的任务。插件技能的卸载保留插件包，确认文案会说明这一点。
@@ -391,3 +392,15 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 完全访问在用户下拉切换至该模式时弹出风险确认对话框（ConfirmDialog）。确认后的 Run 关闭执行沙盒，使用当前 macOS 用户的文件和网络权限，并跳过逐项审批；任务启动前不再重复弹窗。
 - Runtime 保存模式、审批来源、判断和审查元数据。旧 Run 和旧快照继续按请求审批模式解释。数据库新增 v12 → v13 迁移。
 - 权限模式已覆盖组件单元与交互行为测试（包含 ApprovalModeSelector 行为、ApprovalComposer 状态胶囊、Composer 交互以及 Runtime 协议测试）。
+
+## 输入入口与引用（生产代码已接入，待测试）
+
+用户可以通过输入框左下角 `+` 选择文件、文件夹、Skill、MCP、Plugin 和历史对话。选择器提供分类、搜索、可用状态和扩展设置入口。`@` 打开统一引用选择，`$` 选择 Skill，`/` 提供 model、skills、mcp、plugins、status 快捷入口。选择器支持方向键、Enter、Escape，并避开中文输入法的组词确认。
+
+用户可以从 Finder 向对话区域拖入文件或文件夹，也可以粘贴剪贴板图片。输入框使用 macOS 原生剪切、复制、粘贴、撤销、重做和全选菜单。拖入内容只进入草稿，不自动发送。正在运行的 Run 不会因新草稿而改变。
+
+引用卡片显示名称和内容类型。用户可以预览、移除和再次引用快照。图片提供缩略图。文本文件预览提供行范围引用；该操作读取当前文件的指定行，并产生新快照。工作区文件树提供引用按钮。历史选择器可以选择具体消息；消息区域也提供单条引用。非编辑区域的选中文字可以通过原生右键菜单加入草稿。
+
+Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
+
+本批生产代码包含协议、持久化、模型上下文和 Desktop 接入。用户尚未授权测试阶段，开发者尚未新增或调整测试，也没有运行构建、类型检查或原生验收。

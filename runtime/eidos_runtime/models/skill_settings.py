@@ -28,6 +28,7 @@ class ManagedSkill(EidosFrozenStrictModel):
     source_kind: Literal["system", "user", "plugin"]
     enabled: bool
     available: bool
+    icon: str | None = None
 
 
 class SkillDetail(EidosFrozenStrictModel):

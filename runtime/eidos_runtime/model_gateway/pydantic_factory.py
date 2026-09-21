@@ -37,7 +37,7 @@ def build_provider(
     timeout: httpx.Timeout,
     wire_api: str = "chat_completions",
 ) -> tuple[OpenAICompatibleProvider, AsyncOpenAI, RetryTransportClient]:
-    provider_id = MODEL_CATALOG.provider_id_for(config.id)
+    provider_id = MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
     retry_client = build_retrying_http_client(
         config, timeout=timeout, wire_api=wire_api
     )
@@ -55,7 +55,7 @@ def build_provider(
     elif provider_id in {"minimax", "volcengine"}:
         provider = OpenAIProvider(openai_client=client)
     else:
-        raise ValueError("unknown model provider")
+        provider = OpenAIProvider(openai_client=client)
     return provider, client, retry_client
 
 
