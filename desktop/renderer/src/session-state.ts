@@ -221,10 +221,16 @@ export function applyNotification(
         if (item.id !== notification.params.itemId) return item;
         const { delta, offset } = notification.params;
         const content = item.content ?? "";
-        // Snapshots can already contain this delta. Never append a replay or
-        // an out-of-order fragment; the session refresh repairs missing text.
-        if (offset !== undefined && offset !== content.length) return item;
         if (item.kind === "assistant_message" && item.status !== "in_progress") return item;
+        if (offset !== undefined) {
+          if (offset < content.length) {
+            if (offset + delta.length <= content.length) {
+              return item;
+            }
+            return { ...item, content: content + delta.slice(content.length - offset) };
+          }
+          return { ...item, content: content + delta };
+        }
         return { ...item, content: content + delta };
       }),
     };

@@ -163,8 +163,6 @@ class EventProjector:
 
     @staticmethod
     def _safe_completed_item(item: dict[str, object]) -> dict[str, object]:
-        if item["kind"] == "assistant_message" and "content" in item:
-            return {key: value for key, value in item.items() if key != "content"}
         if item["kind"] == "file_change" and isinstance(item.get("toolCall"), dict):
             tool_call = {
                 key: value

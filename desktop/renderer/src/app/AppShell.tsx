@@ -1169,6 +1169,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 )}
 
                 <ExecutionFeed
+                  key={currentSnapshot.session.id}
                   items={currentSnapshot.items}
                   resultItems={completeSessionItems.items}
                   projectless={currentSnapshot.session.projectless === true}

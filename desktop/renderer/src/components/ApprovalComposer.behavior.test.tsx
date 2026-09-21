@@ -43,6 +43,25 @@ describe("Approval composer slot", () => {
     expect(screen.queryByRole("button", { name: "批准" })).toBeNull();
     expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
   });
+
+  it("renders the redesigned status banner with spinner, title, hint, and badge", () => {
+    render(
+      <ComposerSlot
+        run={{ ...run, approvalMode: "auto_review" }}
+        approval={approval}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+      >
+        <textarea aria-label="message" />
+      </ComposerSlot>,
+    );
+    const statusBanner = screen.getByRole("status");
+    expect(statusBanner).toHaveClass("approval-status-banner");
+    expect(statusBanner).toHaveTextContent("模型正在审查操作…");
+    expect(statusBanner).toHaveTextContent("正在评估工具调用的安全性与潜在风险");
+    expect(statusBanner).toHaveTextContent("替我审批");
+    expect(statusBanner.querySelector(".approval-status-banner__spinner")).toBeInTheDocument();
+  });
 });
 
 it.each(["approve", "reject"] as const)("disables both buttons while responding %s", (kind) => {

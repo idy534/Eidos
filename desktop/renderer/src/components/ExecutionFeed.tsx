@@ -136,7 +136,7 @@ export function ExecutionFeed({
       if (!target || !isAtBottomRef.current) return;
       target.scrollTop = target.scrollHeight;
     });
-  }, [items, responseActionState.revisions]);
+  }, [items, runs, responseActionState.revisions]);
 
   const supersededRunIds = useMemo(
     () => new Set(responseActionState.revisions.map((revision) => revision.sourceRunId)),

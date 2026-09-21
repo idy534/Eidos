@@ -243,8 +243,8 @@ describe("Composer DOM interaction & state behavior", () => {
       />,
     );
 
-    const selector = screen.getByRole("button", { name: "审批模式：人工审批" });
-    expect(selector).toHaveTextContent("人工审批");
+    const selector = screen.getByRole("button", { name: "审批模式：请求审批" });
+    expect(selector).toHaveTextContent("请求审批");
 
     fireEvent.click(selector);
     const autoReview = screen.getByRole("radio", { name: /替我审批.*推荐/ });
