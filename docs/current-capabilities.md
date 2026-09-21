@@ -1,6 +1,8 @@
 # Eidos 当前能力
 
-本文只回答“当前 main 已经能做什么”。每项能力都对应生产代码和测试入口。能力存在但没有进入默认 Run 的部分会明确标注。
+> 权限模式范围：本文原有的逐操作请求审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。权限模式相关单元与行为测试已纳入测试套件。
+
+本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
 ## Desktop
 
@@ -83,7 +85,8 @@
 - Context Budget 记录 active tokens、模型窗口、百分比和 `provider`/`estimated` 来源。
 - Runtime 会在输入投影超过 65,536 tokens 且有足够新历史时尝试主动压缩，保留近期 16 条候选 Item、用户消息和 Skill 正文。这个阈值只减少历史重发，不终止 Run。原始证据仍保存在 SQLite 和 Context Snapshot 中。
 - Provider Usage 只有提供正的 input tokens 时才作为 active Context truth。Provider Usage 缺失或返回 0 时，Runtime 使用有界 estimated fallback。
-- ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。
+- ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。内部去重计数只由投影历史本身决定，不进入模型提示，也不随 Run 级 `workspaceVersion` 漂移。
+- `workspace-environment` 只包含 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 不进入模型输入，因此 Workspace 写入不会只因版本计数变化而使后续历史失去缓存。
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
 - Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
 - 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已经收到尚未持久化的 provisional text，也会先失败当前 Attempt，再创建独立 Attempt 并复用同一 Snapshot；已有文本或 ToolCall 进度不会自动重放。
@@ -241,7 +244,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v11。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 支持旧版本逐级迁移到 v11。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
+- 当前 state schema 是 v13。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 包含旧版本逐级迁移到 v13 的代码；本次 v12 → v13 迁移尚待验证。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。主库保存带 checksum 和大小的引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
@@ -380,3 +383,11 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 技能详情展示描述、状态与可滚动 Markdown 正文。左上角开关控制技能自身状态；右上角菜单提供“在 Finder 中显示”和“复制 Markdown”。复制内容包含原始 frontmatter。所属插件未启用时，详情会说明该限制，保存技能开关不会自动启用插件。
 - 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理会避开运行中的任务。插件技能的卸载保留插件包，确认文案会说明这一点。
 - 技能状态保存在 SQLite，后续 Turn 使用新状态，已开始的 Turn 保留原快照。UI、协议、数据库迁移和真实文件清理的验证尚未执行。
+
+## 权限模式
+
+- Composer 底栏左侧已接入请求审批、替我审批（推荐）和完全访问（风险）。选择器采用与模型选择器一致的无外边框 Popover 样式。新会话默认使用请求审批，模式在每个 Run 创建时固定。
+- 替我审批只审查原本需要审批的操作。模型批准后沿原执行链继续；模型拒绝或审查失败直接返回理由，Desktop 不弹出人工审批框。审查期间底栏上方展示具备毛玻璃与旋转动效的状态胶囊（ApprovalStatusBanner）。
+- 完全访问在用户下拉切换至该模式时弹出风险确认对话框（ConfirmDialog）。确认后的 Run 关闭执行沙盒，使用当前 macOS 用户的文件和网络权限，并跳过逐项审批；任务启动前不再重复弹窗。
+- Runtime 保存模式、审批来源、判断和审查元数据。旧 Run 和旧快照继续按请求审批模式解释。数据库新增 v12 → v13 迁移。
+- 权限模式已覆盖组件单元与交互行为测试（包含 ApprovalModeSelector 行为、ApprovalComposer 状态胶囊、Composer 交互以及 Runtime 协议测试）。

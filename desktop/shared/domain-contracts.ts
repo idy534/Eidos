@@ -259,7 +259,10 @@ export interface TerminalExitEvent {
   signal?: number;
 }
 
+export type ApprovalMode = "manual" | "auto_review" | "full_access";
+
 export interface Run {
+  approvalMode?: ApprovalMode;
   id: string;
   sessionId: string;
   userInput?: string;

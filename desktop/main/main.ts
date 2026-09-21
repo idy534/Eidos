@@ -15,6 +15,7 @@ import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import { ArtifactPreviewManager } from "./artifact-preview.js";
 import { TerminalManager } from "./terminal-manager.js";
 import type {
+  ApprovalMode,
   ApprovalDecision,
   ApprovalRequest,
   AppShortcut,
@@ -1028,12 +1029,13 @@ ipcMain.handle(IPC.SESSION_GIT_REBASE_ABORT, (
   return clientOrThrow().abortSessionGitRebase(sessionId, operationId);
 });
 
-ipcMain.handle(IPC.RUN_START, (
+ipcMain.handle(IPC.RUN_START, async (
   _event,
   sessionId: unknown,
   userInput: unknown,
   modelId: unknown,
   reasoningSelection: unknown,
+  approvalMode: unknown,
 ) => {
   const validReasoningSelection =
     reasoningSelection === undefined
@@ -1050,6 +1052,7 @@ ipcMain.handle(IPC.RUN_START, (
     || modelId.length === 0
     || modelId.length > 256
     || !validReasoningSelection
+    || (approvalMode !== undefined && !["manual", "auto_review", "full_access"].includes(String(approvalMode)))
   ) {
     throw new Error("Run 参数无效。");
   }
@@ -1059,6 +1062,8 @@ ipcMain.handle(IPC.RUN_START, (
     modelId,
     undefined,
     reasoningSelection as ModelReasoningSelection | undefined,
+    approvalMode as ApprovalMode | undefined,
+    approvalMode === "full_access" ? "full-access-v1" : undefined,
   );
 });
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {

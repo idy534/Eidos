@@ -4,7 +4,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import type { Project, Run, Session } from "../contracts.js";
+import type { ApprovalMode, Project, Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -112,6 +112,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const latestRun = sessionState.snapshot?.runs.length
     ? sessionState.snapshot.runs[sessionState.snapshot.runs.length - 1]
     : undefined;
+  const [approvalModes, setApprovalModes] = useState<Record<string, ApprovalMode>>({});
+  const approvalSessionId = activeSnapshot?.session.id;
+  const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
+    ?? latestRun?.approvalMode ?? "manual";
   const contextRun = runState.activeRun ?? latestRun;
   const contextRunId = contextRun && contextRun.modelId === modelState.selectedModelId
     ? contextRun.id
@@ -613,6 +617,7 @@ export function AppShell({ runtime }: AppShellProps) {
         snapshot: materialized,
         selectedModelId: modelState.selectedModelId,
         reasoningSelection: modelState.reasoningSelection,
+        approvalMode,
         isStorageReady,
         inputOverride: draftInput,
         onRunProjected: sessionActions.projectRun,
@@ -631,6 +636,7 @@ export function AppShell({ runtime }: AppShellProps) {
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
       reasoningSelection: modelState.reasoningSelection,
+      approvalMode,
       isStorageReady,
       onRunProjected: sessionActions.projectRun,
     });
@@ -642,6 +648,7 @@ export function AppShell({ runtime }: AppShellProps) {
       snapshot: sessionState.snapshot,
       selectedModelId: modelState.selectedModelId,
       reasoningSelection: modelState.reasoningSelection,
+      approvalMode,
       isStorageReady,
       inputOverride: feedback,
       onRunProjected: sessionActions.projectRun,
@@ -1162,6 +1169,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 )}
 
                 <ExecutionFeed
+                  key={currentSnapshot.session.id}
                   items={currentSnapshot.items}
                   resultItems={completeSessionItems.items}
                   projectless={currentSnapshot.session.projectless === true}
@@ -1206,6 +1214,10 @@ export function AppShell({ runtime }: AppShellProps) {
                   input={input}
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
+                  approvalMode={activeRun?.approvalMode ?? approvalMode}
+                  onApprovalModeChange={(mode) => {
+                    if (approvalSessionId) setApprovalModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
+                  }}
                   reasoningSelection={modelState.reasoningSelection}
                   contextUsage={contextUsageState.usage}
                   showContextIndicator={Boolean(contextRun)}

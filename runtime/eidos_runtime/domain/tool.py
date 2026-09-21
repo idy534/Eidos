@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
 
@@ -70,6 +71,7 @@ class ToolCall(EidosFrozenStrictModel):
 
 
 class Approval(EidosFrozenStrictModel):
+    review: ApprovalReview | None = None
     id: str = Field(min_length=1)
     tool_call_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)

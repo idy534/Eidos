@@ -26,6 +26,8 @@ from eidos_runtime.db.schema import (
     V10_TO_V11_MIGRATION_SQL,
     V11_TO_V12_MIGRATION_SQL,
     V11_SCHEMA_VERSION,
+    V12_SCHEMA_VERSION,
+    V12_TO_V13_MIGRATION_SQL,
 )
 from eidos_runtime.db.thread_history import ThreadHistoryStore
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
@@ -601,6 +603,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V9_SCHEMA_VERSION,
         V10_SCHEMA_VERSION,
         V11_SCHEMA_VERSION,
+        V12_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     migration = ""
@@ -618,6 +621,8 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         migration += V10_TO_V11_MIGRATION_SQL
     if revision <= V11_SCHEMA_VERSION:
         migration += V11_TO_V12_MIGRATION_SQL
+    if revision <= V12_SCHEMA_VERSION:
+        migration += V12_TO_V13_MIGRATION_SQL
     try:
         with state.lock:
             connection = state.connection()

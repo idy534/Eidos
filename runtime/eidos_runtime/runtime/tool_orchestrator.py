@@ -147,7 +147,7 @@ class ToolOrchestrator:
             ordinal=0,
             sandbox=(
                 SandboxType.NONE
-                if explicit_escalation
+                if explicit_escalation or effective.full_access
                 else SandboxType.MACOS_SEATBELT
             ),
             effective=effective,

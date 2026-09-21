@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.approval_policy import ApprovalReview
+from eidos_runtime.domain.tool import Approval
+
+from eidos_runtime.domain.approval_policy import ApprovalMode
+
 from pathlib import Path
 import sqlite3
 import threading
@@ -549,6 +554,7 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        approval_mode: ApprovalMode = "manual",
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -562,6 +568,7 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            approval_mode=approval_mode,
             extension_snapshot=extension_snapshot,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
@@ -577,6 +584,7 @@ class SessionStore:
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        approval_mode: ApprovalMode = "manual",
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -589,6 +597,7 @@ class SessionStore:
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            approval_mode=approval_mode,
             extension_snapshot=extension_snapshot,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
@@ -605,6 +614,9 @@ class SessionStore:
 
     def read_run(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).read_run(run_id)
+
+    def approval_user_evidence(self, run_id: str) -> tuple[str, ...]:
+        return self._repository(self._runs).approval_user_evidence(run_id)
 
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot:
         return self._repository(self._runs).read_model_profile(run_id)
@@ -1233,12 +1245,14 @@ class SessionStore:
         feedback: str | None,
         *,
         requeue: bool = False,
+        review: ApprovalReview | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).resolve_approval_committed(
             item_id,
             decision,
             feedback,
             requeue=requeue,
+            review=review,
         )
 
     def clear_rejects(self, run_id: str) -> None:
@@ -1249,6 +1263,9 @@ class SessionStore:
 
     def run_permission_grants(self, run_id: str) -> AdditionalPermissionProfile:
         return self._repository(self._runs).run_permission_grants(run_id)
+
+    def rejected_approval(self, run_id: str, fingerprint: str) -> Approval | None:
+        return self._repository(self._runs).rejected_approval(run_id, fingerprint)
 
     def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
         return self._repository(self._runs).approval_prompt_blocked(run_id, fingerprint)

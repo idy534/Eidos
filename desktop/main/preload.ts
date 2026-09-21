@@ -35,6 +35,7 @@ import type {
   ContextUsage,
   ModelId,
   ModelReasoningSelection,
+  ApprovalMode,
   ModelListResult,
   ModelOption,
   ModelPresetsResult,
@@ -269,12 +270,14 @@ const api: EidosRuntimeAPI = {
     userInput: string,
     modelId: ModelId,
     reasoningSelection?: ModelReasoningSelection,
+    approvalMode?: ApprovalMode,
   ): Promise<Run> => ipcRenderer.invoke(
     IPC.RUN_START,
     sessionId,
     userInput,
     modelId,
     reasoningSelection,
+    approvalMode,
   ),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
   readContextUsage: (runId: string): Promise<ContextUsage | null> =>

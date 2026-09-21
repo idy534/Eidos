@@ -32,6 +32,7 @@ import type {
   ContextUsage,
   ModelId,
   ModelReasoningSelection,
+  ApprovalMode,
   ModelListResult,
   ModelOption,
   ModelPresetsResult,
@@ -215,6 +216,7 @@ export interface EidosRuntimeAPI {
     userInput: string,
     modelId: ModelId,
     reasoningSelection?: ModelReasoningSelection,
+    approvalMode?: ApprovalMode,
   ): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
   readContextUsage(runId: string): Promise<ContextUsage | null>;

@@ -1565,7 +1565,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(len(model.contexts), 2)
         self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
 
-    def test_default_shell_write_with_hard_link_reaches_reconciliation(self) -> None:
+    def test_default_shell_write_with_hard_link_preserves_known_exit(self) -> None:
         external = self.workspace.parent / "external.txt"
         external.write_text("outside\n", encoding="utf-8")
         os.link(external, self.workspace / "linked.txt")
@@ -1596,12 +1596,21 @@ class RuntimeLoopTests(unittest.TestCase):
         ).run(run["id"], threading.Event())
 
         self.assertEqual(approvals, [])
+        self.assertEqual(external.read_text(encoding="utf-8"), "changed")
         snapshot = self.store.read_session_snapshot(self.session["id"])
         command_item = next(
             item for item in snapshot["items"] if item["kind"] == "command_execution"
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
-        self.assertTrue(result["reconciliationRequired"])
+        self.assertEqual(result["outcome"], "success")
+        self.assertEqual(result["code"], "ok")
+        self.assertEqual(result["data"]["termination"], "exit")
+        self.assertEqual(result["data"]["exitCode"], 0)
+        self.assertTrue(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertTrue(result["data"]["workspaceDiffIncomplete"])
+        self.assertEqual(result["data"]["workspaceChangeState"], "unknown")
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
 
     def test_read_only_shell_does_not_block_on_unrelated_hard_link(self) -> None:
         external = self.workspace.parent / "external.txt"

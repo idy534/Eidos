@@ -84,6 +84,7 @@ class ResponseActionApplication:
             "modelId": source["modelId"],
             "operationId": request.operation_id,
             "reasoningSelection": source_profile.reasoning_selection,
+            "approvalMode": "auto_review" if source.get("approvalMode") == "auto_review" else "manual",
         })
         outcome = self._runs.start(start_request)
         run_id = str(outcome.response.root["id"])

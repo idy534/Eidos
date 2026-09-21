@@ -47,6 +47,7 @@ class StepPermissionPolicy:
     """e.g. 'workspace-write', 'read-only', 'unsandboxed', 'none'"""
 
     workspace_root: str
+    approval_mode: str = "manual"
     writable_roots: tuple[str, ...] = field(default_factory=tuple)
     network_enabled: bool = False
     allow_additional_permissions: bool = True
@@ -72,7 +73,20 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
     )
 
     approval_lines = []
-    if policy.allow_additional_permissions:
+    if policy.approval_mode == "auto_review":
+        approval_lines.append(
+            "- Every required approval is reviewed automatically by a separate model request, not the user. "
+            "A rejected review returns its reason and never opens a manual approval dialog. "
+            "Do not repeat or circumvent a rejected action; choose a materially safer alternative or explain the blocker."
+        )
+    elif policy.approval_mode == "full_access":
+        approval_lines.append(
+            "- The user confirmed full access for this Run. Shell commands run without the Eidos sandbox. "
+            "File and network operations do not need further approval. Operating-system permissions still apply. "
+            "Use normal default tool arguments; additional permission requests are unnecessary. "
+            "Use Shell for host resources not supported by the bounded built-in file tools."
+        )
+    if policy.allow_additional_permissions and policy.approval_mode != "full_access":
         approval_lines.append(
             "- Additional sandbox permissions may be requested when a tool explicitly supports them."
         )
@@ -96,11 +110,11 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
         approval_lines.append(
             "- Network access cannot be requested by the available runtime tools."
         )
-    if policy.allow_escalated_execution:
+    if policy.allow_escalated_execution and policy.approval_mode != "full_access":
         approval_lines.append(
             "- Escalated (unsandboxed) execution may be requested with explicit approval."
         )
-    else:
+    elif policy.approval_mode != "full_access":
         approval_lines.append(
             "- Unsandboxed execution is not available during this run."
         )

@@ -153,6 +153,7 @@ import type {
   McpServerRemoval,
   ModelId,
   ModelReasoningSelection,
+  ApprovalMode,
   ModelListResult,
   ModelOption,
   ModelPresetsResult,
@@ -760,6 +761,8 @@ export class RuntimeClient {
     modelId: ModelId,
     operationId = randomUUID(),
     reasoningSelection?: ModelReasoningSelection,
+    approvalMode?: ApprovalMode,
+    fullAccessConfirmation?: "full-access-v1",
   ): Promise<Run> {
     return this.validatedRequest(
       "run/start",
@@ -769,6 +772,8 @@ export class RuntimeClient {
         modelId,
         operationId,
         ...(reasoningSelection !== undefined ? { reasoningSelection } : {}),
+        ...(approvalMode !== undefined ? { approvalMode } : {}),
+        ...(fullAccessConfirmation !== undefined ? { fullAccessConfirmation } : {}),
       },
       isRun,
     );
@@ -1840,6 +1845,7 @@ function isRun(value: unknown): value is Run {
       "status",
       "runtimeState",
       "modelId",
+      "approvalMode",
       "modelStepCount",
       "allowedActions",
       "createdAt",
@@ -1874,6 +1880,7 @@ function isRun(value: unknown): value is Run {
         "waiting_approval", "finalizing", "terminal",
       ].includes(String(value.runtimeState))
     )
+    && (value.approvalMode === undefined || ["manual", "auto_review", "full_access"].includes(String(value.approvalMode)))
     && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (

@@ -33,6 +33,8 @@ from eidos_runtime.db.schema import (
     V8_SCHEMA_VERSION,
     V10_SCHEMA_VERSION,
     V11_SCHEMA_VERSION,
+    V12_SCHEMA_VERSION,
+    V12_TO_V13_MIGRATION_SQL,
     V11_TO_V12_MIGRATION_SQL,
     V9_SCHEMA_VERSION,
     V1_TO_V2_MIGRATION_SQL,
@@ -143,6 +145,7 @@ class Database:
                     V9_SCHEMA_VERSION,
                     V10_SCHEMA_VERSION,
                     V11_SCHEMA_VERSION,
+                    V12_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -192,6 +195,7 @@ class Database:
                         + V9_TO_V10_MIGRATION_SQL
                         + V10_TO_V11_MIGRATION_SQL
                         + V11_TO_V12_MIGRATION_SQL
+                        + V12_TO_V13_MIGRATION_SQL
                         + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                     )
                 except sqlite3.Error as error:
@@ -206,6 +210,7 @@ class Database:
                         "BEGIN IMMEDIATE;\n"
                         + V10_TO_V11_MIGRATION_SQL
                         + V11_TO_V12_MIGRATION_SQL
+                        + V12_TO_V13_MIGRATION_SQL
                         + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                     )
                 except sqlite3.Error as error:
@@ -218,6 +223,16 @@ class Database:
                 try:
                     connection.executescript(
                         "BEGIN IMMEDIATE;\n" + V11_TO_V12_MIGRATION_SQL
+                        + V12_TO_V13_MIGRATION_SQL
+                        + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                    )
+                except sqlite3.Error as error:
+                    connection.rollback()
+                    raise StorageError("schema_migration_failed") from error
+            if revision == V12_SCHEMA_VERSION:
+                try:
+                    connection.executescript(
+                        "BEGIN IMMEDIATE;\n" + V12_TO_V13_MIGRATION_SQL
                         + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
                     )
                 except sqlite3.Error as error:

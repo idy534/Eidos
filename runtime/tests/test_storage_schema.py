@@ -23,6 +23,8 @@ from eidos_runtime.db.schema import (  # noqa: E402
     V10_SCHEMA_VERSION,
     V11_SCHEMA_SQL,
     V11_SCHEMA_VERSION,
+    V12_SCHEMA_SQL,
+    V12_SCHEMA_VERSION,
     V7_SCHEMA_SQL,
     V7_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
@@ -122,6 +124,7 @@ EXPECTED_COLUMNS = {
         "cancel_requested_at",
         "cancel_completed_at",
         "cancel_failure_code",
+        "approval_mode",
     },
     "steps": {
         "resolution_snapshot_id",
@@ -147,6 +150,7 @@ EXPECTED_COLUMNS = {
     },
     "approvals": {
         "request_json", "attempt_ordinal", "approval_kind",
+        "review_json",
     },
     "worktree_lifecycle_operations": {
         "expected_head", "snapshot_id", "snapshot_head", "snapshot_fingerprint"
@@ -512,8 +516,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 12)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 11)
+        self.assertEqual(SCHEMA_VERSION, 13)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 12)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
@@ -637,6 +641,35 @@ class StorageSchemaTests(unittest.TestCase):
                 "AND name = 'skill_states'"
             ).fetchone()
         )
+        store.close()
+
+    def test_v12_schema_adds_approval_mode_and_review_metadata(self) -> None:
+        database = self.data / DATABASE_NAME
+        connection = sqlite3.connect(database)
+        connection.executescript(V12_SCHEMA_SQL)
+        connection.execute(f"PRAGMA user_version = {V12_SCHEMA_VERSION}")
+        connection.commit()
+        connection.close()
+        os.chmod(database, 0o600)
+
+        store = Database(self.data)
+        store.initialize()
+
+        connection = store.connection()
+        self.assertEqual(
+            connection.execute("PRAGMA user_version").fetchone()[0],
+            SCHEMA_VERSION,
+        )
+        runs_columns = {
+            row[1]: row[4]
+            for row in connection.execute("PRAGMA table_info(runs)")
+        }
+        approval_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(approvals)")
+        }
+        self.assertEqual(runs_columns["approval_mode"], "'manual'")
+        self.assertIn("review_json", approval_columns)
         store.close()
 
     def test_session_active_run_index_excludes_waiting_approval(self) -> None:

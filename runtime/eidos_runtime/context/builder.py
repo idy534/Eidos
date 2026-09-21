@@ -96,14 +96,14 @@ class ContextBuilder:
         context: list[ModelContextItem] = [*user_context_messages]
         if not projectless:
             workspace = self.store.workspace_for_run(run_id)
+            # Keep this early message stable across Workspace mutations. The
+            # numeric workspace version is Runtime state and is not model input.
             context.append({
                 "type": "user",
                 "sectionId": "workspace-environment",
-                "version": str(facts.workspace_version),
                 "content": "Workspace/environment context: " + json.dumps(
                     {
                         "workspace": str(workspace.path),
-                        "workspaceVersion": facts.workspace_version,
                         "platform": platform.system(),
                     },
                     ensure_ascii=False,
@@ -136,7 +136,9 @@ class ContextBuilder:
                     sort_keys=True,
                 ),
             })
-        workspace_state = facts.workspace_version
+        # This counter only separates otherwise identical reads across visible
+        # Workspace mutations. It must remain a pure function of the transcript.
+        workspace_state = 0
         read_result_fingerprints: dict[tuple[str, str, str, int], str] = {}
         for item in facts.items:
             if (
@@ -169,9 +171,7 @@ class ContextBuilder:
                     if duplicate_of is None:
                         read_result_fingerprints[dedupe_key] = item.provider_call_id
                     else:
-                        projected_result = _context_deduplicated_result(
-                            duplicate_of, workspace_state
-                        )
+                        projected_result = _context_deduplicated_result(duplicate_of)
                 if payload_kind == "function":
                     context.extend((
                         {
@@ -295,13 +295,12 @@ def _custom_payload_input(arguments_json: str | None) -> str | None:
     return None
 
 
-def _context_deduplicated_result(provider_call_id: str, workspace_state: int) -> str:
+def _context_deduplicated_result(provider_call_id: str) -> str:
     return json.dumps(
         {
             "contextDeduplicated": True,
             "duplicateOf": provider_call_id,
             "summary": "Identical read result already appears for this workspace state.",
-            "workspaceVersion": workspace_state,
         },
         ensure_ascii=False,
         separators=(",", ":"),

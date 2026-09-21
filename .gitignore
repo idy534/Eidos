@@ -4,6 +4,7 @@
 
 .idea/
 .venv/
+.workbuddy/
 __pycache__/
 .pytest_cache/
 .mypy_cache/

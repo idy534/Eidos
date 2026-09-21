@@ -810,7 +810,44 @@ class ContextPersistenceTests(unittest.TestCase):
         duplicate = json.loads(results["read-2"])
         self.assertTrue(duplicate["contextDeduplicated"])
         self.assertEqual(duplicate["duplicateOf"], "read-1")
+        self.assertNotIn("workspaceVersion", duplicate)
         self.assertIn("same content", results["read-3"])
+
+    def test_context_builder_keeps_workspace_version_out_of_model_payload(self) -> None:
+        run, _ = self.store.create_run(self.session["id"], "inspect")
+        before = ContextBuilder(self.store).build(run["id"])
+        write = self.store.create_tool_item(
+            run["id"], 1, 0, "write-1", "write_file", '{"path":"a.txt"}'
+        )
+        self.store.complete_tool_item(
+            write["id"],
+            json.dumps({
+                "outcome": "success",
+                "data": {"workspaceChanged": True},
+            }),
+            workspace_changed=True,
+        )
+        after = ContextBuilder(self.store).build(run["id"])
+
+        environments = [
+            next(
+                item for item in built.model_context
+                if item.get("sectionId") == "workspace-environment"
+            )
+            for built in (before, after)
+        ]
+        self.assertEqual(environments[0], environments[1])
+        self.assertNotIn(
+            "workspaceVersion",
+            json.dumps(after.model_context, ensure_ascii=False),
+        )
+        self.assertEqual(
+            [
+                item["content"] for item in after.model_context
+                if item.get("type") == "user"
+            ][-1],
+            "inspect",
+        )
 
     def test_context_projection_keeps_unresolved_errors_and_reconciliation_state(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "inspect failure")

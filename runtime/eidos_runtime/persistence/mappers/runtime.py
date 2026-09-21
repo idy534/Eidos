@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from pydantic import ValidationError
 
+from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.domain.execution import (
     ExecutionSegment,
     Item,
@@ -63,6 +64,7 @@ def run_from_row(row: RowValues | Mapping[str, object]) -> Run:
         "id": values.text("id"),
         "session_id": values.text("session_id"),
         "user_input": values.text("user_input"),
+        "approval_mode": values.optional_text("approval_mode") or "manual",
         "model_id": values.text("model_id"),
         "status": status,
         "model_step_count": values.integer("model_step_count"),
@@ -173,6 +175,7 @@ def approval_from_row(row: RowValues | Mapping[str, object]) -> Approval:
         "status": _enum(ApprovalStatus, values.text("status"), record="approval", field="status"),
         "request_hash": values.text("request_hash"),
         "request_json": values.json_text("request_json"),
+        "review": ApprovalReview.model_validate_json(values.text("review_json")) if values.optional_text("review_json") else None,
         "attempt_ordinal": values.integer("attempt_ordinal"),
         "approval_kind": _enum(ApprovalKind, values.text("approval_kind"), record="approval", field="approval_kind"),
         "decision": values.optional_text("decision"),

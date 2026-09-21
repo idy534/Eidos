@@ -9,6 +9,7 @@ import uuid
 
 from pydantic import Field
 
+from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
@@ -1837,6 +1838,7 @@ class ExecutionRepository(Repository):
         feedback: str | None,
         *,
         requeue: bool = False,
+        review: ApprovalReview | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
             resolution = resolve_approval_and_transition(
@@ -1845,6 +1847,7 @@ class ExecutionRepository(Repository):
                 decision=decision,
                 feedback=feedback,
                 requeue=requeue,
+                review=review,
             )
         return CommittedMutation(
             self.read_item(item_id), resolution.events

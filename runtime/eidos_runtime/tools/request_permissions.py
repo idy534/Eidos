@@ -14,7 +14,12 @@ from eidos_runtime.tools.registry import AdapterToolRuntime, ToolProvenance, Too
 
 class RequestPermissionsInput(EidosFrozenStrictModel):
     reason: str | None = Field(default=None, max_length=2000)
-    permissions: AdditionalPermissionProfile
+    permissions: AdditionalPermissionProfile = Field(
+        description=(
+            "A JSON object, not a JSON-encoded string. Use fileSystem for absolute "
+            "paths and/or network: {\"enabled\": true} for network access."
+        ),
+    )
 
     @model_validator(mode="after")
     def actual_permission(self):
@@ -47,9 +52,23 @@ class PermissionAdapter:
 def request_permissions_entry() -> ToolRegistryEntry:
     spec = ToolSpec(
         name="request_permissions",
-        description=("Request additional filesystem or network permissions before continuing "
-                     "the task. At least one actual permission is required. The request waits "
-                     "for user approval; approved permissions last for the current run."),
+        description=(
+            "Request additional filesystem or network permissions before continuing "
+            "the task. At least one actual permission is required. The request waits "
+            "for user approval; approved permissions last for the current run.\n"
+            "Argument structure: permissions is a required JSON object, not a "
+            "JSON-encoded string. permissions.fileSystem is an optional array of "
+            "objects with path (absolute path), access (read, write, or execute), "
+            "and recursive (boolean, defaults to true). permissions.network is an "
+            "optional object with enabled set to true. Request filesystem access, "
+            "network access, or both. reason is an optional explanation string "
+            "(maximum 2000 characters). Request only the access needed.\n"
+            'Filesystem example: {"permissions":{"fileSystem":[{"path":'
+            '"/absolute/project/path","access":"read","recursive":true}]},'
+            '"reason":"Read the project source files"}\n'
+            'Network example: {"permissions":{"network":{"enabled":true}},'
+            '"reason":"Download the dependencies needed for this task"}'
+        ),
         sideEffect="none", approvalRequired=False, timeoutSeconds=600,
         inputSchema=RequestPermissionsInput.model_json_schema(by_alias=True),
         resultSchema=result_model(PermissionResultData).model_json_schema(by_alias=True),

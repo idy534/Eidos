@@ -1,5 +1,7 @@
 # Eidos 当前限制
 
+> 权限模式范围：本文原有的逐操作请求审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。权限模式相关单元与行为测试已纳入测试套件。
+
 - `session/read` 不提供 Step Resolution Review 内容，兼容字段 `stepResolutions` 固定为空数组。Desktop 当前不展示这些信息，Runtime 也未新增按需详情 RPC。完整执行快照仍持久化并由执行读取入口校验；打开 Session 不承担这些 Blob 的完整性检查。本项代码修订尚未验证，不能据此宣称 UI 打开耗时已经达标。
 
 本文只记录 Stage 4+ 后续能力、其他平台支持，以及没有 Apple credentials 时无法验证的真实签名结果。本文不记录已经解决的问题，也不记录历史阶段。
@@ -86,6 +88,8 @@
 - Cold start 仍然不能只凭旧 Inventory 证明仓库 clean，所以第一个 Run 会 reconcile。当前实现使用一次 bounded full Inventory scan。它没有 partial directory index、filesystem journal、Base Index + Worktree Overlay 或增量 Map 算法。
 - Repository build 是增强能力。Canceled、incomplete、manifest verification failure 或 Git state change 不会替换旧 active generation。没有旧 complete generation 时，Snapshot 仍可为空，Agent 继续依赖 Workspace tools。
 - 当前默认 online Run 已经自动执行一次 grounded Repository Retrieval，并通过 ContextBuilder 注入 Repository overview 和 evidence。每个 ModelAttempt 也会绑定精确 ContextSnapshot。
+- 模型请求前缀仍有两条中途可变的来源。其一，resolved instructions 的 `runtime-permissions` 层渲染了 `Available tools` 清单和 rejected approval 计数，Run 中途连接 MCP 或出现被拒审批会改写这一层。其二，`user_context_layers` 中的 `selected-skill:*` 位于历史之前，Run 中途激活 Skill 会在全部历史之前插入新消息。两者都会让该 Step 的指令哈希变化并使后续历史无法命中缓存。
+- Protocol 与 Desktop 目前都不暴露 cache token：`cache_read_tokens` / `cache_write_tokens` 只存在于 `usage_json` 与 tracing，因此 Prompt Cache 命中率无法从 UI 或协议观测，也没有 `structuralReuseTokens` / cache break 归因字段。
 - 当前 Retrieval Query 只使用可以从用户目标、Inventory、Index、已有 Tool Result、dirty path 和 committed change 直接确认的信号。它没有 embedding、Vector Search、复杂 query rewrite、Base Index + Worktree Overlay，也没有 cross-worktree sharing。
 - Watcher 事件不是 Workspace 安全事实。Watcher 不会静默修改当前 Run 的 immutable snapshot。
 
@@ -152,7 +156,7 @@
 
 ## Approval R1 的范围
 
-权限 Grant 只覆盖当前 Run，用户不能选择 Session 或全局范围。R1 不提供 Approve for me、Full Access、Network Proxy、域名授权、持久 allowlist 或自动审批。路径权限只使用具体路径，不支持 glob。
+权限 Grant 只覆盖当前 Run，用户不能选择 Session 或全局范围。当前权限模式代码已加入模型自动审批和完全访问。Runtime 仍不提供 Network Proxy、域名授权或持久 allowlist。路径权限只使用具体路径，不支持 glob。
 
 旧审批或缺少完整执行事实的待批动作不会被猜测为可恢复。Runtime 会继续中断不确定执行，并保留 Reconciliation。用户批准权限不会自动重放之前失败的 Shell。
 
@@ -197,3 +201,13 @@
 - 独立用户技能的物理清理保守地等待所有非终态 Run 结束。Runtime 在扩展清理回调、下次读取设置列表或启动时重试。目录内容、owner 或 inode/device 变化会保留文件并延后清理；用户需要处理这种外部变更，Runtime 不会猜测并删除新目录。
 - 技能开关是独立偏好。插件关闭时，其技能仍可查看和配置，但不会进入新 Run 的可用技能目录。详情会提示所属插件尚未启用。
 - 详情暂不加载技能图标资源，也不开放 Markdown 内的本地资源跳转。图标使用名称首字符；用户可通过 Finder 查看完整技能目录。
+
+
+## 权限模式的验证范围
+
+- 权限模式已通过组件单元与行为测试、协议校验和数据迁移测试。真实模型审查决策质量仍依赖于所配置模型的审查推理能力；静态检查不能证明所有外部第三方模型的审查决策稳定性。
+- 自动审批复用当前 Run 的模型和 Provider，没有单独的审查模型设置。模型可能误判；确定性硬拒绝继续生效，但模型审查不能保证识别所有风险或提示注入。
+- 自动审批只检查原本需要 Approval 的动作。默认允许的 Workspace 操作不会额外审查。审查证据只包括最近八条用户消息及当前动作事实；证据不足时策略要求拒绝。超限、超时、错误和重启中断不会转交人工，也不会自动重试同一请求。
+- 完全访问会失去 Eidos 自身路径的沙盒保护。用户可以通过 Shell 改动 Eidos 数据、系统 Skill 或 Git metadata。macOS 的系统权限仍然有效，内置文件工具的普通文件约束仍然有效。
+- 当前模式作用于单个 Run。用户不能在 Run 执行中切换模式。重新生成完全访问 Run 的回答会回到人工模式；用户可以在 Composer 重新选择完全访问并确认。
+- 本期不实现自定义审批规则、`config.toml` 权限解析、域名代理或持久 allowlist。审批元数据保存可取得的审查 Token Usage，当前 UI 不提供独立的审查费用汇总。

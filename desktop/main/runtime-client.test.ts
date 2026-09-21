@@ -894,6 +894,7 @@ test("passes reasoning selection while preserving the operation ID argument", as
       "deepseek-flash",
       operationId,
       "max",
+      "auto_review",
     );
     const completed = await withTimeout(runCompleted, 5_000);
     const replay = await client.startRun(
@@ -902,6 +903,7 @@ test("passes reasoning selection while preserving the operation ID argument", as
       "deepseek-flash",
       operationId,
       "max",
+      "auto_review",
     );
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
@@ -912,9 +914,18 @@ test("passes reasoning selection while preserving the operation ID argument", as
       path.join(dataDirectory, "state.sqlite"),
       started.id,
     ]);
-    const profile = JSON.parse(stdout) as { reasoning_selection?: string };
+    const profile = JSON.parse(stdout) as {
+      reasoning_selection?: string;
+    };
+    const { stdout: runMode } = await execFileAsync(pythonExecutable, [
+      "-c",
+      "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute('SELECT approval_mode FROM runs WHERE id=?',(sys.argv[2],)).fetchone()[0])",
+      path.join(dataDirectory, "state.sqlite"),
+      started.id,
+    ]);
     assert.equal(replay.id, started.id);
     assert.equal(profile.reasoning_selection, "max");
+    assert.equal(runMode.trim(), "auto_review");
     assert.equal(completed.method, "run/completed");
     if (completed.method === "run/completed") {
       assert.equal(completed.params.run.id, started.id);

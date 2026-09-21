@@ -7,6 +7,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.model.client import (
     ModelContextItem,
     ModelProfileSnapshot,
@@ -305,6 +306,7 @@ def create_run_resolution_snapshot(
     data_directory: Path | None,
     created_at: int,
     projectless: bool = False,
+    approval_mode: ApprovalMode = "manual",
 ) -> RunResolutionSnapshot:
     model_value = model_profile.model_dump(mode="json")
     model_hash = canonical_sha256(model_value)
@@ -313,6 +315,8 @@ def create_run_resolution_snapshot(
         Path(workspace_identity.path),
         data_directory,
     )
+    if approval_mode == "full_access":
+        base_permissions = base_permissions.with_full_access()
     permission_json = canonical_json(
         base_permissions.model_dump(mode="json", by_alias=True)
     )
@@ -322,9 +326,11 @@ def create_run_resolution_snapshot(
     base_policy_hash = hashlib.sha256(BASE_POLICY_PATH.read_bytes()).hexdigest()
     sandbox_policy = {
         "approvalPolicy": "side_effects_require_approval",
+        "approvalMode": approval_mode,
+        "fullAccessConfirmation": FULL_ACCESS_WARNING_VERSION if approval_mode == "full_access" else None,
         "basePolicyHash": base_policy_hash,
         "permissionProfileHash": permission_hash,
-        "sandboxType": "macos_seatbelt",
+        "sandboxType": "none" if approval_mode == "full_access" else "macos_seatbelt",
     }
     sandbox_json = canonical_json(sandbox_policy)
     return RunResolutionSnapshot.create(

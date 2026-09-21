@@ -1,7 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
-import type { ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
+import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
+import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
 import { ReasoningSelector } from "./ReasoningSelector.js";
@@ -13,6 +14,8 @@ export interface ComposerProps {
   modelList: import("../contracts.js").ModelListResult | undefined;
   selectedModelId: ModelId | undefined;
   reasoningSelection?: ModelReasoningSelection | undefined;
+  approvalMode?: ApprovalMode | undefined;
+  onApprovalModeChange?: ((mode: ApprovalMode) => void) | undefined;
   contextUsage: ContextUsage | undefined;
   modelConfigured: boolean;
   modelLoading: boolean;
@@ -46,6 +49,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   modelList,
   selectedModelId,
   reasoningSelection,
+  approvalMode = "manual",
+  onApprovalModeChange,
   contextUsage,
   modelConfigured,
   modelLoading,
@@ -252,6 +257,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       />
       <div className="composer-actions">
         <div className="composer-meta">
+          {onApprovalModeChange && (
+            <ApprovalModeSelector
+              mode={approvalMode}
+              disabled={composerMode !== "idle" || isSubmitting}
+              onChange={onApprovalModeChange}
+            />
+          )}
           {!isIdle && <span>{statusLabel}</span>}
           {!modelConfigured && (
             <Button type="button" variant="ghost" size="small" onClick={onOpenModelSettings}>
