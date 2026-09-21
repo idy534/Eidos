@@ -1,6 +1,8 @@
 # Eidos 当前能力
 
-本文只回答“当前 main 已经能做什么”。每项能力都对应生产代码和测试入口。能力存在但没有进入默认 Run 的部分会明确标注。
+> 权限模式范围：本文原有的逐操作人工审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。本次权限模式修改尚未进入测试阶段。
+
+本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
 ## Desktop
 
@@ -241,7 +243,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v11。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 支持旧版本逐级迁移到 v11。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
+- 当前 state schema 是 v13。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 包含旧版本逐级迁移到 v13 的代码；本次 v12 → v13 迁移尚待验证。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。主库保存带 checksum 和大小的引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
@@ -380,3 +382,12 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 技能详情展示描述、状态与可滚动 Markdown 正文。左上角开关控制技能自身状态；右上角菜单提供“在 Finder 中显示”和“复制 Markdown”。复制内容包含原始 frontmatter。所属插件未启用时，详情会说明该限制，保存技能开关不会自动启用插件。
 - 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理会避开运行中的任务。插件技能的卸载保留插件包，确认文案会说明这一点。
 - 技能状态保存在 SQLite，后续 Turn 使用新状态，已开始的 Turn 保留原快照。UI、协议、数据库迁移和真实文件清理的验证尚未执行。
+
+
+## 权限模式（待测试）
+
+- Composer 已接入人工审批、替我审批（推荐）和完全访问。新会话默认使用人工审批，模式在每个 Run 创建时固定。
+- 替我审批只审查原本需要审批的操作。模型批准后沿原执行链继续；模型拒绝或审查失败直接返回理由，Desktop 不弹出人工审批框。
+- 完全访问在每次启动前显示 Main 原生风险确认框。确认后的 Run 关闭执行沙盒，使用当前 macOS 用户的文件和网络权限，并跳过逐项审批。
+- Runtime 保存模式、审批来源、判断和审查元数据。旧 Run 和旧快照继续按人工模式解释。数据库新增 v12 → v13 迁移。
+- 本次修改仅完成生产代码和文档。测试代码、协议 Fixture、数据库升级验证、真实模型及 macOS 行为验收均等待用户确认后开展。

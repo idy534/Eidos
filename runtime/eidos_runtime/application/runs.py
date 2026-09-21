@@ -314,6 +314,7 @@ class RunApplication:
             "modelId": model_id,
             "reasoningSelection": model_profile.reasoning_selection,
             "extensionSnapshot": extension_snapshot,
+            **({"approvalMode": request.approval_mode} if request.approval_mode != "manual" else {}),
         }
         if request.operation_id is not None:
             try:
@@ -380,6 +381,7 @@ class RunApplication:
                         session_title=None,
                         model_id=model_id,
                         model_profile=model_profile,
+                        approval_mode=request.approval_mode,
                         extension_snapshot=extension_snapshot,
                         expected_workspace_identity=expected_workspace_identity,
                     )

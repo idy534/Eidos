@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { ModelId, ModelReasoningSelection, Run, RunRevisionResult, SessionSnapshot } from "../contracts.js";
+import type { ApprovalMode, ModelId, ModelReasoningSelection, Run, RunRevisionResult, SessionSnapshot } from "../contracts.js";
 import {
   deriveComposerMode,
   findActiveRun,
@@ -32,6 +32,7 @@ export interface RunControllerActions {
     snapshot: SessionSnapshot;
     selectedModelId: ModelId;
     reasoningSelection?: ModelReasoningSelection | undefined;
+    approvalMode?: ApprovalMode | undefined;
     isStorageReady: boolean;
     inputOverride?: string;
     onRunProjected?: (sessionId: string, run: Run) => void;
@@ -111,6 +112,7 @@ export function useRunController(
     snapshot: currentSnapshot,
     selectedModelId,
     reasoningSelection,
+    approvalMode,
     isStorageReady: storageReady,
     inputOverride,
     onRunProjected,
@@ -118,6 +120,7 @@ export function useRunController(
     snapshot: SessionSnapshot;
     selectedModelId: ModelId;
     reasoningSelection?: ModelReasoningSelection | undefined;
+    approvalMode?: ApprovalMode | undefined;
     isStorageReady: boolean;
     inputOverride?: string;
     onRunProjected?: (sessionId: string, run: Run) => void;
@@ -157,14 +160,9 @@ export function useRunController(
     clearSessionError(sessionId);
 
     try {
-      const returnedRun = reasoningSelection === undefined
-        ? await window.eidosRuntime.startRun(sessionId, sessionInput.trim(), selectedModelId)
-        : await window.eidosRuntime.startRun(
-          sessionId,
-          sessionInput.trim(),
-          selectedModelId,
-          reasoningSelection,
-        );
+      const returnedRun = await window.eidosRuntime.startRun(
+        sessionId, sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode,
+      );
 
       if (returnedRun.sessionId === sessionId) {
         onRunProjected?.(sessionId, returnedRun);

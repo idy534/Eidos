@@ -5221,3 +5221,5 @@ button.composer-context-project--empty:hover:not(:disabled) {
     transform: none;
   }
 }
+
+.composer-approval-mode { font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; padding: 4px 6px; max-width: 11rem; }

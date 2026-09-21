@@ -236,6 +236,7 @@ class McpServerRecordDto(ClosedModel):
 
 
 class RunDto(ClosedModel):
+    approval_mode: Literal["manual", "auto_review", "full_access"] = Field(default="manual", alias="approvalMode")
     id: StrictStr
     session_id: StrictStr = Field(alias="sessionId")
     user_input: StrictStr | None = Field(default=None, alias="userInput")

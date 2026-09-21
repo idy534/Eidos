@@ -356,3 +356,14 @@ PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 
 已有文件使用原地写入，新文件使用排他创建。相关定向用例位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_runtime_loop.py` 和 `runtime/tests/test_seatbelt.py`。macOS 验收必须覆盖 inode 不变、ACL 拒绝、写前版本冲突、部分写入、取消、外部路径拒批/批准和无沙盒审批。Runtime Bundle 必须重新构建并执行 bundled smoke；源码检查不能代表已安装 App 的行为。
 
 Projectless 文件提交和 Skill 写入权限的定向回归位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_permission_policy.py` 和 `runtime/tests/test_seatbelt.py`。验证者需要执行真实 macOS Seatbelt 用例，覆盖受保护数据目录内的 Projectless 新建、更新、删除，普通 Skill 的精确写入授权，以及系统 Skill 和相邻数据文件的拒写；mock 通过不能替代这些原生结果。
+
+
+## 权限模式修改的待验收项
+
+本次权限模式生产代码和文档先交由用户确认。开发者在用户确认前不新增测试代码，也不运行测试、构建或原生验收。静态类型、语法及 Diff 检查不能替代验收结果。
+
+用户确认后，测试需要覆盖三种模式的协议和 UI、旧请求默认值、无确认的完全访问拒绝、Run 模式不可变、v12 → v13 升级与事务回滚。审批测试需要覆盖所有原有入口、模型批准与拒绝、无效输出、未知风险、输出和证据超限、60 秒超时、取消与迟到结果、重启中断、拒绝去重及人工模式回归。测试还需要证明普通 Workspace 操作不产生额外审查请求，模型拒绝不会触发人工窗口。
+
+macOS 原生验收需要覆盖完全访问的网络、外部 cwd、外部普通文件、Git metadata 和原 Eidos 保护路径。测试只能在隔离数据目录和临时文件上验证这些写入，不能破坏真实 Eidos 数据。验收还需要检查 manual/auto_review 的原有 Seatbelt deny、文件身份与版本冲突、Durable Intent、部分写入、取消、MCP 生命周期和 Reconciliation。真实 Provider 的结构化审查与拒绝理由需要单独验证。
+
+测试阶段沿用本文现有命令和 AGENTS.md 的门槛：协议、Runtime、Main、Desktop、Python 依赖检查、构建、Seatbelt native 和 Electron smoke。测试阶段还需要同步受影响的协议 Fixture 与旧 Schema 断言。当前代码没有增加生产依赖，也没有改变安装或启动命令。

@@ -11,6 +11,7 @@ from typing import Callable, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
+from eidos_runtime.runtime.cancellation import DeadlineCancellation as _DeadlineCancellation
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.db.errors import InvalidRunStateError, StorageError
 from eidos_runtime.db.invariants import RuntimeInvariantError
@@ -256,58 +257,6 @@ class VerifiedToolExecutionResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     result: dict[str, object]
-
-
-class _DeadlineCancellation(threading.Event):
-    def __init__(
-        self,
-        cancel: threading.Event,
-        deadline: float,
-        monotonic,
-    ) -> None:
-        super().__init__()
-        self.cancel = cancel
-        self.deadline = deadline
-        self.monotonic = monotonic
-        self.paused_at: float | None = None
-
-    def suspend_deadline(self) -> None:
-        if self.paused_at is None:
-            self.paused_at = self.monotonic()
-
-    def resume_deadline(self) -> None:
-        if self.paused_at is not None:
-            self.deadline += max(0.0, self.monotonic() - self.paused_at)
-            self.paused_at = None
-
-    def is_set(self) -> bool:
-        return self.cancel.is_set() or (
-            self.paused_at is None and self.monotonic() >= self.deadline
-        )
-
-    def wait(self, timeout: float | None = None) -> bool:
-        if self.is_set():
-            return True
-        remaining = (
-            None
-            if self.paused_at is not None
-            else max(0.0, self.deadline - self.monotonic())
-        )
-        return self.cancel.wait(
-            remaining
-            if timeout is None
-            else timeout
-            if remaining is None
-            else min(timeout, remaining)
-        ) or self.is_set()
-
-    @property
-    def reason(self) -> str | None:
-        if self.cancel.is_set():
-            return "cancel"
-        if self.paused_at is None and self.monotonic() >= self.deadline:
-            return "timeout"
-        return None
 
 
 class ToolExecutionController:
@@ -729,6 +678,16 @@ class ToolExecutionController:
                     data["workspaceDiffHash"] = outcome.diff_hash
                 enriched["data"] = data
                 outcome = replace(outcome, result=enriched)
+            if self.approval is not None and self.store.read_run(run_id).get("approvalMode") == "auto_review":
+                if outcome.result.get("code") in {"user_rejected", "user_rejected_network", "user_rejected_escalation"}:
+                    review = self.approval.last_review
+                    decided_item = self.store.read_item(str(item["id"]))
+                    feedback = decided_item.get("toolCall", {}).get("approvalFeedback")
+                    outcome = replace(outcome, result={
+                        **outcome.result,
+                        "code": review.reason_code if review is not None else "auto_review_rejected",
+                        "summary": feedback or (review.rationale + " Do not repeat or circumvent the refused action." if review else "Automatic approval review rejected this request. Do not repeat or circumvent it."),
+                    })
             # Contract failure cannot erase an already-authorized side effect.
             try:
                 outcome = replace(

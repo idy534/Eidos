@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.approval_policy import ApprovalReview
+
 from dataclasses import dataclass
 import sqlite3
 
@@ -159,12 +161,14 @@ def resolve_approval_and_transition(
     decision: str,
     feedback: str | None,
     requeue: bool,
+    review: ApprovalReview | None = None,
 ) -> ApprovalResolution:
     if decision not in {"approve", "reject"}:
         raise ValueError("invalid approval decision")
     fact = connection.execute(
         """
-        SELECT items.run_id, runs.consecutive_rejects, approvals.id AS approval_id
+        SELECT items.run_id, runs.consecutive_rejects, runs.approval_mode,
+               approvals.id AS approval_id
         FROM items
         JOIN runs ON runs.id = items.run_id
         JOIN approvals ON approvals.item_id = items.id
@@ -176,6 +180,11 @@ def resolve_approval_and_transition(
     ).fetchone()
     if fact is None:
         raise InvalidRunStateError("approval is no longer pending")
+    expected_source = {"manual": None, "auto_review": "model", "full_access": "mode"}[fact["approval_mode"]]
+    if (review.source if review is not None else None) != expected_source:
+        raise InvalidRunStateError("approval source does not match run policy")
+    if review is not None and review.decision != decision:
+        raise InvalidRunStateError("approval decision does not match review")
 
     now = _now_ms()
     target_approval = (
@@ -197,7 +206,7 @@ def resolve_approval_and_transition(
     approval_update = connection.execute(
         """
         UPDATE approvals
-        SET status = ?, decision = ?, feedback = ?, decided_at = ?
+        SET status = ?, decision = ?, feedback = ?, decided_at = ?, review_json = ?
         WHERE id = ? AND status = 'pending'
         """,
         (
@@ -205,6 +214,7 @@ def resolve_approval_and_transition(
             decision,
             feedback,
             now,
+            review.model_dump_json() if review is not None else None,
             fact["approval_id"],
         ),
     )

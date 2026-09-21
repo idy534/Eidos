@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from eidos_runtime.domain.approval_policy import ApprovalMode
 
 from pydantic import Field
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
@@ -29,6 +30,7 @@ class RunControlState(StrEnum):
 
 
 class Run(EidosFrozenStrictModel):
+    approval_mode: ApprovalMode = "manual"
     id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     user_input: str

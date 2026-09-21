@@ -198,7 +198,7 @@ class PreparedPatch:
 class ResolvedAuthorizedPath:
     root: Path
     relative_path: str
-    authority: Literal["workspace", "active_skill"]
+    authority: Literal["workspace", "active_skill", "full_access"]
     writable: bool
 
 
@@ -467,6 +467,7 @@ class ToolExecutor:
         self.write_permissions: EffectivePermissionProfile | None = None
         self._revalidate_write_permissions: Callable[[], EffectivePermissionProfile] | None = None
         self.unsandboxed_write = False
+        self.full_access = False
         self.external_write_approved = False
         self.workspace = identity
         self.root_fd = root_fd
@@ -533,7 +534,7 @@ class ToolExecutor:
         absolute = str(self.workspace.path / value)
         resolved = absolute if absolute in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
         target = self.workspace.path / resolved
-        if _is_protected_workspace_metadata_path(target, self.workspace.path):
+        if not (self.write_permissions and self.write_permissions.full_access) and _is_protected_workspace_metadata_path(target, self.workspace.path):
             raise WorkspacePathError("permission_not_requestable")
         if self.write_permissions is not None and not self.write_permissions.allows_file_write(target):
             raise WorkspacePathError("permission_not_requestable")
@@ -647,6 +648,10 @@ class ToolExecutor:
 
     def shell_cwd(self, value: str) -> WorkspaceIdentity:
         self._verify_root()
+        if self.full_access and Path(value).is_absolute():
+            resolve_read_path(value, self.workspace.path, (Path("/"),))
+            with ToolExecutor(Path(value)) as external:
+                return external.workspace
         relative = (
             "."
             if value == "."
@@ -755,7 +760,7 @@ class ToolExecutor:
             assert isinstance(path_value, str)
             parts = _validate_relative_path(path_value)
             normalized_path = "/".join(parts)
-            if _is_protected_workspace_metadata_path(
+            if not (self.write_permissions and self.write_permissions.full_access) and _is_protected_workspace_metadata_path(
                 self.workspace.path / normalized_path, self.workspace.path
             ):
                 raise WorkspacePathError("permission_not_requestable")
@@ -1042,7 +1047,7 @@ class ToolExecutor:
             self.verify_write_scope()
             _check_cancel(cancel)
             parts = _validate_relative_path(change.path)
-            if _is_protected_workspace_metadata_path(
+            if not (self.write_permissions and self.write_permissions.full_access) and _is_protected_workspace_metadata_path(
                 self.workspace.path / change.path, self.workspace.path
             ):
                 raise WorkspacePathError("permission_not_requestable")
@@ -1633,6 +1638,14 @@ class ToolExecutor:
         )
 
     def _resolve_read_path(self, value: str) -> ResolvedAuthorizedPath:
+        if self.full_access:
+            # Validate using the same canonical syntax, then scope the reader to the selected target.
+            resolved = resolve_read_path(value, self.workspace.path, (Path("/"),))
+            if resolved.authority != "workspace":
+                candidate = resolved.root / resolved.relative_path
+                root = candidate if candidate.is_dir() else candidate.parent
+                return ResolvedAuthorizedPath(root, candidate.relative_to(root).as_posix(), "full_access", True)
+            return resolved
         return resolve_read_path(
             value,
             self.workspace.path,

@@ -21,6 +21,7 @@ from eidos_runtime.db.storage import (
     SessionStore,
 )
 from eidos_runtime.model.client import ModelClient
+from eidos_runtime.domain.approval_policy import FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -360,6 +361,7 @@ class RuntimeEngine:
             lambda _run_id, _cancel: None,
             self._check_cancel,
             requeue=False,
+            reviewer=self.model,
         )
 
         if self.store.read_run(run.run_id)["status"] == "waiting_approval":
@@ -1033,6 +1035,18 @@ class RuntimeEngine:
         extension_snapshot: dict[str, object],
     ) -> RunContext:
         resolution = self.store.read_run_resolution_snapshot(str(run["id"]))
+        policy = json.loads(resolution.sandbox_policy_json)
+        permissions = BasePermissionProfile.model_validate_json(resolution.permission_profile_json)
+        mode = run.get("approvalMode", "manual")
+        if (
+            policy.get("approvalMode", "manual") != mode
+            or permissions.full_access != (mode == "full_access")
+            or (mode == "full_access" and (
+                policy.get("fullAccessConfirmation") != FULL_ACCESS_WARNING_VERSION
+                or policy.get("sandboxType") != "none"
+            ))
+        ):
+            raise InvalidRunStateError("run approval policy does not match permission snapshot")
         return RunContext(
             run_id=str(run["id"]),
             session_id=str(run["sessionId"]),
@@ -1293,8 +1307,11 @@ def _build_step_policy(
         network_enabled = False
         writable_roots = (workspace_root,)
 
+    approval_mode = "manual"
     try:
         sandbox_data = json.loads(sandbox_policy_json)
+        if isinstance(sandbox_data, dict):
+            approval_mode = str(sandbox_data.get("approvalMode", "manual"))
         sandbox_type = (
             str(sandbox_data.get("sandboxType") or "none")
             if isinstance(sandbox_data, dict)
@@ -1323,6 +1340,7 @@ def _build_step_policy(
 
     return StepPermissionPolicy(
         sandbox_mode=sandbox_mode,
+        approval_mode=approval_mode,
         workspace_root=workspace_root,
         writable_roots=writable_roots,
         network_enabled=network_enabled,

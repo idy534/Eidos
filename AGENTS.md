@@ -202,6 +202,11 @@ RunSupervisor、ResourceRegistry、FIFO、Execution Slot 和 Shutdown Quiescence
 - Runtime 重启不会重放不确定副作用
 - 并行结果保持模型声明顺序
 异步实现变化必须独立 PR，不得同时修改协议、DB Schema 和 UI。
+## 本期明确的权限模式例外
+用户明确要求增加 Codex 风格的完全访问模式。只有用户通过 Desktop 确认并创建的 `full_access` Run 可以关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批。该模式不能继续承诺 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久保护。第 14、15、28 节的相关沙盒和路径保护要求继续完整适用于 `manual` 与 `auto_review`。所有模式仍保留参数校验、Durable Intent、文件身份与版本核验、取消、结果验证和 Reconciliation。模型、项目文件和工具参数不能切换模式。
+
+用户本轮要求先完成生产代码及文档；测试代码和测试执行等待用户确认。当前工作不能因未进入测试阶段而宣称已通过验收。
+
 ## 14. Tool execution
 单 ToolCall 固定流程：
 ```text

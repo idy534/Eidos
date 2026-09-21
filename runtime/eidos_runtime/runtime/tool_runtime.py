@@ -368,16 +368,19 @@ class FileChangeToolHandler:
     ) -> VerifiedToolExecutionResult:
         executor = runtime.implementation.executor  # type: ignore[attr-defined]
         external = bool(executor._external_writers)
-        unsandboxed = not is_seatbelt_ready()
         permissions = executor.write_permissions
+        full_access = bool(permissions and permissions.full_access)
+        unsandboxed = full_access or not is_seatbelt_ready()
         if unsandboxed and (permissions is None or not unsandboxed_execution_allowed(permissions, controlled_file_write=True)):
             return VerifiedToolExecutionResult(result=tool_error(
                 runtime.spec.name, "sandbox_unavailable", "File sandbox is unavailable and escalation is forbidden",
             ))
-        if (not external or executor.external_write_approved) and not unsandboxed:
+        if full_access or ((not external or executor.external_write_approved) and not unsandboxed):
+            executor.unsandboxed_write = full_access
             if external:
                 prepared = prepared.model_copy(update={"intent_preconditions": {
-                    **prepared.intent_preconditions, "authorization": "run_grant",
+                    **prepared.intent_preconditions,
+                    "authorization": "full_access" if full_access else "run_grant",
                     "mutationScope": "external_file",
                     "effectivePermissions": permissions.summary() if permissions is not None else {},
                 }})
@@ -638,10 +641,12 @@ class ShellToolHandler:
         shell_input = RunShellInput.model_validate_json(
             json.dumps(call.arguments, ensure_ascii=False)
         )
+        full_access = bool(self.dependencies.base_permissions and self.dependencies.base_permissions.full_access)
         effective_sandbox_permissions = shell_input.effective_sandbox_permissions
         if (
             effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
+            and not full_access
             and not self.dependencies.shell_available
         ):
             return HandlerOutcome(
@@ -836,6 +841,7 @@ class ShellToolHandler:
         if (
             effective_sandbox_permissions
             is not SandboxPermissions.REQUIRE_ESCALATED
+            and not full_access
             and not is_seatbelt_ready()
         ):
             return HandlerOutcome(

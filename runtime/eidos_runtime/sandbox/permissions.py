@@ -97,6 +97,7 @@ class MaterializedFileSystemPermissionEntry(ClosedModel):
 
 
 class BasePermissionProfile(ClosedModel):
+    full_access: bool = Field(default=False, alias="fullAccess")
     workspace_roots: tuple[StrictStr, ...] = Field(alias="workspaceRoots")
     entries: tuple[FileSystemPermissionEntry, ...]
     permanent_denies: tuple[FileSystemPermissionEntry, ...] = Field(
@@ -119,6 +120,16 @@ class BasePermissionProfile(ClosedModel):
     approval_write_roots: tuple[StrictStr, ...] = Field(
         default=(), alias="approvalWriteRoots"
     )
+
+    def with_full_access(self) -> "BasePermissionProfile":
+        """Only the user-confirmed Run policy factory selects this profile."""
+        return self.model_copy(update={
+            "full_access": True, "network_enabled": True,
+            "entries": (FileSystemPermissionEntry(path="/", access=FileSystemAccessMode.WRITE),),
+            "permanent_denies": (), "hard_confidentiality_denies": (),
+            "protected_metadata_paths": (), "protected_write_paths": (),
+            "approval_write_roots": (),
+        })
 
     @classmethod
     def for_workspace(
@@ -200,6 +211,7 @@ def base_permission_profile_for_workspace(
 
 
 class EffectivePermissionProfile(ClosedModel):
+    full_access: bool = Field(default=False, alias="fullAccess")
     workspace_roots: tuple[StrictStr, ...] = Field(alias="workspaceRoots")
     entries: tuple[MaterializedFileSystemPermissionEntry, ...]
     permanent_denies: tuple[MaterializedFileSystemPermissionEntry, ...] = Field(
@@ -256,10 +268,13 @@ class EffectivePermissionProfile(ClosedModel):
             ],
             "activeSkillRoots": list(self.active_skill_roots),
             "networkEnabled": self.network_enabled,
+            "fullAccess": self.full_access,
         }
 
     def allows_file_write(self, path: Path) -> bool:
         """Check a canonical file target, including unsandboxed helper targets."""
+        if self.full_access:
+            return path.is_absolute()
         approved = any(
             entry.source == "additional" and entry.access is FileSystemAccessMode.WRITE
             and (path == Path(entry.resolved_path) or (
@@ -337,6 +352,8 @@ def materialize_effective_profile(
     base: BasePermissionProfile,
     additional: AdditionalPermissionProfile | None = None,
 ) -> EffectivePermissionProfile:
+    if base.full_access:
+        base = base.with_full_access()
     protected = tuple(Path(path) for path in base.protected_metadata_paths)
     protected_write = tuple(Path(path) for path in base.protected_write_paths)
     active_skill_roots = _canonical_active_skill_roots(base.active_skill_roots)
@@ -415,6 +432,8 @@ def materialize_effective_profile(
         "activeSkillRoots": active_skill_roots,
         "approvalWriteRoots": base.approval_write_roots,
     }
+    if base.full_access:
+        payload["fullAccess"] = True
     profile_hash = hashlib.sha256(
         json.dumps(
             payload,
@@ -424,6 +443,7 @@ def materialize_effective_profile(
         ).encode("utf-8")
     ).hexdigest()
     return EffectivePermissionProfile(
+        fullAccess=base.full_access,
         workspaceRoots=base.workspace_roots,
         entries=entries,
         permanentDenies=permanent,
@@ -444,9 +464,9 @@ def unsandboxed_execution_allowed(
 ) -> bool:
     # Arbitrary processes cannot enforce permanent write protection without an
     # OS sandbox. The bounded file helper separately validates every target.
-    return not effective_profile.hard_confidentiality_denies and (
+    return effective_profile.full_access or (not effective_profile.hard_confidentiality_denies and (
         controlled_file_write or not effective_profile.protected_write_paths
-    )
+    ))
 
 
 def is_approval_write_exception(

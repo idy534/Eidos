@@ -41,6 +41,8 @@ class PermissionPolicyEvaluator:
         *,
         unsandboxed: bool = False,
     ) -> PermissionDecision:
+        if base.full_access:
+            return PermissionDecision(disposition=PermissionDisposition.ALLOW, reason_code="already_granted", requested_permissions=requested)
         disposition = PermissionDisposition.ALLOW
         if unsandboxed:
             disposition = (

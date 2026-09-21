@@ -1,5 +1,7 @@
 # Eidos 当前架构
 
+> 权限模式范围：本文原有的逐操作人工审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。本次权限模式修改尚未进入测试阶段。
+
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。
 
 ## 1. System Boundary
@@ -605,3 +607,20 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 插件技能只保存单技能卸载标记，不删除插件包内文件，因此不会破坏插件 hash 或影响其他 Skill/MCP。插件重启或开关不会移除该标记。当前实现保守地等待所有非终态 Run 结束后清理独立用户技能，不新增后台清理线程。
 
 本次设置重构已进入测试阶段。Runtime 管理、数据库迁移、协议 Fixture、Main 集成和 Renderer 行为测试已经补充。定向测试、协议契约检查、Python 检查、Renderer 状态与行为测试、构建、Seatbelt 和 Electron smoke 已完成。Runtime 全量测试首次运行发现 4 个旧 schema 断言和 1 个方法请求类型复用问题；修正后，5 个失败用例已定向通过。Main 全量测试首次运行发现 1 个错误测试期望；修正后，该场景已定向通过。人工 UI 验收和真实 Provider 验证仍未完成。
+
+
+## Run 权限模式（生产代码已修改，测试待确认）
+
+调用链保持为 `Composer → preload → Main → run/start → Run 快照 → PermissionPolicyEvaluator → ApprovalCoordinator → 原 Tool 执行链`。权限决定仍属于 Eidos。实现复用现有 Model Gateway、Approval 事务和权限物化，没有新增依赖、独立 Agent Loop 或第二套审批状态机。
+
+Composer 提供 `manual`（人工审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问）。选择只影响下一次创建的 Run。Renderer 在当前会话保留草稿选择，重新加载时从最近的 Run 读取模式。Main 对每次完全访问启动显示原生风险确认框。Main 只在确认后发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。模型和 Tool 参数没有切换模式的入口。重新生成回答保留自动审批模式，但不会继承完全访问；完全访问必须重新通过 Composer 启动并确认。
+
+Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 在 `runs` 增加 `approval_mode`，旧 Run 默认为 `manual`；该版本在 `approvals` 增加 `review_json`，旧审批默认为空。迁移沿用事务和失败回滚。Runtime 在执行前检查 Run 模式与权限快照一致。当前自定义权限没有配置、解析器或 UI；后续可以在既有 Run 权限快照工厂和 PermissionPolicyEvaluator 中接入 `config.toml`，本期不接受 `custom` 模式。
+
+人工模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。硬拒绝仍由确定性策略直接拒绝。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请、MCP 和 Eidos-state 的原有审批。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。
+
+审查证据包括当前 Run 及之前最近八条用户消息、具体 Tool 参数、权限请求、完整 Diff 和 Base Hash。策略要求模型把项目内容、工具输出和操作理由当作不可信数据。请求最多 48 KiB，输出最多 8 KiB，独立审查期限为 60 秒。证据过大、响应无效、模型不可用和超时均拒绝执行，并返回具体原因。模型拒绝不会弹出人工审批框。相同操作在当前 Run 中按原 fingerprint 去重；技术失败也不自动重试同一申请，用户可以处理原因后创建新的 Run。
+
+审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后不会重新采样未完成的自动审批，而是拒绝原请求并报告中断。Desktop 在自动审查时显示状态并保留取消入口；Feed 展示审批来源与拒绝理由。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
+
+完全访问使用 `fullAccess` 权限快照，启用网络并移除 Eidos 路径 deny。Shell、受控文件 helper 和 MCP 执行不使用 Seatbelt。普通操作跳过逐项审批；仍经过原 Coordinator 的操作以模式授权记录批准，不调用审查模型或人工窗口。文件工具允许绝对路径访问，但仍拒绝不支持的链接和特殊文件；Shell 使用当前 macOS 用户的权限，不能绕过操作系统 ACL、TCC 或只读卷。该模式没有管理员提权，也没有无界输出或自动重放不确定副作用。

@@ -8,6 +8,8 @@ records; each public method nevertheless owns a distinct validation type.
 
 from __future__ import annotations
 
+from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
+
 import uuid
 from pathlib import Path
 import re
@@ -393,6 +395,10 @@ class EventListRequestDto(_CanonicalIdRequest):
 
 
 class RunStartRequestDto(_OperationRequest):
+    approval_mode: ApprovalMode = Field(default="manual", alias="approvalMode")
+    full_access_confirmation: Literal["full-access-v1"] | None = Field(
+        default=None, alias="fullAccessConfirmation"
+    )
     session_id: StrictStr = Field(alias="sessionId")
     user_input: StrictStr = Field(alias="userInput", min_length=1, max_length=64 * 1024)
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
@@ -404,6 +410,10 @@ class RunStartRequestDto(_OperationRequest):
     @model_validator(mode="after")
     def _validate_model_selector(self) -> "RunStartRequestDto":
         super()._validate_canonical_ids()
+        if self.approval_mode == "full_access" and self.full_access_confirmation != FULL_ACCESS_WARNING_VERSION:
+            raise ValueError("full access requires explicit confirmation")
+        if self.approval_mode != "full_access" and self.full_access_confirmation is not None:
+            raise ValueError("full access confirmation does not match approval mode")
         if not self.user_input.strip():
             raise ValueError("userInput must not be blank")
         return self

@@ -805,7 +805,8 @@ function ProcessItem({
     return <><p className="feed-label">需要批准 · {{ file_change: "文件变更", command_execution: "Shell 命令", network_access: "网络访问", external_tool: "MCP 工具", permission_request: "权限申请" }[approval.kind]} · <span>{approval.summary}</span></p>{toolItem}</>;
   }
   if (item.toolCall.approvalDecision) {
-    return <div><p className="feed-label">{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>
+    return <div><p className="feed-label">{run.approvalMode === "auto_review" ? "模型审查 · " : run.approvalMode === "full_access" ? "完全访问 · " : ""}{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>
+      {item.toolCall.approvalFeedback && <p className="feed-label">{item.toolCall.approvalFeedback}</p>}
       {toolItem}</div>;
   }
 

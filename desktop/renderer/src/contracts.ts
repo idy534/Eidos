@@ -1,6 +1,7 @@
 import type { EidosRuntimeAPI } from "../../shared/index.js";
 
 export type {
+  ApprovalMode,
   RuntimeStatus,
   RuntimeHealth,
   ModelId,

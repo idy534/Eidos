@@ -169,6 +169,7 @@ def _run_from_row(
         "modelId": row["model_id"],
         "status": row["status"],
         "modelStepCount": row["model_step_count"],
+        "approvalMode": row["approval_mode"] if "approval_mode" in row.keys() else "manual",
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
@@ -178,6 +179,8 @@ def _run_from_row(
         "waiting_approval": ["approve", "reject", "cancel"],
         "finalizing": ["cancel"],
     }.get(row["status"], [])
+    if run["approvalMode"] != "manual":
+        allowed_actions = [action for action in allowed_actions if action == "cancel"]
     if allowed_actions:
         run["allowedActions"] = allowed_actions
     if row["started_at"] is not None:

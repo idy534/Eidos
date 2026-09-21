@@ -103,13 +103,14 @@ class RunResources:
                 supports_custom_tools=self.supports_custom_tools,
                 supports_tool_grammar=self.supports_tool_grammar,
             )
+            self.tool_executor.full_access = self.store.read_run(self.run_id).get("approvalMode") == "full_access"
             self.skills = SkillCatalog(PluginCatalog(self.store))
             self.mcp = McpManager(
                 self.skills.plugins,
                 self.extension_snapshot,
                 workspace.path,
                 async_kernel=self.async_kernel,
-                sandbox=self.mcp_sandbox,
+                sandbox=self.mcp_sandbox and not self.tool_executor.full_access,
                 resource_registry=self.resources,
             )
             self._external_entries = self.mcp.start()

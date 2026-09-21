@@ -5,6 +5,9 @@ from pathlib import Path
 import sqlite3
 import uuid
 
+from eidos_runtime.domain.approval_policy import ApprovalMode
+from eidos_runtime.domain.tool import Approval
+from eidos_runtime.persistence.mappers.runtime import approval_from_row
 from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
@@ -121,6 +124,7 @@ class RunRepository(Repository):
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        approval_mode: ApprovalMode = "manual",
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -200,14 +204,14 @@ class RunRepository(Repository):
                 connection.execute(
                     """
                     INSERT INTO runs (
-                        id, session_id, user_input, model_id, model_profile_json,
+                        id, session_id, user_input, model_id, model_profile_json, approval_mode,
                         status, enqueued_at,
                         extension_snapshot_json, created_at, started_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id, session_id, user_input, model_id,
-                        model_profile_json,
+                        model_profile_json, approval_mode,
                         status,
                         now if queued else None, extension_snapshot_json,
                         now, started_at, now,
@@ -220,6 +224,7 @@ class RunRepository(Repository):
             run_resolution = create_run_resolution_snapshot(
                 run_id=run_id,
                 model_profile=profile,
+                approval_mode=approval_mode,
                 extension_snapshot=json.loads(extension_snapshot_json),
                 workspace_identity=WorkspaceIdentitySnapshot(
                     path=str(execution_workspace.path),
@@ -293,6 +298,7 @@ class RunRepository(Repository):
                 "modelId": model_id,
                 "reasoningSelection": profile.reasoning_selection,
                 "extensionSnapshot": json.loads(extension_snapshot_json),
+                **({"approvalMode": approval_mode} if approval_mode != "manual" else {}),
             },
         )
         return result["run"], result["item"]
@@ -306,6 +312,7 @@ class RunRepository(Repository):
         session_title: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
+        approval_mode: ApprovalMode = "manual",
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -319,6 +326,7 @@ class RunRepository(Repository):
             session_title=session_title,
             model_id=model_id,
             model_profile=model_profile,
+            approval_mode=approval_mode,
             extension_snapshot=extension_snapshot,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
@@ -401,6 +409,18 @@ class RunRepository(Repository):
         if row is None:
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
+
+    def approval_user_evidence(self, run_id: str) -> tuple[str, ...]:
+        with self.lock:
+            rows = self._connection().execute(
+                """SELECT substr(i.content, 1, 65537) AS content FROM items i
+                   JOIN runs current ON current.id = ?
+                   JOIN runs source ON source.id = i.run_id
+                   WHERE i.session_id = current.session_id AND i.kind = 'user_message'
+                     AND source.creation_seq <= current.creation_seq
+                   ORDER BY i.creation_seq DESC LIMIT 8""", (run_id,),
+            ).fetchall()
+        return tuple(str(row["content"] or "") for row in reversed(rows))
 
     def read_resolution_snapshot(self, run_id: str) -> RunResolutionSnapshot:
         with self.lock:
@@ -515,13 +535,17 @@ class RunRepository(Repository):
                 """
             ))
 
-    def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
+    def rejected_approval(self, run_id: str, fingerprint: str) -> Approval | None:
         with self.lock:
-            return self._connection().execute(
-                """SELECT 1 FROM approvals WHERE run_id = ? AND status = 'rejected'
+            row = self._connection().execute(
+                """SELECT * FROM approvals WHERE run_id = ? AND status = 'rejected'
                    AND json_extract(request_json, '$.permissionBlockFingerprint') = ?
-                   LIMIT 1""", (run_id, fingerprint),
-            ).fetchone() is not None
+                   ORDER BY creation_seq DESC LIMIT 1""", (run_id, fingerprint),
+            ).fetchone()
+        return approval_from_row(row) if row is not None else None
+
+    def approval_prompt_blocked(self, run_id: str, fingerprint: str) -> bool:
+        return self.rejected_approval(run_id, fingerprint) is not None
 
     def run_permission_grants(self, run_id: str) -> AdditionalPermissionProfile:
         from eidos_runtime.sandbox.permissions import merge_permissions

@@ -15,6 +15,7 @@ import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import { ArtifactPreviewManager } from "./artifact-preview.js";
 import { TerminalManager } from "./terminal-manager.js";
 import type {
+  ApprovalMode,
   ApprovalDecision,
   ApprovalRequest,
   AppShortcut,
@@ -1028,12 +1029,13 @@ ipcMain.handle(IPC.SESSION_GIT_REBASE_ABORT, (
   return clientOrThrow().abortSessionGitRebase(sessionId, operationId);
 });
 
-ipcMain.handle(IPC.RUN_START, (
+ipcMain.handle(IPC.RUN_START, async (
   _event,
   sessionId: unknown,
   userInput: unknown,
   modelId: unknown,
   reasoningSelection: unknown,
+  approvalMode: unknown,
 ) => {
   const validReasoningSelection =
     reasoningSelection === undefined
@@ -1050,8 +1052,20 @@ ipcMain.handle(IPC.RUN_START, (
     || modelId.length === 0
     || modelId.length > 256
     || !validReasoningSelection
+    || (approvalMode !== undefined && !["manual", "auto_review", "full_access"].includes(String(approvalMode)))
   ) {
     throw new Error("Run 参数无效。");
+  }
+  if (approvalMode === "full_access") {
+    const { response } = await dialog.showMessageBox({
+      type: "warning",
+      title: "开启完全访问？",
+      message: "Eidos 将不再逐项请求批准",
+      detail: "本次任务将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任当前任务时开启。",
+      buttons: ["取消", "开启完全访问并开始"],
+      defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (response !== 1) throw new Error("你已取消开启完全访问，任务未启动。");
   }
   return clientOrThrow().startRun(
     sessionId,
@@ -1059,6 +1073,8 @@ ipcMain.handle(IPC.RUN_START, (
     modelId,
     undefined,
     reasoningSelection as ModelReasoningSelection | undefined,
+    approvalMode as ApprovalMode | undefined,
+    approvalMode === "full_access" ? "full-access-v1" : undefined,
   );
 });
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {

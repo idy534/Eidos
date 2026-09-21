@@ -9,6 +9,9 @@ from typing import Callable
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.domain.approval_policy import ApprovalReview
+from eidos_runtime.model.client import ModelClient
+from eidos_runtime.runtime.approval_review import review_approval
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.protocol.tool_text import project_approval_diff
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -88,6 +91,7 @@ class ApprovalCoordinator:
         check_cancel: Callable[[str, threading.Event], None],
         *,
         requeue: bool,
+        reviewer: ModelClient | None = None,
     ) -> None:
         self.store = store
         self.transport = ApprovalAdapter(request)
@@ -98,6 +102,8 @@ class ApprovalCoordinator:
         self.resume_execution_slot = resume_execution_slot
         self.check_cancel = check_cancel
         self.requeue = requeue
+        self.reviewer = reviewer
+        self.last_review: ApprovalReview | None = None
 
     def request(
         self,
@@ -113,6 +119,8 @@ class ApprovalCoordinator:
         attempt_ordinal: int = 0,
         approval_kind: str = "tool",
     ) -> ApprovalOutcome:
+        self.last_review = None
+        mode = self.store.read_run(run_id).get("approvalMode", "manual")
         fingerprint = hashlib.sha256(json.dumps({
             "tool": item.get("toolCall", {}).get("toolName"),
             "arguments": (None if description.get("kind") == "permission_request"
@@ -127,10 +135,12 @@ class ApprovalCoordinator:
             **project_approval_diff(request or description),
             "permissionBlockFingerprint": fingerprint,
         }
-        if self.store.approval_prompt_blocked(run_id, fingerprint):
+        rejected = self.store.rejected_approval(run_id, fingerprint)
+        if rejected is not None:
+            self.last_review = rejected.review
             return ApprovalOutcome(
                 decision="reject",
-                feedback=APPROVAL_REJECTION_GUIDANCE,
+                feedback=rejected.feedback or ("Automatic approval review rejected this request previously. Do not repeat it or bypass the refusal; choose a materially safer action." if mode == "auto_review" else APPROVAL_REJECTION_GUIDANCE),
                 item=item,
             )
         pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
@@ -162,16 +172,39 @@ class ApprovalCoordinator:
         if callable(suspend_deadline):
             suspend_deadline()
         try:
-            result = self.transport.request(
-                ApprovalRequest({
-                    "sessionId": pending_item["sessionId"],
-                    "runId": pending_item["runId"],
-                    "itemId": pending_item["id"],
-                    "toolCallId": tool_call["id"],
-                    **project_approval_diff(description),
-                }),
-                cancel,
-            )
+            if mode == "full_access":
+                self.last_review = ApprovalReview(source="mode", decision="approve",
+                    reason_code="full_access", rationale="用户已为本次任务开启完全访问。")
+            elif mode == "auto_review":
+                if pending is not None:
+                    self.last_review = ApprovalReview(source="model", decision="reject",
+                        reason_code="auto_review_interrupted", rationale="自动审批在 Runtime 重启前未完成；原操作未获批准。")
+                elif self.reviewer is None:
+                    self.last_review = ApprovalReview(source="model", decision="reject",
+                        reason_code="auto_review_unavailable", rationale="自动审批模型不可用；操作未获批准。")
+                else:
+                    evidence = json.dumps({
+                        "userMessages": self.store.approval_user_evidence(run_id),
+                        "tool": item.get("toolCall", {}).get("toolName"),
+                        "arguments": item.get("toolCall", {}).get("argumentsJson"),
+                        "request": request, "diff": diff, "baseSha256": base_sha256,
+                    }, ensure_ascii=False)
+                    self.last_review = review_approval(self.reviewer, evidence, cancel)
+            if self.last_review is not None:
+                feedback = None
+                if self.last_review.decision == "reject":
+                    feedback = self.last_review.rationale + " Do not retry the same action or circumvent this refusal. Choose a materially safer alternative or explain the blocker."
+                result = ApprovalResult(self.last_review.decision, feedback)
+            else:
+                result = self.transport.request(
+                    ApprovalRequest({
+                        "sessionId": pending_item["sessionId"],
+                        "runId": pending_item["runId"],
+                        "itemId": pending_item["id"],
+                        "toolCallId": tool_call["id"],
+                        **project_approval_diff(description),
+                    }), cancel,
+                )
         finally:
             if callable(resume_deadline):
                 resume_deadline()
@@ -182,6 +215,7 @@ class ApprovalCoordinator:
             decision.decision,
             decision.feedback,
             requeue=self.requeue,
+            review=self.last_review,
         )
         approval_run = self.store.read_run(run_id)
         self.events.publish(mutation, run=approval_run, item=mutation.value)
