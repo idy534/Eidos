@@ -1,4 +1,4 @@
-import { InputReferenceCards, useInputContext } from "./InputContext.js";
+import { InputReferenceCards } from "./InputContext.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -466,7 +466,6 @@ function UserMessage({
   revisionSubmitting: boolean;
   onEditResend: EditResendHandler;
 }) {
-  const inputContext = useInputContext();
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.content ?? "");
@@ -522,7 +521,6 @@ function UserMessage({
       {!editing && (
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
-            {inputContext && <button type="button" className="workspace-reference-button" onClick={() => void inputContext.add({ kind: "history", source: item.sessionId, itemIds: [item.id], label: "历史消息" })}>引用</button>}
             {item.content && <CopyButton content={item.content} />}
             {canEdit && (item.content || item.references?.length) && (
               <ActionButton

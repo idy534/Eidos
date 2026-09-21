@@ -21,7 +21,7 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
     const key = storageKey(id);
     const next = (pending.current.get(key) ?? Promise.resolve()).catch(() => {}).then(() => {
       if (id.startsWith("draft-") && draftOwner.current !== id) return draft;
-      return window.eidosRuntime.writeInputDraft(key, draft);
+      return window.eidosRuntime?.writeInputDraft ? window.eidosRuntime.writeInputDraft(key, draft) : draft;
     });
     pending.current.set(key, next);
     void next.catch(() => { if (pending.current.get(key) === next) setError(id, "草稿保存失败，请保留当前窗口并重试。"); });
@@ -43,6 +43,10 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
 
   useEffect(() => {
     if (!storageReady || !sessionId || loading.current.has(sessionId)) return;
+    if (!window.eidosRuntime?.readInputDraft) {
+      setLoaded((previous) => ({ ...previous, [sessionId]: true }));
+      return;
+    }
     loading.current.add(sessionId);
     void window.eidosRuntime.readInputDraft(storageKey(sessionId)).then((draft) => {
       if (!touched.current.has(sessionId)) {

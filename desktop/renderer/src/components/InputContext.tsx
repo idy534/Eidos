@@ -50,7 +50,7 @@ export function InputContextProvider({ sessionId, workspaceRoot, ready, onAdd, o
     if (sessionId) setErrors((previous) => ({ ...previous, [sessionId]: undefined }));
     for (const source of paths) await work(() => window.eidosRuntime.prepareInput({ kind: "file", source, ...(sessionId && !sessionId.startsWith("draft-") ? { sessionId } : {}) }), false);
   }, [work, sessionId]);
-  useEffect(() => window.eidosRuntime.onInputQuote((text) => {
+  useEffect(() => window.eidosRuntime?.onInputQuote?.((text) => {
     void add({ kind: "excerpt", source: `session:${sessionId ?? ""}:selection`, label: "选中内容", text });
   }), [sessionId, add]);
   return <Context.Provider value={sessionId ? {
@@ -80,6 +80,8 @@ export function InputDropZone({ children }: { children: ReactNode }) {
   </div>;
 }
 
+import { FileIcon, FolderIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
+
 export function InputReferenceCards({ references, onRemove }: { references: InputReference[]; onRemove?: (id: string) => void }) {
   const context = useInputContext();
   const [firstLine, setFirstLine] = useState(1);
@@ -91,16 +93,40 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
   useEffect(() => { if (preview) { setFirstLine(1); setLastLine(1); dialog.current?.showModal(); } }, [preview]);
   return <>
     <div className="input-reference-list" aria-label="输入引用">
-      {references.map((reference) => <div className="input-reference" key={reference.id}>
-        <button type="button" title={reference.source} onClick={() => {
-          const token = ++request.current;
-          setError(undefined);
-          void window.eidosRuntime.readInput(reference.id).then((value) => { if (token === request.current) setPreview(value); }, (cause) => { if (token === request.current) setError(userFacingError(cause)); });
-        }}><span>{reference.kind === "image" ? <InputThumbnail id={reference.id} label={reference.label} /> : reference.kind === "directory" ? "▣" : "↗"}</span> {reference.label}
-          <small>{reference.status === "content" ? "内容快照" : reference.status === "selection" ? "扩展选择" : "位置引用"}</small>
-        </button>
-        {onRemove && <button type="button" className="input-reference-remove" aria-label={`移除 ${reference.label}`} onClick={() => onRemove(reference.id)}>×</button>}
-      </div>)}
+      {references.map((reference) => (
+        <div className="input-reference" key={reference.id}>
+          <button
+            type="button"
+            className="input-reference__btn"
+            title={reference.source}
+            onClick={() => {
+              const token = ++request.current;
+              setError(undefined);
+              void window.eidosRuntime.readInput(reference.id).then((value) => {
+                if (token === request.current) setPreview(value);
+              }, (cause) => {
+                if (token === request.current) setError(userFacingError(cause));
+              });
+            }}
+          >
+            <span className={`input-reference__icon input-reference__icon--${reference.kind}`}>
+              {renderReferenceIcon(reference)}
+            </span>
+            <span className="input-reference__label">{reference.label}</span>
+          </button>
+          {onRemove && (
+            <button
+              type="button"
+              className="input-reference-remove"
+              aria-label={`移除 ${reference.label}`}
+              title={`移除 ${reference.label}`}
+              onClick={() => onRemove(reference.id)}
+            >
+              <CloseIcon />
+            </button>
+          )}
+        </div>
+      ))}
     </div>
     {error && <p role="alert" className="input-reference-error">{error}</p>}
     {preview && <dialog className="input-reference-preview" ref={dialog} onClose={() => setPreview(undefined)} aria-label={preview.reference.label}>
@@ -121,6 +147,46 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
   </>;
 }
 
+function renderReferenceIcon(reference: InputReference) {
+  switch (reference.kind) {
+    case "file":
+    case "excerpt":
+      return <FileIcon />;
+    case "directory":
+      return <FolderIcon />;
+    case "skill":
+      return <SparklesIcon />;
+    case "mcp":
+      return <ServerIcon />;
+    case "plugin":
+      return <PuzzleIcon />;
+    case "history":
+      return <ChatHistoryIcon />;
+    case "image":
+      return <InputThumbnail id={reference.id} label={reference.label} />;
+    default:
+      return <FileIcon />;
+  }
+}
+
+function ImageIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="5.5" cy="5.5" r="1" fill="currentColor" />
+      <path d="m3 12 4-4 2.5 2.5 2-2 2 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="10" height="10" fill="none" aria-hidden="true">
+      <path d="m4 4 8 8m0-8-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function InputThumbnail({ id, label }: { id: string; label: string }) {
   const root = useRef<HTMLSpanElement>(null);
   const [source, setSource] = useState<string>();
@@ -136,5 +202,5 @@ function InputThumbnail({ id, label }: { id: string; label: string }) {
     if (root.current) observer.observe(root.current);
     return () => { active = false; observer.disconnect(); };
   }, [id]);
-  return <span ref={root} className="input-thumbnail">{source ? <img src={source} alt={label} /> : "▧"}</span>;
+  return <span ref={root} className="input-thumbnail">{source ? <img src={source} alt={label} /> : <ImageIcon />}</span>;
 }
