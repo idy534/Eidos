@@ -312,7 +312,7 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 
 `RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
 
-`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。敏感扫描尚未释放的文本不代表可见进度；已经发布的 Assistant Item 会参与 retry safety 判断。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
+`ContextBuilder` 是默认在线 Run 的唯一模型输入投影器。它把 Project Rules、Skills、SQLite history、verified compact summary、Repository overview 和 Retrieval evidence 放入一个结构化 `ModelContextItem` 序列。Provider 按最长公共前缀命中缓存。`workspace-environment` 位于历史之前，所以它只投影 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 继续由 Runtime 保存，但不进入模型输入。只读结果去重使用投影历史内的 Workspace 变更计数分隔状态；该计数不进入模型提示，也不引用 Run 级版本号。这样单次 Workspace 写入不会仅因版本计数变化而使其后的整段历史失去缓存。Compaction、协议修复、权限变化和动态 Skill 仍可能改变请求前缀，不能把完整模型输入视为只追加序列。每个 ModelAttempt 在 Sampling 前持久化完整的 `ContextSnapshot`。Snapshot 原样保存 model context、resolved instructions、tool definitions、Model/Rule metadata 和可空 Repository lineage。Sampling 只读取已绑定的 Snapshot。可重试的 transport failure 会先完成旧 Attempt，再创建独立 Attempt 并复用同一个 Snapshot。敏感扫描尚未释放的文本不代表可见进度；已经发布的 Assistant Item 会参与 retry safety 判断。已有文本或 ToolCall 进度不会自动重放。协议修复会建立新的 ModelAttempt 和新的 Snapshot。已声明 Tool 的参数校验错误会通过持久化的 `invalid_arguments` Tool Result 进入下一次 Model Context。该结果只保留有界的错误码和摘要，不携带原始参数。真正的协议错误仍然使用 protocol repair context。
 
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
@@ -606,10 +606,10 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 
 插件技能只保存单技能卸载标记，不删除插件包内文件，因此不会破坏插件 hash 或影响其他 Skill/MCP。插件重启或开关不会移除该标记。当前实现保守地等待所有非终态 Run 结束后清理独立用户技能，不新增后台清理线程。
 
-本次设置重构已进入测试阶段。Runtime 管理、数据库迁移、协议 Fixture、Main 集成和 Renderer 行为测试已经补充。定向测试、协议契约检查、Python 检查、Renderer 状态与行为测试、构建、Seatbelt 和 Electron smoke 已完成。Runtime 全量测试首次运行发现 4 个旧 schema 断言和 1 个方法请求类型复用问题；修正后，5 个失败用例已定向通过。Main 全量测试首次运行发现 1 个错误测试期望；修正后，该场景已定向通过。人工 UI 验收和真实 Provider 验证仍未完成。
+本次设置重构已进入测试阶段。Runtime 管理、数据库迁移、协议 Fixture、Main 集和 Renderer 行为测试已经补充。定向测试、协议契约检查、Python 检查、Renderer 状态与行为测试、构建、Seatbelt 和 Electron smoke 已完成。Runtime 全量测试首次运行发现 4 个旧 schema 断言和 1 个方法请求类型复用问题；修正后，5 个失败用例已定向通过。Main 全量测试首次运行发现 1 个错误测试期望；修正后，该场景已定向通过。人工 UI 验收和真实 Provider 验证仍未完成。
 
 
-## Run 权限模式（生产代码已修改，测试待确认）
+### Run 权限模式
 
 调用链保持为 `Composer → preload → Main → run/start → Run 快照 → PermissionPolicyEvaluator → ApprovalCoordinator → 原 Tool 执行链`。权限决定仍属于 Eidos。实现复用现有 Model Gateway、Approval 事务和权限物化，没有新增依赖、独立 Agent Loop 或第二套审批状态机。
 

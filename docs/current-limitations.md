@@ -88,6 +88,8 @@
 - Cold start 仍然不能只凭旧 Inventory 证明仓库 clean，所以第一个 Run 会 reconcile。当前实现使用一次 bounded full Inventory scan。它没有 partial directory index、filesystem journal、Base Index + Worktree Overlay 或增量 Map 算法。
 - Repository build 是增强能力。Canceled、incomplete、manifest verification failure 或 Git state change 不会替换旧 active generation。没有旧 complete generation 时，Snapshot 仍可为空，Agent 继续依赖 Workspace tools。
 - 当前默认 online Run 已经自动执行一次 grounded Repository Retrieval，并通过 ContextBuilder 注入 Repository overview 和 evidence。每个 ModelAttempt 也会绑定精确 ContextSnapshot。
+- 模型请求前缀仍有两条中途可变的来源。其一，resolved instructions 的 `runtime-permissions` 层渲染了 `Available tools` 清单和 rejected approval 计数，Run 中途连接 MCP 或出现被拒审批会改写这一层。其二，`user_context_layers` 中的 `selected-skill:*` 位于历史之前，Run 中途激活 Skill 会在全部历史之前插入新消息。两者都会让该 Step 的指令哈希变化并使后续历史无法命中缓存。
+- Protocol 与 Desktop 目前都不暴露 cache token：`cache_read_tokens` / `cache_write_tokens` 只存在于 `usage_json` 与 tracing，因此 Prompt Cache 命中率无法从 UI 或协议观测，也没有 `structuralReuseTokens` / cache break 归因字段。
 - 当前 Retrieval Query 只使用可以从用户目标、Inventory、Index、已有 Tool Result、dirty path 和 committed change 直接确认的信号。它没有 embedding、Vector Search、复杂 query rewrite、Base Index + Worktree Overlay，也没有 cross-worktree sharing。
 - Watcher 事件不是 Workspace 安全事实。Watcher 不会静默修改当前 Run 的 immutable snapshot。
 

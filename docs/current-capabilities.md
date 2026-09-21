@@ -85,7 +85,8 @@
 - Context Budget 记录 active tokens、模型窗口、百分比和 `provider`/`estimated` 来源。
 - Runtime 会在输入投影超过 65,536 tokens 且有足够新历史时尝试主动压缩，保留近期 16 条候选 Item、用户消息和 Skill 正文。这个阈值只减少历史重发，不终止 Run。原始证据仍保存在 SQLite 和 Context Snapshot 中。
 - Provider Usage 只有提供正的 input tokens 时才作为 active Context truth。Provider Usage 缺失或返回 0 时，Runtime 使用有界 estimated fallback。
-- ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。
+- ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。内部去重计数只由投影历史本身决定，不进入模型提示，也不随 Run 级 `workspaceVersion` 漂移。
+- `workspace-environment` 只包含 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 不进入模型输入，因此 Workspace 写入不会只因版本计数变化而使后续历史失去缓存。
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
 - Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
 - 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已经收到尚未持久化的 provisional text，也会先失败当前 Attempt，再创建独立 Attempt 并复用同一 Snapshot；已有文本或 ToolCall 进度不会自动重放。
