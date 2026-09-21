@@ -81,8 +81,16 @@ export interface EidosRuntimeAPI {
     sessionId: string,
     path: string,
     limit?: number,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceDirectoryListing>;
-  prepareWorkspacePreview(sessionId: string, path: string, version?: string): Promise<string>;
+  prepareWorkspacePreview(
+    sessionId: string,
+    path: string,
+    version?: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<string>;
   releaseWorkspacePreview(url: string): Promise<void>;
   openBrowser(sessionId: string, browserId: string, url: string): Promise<import("./domain-contracts.js").BrowserPageState>;
   setBrowserBounds(sessionId: string, browserId: string, bounds: import("./domain-contracts.js").BrowserBounds | null): Promise<void>;
@@ -92,6 +100,8 @@ export interface EidosRuntimeAPI {
   readWorkspaceFilePreview(
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceFilePreview>;
   openWorkspacePathInEditor(sessionId: string, path: string): Promise<void>;
   showItemInFolder(path: string): Promise<void>;

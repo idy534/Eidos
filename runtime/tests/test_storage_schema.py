@@ -92,6 +92,8 @@ EXPECTED_TABLES = {
     "run_dependency_snapshots",
     "run_dependency_bindings",
     "skill_states",
+    "input_references",
+    "input_drafts",
 }
 
 EXPECTED_COLUMNS = {
@@ -108,7 +110,7 @@ EXPECTED_COLUMNS = {
         "target_head", "target_fingerprint", "error_code",
     },
     "compact_summaries": {"summary_metadata_json"},
-    "items": {"incomplete"},
+    "items": {"incomplete", "input_references_json"},
     "review_comments": {
         "session_id", "path", "scope", "side", "line", "body",
         "base_head", "diff_hash", "status", "created_at", "updated_at",
@@ -516,8 +518,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 13)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 12)
+        self.assertEqual(SCHEMA_VERSION, 14)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 13)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

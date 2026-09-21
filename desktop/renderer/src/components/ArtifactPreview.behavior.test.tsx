@@ -130,7 +130,7 @@ describe("artifact previews and feedback", () => {
 
     expect(await screen.findByAltText("diagram")).toBeInTheDocument();
     expect(api.prepareWorkspacePreview).toHaveBeenCalledWith(
-      "session-a", "docs/assets/diagram.png", undefined,
+      "session-a", "docs/assets/diagram.png", undefined, "/workspace", undefined,
     );
     fireEvent.click(screen.getByRole("button", { name: "打开 diagram" }));
     expect(value.openFile).toHaveBeenLastCalledWith("docs/assets/diagram.png");
@@ -189,7 +189,9 @@ describe("artifact previews and feedback", () => {
 
     fireEvent.click(await screen.findByText("diagram.png"));
     expect(await screen.findByAltText("diagram.png")).toBeInTheDocument();
-    expect(api.prepareWorkspacePreview).toHaveBeenCalledWith("session-a", "diagram.png", "a".repeat(64));
+    expect(api.prepareWorkspacePreview).toHaveBeenCalledWith(
+      "session-a", "diagram.png", "a".repeat(64), "/workspace", undefined,
+    );
 
     fireEvent.click(screen.getByText("manual.pdf"));
     expect(await screen.findByTitle("manual.pdf")).toBeInTheDocument();

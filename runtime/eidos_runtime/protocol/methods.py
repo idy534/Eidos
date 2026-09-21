@@ -73,6 +73,30 @@ class _CanonicalIdRequest(MethodRequestDto):
         return self
 
 
+class _WorkspaceSessionRequest(MethodRequestDto):
+    session_id: StrictStr = Field(alias="sessionId")
+    workspace_root: StrictStr | None = Field(
+        default=None, alias="workspaceRoot", min_length=1, max_length=4096
+    )
+    project_id: StrictStr | None = Field(
+        default=None, alias="projectId", min_length=1, max_length=256
+    )
+
+    @model_validator(mode="after")
+    def _validate_workspace_session_id(self) -> "_WorkspaceSessionRequest":
+        value = self.session_id.removeprefix("draft-")
+        try:
+            if str(uuid.UUID(value)) != value:
+                raise ValueError
+        except ValueError as error:
+            raise ValueError(
+                "session_id must be a canonical UUID or draft UUID"
+            ) from error
+        if self.session_id.startswith("draft-") and not self.project_id:
+            raise ValueError("draft workspace requires a project binding")
+        return self
+
+
 class _OperationRequest(_CanonicalIdRequest):
     operation_id: StrictStr | None = Field(default=None, alias="operationId")
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("operation_id",)
@@ -199,17 +223,13 @@ class SessionGitDiffRequestDto(_CanonicalIdRequest):
         return None if value is None else _git_relative_path(value)
 
 
-class WorkspaceListDirectoryRequestDto(_CanonicalIdRequest):
-    session_id: StrictStr = Field(alias="sessionId")
+class WorkspaceListDirectoryRequestDto(_WorkspaceSessionRequest):
     path: StrictStr = Field(default=".", min_length=1, max_length=4096)
     limit: StrictInt = Field(default=500, ge=1, le=2_000)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
-class WorkspaceReadFilePreviewRequestDto(_CanonicalIdRequest):
-    session_id: StrictStr = Field(alias="sessionId")
+class WorkspaceReadFilePreviewRequestDto(_WorkspaceSessionRequest):
     path: StrictStr = Field(min_length=1, max_length=4096)
-    _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id",)
 
 
 class WorkspaceReadAssetRequestDto(WorkspaceReadFilePreviewRequestDto):

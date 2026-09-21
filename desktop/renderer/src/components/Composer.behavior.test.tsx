@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { Composer, type ComposerProps } from "./Composer.js";
+import { InputContextProvider } from "./InputContext.js";
 import type { ModelListResult, Run } from "../contracts.js";
+import type { InputReference } from "../../../shared/input-context.js";
 
 const mockModelList: ModelListResult = {
   defaultModelId: "deepseek-v4-flash",
@@ -32,6 +34,16 @@ const defaultProps: ComposerProps = {
   onCancel: vi.fn(),
   onModelChange: vi.fn(),
   onOpenModelSettings: vi.fn(),
+};
+
+const composerReference: InputReference = {
+  id: "a".repeat(64),
+  kind: "file",
+  label: "notes.txt",
+  source: "/workspace/notes.txt",
+  sha256: "b".repeat(64),
+  status: "content",
+  size: 12,
 };
 
 describe("Composer DOM interaction & state behavior", () => {
@@ -333,6 +345,98 @@ describe("Composer DOM interaction & state behavior", () => {
 
     const submitBtn = screen.getByRole("button", { name: "开始" });
     expect(submitBtn).toBeDisabled();
+  });
+
+  it("opens the input picker from the add button when a draft context is ready", async () => {
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      writable: true,
+      value: {
+        listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+        listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+        listMcpServers: vi.fn().mockResolvedValue({ servers: [] }),
+        listSessions: vi.fn().mockResolvedValue({ items: [] }),
+        listWorkspaceDirectory: vi.fn().mockResolvedValue({ path: ".", entries: [], truncated: false }),
+        onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+      },
+    });
+    render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <Composer {...defaultProps} />
+      </InputContextProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+
+    expect(await screen.findByRole("listbox", { name: "引用候选" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加文件" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["/sk", "快捷指令"],
+    ["$de", "选择 Skill"],
+    ["@no", "选择引用"],
+  ])("opens the matching inline picker for %s", async (value, title) => {
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      writable: true,
+      value: {
+        listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+        listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+        listMcpServers: vi.fn().mockResolvedValue({ servers: [] }),
+        listSessions: vi.fn().mockResolvedValue({ items: [] }),
+        listWorkspaceDirectory: vi.fn().mockResolvedValue({ path: ".", entries: [], truncated: false }),
+        onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+      },
+    });
+    render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <Composer {...defaultProps} />
+      </InputContextProvider>,
+    );
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value, selectionStart: value.length },
+    });
+
+    expect(await screen.findByText(title)).toBeInTheDocument();
+  });
+
+  it("allows a reference-only draft to submit", () => {
+    const onSubmit = vi.fn();
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      writable: true,
+      value: { onInputQuote: vi.fn().mockReturnValue(vi.fn()) },
+    });
+    render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <Composer {...defaultProps} references={[composerReference]} onSubmit={onSubmit} />
+      </InputContextProvider>,
+    );
+
+    const submit = screen.getByRole("button", { name: "开始" });
+    expect(submit).not.toBeDisabled();
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it("IME composition (isComposing) ignores Enter key submission", () => {

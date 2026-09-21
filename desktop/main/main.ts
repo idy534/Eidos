@@ -703,11 +703,15 @@ ipcMain.handle(IPC.WORKSPACE_LIST_DIRECTORY, (
   sessionId: unknown,
   relativePath: unknown,
   limit: unknown,
+  workspaceRoot: unknown,
+  projectId: unknown,
 ) => {
   if (
     typeof sessionId !== "string"
     || typeof relativePath !== "string"
     || (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 2_000))
+    || (workspaceRoot !== undefined && typeof workspaceRoot !== "string")
+    || (projectId !== undefined && typeof projectId !== "string")
   ) {
     throw new Error("Workspace 目录参数无效。");
   }
@@ -715,6 +719,31 @@ ipcMain.handle(IPC.WORKSPACE_LIST_DIRECTORY, (
     sessionId,
     relativePath,
     limit === undefined ? undefined : Number(limit),
+    typeof workspaceRoot === "string" ? workspaceRoot : undefined,
+    typeof projectId === "string" ? projectId : undefined,
+  );
+});
+
+ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (
+  _event,
+  sessionId: unknown,
+  relativePath: unknown,
+  workspaceRoot: unknown,
+  projectId: unknown,
+) => {
+  if (
+    typeof sessionId !== "string"
+    || typeof relativePath !== "string"
+    || (workspaceRoot !== undefined && typeof workspaceRoot !== "string")
+    || (projectId !== undefined && typeof projectId !== "string")
+  ) {
+    throw new Error("Workspace 文件参数无效。");
+  }
+  return clientOrThrow().readWorkspaceFilePreview(
+    sessionId,
+    relativePath,
+    typeof workspaceRoot === "string" ? workspaceRoot : undefined,
+    typeof projectId === "string" ? projectId : undefined,
   );
 });
 function previewOwner(event: Electron.IpcMainInvokeEvent): Electron.WebContents {
@@ -726,9 +755,25 @@ function previewString(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > 8192 || value.includes("\0")) throw new Error("预览参数无效。");
   return value;
 }
-ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (event, id: unknown, path: unknown, version: unknown) => {
+ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (
+  event,
+  id: unknown,
+  path: unknown,
+  version: unknown,
+  workspaceRoot: unknown,
+  projectId: unknown,
+) => {
   if (version !== undefined && (typeof version !== "string" || !/^[a-f0-9]{64}$/.test(version))) throw new Error("文件版本无效。");
-  return artifactPreview.prepare(previewOwner(event), previewString(id), previewString(path), version as string | undefined);
+  if (workspaceRoot !== undefined && typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
+  if (projectId !== undefined && typeof projectId !== "string") throw new Error("Project 参数无效。");
+  return artifactPreview.prepare(
+    previewOwner(event),
+    previewString(id),
+    previewString(path),
+    version as string | undefined,
+    typeof workspaceRoot === "string" ? workspaceRoot : undefined,
+    typeof projectId === "string" ? projectId : undefined,
+  );
 });
 ipcMain.handle(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
 ipcMain.handle(IPC.BROWSER_OPEN, (event, id: unknown, browserId: unknown, url: unknown) => artifactPreview.open(previewOwner(event), previewString(id), previewString(browserId), previewString(url)));
@@ -738,17 +783,6 @@ ipcMain.handle(IPC.BROWSER_ANNOTATE, (event, id: unknown, browserId: unknown) =>
 ipcMain.handle(IPC.BROWSER_BOUNDS, (event, id: unknown, browserId: unknown, bounds: unknown) => {
   if (bounds !== null && (typeof bounds !== "object" || !bounds || !["x", "y", "width", "height"].every((key) => typeof Reflect.get(bounds, key) === "number" && Number.isFinite(Reflect.get(bounds, key))))) throw new Error("页面位置无效。");
   artifactPreview.bounds(previewOwner(event), previewString(id), previewString(browserId), bounds as import("../shared/index.js").BrowserBounds | null);
-});
-
-ipcMain.handle(IPC.WORKSPACE_READ_FILE_PREVIEW, (
-  _event,
-  sessionId: unknown,
-  relativePath: unknown,
-) => {
-  if (typeof sessionId !== "string" || typeof relativePath !== "string") {
-    throw new Error("Workspace 文件参数无效。");
-  }
-  return clientOrThrow().readWorkspaceFilePreview(sessionId, relativePath);
 });
 ipcMain.handle(IPC.WORKSPACE_OPEN_IN_EDITOR, async (
   _event,

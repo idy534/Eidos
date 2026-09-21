@@ -55,6 +55,7 @@ def test_core_mappers_return_frozen_domain_records_and_preserve_nullable_facts()
         "kind": "user_message",
         "status": "completed",
         "content": "Inspect the repository",
+        "input_references_json": "[]",
         "incomplete": 0,
         "created_at": 1000,
         "completed_at": 1001,

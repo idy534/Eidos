@@ -698,8 +698,10 @@ export function AppShell({ runtime }: AppShellProps) {
     ? sessionState.projects.find((project) => project.id === currentSnapshot.session.project?.id)
     : undefined;
   const sessionProject = selectedProject ?? currentSnapshot?.session.project;
-  const sessionHasProject = Boolean(!isDraft && currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
-  const sessionHasGit = !isDraft && sessionProject?.gitAvailable === true;
+  // Draft 状态下也允许根据关联项目类型计算 hasProject/hasGit，
+  // 使环境信息在新会话有项目时也能显示。
+  const sessionHasProject = Boolean(currentSnapshot && currentSnapshot.session.projectless !== true && sessionProject);
+  const sessionHasGit = sessionProject?.gitAvailable === true;
   const sessionBranch = gitReviewState.status?.branch ?? sessionWorktree?.branch ?? null;
   const handoffBusy = Boolean(snapshot && sessionState.pending.handoffSessionId === snapshot.session.id);
   const restoreBusy = Boolean(snapshot && sessionState.pending.restoringWorktreeSessionId === snapshot.session.id);
@@ -714,11 +716,14 @@ export function AppShell({ runtime }: AppShellProps) {
         currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
       ].join(":")
     : "empty";
-  const availableTools: WorkspaceToolKind[] = sessionHasProject
-    ? sessionHasGit
-      ? ["review", "terminal", "files", "browser"]
-      : ["terminal", "files", "browser"]
-    : currentSnapshot && !isDraft ? ["files", "browser"] : [];
+  // Draft 只在已选择 Project 时提供 Files。Projectless draft 没有可绑定的工作区。
+  const availableTools: WorkspaceToolKind[] = isDraft
+    ? (currentSnapshot?.session.project?.id && currentSnapshot.session.workspaceRoot ? ["files"] : [])
+    : sessionHasProject
+      ? sessionHasGit
+        ? ["review", "terminal", "files", "browser"]
+        : ["terminal", "files", "browser"]
+      : currentSnapshot ? ["files", "browser"] : [];
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -816,7 +821,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function openTool(tool: WorkspaceToolKind): string | undefined {
-    if (!availableTools.includes(tool) && !(tool === "review" && sessionHasGit)) return;
+    if (!availableTools.includes(tool)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
     const existing = tool === "terminal" || tool === "browser"
@@ -845,7 +850,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function handleOpenReview(request: { runId: string; path?: string; itemId?: string }): void {
-    if (!currentSnapshot) return;
+    if (!currentSnapshot || !availableTools.includes("review")) return;
     setOpenTabs((tabs) => tabs.some((tab) => tab.kind === "text-review") ? tabs : [...tabs, { id: "text-review", kind: "text-review" }]);
     setActiveTabId("text-review");
     setDockOpen(true);
@@ -992,7 +997,7 @@ export function AppShell({ runtime }: AppShellProps) {
     </div>
   ) : null;
 
-  const workspaceToggle = currentSnapshot && !isDraft
+  const workspaceToggle = availableTools.length > 0
     ? <WorkspaceDockToggle open={dockOpen} onClick={toggleDock} />
     : null;
 
@@ -1001,6 +1006,9 @@ export function AppShell({ runtime }: AppShellProps) {
     <ArtifactProvider value={currentSnapshot ? {
       sessionId: currentSnapshot.session.id,
       executionRoot: currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
+      ...(currentSnapshot.session.project?.id
+        ? { projectId: currentSnapshot.session.project.id }
+        : {}),
       openFile: handleOpenFileInDock,
       openBrowser: handleOpenBrowser,
       openExternal: handleOpenExternal,
@@ -1377,6 +1385,23 @@ export function AppShell({ runtime }: AppShellProps) {
                       executionKey={executionKey}
                       layout={dockExpanded ? "expanded" : "side"}
                       openRequest={explorerOpenRequest}
+                      {...(isDraft && currentSnapshot.session.workspaceRoot ? {
+                        listDirectory: (sid: string, path: string) =>
+                          window.eidosRuntime.listWorkspaceDirectory(
+                            sid,
+                            path,
+                            undefined,
+                            currentSnapshot.session.workspaceRoot,
+                            currentSnapshot.session.project?.id,
+                          ),
+                        readPreview: (sid: string, path: string) =>
+                          window.eidosRuntime.readWorkspaceFilePreview(
+                            sid,
+                            path,
+                            currentSnapshot.session.workspaceRoot,
+                            currentSnapshot.session.project?.id,
+                          ),
+                      } : {})}
                     />
                   );
                 }}

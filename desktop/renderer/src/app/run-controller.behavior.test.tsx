@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useRunController } from "./useRunController.js";
 import type { EidosRuntimeAPI, Run, SessionSnapshot } from "../contracts.js";
+import type { InputReference } from "../../../shared/input-context.js";
 
 const mockSnapshotA: SessionSnapshot = {
   session: { id: "session-A", title: "Session A", workspaceRoot: "/ws/a", createdAt: 1000, updatedAt: 1000 },
@@ -39,6 +40,15 @@ const mockRunB: Run = {
   startedAt: 2000,
   updatedAt: 2000,
   allowedActions: ["cancel"],
+};
+const mockReference: InputReference = {
+  id: "a".repeat(64),
+  kind: "file",
+  label: "notes.txt",
+  source: "/ws/a/notes.txt",
+  sha256: "b".repeat(64),
+  status: "content",
+  size: 12,
 };
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
@@ -233,6 +243,77 @@ describe("useRunController real behavior", () => {
 
       expect(projectRunSpy).toHaveBeenCalledWith("session-A", mockRunA);
       expect(result.current[0].input).toBe("");
+    });
+
+    it("submits reference IDs and permits a references-only start", async () => {
+      const startRunSpy = vi.fn().mockResolvedValue(mockRunA);
+      setupMockRuntime({ startRun: startRunSpy });
+      const { result } = renderHook(() => useRunController(mockSnapshotA, true));
+
+      act(() => result.current[1].addReference("session-A", mockReference));
+
+      await act(async () => {
+        await result.current[1].submitInput({
+          snapshot: mockSnapshotA,
+          selectedModelId: "deepseek-v4-flash",
+          isStorageReady: true,
+        });
+      });
+
+      expect(startRunSpy).toHaveBeenCalledWith(
+        "session-A", "", "deepseek-v4-flash", undefined, undefined, [mockReference.id],
+      );
+      expect(result.current[0].references).toEqual([]);
+    });
+
+    it("does not clear a draft edited while startRun is pending", async () => {
+      let resolveRun: ((run: Run) => void) | undefined;
+      const startRunSpy = vi.fn().mockImplementation(
+        () => new Promise<Run>((resolve) => { resolveRun = resolve; }),
+      );
+      setupMockRuntime({ startRun: startRunSpy });
+      const { result } = renderHook(() => useRunController(mockSnapshotA, true));
+
+      act(() => result.current[1].setInput("original draft"));
+      let submission: Promise<boolean> | undefined;
+      act(() => {
+        submission = result.current[1].submitInput({
+          snapshot: mockSnapshotA,
+          selectedModelId: "deepseek-v4-flash",
+          isStorageReady: true,
+        });
+      });
+      await waitFor(() => expect(startRunSpy).toHaveBeenCalledTimes(1));
+      act(() => result.current[1].setInput("edited while starting"));
+      resolveRun?.(mockRunA);
+
+      await act(async () => { await submission; });
+
+      expect(result.current[0].input).toBe("edited while starting");
+    });
+
+    it("passes revised reference IDs through reviseRun", async () => {
+      const reviseRunSpy = vi.fn().mockResolvedValue({
+        run: mockRunA,
+        sourceRunId: "run-source",
+        kind: "edit",
+      });
+      setupMockRuntime({ reviseRun: reviseRunSpy });
+      const { result } = renderHook(() => useRunController(mockSnapshotA, true));
+
+      await act(async () => {
+        await result.current[1].reviseRun({
+          snapshot: mockSnapshotA,
+          sourceRunId: "run-source",
+          userInput: "Use the reference",
+          references: [mockReference.id],
+          isStorageReady: true,
+        });
+      });
+
+      expect(reviseRunSpy).toHaveBeenCalledWith(
+        "run-source", "Use the reference", [mockReference.id],
+      );
     });
 
     it("Mismatched sessionId response does not clear input or project cross-session", async () => {

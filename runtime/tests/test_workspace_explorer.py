@@ -89,6 +89,33 @@ def test_list_directory_is_lazy_sorted_and_supports_unicode_and_spaces(
         store.close()
 
 
+def test_draft_workspace_root_can_drive_workspace_listing_without_a_session(
+    tmp_path: Path,
+) -> None:
+    store, application, _session_id, workspace = _application(tmp_path)
+    try:
+        (workspace / "draft.txt").write_text("draft\n", encoding="utf-8")
+
+        result = application.list_directory(
+            WorkspaceListDirectoryRequestDto(
+                sessionId="00000000-0000-0000-0000-000000000001",
+                path=".",
+                workspaceRoot=str(workspace),
+            )
+        ).root
+
+        assert result["entries"] == [
+            {
+                "name": "draft.txt",
+                "relativePath": "draft.txt",
+                "kind": "file",
+                "sizeBytes": 6,
+            }
+        ]
+    finally:
+        store.close()
+
+
 def test_directory_listing_rejects_symlink_escape_and_truncates_large_directory(
     tmp_path: Path,
 ) -> None:

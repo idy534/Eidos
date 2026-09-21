@@ -498,10 +498,18 @@ export class RuntimeClient {
     sessionId: string,
     path: string,
     limit = 500,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceDirectoryListing> {
     return this.validatedRequest(
       "workspace/listDirectory",
-      { sessionId, path, limit },
+      {
+        sessionId,
+        path,
+        limit,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+        ...(projectId ? { projectId } : {}),
+      },
       isWorkspaceDirectoryListing,
     );
   }
@@ -509,16 +517,41 @@ export class RuntimeClient {
   readWorkspaceFilePreview(
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceFilePreview> {
     return this.validatedRequest(
       "workspace/readFilePreview",
-      { sessionId, path },
+      {
+        sessionId,
+        path,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+        ...(projectId ? { projectId } : {}),
+      },
       isWorkspaceFilePreview,
     );
   }
 
-  readWorkspaceAsset(sessionId: string, path: string, executionRoot: string, offset = 0, version?: string, workspaceVersion?: string): Promise<WorkspaceAssetChunk> {
-    return this.validatedRequest("workspace/readAsset", { sessionId, path, executionRoot, offset, ...(version ? { version } : {}), ...(workspaceVersion ? { workspaceVersion } : {}) }, isWorkspaceAssetChunk);
+  readWorkspaceAsset(
+    sessionId: string,
+    path: string,
+    executionRoot: string,
+    offset = 0,
+    version?: string,
+    workspaceVersion?: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ): Promise<WorkspaceAssetChunk> {
+    return this.validatedRequest("workspace/readAsset", {
+      sessionId,
+      path,
+      executionRoot,
+      offset,
+      ...(version ? { version } : {}),
+      ...(workspaceVersion ? { workspaceVersion } : {}),
+      ...(workspaceRoot ? { workspaceRoot } : {}),
+      ...(projectId ? { projectId } : {}),
+    }, isWorkspaceAssetChunk);
   }
 
   renameSession(

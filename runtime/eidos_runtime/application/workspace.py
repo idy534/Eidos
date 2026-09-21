@@ -10,6 +10,7 @@ from typing import Protocol
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.db.database import WorkspaceIdentity
+from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.session import SessionExecutionMode, SessionProjection
 from eidos_runtime.git.errors import WorktreeError
 from eidos_runtime.protocol.methods import (
@@ -39,6 +40,8 @@ class WorkspaceSessionRepository(Protocol):
 
 class WorkspaceWorktreePort(Protocol):
     def execution_identity(self, worktree_id: str) -> WorkspaceIdentity: ...
+
+    def project(self, project_id: str) -> Project: ...
 
 
 @dataclass
@@ -70,7 +73,9 @@ class WorkspaceExplorerApplication:
         self, request: WorkspaceListDirectoryRequestDto
     ) -> WorkspaceListDirectoryResponseDto:
         try:
-            identity = self._execution_identity(request.session_id)
+            identity = self._execution_identity(
+                request.session_id, request.workspace_root, request.project_id
+            )
             self._ensure_watch(request.session_id, identity.path)
             with WorkspaceReader(identity) as reader:
                 listing = reader.list_directory(request.path, limit=request.limit)
@@ -97,7 +102,9 @@ class WorkspaceExplorerApplication:
         self, request: WorkspaceReadFilePreviewRequestDto
     ) -> WorkspaceReadFilePreviewResponseDto:
         try:
-            identity = self._execution_identity(request.session_id)
+            identity = self._execution_identity(
+                request.session_id, request.workspace_root, request.project_id
+            )
             with WorkspaceReader(identity) as reader:
                 preview = reader.read_preview(request.path)
             return WorkspaceReadFilePreviewResponseDto.model_validate({
@@ -116,7 +123,9 @@ class WorkspaceExplorerApplication:
 
     def read_asset(self, request: WorkspaceReadAssetRequestDto) -> WorkspaceReadAssetResponseDto:
         try:
-            identity = self._execution_identity(request.session_id)
+            identity = self._execution_identity(
+                request.session_id, request.workspace_root, request.project_id
+            )
             if str(identity.path) != request.execution_root:
                 raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
             workspace_version = hashlib.sha256(str((identity.device, identity.inode, identity.owner)).encode()).hexdigest()
@@ -151,9 +160,40 @@ class WorkspaceExplorerApplication:
         except (WorkspacePathError, DiscoveryScopeError) as error:
             raise ApplicationError(_workspace_error_code(error)) from error
 
-    def _execution_identity(self, session_id: str) -> WorkspaceIdentity:
+    def _execution_identity(
+        self,
+        session_id: str,
+        workspace_root: str | None = None,
+        project_id: str | None = None,
+    ) -> WorkspaceIdentity:
         projection = self._sessions.read_session_projection(session_id)
         if projection is None:
+            # A draft request is bound to the saved Project selected by the user.
+            if project_id:
+                try:
+                    identity = capture_workspace_identity(
+                        self._worktree_manager.project(project_id).workspace_root
+                    )
+                except WorktreeError as error:
+                    raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+                if workspace_root:
+                    supplied = capture_workspace_identity(workspace_root)
+                    if (
+                        supplied.path,
+                        supplied.device,
+                        supplied.inode,
+                        supplied.owner,
+                    ) != (
+                        identity.path,
+                        identity.device,
+                        identity.inode,
+                        identity.owner,
+                    ):
+                        raise ApplicationError("WORKSPACE_IDENTITY_CHANGED")
+                return identity
+            # Keep the existing root-only compatibility path for non-draft callers.
+            if workspace_root and not session_id.startswith("draft-"):
+                return capture_workspace_identity(workspace_root)
             raise ApplicationError("RESOURCE_NOT_FOUND")
         if projection.session.execution_mode is SessionExecutionMode.WORKTREE:
             if projection.worktree is None:

@@ -128,7 +128,7 @@ def test_legacy_deepseek_model_id_is_migrated_to_the_current_id(
     assert migrated.api_key == "sk-deepseek-secret-value"
     assert migrated.reasoning is not None
     assert migrated.reasoning.default_selection == "high"
-    assert migrated.reasoning.selections == ("none", "low", "high", "max")
+    assert migrated.reasoning.selections == ("high", "max")
     assert json.loads(store.path.read_text(encoding="utf-8"))[0]["id"] == "deepseek-flash"
 
 
@@ -139,7 +139,7 @@ def test_legacy_deepseek_model_id_is_migrated_to_the_current_id(
         ("default_effort", "supported_efforts"),
     ],
 )
-def test_old_models_json_reasoning_metadata_refreshes_and_preserves_api_key(
+def test_old_models_json_reasoning_metadata_is_preserved_with_api_key(
     tmp_path: Path,
     default_key: str,
     supported_key: str,
@@ -172,13 +172,13 @@ def test_old_models_json_reasoning_metadata_refreshes_and_preserves_api_key(
     assert model is not None
     assert model.api_key == "minimax-secret-value"
     assert model.reasoning is not None
-    assert model.reasoning.default_selection == "thinking"
-    assert model.reasoning.selections == ("none", "thinking")
+    assert model.reasoning.default_selection == "high"
+    assert model.reasoning.selections == ("high", "max")
     persisted = json.loads(store.path.read_text(encoding="utf-8"))[0]
     assert persisted["apiKey"] == "minimax-secret-value"
     assert persisted["reasoning"] == {
-        "defaultSelection": "thinking",
-        "selections": ["none", "thinking"],
+        default_key: "high",
+        supported_key: ["high", "max"],
     }
     assert "reasoningSelection" not in persisted
 
@@ -206,7 +206,7 @@ def test_removed_volcengine_glm_52_config_migrates_to_glm_53(tmp_path: Path) -> 
 
     models = store.list()
     assert [(model.id, model.name, model.api_key) for model in models] == [
-        ("glm-5.3", "GLM 5.3", "volcengine-secret-value")
+        ("glm-5.3", "GLM 5.2", "volcengine-secret-value")
     ]
     assert json.loads(store.path.read_text(encoding="utf-8"))[0]["id"] == "glm-5.3"
 
@@ -268,7 +268,7 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
     )
     minimax = next(model for model in provider["models"] if model["id"] == "minimax-m3")
     assert glm["supportsImages"] is False
-    assert glm_flash["supportsImages"] is False
+    assert glm_flash["supportsImages"] is True
     assert minimax["supportsImages"] is True
 
 

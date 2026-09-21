@@ -87,9 +87,17 @@ const api: EidosRuntimeAPI = {
     sessionId: string,
     path: string,
     limit?: number,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceDirectoryListing> =>
-    ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit),
-  prepareWorkspacePreview: (sessionId: string, path: string, version?: string) => ipcRenderer.invoke(IPC.WORKSPACE_PREVIEW_URL, sessionId, path, version),
+    ipcRenderer.invoke(IPC.WORKSPACE_LIST_DIRECTORY, sessionId, path, limit, workspaceRoot, projectId),
+  prepareWorkspacePreview: (
+    sessionId: string,
+    path: string,
+    version?: string,
+    workspaceRoot?: string,
+    projectId?: string,
+  ) => ipcRenderer.invoke(IPC.WORKSPACE_PREVIEW_URL, sessionId, path, version, workspaceRoot, projectId),
   releaseWorkspacePreview: (url: string) => ipcRenderer.invoke(IPC.WORKSPACE_RELEASE_PREVIEW, url),
   openBrowser: (sessionId: string, browserId: string, url: string) => ipcRenderer.invoke(IPC.BROWSER_OPEN, sessionId, browserId, url),
   setBrowserBounds: (sessionId: string, browserId: string, bounds: import("../shared/domain-contracts.js").BrowserBounds | null) => ipcRenderer.invoke(IPC.BROWSER_BOUNDS, sessionId, browserId, bounds),
@@ -99,8 +107,10 @@ const api: EidosRuntimeAPI = {
   readWorkspaceFilePreview: (
     sessionId: string,
     path: string,
+    workspaceRoot?: string,
+    projectId?: string,
   ): Promise<WorkspaceFilePreview> =>
-    ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path),
+    ipcRenderer.invoke(IPC.WORKSPACE_READ_FILE_PREVIEW, sessionId, path, workspaceRoot, projectId),
   openWorkspacePathInEditor: (sessionId: string, path: string): Promise<void> =>
     ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_EDITOR, sessionId, path),
   showItemInFolder: (path: string): Promise<void> =>
