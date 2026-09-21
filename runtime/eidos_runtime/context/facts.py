@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from eidos_runtime.domain.input_reference import InputReference
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -14,6 +16,7 @@ class ContextItemFact(_Fact):
     run_id: str
     kind: str
     status: str
+    input_references: tuple[InputReference, ...] = ()
     content: str | None = None
     provider_call_id: str | None = None
     tool_name: str | None = None

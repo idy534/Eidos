@@ -1,3 +1,4 @@
+import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
 import type {
   RuntimeStatus,
   RuntimeHealth,
@@ -210,6 +211,15 @@ export interface EidosRuntimeAPI {
     operationId: string,
   ): Promise<GitRebaseResult>;
 
+  onInputQuote(callback: (text: string) => void): Unsubscribe;
+  pickInputPaths(directory?: boolean): Promise<string[]>;
+  inputPathForFile(file: File): string;
+  prepareInput(request: InputPrepareRequest): Promise<InputReference>;
+  readInput(id: string): Promise<InputPreview>;
+  pasteInputImage(): Promise<InputReference | null>;
+  readInputDraft(key: string): Promise<InputDraft>;
+  writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;
+
   // Runs
   startRun(
     sessionId: string,
@@ -217,10 +227,11 @@ export interface EidosRuntimeAPI {
     modelId: ModelId,
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
+    references?: string[],
   ): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
   readContextUsage(runId: string): Promise<ContextUsage | null>;
-  reviseRun(sourceRunId: string, userInput?: string): Promise<RunRevisionResult>;
+  reviseRun(sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult>;
 
   // Response actions
   readResponseActionState(sessionId: string): Promise<ResponseActionState>;

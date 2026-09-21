@@ -1,3 +1,5 @@
+import type { InputReference } from "../../../shared/input-context.js";
+import { useInputDrafts } from "./useInputDrafts.js";
 import { useCallback, useRef, useState } from "react";
 import type { ApprovalMode, ModelId, ModelReasoningSelection, Run, RunRevisionResult, SessionSnapshot } from "../contracts.js";
 import {
@@ -18,6 +20,8 @@ export interface RunControllerState {
   activeRun: Run | undefined;
   input: string;
   inputs: Record<string, string>;
+  references: InputReference[];
+  draftReady: boolean;
   isSubmitting: boolean;
   submitKind: "start" | undefined;
   cancelingRunId: string | undefined;
@@ -26,6 +30,9 @@ export interface RunControllerState {
 }
 
 export interface RunControllerActions {
+  addReference: (sessionId: string, reference: InputReference) => void;
+  removeReference: (id: string) => void;
+  clearDraftIfUnchanged: (sessionId: string, text: string, references: InputReference[]) => void;
   setInput: (value: string) => void;
   setInputForSession: (sessionId: string, value: string) => void;
   submitInput: (params: {
@@ -35,17 +42,19 @@ export interface RunControllerActions {
     approvalMode?: ApprovalMode | undefined;
     isStorageReady: boolean;
     inputOverride?: string;
+    referencesOverride?: InputReference[];
     onRunProjected?: (sessionId: string, run: Run) => void;
   }) => Promise<boolean>;
   reviseRun: (params: {
     snapshot: SessionSnapshot;
     sourceRunId: string;
     userInput?: string;
+    references?: string[];
     isStorageReady: boolean;
     onRunProjected?: (sessionId: string, run: Run) => void;
     onRevisionProjected?: (revision: RunRevisionResult) => void;
     onRefreshSession?: (sessionId: string) => Promise<unknown>;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
   cancelRun: (params: { runId: string; sessionId: string } | string) => Promise<void>;
   clearError: (sessionId?: string) => void;
 }
@@ -66,7 +75,8 @@ export function useRunController(
   snapshot: SessionSnapshot | undefined,
   isStorageReady: boolean,
 ): [RunControllerState, RunControllerActions] {
-  const [inputs, setInputs] = useState<Record<string, string>>({});
+  const draftStore = useInputDrafts(snapshot?.session.id, isStorageReady);
+  const inputs = Object.fromEntries(Object.entries(draftStore.drafts).map(([id, draft]) => [id, draft.text]));
   const [submissionOperation, setSubmissionOperation] = useState<SubmissionOperation | undefined>(undefined);
   const [cancelingRunId, setCancelingRunId] = useState<string | undefined>(undefined);
   const [errorsBySessionId, setErrorsBySessionId] = useState<Record<string, string>>({});
@@ -75,7 +85,8 @@ export function useRunController(
 
   const currentSessionId = snapshot?.session.id;
   const input = currentSessionId ? (inputs[currentSessionId] ?? "") : "";
-  const error = currentSessionId ? errorsBySessionId[currentSessionId] : undefined;
+  const error = (currentSessionId ? errorsBySessionId[currentSessionId] : undefined) ?? draftStore.error;
+  const references = currentSessionId ? draftStore.drafts[currentSessionId]?.references ?? [] : [];
 
   const currentSubmission = submissionOperation?.sessionId === currentSessionId
     ? submissionOperation
@@ -96,12 +107,13 @@ export function useRunController(
   }, []);
 
   const setInputForSession = useCallback((sessionId: string, value: string): void => {
-    setInputs((prev) => ({
-      ...prev,
-      [sessionId]: value,
-    }));
+    draftStore.update(sessionId, (draft) => ({ ...draft, text: value }));
     clearSessionError(sessionId);
-  }, [clearSessionError]);
+  }, [clearSessionError, draftStore.update]);
+
+  const clearDraftIfUnchanged = useCallback((sessionId: string, text: string, references: InputReference[]) => {
+    draftStore.update(sessionId, (draft) => draft.text === text && JSON.stringify(draft.references) === JSON.stringify(references) ? { text: "", references: [] } : draft);
+  }, [draftStore.update]);
 
   const setInput = useCallback((value: string): void => {
     if (!currentSessionId) return;
@@ -115,6 +127,7 @@ export function useRunController(
     approvalMode,
     isStorageReady: storageReady,
     inputOverride,
+    referencesOverride,
     onRunProjected,
   }: {
     snapshot: SessionSnapshot;
@@ -123,10 +136,12 @@ export function useRunController(
     approvalMode?: ApprovalMode | undefined;
     isStorageReady: boolean;
     inputOverride?: string;
+    referencesOverride?: InputReference[];
     onRunProjected?: (sessionId: string, run: Run) => void;
   }): Promise<boolean> => {
     const sessionId = currentSnapshot.session.id;
-    const sessionInput = inputOverride ?? inputs[sessionId] ?? "";
+    const sessionInput = inputOverride ?? draftStore.values.current[sessionId]?.text ?? "";
+    const submittedReferences = referencesOverride ?? (inputOverride === undefined ? draftStore.values.current[sessionId]?.references ?? [] : []);
 
     if (submissionLockRef.current) {
       if (submissionLockRef.current.sessionId !== sessionId) {
@@ -138,8 +153,8 @@ export function useRunController(
       return false;
     }
 
-    if (!storageReady) return false;
-    if (!sessionInput.trim()) return false;
+    if (!storageReady || (inputOverride === undefined && !draftStore.ready)) return false;
+    if (!sessionInput.trim() && !submittedReferences.length) return false;
 
     const currentActiveRun = findActiveRun(currentSnapshot.runs);
     const mode = deriveComposerMode(storageReady, currentActiveRun, false);
@@ -160,18 +175,16 @@ export function useRunController(
     clearSessionError(sessionId);
 
     try {
+      if (inputOverride === undefined) await draftStore.flush(sessionId);
       const returnedRun = await window.eidosRuntime.startRun(
-        sessionId, sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode,
+        sessionId, sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode, submittedReferences.map((value) => value.id),
       );
 
       if (returnedRun.sessionId === sessionId) {
         onRunProjected?.(sessionId, returnedRun);
         if (inputOverride === undefined) {
-          setInputs((prev) => {
-            const next = { ...prev };
-            delete next[sessionId];
-            return next;
-          });
+          clearDraftIfUnchanged(sessionId, sessionInput, submittedReferences);
+          void draftStore.flush(sessionId).catch(() => {});
         }
         return true;
       }
@@ -191,12 +204,13 @@ export function useRunController(
         setSubmissionOperation(undefined);
       }
     }
-  }, [inputs, clearSessionError]);
+  }, [draftStore.values, draftStore.flush, draftStore.ready, clearDraftIfUnchanged, clearSessionError]);
 
   const reviseRun = useCallback(async ({
     snapshot: currentSnapshot,
     sourceRunId,
     userInput,
+    references,
     isStorageReady: storageReady,
     onRunProjected,
     onRevisionProjected,
@@ -205,16 +219,17 @@ export function useRunController(
     snapshot: SessionSnapshot;
     sourceRunId: string;
     userInput?: string;
+    references?: string[];
     isStorageReady: boolean;
     onRunProjected?: (sessionId: string, run: Run) => void;
     onRevisionProjected?: (revision: RunRevisionResult) => void;
     onRefreshSession?: (sessionId: string) => Promise<unknown>;
-  }): Promise<void> => {
+  }): Promise<boolean> => {
     const sessionId = currentSnapshot.session.id;
     if (submissionLockRef.current || !storageReady || findActiveRun(currentSnapshot.runs)) {
-      return;
+      return false;
     }
-    if (userInput !== undefined && !userInput.trim()) return;
+    if (userInput !== undefined && !userInput.trim() && !references?.length) return false;
 
     const token = Symbol("run-revision");
     const operation: SubmissionOperation = {
@@ -230,11 +245,17 @@ export function useRunController(
       const revision = await window.eidosRuntime.reviseRun(
         sourceRunId,
         userInput?.trim(),
+        references,
       );
-      if (revision.run.sessionId !== sessionId) return;
+      if (revision.run.sessionId !== sessionId) return false;
       onRevisionProjected?.(revision);
       onRunProjected?.(sessionId, revision.run);
-      await onRefreshSession?.(sessionId);
+      try {
+        await onRefreshSession?.(sessionId);
+      } catch (cause) {
+        setErrorsBySessionId((previous) => ({ ...previous, [sessionId]: userFacingError(cause) }));
+      }
+      return true;
     } catch (cause) {
       if (submissionLockRef.current?.token === operation.token) {
         setErrorsBySessionId((prev) => ({
@@ -242,6 +263,7 @@ export function useRunController(
           [sessionId]: userFacingError(cause),
         }));
       }
+      return false;
     } finally {
       if (submissionLockRef.current?.token === operation.token) {
         submissionLockRef.current = undefined;
@@ -286,6 +308,8 @@ export function useRunController(
     activeRun,
     input,
     inputs,
+    references,
+    draftReady: draftStore.ready,
     isSubmitting,
     submitKind,
     cancelingRunId: cancelingRunId === activeRun?.id ? cancelingRunId : undefined,
@@ -294,6 +318,11 @@ export function useRunController(
   };
 
   const actions: RunControllerActions = {
+    addReference: draftStore.add,
+    removeReference: (id) => {
+      if (currentSessionId) draftStore.update(currentSessionId, (draft) => ({ ...draft, references: draft.references.filter((value) => value.id !== id) }));
+    },
+    clearDraftIfUnchanged,
     setInput,
     setInputForSession,
     submitInput,

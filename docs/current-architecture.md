@@ -626,3 +626,19 @@ Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 �
 审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后不会重新采样未完成的自动审批，而是拒绝原请求并报告中断。Desktop 在自动审查时通过位于底栏上方的状态胶囊（ApprovalStatusBanner）展示“模型正在审查操作…”与动效进度，并保留取消入口；Feed 展示审批来源与拒绝理由。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
 
 完全访问使用 `fullAccess` 权限快照，启用网络并移除 Eidos 路径 deny。Shell、受控文件 helper 和 MCP 执行不使用 Seatbelt。普通操作跳过逐项审批；仍经过原 Coordinator 的操作以模式授权记录批准，不调用审查模型或人工窗口。文件工具允许绝对路径访问，但仍拒绝不支持的链接和特殊文件；Shell 使用当前 macOS 用户的权限，不能绕过操作系统 ACL、TCC 或只读卷。该模式没有管理员提权，也没有无界输出或自动重放不确定副作用。
+
+## 输入引用与草稿
+
+本节描述新增生产代码。用户要求先完成生产代码和文档，再确认测试阶段。因此，本节不代表测试或验收通过。
+
+输入链路是 `Composer / WorkspaceExplorer → InputContext → preload typed IPC → Main → input/* RPC → InputContextApplication → InputContextRepository`。Main 提供系统文件选择、剪贴板图片、右键菜单和拖放文件路径转换。Renderer 不直接读取文件。Runtime 读取选中的内容，检查文件身份、大小和敏感内容，并生成带来源、摘要和类型的不可变引用。
+
+Schema v14 在 `items` 增加 `input_references_json`，并增加 `input_references` 与 `input_drafts`。v13 → v14 升级通过现有事务执行；此前受支持的版本沿原有升级链进入 v14。引用正文与图片使用现有 JSON Blob 存储。SQLite 保存引用元数据和 Blob 指针。Blob GC 保留这些指针。每个 Session 的草稿保存文字与引用 ID；尚未创建 Session 的输入使用 `new-conversation` 草稿。Renderer 的草稿状态只是编辑缓存，持久事实仍由 Runtime 管理。
+
+`input/prepare` 固定引用，`input/read` 返回预览，`input/draftRead` 与 `input/draftWrite` 读写草稿。`run/start` 接收引用 ID。Runtime 在接纳 Run 前解析这些 ID、检查总量和模型图片能力，并重新核对 Skill、MCP、Plugin 的可用状态和版本。Run 的用户消息与引用元数据在同一现有事务中提交，并经 Event/Outbox 投影。编辑重发、重新生成和 Fork 保留原引用；编辑重发可以显式移除引用。引用不会复制审批或权限授权。
+
+文本和 PNG/JPEG 图片使用内容快照。目录使用最多 200 项的一层目录摘要。未解析的二进制文件和较大的文本使用位置引用。目录和位置引用不代表子文件或二进制正文已经进入模型上下文。Runtime 不会因为引用而赋予模型额外写权限。后续工具读取和操作继续使用现有权限流程。
+
+Context Builder 从用户消息关联的持久引用读取内容，并标记来源、SHA256 和资料边界。图片通过现有 Pydantic AI `BinaryContent` 进入支持图片的 Provider。Context 预算排除 base64 字符串的文本计数，并加入按尺寸估算的图片开销。压缩事实保留引用来源和 ID。Skill 使用现有 Catalog、Activation、Resource 流程；MCP 和 Plugin 选择激活现有 deferred tools，不安装扩展、不绕过授权，也不在运行中替换快照。
+
+Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `desktop/shared/input-context.generated.ts`。生成器使用现有 Python 环境和已锁定的 `json-schema-to-typescript`，没有引入生产依赖。Main 与 RuntimeClient 继续执行边界校验。

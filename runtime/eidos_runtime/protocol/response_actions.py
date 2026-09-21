@@ -3,6 +3,8 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar, Literal
 
+from eidos_runtime.domain.input_reference import InputReferenceId
+
 from pydantic import Field, StrictStr, model_validator
 
 from eidos_runtime.protocol.methods import MethodRequestDto, MethodResultDto
@@ -38,11 +40,11 @@ class ItemSetFeedbackRequestDto(_CanonicalRequest):
 
 
 class RunReviseRequestDto(_CanonicalRequest):
+    references: list[InputReferenceId] | None = Field(default=None, max_length=20)
     source_run_id: StrictStr = Field(alias="sourceRunId")
     user_input: StrictStr | None = Field(
         default=None,
         alias="userInput",
-        min_length=1,
         max_length=64 * 1024,
     )
     operation_id: StrictStr | None = Field(default=None, alias="operationId")
@@ -53,7 +55,7 @@ class RunReviseRequestDto(_CanonicalRequest):
 
     @model_validator(mode="after")
     def _validate_revision_input(self) -> "RunReviseRequestDto":
-        if self.user_input is not None and not self.user_input.strip():
+        if self.user_input is not None and not self.user_input.strip() and not self.references:
             raise ValueError("userInput must not be blank")
         return self
 

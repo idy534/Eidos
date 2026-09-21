@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.input_reference import InputReference
+
 from enum import StrEnum
 
 from pydantic import Field
@@ -80,6 +82,7 @@ class Step(EidosFrozenStrictModel):
 
 
 class Item(EidosFrozenStrictModel):
+    references: tuple[InputReference, ...] = ()
     id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)

@@ -367,3 +367,15 @@ Projectless 文件提交和 Skill 写入权限的定向回归位于 `runtime/tes
 macOS 原生验收需要覆盖完全访问的网络、外部 cwd、外部普通文件、Git metadata 和原 Eidos 保护路径。测试只能在隔离数据目录和临时文件上验证这些写入，不能破坏真实 Eidos 数据。验收还需要检查 manual/auto_review 的原有 Seatbelt deny、文件身份与版本冲突、Durable Intent、部分写入、取消、MCP 生命周期和 Reconciliation。真实 Provider 的结构化审查与拒绝理由需要单独验证。
 
 测试阶段沿用本文现有命令和 AGENTS.md 的门槛：协议、Runtime、Main、Desktop、Python 依赖检查、构建、Seatbelt native 和 Electron smoke。测试阶段还需要同步受影响的协议 Fixture 与旧 Schema 断言。当前代码没有增加生产依赖，也没有改变安装或启动命令。
+
+## 输入引用修改的待验收项
+
+本批工作按用户要求只修改生产代码和文档。开发者在用户确认前不新增测试代码，也不运行测试、类型检查、lint、构建、应用启动或原生验收。DTO 生成命令 `node scripts/generate-input-contracts.mjs` 只更新生产协议文件，不是验证结果。
+
+用户确认后，测试需要覆盖 `input/*` 与 Run 引用的协议 Fixture、v13 → v14 迁移及回滚、旧数据库升级、引用 Blob GC、512 MiB 总量限制、草稿恢复和写入失败、跨 Session 迟到结果，以及提交后继续输入时的草稿保留。测试还需要覆盖不支持图片的模型、图片编码和预算、历史引用截断、扩展失效、编辑重发、重新生成、Fork 与压缩后的来源保留。
+
+文件边界测试需要覆盖文件替换竞争、符号链接、硬链接、特殊文件、超限文件、Projectless 与 Managed Worktree，以及 Eidos 私有数据目录的拒绝读取。权限回归需要证明引用不会产生额外写权限，目录和位置引用不会被当作已读取正文。
+
+Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦点、原生右键菜单、Finder 多文件拖放、剪贴板图片、批量部分失败、引用预览与移除、行范围和历史消息选择，以及 Run 执行时修改下一轮草稿。macOS 真机行为不能由 Renderer mock 代替。
+
+测试阶段沿用本文和 AGENTS.md 的现有协议、Runtime、Main、Desktop、构建、Seatbelt native 和 Electron smoke 门槛。开发者还需要同步旧 Schema 版本断言和现有调用 Fixture。本批没有增加生产依赖，也没有改变安装与启动命令。

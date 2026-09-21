@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.input_reference import InputReference
+
 import json
 from pathlib import Path
 import sqlite3
@@ -118,6 +120,7 @@ class RunRepository(Repository):
         self,
         session_id: str,
         user_input: str,
+        references: list[InputReference] | None = None,
         *,
         operation_id: str | None = None,
         queued: bool = False,
@@ -130,6 +133,8 @@ class RunRepository(Repository):
         run_id: str | None = None,
         item_id: str | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
+        references = references or []
+        references_json = json.dumps([value.to_wire_dict() for value in references], ensure_ascii=False)
         if session_title is not None and (
             not session_title
             or len(session_title) > 60
@@ -264,10 +269,10 @@ class RunRepository(Repository):
                 """
                 INSERT INTO items (
                     id, session_id, run_id, ordinal, kind, status,
-                    content, created_at, completed_at
-                ) VALUES (?, ?, ?, 1, 'user_message', 'completed', ?, ?, ?)
+                    content, created_at, completed_at, input_references_json
+                ) VALUES (?, ?, ?, 1, 'user_message', 'completed', ?, ?, ?, ?)
                 """,
-                (item_id, session_id, run_id, user_input, now, now),
+                (item_id, session_id, run_id, user_input, now, now, references_json),
             )
             connection.execute(
                 "UPDATE sessions SET updated_at = ? WHERE id = ?",
@@ -295,6 +300,7 @@ class RunRepository(Repository):
             operation_request={
                 "sessionId": session_id,
                 "userInput": user_input,
+                **({"references": [value.id for value in references]} if references else {}),
                 "modelId": model_id,
                 "reasoningSelection": profile.reasoning_selection,
                 "extensionSnapshot": json.loads(extension_snapshot_json),
@@ -307,6 +313,7 @@ class RunRepository(Repository):
         self,
         session_id: str,
         user_input: str,
+        references: list[InputReference] | None = None,
         *,
         operation_id: str | None = None,
         session_title: str | None = None,
@@ -321,6 +328,7 @@ class RunRepository(Repository):
         return self.create_run(
             session_id,
             user_input,
+            references=references,
             operation_id=operation_id,
             queued=True,
             session_title=session_title,

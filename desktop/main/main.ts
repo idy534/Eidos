@@ -1,6 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell as electronShell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
-import { realpath, stat } from "node:fs/promises";
+import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
+import os from "node:os";
+import { isInputPrepareRequest, isInputDraft } from "../shared/input-context.js";
 import path from "node:path";
 import * as nodePty from "node-pty";
 
@@ -295,6 +297,25 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  window.webContents.on("context-menu", (_event, params) => {
+    if (!params.isEditable && !params.selectionText) return;
+    const template: Electron.MenuItemConstructorOptions[] = params.isEditable ? [
+      { role: "undo", enabled: params.editFlags.canUndo },
+      { role: "redo", enabled: params.editFlags.canRedo },
+      { type: "separator" },
+      { role: "cut", enabled: params.editFlags.canCut },
+      { role: "copy", enabled: params.editFlags.canCopy },
+      { role: "paste", enabled: params.editFlags.canPaste },
+      { role: "pasteAndMatchStyle", enabled: params.editFlags.canPaste },
+      { role: "selectAll" },
+    ] : [{ role: "copy", enabled: params.editFlags.canCopy }];
+    if (params.selectionText && !params.isEditable) template.push(
+      { type: "separator" },
+      { label: "引用到输入框", enabled: params.selectionText.length <= 65536,
+        click: () => window.webContents.send(IPC.INPUT_QUOTE, params.selectionText) },
+    );
+    Menu.buildFromTemplate(template).popup({ window });
+  });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.once("ready-to-show", () => window.show());
   const ownerId = window.webContents.id;
@@ -1029,6 +1050,58 @@ ipcMain.handle(IPC.SESSION_GIT_REBASE_ABORT, (
   return clientOrThrow().abortSessionGitRebase(sessionId, operationId);
 });
 
+function inputOwner(event: Electron.IpcMainInvokeEvent): void {
+  if (BrowserWindow.fromWebContents(event.sender)?.webContents !== event.sender || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error("输入请求来源无效。");
+  }
+}
+function inputKey(value: unknown): string {
+  if (typeof value !== "string" || !value || value.length > 128) throw new Error("输入标识无效。");
+  return value;
+}
+ipcMain.handle(IPC.INPUT_PICK, async (event, directory: unknown) => {
+  inputOwner(event);
+  if (typeof directory !== "boolean") throw new Error("文件选择参数无效。");
+  const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender)!, {
+    properties: [directory ? "openDirectory" : "openFile", "multiSelections"],
+  });
+  if (result.filePaths.length > 20) throw new Error("一次最多添加 20 个引用。");
+  return result.canceled ? [] : result.filePaths;
+});
+ipcMain.handle(IPC.INPUT_PREPARE, (event, request: unknown) => {
+  inputOwner(event);
+  if (!isInputPrepareRequest(request)) throw new Error("引用参数无效。");
+  return clientOrThrow().prepareInput(request);
+});
+ipcMain.handle(IPC.INPUT_READ, (event, id: unknown) => {
+  inputOwner(event);
+  return clientOrThrow().readInput(inputKey(id));
+});
+ipcMain.handle(IPC.INPUT_DRAFT_READ, (event, key: unknown) => {
+  inputOwner(event);
+  return clientOrThrow().readInputDraft(inputKey(key));
+});
+ipcMain.handle(IPC.INPUT_DRAFT_WRITE, (event, key: unknown, draft: unknown) => {
+  inputOwner(event);
+  if (!isInputDraft(draft)) throw new Error("草稿参数无效。");
+  return clientOrThrow().writeInputDraft(inputKey(key), draft);
+});
+ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event) => {
+  inputOwner(event);
+  const picture = clipboard.readImage();
+  if (picture.isEmpty()) return null;
+  const bytes = picture.toPNG();
+  if (bytes.length > 10 * 1024 * 1024) throw new Error("图片不能超过 10 MiB。");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eidos-input-"));
+  try {
+    const filename = path.join(directory, "粘贴的图片.png");
+    await writeFile(filename, bytes, { mode: 0o600, flag: "wx" });
+    return await clientOrThrow().prepareInput({ kind: "image", source: filename, origin: "clipboard" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 ipcMain.handle(IPC.RUN_START, async (
   _event,
   sessionId: unknown,
@@ -1036,7 +1109,9 @@ ipcMain.handle(IPC.RUN_START, async (
   modelId: unknown,
   reasoningSelection: unknown,
   approvalMode: unknown,
+  references: unknown,
 ) => {
+  inputOwner(_event);
   const validReasoningSelection =
     reasoningSelection === undefined
     || (
@@ -1051,6 +1126,7 @@ ipcMain.handle(IPC.RUN_START, async (
     || typeof modelId !== "string"
     || modelId.length === 0
     || modelId.length > 256
+    || (references !== undefined && (!Array.isArray(references) || references.length > 20 || !references.every((id) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))))
     || !validReasoningSelection
     || (approvalMode !== undefined && !["manual", "auto_review", "full_access"].includes(String(approvalMode)))
   ) {
@@ -1064,6 +1140,7 @@ ipcMain.handle(IPC.RUN_START, async (
     reasoningSelection as ModelReasoningSelection | undefined,
     approvalMode as ApprovalMode | undefined,
     approvalMode === "full_access" ? "full-access-v1" : undefined,
+    references as string[] | undefined,
   );
 });
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
@@ -1075,12 +1152,14 @@ ipcMain.handle(IPC.CONTEXT_USAGE, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Context Usage 参数无效。");
   return clientOrThrow().readContextUsage(runId);
 });
-ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown) => {
+ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown, references: unknown) => {
+  inputOwner(_event);
   if (
-    typeof sourceRunId !== "string"
+    (references !== undefined && (!Array.isArray(references) || references.length > 20 || !references.every((id) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))))
+    || typeof sourceRunId !== "string"
     || (userInput !== undefined && typeof userInput !== "string")
     || (typeof userInput === "string" && (
-      !userInput.trim() || Buffer.byteLength(userInput, "utf8") > 64 * 1024
+      (!userInput.trim() && !(Array.isArray(references) && references.length)) || Buffer.byteLength(userInput, "utf8") > 64 * 1024
     ))
   ) {
     throw new Error("重新回答参数无效。");
@@ -1089,7 +1168,7 @@ ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown
     sourceRunId,
     kind: userInput === undefined ? "regenerate" : "edit",
   });
-  return clientOrThrow().reviseRun(sourceRunId, userInput);
+  return clientOrThrow().reviseRun(sourceRunId, userInput, undefined, references as string[] | undefined);
 });
 
 ipcMain.handle(IPC.RESPONSE_ACTION_STATE, (_event, sessionId: unknown) => {

@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from "electron";
+import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/index.js";
 import type { EidosRuntimeAPI, Unsubscribe } from "../shared/ipc-api.js";
 import type {
@@ -265,12 +266,25 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.SESSION_GIT_REBASE_ABORT, sessionId, operationId),
 
   // Runs
+  onInputQuote: (callback: (text: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, text: string) => callback(text);
+    ipcRenderer.on(IPC.INPUT_QUOTE, listener);
+    return () => ipcRenderer.removeListener(IPC.INPUT_QUOTE, listener);
+  },
+  pickInputPaths: (directory = false) => ipcRenderer.invoke(IPC.INPUT_PICK, directory),
+  inputPathForFile: (file: File) => webUtils.getPathForFile(file),
+  prepareInput: (request: InputPrepareRequest) => ipcRenderer.invoke(IPC.INPUT_PREPARE, request),
+  readInput: (id: string) => ipcRenderer.invoke(IPC.INPUT_READ, id),
+  pasteInputImage: () => ipcRenderer.invoke(IPC.INPUT_PASTE_IMAGE),
+  readInputDraft: (key: string) => ipcRenderer.invoke(IPC.INPUT_DRAFT_READ, key),
+  writeInputDraft: (key: string, draft: InputDraft) => ipcRenderer.invoke(IPC.INPUT_DRAFT_WRITE, key, draft),
   startRun: (
     sessionId: string,
     userInput: string,
     modelId: ModelId,
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
+    references?: string[],
   ): Promise<Run> => ipcRenderer.invoke(
     IPC.RUN_START,
     sessionId,
@@ -278,12 +292,13 @@ const api: EidosRuntimeAPI = {
     modelId,
     reasoningSelection,
     approvalMode,
+    references,
   ),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
   readContextUsage: (runId: string): Promise<ContextUsage | null> =>
     ipcRenderer.invoke(IPC.CONTEXT_USAGE, runId),
-  reviseRun: (sourceRunId: string, userInput?: string): Promise<RunRevisionResult> =>
-    ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput),
+  reviseRun: (sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult> =>
+    ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput, references),
 
   // Response actions
   readResponseActionState: (sessionId: string): Promise<ResponseActionState> =>

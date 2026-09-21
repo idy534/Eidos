@@ -353,6 +353,7 @@ export interface ToolTextPage {
 }
 
 export interface Item {
+  references?: import("./input-context.js").InputReference[];
   id: string;
   sessionId: string;
   runId: string;

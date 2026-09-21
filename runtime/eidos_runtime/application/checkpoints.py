@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.persistence.input_context import InputContextRepository
+
 import logging
 from pathlib import Path
 from contextlib import nullcontext
@@ -583,6 +585,7 @@ class CheckpointApplication:
             run, _item = self._store.enqueue_run(
                 session_id,
                 str(parent["userInput"]),
+                references=[value.reference for value in InputContextRepository(self._store.database).for_run(str(parent["id"]))],
                 model_id=str(parent["modelId"]),
             )
         except Exception:
@@ -802,6 +805,7 @@ class CheckpointApplication:
                 run, _item = self._store.enqueue_run(
                     session_id,
                     str(parent["userInput"]),
+                    references=[value.reference for value in InputContextRepository(self._store.database).for_run(str(parent["id"]))],
                     model_id=str(parent["modelId"]),
                     operation_id=None,
                     run_id=lifecycle_operation.run_id,

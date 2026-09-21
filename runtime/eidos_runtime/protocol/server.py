@@ -119,6 +119,9 @@ from eidos_runtime.db.storage import (
     SessionStore,
     StorageError,
 )
+from eidos_runtime.domain.input_reference import InputSnapshot
+from eidos_runtime.application.input_context import InputContextApplication
+from eidos_runtime.protocol import input_context as input_dtos
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skill_management import SkillManagement
 from eidos_runtime.extensions.skills import (
@@ -526,6 +529,12 @@ class _ServerRunEnvironment:
 
     def __init__(self, server: "RuntimeServer") -> None:
         self._server = server
+
+    def validate_input_selections(self, snapshots: list[InputSnapshot]) -> None:
+        try:
+            self._server._input_application().validate_selections(snapshots)
+        except ValueError as error:
+            raise ApplicationError("INVALID_STATE", "引用扩展不可用，请重新选择。") from error
 
     def model_is_configured(self) -> bool:
         return (
@@ -1001,6 +1010,14 @@ class RuntimeServer:
                     request
                 ),
             ),
+            ("input/prepare", input_dtos.InputPrepareRequest, input_dtos.InputReferenceResponse,
+             lambda _id, request: self._input_application().prepare(request)),
+            ("input/read", input_dtos.InputReadRequest, input_dtos.InputPreviewResponse,
+             lambda _id, request: self._input_application().read(request)),
+            ("input/draftRead", input_dtos.DraftReadRequest, input_dtos.DraftResponse,
+             lambda _id, request: self._input_application().read_draft(request)),
+            ("input/draftWrite", input_dtos.DraftWriteRequest, input_dtos.DraftResponse,
+             lambda _id, request: self._input_application().write_draft(request)),
             (
                 "run/start",
                 method_dtos.RunStartRequestDto,
@@ -1257,6 +1274,8 @@ class RuntimeServer:
         )
         draining_blocked = {
             "run/start",
+            "input/prepare",
+            "input/draftWrite",
             "model/create",
             "model/update",
             "model/delete",
@@ -1391,6 +1410,9 @@ class RuntimeServer:
                 "updatedAt": int(settings.updated_at.timestamp() * 1000),
             }
         )
+
+    def _input_application(self) -> InputContextApplication:
+        return InputContextApplication(self.store, self._applications_or_error().extensions, self._scan_text)
 
     def _applications_or_error(self) -> _RuntimeApplications:
         """Return initialized use cases, retaining no second state authority."""

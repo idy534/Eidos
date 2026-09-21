@@ -29,6 +29,7 @@ declare module "./runtime-client.js" {
       sourceRunId: string,
       userInput?: string,
       operationId?: string,
+      references?: string[],
     ): Promise<RunRevisionResult>;
   }
 }
@@ -64,12 +65,14 @@ RuntimeClient.prototype.reviseRun = function reviseRun(
   sourceRunId: string,
   userInput?: string,
   operationId = randomUUID(),
+  references?: string[],
 ): Promise<RunRevisionResult> {
   return requestBoundary(this).validatedRequest(
     "run/revise",
     {
       sourceRunId,
       ...(userInput === undefined ? {} : { userInput }),
+      ...(references === undefined ? {} : { references }),
       operationId,
     },
     isRunRevisionResult,

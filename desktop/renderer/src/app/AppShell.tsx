@@ -1,3 +1,5 @@
+import type { SettingsCategory } from "../components/settings/settings-types.js";
+import { InputContextProvider, InputDropZone } from "../components/InputContext.js";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type {
   CSSProperties,
@@ -130,6 +132,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("model");
   const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
   const [titleDraft, setTitleDraft] = useState("");
   const [renameError, setRenameError] = useState<string | undefined>(undefined);
@@ -609,7 +612,8 @@ export function AppShell({ runtime }: AppShellProps) {
     const draftSnapshot = sessionState.draft;
     if (draftSnapshot && !sessionState.snapshot) {
       const draftInput = runState.input;
-      if (!draftInput.trim()) return;
+      const draftReferences = runState.references;
+      if (!draftInput.trim() && !draftReferences.length) return;
       const materialized = await sessionActions.materializeDraft();
       if (!materialized) return;
       navHistoryActions.replaceCurrent(materialized.session.id);
@@ -620,10 +624,11 @@ export function AppShell({ runtime }: AppShellProps) {
         approvalMode,
         isStorageReady,
         inputOverride: draftInput,
+        referencesOverride: draftReferences,
         onRunProjected: sessionActions.projectRun,
       });
       if (started) {
-        runActions.setInputForSession(draftSnapshot.session.id, "");
+        runActions.clearDraftIfUnchanged(draftSnapshot.session.id, draftInput, draftReferences);
         sessionActions.discardDraft();
       } else {
         const rolledBack = await sessionActions.rollbackMaterializedSession(materialized.session, draftSnapshot);
@@ -655,13 +660,14 @@ export function AppShell({ runtime }: AppShellProps) {
     });
   }
 
-  async function reviseLatestRun(run: Run, userInput?: string): Promise<void> {
+  async function reviseLatestRun(run: Run, userInput?: string, references?: string[]): Promise<boolean> {
     const snapshot = sessionState.snapshot;
-    if (!snapshot || run.sessionId !== snapshot.session.id) return;
-    await runActions.reviseRun({
+    if (!snapshot || run.sessionId !== snapshot.session.id) return false;
+    return runActions.reviseRun({
       snapshot,
       sourceRunId: run.id,
       ...(userInput !== undefined ? { userInput } : {}),
+      ...(references !== undefined ? { references } : {}),
       isStorageReady,
       onRunProjected: sessionActions.projectRun,
       onRevisionProjected: (revision) => {
@@ -997,6 +1003,8 @@ export function AppShell({ runtime }: AppShellProps) {
       openReview: handleOpenReview,
       showInFinder: handleShowInFinder,
     } : undefined}>
+    <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
+      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}>
     <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
       <SessionSidebar
         collapsed={!sidebarOpen || settingsOpen}
@@ -1062,6 +1070,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
         {settingsOpen ? (
           <SettingsPage
+            initialCategory={settingsCategory}
             runtime={runtimeStatus}
             modelList={modelState.list}
             modelLoading={modelState.loading}
@@ -1162,6 +1171,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
             <div className="workspace-content">
               <div className="workspace-main">
+                <InputDropZone>
                 {responseActionState.error && (
                   <p className="approval-error response-action-error" role="alert">
                     {responseActionState.error}
@@ -1192,8 +1202,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   onReject={(request) => void approvalActions.reject(request)}
                   onFeedback={(itemId, feedback) =>
                     responseActionActions.setFeedback(currentSnapshot.session.id, itemId, feedback)}
-                  onRegenerate={(run) => reviseLatestRun(run)}
-                  onEditResend={(run, editedInput) => reviseLatestRun(run, editedInput)}
+                  onRegenerate={async (run) => { await reviseLatestRun(run); }}
+                  onEditResend={(run, editedInput, references) => reviseLatestRun(run, editedInput, references)}
                   onOpenFile={handleOpenFileInDock}
                 />
 
@@ -1212,6 +1222,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   composerMode={worktreeRestoreRequired ? "read_only" : composerMode}
                   activeRun={activeRun}
                   input={input}
+                  references={runState.references}
+                  onRemoveReference={runActions.removeReference}
+                  draftReady={runState.draftReady}
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
                   approvalMode={activeRun?.approvalMode ?? approvalMode}
@@ -1253,6 +1266,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onExecutionModeChange={sessionProject?.gitAvailable === true ? requestExecutionModeChange : undefined}
                 />
                 </ComposerSlot>
+                </InputDropZone>
               </div>
 
             </div>
@@ -1511,6 +1525,7 @@ export function AppShell({ runtime }: AppShellProps) {
         onCancel={() => { setProjectToDelete(undefined); setProjectDeleteError(undefined); }}
       />
     </main>
+    </InputContextProvider>
     </ArtifactProvider>
   );
 }

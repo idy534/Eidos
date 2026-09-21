@@ -15,6 +15,8 @@ from pathlib import Path
 import re
 from typing import ClassVar, Literal
 
+from eidos_runtime.domain.input_reference import InputReferenceId
+
 from pydantic import Field, JsonValue, StrictInt, StrictStr
 from pydantic import field_validator, model_validator
 
@@ -395,12 +397,13 @@ class EventListRequestDto(_CanonicalIdRequest):
 
 
 class RunStartRequestDto(_OperationRequest):
+    references: list[InputReferenceId] = Field(default_factory=list, max_length=20)
     approval_mode: ApprovalMode = Field(default="manual", alias="approvalMode")
     full_access_confirmation: Literal["full-access-v1"] | None = Field(
         default=None, alias="fullAccessConfirmation"
     )
     session_id: StrictStr = Field(alias="sessionId")
-    user_input: StrictStr = Field(alias="userInput", min_length=1, max_length=64 * 1024)
+    user_input: StrictStr = Field(alias="userInput", max_length=64 * 1024)
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     reasoning_selection: ModelReasoningSelection | None = Field(
         default=None, alias="reasoningSelection"
@@ -414,7 +417,7 @@ class RunStartRequestDto(_OperationRequest):
             raise ValueError("full access requires explicit confirmation")
         if self.approval_mode != "full_access" and self.full_access_confirmation is not None:
             raise ValueError("full access confirmation does not match approval mode")
-        if not self.user_input.strip():
+        if not self.user_input.strip() and not self.references:
             raise ValueError("userInput must not be blank")
         return self
 

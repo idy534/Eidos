@@ -1,4 +1,7 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import type { InputReference } from "../../../shared/input-context.js";
+import { InputReferenceCards, useInputContext } from "./InputContext.js";
+import { InputPicker, type InputPickerMode } from "./InputPicker.js";
+import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
@@ -11,6 +14,9 @@ export interface ComposerProps {
   composerMode: ComposerMode;
   activeRun: Run | undefined;
   input: string;
+  references?: InputReference[];
+  onRemoveReference?: (id: string) => void;
+  draftReady?: boolean;
   modelList: import("../contracts.js").ModelListResult | undefined;
   selectedModelId: ModelId | undefined;
   reasoningSelection?: ModelReasoningSelection | undefined;
@@ -46,6 +52,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   composerMode,
   activeRun,
   input,
+  references = [],
+  onRemoveReference,
+  draftReady = true,
   modelList,
   selectedModelId,
   reasoningSelection,
@@ -76,7 +85,29 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   onLeaveProject,
   onExecutionModeChange,
 }, forwardedRef) {
+  const context = useInputContext();
+  const [picker, setPicker] = useState<{ mode: InputPickerMode; query: string; start?: number; end?: number }>();
+  const [list, setList] = useState<{ id: string; active: string | undefined }>();
+  const [showStatus, setShowStatus] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pickerList = useCallback((id: string, active: string | undefined) => setList((previous) => previous?.id === id && previous.active === active ? previous : { id, active }), []);
+  const closePicker = useCallback(() => { setPicker(undefined); textareaRef.current?.focus(); }, []);
+  useEffect(() => { setPicker(undefined); setShowStatus(false); }, [context?.sessionId]);
+  function updateMention(value: string, position: number) {
+    const match = /(?:^|\s)([@$/])([^\s]*)$/.exec(value.slice(0, position));
+    if (!match) { setPicker(undefined); return; }
+    const symbol = match[1]!;
+    const query = match[2]!;
+    setPicker({ mode: symbol === "$" ? "skill" : symbol === "/" ? "commands" : "all", query, start: position - query.length - 1, end: position });
+  }
+  function consumeMention() {
+    if (picker?.start !== undefined && picker.end !== undefined) {
+      const position = picker.start;
+      onInputChange(input.slice(0, position) + input.slice(picker.end));
+      requestAnimationFrame(() => { textareaRef.current?.focus(); textareaRef.current?.setSelectionRange(position, position); });
+    }
+    closePicker();
+  }
   useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement);
 
   useLayoutEffect(() => {
@@ -92,7 +123,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const isReadOnly = composerMode === "read_only";
   const isIdle = composerMode === "idle";
   const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
-  const inputDisabled = modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
+  const inputDisabled = !draftReady || modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
 
   const prevDisabledRef = useRef<boolean>(inputDisabled);
 
@@ -137,8 +168,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         ? "启动中…"
         : "开始";
 
+  const unsupportedImage = references.some((reference) => reference.kind === "image") && !modelList?.models.find((model) => model.id === selectedModelId)?.supportsImages;
+
   const isSubmitDisabled =
-    modelLoading
+    !draftReady
+    || unsupportedImage
+    || Boolean(context?.busy)
+    || modelLoading
     || isSubmitting
     || composerMode === "starting"
     || composerMode === "running"
@@ -147,7 +183,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     || composerMode === "read_only"
     || !modelConfigured
     || !selectedModelId
-    || !input.trim();
+    || (!input.trim() && references.length === 0);
 
   const hasProjectContext = showSessionContext && (project !== undefined || projectless);
   const selectedModel = modelList?.models.find((model) => model.id === selectedModelId);
@@ -158,7 +194,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   return (
     <form
       className="composer"
-      onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+      onSubmit={(e) => { e.preventDefault(); if (!isSubmitDisabled) onSubmit(); }}
     >
       {hasProjectContext && (
         <div className="composer-context" aria-label="会话上下文">
@@ -239,24 +275,60 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           )}
         </div>
       )}
+      {references.length > 0 && <InputReferenceCards references={references} {...(onRemoveReference ? { onRemove: onRemoveReference } : {})} />}
+      {unsupportedImage && <p className="input-reference-error" role="alert">当前模型不支持图片。请选择支持图片的模型，或移除图片引用。</p>}
+      {context?.busy && <p className="input-reference-hint" role="status">正在准备引用…</p>}
+      {context?.error && <p className="input-reference-error" role="alert">{context.error}</p>}
+      {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
+      {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
+        onQuery={(query) => setPicker((previous) => previous ? { ...previous, query } : previous)}
+        onListId={pickerList} onClose={closePicker}
+        onChoose={(request) => { void context?.add(request); consumeMention(); }}
+        onCommand={(command) => {
+          consumeMention();
+          if (command === "skills") setPicker({ mode: "skill", query: "" });
+          else if (command === "status") setShowStatus((value) => !value);
+          else if (command === "model") {
+            textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".reasoning-selector > button")?.click();
+          } else context?.settings(command);
+        }} />}
       <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
       <textarea
         ref={textareaRef}
         id="task-input"
         rows={2}
+        maxLength={65536}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={Boolean(picker)}
+        aria-controls={picker ? list?.id : undefined}
+        aria-activedescendant={picker ? list?.active : undefined}
         placeholder={placeholder}
         value={input}
         disabled={inputDisabled}
-        onChange={(e) => onInputChange(e.target.value)}
+        onChange={(e) => { onInputChange(e.target.value); if (!(e.nativeEvent as InputEvent).isComposing) updateMention(e.target.value, e.target.selectionStart); }}
+        onCompositionEnd={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+        onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData.files);
+          if (!files.length) return;
+          event.preventDefault();
+          const paths = files.map((file) => window.eidosRuntime.inputPathForFile(file)).filter(Boolean);
+          if (paths.length) void context?.paths(paths);
+          else if (files.some((file) => file.type.startsWith("image/"))) void context?.paste();
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
-            onSubmit();
+            if (!isSubmitDisabled) onSubmit();
           }
         }}
       />
       <div className="composer-actions">
         <div className="composer-meta">
+          <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
+            disabled={!draftReady || isSubmitting || isReadOnly || !context}
+            onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
           {onApprovalModeChange && (
             <ApprovalModeSelector
               mode={approvalMode}
@@ -305,7 +377,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             type="submit"
             variant="primary"
             size="medium"
-            className={`composer-submit-btn${!input.trim() ? " composer-submit-btn--empty" : ""}`}
+            className={`composer-submit-btn${!input.trim() && references.length === 0 ? " composer-submit-btn--empty" : ""}`}
             disabled={isSubmitDisabled}
             loading={isSubmitting || composerMode === "starting"}
             aria-label={buttonLabel}

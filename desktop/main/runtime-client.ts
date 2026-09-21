@@ -1,3 +1,4 @@
+import { isInputReference, isInputDraft, isInputPreview, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference } from "../shared/input-context.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -755,6 +756,21 @@ export class RuntimeClient {
     return this.validatedRequest("runtime/health", {}, isRuntimeHealth);
   }
 
+  async prepareInput(request: InputPrepareRequest): Promise<InputReference> {
+    const value = await this.validatedRequest("input/prepare", { ...request }, (v): v is { reference: InputReference } =>
+      isRecord(v) && Object.keys(v).length === 1 && isInputReference(v.reference));
+    return value.reference;
+  }
+  readInput(id: string): Promise<InputPreview> {
+    return this.validatedRequest("input/read", { id }, isInputPreview);
+  }
+  readInputDraft(key: string): Promise<InputDraft> {
+    return this.validatedRequest("input/draftRead", { key }, isInputDraft);
+  }
+  writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft> {
+    return this.validatedRequest("input/draftWrite", { key, text: draft.text, references: draft.references.map((value) => value.id) }, isInputDraft);
+  }
+
   startRun(
     sessionId: string,
     userInput: string,
@@ -763,6 +779,7 @@ export class RuntimeClient {
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
     fullAccessConfirmation?: "full-access-v1",
+    references?: string[],
   ): Promise<Run> {
     return this.validatedRequest(
       "run/start",
@@ -771,6 +788,7 @@ export class RuntimeClient {
         userInput,
         modelId,
         operationId,
+        ...(references?.length ? { references } : {}),
         ...(reasoningSelection !== undefined ? { reasoningSelection } : {}),
         ...(approvalMode !== undefined ? { approvalMode } : {}),
         ...(fullAccessConfirmation !== undefined ? { fullAccessConfirmation } : {}),
@@ -1980,12 +1998,14 @@ function isItem(value: unknown): value is Item {
       "createdAt",
       "completedAt",
       "toolCall",
+      "references",
     ])
   ) {
     return false;
   }
   const valid = (
-    typeof value.id === "string"
+    (value.references === undefined || (Array.isArray(value.references) && value.references.length <= 20 && value.references.every(isInputReference)))
+    && typeof value.id === "string"
     && typeof value.sessionId === "string"
     && typeof value.runId === "string"
     && isNonNegativeInteger(value.ordinal)

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.input_reference import InputReference
+
+import json
+
 from collections.abc import Mapping
 from enum import StrEnum
 
@@ -127,6 +131,7 @@ def item_from_row(row: RowValues | Mapping[str, object]) -> Item:
         "model_step_index": values.optional_integer("model_step_index"),
         "kind": _enum(ItemKind, values.text("kind"), record="item", field="kind"),
         "status": _enum(ItemStatus, values.text("status"), record="item", field="status"),
+        "references": tuple(InputReference.model_validate(value) for value in json.loads(values.optional_text("input_references_json") or "[]")),
         "content": values.optional_text("content"),
         "incomplete": values.boolean("incomplete"),
         "created_at": values.integer("created_at"),

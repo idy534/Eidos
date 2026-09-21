@@ -1,3 +1,4 @@
+import { useInputContext } from "./InputContext.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
@@ -525,6 +526,7 @@ function WorkspaceTreeRow({
   onOpenDirectory(path: string): void;
   onOpenFile(path: string): void;
 }) {
+  const inputContext = useInputContext();
   return (
     <div
       ref={dragHandle}
@@ -561,6 +563,11 @@ function WorkspaceTreeRow({
           </svg>
         )}
       </button>
+      {inputContext && <button type="button" className="workspace-reference-button" aria-label={`引用 ${node.data.name}`} title="添加到当前输入"
+        onClick={(event) => { event.stopPropagation(); void inputContext.add({
+          kind: node.data.kind === "directory" ? "directory" : "file",
+          source: `${inputContext.workspaceRoot}/${node.id}`,
+        }); }}>＋</button>}
       <span className="workspace-tree-icon" aria-hidden="true">
         {node.data.kind === "directory" ? (
           <svg viewBox="0 0 20 20">

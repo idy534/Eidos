@@ -48,6 +48,7 @@ def estimate_context_budget(
     provider_usage: ModelUsage | None = None,
     provider_calibration_estimate: int | None = None,
     usage_updated_at: int = 0,
+    media_tokens: int = 0,
 ) -> ContextBudget:
     if context_window_tokens <= 0 or not 0 <= request_max_output_tokens < context_window_tokens:
         raise ValueError("invalid context budget")
@@ -61,7 +62,7 @@ def estimate_context_budget(
         separators=(",", ":"),
         sort_keys=True,
     )
-    payload_tokens = _estimate_serialized_tokens(payload_text)
+    payload_tokens = _estimate_serialized_tokens(payload_text) + max(0, media_tokens)
     overhead = 64 + message_count * 8 + tool_call_count * 16 + tool_result_count * 16
     margin = min(8_192, max(1_024, math.ceil(context_window_tokens * 0.02)))
     usable = context_window_tokens - request_max_output_tokens - margin
@@ -132,11 +133,16 @@ def estimate_model_request_budget(
     return estimate_context_budget(
         {
             "instructions": instructions,
-            "messages": model_context,
+            "messages": tuple(
+                {key: value for key, value in item.items() if key not in {"inputImage", "imageTokenEstimate"}}
+                for item in model_context
+            ),
             "tools": [
                 tool.model_dump(mode="json") for tool in tool_definitions
             ],
         },
+        # Image bytes are not text tokens. This remains an explicitly estimated budget.
+        media_tokens=sum(int(item.get("imageTokenEstimate", 4096)) for item in model_context if item.get("inputImage")),
         context_window_tokens=context_window_tokens,
         request_max_output_tokens=request_max_output_tokens,
         message_count=len(model_context),

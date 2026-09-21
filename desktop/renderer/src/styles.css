@@ -5518,3 +5518,41 @@ button.composer-context-project--empty:hover:not(:disabled) {
 
 
 
+
+/* User input references share the existing composer and native textarea. */
+.input-drop-zone { display: flex; flex: 1; min-height: 0; flex-direction: column; position: relative; }
+.input-drop-overlay { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; background: color-mix(in srgb, var(--bg, #faf9f6) 88%, transparent); border: 2px dashed currentColor; border-radius: 16px; pointer-events: none; }
+.composer { position: relative; }
+.composer-add { width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 24px; cursor: pointer; }
+.composer-add:hover { background: rgba(128,128,128,.12); }
+.composer-add:disabled { opacity: .4; cursor: default; }
+.input-reference-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 160px; overflow: auto; padding: 5px 0; }
+.input-reference { display: flex; max-width: 100%; border: 1px solid rgba(128,128,128,.25); border-radius: 9px; overflow: hidden; background: rgba(128,128,128,.06); }
+.input-reference button { background: transparent; border: 0; color: inherit; padding: 6px 8px; cursor: pointer; overflow-wrap: anywhere; text-align: left; }
+.input-reference small { display: block; opacity: .65; font-size: 10px; margin-top: 2px; }
+.input-reference .input-reference-remove { align-self: stretch; padding: 6px 10px; font-size: 18px; }
+.input-reference button:hover { background: rgba(128,128,128,.12); }
+.input-reference-hint, .input-reference-error { font-size: 12px; margin: 5px 0; }
+.input-reference-error { color: var(--danger, #b42318); }
+.input-reference-preview { width: min(760px, 90vw); max-height: 80vh; padding: 20px; border: 1px solid rgba(128,128,128,.3); border-radius: 14px; color: var(--text, #242424); background: var(--bg, #faf9f6); }
+.input-reference-preview::backdrop { background: #0005; }
+.input-reference-preview img { display: block; max-width: 100%; max-height: 45vh; margin: 12px auto; }
+.input-reference-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow: auto; }
+.input-reference-source { font-size: 12px; overflow-wrap: anywhere; opacity: .7; }
+.input-picker { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40; width: min(540px, 100%); max-height: min(480px, 65vh); display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg, #faf9f6); color: var(--text, #242424); border: 1px solid rgba(128,128,128,.25); border-radius: 14px; box-shadow: 0 10px 36px #0002; }
+.input-picker-toolbar, .input-picker-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.input-picker-toolbar input { flex: 1; min-width: 0; padding: 7px; border: 1px solid rgba(128,128,128,.3); border-radius: 7px; background: transparent; color: inherit; }
+.input-picker button, .input-picker select { border: 0; border-radius: 6px; padding: 6px 8px; color: inherit; background: rgba(128,128,128,.07); cursor: pointer; }
+.input-picker-list { overflow: auto; min-height: 0; }
+.input-picker-list [role=option] { width: 100%; text-align: left; padding: 8px; margin: 2px 0; background: transparent; }
+.input-picker-list [role=option].is-selected { background: rgba(128,128,128,.15); }
+.input-picker-list [aria-disabled=true] { opacity: .5; cursor: default; }
+.input-picker-list small { display: block; opacity: .65; font-size: 11px; overflow-wrap: anywhere; }
+.input-picker-history { font-size: 11px; margin-left: 8px; }
+.input-picker p { margin: 3px 0; font-size: 12px; }
+.workspace-reference-button { margin-left: auto; flex-shrink: 0; border: 0; background: transparent; color: inherit; cursor: pointer; opacity: .6; }
+.workspace-reference-button:hover { opacity: 1; }
+.input-thumbnail { display: inline-flex; min-width: 24px; min-height: 24px; vertical-align: middle; }
+.input-thumbnail img { width: 40px; height: 32px; object-fit: cover; border-radius: 4px; }
+.input-reference-lines { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 12px; }
+.input-reference-lines input { width: 6em; }

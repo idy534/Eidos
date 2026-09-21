@@ -20,6 +20,7 @@ import { WorktreeSettings } from "./WorktreeSettings.js";
 import { Button } from "../Button.js";
 
 interface SettingsPageProps {
+  initialCategory?: SettingsCategory;
   runtime: RuntimeStatus;
   modelList?: ModelListResult | undefined;
   modelLoading?: boolean | undefined;
@@ -44,6 +45,7 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({
+  initialCategory = "model",
   runtime,
   modelList,
   modelLoading,
@@ -66,7 +68,7 @@ export function SettingsPage({
   onUpdateMcp,
   onRemoveMcp,
 }: SettingsPageProps) {
-  const [activeCategory, setActiveCategory] = useState<SettingsCategory>("model");
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
   const [toasts, setToasts] = useState<SettingsToast[]>([]);
 
   useEffect(() => {
