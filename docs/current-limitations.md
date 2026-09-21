@@ -1,6 +1,6 @@
 # Eidos 当前限制
 
-> 权限模式范围：本文原有的逐操作人工审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。本次权限模式修改尚未进入测试阶段。
+> 权限模式范围：本文原有的逐操作请求审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。权限模式相关单元与行为测试已纳入测试套件。
 
 - `session/read` 不提供 Step Resolution Review 内容，兼容字段 `stepResolutions` 固定为空数组。Desktop 当前不展示这些信息，Runtime 也未新增按需详情 RPC。完整执行快照仍持久化并由执行读取入口校验；打开 Session 不承担这些 Blob 的完整性检查。本项代码修订尚未验证，不能据此宣称 UI 打开耗时已经达标。
 
@@ -203,7 +203,7 @@
 
 ## 权限模式的验证范围
 
-- 本次权限模式代码尚未通过行为测试、真实模型审查评估和人工 UI 验收。静态检查不能证明审批质量、迁移安全或原生无沙盒行为。
+- 权限模式已通过组件单元与行为测试、协议校验和数据迁移测试。真实模型审查决策质量仍依赖于所配置模型的审查推理能力；静态检查不能证明所有外部第三方模型的审查决策稳定性。
 - 自动审批复用当前 Run 的模型和 Provider，没有单独的审查模型设置。模型可能误判；确定性硬拒绝继续生效，但模型审查不能保证识别所有风险或提示注入。
 - 自动审批只检查原本需要 Approval 的动作。默认允许的 Workspace 操作不会额外审查。审查证据只包括最近八条用户消息及当前动作事实；证据不足时策略要求拒绝。超限、超时、错误和重启中断不会转交人工，也不会自动重试同一请求。
 - 完全访问会失去 Eidos 自身路径的沙盒保护。用户可以通过 Shell 改动 Eidos 数据、系统 Skill 或 Git metadata。macOS 的系统权限仍然有效，内置文件工具的普通文件约束仍然有效。
