@@ -521,6 +521,8 @@ Worktree Session create、Session delete、managed Checkpoint Fork、Create Bran
 
 模型可以调用 `request_permissions` 申请网络和具体绝对路径权限。空请求会进入 Tool 参数校验错误。Runtime 会先规范化路径并检查保护边界。已有权限返回 `already_granted`；受保护权限返回 `permission_not_requestable`；可申请权限通过唯一的 `ApprovalCoordinator` 等待批准或拒绝。
 
+`request_permissions` 的工具说明包含参数结构、文件权限示例和网络权限示例。工具说明和 `permissions` 字段的 Schema 描述都明确要求 JSON 对象，不能传入 JSON 编码字符串。Runtime 保持原有参数校验，不自动解析字符串形式的权限对象。
+
 Run Grant 由当前 Run 中已批准的 `approvals.request_json` 派生。请求必须带有 `kind=permission_request` 和 `grantScope=run`。SQLite 对 Approval 的原子决策同时决定 Grant 是否存在，因此没有新的授权表和第二份状态。Run 终止后，Grant 不再生效。普通 Shell 把 Base、Run Grant 和单次动作请求一起物化为 `EffectivePermissionProfile`。Seatbelt 只消费该结果。显式 Shell 扩权仍只授权当前动作。
 
 已知网络 denial 会进入同一个权限请求流程。Runtime 会在 Approval 中保存已完成的 Shell 结果。用户批准后，当前调用返回 `permission_granted_retry_required`，模型可以再次调用普通 Shell。Runtime 不会自动重跑这个命令。拒绝返回 `user_rejected_network`。相同请求的拒绝按持久化 fingerprint 去重，不会阻止不同命令或不同类型的审批。LoopGuard 的状态包含权限状态，权限变化后允许模型重新执行相同动作。
