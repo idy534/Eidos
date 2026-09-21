@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type DragEvent } from "react";
+import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { userFacingError } from "../session-state.js";
+import { FileIcon, FolderIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
 
 interface InputContextValue {
   sessionId: string;
@@ -80,71 +82,429 @@ export function InputDropZone({ children }: { children: ReactNode }) {
   </div>;
 }
 
-import { FileIcon, FolderIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
-
 export function InputReferenceCards({ references, onRemove }: { references: InputReference[]; onRemove?: (id: string) => void }) {
   const context = useInputContext();
-  const [firstLine, setFirstLine] = useState(1);
-  const [lastLine, setLastLine] = useState(1);
   const [preview, setPreview] = useState<InputPreview>();
   const [error, setError] = useState<string>();
-  const dialog = useRef<HTMLDialogElement>(null);
   const request = useRef(0);
-  useEffect(() => { if (preview) { setFirstLine(1); setLastLine(1); dialog.current?.showModal(); } }, [preview]);
-  return <>
-    <div className="input-reference-list" aria-label="输入引用">
-      {references.map((reference) => (
-        <div className="input-reference" key={reference.id}>
-          <button
-            type="button"
-            className="input-reference__btn"
-            title={reference.source}
-            onClick={() => {
-              const token = ++request.current;
-              setError(undefined);
-              void window.eidosRuntime.readInput(reference.id).then((value) => {
-                if (token === request.current) setPreview(value);
-              }, (cause) => {
-                if (token === request.current) setError(userFacingError(cause));
-              });
-            }}
-          >
-            <span className={`input-reference__icon input-reference__icon--${reference.kind}`}>
-              {renderReferenceIcon(reference)}
-            </span>
-            <span className="input-reference__label">{reference.label}</span>
-          </button>
-          {onRemove && (
+
+  return (
+    <>
+      <div className="input-reference-list" aria-label="输入引用">
+        {references.map((reference) => (
+          <div className="input-reference" key={reference.id}>
             <button
               type="button"
-              className="input-reference-remove"
-              aria-label={`移除 ${reference.label}`}
-              title={`移除 ${reference.label}`}
-              onClick={() => onRemove(reference.id)}
+              className="input-reference__btn"
+              title={reference.source}
+              onClick={() => {
+                const token = ++request.current;
+                setError(undefined);
+                void window.eidosRuntime.readInput(reference.id).then((value) => {
+                  if (token === request.current) setPreview(value);
+                }, (cause) => {
+                  if (token === request.current) setError(userFacingError(cause));
+                });
+              }}
             >
-              <CloseIcon />
+              <span className={`input-reference__icon input-reference__icon--${reference.kind}`}>
+                {renderReferenceIcon(reference)}
+              </span>
+              <span className="input-reference__label">{reference.label}</span>
             </button>
+            {onRemove && (
+              <button
+                type="button"
+                className="input-reference-remove"
+                aria-label={`移除 ${reference.label}`}
+                title={`移除 ${reference.label}`}
+                onClick={() => onRemove(reference.id)}
+              >
+                <CloseIcon />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {error && <p role="alert" className="input-reference-error">{error}</p>}
+      {preview && (
+        preview.reference.kind === "image" ? (
+          <ImageLightboxModal
+            preview={preview}
+            onClose={() => setPreview(undefined)}
+            onReuse={context ? () => context.reuse(preview.reference) : undefined}
+          />
+        ) : (
+          <ReferencePreviewModal
+            preview={preview}
+            onClose={() => setPreview(undefined)}
+            onReuse={context ? () => context.reuse(preview.reference) : undefined}
+            onAddLineRange={context && preview.reference.kind === "file" && preview.reference.status === "content" ? (startLine, endLine) => {
+              void context.add({
+                kind: "file",
+                source: preview.reference.source,
+                startLine,
+                endLine,
+              });
+            } : undefined}
+          />
+        )
+      )}
+    </>
+  );
+}
+
+function ImageLightboxModal({
+  preview,
+  onClose,
+  onReuse,
+}: {
+  preview: InputPreview;
+  onClose(): void;
+  onReuse?: (() => void) | undefined;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="artifact-image-preview ref-image-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${preview.reference.label} 图片预览`}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <button
+        type="button"
+        className="artifact-image-preview__close"
+        aria-label="关闭图片预览"
+        autoFocus
+        onClick={onClose}
+      >
+        ×
+      </button>
+      <div className="ref-image-lightbox__container">
+        {preview.thumbnail ? (
+          <img src={preview.thumbnail} alt={preview.reference.label} />
+        ) : (
+          <p role="status">正在读取图片预览…</p>
+        )}
+        <div className="ref-image-lightbox__bar">
+          <div className="ref-image-lightbox__info">
+            <span className="ref-image-lightbox__title">{preview.reference.label}</span>
+            <span className="ref-image-lightbox__source" title={preview.reference.source}>
+              {preview.reference.source}
+            </span>
+          </div>
+          {onReuse && (
+            <div className="ref-image-lightbox__actions">
+              <button
+                type="button"
+                className="ref-preview-btn ref-preview-btn--primary"
+                onClick={() => {
+                  onReuse();
+                  onClose();
+                }}
+              >
+                添加到当前输入
+              </button>
+            </div>
           )}
         </div>
-      ))}
-    </div>
-    {error && <p role="alert" className="input-reference-error">{error}</p>}
-    {preview && <dialog className="input-reference-preview" ref={dialog} onClose={() => setPreview(undefined)} aria-label={preview.reference.label}>
-      <h3>{preview.reference.label}</h3>
-      <p className="input-reference-source">{preview.reference.source}</p>
-      {preview.thumbnail && <img alt={preview.reference.label} src={preview.thumbnail} />}
-      <pre>{preview.text}</pre>
-      {context && <button type="button" onClick={() => { context.reuse(preview.reference); dialog.current?.close(); }}>添加到当前输入</button>}
-      {context && preview.reference.kind === "file" && preview.reference.status === "content" && <div className="input-reference-lines">
-        <label>起始行 <input type="number" min={1} value={firstLine} onChange={(event) => setFirstLine(Number(event.target.value))} /></label>
-        <label>结束行 <input type="number" min={firstLine} value={lastLine} onChange={(event) => setLastLine(Number(event.target.value))} /></label>
-        <button type="button" disabled={!Number.isSafeInteger(firstLine) || firstLine < 1 || !Number.isSafeInteger(lastLine) || lastLine < firstLine} onClick={() => {
-          void context.add({ kind: "file", source: preview.reference.source, startLine: firstLine, endLine: lastLine }); dialog.current?.close();
-        }}>引用当前文件的这些行</button>
-      </div>}
-      <button type="button" autoFocus onClick={() => dialog.current?.close()}>关闭</button>
-    </dialog>}
-  </>;
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ReferencePreviewModal({
+  preview,
+  onClose,
+  onReuse,
+  onAddLineRange,
+}: {
+  preview: InputPreview;
+  onClose(): void;
+  onReuse?: (() => void) | undefined;
+  onAddLineRange?: ((startLine: number, endLine: number) => void) | undefined;
+}) {
+  const lines = preview.text ? preview.text.split("\n") : [];
+  const totalLines = lines.length;
+  const [firstLine, setFirstLine] = useState(1);
+  const [lastLine, setLastLine] = useState(Math.max(1, totalLines));
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const handleCopyPath = async () => {
+    try {
+      await navigator.clipboard.writeText(preview.reference.source);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Ignore clipboard write failure
+    }
+  };
+
+  const isLineHighlighted = (lineNum: number) => {
+    if (!onAddLineRange) return false;
+    return lineNum >= firstLine && lineNum <= lastLine;
+  };
+
+  const renderBodyContent = () => {
+    const kind = preview.reference.kind;
+    if (kind === "file" || kind === "excerpt") {
+      return (
+        <div className="ref-preview-code-viewer">
+          <div className="ref-preview-gutter" aria-hidden="true">
+            {lines.map((_, index) => (
+              <span
+                key={index}
+                className={`ref-preview-line-number${isLineHighlighted(index + 1) ? " is-highlighted" : ""}`}
+              >
+                {index + 1}
+              </span>
+            ))}
+          </div>
+          <pre className="ref-preview-code">
+            <code>
+              {lines.map((line, index) => (
+                <div
+                  key={index}
+                  className={`ref-preview-code-line${isLineHighlighted(index + 1) ? " is-highlighted" : ""}`}
+                >
+                  {line || " "}
+                </div>
+              ))}
+            </code>
+          </pre>
+        </div>
+      );
+    }
+
+    if (kind === "directory") {
+      const rawLines = preview.text.split("\n");
+      const notice = rawLines[0];
+      const items = rawLines.slice(1).filter(Boolean);
+      return (
+        <div className="ref-preview-directory">
+          {notice && <p className="ref-preview-notice">{notice}</p>}
+          <div className="ref-preview-dir-list" role="list">
+            {items.length === 0 ? (
+              <div className="ref-preview-empty">空目录</div>
+            ) : (
+              items.map((item, index) => {
+                const isDir = item.endsWith("/");
+                const cleanName = isDir ? item.slice(0, -1) : item;
+                return (
+                  <div className="ref-preview-dir-item" key={index} role="listitem">
+                    <span className={`ref-preview-dir-item__icon ref-preview-dir-item__icon--${isDir ? "dir" : "file"}`}>
+                      {isDir ? <FolderIcon /> : <FileIcon />}
+                    </span>
+                    <span className="ref-preview-dir-item__name">{cleanName}</span>
+                    <span className="ref-preview-dir-item__type">{isDir ? "目录" : "文件"}</span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (kind === "skill" || kind === "mcp" || kind === "plugin") {
+      return (
+        <div className="ref-preview-extension">
+          <div className="ref-preview-card">
+            <h4>功能描述</h4>
+            <p className="ref-preview-desc">{preview.text || "暂无描述"}</p>
+          </div>
+          <div className="ref-preview-card">
+            <h4>配置与校验</h4>
+            <div className="ref-preview-key-values">
+              <div className="ref-preview-kv">
+                <span className="ref-preview-k">标识来源</span>
+                <span className="ref-preview-v">{preview.reference.source}</span>
+              </div>
+              <div className="ref-preview-kv">
+                <span className="ref-preview-k">扩展类别</span>
+                <span className="ref-preview-v">{kindLabel(preview.reference.kind)}</span>
+              </div>
+              {preview.reference.sha256 && (
+                <div className="ref-preview-kv">
+                  <span className="ref-preview-k">内容校验 (SHA-256)</span>
+                  <span className="ref-preview-v ref-preview-v--code">{preview.reference.sha256.slice(0, 16)}…</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (kind === "history") {
+      return (
+        <div className="ref-preview-history">
+          <div className="ref-preview-history__content">
+            <pre className="ref-preview-transcript">{preview.text}</pre>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="ref-preview-default">
+        <pre>{preview.text}</pre>
+      </div>
+    );
+  };
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="ref-preview-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={preview.reference.label}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="ref-preview-modal" role="document">
+        <div className="ref-preview-header">
+          <div className="ref-preview-header__main">
+            <div className="ref-preview-header__title-row">
+              <span className={`ref-preview-header__icon ref-preview-header__icon--${preview.reference.kind}`}>
+                {renderReferenceIcon(preview.reference)}
+              </span>
+              <h3 className="ref-preview-header__title">{preview.reference.label}</h3>
+              <span className="ref-preview-header__badge">{kindLabel(preview.reference.kind)}</span>
+            </div>
+            <div className="ref-preview-header__path-row">
+              <span className="ref-preview-header__path" title={preview.reference.source}>
+                {preview.reference.source}
+              </span>
+              <button
+                type="button"
+                className="ref-preview-header__copy-btn"
+                onClick={handleCopyPath}
+                title="复制完整路径"
+              >
+                {copied ? <CheckIcon /> : <CopyIcon />}
+                <span>{copied ? "已复制" : "复制路径"}</span>
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="ref-preview-header__close-btn"
+            aria-label="关闭预览"
+            autoFocus
+            onClick={onClose}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+
+        <div className="ref-preview-body">
+          {renderBodyContent()}
+        </div>
+
+        {onAddLineRange && (
+          <div className="ref-preview-lines-bar">
+            <span className="ref-preview-lines-bar__label">
+              截取行范围 <small>(共 {totalLines} 行)</small>
+            </span>
+            <div className="ref-preview-lines-bar__inputs">
+              <label>
+                <span>起始</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={totalLines}
+                  value={firstLine}
+                  onChange={(e) => setFirstLine(Number(e.target.value))}
+                />
+              </label>
+              <span className="ref-preview-lines-bar__sep">至</span>
+              <label>
+                <span>结束</span>
+                <input
+                  type="number"
+                  min={firstLine}
+                  max={totalLines}
+                  value={lastLine}
+                  onChange={(e) => setLastLine(Number(e.target.value))}
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              className="ref-preview-action-btn"
+              disabled={!Number.isSafeInteger(firstLine) || firstLine < 1 || !Number.isSafeInteger(lastLine) || lastLine < firstLine}
+              onClick={() => {
+                onAddLineRange(firstLine, lastLine);
+                onClose();
+              }}
+            >
+              引用选定行范围 ({lastLine - firstLine + 1} 行)
+            </button>
+          </div>
+        )}
+
+        <div className="ref-preview-footer">
+          <div className="ref-preview-footer__meta">
+            <span className="ref-preview-meta-pill">
+              {preview.reference.status === "content" ? "全文快照" : "位置引用"}
+            </span>
+            {preview.reference.size > 0 && (
+              <span className="ref-preview-meta-text">
+                大小：{formatFileSize(preview.reference.size)}
+              </span>
+            )}
+          </div>
+          <div className="ref-preview-footer__actions">
+            <button
+              type="button"
+              className="ref-preview-btn ref-preview-btn--secondary"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+            {onReuse && (
+              <button
+                type="button"
+                className="ref-preview-btn ref-preview-btn--primary"
+                onClick={() => {
+                  onReuse();
+                  onClose();
+                }}
+              >
+                添加到当前输入
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
 }
 
 function renderReferenceIcon(reference: InputReference) {
@@ -204,3 +564,50 @@ function InputThumbnail({ id, label }: { id: string; label: string }) {
   }, [id]);
   return <span ref={root} className="input-thumbnail">{source ? <img src={source} alt={label} /> : <ImageIcon />}</span>;
 }
+
+function kindLabel(kind: InputReference["kind"]): string {
+  switch (kind) {
+    case "file":
+      return "文件";
+    case "directory":
+      return "文件夹";
+    case "image":
+      return "图片";
+    case "skill":
+      return "Skill";
+    case "mcp":
+      return "MCP";
+    case "plugin":
+      return "Plugin";
+    case "history":
+      return "历史对话";
+    case "excerpt":
+      return "代码片段";
+    default:
+      return "引用";
+  }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <path d="m3.5 8.5 3 3 6-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
