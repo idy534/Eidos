@@ -9,7 +9,7 @@ import threading
 from eidos_runtime.domain.planning import (
     RequestUserInput, UserInputResponse, WritePlan, PlanningSuspended,
 )
-from eidos_runtime.persistence.planning import PlanningRepository
+from eidos_runtime.persistence.planning import PlanningRepository, PlanWriteRejected
 from eidos_runtime.runtime.errors import tool_result
 from eidos_runtime.tools.contracts import StrictToolModel, result_model
 from eidos_runtime.tools.registry import AdapterToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec
@@ -50,7 +50,7 @@ class PlanningToolRuntime(AdapterToolRuntime):
             saved = repository.for_item(str(item['id']))
             if saved is not None and saved.response is not None:
                 return HandlerOutcome(tool_result(call.name, 'success', 'user_input_received',
-                    'The user responded.', {'response': saved.response.to_wire_dict()}), 'completed', 'completed')
+                    'The user responded.', {'response': saved.response.to_wire_dict()}, data_model=InputResultData), 'completed', 'completed')
             if saved is None:
                 if context.concurrency.has_managed_shell:
                     raise ValueError('finish_running_shell_before_requesting_input')
@@ -58,21 +58,27 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 context.events.deliver_pending()
             raise PlanningSuspended()
         request = WritePlan.model_validate(call.arguments)
-        context.controller.authorize_workspace_side_effect(item=item, prepared=PreparedToolExecution(
-            approval_description={}, intent_preconditions={'planId': request.plan_id, 'expectedRevision': request.expected_revision},
-            transition_reason='plan_document_write',
-        ))
-        document = repository.write(run_id, request)
+        try:
+            repository.validate_write(run_id, request)
+            context.controller.authorize_workspace_side_effect(item=item, prepared=PreparedToolExecution(
+                approval_description={}, intent_preconditions={'planId': request.plan_id, 'expectedRevision': request.expected_revision},
+                transition_reason='plan_document_write',
+            ))
+            document = repository.write(run_id, request)
+        except PlanWriteRejected as error:
+            return HandlerOutcome(tool_result(call.name, 'error', str(error),
+                'Plan was not changed. For a new plan omit planId and expectedRevision; for an existing plan use its returned ID and current revision.',
+                data_model=PlanResultData), 'failed', 'failed')
         return HandlerOutcome(tool_result(call.name, 'success', 'plan_ready' if request.ready_for_review else 'plan_saved',
             'Plan saved. Wait for user confirmation before implementation.' if request.ready_for_review else 'Plan draft saved.',
-            {'planId': document.id, 'revision': document.revision, 'path': document.path, 'sha256': document.sha256}), 'completed', 'completed')
+            {'planId': document.id, 'revision': document.revision, 'path': document.path, 'sha256': document.sha256}, data_model=PlanResultData), 'completed', 'completed')
 
 
 def planning_entries() -> tuple[ToolRegistryEntry, ...]:
     entries = []
     for name, description, input_model, output_model in (
         ('request_user_input', 'Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.', RequestUserInput, InputResultData),
-        ('write_plan', 'Save a Markdown plan outside the project. Include the goal, findings, clarified decisions, implementation steps and verification. Supply planId and expectedRevision when revising. Set readyForReview to submit the complete plan and end this turn. This tool is only available in Plan mode.', WritePlan, PlanResultData),
+        ('write_plan', 'Save a Markdown plan outside the project. Include the goal, findings, clarified decisions, implementation steps and verification. For a new plan, omit planId and expectedRevision; Eidos generates the ID. When revising, supply the exact planId and current revision returned by write_plan as expectedRevision. Never invent an ID. Set readyForReview to submit the complete plan and end this turn. This tool is only available in Plan mode.', WritePlan, PlanResultData),
     ):
         spec = ToolSpec(name=name, description=description, sideEffect='eidos_state' if name == 'write_plan' else 'none', approvalRequired=False,
             timeoutSeconds=60, inputSchema=input_model.model_json_schema(by_alias=True),

@@ -159,3 +159,119 @@ def test_planning_input_and_tool_contracts_keep_questions_bounded() -> None:
     assert {entry.spec.name for entry in planning_entries()} == {"request_user_input", "write_plan"}
     with pytest.raises(ValueError):
         RequestUserInput(questions=[question, question, question, question])
+
+
+@pytest.fixture
+def planning_runtime(tmp_path):
+    from eidos_runtime.runtime.events import RuntimeEvents
+    from eidos_runtime.runtime.state_machine import RuntimePhaseTracker
+    from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
+    from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
+    from eidos_runtime.sandbox.permissions import BasePermissionProfile
+    from eidos_runtime.sandbox.sensitive import default_scanner
+    from eidos_runtime.tools.registry import ToolRegistry
+
+    store, session = _store(tmp_path)
+    run, _ = store.create_run(str(session['id']), 'plan', work_mode='plan')
+    store.increment_model_step(str(run['id']))
+    dispatcher = ToolDispatcher(ToolRegistry(planning_entries()))
+    runtime = ToolCallRuntime(store, dispatcher, None, RuntimeEvents(lambda _: None),
+        default_scanner(), RuntimePhaseTracker(), shell_available=False,
+        base_permissions=BasePermissionProfile.for_workspace(workspace_root=tmp_path / 'workspace'))
+    yield store, str(run['id']), runtime
+    store.close()
+
+
+def _execute_planning(fixture, name, arguments, item=None):
+    import threading
+    import uuid
+    from eidos_runtime.model.client import ModelToolCall, ModelResponse
+
+    store, run_id, runtime = fixture
+    call = ModelToolCall(item['toolCall']['providerCallId'] if item else str(uuid.uuid4()), name, arguments)
+    validation = runtime.dispatcher.validate(ModelResponse(tool_calls=(call,)))
+    assert validation.error_code is None
+    call = validation.tool_calls[0]
+    if item is None:
+        item = store.create_tool_item(run_id, 1, 0, call.provider_call_id, name, json.dumps(call.arguments))
+    outcome = runtime.controller.execute(run_id=run_id, item=item, call=call,
+        plan=runtime.dispatcher.plan(call), cancel=threading.Event(), deadline=None)
+    return outcome
+
+
+def test_answer_resumes_original_tool_and_persists_model_result(planning_runtime):
+    from eidos_runtime.domain.planning import PlanningSuspended
+
+    store, run_id, _ = planning_runtime
+    arguments = {'questions': [{'id': 'genre', 'question': 'What style?', 'type': 'text'}]}
+    with pytest.raises(PlanningSuspended):
+        _execute_planning(planning_runtime, 'request_user_input', arguments)
+    repository = PlanningRepository(store.database)
+    request = repository.unfinished(run_id)
+    assert request is not None
+    repository.answer(request.id, UserInputResponse(status='answered', answers=[
+        InputAnswer(question_id='genre', text='散文，约800字'),
+    ]))
+    assert store.claim_next_run()['id'] == run_id
+    outcome = _execute_planning(planning_runtime, 'request_user_input', arguments, store.read_item(request.item_id))
+    assert outcome.result['outcome'] == 'success'
+    persisted = store.connection.execute('SELECT result_json, model_result_json FROM tool_calls WHERE item_id=?', (request.item_id,)).fetchone()
+    for value in persisted:
+        assert '散文' in value or '散文' in json.dumps(json.loads(value), ensure_ascii=False)
+    assert not store.read_run(run_id).get('reconciliationRequired', False)
+
+
+def test_write_plan_success_crosses_controller_and_result_projection(planning_runtime):
+    store, run_id, _ = planning_runtime
+    outcome = _execute_planning(planning_runtime, 'write_plan', {'title': 'Sea', 'markdown': '# 海', 'readyForReview': True})
+    assert outcome.result['outcome'] == 'success'
+    document = PlanningRepository(store.database).read(outcome.result['data']['planId'])
+    assert Path(document.path).read_text() == '# 海'
+    assert not store.read_run(run_id).get('reconciliationRequired', False)
+    assert store.connection.execute('SELECT status FROM durable_intents WHERE run_id=?', (run_id,)).fetchone()[0] == 'completed'
+
+
+def test_unknown_plan_id_does_not_create_intent_or_block_retry(planning_runtime):
+    store, run_id, _ = planning_runtime
+    outcome = _execute_planning(planning_runtime, 'write_plan', {'planId': 'plan-sea-doc', 'title': 'Sea', 'markdown': '# 海'})
+    assert outcome.result['code'] == 'plan_not_found'
+    assert not outcome.result['reconciliationRequired']
+    assert store.connection.execute('SELECT COUNT(*) FROM durable_intents WHERE run_id=?', (run_id,)).fetchone()[0] == 0
+    assert not store.read_run(run_id).get('reconciliationRequired', False)
+    assert _execute_planning(planning_runtime, 'write_plan', {'title': 'Sea', 'markdown': '# 海'}).result['outcome'] == 'success'
+
+
+def test_plan_projection_failure_preserves_reconciliation(planning_runtime, monkeypatch):
+    def fail_projection(*_args):
+        raise OSError('disk unavailable')
+
+    monkeypatch.setattr(PlanningRepository, 'materialize', fail_projection)
+    store, run_id, _ = planning_runtime
+    outcome = _execute_planning(planning_runtime, 'write_plan', {'title': 'Sea', 'markdown': '# 海'})
+    assert outcome.result['reconciliationRequired'] is True
+    assert store.read_run(run_id)['reconciliationRequired'] is True
+    assert store.connection.execute('SELECT COUNT(*) FROM plans WHERE run_id=?', (run_id,)).fetchone()[0] == 1
+    assert store.connection.execute('SELECT status FROM durable_intents WHERE run_id=?', (run_id,)).fetchone()[0] == 'uncertain'
+
+
+def test_plan_precondition_rechecked_after_intent_is_known_failure(planning_runtime, monkeypatch):
+    from eidos_runtime.persistence.planning import PlanWriteRejected
+
+    original = PlanningRepository._prepare_write
+    checks = 0
+
+    def reject_second(self, *args):
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise PlanWriteRejected('plan_revision_conflict')
+        return original(self, *args)
+
+    monkeypatch.setattr(PlanningRepository, '_prepare_write', reject_second)
+    store, run_id, _ = planning_runtime
+    outcome = _execute_planning(planning_runtime, 'write_plan', {'title': 'Sea', 'markdown': '# 海'})
+    assert outcome.result['code'] == 'plan_revision_conflict'
+    assert not outcome.result['sideEffectsMayExist']
+    assert not store.read_run(run_id).get('reconciliationRequired', False)
+    assert store.connection.execute('SELECT COUNT(*) FROM plans WHERE run_id=?', (run_id,)).fetchone()[0] == 0
+    assert store.connection.execute('SELECT status FROM durable_intents WHERE run_id=?', (run_id,)).fetchone()[0] == 'completed'

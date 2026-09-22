@@ -18,6 +18,10 @@ from eidos_runtime.runtime.state_machine import EventType, RunStatus
 MAX_PLAN_BYTES = 256 * 1024
 
 
+class PlanWriteRejected(ValueError):
+    """A known precondition failure before any plan content is changed."""
+
+
 class PlanningRepository:
     def __init__(self, database: Database):
         self.database = database
@@ -83,26 +87,36 @@ class PlanningRepository:
             connection.execute("UPDATE plans SET status = 'accepted', execution_run_id = ?, updated_at = ? WHERE id = ?", (run_id, now_ms(), plan_id))
         connection.execute('UPDATE runs SET plan_id = ?, plan_revision = ? WHERE id = ?', (plan_id, plan_revision, run_id))
 
+    def validate_write(self, run_id: str, request: WritePlan) -> None:
+        with self.database.lock:
+            self._prepare_write(self.database.connection(), run_id, request)
+
+    def _prepare_write(self, connection: sqlite3.Connection, run_id: str, request: WritePlan) -> tuple[sqlite3.Row, str, sqlite3.Row | None]:
+        run = connection.execute('SELECT * FROM runs WHERE id = ?', (run_id,)).fetchone()
+        if run is None or run['work_mode'] != 'plan' or run['status'] != 'running' or run['cancel_requested_at'] is not None:
+            raise PlanWriteRejected('plan_run_required')
+        plan_id = request.plan_id or run['plan_id'] or str(uuid.uuid4())
+        old = connection.execute('SELECT * FROM plans WHERE id = ?', (plan_id,)).fetchone()
+        if old is not None:
+            if old['session_id'] != run['session_id']:
+                raise PlanWriteRejected('plan_not_found')
+            if old['revision'] != request.expected_revision:
+                raise PlanWriteRejected('plan_revision_conflict')
+            if old['status'] == 'accepted':
+                raise PlanWriteRejected('accepted_plan_is_immutable')
+        elif request.plan_id is not None or request.expected_revision is not None:
+            raise PlanWriteRejected('plan_not_found')
+        if old is not None:
+            current = self.file_text(self._plan(old))
+            if current is not None and current != old['markdown']:
+                raise PlanWriteRejected('plan_file_has_external_changes')
+        if not request.markdown.strip() or len(request.markdown.encode()) > MAX_PLAN_BYTES:
+            raise PlanWriteRejected('plan_size_invalid')
+        return run, plan_id, old
+
     def write(self, run_id: str, request: WritePlan) -> PlanDocument:
         with self.database.transaction() as connection:
-            run = connection.execute('SELECT * FROM runs WHERE id = ?', (run_id,)).fetchone()
-            if run is None or run['work_mode'] != 'plan' or run['status'] != 'running' or run['cancel_requested_at'] is not None:
-                raise ValueError('plan_run_required')
-            plan_id = request.plan_id or run['plan_id'] or str(uuid.uuid4())
-            old = connection.execute('SELECT * FROM plans WHERE id = ?', (plan_id,)).fetchone()
-            if old is not None:
-                if old['session_id'] != run['session_id']:
-                    raise ValueError('plan_not_found')
-                if old['revision'] != request.expected_revision:
-                    raise ValueError('plan_revision_conflict')
-                if old['status'] == 'accepted':
-                    raise ValueError('accepted_plan_is_immutable')
-            elif request.plan_id is not None or request.expected_revision is not None:
-                raise ValueError('plan_not_found')
-            if old is not None:
-                current = self.file_text(self._plan(old))
-                if current is not None and current != old['markdown']:
-                    raise ValueError('plan_file_has_external_changes')
+            run, plan_id, old = self._prepare_write(connection, run_id, request)
             revision = old['revision'] + 1 if old else 1
             self._save(connection, plan_id, run['session_id'], run_id, revision, request.title,
                        request.markdown, 'review' if request.ready_for_review else 'draft')

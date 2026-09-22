@@ -414,3 +414,5 @@ Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草
 - 澄清等待、答案、取消和安全恢复使用现有 SQLite、Event / Outbox 与 Run 调度流程。Plan 沿用现有权限模式。
 
 以上内容描述本次生产代码的接入范围。Runtime 全量测试、Integration 测试、协议契约、类型构建、Python 检查、Seatbelt 和 Electron smoke 已通过。Renderer 行为全量仍有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成，所以当前不能把这些代码视为完整验收通过的能力。
+
+Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Repository 和结果投影的回归用例。用例覆盖澄清答案恢复、计划成功保存、错误 ID 后修正重试、Intent 后版本冲突，以及内容提交后文件投影失败的对账保护。这些用例不调用真实 Provider，也不操作用户数据目录。

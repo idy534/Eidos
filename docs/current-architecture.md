@@ -660,3 +660,9 @@ Schema v15 增加 Run 模式与计划版本引用、`plans`、`plan_revisions` �
 `write_plan.readyForReview=true` 保存完整计划并结束当前 Run。用户通过 `plan/edit` 修改正文，或通过新的 Plan Run 提交修改意见。界面确认时提交 `planId + planRevision`。Runtime 在创建普通 Run 的事务中核验所属 Session、当前版本和待确认状态，记录确认并绑定执行 Run。已确认的版本不可修改，执行 Context 从对应的不可变版本读取正文。Main 只根据 Runtime 返回的计划路径打开文件。
 
 本次工作已经补充 Runtime 和 Renderer 的 Plan 定向测试。`pnpm test:runtime:full` 通过 1947 个测试，另有 2 个 `large_repository` 测试按配置跳过。`pnpm test:integration` 通过 761 个测试，另有 1188 个测试按标记排除。构建、协议契约、Renderer 状态、Main 全量、Python 检查、Seatbelt 和 Electron smoke 也已通过。Renderer 行为全量有 321 个测试通过，另有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成。
+
+### Plan 工具结果与写入失败边界
+
+`request_user_input` 和 `write_plan` 构造结果时显式传入各自的结果模型。公共 `tool_result` 将该模型交给既有 canonical 校验，不放宽通用 DTO，也不维护另一份工具名映射。
+
+计划写入先校验 Run、计划所属 Session、版本、确认状态、外部文件修改及正文大小，再提交 Durable Intent。Repository 在事务内重复核验。已知发生在内容写入前的 `PlanWriteRejected` 返回普通工具错误；该错误不留下不确定副作用。提交计划或投影文件之后的异常仍由原有对账流程处理。Schema 明确要求新计划省略 ID 和版本，修改时使用工具返回的值。

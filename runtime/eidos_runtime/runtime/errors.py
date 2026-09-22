@@ -24,6 +24,7 @@ def tool_result(
     summary: str,
     data: dict[str, object] | None = None,
     *,
+    data_model: type[BaseModel] | None = None,
     side_effects_may_exist: bool = False,
     reconciliation_required: bool = False,
 ) -> dict[str, object]:
@@ -34,7 +35,7 @@ def tool_result(
         "data": data or {},
         "sideEffectsMayExist": side_effects_may_exist,
         "reconciliationRequired": reconciliation_required,
-    })
+    }, data_model=data_model)
 
 
 def bounded_tool_result(

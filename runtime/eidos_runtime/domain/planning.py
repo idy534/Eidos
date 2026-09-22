@@ -81,8 +81,8 @@ class PlanDocument(EidosFrozenStrictModel):
 
 
 class WritePlan(EidosFrozenStrictModel):
-    plan_id: str | None = None
-    expected_revision: int | None = Field(default=None, ge=1)
+    plan_id: str | None = Field(default=None, description="Omit for a new plan. For revisions, use the exact ID returned by write_plan; never invent an ID.")
+    expected_revision: int | None = Field(default=None, ge=1, description="Omit for a new plan. For revisions, use the current revision returned by write_plan.")
     title: str = Field(min_length=1, max_length=200)
     markdown: str = Field(min_length=1, max_length=65536)
     ready_for_review: bool = False
