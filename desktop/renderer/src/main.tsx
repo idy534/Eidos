@@ -7,6 +7,7 @@ import "./styles.css";
 import "./components/response-actions.css";
 import "./components/TurnResults.css";
 import "./components/settings/SkillSettings.css";
+import "./components/planning.css";
 
 
 createRoot(document.getElementById("root")!).render(

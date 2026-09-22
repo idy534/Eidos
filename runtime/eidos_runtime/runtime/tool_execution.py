@@ -101,6 +101,20 @@ def _invalid_arguments_summary(
     if validation.actual is not None:
         details.append(f"actual={validation.actual}")
     summary = "Invalid tool arguments: " + ", ".join(details or ["invalid_arguments"])
+    if len(validation.issues) > 1:
+        summary += "; " + "; ".join(
+            f"field={issue.path}, reason={issue.reason_code}"
+            for issue in validation.issues[1:]
+        )
+    if tool_name == "request_user_input":
+        summary += (
+            ' No question was submitted. Use {"questions":[{"id":"constraints",'
+            '"question":"Any constraints?","type":"text"}]}. '
+            'Keep question fields inside questions[] and option labels inside options[]. '
+            'For text, omit options and recommendedOptionId; for choices, use '
+            'single_select or multi_select with 2–6 options. '
+            'Correct the arguments and resubmit; do not infer a user answer.'
+        )
     if tool_name == "apply_patch":
         summary += (
             ' No files were changed by this call. Expected {"patch":"*** Begin Patch\\n'
@@ -222,6 +236,7 @@ class HandlerOutcome:
     diff_hash: str | None = None
     item: dict[str, object] | None = None
     progress_fingerprint: str | None = None
+    argument_validation: ToolArgumentValidationResult | None = None
     reconciliation_disposition: ReconciliationDisposition = (
         ReconciliationDisposition.CONTINUE
     )
@@ -528,6 +543,7 @@ class ToolExecutionController:
                             _invalid_arguments_summary(validation, call.name),
                         ),
                         "completed",
+                        argument_validation=validation,
                     )
                 else:
                     outcome = HandlerOutcome(

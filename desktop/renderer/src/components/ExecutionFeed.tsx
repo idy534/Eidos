@@ -964,11 +964,13 @@ function PlanResponseItem({
 
   if (item.status === "in_progress") {
     return (
-      <div className="tool-item tool-item--plan-running">
-        <span className="tool-icon tool-icon--plan" aria-hidden="true">
-          <LightbulbIcon />
-        </span>
-        <span>正在制定计划…</span>
+      <div className="feed-item feed-item--assistant feed-item--plan">
+        <div className="tool-item tool-item--plan-running">
+          <span className="tool-icon tool-icon--plan" aria-hidden="true">
+            <LightbulbIcon />
+          </span>
+          <span>正在制定计划…</span>
+        </div>
       </div>
     );
   }
@@ -978,23 +980,25 @@ function PlanResponseItem({
   }
 
   return (
-    <div
-      className="tool-item tool-item--plan-card"
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpenPlan?.()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpenPlan?.();
-        }
-      }}
-    >
-      <span className="tool-icon tool-icon--plan" aria-hidden="true">
-        <LightbulbIcon />
-      </span>
-      <span className="tool-plan-title">{planTitle}</span>
-      <span className="tool-plan-action">查看计划 →</span>
+    <div className="feed-item feed-item--assistant feed-item--plan">
+      <div
+        className="tool-item tool-item--plan-card"
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpenPlan?.()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenPlan?.();
+          }
+        }}
+      >
+        <span className="tool-icon tool-icon--plan" aria-hidden="true">
+          <LightbulbIcon />
+        </span>
+        <span className="tool-plan-title">{planTitle}</span>
+        <span className="tool-plan-action">查看计划 →</span>
+      </div>
     </div>
   );
 }
@@ -1009,7 +1013,9 @@ function ToolItem({ item, toolCall, onOpenFile }: {
     if (item.status !== "in_progress") setOpen(false);
   }, [item.status]);
 
-  if (toolCall.toolName === "request_user_input") {
+  const toolResult = parseObject(toolCall.resultJson);
+  if (toolCall.toolName === "request_user_input"
+    && (item.status === "in_progress" || (item.status === "completed" && toolResult.outcome === "success"))) {
     const args = parseObject(toolCall.argumentsJson);
     const questions = Array.isArray(args.questions)
       ? (args.questions as Array<{ id: string; question: string; options?: Array<{ id: string; label: string }> }>)
@@ -1065,7 +1071,7 @@ function ToolItem({ item, toolCall, onOpenFile }: {
               ? "已跳过"
               : answerParts.length > 0
                 ? answerParts.join("；")
-                : "已跳过";
+                : "未收到回答";
 
             return (
               <div key={q.id} className="tool-user-input-entry">
@@ -1474,10 +1480,19 @@ function pathBasename(p: string): string {
 
 function QuestionCircleIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="8" cy="8" r="6.5" />
-      <path d="M6.5 6.2a1.8 1.8 0 0 1 3.2 1c0 1-.8 1.4-1.3 1.8-.3.3-.4.6-.4 1" />
-      <circle cx="8" cy="12.2" r="0.6" fill="currentColor" />
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+      <path
+        d="M14.3726 8.00049C14.3726 4.48132 11.5196 1.6285 8.00049 1.62842C4.48127 1.62842 1.62842 4.48127 1.62842 8.00049C1.6285 11.5196 4.48132 14.3726 8.00049 14.3726C11.5196 14.3725 14.3725 11.5196 14.3726 8.00049ZM15.772 8.00049C15.7719 12.2928 12.2928 15.7719 8.00049 15.772C3.70812 15.772 0.22811 12.2928 0.228027 8.00049C0.228027 3.70807 3.70807 0.228027 8.00049 0.228027C12.2928 0.22811 15.772 3.70812 15.772 8.00049Z"
+        fill="currentColor"
+      />
+      <path
+        d="M7.06369 9.92245C7.06369 9.24781 7.23342 8.39641 7.91037 7.82675C8.32682 7.47633 8.87011 7.16969 9.14572 6.98105C9.47422 6.7562 9.62589 6.58962 9.69553 6.38828C9.80348 6.07588 9.7503 5.72497 9.54221 5.44882C9.34217 5.18345 8.95897 4.94003 8.32248 4.94003C6.85369 4.94006 6.25143 5.84986 6.25119 6.61679H4.8508C4.85104 5.02826 6.1298 3.53968 8.32248 3.53964C9.34633 3.53964 10.1659 3.95013 10.6604 4.60605C11.1465 5.25107 11.2796 6.08921 11.0178 6.84628C10.7986 7.47967 10.34 7.86026 9.93674 8.13632C9.48042 8.44865 9.1697 8.59682 8.81174 8.89804C8.59398 9.08128 8.46408 9.42776 8.46408 9.92245V10.0064H7.06369V9.92245Z"
+        fill="currentColor"
+      />
+      <path
+        d="M8.45126 10.7892V12.3556H7.05087V10.7892H8.45126Z"
+        fill="currentColor"
+      />
     </svg>
   );
 }

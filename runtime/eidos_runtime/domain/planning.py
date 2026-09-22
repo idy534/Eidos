@@ -16,9 +16,9 @@ class InputOption(EidosFrozenStrictModel):
 class InputQuestion(EidosFrozenStrictModel):
     id: str = Field(min_length=1, max_length=80)
     question: str = Field(min_length=1, max_length=1000)
-    type: Literal['single_select', 'multi_select', 'text'] = 'single_select'
-    options: list[InputOption] = Field(default_factory=list, max_length=6)
-    recommended_option_id: str | None = None
+    type: Literal['single_select', 'multi_select', 'text'] = Field(default='single_select', description='Use single_select or multi_select for choices with 2–6 options. Use text for a free-text question, with no options or recommendedOptionId.')
+    options: list[InputOption] = Field(default_factory=list, max_length=6, description='Each choice has a unique id and a label. Required with 2–6 entries for choice questions; omit for text. The UI provides custom input; do not add an Other/custom option.')
+    recommended_option_id: str | None = Field(default=None, description='Optional existing option id, not its label. Omit for text questions.')
 
     @model_validator(mode='after')
     def validate_options(self):
@@ -35,7 +35,13 @@ class InputQuestion(EidosFrozenStrictModel):
 
 
 class RequestUserInput(EidosFrozenStrictModel):
-    questions: list[InputQuestion] = Field(min_length=1, max_length=3)
+    questions: list[InputQuestion] = Field(min_length=1, max_length=3, description=(
+        'Put every question inside this array; the only top-level field is questions. '
+        'Every question needs a unique id and question text. Example: '
+        '{"questions":[{"id":"tone","question":"Which tone?","type":"single_select",'
+        '"options":[{"id":"formal","label":"Formal"},{"id":"casual","label":"Casual"}],'
+        '"recommendedOptionId":"formal"},{"id":"constraints","question":"Any constraints?","type":"text"}]}'
+    ))
 
     @model_validator(mode='after')
     def unique_questions(self):

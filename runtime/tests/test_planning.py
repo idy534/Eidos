@@ -275,3 +275,55 @@ def test_plan_precondition_rechecked_after_intent_is_known_failure(planning_runt
     assert not store.read_run(run_id).get('reconciliationRequired', False)
     assert store.connection.execute('SELECT COUNT(*) FROM plans WHERE run_id=?', (run_id,)).fetchone()[0] == 0
     assert store.connection.execute('SELECT status FROM durable_intents WHERE run_id=?', (run_id,)).fetchone()[0] == 'completed'
+
+
+def test_clarification_schema_example_is_valid_and_explains_question_types():
+    entry = next(entry for entry in planning_entries() if entry.spec.name == 'request_user_input')
+    schema = entry.spec.input_schema
+    example = schema['properties']['questions']['description'].split('Example: ', 1)[1]
+    assert entry.validate_arguments(json.loads(example)).valid
+    question = schema['$defs']['InputQuestion']['properties']
+    assert '2–6' in question['type']['description']
+    assert 'omit for text' in question['options']['description']
+    assert entry.spec.description == 'Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.'
+
+
+def test_invalid_clarifications_have_actionable_feedback_and_distinct_error_identity(planning_runtime):
+    from eidos_runtime.runtime.tool_runtime import _result_fingerprint
+
+    store, run_id, _ = planning_runtime
+    malformed = {'item': {}, 'questions': [{'id': 'tone', 'options': [{'id': 'a'}]}]}
+    wrong_type = {'questions': [{'id': 'constraints', 'question': 'Constraints?', 'type': 'text',
+                                'options': [{'id': 'a', 'label': 'A'}, {'id': 'b', 'label': 'B'}]}]}
+    first = _execute_planning(planning_runtime, 'request_user_input', malformed)
+    second = _execute_planning(planning_runtime, 'request_user_input', wrong_type)
+    assert first.result['code'] == second.result['code'] == 'invalid_arguments'
+    assert 'questions[0].question' in first.result['summary']
+    assert 'questions[0].options[0].label' in first.result['summary']
+    assert 'For text, omit options and recommendedOptionId' in second.result['summary']
+    assert second.argument_validation is not None
+    first_hash = _result_fingerprint('request_user_input', first.result, first.argument_validation)
+    second_hash = _result_fingerprint('request_user_input', second.result, second.argument_validation)
+    assert first_hash != second_hash
+    from eidos_runtime.runtime.loop_guard import LoopGuard
+    guard = LoopGuard()
+    decisions = [guard.observe_progress(guard.make_signature(
+        workspace_version=0, diff_hash=None, successful_tool_result_hashes=(),
+        context_fact_ids=(), error_fingerprints=(fingerprint,), reconciliation_epoch=0,
+    )) for fingerprint in (first_hash, second_hash, second_hash)]
+    assert decisions == [None, None, 'recover_no_progress']
+    wrong_type['questions'][0]['question'] = 'Different wording?'
+    repeated = _execute_planning(planning_runtime, 'request_user_input', wrong_type)
+    assert _result_fingerprint('request_user_input', repeated.result, repeated.argument_validation) == second_hash
+    assert store.connection.execute('SELECT COUNT(*) FROM user_input_requests WHERE run_id=?', (run_id,)).fetchone()[0] == 0
+    assert store.connection.execute('SELECT COUNT(*) FROM durable_intents WHERE run_id=?', (run_id,)).fetchone()[0] == 0
+    persisted = store.connection.execute('SELECT model_result_json FROM tool_calls ORDER BY creation_seq DESC LIMIT 1').fetchone()[0]
+    assert 'No question was submitted' in json.loads(persisted)['summary']
+
+
+def test_argument_diagnostics_are_bounded_and_do_not_echo_values():
+    entry = next(entry for entry in planning_entries() if entry.spec.name == 'request_user_input')
+    validation = entry.validate_arguments({**{f'extra{i}': 'private value' for i in range(20)}, 'questions': []})
+    assert not validation.valid
+    assert len(validation.issues) == 8
+    assert 'private value' not in validation.model_dump_json()

@@ -18,14 +18,22 @@ export type Runid1 = string;
 export type Itemid = string;
 export type Id2 = string;
 export type Question = string;
+/**
+ * Use single_select or multi_select for choices with 2–6 options. Use text for a free-text question, with no options or recommendedOptionId.
+ */
 export type Type = "single_select" | "multi_select" | "text";
 export type Id3 = string;
 export type Label = string;
 export type Description = string;
 /**
+ * Each choice has a unique id and a label. Required with 2–6 entries for choice questions; omit for text. The UI provides custom input; do not add an Other/custom option.
+ *
  * @maxItems 6
  */
 export type Options = InputOption[];
+/**
+ * Optional existing option id, not its label. Omit for text questions.
+ */
 export type Recommendedoptionid = string | null;
 export type Questions1 = InputQuestion[];
 export type Status1 = "pending" | "answered" | "skipped" | "canceled";

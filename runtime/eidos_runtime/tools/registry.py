@@ -278,8 +278,14 @@ class EidosStateToolRuntime(AdapterToolRuntime):
         )
 
 
+class ToolArgumentIssue(ClosedModel):
+    path: StrictStr | None = None
+    reason_code: StrictStr | None = None
+
+
 class ToolArgumentValidationResult(ClosedModel):
     valid: bool
+    issues: tuple[ToolArgumentIssue, ...] = Field(default=(), max_length=8)
     normalized_arguments: dict[str, object] | None = None
     normalized_input: str | None = None
     code: StrictStr | None = None
@@ -416,12 +422,16 @@ class ToolRegistryEntry:
             else:
                 raise ValueError("missing_argument_contract")
         except ValidationError as error:
-            details = error.errors(include_url=False)
+            details = error.errors(include_url=False, include_input=False)
             detail = details[0] if details else {}
             maximum, minimum, actual = _validation_limits(detail)
             return ToolArgumentValidationResult(
                 valid=False,
                 code="TOOL_ARGUMENT_CONTRACT_VIOLATION",
+                issues=tuple(ToolArgumentIssue(
+                    path=_validation_path(issue.get("loc")),
+                    reason_code=_validation_error_reason(issue),
+                ) for issue in details[:8]),
                 path=_validation_path(detail.get("loc")),
                 reason_code=_validation_error_reason(detail),
                 maximum=maximum,

@@ -492,6 +492,20 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     };
   }
 
+  it.each(["completed", "failed", "canceled"] as const)("shows clarification errors with %s item status without inventing a skipped answer", (status) => {
+    const item = toolCallItem("request_user_input", {status}, {
+      status: status === "completed" ? "completed" : status,
+      argumentsJson: JSON.stringify({questions: [{id: "q", question: "Constraints?", type: "text"}]}),
+      resultJson: JSON.stringify({outcome: "error", code: "invalid_arguments", summary: "No question was submitted"}),
+    });
+    render(<ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]}
+      respondingApprovalIds={new Set()} respondingKindByApprovalId={{}}
+      onApprove={() => {}} onReject={() => {}} />);
+    expect(screen.queryByText(/已询问/)).toBeNull();
+    expect(screen.queryByText("已跳过")).toBeNull();
+    expect(screen.getByText("No question was submitted")).toBeInTheDocument();
+  });
+
   it("renders active request_user_input in progress with question count and waiting prompt", () => {
     const item = toolCallItem(
       "request_user_input",
@@ -696,9 +710,12 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     // Process group should NOT contain write_plan
     expect(processGroup?.querySelector(".tool-item--plan-card")).toBeNull();
 
-    // write_plan should be in the response area outside process group
+    // write_plan should be in the response area outside process group, aligned with assistant feed items
+    const planWrapper = container.querySelector(".feed-item--assistant.feed-item--plan");
+    expect(planWrapper).not.toBeNull();
     const planCard = container.querySelector(".tool-item--plan-card");
     expect(planCard).not.toBeNull();
+    expect(planWrapper?.contains(planCard!)).toBe(true);
     expect(planCard?.textContent).toContain("从结果中读取的计划标题");
   });
 });
