@@ -421,11 +421,11 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 澄清工具的 Schema 提供题型规则与完整参数示例。参数校验失败时，模型会收到有界的多项诊断与修正提示；界面显示工具错误，不把失败当作用户跳过。不同校验原因可以被循环检测区分，相同错误重复发生时仍保留原有恢复与停止机制。
 
-## 只读多 Agent（生产代码待验证）
+## 只读多 Agent（已完成代码与自动化定向测试）
 
 - 父任务可以创建只读子任务、发送消息、继续已结束的子任务、等待和停止子任务。
 - Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
 - 每个父 Run 最多有 16 个子 Session，其中最多 2 个子 Run 同时执行。Runtime 的工具允许列表禁止子任务写文件、执行 Shell、使用 MCP、扩权和继续派生。
 - 父任务等待使用持久 `waiting_agents` 状态。Worker 会退出，运行资源会释放。满足条件后，Runtime 继续同一等待调用。
 - Desktop 展示只读子任务面板。用户可以查看状态、摘要、分页记录，并停止单个子任务。父任务取消会同时发起子任务取消。
-- 本阶段没有新增依赖。生产 DTO 已从 Python Schema 生成。本阶段没有编写或执行测试，也没有执行构建或启动验收。上述能力描述的是代码路径，不代表已通过验收。
+- 本阶段没有新增依赖。生产 DTO 已从 Python Schema 生成。协作相关 Runtime 定向测试 28/28、Renderer 状态测试 129/129、Renderer 行为测试 356/356 通过。本次 Runtime 全量运行观察到 85 个失败，Seatbelt native 与 Electron smoke 受当前环境限制。上述结果不代表已经通过完整发布验收。

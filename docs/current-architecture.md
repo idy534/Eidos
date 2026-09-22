@@ -675,7 +675,7 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 
 `request_user_input` 的字段说明提供完整嵌套示例、题型约束和自定义输入说明，工具名称与原始描述保持不变。Pydantic 校验最多保留八项字段路径与错误原因，不回传参数值；参数错误反馈说明问题尚未提交，并给出修正方式。Runtime 的参数错误指纹区分首项字段路径和原因，不包含参数值、错误文案或问题措辞。连续相同校验错误仍受原有 LoopGuard 限制。失败或取消的澄清调用沿用普通工具结果展示，只有成功的回答结果进入澄清历史。
 
-## 只读子任务委派（Schema v16，生产代码待验证）
+## 只读子任务委派（Schema v16，已完成代码与自动化定向测试）
 
 本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文、父 Run 的模型快照和 `manual` 权限模式。子任务不继承父任务的全部对话、扩权 Grant、Plugin 或 MCP 快照。
 
@@ -691,4 +691,4 @@ SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当�
 
 Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。任务页面展示状态、摘要、停止按钮和分页记录。
 
-v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。本次没有启动应用，也没有迁移用户数据库。用户要求先完成生产代码和文档，因此迁移、恢复、取消竞争、协议和 UI 尚未进入测试验收阶段。
+v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。本阶段已补充迁移回滚、重复创建、并发名额、子任务工具隔离、等待超时、父任务取消、父会话删除、协议边界和 Desktop 停止操作测试。协作相关定向 Runtime 测试 28/28 通过，Renderer 状态测试 129/129 通过，Renderer 行为测试 356/356 通过。本次 Runtime 全量运行观察到 85 个失败，失败集中在本轮之外的 apply_patch、Shell、Workspace 和 Reconciliation 路径。Seatbelt native 和 Electron smoke 也受当前环境限制，不能据此宣称本功能已经通过完整发布验收。

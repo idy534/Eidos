@@ -18,9 +18,12 @@ function AgentDetails({ agent }: { agent: AgentSummary }) {
   const load = async (older = false) => {
     setLoading(true);
     try {
-      const value = await window.eidosRuntime.readSession(agent.sessionId, {
-        itemLimit: 50, beforeItemId: older ? snapshot?.previousItemId : undefined,
-      });
+      const value = await window.eidosRuntime.readSession(
+        agent.sessionId,
+        older && snapshot?.previousItemId
+          ? { itemLimit: 50, beforeItemId: snapshot.previousItemId }
+          : { itemLimit: 50 },
+      );
       setSnapshot((previous) => older && previous ? { ...value, items: [...value.items, ...previous.items] } : value);
       setError("");
     } catch (cause) { setError(userFacingError(cause)); }
@@ -46,7 +49,7 @@ export function AgentPanel({ sessionId, ready }: { sessionId: string; ready: boo
   useEffect(() => {
     setState(undefined);
     setError("");
-    if (!ready) return;
+    if (!ready || typeof window.eidosRuntime?.readAgents !== "function") return;
     let disposed = false;
     let generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;

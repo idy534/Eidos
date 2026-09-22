@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from eidos_runtime.domain.planning import PlanningSuspended
 from eidos_runtime.domain.collaboration import AgentSuspended, WaitAgents
-from eidos_runtime.application.collaboration import CollaborationApplication
 from eidos_runtime.persistence.planning import PlanningRepository
 
 import logging
@@ -98,6 +97,7 @@ EMPTY_EXTENSION_SNAPSHOT = {
 logger = logging.getLogger("eidos.runtime")
 
 if TYPE_CHECKING:
+    from eidos_runtime.application.collaboration import CollaborationApplication
     from eidos_runtime.application.context import ContextApplication
 
 

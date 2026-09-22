@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from eidos_runtime.application.collaboration import CollaborationApplication
 from eidos_runtime.domain.collaboration import ACTIVE_STATUSES
 
 from dataclasses import dataclass
@@ -163,6 +162,8 @@ class RunSupervisor:
         self._async_kernel_frozen = False
         self.repository_runtime = repository_runtime
         self._runtime_dependency_catalog = runtime_dependency_catalog
+        from eidos_runtime.application.collaboration import CollaborationApplication
+
         self.collaboration = CollaborationApplication(store, self.schedule_next, self.cancel_agent, self.events.deliver_pending)
         self._agent_maintenance: RuntimeAsyncTask[None] | None = None
 
@@ -178,8 +179,6 @@ class RunSupervisor:
             if self._async_kernel is not None and self._async_kernel is not kernel:
                 raise RuntimeError("runtime async kernel is already bound")
             self._async_kernel = kernel
-        if self._agent_maintenance is None:
-            self._agent_maintenance = kernel.start_task(self._maintain_agents, owner_id="collaboration")
 
     @property
     def async_kernel(self) -> RuntimeAsyncKernel | None:
@@ -235,6 +234,7 @@ class RunSupervisor:
 
     def schedule_next(self) -> None:
         if self.store.health_state == "ready" and self.lifecycle is RuntimeLifecycle.RUNNING:
+            self._ensure_agent_maintenance()
             self.collaboration.repository.wake()
         while True:
             start = self.prepare_next()
@@ -245,13 +245,34 @@ class RunSupervisor:
     async def _maintain_agents(self) -> None:
         # One kernel-owned timer restores persisted deadlines after restart.
         # Polling wakes the scheduler, never the model, and creates no thread.
-        while self.lifecycle is RuntimeLifecycle.RUNNING:
-            await anyio.sleep(0.5)
-            if self.store.health_state == "ready":
-                try:
-                    await anyio.to_thread.run_sync(self._settle_agents)
-                except Exception:
-                    logger.exception("Agent scheduling failed; durable state retained")
+        try:
+            while self.lifecycle is RuntimeLifecycle.RUNNING:
+                await anyio.sleep(0.5)
+                if self.store.health_state == "ready":
+                    try:
+                        await anyio.to_thread.run_sync(self._settle_agents)
+                    except Exception:
+                        logger.exception("Agent scheduling failed; durable state retained")
+                    if not self.collaboration.repository.has_pending_waits():
+                        return
+        finally:
+            with self.lock:
+                self._agent_maintenance = None
+
+    def _ensure_agent_maintenance(self) -> None:
+        if not self.collaboration.repository.has_pending_waits():
+            return
+        with self.lock:
+            if (
+                self._agent_maintenance is not None
+                or self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+                or self._async_kernel is None
+            ):
+                return
+            self._agent_maintenance = self._async_kernel.start_task(
+                self._maintain_agents, owner_id="collaboration"
+            )
 
     def _settle_agents(self) -> None:
         if self.lifecycle is not RuntimeLifecycle.RUNNING:
@@ -574,12 +595,17 @@ class RunSupervisor:
         with self.lock:
             active_ids = tuple(self._handles)
             tasks = tuple(self._managed_tasks.values())
+            maintenance = self._agent_maintenance
+            if maintenance is not None:
+                maintenance.cancel()
             for task in tasks:
                 task.cancellation.set()
         hit_fault("shutdown_tool_completion_race")
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
         self.wait_managed_tasks(self.shutdown_timeout)
+        if maintenance is not None:
+            maintenance.wait(self.shutdown_timeout)
         registered = tuple(
             resource
             for resource in self.resources.active_resources()

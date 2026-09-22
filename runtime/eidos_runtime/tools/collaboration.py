@@ -3,9 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
-from eidos_runtime.application.collaboration import CollaborationApplication
 from eidos_runtime.domain.collaboration import (
     AgentMessageRequest, AgentSummary, AgentTarget, CollaborationRejected,
     CollaborationState, SpawnAgent, WaitAgents,
@@ -15,6 +14,7 @@ from eidos_runtime.tools.contracts import StrictToolModel, result_model
 from eidos_runtime.tools.registry import AdapterToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec
 
 if TYPE_CHECKING:
+    from eidos_runtime.application.collaboration import CollaborationApplication
     from eidos_runtime.model.client import ModelToolCall
     from eidos_runtime.runtime.tool_execution import HandlerOutcome
     from eidos_runtime.runtime.tool_runtime import ToolCallRuntime
@@ -25,6 +25,7 @@ class EmptyAgentRequest(StrictToolModel):
 
 
 class AgentResultData(StrictToolModel):
+    SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = ()
     agent: AgentSummary | None = None
     state: CollaborationState | None = None
 

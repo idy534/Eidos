@@ -5,6 +5,7 @@ from eidos_runtime.extensions.skills import SelectedSkillSet
 
 import hashlib
 import re
+from typing import TYPE_CHECKING
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.mcp import McpManager
@@ -38,7 +39,6 @@ from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
 from eidos_runtime.tools.planning import planning_entries
 from eidos_runtime.tools.collaboration import collaboration_entries
-from eidos_runtime.application.collaboration import CollaborationApplication
 from eidos_runtime.domain.collaboration import READ_ONLY_TOOLS
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
@@ -46,6 +46,9 @@ from eidos_runtime.tools.declare_outputs import declare_outputs_entry
 from eidos_runtime.tools.search import tool_search_entry
 from eidos_runtime.tools.runtime_workspace import ToolExecutor
 from eidos_runtime.tools.view_image import ViewImageRootAuthority, view_image_entry
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.collaboration import CollaborationApplication
 
 
 class RunResourceError(RuntimeError):

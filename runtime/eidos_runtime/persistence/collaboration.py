@@ -163,6 +163,12 @@ class CollaborationRepository:
             row = self.database.connection().execute('SELECT * FROM agent_waits WHERE run_id=?', (run_id,)).fetchone()
             return AgentWait(run_id=row['run_id'], item_id=row['item_id'], agent_ids=json.loads(row['agent_ids_json']), deadline_at=row['deadline_at'], status=row['status']) if row else None
 
+    def has_pending_waits(self) -> bool:
+        with self.database.lock:
+            return self.database.connection().execute(
+                "SELECT 1 FROM agent_waits WHERE status='pending' LIMIT 1"
+            ).fetchone() is not None
+
     def wait(self, run_id: str, item_id: str | None, request: WaitAgents) -> bool:
         with self.database.transaction() as connection:
             self._active(connection, run_id)
