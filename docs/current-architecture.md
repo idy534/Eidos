@@ -642,3 +642,21 @@ Schema v14 在 `items` 增加 `input_references_json`，并增加 `input_referen
 Context Builder 从用户消息关联的持久引用读取内容，并标记来源、SHA256 和资料边界。图片通过现有 Pydantic AI `BinaryContent` 进入支持图片的 Provider。Context 预算排除 base64 字符串的文本计数，并加入按尺寸估算的图片开销。压缩事实保留引用来源和 ID。Skill 使用现有 Catalog、Activation、Resource 流程；MCP 和 Plugin 选择激活现有 deferred tools，不安装扩展、不绕过授权，也不在运行中替换快照。
 
 Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `desktop/shared/input-context.generated.ts`。生成器使用现有 Python 环境和已锁定的 `json-schema-to-typescript`，没有引入生产依赖。Main 与 RuntimeClient 继续执行边界校验。
+
+## Plan 模式（生产代码已接入，Plan 自动化验证已完成）
+
+用户通过 Composer 的模式选择或输入开头的 `/plan` 显式选择 Plan。`run/start.workMode` 默认为 `execute`。Runtime 把模式保存在 Run 上。模型不能改变模式。Plan 与 `manual`、`auto_review`、`full_access` 权限模式独立；原有工具与权限流程继续生效。
+
+调用链为 `Composer / PlanningPanel → typed preload IPC → Main RuntimeClient → Method Registry → PlanningApplication / RunApplication → PlanningRepository / RunSupervisor → ToolExecutionController`。Python Pydantic 是新增 DTO 的定义来源。`scripts/generate-planning-contracts.mjs` 生成 Desktop 类型，`desktop/shared/planning.ts` 校验跨进程数据。
+
+Plan Run 的工具注册表额外注入 `request_user_input` 和 `write_plan`。普通 Run 不注入这两个工具。Runtime 在执行入口再次检查 Plan 模式。`request_user_input` 每次接收一到三个问题，支持单选、多选和文字回答；用户可以填写自定义回答或明确跳过。两个控制工具必须单独调用。Plan 的正常完成必须先通过 `write_plan` 提交可审阅的计划。
+
+澄清请求、问题、答案和 ToolCall 关联保存在 SQLite。请求创建与 Run 转为 `waiting_input` 在同一事务中提交，并写入 Event / Outbox。引擎退出当前 worker 并释放资源，不用线程等待用户回答。回答通过 `planning/answer` 校验后保存，Run 转回 `queued`。调度器排除尚未完成收尾的 worker，恢复同一个 ToolCall，再继续模型循环。重复提交相同答案保持幂等。取消会同时关闭待回答问题；启动恢复只保留没有未确定副作用的澄清等待。
+
+Schema v15 增加 Run 模式与计划版本引用、`plans`、`plan_revisions` 和 `user_input_requests`。v14 升级通过 SQLite 表重建扩展 Run 的状态 CHECK，并保留索引与外键检查。数据库是计划内容、版本和确认状态的唯一事实来源。
+
+计划文件位于 `<EIDOS_DATA_DIR>/plans/<session-id>/<plan-id>/plan.md`，默认根目录为 `~/.eidos`。Runtime 用专用工具保存文件，不扩权开放整个数据目录。`write_plan` 经过已有 Durable Intent、结果校验与结果提交流程。文件是数据库内容的可恢复投影。Runtime 记录投影 Hash，并拒绝静默覆盖外部修改。用户可以在界面编辑、打开 MD 文件，或将外部修改载入为新版本。文件访问使用有界读取、无符号链接路径打开和临时文件替换。
+
+`write_plan.readyForReview=true` 保存完整计划并结束当前 Run。用户通过 `plan/edit` 修改正文，或通过新的 Plan Run 提交修改意见。界面确认时提交 `planId + planRevision`。Runtime 在创建普通 Run 的事务中核验所属 Session、当前版本和待确认状态，记录确认并绑定执行 Run。已确认的版本不可修改，执行 Context 从对应的不可变版本读取正文。Main 只根据 Runtime 返回的计划路径打开文件。
+
+本次工作已经补充 Runtime 和 Renderer 的 Plan 定向测试。`pnpm test:runtime:full` 通过 1947 个测试，另有 2 个 `large_repository` 测试按配置跳过。`pnpm test:integration` 通过 761 个测试，另有 1188 个测试按标记排除。构建、协议契约、Renderer 状态、Main 全量、Python 检查、Seatbelt 和 Electron smoke 也已通过。Renderer 行为全量有 321 个测试通过，另有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成。

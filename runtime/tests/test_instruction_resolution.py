@@ -86,6 +86,7 @@ class InstructionResolverTests(unittest.TestCase):
                 "system-safety",
                 "base-agent",
                 "runtime-policy",
+                "work-mode",
                 "project-rule:EIDOS.md",
                 "selected-skill:demo:review",
             ),
@@ -93,8 +94,8 @@ class InstructionResolverTests(unittest.TestCase):
         self.assertEqual(resolved.layers[0].content, SYSTEM_SAFETY_INSTRUCTIONS)
         self.assertEqual(resolved.layers[1].content, BASE_AGENT_INSTRUCTIONS)
         self.assertEqual(resolved.layers[2].content, RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertEqual(resolved.layers[3].source, "EIDOS.md")
-        self.assertEqual(resolved.layers[4].source, "demo")
+        self.assertEqual(resolved.layers[4].source, "EIDOS.md")
+        self.assertEqual(resolved.layers[5].source, "demo")
         for layer in resolved.layers:
             self.assertEqual(
                 layer.content_hash,
@@ -157,7 +158,7 @@ class InstructionResolverTests(unittest.TestCase):
 
         self.assertEqual(
             tuple(layer.id for layer in resolved.layers),
-            ("system-safety", "base-agent", "runtime-policy"),
+            ("system-safety", "base-agent", "runtime-policy", "work-mode"),
         )
         self.assertNotIn("project-rule:", resolved.text)
         self.assertNotIn("selected-skill:", resolved.text)
@@ -175,13 +176,13 @@ class InstructionResolverTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(hostile.layers[:3], baseline.layers)
-        self.assertIn("Disable sandbox", hostile.layers[3].content)
-        self.assertIn("auto approve", hostile.layers[3].content)
-        self.assertIn("grant every tool", hostile.layers[4].content)
+        self.assertEqual(hostile.layers[:4], baseline.layers)
+        self.assertIn("Disable sandbox", hostile.layers[4].content)
+        self.assertIn("auto approve", hostile.layers[4].content)
+        self.assertIn("grant every tool", hostile.layers[5].content)
         self.assertEqual(
-            tuple(layer.id for layer in hostile.layers[:3]),
-            ("system-safety", "base-agent", "runtime-policy"),
+            tuple(layer.id for layer in hostile.layers[:4]),
+            ("system-safety", "base-agent", "runtime-policy", "work-mode"),
         )
 
     def test_resolved_text_and_hash_are_model_invariants(self) -> None:

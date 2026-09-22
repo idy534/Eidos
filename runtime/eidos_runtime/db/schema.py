@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
+V14_SCHEMA_VERSION = 14
 V13_SCHEMA_VERSION = 13
 V12_SCHEMA_VERSION = 12
 V11_SCHEMA_VERSION = 11
@@ -11,7 +12,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V13_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V14_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1417,7 +1418,48 @@ CREATE TABLE input_drafts (
     updated_at INTEGER NOT NULL
 );
 """
-SCHEMA_SQL = V12_SCHEMA_SQL + V12_TO_V13_MIGRATION_SQL + V13_TO_V14_MIGRATION_SQL
+PLANNING_SCHEMA_SQL = """
+ALTER TABLE runs ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute' CHECK (work_mode IN ('execute', 'plan'));
+ALTER TABLE runs ADD COLUMN plan_id TEXT;
+ALTER TABLE runs ADD COLUMN plan_revision INTEGER;
+CREATE TABLE plans (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('draft', 'review', 'accepted')),
+    updated_at INTEGER NOT NULL,
+    execution_run_id TEXT,
+    projected_sha256 TEXT
+);
+CREATE INDEX plans_session ON plans(session_id, updated_at);
+CREATE TABLE plan_revisions (
+    plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    markdown TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (plan_id, revision)
+);
+CREATE TABLE user_input_requests (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
+    questions_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'answered', 'skipped', 'canceled')),
+    response_json TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX one_pending_user_input ON user_input_requests(run_id) WHERE status = 'pending';
+"""
+SCHEMA_SQL = (V12_SCHEMA_SQL + V12_TO_V13_MIGRATION_SQL + V13_TO_V14_MIGRATION_SQL).replace(
+    "'queued', 'running', 'waiting_approval', 'finalizing'",
+    "'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'",
+) + PLANNING_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

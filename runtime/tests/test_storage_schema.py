@@ -94,6 +94,9 @@ EXPECTED_TABLES = {
     "skill_states",
     "input_references",
     "input_drafts",
+    "plans",
+    "plan_revisions",
+    "user_input_requests",
 }
 
 EXPECTED_COLUMNS = {
@@ -127,7 +130,11 @@ EXPECTED_COLUMNS = {
         "cancel_completed_at",
         "cancel_failure_code",
         "approval_mode",
+        "work_mode", "plan_id", "plan_revision",
     },
+    "plans": {"id", "session_id", "run_id", "revision", "title", "markdown", "sha256", "status", "updated_at", "execution_run_id", "projected_sha256"},
+    "plan_revisions": {"plan_id", "revision", "markdown", "sha256", "created_at"},
+    "user_input_requests": {"id", "session_id", "run_id", "item_id", "questions_json", "status", "response_json", "created_at"},
     "steps": {
         "resolution_snapshot_id",
         "tool_snapshot_json",
@@ -355,7 +362,7 @@ class StorageSchemaTests(unittest.TestCase):
 
     def test_legacy_waiting_run_is_interrupted_on_startup(self) -> None:
         legacy_schema = SCHEMA_SQL.replace(
-            "'queued', 'running', 'waiting_approval', 'finalizing',",
+            "'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing',",
             "'queued', 'running', 'waiting_approval', 'waiting_user_input', 'finalizing',",
             1,
         ).replace(
@@ -468,6 +475,8 @@ class StorageSchemaTests(unittest.TestCase):
                 "worktree_snapshots_latest",
                 "run_dependency_snapshots_hash",
                 "run_dependency_bindings_run",
+                "plans_session",
+                "one_pending_user_input",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -518,8 +527,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 14)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 13)
+        self.assertEqual(SCHEMA_VERSION, 15)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 14)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

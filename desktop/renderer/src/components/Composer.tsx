@@ -20,6 +20,8 @@ export interface ComposerProps {
   modelList: import("../contracts.js").ModelListResult | undefined;
   selectedModelId: ModelId | undefined;
   reasoningSelection?: ModelReasoningSelection | undefined;
+  workMode?: "execute" | "plan";
+  onWorkModeChange?: (mode: "execute" | "plan") => void;
   approvalMode?: ApprovalMode | undefined;
   onApprovalModeChange?: ((mode: ApprovalMode) => void) | undefined;
   contextUsage: ContextUsage | undefined;
@@ -58,6 +60,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   modelList,
   selectedModelId,
   reasoningSelection,
+  workMode = "execute",
+  onWorkModeChange,
   approvalMode = "manual",
   onApprovalModeChange,
   contextUsage,
@@ -341,6 +345,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
             disabled={!draftReady || isSubmitting || isReadOnly || !context}
             onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
+          {onWorkModeChange && <select aria-label="工作模式" value={workMode} disabled={composerMode !== "idle" || isSubmitting}
+            onChange={(event) => onWorkModeChange(event.target.value === "plan" ? "plan" : "execute")}>
+            <option value="execute">普通模式</option><option value="plan">Plan 模式</option>
+          </select>}
           {onApprovalModeChange && (
             <ApprovalModeSelector
               mode={approvalMode}
@@ -456,7 +464,7 @@ export function StopSquareIcon() {
 
 export function statusText(status: Run["status"]): string {
   return ({
-    queued: "已排队", running: "正在执行", waiting_approval: "等待批准",
+    queued: "已排队", running: "正在执行", waiting_input: "等待回答", waiting_approval: "等待批准",
     finalizing: "正在收尾", stopped: "已停止",
     succeeded: "已完成", failed: "失败", canceled: "已取消", interrupted: "已中断",
   } as const)[status];

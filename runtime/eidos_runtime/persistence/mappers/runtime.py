@@ -69,6 +69,7 @@ def run_from_row(row: RowValues | Mapping[str, object]) -> Run:
         "session_id": values.text("session_id"),
         "user_input": values.text("user_input"),
         "approval_mode": values.optional_text("approval_mode") or "manual",
+        "work_mode": values.optional_text("work_mode") or "execute",
         "model_id": values.text("model_id"),
         "status": status,
         "model_step_count": values.integer("model_step_count"),

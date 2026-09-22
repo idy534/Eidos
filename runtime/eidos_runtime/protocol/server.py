@@ -121,6 +121,8 @@ from eidos_runtime.db.storage import (
 )
 from eidos_runtime.domain.input_reference import InputSnapshot
 from eidos_runtime.application.input_context import InputContextApplication
+from eidos_runtime.application.planning import PlanningApplication
+from eidos_runtime.protocol import planning as planning_dtos
 from eidos_runtime.protocol import input_context as input_dtos
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skill_management import SkillManagement
@@ -1010,6 +1012,14 @@ class RuntimeServer:
                     request
                 ),
             ),
+            ("planning/read", planning_dtos.PlanningReadRequest, planning_dtos.PlanningReadResponse,
+             lambda _id, request: self._planning_application().read(request)),
+            ("planning/answer", planning_dtos.AnswerInputRequest, planning_dtos.AnswerInputResponse,
+             lambda _id, request: self._planning_application().answer(request)),
+            ("plan/read", planning_dtos.PlanReadRequest, planning_dtos.PlanResponse,
+             lambda _id, request: self._planning_application().read_plan(request)),
+            ("plan/edit", planning_dtos.PlanEditRequest, planning_dtos.PlanResponse,
+             lambda _id, request: self._planning_application().edit(request)),
             ("input/prepare", input_dtos.InputPrepareRequest, input_dtos.InputReferenceResponse,
              lambda _id, request: self._input_application().prepare(request)),
             ("input/read", input_dtos.InputReadRequest, input_dtos.InputPreviewResponse,
@@ -1276,6 +1286,8 @@ class RuntimeServer:
             "run/start",
             "input/prepare",
             "input/draftWrite",
+            "planning/answer",
+            "plan/edit",
             "model/create",
             "model/update",
             "model/delete",
@@ -1410,6 +1422,10 @@ class RuntimeServer:
                 "updatedAt": int(settings.updated_at.timestamp() * 1000),
             }
         )
+
+    def _planning_application(self) -> PlanningApplication:
+        return PlanningApplication(self.store, self.supervisor.schedule_next,
+                                   self.supervisor.events.deliver_pending, self._scan_text)
 
     def _input_application(self) -> InputContextApplication:
         return InputContextApplication(self.store, self._applications_or_error().extensions, self._scan_text)

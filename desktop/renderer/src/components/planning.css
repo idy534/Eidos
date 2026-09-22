@@ -1,0 +1,12 @@
+.planning-panel { margin: 0 20px 12px; padding: 14px; border: 1px solid var(--border-color, #8885); border-radius: 12px; max-height: 55vh; overflow: auto; }
+.planning-panel h3 { margin: 0 0 10px; font-size: 14px; }
+.planning-panel small { font-size: 12px; font-weight: normal; opacity: .75; }
+.planning-panel fieldset { margin: 10px 0; padding: 10px; border: 1px solid var(--border-color, #8885); border-radius: 8px; }
+.planning-panel textarea { display: block; box-sizing: border-box; width: 100%; min-height: 64px; margin: 6px 0; padding: 8px; color: inherit; background: transparent; border: 1px solid var(--border-color, #8885); border-radius: 6px; resize: vertical; }
+.planning-panel .plan-editor { min-height: 240px; font-family: monospace; }
+.planning-choice { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; }
+.planning-choice small { display: block; }
+.planning-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.planning-panel button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--border-color, #8885); border-radius: 6px; padding: 5px 9px; cursor: pointer; }
+.planning-panel button:disabled { opacity: .45; cursor: default; }
+.planning-panel summary { cursor: pointer; padding: 6px 0; }

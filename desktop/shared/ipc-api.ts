@@ -1,3 +1,4 @@
+import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
 import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
 import type {
   RuntimeStatus,
@@ -235,6 +236,12 @@ export interface EidosRuntimeAPI {
   readInputDraft(key: string): Promise<InputDraft>;
   writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;
 
+  readPlanning(sessionId: string): Promise<PlanningReadResponse>;
+  answerUserInput(request: AnswerInputRequest): Promise<UserInputRequest>;
+  readPlan(planId: string, reloadFile?: boolean): Promise<PlanDocument>;
+  editPlan(request: PlanEditRequest): Promise<PlanDocument>;
+  openPlan(planId: string): Promise<void>;
+
   // Runs
   startRun(
     sessionId: string,
@@ -243,6 +250,7 @@ export interface EidosRuntimeAPI {
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
     references?: string[],
+    planning?: RunPlanningOptions,
   ): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
   readContextUsage(runId: string): Promise<ContextUsage | null>;

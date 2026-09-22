@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 from eidos_runtime.domain.approval_policy import ApprovalMode
 
 from pydantic import Field
@@ -11,6 +12,7 @@ class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
+    WAITING_INPUT = "waiting_input"
     FINALIZING = "finalizing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -30,6 +32,7 @@ class RunControlState(StrEnum):
 
 
 class Run(EidosFrozenStrictModel):
+    work_mode: Literal["execute", "plan"] = "execute"
     approval_mode: ApprovalMode = "manual"
     id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)

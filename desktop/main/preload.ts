@@ -1,3 +1,4 @@
+import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/index.js";
@@ -297,6 +298,11 @@ const api: EidosRuntimeAPI = {
   pasteInputImage: () => ipcRenderer.invoke(IPC.INPUT_PASTE_IMAGE),
   readInputDraft: (key: string) => ipcRenderer.invoke(IPC.INPUT_DRAFT_READ, key),
   writeInputDraft: (key: string, draft: InputDraft) => ipcRenderer.invoke(IPC.INPUT_DRAFT_WRITE, key, draft),
+  readPlanning: (sessionId: string): Promise<PlanningReadResponse> => ipcRenderer.invoke(IPC.PLANNING_READ, sessionId),
+  answerUserInput: (request: AnswerInputRequest): Promise<UserInputRequest> => ipcRenderer.invoke(IPC.PLANNING_ANSWER, request),
+  readPlan: (planId: string, reloadFile = false): Promise<PlanDocument> => ipcRenderer.invoke(IPC.PLAN_READ, planId, reloadFile),
+  editPlan: (request: PlanEditRequest): Promise<PlanDocument> => ipcRenderer.invoke(IPC.PLAN_EDIT, request),
+  openPlan: (planId: string): Promise<void> => ipcRenderer.invoke(IPC.PLAN_OPEN, planId),
   startRun: (
     sessionId: string,
     userInput: string,
@@ -304,6 +310,7 @@ const api: EidosRuntimeAPI = {
     reasoningSelection?: ModelReasoningSelection,
     approvalMode?: ApprovalMode,
     references?: string[],
+    planning?: RunPlanningOptions,
   ): Promise<Run> => ipcRenderer.invoke(
     IPC.RUN_START,
     sessionId,
@@ -312,6 +319,7 @@ const api: EidosRuntimeAPI = {
     reasoningSelection,
     approvalMode,
     references,
+    planning,
   ),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
   readContextUsage: (runId: string): Promise<ContextUsage | null> =>

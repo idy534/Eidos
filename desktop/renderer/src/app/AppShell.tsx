@@ -1,3 +1,5 @@
+import { PlanningPanel } from "../components/PlanningPanel.js";
+import type { PlanDocument } from "../../../shared/planning.generated.js";
 import type { SettingsCategory } from "../components/settings/settings-types.js";
 import { InputContextProvider, InputDropZone } from "../components/InputContext.js";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -118,6 +120,8 @@ export function AppShell({ runtime }: AppShellProps) {
   const approvalSessionId = activeSnapshot?.session.id;
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
     ?? latestRun?.approvalMode ?? "manual";
+  const [workModes, setWorkModes] = useState<Record<string, "execute" | "plan">>({});
+  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestRun?.workMode ?? "execute";
   const contextRun = runState.activeRun ?? latestRun;
   const contextRunId = contextRun && contextRun.modelId === modelState.selectedModelId
     ? contextRun.id
@@ -622,6 +626,7 @@ export function AppShell({ runtime }: AppShellProps) {
         selectedModelId: modelState.selectedModelId,
         reasoningSelection: modelState.reasoningSelection,
         approvalMode,
+        planning: { workMode },
         isStorageReady,
         inputOverride: draftInput,
         referencesOverride: draftReferences,
@@ -642,9 +647,27 @@ export function AppShell({ runtime }: AppShellProps) {
       selectedModelId: modelState.selectedModelId,
       reasoningSelection: modelState.reasoningSelection,
       approvalMode,
+      planning: { workMode },
       isStorageReady,
       onRunProjected: sessionActions.projectRun,
     });
+  }
+
+  async function submitPlan(plan: PlanDocument, feedback?: string): Promise<boolean> {
+    if (!sessionState.snapshot || !modelState.selectedModelId) return false;
+    const mode = feedback === undefined ? "execute" : "plan";
+    const started = await runActions.submitInput({
+      snapshot: sessionState.snapshot,
+      selectedModelId: modelState.selectedModelId,
+      reasoningSelection: modelState.reasoningSelection,
+      approvalMode,
+      planning: { workMode: mode, planId: plan.id, planRevision: plan.revision },
+      inputOverride: feedback === undefined ? "按已确认的计划执行。" : `请根据以下意见修改计划：\n${feedback}`,
+      isStorageReady,
+      onRunProjected: sessionActions.projectRun,
+    });
+    if (started) setWorkModes((previous) => ({ ...previous, [plan.sessionId]: mode }));
+    return started;
   }
 
   async function handleReviewFeedback(feedback: string): Promise<void> {
@@ -1223,6 +1246,10 @@ export function AppShell({ runtime }: AppShellProps) {
                   onOpenFile={handleOpenFileInDock}
                 />
 
+                {!isDraft && <PlanningPanel key={currentSnapshot.session.id} sessionId={currentSnapshot.session.id}
+                  ready={isStorageReady && runtimeStatus.state === "ready"}
+                  canEdit={!activeRun && !runState.isSubmitting && !worktreeRestoreRequired}
+                  onExecute={(plan) => submitPlan(plan)} onRevise={(plan, feedback) => submitPlan(plan, feedback)} />}
                 <ComposerSlot
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}
@@ -1243,6 +1270,10 @@ export function AppShell({ runtime }: AppShellProps) {
                   draftReady={runState.draftReady}
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
+                  workMode={activeRun?.workMode ?? workMode}
+                  onWorkModeChange={(mode) => {
+                    if (approvalSessionId) setWorkModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
+                  }}
                   approvalMode={activeRun?.approvalMode ?? approvalMode}
                   onApprovalModeChange={(mode) => {
                     if (approvalSessionId) setApprovalModes((previous) => ({ ...previous, [approvalSessionId]: mode }));

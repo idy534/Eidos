@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from eidos_runtime.domain.planning import PlanningSuspended
 from enum import StrEnum
 import json
 import logging
@@ -597,6 +598,8 @@ class ToolExecutionController:
                                 self._execution_state.intent_started
                             ),
                         )
+                    except PlanningSuspended:
+                        raise
                     except ApprovalTransportError:
                         raise
                     except _INFRASTRUCTURE_ERRORS as error:

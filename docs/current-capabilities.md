@@ -404,3 +404,13 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
 
 本批生产代码包含协议、持久化、模型上下文和 Desktop 接入。用户尚未授权测试阶段，开发者尚未新增或调整测试，也没有运行构建、类型检查或原生验收。
+
+## Plan 模式（生产代码，Plan 自动化验证已完成）
+
+- 用户可以通过模式选择或 `/plan` 显式进入 Plan。系统不会自主切换模式。
+- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。界面支持选择、文字补充、跳过及查看最近的澄清记录。
+- Runtime 保存 Markdown 草稿与版本。文件位于 `~/.eidos/plans/`；自定义 `EIDOS_DATA_DIR` 时使用该目录下的 `plans/`。
+- 用户可以编辑计划正文、载入外部文件修改、让模型按意见修改计划，然后确认具体版本并启动普通执行 Run。
+- 澄清等待、答案、取消和安全恢复使用现有 SQLite、Event / Outbox 与 Run 调度流程。Plan 沿用现有权限模式。
+
+以上内容描述本次生产代码的接入范围。Runtime 全量测试、Integration 测试、协议契约、类型构建、Python 检查、Seatbelt 和 Electron smoke 已通过。Renderer 行为全量仍有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成，所以当前不能把这些代码视为完整验收通过的能力。

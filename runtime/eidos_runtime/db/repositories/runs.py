@@ -93,7 +93,7 @@ class RunRepository(Repository):
                 SELECT 1 FROM runs r
                 JOIN sessions s ON s.id = r.session_id
                 WHERE s.workspace_root = ?
-                  AND r.status IN ('queued', 'running', 'waiting_approval', 'finalizing')
+                  AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
                 LIMIT 1
                 """,
                 (workspace_root,),
@@ -109,7 +109,7 @@ class RunRepository(Repository):
                 SELECT 1 FROM runs r
                 JOIN sessions s ON s.id = r.session_id
                 WHERE (s.worktree_id = ? OR s.associated_worktree_id = ?)
-                  AND r.status IN ('queued', 'running', 'waiting_approval', 'finalizing')
+                  AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
                 LIMIT 1
                 """,
                 (worktree_id, worktree_id),
@@ -128,6 +128,9 @@ class RunRepository(Repository):
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
         approval_mode: ApprovalMode = "manual",
+        work_mode: str = "execute",
+        plan_id: str | None = None,
+        plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -226,6 +229,10 @@ class RunRepository(Repository):
                 if "one_active_run" in str(error) or "UNIQUE constraint failed" in str(error):
                     raise ActiveRunError("another run is active") from None
                 raise
+            connection.execute('UPDATE runs SET work_mode = ? WHERE id = ?', (work_mode, run_id))
+            from eidos_runtime.persistence.planning import PlanningRepository
+            PlanningRepository.bind_run(connection, run_id=run_id, session_id=session_id,
+                work_mode=work_mode, plan_id=plan_id, plan_revision=plan_revision)
             run_resolution = create_run_resolution_snapshot(
                 run_id=run_id,
                 model_profile=profile,
@@ -300,6 +307,9 @@ class RunRepository(Repository):
             operation_request={
                 "sessionId": session_id,
                 "userInput": user_input,
+                "workMode": work_mode,
+                "planId": plan_id,
+                "planRevision": plan_revision,
                 **({"references": [value.id for value in references]} if references else {}),
                 "modelId": model_id,
                 "reasoningSelection": profile.reasoning_selection,
@@ -320,6 +330,9 @@ class RunRepository(Repository):
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
         approval_mode: ApprovalMode = "manual",
+        work_mode: str = "execute",
+        plan_id: str | None = None,
+        plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -335,6 +348,9 @@ class RunRepository(Repository):
             model_id=model_id,
             model_profile=model_profile,
             approval_mode=approval_mode,
+            work_mode=work_mode,
+            plan_id=plan_id,
+            plan_revision=plan_revision,
             extension_snapshot=extension_snapshot,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
@@ -346,7 +362,7 @@ class RunRepository(Repository):
         return mutation.value if mutation is not None else None
 
     def claim_next_run_committed(
-        self,
+        self, excluded_run_ids: tuple[str, ...] = (),
     ) -> CommittedMutation[dict[str, object]] | None:
         segment_id = str(uuid.uuid4())
         with self.lock, self._connection() as connection:
@@ -355,17 +371,19 @@ class RunRepository(Repository):
                 """
                 SELECT queued.id FROM runs AS queued
                 WHERE queued.status = 'queued'
+                  AND queued.id NOT IN (SELECT value FROM json_each(?))
                   AND queued.cancel_requested_at IS NULL
                   AND NOT EXISTS (
                     SELECT 1 FROM runs AS active
                     WHERE active.session_id = queued.session_id
                       AND active.status IN (
-                          'running', 'waiting_approval', 'finalizing'
+                          'running', 'waiting_approval', 'waiting_input', 'finalizing'
                       )
                   )
                 ORDER BY queued.enqueued_at ASC, queued.creation_seq ASC
                 LIMIT 1
-                """
+                """,
+                (json.dumps(excluded_run_ids),),
             ).fetchone()
             if row is None:
                 return None
@@ -563,7 +581,7 @@ class RunRepository(Repository):
             rows = self._connection().execute(
                 """SELECT a.request_json FROM approvals a JOIN runs r ON r.id = a.run_id
                    WHERE a.run_id = ? AND a.status = 'approved'
-                     AND r.status IN ('queued', 'running', 'waiting_approval', 'finalizing')
+                     AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
                      AND json_extract(a.request_json, '$.grantScope') = 'run'
                      AND json_extract(a.request_json, '$.kind') = 'permission_request'
                    ORDER BY a.creation_seq""", (run_id,),
@@ -896,7 +914,7 @@ class RunRepository(Repository):
                 run_id,
                 frozenset({
                     RunStatus.RUNNING,
-                    RunStatus.WAITING_APPROVAL,
+                    RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT,
                     RunStatus.FINALIZING,
                 }),
                 RunStatus.FAILED,
@@ -931,6 +949,7 @@ class RunRepository(Repository):
                 "queued",
                 "running",
                 "waiting_approval",
+                "waiting_input",
                 "finalizing",
                 "canceled",
                 "interrupted",
@@ -1013,7 +1032,7 @@ class RunRepository(Repository):
             expected = frozenset({
                 RunStatus.QUEUED,
                 RunStatus.RUNNING,
-                RunStatus.WAITING_APPROVAL,
+                RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT,
                 RunStatus.FINALIZING,
             })
             if current not in expected:
@@ -1051,7 +1070,7 @@ class RunRepository(Repository):
                 """
                 SELECT id FROM runs
                 WHERE status IN (
-                    'queued', 'running', 'waiting_approval', 'finalizing'
+                    'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'
                 )
                 ORDER BY creation_seq
                 """
@@ -1094,7 +1113,7 @@ class RunRepository(Repository):
         expected = expected or frozenset({
             RunStatus.QUEUED,
             RunStatus.RUNNING,
-            RunStatus.WAITING_APPROVAL,
+            RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT,
             RunStatus.FINALIZING,
         })
         current = RunStatus(row["status"])
@@ -1135,7 +1154,7 @@ class RunRepository(Repository):
                 raise ResourceNotFoundError("run not found")
             if row["status"] == "interrupted":
                 return CommittedMutation(self.read_run(run_id), ())
-            if row["status"] not in {"running", "waiting_approval"}:
+            if row["status"] not in {"running", "waiting_approval", "waiting_input"}:
                 raise InvalidRunStateError("run cannot be interrupted")
             now = _now_ms()
             events = list(settle_run_children(
@@ -1144,7 +1163,7 @@ class RunRepository(Repository):
             run, event = transition_run(
                 connection,
                 run_id,
-                frozenset({RunStatus.RUNNING, RunStatus.WAITING_APPROVAL}),
+                frozenset({RunStatus.RUNNING, RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT}),
                 RunStatus.INTERRUPTED,
                 "runtime_interrupted",
             )

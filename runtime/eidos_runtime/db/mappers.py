@@ -169,6 +169,7 @@ def _run_from_row(
         "modelId": row["model_id"],
         "status": row["status"],
         "modelStepCount": row["model_step_count"],
+        "workMode": row["work_mode"] if "work_mode" in row.keys() else "execute",
         "approvalMode": row["approval_mode"] if "approval_mode" in row.keys() else "manual",
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
@@ -177,6 +178,7 @@ def _run_from_row(
         "queued": ["cancel"],
         "running": ["cancel"],
         "waiting_approval": ["approve", "reject", "cancel"],
+        "waiting_input": ["cancel"],
         "finalizing": ["cancel"],
     }.get(row["status"], [])
     if run["approvalMode"] != "manual":

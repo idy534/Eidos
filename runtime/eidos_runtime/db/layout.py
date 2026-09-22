@@ -28,6 +28,8 @@ from eidos_runtime.db.schema import (
     V11_SCHEMA_VERSION,
     V12_SCHEMA_VERSION,
     V13_SCHEMA_VERSION,
+    V14_SCHEMA_VERSION,
+    PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
 )
@@ -607,6 +609,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V11_SCHEMA_VERSION,
         V12_SCHEMA_VERSION,
         V13_SCHEMA_VERSION,
+        V14_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     migration = ""
@@ -635,9 +638,11 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             connection.executescript(
                 "BEGIN IMMEDIATE;\n"
                 + migration
-                + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
+                + f"\nPRAGMA user_version = {V14_SCHEMA_VERSION};\nCOMMIT;"
             )
             connection.execute("PRAGMA foreign_keys = ON")
+            from eidos_runtime.db.planning_migration import migrate_planning
+            migrate_planning(connection, PLANNING_SCHEMA_SQL)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

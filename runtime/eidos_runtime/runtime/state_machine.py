@@ -8,6 +8,7 @@ class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
+    WAITING_INPUT = "waiting_input"
     FINALIZING = "finalizing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -107,9 +108,10 @@ TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {
             RunStatus.RUNNING, RunStatus.CANCELED, RunStatus.INTERRUPTED,
         }),
         RunStatus.RUNNING: frozenset({
-            RunStatus.WAITING_APPROVAL, RunStatus.FINALIZING, RunStatus.SUCCEEDED, RunStatus.FAILED,
+            RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT, RunStatus.FINALIZING, RunStatus.SUCCEEDED, RunStatus.FAILED,
             RunStatus.CANCELED, RunStatus.INTERRUPTED, RunStatus.QUEUED,
         }),
+        RunStatus.WAITING_INPUT: frozenset({RunStatus.QUEUED, RunStatus.CANCELED, RunStatus.FAILED, RunStatus.INTERRUPTED}),
         RunStatus.WAITING_APPROVAL: frozenset({
             RunStatus.RUNNING, RunStatus.QUEUED, RunStatus.FAILED,
             RunStatus.CANCELED, RunStatus.INTERRUPTED,

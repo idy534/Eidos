@@ -219,7 +219,7 @@ class RunSupervisor:
                 if waiting_id not in self._handles:
                     self._async_kernel_frozen = True
                     return self._start_worker_locked(waiting_id)
-            claimed = self.store.claim_next_run_committed()
+            claimed = self.store.claim_next_run_committed(tuple(self._handles))
             if claimed is None:
                 return None
             run_id = str(claimed.value["id"])
@@ -928,6 +928,7 @@ class RunSupervisor:
             if run["status"] in {
                 "running",
                 "waiting_approval",
+                "waiting_input",
                 "finalizing",
             }:
                 mutation = self.store.fail_run_committed(run_id, "INTERNAL_ERROR")

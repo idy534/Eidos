@@ -156,7 +156,7 @@ describe("useRunController real behavior", () => {
       });
 
       expect(startRunSpy).toHaveBeenCalledWith(
-        "session-A", "Use the strongest reasoning level", "deepseek-v4-flash", "max", undefined, [],
+        "session-A", "Use the strongest reasoning level", "deepseek-v4-flash", "max", undefined, [], undefined,
       );
     });
 
@@ -176,7 +176,7 @@ describe("useRunController real behavior", () => {
       });
 
       expect(startRunSpy).toHaveBeenCalledWith(
-        "session-A", "Use automatic approval review", "deepseek-v4-flash", undefined, "auto_review", [],
+        "session-A", "Use automatic approval review", "deepseek-v4-flash", undefined, "auto_review", [], undefined,
       );
     });
 
@@ -196,7 +196,7 @@ describe("useRunController real behavior", () => {
       });
 
       expect(startRunSpy).toHaveBeenCalledWith(
-        "session-A", "Please address review feedback", "deepseek-v4-flash", undefined, undefined, [],
+        "session-A", "Please address review feedback", "deepseek-v4-flash", undefined, undefined, [], undefined,
       );
       expect(result.current[0].input).toBe("Keep this draft");
     });
@@ -261,7 +261,7 @@ describe("useRunController real behavior", () => {
       });
 
       expect(startRunSpy).toHaveBeenCalledWith(
-        "session-A", "", "deepseek-v4-flash", undefined, undefined, [mockReference.id],
+        "session-A", "", "deepseek-v4-flash", undefined, undefined, [mockReference.id], undefined,
       );
       expect(result.current[0].references).toEqual([]);
     });

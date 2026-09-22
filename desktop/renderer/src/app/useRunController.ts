@@ -1,3 +1,4 @@
+import type { RunPlanningOptions } from "../../../shared/planning.generated.js";
 import type { InputReference } from "../../../shared/input-context.js";
 import { useInputDrafts } from "./useInputDrafts.js";
 import { useCallback, useRef, useState } from "react";
@@ -40,6 +41,7 @@ export interface RunControllerActions {
     selectedModelId: ModelId;
     reasoningSelection?: ModelReasoningSelection | undefined;
     approvalMode?: ApprovalMode | undefined;
+    planning?: RunPlanningOptions | undefined;
     isStorageReady: boolean;
     inputOverride?: string;
     referencesOverride?: InputReference[];
@@ -125,6 +127,7 @@ export function useRunController(
     selectedModelId,
     reasoningSelection,
     approvalMode,
+    planning,
     isStorageReady: storageReady,
     inputOverride,
     referencesOverride,
@@ -134,6 +137,7 @@ export function useRunController(
     selectedModelId: ModelId;
     reasoningSelection?: ModelReasoningSelection | undefined;
     approvalMode?: ApprovalMode | undefined;
+    planning?: RunPlanningOptions | undefined;
     isStorageReady: boolean;
     inputOverride?: string;
     referencesOverride?: InputReference[];
@@ -177,7 +181,8 @@ export function useRunController(
     try {
       if (inputOverride === undefined) await draftStore.flush(sessionId);
       const returnedRun = await window.eidosRuntime.startRun(
-        sessionId, sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode, submittedReferences.map((value) => value.id),
+        sessionId, /^\/plan(?:\s|$)/.test(sessionInput.trim()) ? sessionInput.trim().replace(/^\/plan(?:\s+|$)/, "").trim() || "请先制定计划。" : sessionInput.trim(), selectedModelId, reasoningSelection, approvalMode, submittedReferences.map((value) => value.id),
+        /^\/plan(?:\s|$)/.test(sessionInput.trim()) ? { ...planning, workMode: "plan" } : planning,
       );
 
       if (returnedRun.sessionId === sessionId) {

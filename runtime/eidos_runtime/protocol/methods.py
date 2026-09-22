@@ -417,6 +417,9 @@ class EventListRequestDto(_CanonicalIdRequest):
 
 
 class RunStartRequestDto(_OperationRequest):
+    work_mode: Literal["execute", "plan"] = Field(default="execute", alias="workMode")
+    plan_id: str | None = Field(default=None, alias="planId")
+    plan_revision: int | None = Field(default=None, alias="planRevision", ge=1)
     references: list[InputReferenceId] = Field(default_factory=list, max_length=20)
     approval_mode: ApprovalMode = Field(default="manual", alias="approvalMode")
     full_access_confirmation: Literal["full-access-v1"] | None = Field(

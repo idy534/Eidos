@@ -28,6 +28,7 @@ def _run_row() -> dict[str, object]:
         "user_input": "Inspect the repository",
         "model_id": "model-1",
         "approval_mode": "manual",
+        "work_mode": "execute",
         "status": "running",
         "model_step_count": 2,
         "reconciliation_required": 0,

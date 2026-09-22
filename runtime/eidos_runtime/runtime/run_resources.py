@@ -36,6 +36,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
+from eidos_runtime.tools.planning import planning_entries
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 from eidos_runtime.tools.declare_outputs import declare_outputs_entry
 from eidos_runtime.tools.search import tool_search_entry
@@ -226,6 +227,7 @@ class RunResources:
                 read_tool_output_entry(self.store, self.run_id),
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
+                *(planning_entries() if self.store.read_run(self.run_id).get("workMode") == "plan" else ()),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
                     activate_model_read=self.activate_skill_model_read,

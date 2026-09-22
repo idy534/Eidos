@@ -1786,7 +1786,11 @@ class ToolCallRuntime:
                 error_code=result.error_code,
                 protocol_diagnostic=result.protocol_diagnostic,
             )
+        if len(result.tool_calls) > 1 and any(call.name in {"request_user_input", "write_plan"} for call in result.tool_calls):
+            return ToolBatchOutcome(status="validation_failed", error_code="planning_control_requires_single_call")
         if not result.tool_calls:
+            if self.store.read_run(step.run_id).get("workMode") == "plan":
+                return ToolBatchOutcome(status="validation_failed", error_code="plan_requires_write_plan_ready_for_review")
             return ToolBatchOutcome(status="no_tools")
         return ToolBatchOutcome(status="ready", tool_calls=result.tool_calls)
 
