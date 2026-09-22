@@ -111,3 +111,89 @@ def test_snapshot_glob_projection_is_bounded() -> None:
     }) or "null")
 
     assert len(projected["includeGlobs"]) <= 32
+
+
+def test_snapshot_preserves_planning_tool_arguments() -> None:
+    questions_input = [
+        {
+            "id": "q1",
+            "question": "Which component to refactor?",
+            "type": "single_select",
+            "options": [
+                {"id": "opt1", "label": "ExecutionFeed", "description": "UI feed"},
+                {"id": "opt2", "label": "WorkspaceDock", "description": "Side dock"},
+            ],
+            "recommendedOptionId": "opt1",
+        }
+    ]
+    input_projected = json.loads(_snapshot_display_arguments({
+        "toolName": "request_user_input",
+        "argumentsJson": json.dumps({
+            "questions": questions_input,
+            "extra_field": "ignored",
+        }),
+    }) or "null")
+
+    assert input_projected == {
+        "questions": [
+            {
+                "id": "q1",
+                "question": "Which component to refactor?",
+                "type": "single_select",
+                "options": [
+                    {"id": "opt1", "label": "ExecutionFeed", "description": "UI feed"},
+                    {"id": "opt2", "label": "WorkspaceDock", "description": "Side dock"},
+                ],
+                "recommendedOptionId": "opt1",
+            }
+        ]
+    }
+
+    plan_projected = json.loads(_snapshot_display_arguments({
+        "toolName": "write_plan",
+        "argumentsJson": json.dumps({
+            "title": "系统重构计划",
+            "markdown": "# 详尽计划正文，不应包含在快照参数中",
+            "planId": "plan-123",
+            "expectedRevision": 1,
+            "readyForReview": True,
+        }),
+    }) or "null")
+
+    assert plan_projected == {
+        "expectedRevision": 1,
+        "planId": "plan-123",
+        "readyForReview": True,
+        "title": "系统重构计划",
+    }
+
+
+def test_clarification_projection_uses_schema_defaults_and_rejects_invalid_questions() -> None:
+    question = {"id": "q1", "question": "补充要求？", "type": "text"}
+    def project(questions):
+        return _snapshot_display_arguments({
+            "toolName": "request_user_input",
+            "argumentsJson": json.dumps({"questions": questions}),
+        })
+
+    projected = json.loads(project([question]) or "null")
+    assert projected["questions"][0]["options"] == []
+    assert project([question, question]) is None
+    assert project([{**question, "id": "x" * 81}]) is None
+    assert project([{**question, "question": "海" * 1001}]) is None
+    assert project([{"id": "q", "question": "Choose", "options": []}]) is None
+    assert project([None]) is None
+    assert project([{**question, "id": str(index)} for index in range(4)]) is None
+    assert project([{
+        "id": "q", "question": "Choose", "options": [
+            {"id": str(index), "label": "Option"} for index in range(7)
+        ],
+    }]) is None
+
+
+def test_snapshot_rejects_boolean_values_for_numeric_display_arguments() -> None:
+    projected = json.loads(_snapshot_display_arguments({
+        "toolName": "write_plan",
+        "argumentsJson": json.dumps({"title": True, "expectedRevision": True, "readyForReview": True}),
+    }) or "null")
+    assert projected == {"readyForReview": True}

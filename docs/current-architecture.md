@@ -558,6 +558,8 @@ Context 从未决 Durable Intent 投影最多 16 条 `reconciliationOrigins`，�
 
 ### Projectless 文件提交与 Skill 写入权限
 
+Seatbelt 编译器为数据目录内的当前 Workspace 保留祖先路径的 metadata 和存在性检查。Shell 因此可以使用绝对路径执行 `mkdir -p`，也可以在 Workspace 内执行 `ls -la`。该例外不开放祖先目录的内容、列举或写入，也不开放其他 Session；hard confidentiality deny 保持不变。
+
 `secure_workspace_move` 向受控 helper 传递已核验的 Workspace 目录 fd。helper 核对目录身份，并从该 fd 向下使用 `O_NOFOLLOW` 访问目标。它不再从 `/` 逐级打开 `.eidos` 等受保护祖先。当前 Projectless Workspace 的普通文件沿原有 Workspace Permission 执行，不逐次审批；其他会话和数据文件仍受数据目录 deny 保护。helper 的新建提交按 errno 区分目标已存在与其他失败，诊断只记录固定阶段和数字 errno。
 
 Base/Effective Permission 的 `approvalWriteRoots` 标记用户 Skill 存储目录。字段默认空，旧权限快照仍可读取；新 Run 的产品权限工厂填入数据目录的 `skills`。Skill 激活只提供读权限，普通 Skill 的写入必须来自明确的附加授权。Runtime、PermissionPolicyEvaluator 和 Seatbelt 使用同一授权范围；精确文件授权不会开放同目录其他文件。Seatbelt 只允许获批目标祖先的 metadata 检查，不开放祖先目录内容。`skills/.system` 作为独立 protected write path 永久禁写，即使它被选作 Workspace 也不能修改。
@@ -647,7 +649,7 @@ Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `
 
 用户通过 Composer 的模式选择或输入开头的 `/plan` 显式选择 Plan。`run/start.workMode` 默认为 `execute`。Runtime 把模式保存在 Run 上。模型不能改变模式。Plan 与 `manual`、`auto_review`、`full_access` 权限模式独立；原有工具与权限流程继续生效。
 
-调用链为 `Composer / PlanningPanel → typed preload IPC → Main RuntimeClient → Method Registry → PlanningApplication / RunApplication → PlanningRepository / RunSupervisor → ToolExecutionController`。Python Pydantic 是新增 DTO 的定义来源。`scripts/generate-planning-contracts.mjs` 生成 Desktop 类型，`desktop/shared/planning.ts` 校验跨进程数据。
+调用链为 `Composer / PlanPanel → typed preload IPC → Main RuntimeClient → Method Registry → PlanningApplication / RunApplication → PlanningRepository / RunSupervisor → ToolExecutionController`。Python Pydantic 是新增 DTO 的定义来源。`scripts/generate-planning-contracts.mjs` 生成 Desktop 类型，`desktop/shared/planning.ts` 校验跨进程数据。
 
 Plan Run 的工具注册表额外注入 `request_user_input` 和 `write_plan`。普通 Run 不注入这两个工具。Runtime 在执行入口再次检查 Plan 模式。`request_user_input` 每次接收一到三个问题，支持单选、多选和文字回答；用户可以填写自定义回答或明确跳过。两个控制工具必须单独调用。Plan 的正常完成必须先通过 `write_plan` 提交可审阅的计划。
 
@@ -660,6 +662,8 @@ Schema v15 增加 Run 模式与计划版本引用、`plans`、`plan_revisions` �
 `write_plan.readyForReview=true` 保存完整计划并结束当前 Run。用户通过 `plan/edit` 修改正文，或通过新的 Plan Run 提交修改意见。界面确认时提交 `planId + planRevision`。Runtime 在创建普通 Run 的事务中核验所属 Session、当前版本和待确认状态，记录确认并绑定执行 Run。已确认的版本不可修改，执行 Context 从对应的不可变版本读取正文。Main 只根据 Runtime 返回的计划路径打开文件。
 
 本次工作已经补充 Runtime 和 Renderer 的 Plan 定向测试。`pnpm test:runtime:full` 通过 1947 个测试，另有 2 个 `large_repository` 测试按配置跳过。`pnpm test:integration` 通过 761 个测试，另有 1188 个测试按标记排除。构建、协议契约、Renderer 状态、Main 全量、Python 检查、Seatbelt 和 Electron smoke 也已通过。Renderer 行为全量有 321 个测试通过，另有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成。
+
+Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题或计划，旧请求的迟到响应也不能覆盖当前状态。澄清表单按请求 ID 重建，答案和跳过状态不跨请求复用。计划卡片只展示已完成且成功的 `write_plan`；失败、取消和拒绝沿用普通工具结果展示。快照中的澄清参数复用 `RequestUserInput` 校验与序列化；无效参数不进入展示投影，原始 ToolCall 记录保持不变。
 
 ### Plan 工具结果与写入失败边界
 

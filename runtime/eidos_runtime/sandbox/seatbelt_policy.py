@@ -104,7 +104,11 @@ class SeatbeltPolicyCompiler:
                             Path(allowed.resolved_path), Path(entry.resolved_path), profile.approval_write_roots,
                         )
                     ),
-                    metadata_exceptions=tuple(
+                    metadata_exceptions=(
+                        (f'(path-ancestors (param "{workspace_exceptions[entry.resolved_path]}"))',)
+                        if entry.source == "permanent_deny" and entry.resolved_path in workspace_exceptions
+                        else ()
+                    ) + tuple(
                         f'(path-ancestors (param "{allowed_key}"))'
                         for allowed, allowed_key in approved_writes
                         if entry.source == "permanent_deny" and is_approval_write_exception(

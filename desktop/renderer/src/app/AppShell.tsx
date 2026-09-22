@@ -1,5 +1,5 @@
 import { ErrorBoundary } from "../components/ErrorBoundary.js";
-import { PlanningPanel } from "../components/PlanningPanel.js";
+import { PlanPanel } from "../components/PlanPanel.js";
 import type { PlanDocument } from "../../../shared/planning.generated.js";
 import type { SettingsCategory } from "../components/settings/settings-types.js";
 import { InputContextProvider, InputDropZone } from "../components/InputContext.js";
@@ -43,6 +43,7 @@ import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
 import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
+import { usePlanningState } from "./usePlanningState.js";
 import { useModelController } from "./useModelController.js";
 import { useResponseActionController } from "./useResponseActionController.js";
 import { useContextUsageController } from "./useContextUsageController.js";
@@ -134,6 +135,11 @@ export function AppShell({ runtime }: AppShellProps) {
     runId: contextRunId,
   });
   const handleContextUsageNotification = contextUsageActions.handleNotification;
+
+  const planning = usePlanningState(
+    sessionState.snapshot?.session.id,
+    runtimeStatus.state === "ready" && isStorageReady,
+  );
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -880,6 +886,15 @@ export function AppShell({ runtime }: AppShellProps) {
     setReviewRequest({ ...request, requestId: ++fileOpenSequenceRef.current });
   }
 
+  function handleOpenPlan(): void {
+    if (!currentSnapshot) return;
+    if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
+    setEnvironmentPopoverOpen(false);
+    setOpenTabs((tabs) => tabs.some((tab) => tab.kind === "plan") ? tabs : [...tabs, { id: "plan", kind: "plan", title: "计划" }]);
+    setActiveTabId("plan");
+    setDockOpen(true);
+  }
+
   async function handleOpenExternal(path: string): Promise<void> {
     if (!currentSnapshot) return;
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
@@ -980,6 +995,21 @@ export function AppShell({ runtime }: AppShellProps) {
               loading={completeSessionItems.loading}
               error={completeSessionItems.error}
             />
+            {planning.state?.plans && planning.state.plans.length > 0 && (
+              <div className="environment-popover__section">
+                <div className="environment-popover__section-title">计划</div>
+                <button
+                  type="button"
+                  className="environment-popover__row environment-popover__row--plan"
+                  onClick={handleOpenPlan}
+                >
+                  <span className="plan-icon" aria-hidden="true">
+                    <PlanLightbulbIcon />
+                  </span>
+                  <span className="plan-title">{planning.state.plans[0]?.title ?? "计划"}</span>
+                </button>
+              </div>
+            )}
             {sessionHasGit && (
               <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
                 <span>变更</span>
@@ -1245,29 +1275,15 @@ export function AppShell({ runtime }: AppShellProps) {
                   onRegenerate={async (run) => { await reviseLatestRun(run); }}
                   onEditResend={(run, editedInput, references) => reviseLatestRun(run, editedInput, references)}
                   onOpenFile={handleOpenFileInDock}
+                  onOpenPlan={handleOpenPlan}
                 />
 
-                {!isDraft && (
-                  <ErrorBoundary
-                    fallback={(error, reset) => (
-                      <div className="planning-panel planning-panel--error" role="alert">
-                        <p>计划加载出现异常：{error.message} <button type="button" onClick={reset}>重试</button></p>
-                      </div>
-                    )}
-                  >
-                    <PlanningPanel
-                      key={currentSnapshot.session.id}
-                      sessionId={currentSnapshot.session.id}
-                      ready={isStorageReady && runtimeStatus.state === "ready"}
-                      canEdit={!activeRun && !runState.isSubmitting && !worktreeRestoreRequired}
-                      onExecute={(plan) => submitPlan(plan)}
-                      onRevise={(plan, feedback) => submitPlan(plan, feedback)}
-                    />
-                  </ErrorBoundary>
-                )}
                 <ComposerSlot
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}
+                  pendingUserInput={planning.pendingQuestion}
+                  userInputReady={isStorageReady && runtimeStatus.state === "ready"}
+                  onAnswerUserInput={planning.refresh}
                   respondingApprovalIds={respondingApprovalIds}
                   respondingKindByApprovalId={respondingKindByApprovalId}
                   expiredApprovalIds={approvalState.expiredApprovalIds}
@@ -1374,6 +1390,21 @@ export function AppShell({ runtime }: AppShellProps) {
                     onFeedback={handleReviewFeedback} disabled={Boolean(activeRun) || runState.isSubmitting}
                     onRefresh={() => currentSnapshot && void sessionActions.selectSession(currentSnapshot.session)}
                     expanded={dockExpanded} />;
+                  if (tab.kind === "plan") {
+                    return (
+                      <PlanPanel
+                        key={currentSnapshot.session.id}
+                        sessionId={currentSnapshot.session.id}
+                        plan={planning.state?.plans[0]}
+                        historyPlans={planning.state?.plans && planning.state.plans.length > 1 ? planning.state.plans.slice(1) : []}
+                        ready={isStorageReady && runtimeStatus.state === "ready"}
+                        canEdit={!activeRun && !runState.isSubmitting && !worktreeRestoreRequired}
+                        onExecute={(plan) => submitPlan(plan)}
+                        onRevise={(plan, feedback) => submitPlan(plan, feedback)}
+                        onSaved={planning.refresh}
+                      />
+                    );
+                  }
                   if (tab.kind === "review") {
                     return sessionHasGit ? (
                       <GitChangesPanel
@@ -1612,5 +1643,14 @@ export function AppShell({ runtime }: AppShellProps) {
     </main>
     </InputContextProvider>
     </ArtifactProvider>
+  );
+}
+
+function PlanLightbulbIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2a4.5 4.5 0 0 0-3 7.8V11.5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V9.8A4.5 4.5 0 0 0 8 2z" />
+      <path d="M6.5 14h3" />
+    </svg>
   );
 }

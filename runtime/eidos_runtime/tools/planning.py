@@ -32,6 +32,7 @@ class PlanResultData(StrictToolModel):
     revision: int | None = None
     path: str | None = None
     sha256: str | None = None
+    title: str | None = None
 
 
 class PlanningAdapter:
@@ -71,7 +72,7 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 data_model=PlanResultData), 'failed', 'failed')
         return HandlerOutcome(tool_result(call.name, 'success', 'plan_ready' if request.ready_for_review else 'plan_saved',
             'Plan saved. Wait for user confirmation before implementation.' if request.ready_for_review else 'Plan draft saved.',
-            {'planId': document.id, 'revision': document.revision, 'path': document.path, 'sha256': document.sha256}, data_model=PlanResultData), 'completed', 'completed')
+            {'planId': document.id, 'revision': document.revision, 'path': document.path, 'sha256': document.sha256, 'title': document.title}, data_model=PlanResultData), 'completed', 'completed')
 
 
 def planning_entries() -> tuple[ToolRegistryEntry, ...]:

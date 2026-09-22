@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from pydantic import ValidationError
+
+from eidos_runtime.domain.planning import RequestUserInput
+
 from eidos_runtime.protocol.tool_text import project_tool_text
 from eidos_runtime.context.facts import CompactSummary
 from eidos_runtime.model.client import ModelUsage
@@ -74,9 +78,16 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         "delete_file": ("path",),
         "run_shell": ("command", "cwd", "yieldTimeMs"),
         "write_stdin": ("sessionId", "chars", "yieldTimeMs"),
+        "write_plan": ("title", "planId", "expectedRevision", "readyForReview"),
     }
     fields = fields_by_tool.get(tool_call.get("toolName"))
     arguments = _load_json_object(tool_call.get("argumentsJson"))
+    if tool_call.get("toolName") == "request_user_input" and arguments is not None:
+        try:
+            request = RequestUserInput.model_validate({"questions": arguments.get("questions")})
+        except ValidationError:
+            return None
+        return request.model_dump_json(by_alias=True, exclude_none=True)
     if fields is None or arguments is None:
         return None
     projected: dict[str, object] = {}
@@ -95,10 +106,10 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
             ):
                 continue
             projected[field] = globs
-        elif field == "regex":
+        elif field in {"regex", "readyForReview"}:
             if isinstance(value, bool):
                 projected[field] = value
-        elif field in {"maxDepth", "maxEntries", "startLine", "endLine", "maxResults", "yieldTimeMs"}:
+        elif field in {"maxDepth", "maxEntries", "startLine", "endLine", "maxResults", "yieldTimeMs", "expectedRevision"}:
             if isinstance(value, int) and not isinstance(value, bool):
                 projected[field] = value
         elif isinstance(value, str):

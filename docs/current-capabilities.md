@@ -200,6 +200,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 模型使用 `write_stdin` 分段等待并读取增量输出。`read_tool_output` 仍只读取原命令已持久化的终态结果。
 - Shell effective environment 使用真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Bundled `rg` 目录只追加在 `PATH` 末尾并去重。Provider 会在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。Runtime 不会强制设置 `LC_ALL`。
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
+- 数据目录内的当前 Workspace 支持 Shell 创建子目录和读写普通文件。Seatbelt 只为其祖先补充 metadata / 存在性检查；其他会话、数据文件和父目录内容继续受保护。
 - 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、Workspace 的 `.git`、`.agents`、`.eidos` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 默认可读和执行；普通 Skill 的具体写入范围可经审批开放，系统 Skill 永久禁写。Workspace `.env` 和其他敏感命名文件可读；命令和审批信息展示使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network denied。
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以组合，所以 `git push` 可以用一次审批同时获得 Git metadata 写入和 network。Runtime 使用现有 GitBackend 重新解析并核验 `git_dir` 与 `git_common_dir`，模型不能提交路径。获批后的命令仍在 macOS Seatbelt 中运行；`.agents`、`.eidos`、Runtime、系统 Skill 和其他 repository 的 Git metadata 继续拒写。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。其他 additional write 需要 Approval。存在永久写入保护或 hard confidentiality deny 时，Runtime 拒绝裸 Shell 的 unsandboxed attempt，审批也不能移除这些保护。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
@@ -408,10 +409,11 @@ Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草
 ## Plan 模式（生产代码，Plan 自动化验证已完成）
 
 - 用户可以通过模式选择或 `/plan` 显式进入 Plan。系统不会自主切换模式。
-- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。界面支持选择、文字补充、跳过及查看最近的澄清记录。
+- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，而是在底部输入框位置通过 `ClarificationComposer` 接管；支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。
 - Runtime 保存 Markdown 草稿与版本。文件位于 `~/.eidos/plans/`；自定义 `EIDOS_DATA_DIR` 时使用该目录下的 `plans/`。
 - 用户可以编辑计划正文、载入外部文件修改、让模型按意见修改计划，然后确认具体版本并启动普通执行 Run。
 - 澄清等待、答案、取消和安全恢复使用现有 SQLite、Event / Outbox 与 Run 调度流程。Plan 沿用现有权限模式。
+- 澄清界面隔离不同会话和不同请求的状态。计划写入失败或取消时，过程展示保留工具结果，不显示成功计划卡片。
 
 以上内容描述本次生产代码的接入范围。Runtime 全量测试、Integration 测试、协议契约、类型构建、Python 检查、Seatbelt 和 Electron smoke 已通过。Renderer 行为全量仍有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成，所以当前不能把这些代码视为完整验收通过的能力。
 

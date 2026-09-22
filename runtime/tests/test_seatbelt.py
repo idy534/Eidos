@@ -82,6 +82,27 @@ class SeatbeltProfileTests(unittest.TestCase):
                 workspace_root=workspace, sandbox_home=workspace / "home",
                 sandbox_tmp=workspace / "tmp", effective_permissions=effective,
             )
+            output = workspace / "output"
+            result = run_sandboxed(profile, ["/bin/mkdir", "-p", str(output)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = run_sandboxed(profile, ["/bin/ls", "-la", str(workspace)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            target = output / "document.md"
+            result = run_sandboxed(profile, [
+                "/bin/sh", "-c", 'printf content > "$1" && cat "$1" && rm "$1"',
+                "sh", str(target),
+            ])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "content")
+            self.assertFalse(target.exists())
+            sibling = workspace.parent / "other-session"
+            sibling.mkdir()
+            secret = sibling / "private.md"
+            secret.write_text("private", encoding="utf-8")
+            self.assertNotEqual(run_sandboxed(profile, ["/bin/cat", str(secret)]).returncode, 0)
+            self.assertNotEqual(run_sandboxed(profile, ["/usr/bin/touch", str(sibling / "new")]).returncode, 0)
+            self.assertNotEqual(run_sandboxed(profile, ["/bin/ls", str(workspace.parent)]).returncode, 0)
+            self.assertNotEqual(run_sandboxed(profile, ["/usr/bin/touch", str(data / "new")]).returncode, 0)
             self.assertNotEqual(run_sandboxed(profile, ["/bin/cat", str(state)]).returncode, 0)
             self.assertNotEqual(run_sandboxed(profile, ["/bin/ls", str(data)]).returncode, 0)
 
