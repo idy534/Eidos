@@ -1024,6 +1024,8 @@ class RuntimeServer:
              lambda _id, request: self._input_application().prepare(request)),
             ("input/read", input_dtos.InputReadRequest, input_dtos.InputPreviewResponse,
              lambda _id, request: self._input_application().read(request)),
+            ("input/readAsset", input_dtos.InputReadAssetRequest, input_dtos.InputReadAssetResponse,
+             lambda _id, request: self._input_application().read_asset(request)),
             ("input/draftRead", input_dtos.DraftReadRequest, input_dtos.DraftResponse,
              lambda _id, request: self._input_application().read_draft(request)),
             ("input/draftWrite", input_dtos.DraftWriteRequest, input_dtos.DraftResponse,

@@ -1147,6 +1147,9 @@ ipcMain.handle(IPC.INPUT_READ, (event, id: unknown) => {
   inputOwner(event);
   return clientOrThrow().readInput(inputKey(id));
 });
+ipcMain.handle(IPC.INPUT_PREVIEW_URL, (event, id: unknown) => {
+  return artifactPreview.prepareInput(previewOwner(event), inputKey(id));
+});
 ipcMain.handle(IPC.INPUT_DRAFT_READ, (event, key: unknown) => {
   inputOwner(event);
   return clientOrThrow().readInputDraft(inputKey(key));

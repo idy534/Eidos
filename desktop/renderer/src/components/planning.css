@@ -385,8 +385,15 @@
   padding: 0.25rem 0.5rem;
 }
 
+.feed-item--assistant:has(+ .feed-item--plan),
+.process-group:has(+ .feed-item--plan) {
+  margin-bottom: 0.5rem;
+}
+
+.feed-item.feed-item--plan,
+.feed-item--assistant.feed-item--plan,
 .feed-item--plan {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.5rem !important;
 }
 
 .tool-item--plan-card {

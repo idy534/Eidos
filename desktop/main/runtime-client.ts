@@ -1,6 +1,6 @@
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
-import { isInputReference, isInputDraft, isInputPreview, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference } from "../shared/input-context.js";
+import { isInputReference, isInputDraft, isInputPreview, isInputAssetChunk, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference, type InputAssetChunk } from "../shared/input-context.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -798,6 +798,9 @@ export class RuntimeClient {
   }
   readInput(id: string): Promise<InputPreview> {
     return this.validatedRequest("input/read", { id }, isInputPreview);
+  }
+  readInputAsset(id: string, offset = 0): Promise<InputAssetChunk> {
+    return this.validatedRequest("input/readAsset", { id, offset }, isInputAssetChunk);
   }
   readInputDraft(key: string): Promise<InputDraft> {
     return this.validatedRequest("input/draftRead", { key }, isInputDraft);

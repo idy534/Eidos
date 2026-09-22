@@ -232,6 +232,8 @@ export interface EidosRuntimeAPI {
   inputPathForFile(file: File): string;
   prepareInput(request: InputPrepareRequest): Promise<InputReference>;
   readInput(id: string): Promise<InputPreview>;
+  prepareInputPreview(id: string): Promise<string>;
+  releaseInputPreview(url: string): Promise<void>;
   pasteInputImage(): Promise<InputReference | null>;
   readInputDraft(key: string): Promise<InputDraft>;
   writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;

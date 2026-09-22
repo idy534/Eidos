@@ -33,6 +33,11 @@ class InputReadRequest(ClosedModel):
     id: InputReferenceId
 
 
+class InputReadAssetRequest(ClosedModel):
+    id: InputReferenceId
+    offset: StrictInt = Field(default=0, ge=0, le=32 * 1024 * 1024)
+
+
 class InputReferenceResponse(ClosedModel):
     reference: InputReference
 
@@ -41,6 +46,15 @@ class InputPreviewResponse(ClosedModel):
     reference: InputReference
     text: StrictStr
     thumbnail: StrictStr | None = None
+
+
+class InputReadAssetResponse(ClosedModel):
+    id: InputReferenceId
+    data: StrictStr
+    mime_type: StrictStr = Field(alias="mimeType")
+    size_bytes: StrictInt = Field(alias="sizeBytes", ge=0)
+    next_offset: StrictInt = Field(alias="nextOffset", ge=0)
+    complete: bool
 
 
 class DraftReadRequest(ClosedModel):

@@ -80,6 +80,7 @@ export const IPC = {
   INPUT_PICK: "input:pick",
   INPUT_PREPARE: "input:prepare",
   INPUT_READ: "input:read",
+  INPUT_PREVIEW_URL: "input:preview-url",
   INPUT_PASTE_IMAGE: "input:pasteImage",
   INPUT_DRAFT_READ: "input:draftRead",
   INPUT_DRAFT_WRITE: "input:draftWrite",

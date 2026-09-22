@@ -24,12 +24,22 @@ export type Text1 = string;
 export type Thumbnail = string | null;
 export type Text2 = string;
 export type References = InputReference[];
+export type Id1 = string;
+export type Offset = number;
+export type Id2 = string;
+export type Data = string;
+export type Mimetype = string;
+export type Sizebytes = number;
+export type Nextoffset = number;
+export type Complete = boolean;
 
 export interface InputContract {
   reference: InputReference;
   prepare: InputPrepareRequest;
   preview: InputPreviewResponse;
   draft: DraftResponse;
+  read_asset_request: InputReadAssetRequest;
+  read_asset_response: InputReadAssetResponse;
 }
 export interface InputReference {
   id: Id;
@@ -60,4 +70,16 @@ export interface InputPreviewResponse {
 export interface DraftResponse {
   text: Text2;
   references: References;
+}
+export interface InputReadAssetRequest {
+  id: Id1;
+  offset?: Offset;
+}
+export interface InputReadAssetResponse {
+  id: Id2;
+  data: Data;
+  mimeType: Mimetype;
+  sizeBytes: Sizebytes;
+  nextOffset: Nextoffset;
+  complete: Complete;
 }

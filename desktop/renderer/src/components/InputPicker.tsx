@@ -6,6 +6,7 @@ import { userFacingError } from "../session-state.js";
 export type InputPickerMode = "all" | "skill" | "commands";
 interface Candidate { id: string; label: string; detail: string; request?: InputPrepareRequest; action?: string; unavailable?: boolean }
 const commands: Candidate[] = [
+  { id: "plan", label: "/plan", detail: "开始 Plan 模式", action: "plan" },
   { id: "skills", label: "/skills", detail: "选择 Skill", action: "skills" },
   { id: "mcp", label: "/mcp", detail: "查看与管理 MCP", action: "mcp" },
   { id: "plugins", label: "/plugins", detail: "管理 Plugin", action: "plugins" },
@@ -18,10 +19,11 @@ const CATEGORIES = [
   { id: "plugin", label: "Plugin" },
   { id: "history", label: "历史对话" },
 ] as const;
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId }: {
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
   onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
+  onSelectPlanMode?(): void;
 }) {
   const context = useInputContext();
   const [catalog, setCatalog] = useState<Candidate[]>([]);
@@ -188,12 +190,12 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
               type="button"
               className="input-picker__quick-btn"
               onClick={() => {
-                context?.settings("plugins");
+                onSelectPlanMode?.();
                 onClose();
               }}
             >
-              <SettingsIcon />
-              <span>管理扩展</span>
+              <LightbulbIcon />
+              <span>Plan 模式</span>
             </button>
           </div>
 
@@ -376,12 +378,20 @@ function FolderPlusIcon() {
   );
 }
 
-function SettingsIcon() {
+export function LightbulbIcon({ className }: { className?: string } = {}) {
   return (
-    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
-      <path d="M2.5 4.5h5M10.5 4.5h3M2.5 11.5h3M8.5 11.5h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-      <circle cx="9" cy="4.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="7" cy="11.5" r="1.5" stroke="currentColor" strokeWidth="1.3" />
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true" className={className}>
+      <path
+        d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5c0 1.8 1.1 3.3 2.5 4v1.5a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1V10c1.4-.7 2.5-2.2 2.5-4A4.5 4.5 0 0 0 8 1.5Z"
+        fill="currentColor"
+        fillOpacity=".15"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M6 14.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M6.75 12.5h2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   );
 }

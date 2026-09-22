@@ -1,10 +1,22 @@
-import type { InputReference, InputPrepareRequest, InputPreviewResponse, DraftResponse } from "./input-context.generated.js";
-export type { InputReference, InputPrepareRequest } from "./input-context.generated.js";
+import type { InputReference, InputPrepareRequest, InputPreviewResponse, DraftResponse, InputReadAssetRequest, InputReadAssetResponse } from "./input-context.generated.js";
+export type { InputReference, InputPrepareRequest, InputReadAssetRequest, InputReadAssetResponse } from "./input-context.generated.js";
 export type InputReferenceKind = InputReference["kind"];
 export type InputPreview = InputPreviewResponse;
 export type InputDraft = DraftResponse;
+export type InputAssetChunk = InputReadAssetResponse;
 
 export const INPUT_KINDS: readonly string[] = ["file", "directory", "image", "skill", "mcp", "plugin", "history", "excerpt"];
+export function isInputAssetChunk(value: unknown): value is InputReadAssetResponse {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return Object.keys(v).every((key) => ["id", "data", "mimeType", "sizeBytes", "nextOffset", "complete"].includes(key))
+    && typeof v.id === "string" && /^[a-f0-9]{64}$/.test(v.id)
+    && typeof v.data === "string"
+    && typeof v.mimeType === "string" && v.mimeType.startsWith("image/")
+    && Number.isSafeInteger(v.sizeBytes) && Number(v.sizeBytes) >= 0
+    && Number.isSafeInteger(v.nextOffset) && Number(v.nextOffset) >= 0
+    && typeof v.complete === "boolean";
+}
 export function isInputReference(value: unknown): value is InputReference {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;

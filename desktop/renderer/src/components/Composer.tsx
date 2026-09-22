@@ -1,6 +1,6 @@
 import type { InputReference } from "../../../shared/input-context.js";
 import { InputReferenceCards, useInputContext } from "./InputContext.js";
-import { InputPicker, type InputPickerMode } from "./InputPicker.js";
+import { InputPicker, type InputPickerMode, LightbulbIcon } from "./InputPicker.js";
 import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
@@ -165,7 +165,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     : isReadOnly
       ? "存储只读，暂无法启动 Run"
       : modelConfigured
-        ? "例如：阅读这个项目并说明如何启动"
+        ? workMode === "plan"
+          ? "先把想法变成计划"
+          : "想做什么，从这里开始"
         : "请先在设置中添加模型";
 
   const statusLabel = modelLoading
@@ -302,12 +304,14 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         onChoose={(request) => { void context?.add(request); consumeMention(); }}
         onCommand={(command) => {
           consumeMention();
-          if (command === "skills") setPicker({ mode: "skill", query: "" });
+          if (command === "plan") onWorkModeChange?.("plan");
+          else if (command === "skills") setPicker({ mode: "skill", query: "" });
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
             textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".reasoning-selector > button")?.click();
           } else context?.settings(command);
-        }} />}
+        }}
+        onSelectPlanMode={() => onWorkModeChange?.("plan")} />}
       <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
       <textarea
         ref={textareaRef}
@@ -345,16 +349,28 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
             disabled={!draftReady || isSubmitting || isReadOnly || !context}
             onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
-          {onWorkModeChange && <select aria-label="工作模式" value={workMode} disabled={composerMode !== "idle" || isSubmitting}
-            onChange={(event) => onWorkModeChange(event.target.value === "plan" ? "plan" : "execute")}>
-            <option value="execute">普通模式</option><option value="plan">Plan 模式</option>
-          </select>}
           {onApprovalModeChange && (
             <ApprovalModeSelector
               mode={approvalMode}
               disabled={composerMode !== "idle" || isSubmitting}
               onChange={onApprovalModeChange}
             />
+          )}
+          {workMode === "plan" && (
+            <button
+              type="button"
+              className="composer-plan-badge"
+              disabled={composerMode !== "idle" || isSubmitting}
+              onClick={() => onWorkModeChange?.("execute")}
+              aria-label="退出 Plan 模式"
+              title="退出 Plan 模式"
+            >
+              <span className="composer-plan-badge__icon" aria-hidden="true">
+                <LightbulbIcon className="composer-plan-badge__bulb" />
+                <CloseIcon className="composer-plan-badge__close" />
+              </span>
+              <span className="composer-plan-badge__text">Plan 模式</span>
+            </button>
           )}
           {!isIdle && <span>{statusLabel}</span>}
           {!modelConfigured && (
@@ -458,6 +474,14 @@ export function StopSquareIcon() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
       <rect x="3" y="3" width="10" height="10" rx="1.8" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ className }: { className?: string } = {}) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className={className}>
+      <path d="m4 4 8 8m0-8-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
