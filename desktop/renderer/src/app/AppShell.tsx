@@ -1,3 +1,4 @@
+import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { PlanningPanel } from "../components/PlanningPanel.js";
 import type { PlanDocument } from "../../../shared/planning.generated.js";
 import type { SettingsCategory } from "../components/settings/settings-types.js";
@@ -1246,10 +1247,24 @@ export function AppShell({ runtime }: AppShellProps) {
                   onOpenFile={handleOpenFileInDock}
                 />
 
-                {!isDraft && <PlanningPanel key={currentSnapshot.session.id} sessionId={currentSnapshot.session.id}
-                  ready={isStorageReady && runtimeStatus.state === "ready"}
-                  canEdit={!activeRun && !runState.isSubmitting && !worktreeRestoreRequired}
-                  onExecute={(plan) => submitPlan(plan)} onRevise={(plan, feedback) => submitPlan(plan, feedback)} />}
+                {!isDraft && (
+                  <ErrorBoundary
+                    fallback={(error, reset) => (
+                      <div className="planning-panel planning-panel--error" role="alert">
+                        <p>计划加载出现异常：{error.message} <button type="button" onClick={reset}>重试</button></p>
+                      </div>
+                    )}
+                  >
+                    <PlanningPanel
+                      key={currentSnapshot.session.id}
+                      sessionId={currentSnapshot.session.id}
+                      ready={isStorageReady && runtimeStatus.state === "ready"}
+                      canEdit={!activeRun && !runState.isSubmitting && !worktreeRestoreRequired}
+                      onExecute={(plan) => submitPlan(plan)}
+                      onRevise={(plan, feedback) => submitPlan(plan, feedback)}
+                    />
+                  </ErrorBoundary>
+                )}
                 <ComposerSlot
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}

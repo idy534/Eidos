@@ -106,7 +106,7 @@ export function TerminalPanel({ sessionId, active, workspaceRoot, projectId }: T
       unsubscribeExit();
       const terminalId = terminalIdRef.current;
       terminalIdRef.current = null;
-      if (terminalId) void window.eidosRuntime.closeTerminal(terminalId).catch(() => undefined);
+      if (terminalId) void window.eidosRuntime?.closeTerminal?.(terminalId)?.catch?.(() => undefined);
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;

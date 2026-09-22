@@ -15,13 +15,15 @@ export function PlanningPanel({ sessionId, ready, canEdit, onExecute, onRevise }
   const [error, setError] = useState("");
   const refresh = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || typeof window.eidosRuntime?.readPlanning !== "function") return;
     let disposed = false;
     let generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
       const current = ++generation;
-      void window.eidosRuntime.readPlanning(sessionId).then((value) => {
+      const readFn = window.eidosRuntime?.readPlanning;
+      if (typeof readFn !== "function") return;
+      void readFn(sessionId).then((value) => {
         if (!disposed && current === generation) { setState(value); setError(""); }
       }).catch((cause: unknown) => {
         if (!disposed && current === generation) setError(userFacingError(cause));
@@ -29,10 +31,12 @@ export function PlanningPanel({ sessionId, ready, canEdit, onExecute, onRevise }
     };
     refresh.current = load;
     load();
-    const unsubscribe = window.eidosRuntime.onNotification(() => {
-      if (timer !== undefined) return;
-      timer = setTimeout(() => { timer = undefined; load(); }, 250);
-    });
+    const unsubscribe = typeof window.eidosRuntime?.onNotification === "function"
+      ? window.eidosRuntime.onNotification(() => {
+          if (timer !== undefined) return;
+          timer = setTimeout(() => { timer = undefined; load(); }, 250);
+        })
+      : () => {};
     return () => { disposed = true; clearTimeout(timer); unsubscribe(); refresh.current = () => {}; };
   }, [sessionId, ready]);
   const pending = state?.questions.find((request) => request.status === "pending");
@@ -73,6 +77,10 @@ function Questions({ request, ready, onSaved }: { request: UserInputRequest; rea
   }));
   const submit = async (skip: boolean) => {
     if (lock.current) return;
+    if (typeof window.eidosRuntime?.answerUserInput !== "function") {
+      setError("当前环境不支持提交回答");
+      return;
+    }
     lock.current = true; setBusy(true); setError("");
     try {
       await window.eidosRuntime.answerUserInput({ requestId: request.id, response: {
@@ -132,11 +140,18 @@ function PlanCard({ plan, canEdit, onSaved, onExecute, onRevise }: {
     </details>
     {error && <p role="alert">{error}</p>}
     <div className="planning-actions">
-      <button type="button" disabled={busy || !canEdit} onClick={() => void perform(() => window.eidosRuntime.openPlan(plan.id))}>打开 MD 文件</button>
+      <button type="button" disabled={busy || !canEdit} onClick={() => void perform(() => {
+        if (typeof window.eidosRuntime?.openPlan !== "function") throw new Error("当前环境不支持打开计划文件");
+        return window.eidosRuntime.openPlan(plan.id);
+      })}>打开 MD 文件</button>
       {plan.status !== "accepted" && <>
-        <button type="button" disabled={disabled || editing} onClick={() => void perform(() => window.eidosRuntime.readPlan(plan.id, true))}>载入文件修改</button>
+        <button type="button" disabled={disabled || editing} onClick={() => void perform(() => {
+          if (typeof window.eidosRuntime?.readPlan !== "function") throw new Error("当前环境不支持读取计划文件");
+          return window.eidosRuntime.readPlan(plan.id, true);
+        })}>载入文件修改</button>
         <button type="button" disabled={disabled} onClick={() => { setMarkdown(plan.markdown); setEditing(!editing); }}>{editing ? "取消编辑" : "编辑计划"}</button>
         {editing && <button type="button" disabled={disabled || !markdown.trim()} onClick={() => void perform(async () => {
+          if (typeof window.eidosRuntime?.editPlan !== "function") throw new Error("当前环境不支持编辑计划");
           await window.eidosRuntime.editPlan({ planId: plan.id, expectedRevision: plan.revision, markdown }); setEditing(false);
         })}>保存修改</button>}
         <button type="button" disabled={disabled || editing || plan.status !== "review"} onClick={() => void perform(() => onExecute(plan))}>确认并执行此版本</button>
