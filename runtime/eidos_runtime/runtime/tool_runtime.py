@@ -55,6 +55,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
     RuntimeDependencyCatalogError,
     RuntimeDependencyCoordinator,
 )
+from eidos_runtime.tools.registry import ToolArgumentValidationResult
 from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
@@ -1786,7 +1787,11 @@ class ToolCallRuntime:
                 error_code=result.error_code,
                 protocol_diagnostic=result.protocol_diagnostic,
             )
+        if len(result.tool_calls) > 1 and any(call.name in {"request_user_input", "write_plan"} for call in result.tool_calls):
+            return ToolBatchOutcome(status="validation_failed", error_code="planning_control_requires_single_call")
         if not result.tool_calls:
+            if self.store.read_run(step.run_id).get("workMode") == "plan":
+                return ToolBatchOutcome(status="validation_failed", error_code="plan_requires_write_plan_ready_for_review")
             return ToolBatchOutcome(status="no_tools")
         return ToolBatchOutcome(status="ready", tool_calls=result.tool_calls)
 
@@ -1877,7 +1882,7 @@ class ToolCallRuntime:
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
-                errors.append(_result_fingerprint(call.name, outcome.result))
+                errors.append(_result_fingerprint(call.name, outcome.result, outcome.argument_validation))
             else:
                 successes.append(
                     outcome.progress_fingerprint or _hash_json(outcome.result)
@@ -2062,7 +2067,7 @@ class ToolCallRuntime:
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
-                errors.append(_result_fingerprint(call.name, outcome.result))
+                errors.append(_result_fingerprint(call.name, outcome.result, outcome.argument_validation))
             else:
                 successes.append(
                     outcome.progress_fingerprint or _hash_json(outcome.result)
@@ -2094,14 +2099,19 @@ class ToolCallRuntime:
             raise RuntimeCancelled
 
 
-def _result_fingerprint(tool_name: str, result: dict[str, object]) -> str:
-    return _hash_json(
-        {
-            "toolName": tool_name,
-            "outcome": result.get("outcome"),
-            "code": result.get("code"),
-        }
-    )
+def _result_fingerprint(
+    tool_name: str, result: dict[str, object],
+    validation: ToolArgumentValidationResult | None = None,
+) -> str:
+    identity = {
+        "toolName": tool_name,
+        "outcome": result.get("outcome"),
+        "code": result.get("code"),
+    }
+    if result.get("code") == "invalid_arguments" and validation is not None:
+        # Values and prose do not count as a different correction attempt.
+        identity["validation"] = {"path": validation.path, "reason": validation.reason_code}
+    return _hash_json(identity)
 
 
 def _hash_json(value: object) -> str:

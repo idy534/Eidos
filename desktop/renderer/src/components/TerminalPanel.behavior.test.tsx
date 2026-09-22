@@ -95,7 +95,7 @@ describe("TerminalPanel", () => {
   it("bridges xterm input and output through the owned terminal session", async () => {
     const { unmount } = render(<TerminalPanel sessionId="session-a" active={true} />);
 
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalledWith("session-a"));
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalledWith("session-a", undefined, undefined));
     expect(terminalInstances).toHaveLength(1);
 
     act(() => dataListener?.({ terminalId: "terminal-1", data: "ready\r\n" }));

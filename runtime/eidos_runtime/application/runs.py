@@ -92,6 +92,10 @@ class RunStorePort(Protocol):
         session_title: str | None = None,
         model_id: str,
         model_profile: ModelProfileSnapshot | None = None,
+        approval_mode: str = "manual",
+        work_mode: str = "execute",
+        plan_id: str | None = None,
+        plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]: ...
@@ -327,10 +331,23 @@ class RunApplication:
             raise ApplicationError("INVALID_PARAMS", "引用内容总量过大。")
         if any(value.image for value in input_snapshots) and not model_profile.supports_images:
             raise ApplicationError("INVALID_PARAMS", "当前模型不支持图片输入。")
+        if request.plan_id is not None:
+            from eidos_runtime.persistence.planning import PlanningRepository
+            try:
+                plan_repository = PlanningRepository(store.database)
+                document = plan_repository.read(request.plan_id)
+                if document.session_id != request.session_id:
+                    raise ValueError('plan_not_found')
+                plan_repository.materialize(document)
+            except (ValueError, OSError) as error:
+                raise ApplicationError("INVALID_STATE", str(error)) from error
         extension_snapshot = environment.extension_snapshot()
         operation_request: dict[str, object] = {
             "sessionId": request.session_id,
             "userInput": user_input,
+            "workMode": request.work_mode,
+            "planId": request.plan_id,
+            "planRevision": request.plan_revision,
             **({"references": [value.reference.id for value in input_snapshots]} if input_snapshots else {}),
             "modelId": model_id,
             "reasoningSelection": model_profile.reasoning_selection,
@@ -407,9 +424,14 @@ class RunApplication:
                         model_id=model_id,
                         model_profile=model_profile,
                         approval_mode=request.approval_mode,
+                        work_mode=request.work_mode,
+                        plan_id=request.plan_id,
+                        plan_revision=request.plan_revision,
                         extension_snapshot=extension_snapshot,
                         expected_workspace_identity=expected_workspace_identity,
                     )
+        except ValueError as error:
+            raise ApplicationError("INVALID_STATE", str(error)) from error
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
         except WorktreeError as error:
@@ -496,6 +518,7 @@ class RunApplication:
             "queued",
             "running",
             "waiting_approval",
+            "waiting_input",
             "finalizing",
             "canceled",
             "interrupted",

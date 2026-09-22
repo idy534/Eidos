@@ -464,3 +464,258 @@ describe("ExecutionFeed process group collapse behavior", () => {
     expect(screen.getByText(/已处理/)).toBeInTheDocument();
   });
 });
+
+describe("ExecutionFeed plan and clarification rendering", () => {
+  function toolCallItem(toolName: string, overrides: Partial<Item> = {}, toolCallOverrides: Partial<ToolCall> = {}): Item {
+    return {
+      id: "tool-item-1",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "command_execution",
+      status: "in_progress",
+      createdAt: 1_000,
+      content: "",
+      toolCall: {
+        id: "tool-call-1",
+        itemId: "tool-item-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "provider-call-1",
+        toolName,
+        status: "running",
+        startedAt: 1_000,
+        argumentsJson: "{}",
+        ...toolCallOverrides,
+      },
+      ...overrides,
+    };
+  }
+
+  it.each(["completed", "failed", "canceled"] as const)("shows clarification errors with %s item status without inventing a skipped answer", (status) => {
+    const item = toolCallItem("request_user_input", {status}, {
+      status: status === "completed" ? "completed" : status,
+      argumentsJson: JSON.stringify({questions: [{id: "q", question: "Constraints?", type: "text"}]}),
+      resultJson: JSON.stringify({outcome: "error", code: "invalid_arguments", summary: "No question was submitted"}),
+    });
+    render(<ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]}
+      respondingApprovalIds={new Set()} respondingKindByApprovalId={{}}
+      onApprove={() => {}} onReject={() => {}} />);
+    expect(screen.queryByText(/已询问/)).toBeNull();
+    expect(screen.queryByText("已跳过")).toBeNull();
+    expect(screen.getByText("No question was submitted")).toBeInTheDocument();
+  });
+
+  it("renders active request_user_input in progress with question count and waiting prompt", () => {
+    const item = toolCallItem(
+      "request_user_input",
+      { status: "in_progress" },
+      {
+        argumentsJson: JSON.stringify({
+          questions: [
+            { id: "q1", question: "第一题？" },
+            { id: "q2", question: "第二题？" },
+          ],
+        }),
+      },
+    );
+
+    render(
+      <ExecutionFeed
+        items={[item]}
+        runs={[baseRun]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("正在询问 2 个问题")).toBeInTheDocument();
+    expect(screen.getByText("正在等待你的回答")).toBeInTheDocument();
+  });
+
+  it("renders completed request_user_input as collapsible summary with questions and answers", () => {
+    const item = toolCallItem(
+      "request_user_input",
+      { status: "completed", completedAt: 2_000 },
+      {
+        status: "completed",
+        completedAt: 2_000,
+        argumentsJson: JSON.stringify({
+          questions: [
+            {
+              id: "scope",
+              question: "选择范围？",
+              options: [
+                { id: "frontend", label: "前端" },
+                { id: "backend", label: "后端" },
+              ],
+            },
+          ],
+        }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          data: {
+            response: {
+              status: "answered",
+              answers: [
+                {
+                  questionId: "scope",
+                  optionIds: ["frontend"],
+                  text: "补充说明",
+                },
+              ],
+            },
+          },
+        }),
+      },
+    );
+
+    render(
+      <ExecutionFeed
+        items={[item]}
+        runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("已询问 1 个问题")).toBeInTheDocument();
+    expect(screen.getByText("选择范围？")).toBeInTheDocument();
+    expect(screen.getByText("前端；补充说明")).toBeInTheDocument();
+  });
+
+  it("renders write_plan in progress with running indicator", () => {
+    const item = toolCallItem(
+      "write_plan",
+      { status: "in_progress" },
+      {
+        argumentsJson: JSON.stringify({ title: "重构计划" }),
+      },
+    );
+
+    render(
+      <ExecutionFeed
+        items={[item]}
+        runs={[baseRun]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("正在制定计划…")).toBeInTheDocument();
+  });
+
+  it.each(["failed", "canceled", "declined", "completed"] as const)("shows an unsuccessful write_plan with %s item status as a tool result", (status) => {
+    const item = toolCallItem("write_plan", {status}, {
+      status: status === "declined" ? "failed" : status,
+      argumentsJson: JSON.stringify({title: "Rejected plan"}),
+      resultJson: JSON.stringify({outcome: "error", code: "plan_write_rejected", summary: "plan_not_found"}),
+    });
+    render(<ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]}
+      respondingApprovalIds={new Set()} respondingKindByApprovalId={{}}
+      onApprove={() => {}} onReject={() => {}} />);
+    expect(screen.queryByText("查看计划 →")).toBeNull();
+    expect(screen.getByText("plan_not_found")).toBeInTheDocument();
+  });
+
+  it("renders completed write_plan card and invokes onOpenPlan when clicked", () => {
+    const onOpenPlan = vi.fn();
+    const item = toolCallItem(
+      "write_plan",
+      { status: "completed", completedAt: 2_000 },
+      {
+        status: "completed",
+        completedAt: 2_000,
+        argumentsJson: JSON.stringify({ title: "系统重构方案" }),
+        resultJson: JSON.stringify({ outcome: "success" }),
+      },
+    );
+
+    render(
+      <ExecutionFeed
+        items={[item]}
+        runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onOpenPlan={onOpenPlan}
+      />,
+    );
+
+    expect(screen.getByText("系统重构方案")).toBeInTheDocument();
+    expect(screen.getByText("查看计划 →")).toBeInTheDocument();
+
+    const planCard = screen.getByRole("button", { name: /系统重构方案/ });
+    fireEvent.click(planCard);
+    expect(onOpenPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders write_plan in the response area outside process group, even when other tools exist", () => {
+    const readFileItem = toolCallItem(
+      "read_file",
+      { id: "read-1", ordinal: 1, status: "completed", completedAt: 1_500 },
+      {
+        id: "call-read-1",
+        toolName: "read_file",
+        status: "completed",
+        argumentsJson: JSON.stringify({ path: "src/index.ts" }),
+        resultJson: JSON.stringify({ outcome: "success", data: { content: "code" } }),
+      },
+    );
+
+    const planItem = toolCallItem(
+      "write_plan",
+      { id: "plan-1", ordinal: 2, status: "completed", completedAt: 2_000 },
+      {
+        id: "call-plan-1",
+        toolName: "write_plan",
+        status: "completed",
+        // Title in resultJson data (simulating fallback or snapshot)
+        argumentsJson: "{}",
+        resultJson: JSON.stringify({
+          outcome: "success",
+          data: { title: "从结果中读取的计划标题", planId: "p1" },
+        }),
+      },
+    );
+
+    const { container } = render(
+      <ExecutionFeed
+        items={[readFileItem, planItem]}
+        runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    // Process group should contain read_file
+    const processGroup = container.querySelector("details.process-group");
+    expect(processGroup).not.toBeNull();
+    expect(processGroup?.textContent).toContain("已读取");
+
+    // Process group should NOT contain write_plan
+    expect(processGroup?.querySelector(".tool-item--plan-card")).toBeNull();
+
+    // write_plan should be in the response area outside process group, aligned with assistant feed items
+    const planWrapper = container.querySelector(".feed-item--assistant.feed-item--plan");
+    expect(planWrapper).not.toBeNull();
+    const planCard = container.querySelector(".tool-item--plan-card");
+    expect(planCard).not.toBeNull();
+    expect(planWrapper?.contains(planCard!)).toBe(true);
+    expect(planCard?.textContent).toContain("从结果中读取的计划标题");
+  });
+});

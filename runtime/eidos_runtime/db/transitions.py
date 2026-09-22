@@ -285,6 +285,7 @@ def settle_run_children(
     ).fetchone()
     if run is None:
         raise ResourceNotFoundError("run not found")
+    connection.execute("UPDATE user_input_requests SET status='canceled' WHERE run_id=? AND status='pending'", (run_id,))
     events: list[dict[str, object]] = []
     tool_rows = connection.execute(
         """

@@ -560,6 +560,9 @@ class SessionStore:
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
         approval_mode: ApprovalMode = "manual",
+        work_mode: str = "execute",
+        plan_id: str | None = None,
+        plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -575,6 +578,9 @@ class SessionStore:
             model_id=model_id,
             model_profile=model_profile,
             approval_mode=approval_mode,
+            work_mode=work_mode,
+            plan_id=plan_id,
+            plan_revision=plan_revision,
             extension_snapshot=extension_snapshot,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
@@ -592,6 +598,9 @@ class SessionStore:
         model_id: str = DEFAULT_MODEL_ID,
         model_profile: ModelProfileSnapshot | None = None,
         approval_mode: ApprovalMode = "manual",
+        work_mode: str = "execute",
+        plan_id: str | None = None,
+        plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
@@ -606,6 +615,9 @@ class SessionStore:
             model_id=model_id,
             model_profile=model_profile,
             approval_mode=approval_mode,
+            work_mode=work_mode,
+            plan_id=plan_id,
+            plan_revision=plan_revision,
             extension_snapshot=extension_snapshot,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
@@ -616,9 +628,9 @@ class SessionStore:
         return self._repository(self._runs).claim_next_run()
 
     def claim_next_run_committed(
-        self,
+        self, excluded_run_ids: tuple[str, ...] = (),
     ) -> CommittedMutation[dict[str, object]] | None:
-        return self._repository(self._runs).claim_next_run_committed()
+        return self._repository(self._runs).claim_next_run_committed(excluded_run_ids)
 
     def read_run(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).read_run(run_id)

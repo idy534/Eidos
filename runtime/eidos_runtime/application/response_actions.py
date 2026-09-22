@@ -81,6 +81,7 @@ class ResponseActionApplication:
         start_request = RunStartRequestDto.model_validate({
             "sessionId": source["sessionId"],
             "userInput": user_input,
+            "workMode": source.get("workMode", "execute"),
             "references": request.references if request.references is not None else self._runs.input_reference_ids(request.source_run_id),
             "modelId": source["modelId"],
             "operationId": request.operation_id,

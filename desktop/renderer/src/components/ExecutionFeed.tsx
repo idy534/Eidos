@@ -55,6 +55,7 @@ interface Props {
   onRegenerate?: RegenerateHandler;
   onEditResend?: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
+  onOpenPlan?: (() => void) | undefined;
 }
 
 interface Segment {
@@ -64,7 +65,7 @@ interface Segment {
 }
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
-  "queued", "running", "waiting_approval", "finalizing",
+  "queued", "running", "waiting_input", "waiting_approval", "finalizing",
 ]);
 
 const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
@@ -106,6 +107,7 @@ export function ExecutionFeed({
   onRegenerate = NOOP_REGENERATE,
   onEditResend = NOOP_EDIT_RESEND,
   onOpenFile,
+  onOpenPlan,
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const isAtBottomRef = useRef(true);
@@ -221,6 +223,7 @@ export function ExecutionFeed({
                   onRegenerate={onRegenerate}
                   onEditResend={onEditResend}
                   onOpenFile={onOpenFile}
+                  onOpenPlan={onOpenPlan}
                 />
               ))}
               <RunNotice run={run} />
@@ -275,6 +278,7 @@ function RunSegment({
   onRegenerate,
   onEditResend,
   onOpenFile,
+  onOpenPlan,
 }: {
   segment: Segment;
   run: Run;
@@ -299,6 +303,7 @@ function RunSegment({
   onRegenerate: RegenerateHandler;
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
+  onOpenPlan?: (() => void) | undefined;
 }) {
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((item) => {
@@ -344,28 +349,39 @@ function RunSegment({
         </ProcessGroup>
       )}
       {showThinking && <p className="thinking-indicator" role="status">正在思考</p>}
-      {segment.response.map((item, index) => (
-        <AssistantMessage
-          key={item.id}
-          item={item}
-          run={run}
-          modelName={modelName}
-          workspaceRoot={workspaceRoot}
-          atBottom={atBottom}
-          feedback={feedbackByItemId.get(item.id)}
-          feedbackPending={pendingFeedbackItemIds.has(item.id)}
-          canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
-          isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
-          showTurnResults={isLast
-            && index === segment.response.length - 1
-            && TERMINAL_RUN_STATUSES.has(run.status)
-            && segment.response.every((responseItem) => responseItem.status !== "in_progress")}
-          resultItems={resultItems}
-          showTextChanges={true}
-          onFeedback={onFeedback}
-          onRegenerate={onRegenerate}
-        />
-      ))}
+      {segment.response.map((item, index) => {
+        if (item.toolCall?.toolName === "write_plan") {
+          return (
+            <PlanResponseItem
+              key={item.id}
+              item={item}
+              onOpenPlan={onOpenPlan}
+            />
+          );
+        }
+        return (
+          <AssistantMessage
+            key={item.id}
+            item={item}
+            run={run}
+            modelName={modelName}
+            workspaceRoot={workspaceRoot}
+            atBottom={atBottom}
+            feedback={feedbackByItemId.get(item.id)}
+            feedbackPending={pendingFeedbackItemIds.has(item.id)}
+            canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
+            isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
+            showTurnResults={isLast
+              && index === segment.response.length - 1
+              && TERMINAL_RUN_STATUSES.has(run.status)
+              && segment.response.every((responseItem) => responseItem.status !== "in_progress")}
+            resultItems={resultItems}
+            showTextChanges={true}
+            onFeedback={onFeedback}
+            onRegenerate={onRegenerate}
+          />
+        );
+      })}
       {isLast
         && segment.response.length === 0
         && TERMINAL_RUN_STATUSES.has(run.status)
@@ -932,6 +948,61 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   );
 }
 
+function PlanResponseItem({
+  item,
+  onOpenPlan,
+}: {
+  item: Item;
+  onOpenPlan?: (() => void) | undefined;
+}) {
+  const toolCall = item.toolCall;
+  if (!toolCall) return null;
+  const args = parseObject(toolCall.argumentsJson);
+  const resultObj = parseObject(toolCall.resultJson);
+  const dataObj = objectField(resultObj, "data");
+  const planTitle = stringField(args, "title") || stringField(dataObj, "title") || "计划";
+
+  if (item.status === "in_progress") {
+    return (
+      <div className="feed-item feed-item--assistant feed-item--plan">
+        <div className="tool-item tool-item--plan-running">
+          <span className="tool-icon tool-icon--plan" aria-hidden="true">
+            <LightbulbIcon />
+          </span>
+          <span>正在制定计划…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (item.status !== "completed" || toolCall.status !== "completed" || resultObj.outcome !== "success") {
+    return <ToolItem item={item} toolCall={toolCall} />;
+  }
+
+  return (
+    <div className="feed-item feed-item--assistant feed-item--plan">
+      <div
+        className="tool-item tool-item--plan-card"
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpenPlan?.()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenPlan?.();
+          }
+        }}
+      >
+        <span className="tool-icon tool-icon--plan" aria-hidden="true">
+          <LightbulbIcon />
+        </span>
+        <span className="tool-plan-title">{planTitle}</span>
+        <span className="tool-plan-action">查看计划 →</span>
+      </div>
+    </div>
+  );
+}
+
 function ToolItem({ item, toolCall, onOpenFile }: {
   item: Item;
   toolCall: ToolCall;
@@ -941,6 +1012,78 @@ function ToolItem({ item, toolCall, onOpenFile }: {
   useEffect(() => {
     if (item.status !== "in_progress") setOpen(false);
   }, [item.status]);
+
+  const toolResult = parseObject(toolCall.resultJson);
+  if (toolCall.toolName === "request_user_input"
+    && (item.status === "in_progress" || (item.status === "completed" && toolResult.outcome === "success"))) {
+    const args = parseObject(toolCall.argumentsJson);
+    const questions = Array.isArray(args.questions)
+      ? (args.questions as Array<{ id: string; question: string; options?: Array<{ id: string; label: string }> }>)
+      : [];
+    const isWaiting = item.status === "in_progress";
+
+    if (isWaiting) {
+      return (
+        <div className="tool-item tool-item--user-input tool-item--user-input-waiting">
+          <div className="tool-user-input-header">
+            <span className="tool-icon tool-icon--question" aria-hidden="true">
+              <QuestionCircleIcon />
+            </span>
+            <span className="tool-user-input-title">
+              正在询问 {questions.length > 1 ? `${questions.length} 个问题` : "问题"}
+            </span>
+          </div>
+          <div className="tool-user-input-waiting-row">
+            <span className="tool-waiting-dots" aria-hidden="true">
+              <WaitingDotsIcon />
+            </span>
+            <span className="tool-waiting-text">正在等待你的回答</span>
+          </div>
+        </div>
+      );
+    }
+
+    const resultObj = parseObject(toolCall.resultJson);
+    const dataObj = objectField(resultObj, "data");
+    const responseObj = objectField(dataObj, "response") || objectField(resultObj, "response");
+    const isSkippedAll = responseObj?.status === "skipped";
+    const answers = Array.isArray(responseObj?.answers)
+      ? (responseObj.answers as Array<{ questionId: string; optionIds?: string[]; text?: string }>)
+      : [];
+
+    return (
+      <details className="tool-item tool-item--user-input" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary>
+          <span className="tool-icon tool-icon--question" aria-hidden="true">
+            <QuestionCircleIcon />
+          </span>
+          <span>已询问 {questions.length > 0 ? `${questions.length} 个问题` : "问题"}</span>
+        </summary>
+        <div className="tool-body tool-body--user-input">
+          {questions.map((q) => {
+            const answer = answers.find((a) => a.questionId === q.id);
+            const optionLabels = (answer?.optionIds ?? [])
+              .map((id) => q.options?.find((opt) => opt.id === id)?.label ?? id);
+            const answerText = answer?.text?.trim();
+            const answerParts = [...optionLabels, ...(answerText ? [answerText] : [])];
+
+            const displayAnswer = isSkippedAll
+              ? "已跳过"
+              : answerParts.length > 0
+                ? answerParts.join("；")
+                : "未收到回答";
+
+            return (
+              <div key={q.id} className="tool-user-input-entry">
+                <p className="tool-user-input-question">{q.question}</p>
+                <p className="tool-user-input-answer">{displayAnswer}</p>
+              </div>
+            );
+          })}
+        </div>
+      </details>
+    );
+  }
 
   const isReadFile = ["read_file", "read_file_range"].includes(toolCall.toolName);
   const isDoneRead = isReadFile && item.status === "completed";
@@ -1088,21 +1231,38 @@ function splitRunIntoSegments(items: Item[]): Segment[] {
   return sourceSegments.map((segmentItems) => {
     const user = segmentItems.find((item) => item.kind === "user_message");
     const body = segmentItems.filter((item) => item.kind !== "user_message");
-    const tools = body.filter((item) => item.kind !== "assistant_message");
-    if (tools.length === 0) {
-      return { user, process: [], response: body.filter((item) => item.kind === "assistant_message") };
+    const processTools = body.filter(
+      (item) => item.kind !== "assistant_message" && item.toolCall?.toolName !== "write_plan",
+    );
+    if (processTools.length === 0) {
+      return {
+        user,
+        process: [],
+        response: body.filter(
+          (item) => item.kind === "assistant_message" || item.toolCall?.toolName === "write_plan",
+        ),
+      };
     }
-    const lastToolOrdinal = Math.max(...tools.map((item) => item.ordinal));
+    const lastProcessToolOrdinal = Math.max(...processTools.map((item) => item.ordinal));
     return {
       user,
-      process: body.filter((item) => item.kind !== "assistant_message" || item.ordinal <= lastToolOrdinal),
-      response: body.filter((item) => item.kind === "assistant_message" && item.ordinal > lastToolOrdinal),
+      process: body.filter(
+        (item) =>
+          item.toolCall?.toolName !== "write_plan" &&
+          (item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal),
+      ),
+      response: body.filter(
+        (item) =>
+          item.toolCall?.toolName === "write_plan" ||
+          (item.kind === "assistant_message" && item.ordinal > lastProcessToolOrdinal),
+      ),
     };
   });
 }
 
 function activeRunPresentation(run: Run) {
   switch (run.status) {
+    case "waiting_input": return { label: "等待回答", tone: "warning" as const };
     case "waiting_approval": return { label: "等待批准", tone: "warning" as const };
     default: return undefined;
   }
@@ -1316,4 +1476,43 @@ function useCurrentTime(live: boolean): number {
 
 function pathBasename(p: string): string {
   return p.split(/[/\\]/).filter(Boolean).at(-1) ?? p;
+}
+
+function QuestionCircleIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+      <path
+        d="M14.3726 8.00049C14.3726 4.48132 11.5196 1.6285 8.00049 1.62842C4.48127 1.62842 1.62842 4.48127 1.62842 8.00049C1.6285 11.5196 4.48132 14.3726 8.00049 14.3726C11.5196 14.3725 14.3725 11.5196 14.3726 8.00049ZM15.772 8.00049C15.7719 12.2928 12.2928 15.7719 8.00049 15.772C3.70812 15.772 0.22811 12.2928 0.228027 8.00049C0.228027 3.70807 3.70807 0.228027 8.00049 0.228027C12.2928 0.22811 15.772 3.70812 15.772 8.00049Z"
+        fill="currentColor"
+      />
+      <path
+        d="M7.06369 9.92245C7.06369 9.24781 7.23342 8.39641 7.91037 7.82675C8.32682 7.47633 8.87011 7.16969 9.14572 6.98105C9.47422 6.7562 9.62589 6.58962 9.69553 6.38828C9.80348 6.07588 9.7503 5.72497 9.54221 5.44882C9.34217 5.18345 8.95897 4.94003 8.32248 4.94003C6.85369 4.94006 6.25143 5.84986 6.25119 6.61679H4.8508C4.85104 5.02826 6.1298 3.53968 8.32248 3.53964C9.34633 3.53964 10.1659 3.95013 10.6604 4.60605C11.1465 5.25107 11.2796 6.08921 11.0178 6.84628C10.7986 7.47967 10.34 7.86026 9.93674 8.13632C9.48042 8.44865 9.1697 8.59682 8.81174 8.89804C8.59398 9.08128 8.46408 9.42776 8.46408 9.92245V10.0064H7.06369V9.92245Z"
+        fill="currentColor"
+      />
+      <path
+        d="M8.45126 10.7892V12.3556H7.05087V10.7892H8.45126Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function WaitingDotsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="5.5" r="1.3" />
+      <circle cx="5" cy="10.5" r="1.3" />
+      <circle cx="11" cy="5.5" r="1.3" />
+      <circle cx="11" cy="10.5" r="1.3" />
+    </svg>
+  );
+}
+
+function LightbulbIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2a4.5 4.5 0 0 0-3 7.8V11.5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V9.8A4.5 4.5 0 0 0 8 2z" />
+      <path d="M6.5 14h3" />
+    </svg>
+  );
 }

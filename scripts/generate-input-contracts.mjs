@@ -9,13 +9,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
 import json
 from eidos_runtime.protocol.schemas import ClosedModel
-from eidos_runtime.protocol.input_context import InputPrepareRequest, InputPreviewResponse, DraftResponse
+from eidos_runtime.protocol.input_context import InputPrepareRequest, InputPreviewResponse, DraftResponse, InputReadAssetRequest, InputReadAssetResponse
 from eidos_runtime.domain.input_reference import InputReference
 class InputContract(ClosedModel):
     reference: InputReference
     prepare: InputPrepareRequest
     preview: InputPreviewResponse
     draft: DraftResponse
+    read_asset_request: InputReadAssetRequest
+    read_asset_response: InputReadAssetResponse
 print(json.dumps(InputContract.model_json_schema(by_alias=True)))
 `], { cwd: root, env: { ...process.env, PYTHONPATH: path.join(root, "runtime") }, encoding: "utf8", maxBuffer: 1024 * 1024 }));
 await writeFile(path.join(root, "desktop/shared/input-context.generated.ts"), await compile(schema, "InputContract", {

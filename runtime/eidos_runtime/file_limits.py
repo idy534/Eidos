@@ -15,6 +15,8 @@ TOOL_TEXT_PAGE_CHARACTERS = 16 * 1024
 
 
 def function_argument_limit(tool_name: str) -> int:
+    if tool_name == "write_plan":
+        return 512 * 1024
     return MAX_PATCH_ARGUMENT_BYTES if tool_name == "apply_patch" else 64 * 1024
 
 

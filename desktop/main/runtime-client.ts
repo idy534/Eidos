@@ -1,4 +1,6 @@
-import { isInputReference, isInputDraft, isInputPreview, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference } from "../shared/input-context.js";
+import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
+import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
+import { isInputReference, isInputDraft, isInputPreview, isInputAssetChunk, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference, type InputAssetChunk } from "../shared/input-context.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -797,11 +799,31 @@ export class RuntimeClient {
   readInput(id: string): Promise<InputPreview> {
     return this.validatedRequest("input/read", { id }, isInputPreview);
   }
+  readInputAsset(id: string, offset = 0): Promise<InputAssetChunk> {
+    return this.validatedRequest("input/readAsset", { id, offset }, isInputAssetChunk);
+  }
   readInputDraft(key: string): Promise<InputDraft> {
     return this.validatedRequest("input/draftRead", { key }, isInputDraft);
   }
   writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft> {
     return this.validatedRequest("input/draftWrite", { key, text: draft.text, references: draft.references.map((value) => value.id) }, isInputDraft);
+  }
+
+  readPlanning(sessionId: string): Promise<PlanningReadResponse> {
+    return this.validatedRequest("planning/read", { sessionId }, isPlanningReadResponse);
+  }
+  async answerUserInput(request: AnswerInputRequest): Promise<UserInputRequest> {
+    const result = await this.validatedRequest("planning/answer", { ...request }, (v): v is { request: UserInputRequest } =>
+      isRecord(v) && hasOnlyKeys(v, ["request"]) && isUserInputRequest(v.request));
+    return result.request;
+  }
+  async readPlan(planId: string, reloadFile = false): Promise<PlanDocument> {
+    const result = await this.validatedRequest("plan/read", { planId, reloadFile }, isPlanResponse);
+    return result.plan;
+  }
+  async editPlan(request: PlanEditRequest): Promise<PlanDocument> {
+    const result = await this.validatedRequest("plan/edit", { ...request }, isPlanResponse);
+    return result.plan;
   }
 
   startRun(
@@ -813,10 +835,12 @@ export class RuntimeClient {
     approvalMode?: ApprovalMode,
     fullAccessConfirmation?: "full-access-v1",
     references?: string[],
+    planning?: RunPlanningOptions,
   ): Promise<Run> {
     return this.validatedRequest(
       "run/start",
       {
+        ...planning,
         sessionId,
         userInput,
         modelId,
@@ -1243,10 +1267,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
       return run.status === "running";
     }
     if (value.method === "run/updated") {
-      return ["queued", "running", "waiting_approval", "finalizing"].includes(run.status);
+      return ["queued", "running", "waiting_input", "waiting_approval", "finalizing"].includes(run.status);
     }
     return ![
-      "queued", "running", "waiting_approval", "finalizing",
+      "queued", "running", "waiting_input", "waiting_approval", "finalizing",
     ].includes(run.status);
   }
   if (value.method === "context/compacted") {
@@ -1432,7 +1456,7 @@ function isSession(value: unknown): value is Session {
     && (value.project === undefined || isSessionProject(value.project))
     && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
-    && (value.activeRunStatus === undefined || ["queued", "running", "waiting_approval", "finalizing"].includes(String(value.activeRunStatus)))
+    && (value.activeRunStatus === undefined || ["queued", "running", "waiting_input", "waiting_approval", "finalizing"].includes(String(value.activeRunStatus)))
     && ["new", "in_progress", "completed", "failed", "canceled"].includes(String(value.taskStatus))
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
@@ -1897,6 +1921,7 @@ function isRun(value: unknown): value is Run {
       "runtimeState",
       "modelId",
       "approvalMode",
+      "workMode",
       "modelStepCount",
       "allowedActions",
       "createdAt",
@@ -1921,7 +1946,7 @@ function isRun(value: unknown): value is Run {
     && typeof value.sessionId === "string"
     && (value.userInput === undefined || typeof value.userInput === "string")
     && [
-      "queued", "running", "waiting_approval",
+      "queued", "running", "waiting_input", "waiting_approval",
       "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
     ].includes(String(value.status))
     && (
@@ -1931,6 +1956,7 @@ function isRun(value: unknown): value is Run {
         "waiting_approval", "finalizing", "terminal",
       ].includes(String(value.runtimeState))
     )
+    && (value.workMode === undefined || ["execute", "plan"].includes(String(value.workMode)))
     && (value.approvalMode === undefined || ["manual", "auto_review", "full_access"].includes(String(value.approvalMode)))
     && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)

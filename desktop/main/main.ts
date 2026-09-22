@@ -1,3 +1,5 @@
+import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
+import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -1145,6 +1147,9 @@ ipcMain.handle(IPC.INPUT_READ, (event, id: unknown) => {
   inputOwner(event);
   return clientOrThrow().readInput(inputKey(id));
 });
+ipcMain.handle(IPC.INPUT_PREVIEW_URL, (event, id: unknown) => {
+  return artifactPreview.prepareInput(previewOwner(event), inputKey(id));
+});
 ipcMain.handle(IPC.INPUT_DRAFT_READ, (event, key: unknown) => {
   inputOwner(event);
   return clientOrThrow().readInputDraft(inputKey(key));
@@ -1170,6 +1175,32 @@ ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event) => {
   }
 });
 
+ipcMain.handle(IPC.PLANNING_READ, (event, sessionId: unknown) => {
+  inputOwner(event);
+  return clientOrThrow().readPlanning(inputKey(sessionId));
+});
+ipcMain.handle(IPC.PLANNING_ANSWER, (event, request: unknown) => {
+  inputOwner(event);
+  if (!isAnswerInputRequest(request)) throw new Error("澄清回答无效。");
+  return clientOrThrow().answerUserInput(request);
+});
+ipcMain.handle(IPC.PLAN_READ, (event, planId: unknown, reloadFile: unknown) => {
+  inputOwner(event);
+  if (typeof reloadFile !== "boolean") throw new Error("计划参数无效。");
+  return clientOrThrow().readPlan(inputKey(planId), reloadFile);
+});
+ipcMain.handle(IPC.PLAN_EDIT, (event, request: unknown) => {
+  inputOwner(event);
+  if (!isPlanEditRequest(request)) throw new Error("计划修改无效。");
+  return clientOrThrow().editPlan(request);
+});
+ipcMain.handle(IPC.PLAN_OPEN, async (event, planId: unknown) => {
+  inputOwner(event);
+  const plan = await clientOrThrow().readPlan(inputKey(planId));
+  const error = await electronShell.openPath(plan.path);
+  if (error) throw new Error(error);
+});
+
 ipcMain.handle(IPC.RUN_START, async (
   _event,
   sessionId: unknown,
@@ -1178,6 +1209,7 @@ ipcMain.handle(IPC.RUN_START, async (
   reasoningSelection: unknown,
   approvalMode: unknown,
   references: unknown,
+  planning: unknown,
 ) => {
   inputOwner(_event);
   const validReasoningSelection =
@@ -1195,6 +1227,7 @@ ipcMain.handle(IPC.RUN_START, async (
     || modelId.length === 0
     || modelId.length > 256
     || (references !== undefined && (!Array.isArray(references) || references.length > 20 || !references.every((id) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))))
+    || (planning !== undefined && !isRunPlanningOptions(planning))
     || !validReasoningSelection
     || (approvalMode !== undefined && !["manual", "auto_review", "full_access"].includes(String(approvalMode)))
   ) {
@@ -1209,6 +1242,7 @@ ipcMain.handle(IPC.RUN_START, async (
     approvalMode as ApprovalMode | undefined,
     approvalMode === "full_access" ? "full-access-v1" : undefined,
     references as string[] | undefined,
+    planning as RunPlanningOptions | undefined,
   );
 });
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {

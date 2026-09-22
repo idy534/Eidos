@@ -57,7 +57,8 @@ export interface Session {
   project?: SessionProject;
   worktree?: SessionWorktree;
   title?: string;
-  activeRunStatus?: "queued" | "running" | "waiting_approval" | "finalizing" | undefined;
+  activeRunStatus?: "queued" | "running" | "waiting_input"
+  | "waiting_approval" | "finalizing" | undefined;
   taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
   createdAt: number;
   updatedAt: number;
@@ -263,13 +264,15 @@ export type ApprovalMode = "manual" | "auto_review" | "full_access";
 
 export interface Run {
   approvalMode?: ApprovalMode;
+  workMode?: "execute" | "plan";
   id: string;
   sessionId: string;
   userInput?: string;
   status:
     | "queued"
     | "running"
-    | "waiting_approval"
+    | "waiting_input"
+  | "waiting_approval"
     | "finalizing"
     | "stopped"
     | "succeeded"
@@ -280,7 +283,8 @@ export interface Run {
     | "queued"
     | "thinking"
     | "tool_executing"
-    | "waiting_approval"
+    | "waiting_input"
+  | "waiting_approval"
     | "finalizing"
     | "terminal";
   modelId: ModelId;

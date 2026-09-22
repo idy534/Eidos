@@ -332,7 +332,7 @@ describe("artifact previews and feedback", () => {
       />,
     );
 
-    await waitFor(() => expect(api.openBrowser).toHaveBeenCalledWith("session-a", "browser-1", "http://localhost:3000"));
+    await waitFor(() => expect(api.openBrowser).toHaveBeenCalledWith("session-a", "browser-1", "http://localhost:3000", undefined));
     const address = screen.getByRole("textbox", { name: "网页地址" });
     fireEvent.change(address, { target: { value: "" } });
     expect(address).toHaveValue("");

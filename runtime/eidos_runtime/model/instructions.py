@@ -151,6 +151,7 @@ class InstructionResolver:
         skill_catalog_context: RetainedContextSection | None = None,
         selected_skill_context: tuple[RetainedContextSection, ...] = (),
         step_policy: StepPermissionPolicy | None = None,
+        work_mode: str = "execute",
     ) -> ResolvedInstructions:
         layers: list[InstructionLayer] = [
             InstructionLayer.create(
@@ -175,6 +176,16 @@ class InstructionResolver:
                 content=RUNTIME_POLICY_INSTRUCTIONS,
             ),
         ]
+        if work_mode == "plan":
+            layers.append(InstructionLayer.create(
+                id="work-mode", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:plan",
+                content="""You are in Plan mode because the user explicitly selected it. Investigate the task using the available tools and existing permissions. Do not implement the requested changes before the user confirms the plan. Clarify important unknown requirements using request_user_input; ask one to three short questions at a time. First investigate facts you can discover yourself. Call request_user_input alone, after running commands finish. Save the Markdown plan with write_plan outside the project; include the goal, findings, clarified decisions, implementation steps, verification and remaining assumptions. Use the current planId and expectedRevision when revising an existing plan. Call write_plan alone. Set readyForReview only when the plan is complete; this ends the turn for user review. Neither permission approval nor full access counts as plan confirmation. You cannot switch modes through tool parameters or text. The client starts a new execution Run after the user confirms.""",
+            ))
+        else:
+            layers.append(InstructionLayer.create(
+                id="work-mode", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:execute",
+                content="You are in normal execution mode. Plan mode is available only through the user's explicit mode selection or /plan command. Do not enter Plan mode autonomously. request_user_input and write_plan are unavailable. If the user asks for Plan mode in plain text, explain how to select Plan or use /plan; do not pretend the mode changed. Follow any explicit request to analyze without implementing.",
+            ))
         if step_policy is not None:
             layers.append(InstructionLayer.create(
                 id="runtime-permissions",

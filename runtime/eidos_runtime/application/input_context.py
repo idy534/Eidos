@@ -21,6 +21,7 @@ from eidos_runtime.persistence.input_context import InputContextRepository
 from eidos_runtime.protocol.input_context import (
     DraftReadRequest, DraftWriteRequest, DraftResponse, InputPrepareRequest,
     InputReadRequest, InputReferenceResponse, InputPreviewResponse,
+    InputReadAssetRequest, InputReadAssetResponse,
 )
 from eidos_runtime.tools.view_image import read_authorized_image, ViewImageRootAuthority
 
@@ -169,6 +170,25 @@ class InputContextApplication:
                 picture.convert('RGB').save(buffer, format='JPEG', quality=75)
                 thumbnail = 'data:image/jpeg;base64,' + base64.b64encode(buffer.getvalue()).decode()
         return InputPreviewResponse(reference=snapshot.reference, text=snapshot.text, thumbnail=thumbnail)
+
+    def read_asset(self, request: InputReadAssetRequest) -> InputReadAssetResponse:
+        try:
+            snapshot = self.repository.read(request.id)
+        except ValueError as error:
+            raise ApplicationError('RESOURCE_NOT_FOUND') from error
+        if not snapshot.image:
+            raise ApplicationError('INVALID_PARAMS', '引用不包含图片内容。')
+        raw = base64.b64decode(snapshot.image)
+        chunk = raw[request.offset : request.offset + 192 * 1024]
+        complete = request.offset + len(chunk) >= len(raw)
+        return InputReadAssetResponse(
+            id=request.id,
+            data=base64.b64encode(chunk).decode('ascii'),
+            mime_type=snapshot.mime or 'image/png',
+            size_bytes=len(raw),
+            next_offset=request.offset + len(chunk),
+            complete=complete,
+        )
 
     def read_draft(self, request: DraftReadRequest) -> DraftResponse:
         self._validate_draft_key(request.key)

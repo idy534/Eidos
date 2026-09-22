@@ -63,7 +63,7 @@ SESSION_SELECT = """
                SELECT 1 FROM runs active
                WHERE active.session_id = s.id
                  AND active.status IN (
-                   'queued', 'running', 'waiting_approval', 'finalizing'
+                   'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'
                  )
              ) THEN 'in_progress'
              ELSE COALESCE((
@@ -83,7 +83,7 @@ SESSION_SELECT = """
            END AS task_status,
            (SELECT active.status FROM runs active
             WHERE active.session_id = s.id
-              AND active.status IN ('queued', 'running', 'waiting_approval', 'finalizing')
+              AND active.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
             ORDER BY CASE active.status WHEN 'waiting_approval' THEN 0 ELSE 1 END,
                      active.creation_seq DESC LIMIT 1) AS active_run_status,
            COALESCE(p.id, direct_p.id) AS projection_project_id,
@@ -828,7 +828,7 @@ class SessionRepository(Repository):
             """
             SELECT 1 FROM runs
             WHERE session_id = ? AND status IN (
-                'queued', 'running', 'waiting_approval', 'finalizing'
+                'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'
             ) LIMIT 1
             """,
             (session_id,),

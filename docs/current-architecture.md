@@ -558,6 +558,8 @@ Context 从未决 Durable Intent 投影最多 16 条 `reconciliationOrigins`，�
 
 ### Projectless 文件提交与 Skill 写入权限
 
+Seatbelt 编译器为数据目录内的当前 Workspace 保留祖先路径的 metadata 和存在性检查。Shell 因此可以使用绝对路径执行 `mkdir -p`，也可以在 Workspace 内执行 `ls -la`。该例外不开放祖先目录的内容、列举或写入，也不开放其他 Session；hard confidentiality deny 保持不变。
+
 `secure_workspace_move` 向受控 helper 传递已核验的 Workspace 目录 fd。helper 核对目录身份，并从该 fd 向下使用 `O_NOFOLLOW` 访问目标。它不再从 `/` 逐级打开 `.eidos` 等受保护祖先。当前 Projectless Workspace 的普通文件沿原有 Workspace Permission 执行，不逐次审批；其他会话和数据文件仍受数据目录 deny 保护。helper 的新建提交按 errno 区分目标已存在与其他失败，诊断只记录固定阶段和数字 errno。
 
 Base/Effective Permission 的 `approvalWriteRoots` 标记用户 Skill 存储目录。字段默认空，旧权限快照仍可读取；新 Run 的产品权限工厂填入数据目录的 `skills`。Skill 激活只提供读权限，普通 Skill 的写入必须来自明确的附加授权。Runtime、PermissionPolicyEvaluator 和 Seatbelt 使用同一授权范围；精确文件授权不会开放同目录其他文件。Seatbelt 只允许获批目标祖先的 metadata 检查，不开放祖先目录内容。`skills/.system` 作为独立 protected write path 永久禁写，即使它被选作 Workspace 也不能修改。
@@ -642,3 +644,33 @@ Schema v14 在 `items` 增加 `input_references_json`，并增加 `input_referen
 Context Builder 从用户消息关联的持久引用读取内容，并标记来源、SHA256 和资料边界。图片通过现有 Pydantic AI `BinaryContent` 进入支持图片的 Provider。Context 预算排除 base64 字符串的文本计数，并加入按尺寸估算的图片开销。压缩事实保留引用来源和 ID。Skill 使用现有 Catalog、Activation、Resource 流程；MCP 和 Plugin 选择激活现有 deferred tools，不安装扩展、不绕过授权，也不在运行中替换快照。
 
 Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `desktop/shared/input-context.generated.ts`。生成器使用现有 Python 环境和已锁定的 `json-schema-to-typescript`，没有引入生产依赖。Main 与 RuntimeClient 继续执行边界校验。
+
+## Plan 模式（生产代码已接入，Plan 自动化验证已完成）
+
+用户通过 Composer 的模式选择或输入开头的 `/plan` 显式选择 Plan。`run/start.workMode` 默认为 `execute`。Runtime 把模式保存在 Run 上。模型不能改变模式。Plan 与 `manual`、`auto_review`、`full_access` 权限模式独立；原有工具与权限流程继续生效。
+
+调用链为 `Composer / PlanPanel → typed preload IPC → Main RuntimeClient → Method Registry → PlanningApplication / RunApplication → PlanningRepository / RunSupervisor → ToolExecutionController`。Python Pydantic 是新增 DTO 的定义来源。`scripts/generate-planning-contracts.mjs` 生成 Desktop 类型，`desktop/shared/planning.ts` 校验跨进程数据。
+
+Plan Run 的工具注册表额外注入 `request_user_input` 和 `write_plan`。普通 Run 不注入这两个工具。Runtime 在执行入口再次检查 Plan 模式。`request_user_input` 每次接收一到三个问题，支持单选、多选和文字回答；用户可以填写自定义回答或明确跳过。两个控制工具必须单独调用。Plan 的正常完成必须先通过 `write_plan` 提交可审阅的计划。
+
+澄清请求、问题、答案和 ToolCall 关联保存在 SQLite。请求创建与 Run 转为 `waiting_input` 在同一事务中提交，并写入 Event / Outbox。引擎退出当前 worker 并释放资源，不用线程等待用户回答。回答通过 `planning/answer` 校验后保存，Run 转回 `queued`。调度器排除尚未完成收尾的 worker，恢复同一个 ToolCall，再继续模型循环。重复提交相同答案保持幂等。取消会同时关闭待回答问题；启动恢复只保留没有未确定副作用的澄清等待。
+
+Schema v15 增加 Run 模式与计划版本引用、`plans`、`plan_revisions` 和 `user_input_requests`。v14 升级通过 SQLite 表重建扩展 Run 的状态 CHECK，并保留索引与外键检查。数据库是计划内容、版本和确认状态的唯一事实来源。
+
+计划文件位于 `<EIDOS_DATA_DIR>/plans/<session-id>/<plan-id>/plan.md`，默认根目录为 `~/.eidos`。Runtime 用专用工具保存文件，不扩权开放整个数据目录。`write_plan` 经过已有 Durable Intent、结果校验与结果提交流程。文件是数据库内容的可恢复投影。Runtime 记录投影 Hash，并拒绝静默覆盖外部修改。用户可以在界面编辑、打开 MD 文件，或将外部修改载入为新版本。文件访问使用有界读取、无符号链接路径打开和临时文件替换。
+
+`write_plan.readyForReview=true` 保存完整计划并结束当前 Run。用户通过 `plan/edit` 修改正文，或通过新的 Plan Run 提交修改意见。界面确认时提交 `planId + planRevision`。Runtime 在创建普通 Run 的事务中核验所属 Session、当前版本和待确认状态，记录确认并绑定执行 Run。已确认的版本不可修改，执行 Context 从对应的不可变版本读取正文。Main 只根据 Runtime 返回的计划路径打开文件。
+
+本次工作已经补充 Runtime 和 Renderer 的 Plan 定向测试。`pnpm test:runtime:full` 通过 1947 个测试，另有 2 个 `large_repository` 测试按配置跳过。`pnpm test:integration` 通过 761 个测试，另有 1188 个测试按标记排除。构建、协议契约、Renderer 状态、Main 全量、Python 检查、Seatbelt 和 Electron smoke 也已通过。Renderer 行为全量有 321 个测试通过，另有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成。
+
+Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题或计划，旧请求的迟到响应也不能覆盖当前状态。澄清表单按请求 ID 重建，答案和跳过状态不跨请求复用。计划卡片只展示已完成且成功的 `write_plan`；失败、取消和拒绝沿用普通工具结果展示。快照中的澄清参数复用 `RequestUserInput` 校验与序列化；无效参数不进入展示投影，原始 ToolCall 记录保持不变。
+
+### Plan 工具结果与写入失败边界
+
+`request_user_input` 和 `write_plan` 构造结果时显式传入各自的结果模型。公共 `tool_result` 将该模型交给既有 canonical 校验，不放宽通用 DTO，也不维护另一份工具名映射。
+
+计划写入先校验 Run、计划所属 Session、版本、确认状态、外部文件修改及正文大小，再提交 Durable Intent。Repository 在事务内重复核验。已知发生在内容写入前的 `PlanWriteRejected` 返回普通工具错误；该错误不留下不确定副作用。提交计划或投影文件之后的异常仍由原有对账流程处理。Schema 明确要求新计划省略 ID 和版本，修改时使用工具返回的值。
+
+### 澄清参数纠错与展示
+
+`request_user_input` 的字段说明提供完整嵌套示例、题型约束和自定义输入说明，工具名称与原始描述保持不变。Pydantic 校验最多保留八项字段路径与错误原因，不回传参数值；参数错误反馈说明问题尚未提交，并给出修正方式。Runtime 的参数错误指纹区分首项字段路径和原因，不包含参数值、错误文案或问题措辞。连续相同校验错误仍受原有 LoopGuard 限制。失败或取消的澄清调用沿用普通工具结果展示，只有成功的回答结果进入澄清历史。

@@ -3,7 +3,7 @@ import { DropdownMenu } from "./DropdownMenu.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import "./WorkspaceDock.css";
 
-export type WorkspaceToolKind = "text-review" | "review" | "terminal" | "files" | "browser";
+export type WorkspaceToolKind = "text-review" | "plan" | "review" | "terminal" | "files" | "browser";
 
 export interface WorkspaceTab {
   id: string;
@@ -26,6 +26,7 @@ interface WorkspaceDockProps {
 
 const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
   "text-review": "文本审查",
+  plan: "计划",
   review: "审查",
   terminal: "终端",
   files: "文件",
@@ -33,6 +34,14 @@ const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
 };
 
 function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
+  if (tool === "plan") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M10 2.5a5.5 5.5 0 0 0-3.5 9.7V14a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1v-1.8A5.5 5.5 0 0 0 10 2.5z" />
+        <path d="M8 17.5h4" />
+      </svg>
+    );
+  }
   if (tool === "terminal") {
     return (
       <svg viewBox="0 0 20 20" aria-hidden="true">

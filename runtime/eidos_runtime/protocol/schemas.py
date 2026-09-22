@@ -101,7 +101,7 @@ class SessionDto(ClosedModel):
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None
-    active_run_status: Literal["queued", "running", "waiting_approval", "finalizing"] | None = Field(default=None, alias="activeRunStatus")
+    active_run_status: Literal["queued", "running", "waiting_approval", "waiting_input", "finalizing"] | None = Field(default=None, alias="activeRunStatus")
     task_status: Literal[
         "new", "in_progress", "completed", "failed", "canceled"
     ] = Field(alias="taskStatus")
@@ -238,13 +238,14 @@ class McpServerRecordDto(ClosedModel):
 
 
 class RunDto(ClosedModel):
+    work_mode: Literal["execute", "plan"] = Field(default="execute", alias="workMode")
     approval_mode: Literal["manual", "auto_review", "full_access"] = Field(default="manual", alias="approvalMode")
     id: StrictStr
     session_id: StrictStr = Field(alias="sessionId")
     user_input: StrictStr | None = Field(default=None, alias="userInput")
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     status: Literal[
-        "queued", "running", "waiting_approval", "finalizing", "stopped",
+        "queued", "running", "waiting_approval", "waiting_input", "finalizing", "stopped",
         "succeeded", "failed", "canceled", "interrupted",
     ]
     runtime_state: Literal[

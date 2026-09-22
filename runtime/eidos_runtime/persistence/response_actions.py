@@ -108,7 +108,7 @@ class ResponseActionRepository:
             connection = self._connection()
             source = connection.execute(
                 """
-                SELECT id, session_id, user_input, model_id, status, creation_seq
+                SELECT id, session_id, user_input, model_id, status, creation_seq, work_mode
                 FROM runs WHERE id = ?
                 """,
                 (source_run_id,),
@@ -141,6 +141,7 @@ class ResponseActionRepository:
             "sessionId": str(source["session_id"]),
             "userInput": str(source["user_input"]),
             "modelId": str(source["model_id"]),
+            "workMode": str(source["work_mode"]),
             "status": str(source["status"]),
         }
 

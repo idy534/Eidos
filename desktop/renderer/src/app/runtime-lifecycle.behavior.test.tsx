@@ -77,6 +77,11 @@ describe("App & Runtime Lifecycle behavior", () => {
       closeTerminal: vi.fn().mockResolvedValue(undefined),
       onTerminalData: vi.fn().mockReturnValue(() => {}),
       onTerminalExit: vi.fn().mockReturnValue(() => {}),
+      readPlanning: vi.fn().mockResolvedValue({ plans: [], questions: [] }),
+      answerUserInput: vi.fn().mockResolvedValue(undefined),
+      readPlan: vi.fn().mockResolvedValue(undefined),
+      editPlan: vi.fn().mockResolvedValue(undefined),
+      openPlan: vi.fn().mockResolvedValue(undefined),
       ...overrides,
     };
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;

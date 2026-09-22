@@ -252,6 +252,42 @@ button.environment-popover__row:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.environment-popover__section {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color, #e5e5e5);
+}
+
+.environment-popover__section-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted, #647b6e);
+  padding: 0.125rem 0.55rem;
+}
+
+.environment-popover__row.environment-popover__row--plan,
+.environment-popover__row--plan {
+  justify-content: flex-start !important;
+  gap: 0.375rem;
+}
+
+.environment-popover__row--plan .plan-icon {
+  color: #46735a;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.environment-popover__row--plan .plan-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text, #1f3126);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
 .git-line-summary {
   display: inline-flex;
   gap: 0.25rem;

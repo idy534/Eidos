@@ -168,7 +168,6 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
           <ImageLightboxModal
             preview={preview}
             onClose={() => setPreview(undefined)}
-            onReuse={context ? () => context.reuse(preview.reference) : undefined}
           />
         ) : preview.reference.kind === "skill" ? (
           <SkillDetailDialog
@@ -197,12 +196,13 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
 function ImageLightboxModal({
   preview,
   onClose,
-  onReuse,
 }: {
   preview: InputPreview;
   onClose(): void;
-  onReuse?: (() => void) | undefined;
 }) {
+  const [url, setUrl] = useState<string>();
+  const [error, setError] = useState<string>();
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -211,11 +211,34 @@ function ImageLightboxModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    let active = true;
+    let created: string | undefined;
+    if (typeof window.eidosRuntime?.prepareInputPreview !== "function") return;
+    void window.eidosRuntime.prepareInputPreview(preview.reference.id).then((previewUrl) => {
+      created = previewUrl;
+      if (active) setUrl(previewUrl);
+      else if (typeof window.eidosRuntime?.releaseInputPreview === "function") {
+        void window.eidosRuntime.releaseInputPreview(previewUrl).catch(() => {});
+      }
+    }).catch((err) => {
+      if (active) setError(err instanceof Error ? err.message : "无法加载原图预览。");
+    });
+    return () => {
+      active = false;
+      if (created && typeof window.eidosRuntime?.releaseInputPreview === "function") {
+        void window.eidosRuntime.releaseInputPreview(created).catch(() => {});
+      }
+    };
+  }, [preview.reference.id]);
+
   if (typeof document === "undefined") return null;
+
+  const displaySrc = url || preview.thumbnail;
 
   return createPortal(
     <div
-      className="artifact-image-preview ref-image-lightbox"
+      className="artifact-image-preview"
       role="dialog"
       aria-modal="true"
       aria-label={`${preview.reference.label} 图片预览`}
@@ -232,35 +255,11 @@ function ImageLightboxModal({
       >
         ×
       </button>
-      <div className="ref-image-lightbox__container">
-        {preview.thumbnail ? (
-          <img src={preview.thumbnail} alt={preview.reference.label} />
-        ) : (
-          <p role="status">正在读取图片预览…</p>
-        )}
-        <div className="ref-image-lightbox__bar">
-          <div className="ref-image-lightbox__info">
-            <span className="ref-image-lightbox__title">{preview.reference.label}</span>
-            <span className="ref-image-lightbox__source" title={preview.reference.source}>
-              {preview.reference.source}
-            </span>
-          </div>
-          {onReuse && (
-            <div className="ref-image-lightbox__actions">
-              <button
-                type="button"
-                className="ref-image-lightbox__action-btn"
-                onClick={() => {
-                  onReuse();
-                  onClose();
-                }}
-              >
-                添加到当前输入
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
+      {displaySrc ? (
+        <img src={displaySrc} alt={preview.reference.label} />
+      ) : (
+        <p role={error ? "alert" : "status"}>{error || "正在读取图片预览…"}</p>
+      )}
     </div>,
     document.body,
   );

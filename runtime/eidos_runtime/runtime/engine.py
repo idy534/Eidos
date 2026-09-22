@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.planning import PlanningSuspended
+from eidos_runtime.persistence.planning import PlanningRepository
+
 import logging
 import json
 from pathlib import Path
@@ -274,6 +277,9 @@ class RuntimeEngine:
                 if callable(bind_image_authority):
                     bind_image_authority(resources.image_authority)
                 self._drive(run_context, resources, cancel, repository_context)
+        except PlanningSuspended:
+            self.events.deliver_pending()
+            return
         except RunResourceError as error:
             self._fail(run_id, str(error))
         except ContextLimitExceeded as error:
@@ -306,6 +312,7 @@ class RuntimeEngine:
             if current["status"] in {
                 "running",
                 "waiting_approval",
+                "waiting_input",
                 "finalizing",
             }:
                 self._fail(run_id, "TOOL_INFRASTRUCTURE_FAILURE")
@@ -364,8 +371,9 @@ class RuntimeEngine:
             reviewer=self.model,
         )
 
-        if self.store.read_run(run.run_id)["status"] == "waiting_approval":
-            pending = self.store.typed_runtime_repository().read_pending_approval(run.run_id)
+        input_request = PlanningRepository(self.store.database).unfinished(run.run_id)
+        if input_request is not None or self.store.read_run(run.run_id)["status"] == "waiting_approval":
+            pending = input_request or self.store.typed_runtime_repository().read_pending_approval(run.run_id)
             if pending is None or resources.dispatcher is None:
                 raise InvalidRunStateError("pending approval is unavailable")
             item = self.store.read_item(pending.item_id)
@@ -951,6 +959,18 @@ class RuntimeEngine:
                 return
             self._pause_at(run.run_id, SafePoint.BEFORE_TOOL, cancel)
             outcome = tools.execute(step, validation.tool_calls, cancel)
+            if len(validation.tool_calls) == 1 and validation.tool_calls[0].name == "write_plan":
+                plans = PlanningRepository(self.store.database).list_plans(run.session_id)
+                ready = next((p for p in plans if p.run_id == run.run_id and p.status == "review"), None)
+                if ready is not None and outcome.status == "completed" and not outcome.error_fingerprints and validation.tool_calls[0].arguments.get("readyForReview") is True:
+                    shell_stopped = resources.shell_process_manager.has_running()
+                    resources.shell_process_manager.cleanup()
+                    self.store.complete_current_step(run.run_id, "completed")
+                    assistant = self.store.create_assistant_item(run.run_id, step.step_index)
+                    self.store.append_item_content(str(assistant["id"]), f"计划已保存：{ready.title}。请审阅计划，确认或修改后再执行。")
+                    mutation = self.store.complete_assistant_and_run_committed(str(assistant["id"]), run.run_id, shell_stopped=shell_stopped)
+                    self.events.publish(mutation, item=mutation.value[0], run=mutation.value[1])
+                    return
             self._pause_at(run.run_id, SafePoint.AFTER_TOOL, cancel)
             guard_reason = None
             signature = None
@@ -1178,7 +1198,7 @@ class RuntimeEngine:
         self.state_machine.track(RuntimeState.CANCELED, "run_canceled")
         self.store.complete_current_step(run_id, "canceled", reason="canceled")
         completed = self.store.read_run(run_id)
-        if completed["status"] in {"running", "waiting_approval", "finalizing"}:
+        if completed["status"] in {"running", "waiting_approval", "waiting_input", "finalizing"}:
             mutation = self.store.cancel_run_committed(run_id)
             items = {
                 str(item["id"]): item

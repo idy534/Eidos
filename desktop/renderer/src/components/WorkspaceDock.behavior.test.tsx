@@ -179,4 +179,31 @@ describe("WorkspaceDock", () => {
     expect(svg).toHaveAttribute("viewBox", "0 0 20 20");
     expect(svg?.querySelector("path")).toHaveAttribute("d", "M10 4.5v11M4.5 10h11");
   });
+
+  it("renders plan tab when openTabs contains plan tab, and renders its content", () => {
+    render(
+      <Harness
+        initialTabs={[
+          { id: "plan", kind: "plan" },
+          { id: "files", kind: "files" },
+        ]}
+      />,
+    );
+
+    const planTab = screen.getByRole("tab", { name: "计划" });
+    expect(planTab).toBeInTheDocument();
+    expect(planTab).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("does not offer plan tab in add-window menu or empty state when availableTools excludes plan", () => {
+    // Empty state
+    const { rerender } = render(<Harness initialTabs={[]} />);
+    expect(screen.queryByRole("button", { name: "计划" })).not.toBeInTheDocument();
+
+    // Add window menu
+    rerender(<Harness initialTabs={[{ id: "files", kind: "files" }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "添加窗口" }));
+    expect(screen.queryByRole("menuitem", { name: "计划" })).not.toBeInTheDocument();
+  });
 });
+
