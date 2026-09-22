@@ -84,6 +84,8 @@ export const IPC = {
   INPUT_PASTE_IMAGE: "input:pasteImage",
   INPUT_DRAFT_READ: "input:draftRead",
   INPUT_DRAFT_WRITE: "input:draftWrite",
+  AGENT_READ: "agent:read",
+  AGENT_STOP: "agent:stop",
   PLANNING_READ: "planning:read",
   PLANNING_ANSWER: "planning:answer",
   PLAN_READ: "plan:read",

@@ -1,3 +1,4 @@
+import type { CollaborationState } from "../shared/collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
@@ -300,6 +301,8 @@ const api: EidosRuntimeAPI = {
   pasteInputImage: () => ipcRenderer.invoke(IPC.INPUT_PASTE_IMAGE),
   readInputDraft: (key: string) => ipcRenderer.invoke(IPC.INPUT_DRAFT_READ, key),
   writeInputDraft: (key: string, draft: InputDraft) => ipcRenderer.invoke(IPC.INPUT_DRAFT_WRITE, key, draft),
+  readAgents: (sessionId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_READ, sessionId),
+  stopAgent: (parentRunId: string, agentId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_STOP, parentRunId, agentId),
   readPlanning: (sessionId: string): Promise<PlanningReadResponse> => ipcRenderer.invoke(IPC.PLANNING_READ, sessionId),
   answerUserInput: (request: AnswerInputRequest): Promise<UserInputRequest> => ipcRenderer.invoke(IPC.PLANNING_ANSWER, request),
   readPlan: (planId: string, reloadFile = false): Promise<PlanDocument> => ipcRenderer.invoke(IPC.PLAN_READ, planId, reloadFile),

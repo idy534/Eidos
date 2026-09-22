@@ -147,6 +147,9 @@ class CheckpointApplication:
             return replay
         try:
             run = self._store.read_run(request.run_id)
+            from eidos_runtime.persistence.collaboration import CollaborationRepository
+            if CollaborationRepository(self._store.database).is_child(str(run["sessionId"])):
+                raise ApplicationError("INVALID_STATE", "Child sessions do not own workspace checkpoints.")
             projection = self._sessions.read_session_projection(str(run["sessionId"]))
             if projection is None:
                 raise ResourceNotFoundError("session not found")

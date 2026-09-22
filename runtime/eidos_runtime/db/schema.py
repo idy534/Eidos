@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from eidos_runtime.db.collaboration_migration import COLLABORATION_SCHEMA_SQL
 
-SCHEMA_VERSION = 15
+
+SCHEMA_VERSION = 16
+V15_SCHEMA_VERSION = 15
 V14_SCHEMA_VERSION = 14
 V13_SCHEMA_VERSION = 13
 V12_SCHEMA_VERSION = 12
@@ -12,7 +15,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V14_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V15_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1456,10 +1459,13 @@ CREATE TABLE user_input_requests (
 );
 CREATE UNIQUE INDEX one_pending_user_input ON user_input_requests(run_id) WHERE status = 'pending';
 """
-SCHEMA_SQL = (V12_SCHEMA_SQL + V12_TO_V13_MIGRATION_SQL + V13_TO_V14_MIGRATION_SQL).replace(
+V15_SCHEMA_SQL = (V12_SCHEMA_SQL + V12_TO_V13_MIGRATION_SQL + V13_TO_V14_MIGRATION_SQL).replace(
     "'queued', 'running', 'waiting_approval', 'finalizing'",
     "'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'",
 ) + PLANNING_SCHEMA_SQL
+
+
+SCHEMA_SQL = V15_SCHEMA_SQL.replace("'waiting_input',", "'waiting_input', 'waiting_agents',") + COLLABORATION_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

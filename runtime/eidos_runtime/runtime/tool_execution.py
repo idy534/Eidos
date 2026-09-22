@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from eidos_runtime.domain.planning import PlanningSuspended
+from eidos_runtime.domain.collaboration import AgentSuspended
 from enum import StrEnum
 import json
 import logging
@@ -614,7 +615,7 @@ class ToolExecutionController:
                                 self._execution_state.intent_started
                             ),
                         )
-                    except PlanningSuspended:
+                    except (PlanningSuspended, AgentSuspended):
                         raise
                     except ApprovalTransportError:
                         raise

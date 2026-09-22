@@ -123,6 +123,8 @@ from eidos_runtime.domain.input_reference import InputSnapshot
 from eidos_runtime.application.input_context import InputContextApplication
 from eidos_runtime.application.planning import PlanningApplication
 from eidos_runtime.protocol import planning as planning_dtos
+from eidos_runtime.protocol.collaboration import AgentReadRequest, AgentStopRequest
+from eidos_runtime.domain.collaboration import CollaborationState
 from eidos_runtime.protocol import input_context as input_dtos
 from eidos_runtime.extensions.plugins import PluginCatalog
 from eidos_runtime.extensions.skill_management import SkillManagement
@@ -1012,6 +1014,10 @@ class RuntimeServer:
                     request
                 ),
             ),
+            ("agent/read", AgentReadRequest, CollaborationState,
+             lambda _id, request: self.supervisor.collaboration.read_session(request.session_id)),
+            ("agent/stop", AgentStopRequest, CollaborationState,
+             lambda _id, request: self.supervisor.collaboration.stop_from_desktop(request.parent_run_id, request.agent_id)),
             ("planning/read", planning_dtos.PlanningReadRequest, planning_dtos.PlanningReadResponse,
              lambda _id, request: self._planning_application().read(request)),
             ("planning/answer", planning_dtos.AnswerInputRequest, planning_dtos.AnswerInputResponse,
@@ -1289,6 +1295,7 @@ class RuntimeServer:
             "input/prepare",
             "input/draftWrite",
             "planning/answer",
+            "agent/stop",
             "plan/edit",
             "model/create",
             "model/update",

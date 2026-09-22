@@ -37,6 +37,10 @@ from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
 from eidos_runtime.tools.planning import planning_entries
+from eidos_runtime.tools.collaboration import collaboration_entries
+from eidos_runtime.application.collaboration import CollaborationApplication
+from eidos_runtime.domain.collaboration import READ_ONLY_TOOLS
+from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 from eidos_runtime.tools.declare_outputs import declare_outputs_entry
 from eidos_runtime.tools.search import tool_search_entry
@@ -66,7 +70,10 @@ class RunResources:
         supports_tool_grammar: bool = False,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
         events: RuntimeEvents | None = None,
+        collaboration: CollaborationApplication | None = None,
     ) -> None:
+        self.collaboration = collaboration
+        self.is_child = CollaborationRepository(store.database).child_for_run(run_id)
         self.store = store
         self.run_id = run_id
         self.extension_snapshot = extension_snapshot
@@ -227,6 +234,7 @@ class RunResources:
                 read_tool_output_entry(self.store, self.run_id),
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
+                *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
                 *(planning_entries() if self.store.read_run(self.run_id).get("workMode") == "plan" else ()),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
@@ -236,10 +244,12 @@ class RunResources:
             ),
             external_entries=self._external_entries,
         )
+        if self.is_child:
+            base = ToolRegistry(tuple(entry for entry in base.entries if (entry.spec.name in READ_ONLY_TOOLS and entry.provenance.kind == "builtin") or (entry.spec.name == "send_message" and entry.provenance.source_id == "eidos.collaboration")))
         deferred = tuple(
             entry for entry in base.entries if entry.spec.visibility == "deferred"
         )
-        self.registry = ToolRegistry((*base.entries, tool_search_entry(deferred)))
+        self.registry = base if self.is_child else ToolRegistry((*base.entries, tool_search_entry(deferred)))
         self.dispatcher = ToolDispatcher(self.registry)
 
     def _activate_mentions(self, user_input: str) -> None:

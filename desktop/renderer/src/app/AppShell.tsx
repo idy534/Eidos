@@ -1,3 +1,4 @@
+import { AgentPanel } from "../components/AgentPanel.js";
 import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { PlanPanel } from "../components/PlanPanel.js";
 import type { PlanDocument } from "../../../shared/planning.generated.js";
@@ -1248,6 +1249,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   </p>
                 )}
 
+                <AgentPanel key={currentSnapshot.session.id} sessionId={currentSnapshot.session.id} ready={isStorageReady && runtimeStatus.state === "ready"} />
                 <ExecutionFeed
                   key={currentSnapshot.session.id}
                   items={currentSnapshot.items}

@@ -1,3 +1,5 @@
+import { isCollaborationState } from "../shared/collaboration.js";
+import type { CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import { isInputReference, isInputDraft, isInputPreview, isInputAssetChunk, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference, type InputAssetChunk } from "../shared/input-context.js";
@@ -809,6 +811,12 @@ export class RuntimeClient {
     return this.validatedRequest("input/draftWrite", { key, text: draft.text, references: draft.references.map((value) => value.id) }, isInputDraft);
   }
 
+  readAgents(sessionId: string): Promise<CollaborationState> {
+    return this.validatedRequest("agent/read", { sessionId }, isCollaborationState);
+  }
+  stopAgent(parentRunId: string, agentId: string): Promise<CollaborationState> {
+    return this.validatedRequest("agent/stop", { parentRunId, agentId }, isCollaborationState);
+  }
   readPlanning(sessionId: string): Promise<PlanningReadResponse> {
     return this.validatedRequest("planning/read", { sessionId }, isPlanningReadResponse);
   }
@@ -1267,10 +1275,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
       return run.status === "running";
     }
     if (value.method === "run/updated") {
-      return ["queued", "running", "waiting_input", "waiting_approval", "finalizing"].includes(run.status);
+      return ["queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing"].includes(run.status);
     }
     return ![
-      "queued", "running", "waiting_input", "waiting_approval", "finalizing",
+      "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",
     ].includes(run.status);
   }
   if (value.method === "context/compacted") {
@@ -1456,7 +1464,7 @@ function isSession(value: unknown): value is Session {
     && (value.project === undefined || isSessionProject(value.project))
     && (value.worktree === undefined || isSessionWorktree(value.worktree))
     && (value.title === undefined || typeof value.title === "string")
-    && (value.activeRunStatus === undefined || ["queued", "running", "waiting_input", "waiting_approval", "finalizing"].includes(String(value.activeRunStatus)))
+    && (value.activeRunStatus === undefined || ["queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing"].includes(String(value.activeRunStatus)))
     && ["new", "in_progress", "completed", "failed", "canceled"].includes(String(value.taskStatus))
     && isNonNegativeInteger(value.createdAt)
     && isNonNegativeInteger(value.updatedAt)
@@ -1946,7 +1954,7 @@ function isRun(value: unknown): value is Run {
     && typeof value.sessionId === "string"
     && (value.userInput === undefined || typeof value.userInput === "string")
     && [
-      "queued", "running", "waiting_input", "waiting_approval",
+      "queued", "running", "waiting_input", "waiting_agents", "waiting_approval",
       "finalizing", "stopped", "succeeded", "failed", "canceled", "interrupted",
     ].includes(String(value.status))
     && (

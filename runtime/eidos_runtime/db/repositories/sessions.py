@@ -63,7 +63,7 @@ SESSION_SELECT = """
                SELECT 1 FROM runs active
                WHERE active.session_id = s.id
                  AND active.status IN (
-                   'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'
+                   'queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'
                  )
              ) THEN 'in_progress'
              ELSE COALESCE((
@@ -83,7 +83,7 @@ SESSION_SELECT = """
            END AS task_status,
            (SELECT active.status FROM runs active
             WHERE active.session_id = s.id
-              AND active.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
+              AND active.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
             ORDER BY CASE active.status WHEN 'waiting_approval' THEN 0 ELSE 1 END,
                      active.creation_seq DESC LIMIT 1) AS active_run_status,
            COALESCE(p.id, direct_p.id) AS projection_project_id,
@@ -310,7 +310,7 @@ class SessionRepository(Repository):
                 high_water, before_sequence = cursor_state
             rows = connection.execute(
                 sql
-                + " WHERE s.creation_seq <= ? AND s.creation_seq < ?"
+                + " WHERE s.creation_seq <= ? AND s.creation_seq < ? AND NOT EXISTS (SELECT 1 FROM agent_delegations d WHERE d.child_session_id=s.id)"
                 + " ORDER BY s.creation_seq DESC LIMIT ?",
                 (high_water, before_sequence, limit + 1),
             ).fetchall()
@@ -641,9 +641,19 @@ class SessionRepository(Repository):
         operation_id: str | None = None,
     ) -> CommittedMutation[DeletedSession]:
         def write(
-            connection: sqlite3.Connection,
+            connection: sqlite3.Connection, session_id: str = session_id,
         ) -> CommittedMutation[DeletedSession]:
             self._assert_session_deletable(connection, session_id)
+            children = connection.execute(
+                'SELECT child_session_id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)',
+                (session_id,),
+            ).fetchall()
+            connection.execute('DELETE FROM agent_messages WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
+            connection.execute('DELETE FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
+            for child in children:
+                # Delete borrowed Session facts only; never remove its workspace.
+                write(connection, child['child_session_id'])
+            connection.execute('DELETE FROM agent_waits WHERE run_id IN (SELECT id FROM runs WHERE session_id=?)', (session_id,))
             run_ids = "SELECT id FROM runs WHERE session_id = ?"
             connection.execute(
                 f"DELETE FROM durable_intents WHERE run_id IN ({run_ids})",
@@ -824,11 +834,18 @@ class SessionRepository(Repository):
         ).fetchone()
         if session is None:
             raise ResourceNotFoundError("session not found")
+        if connection.execute('SELECT 1 FROM agent_delegations WHERE child_session_id=?', (session_id,)).fetchone():
+            raise SessionActiveError("child sessions are managed by their parent")
+        if connection.execute(
+            "SELECT 1 FROM agent_delegations d JOIN runs p ON p.id=d.parent_run_id JOIN runs c ON c.session_id=d.child_session_id WHERE p.session_id=? AND c.status IN ('queued','running','waiting_approval','waiting_input','waiting_agents','finalizing') LIMIT 1",
+            (session_id,),
+        ).fetchone():
+            raise SessionActiveError("session has an active child run")
         active = connection.execute(
             """
             SELECT 1 FROM runs
             WHERE session_id = ? AND status IN (
-                'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'
+                'queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'
             ) LIMIT 1
             """,
             (session_id,),

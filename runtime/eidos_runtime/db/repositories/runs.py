@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.collaboration import MAX_ACTIVE_AGENTS
+
 from eidos_runtime.domain.input_reference import InputReference
 
 import json
@@ -93,7 +95,7 @@ class RunRepository(Repository):
                 SELECT 1 FROM runs r
                 JOIN sessions s ON s.id = r.session_id
                 WHERE s.workspace_root = ?
-                  AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
+                  AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
                 LIMIT 1
                 """,
                 (workspace_root,),
@@ -109,7 +111,7 @@ class RunRepository(Repository):
                 SELECT 1 FROM runs r
                 JOIN sessions s ON s.id = r.session_id
                 WHERE (s.worktree_id = ? OR s.associated_worktree_id = ?)
-                  AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
+                  AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
                 LIMIT 1
                 """,
                 (worktree_id, worktree_id),
@@ -135,6 +137,7 @@ class RunRepository(Repository):
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
         item_id: str | None = None,
+        transaction_connection: sqlite3.Connection | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         references = references or []
         references_json = json.dumps([value.to_wire_dict() for value in references], ensure_ascii=False)
@@ -300,6 +303,9 @@ class RunRepository(Repository):
                 "SELECT * FROM items WHERE id = ?", (item_id,)
             ).fetchone()
             return {"run": run, "item": _item_from_row(item_row, None)}
+        if transaction_connection is not None:
+            result = write(transaction_connection)
+            return result["run"], result["item"]
         result = self._write(
             write,
             operation_id=operation_id,
@@ -374,16 +380,25 @@ class RunRepository(Repository):
                   AND queued.id NOT IN (SELECT value FROM json_each(?))
                   AND queued.cancel_requested_at IS NULL
                   AND NOT EXISTS (
+                    SELECT 1 FROM agent_delegations d JOIN runs parent ON parent.id=d.parent_run_id
+                    WHERE d.child_session_id=queued.session_id AND (
+                      parent.cancel_requested_at IS NOT NULL
+                      OR parent.status NOT IN ('running','queued','waiting_agents','waiting_input','waiting_approval')
+                      OR (SELECT COUNT(*) FROM agent_delegations peers JOIN runs busy ON busy.session_id=peers.child_session_id
+                          WHERE peers.parent_run_id=d.parent_run_id AND busy.status IN ('running','finalizing')) >= ?
+                    )
+                  )
+                  AND NOT EXISTS (
                     SELECT 1 FROM runs AS active
                     WHERE active.session_id = queued.session_id
                       AND active.status IN (
-                          'running', 'waiting_approval', 'waiting_input', 'finalizing'
+                          'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'
                       )
                   )
                 ORDER BY queued.enqueued_at ASC, queued.creation_seq ASC
                 LIMIT 1
                 """,
-                (json.dumps(excluded_run_ids),),
+                (json.dumps(excluded_run_ids), MAX_ACTIVE_AGENTS),
             ).fetchone()
             if row is None:
                 return None
@@ -581,7 +596,7 @@ class RunRepository(Repository):
             rows = self._connection().execute(
                 """SELECT a.request_json FROM approvals a JOIN runs r ON r.id = a.run_id
                    WHERE a.run_id = ? AND a.status = 'approved'
-                     AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing')
+                     AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
                      AND json_extract(a.request_json, '$.grantScope') = 'run'
                      AND json_extract(a.request_json, '$.kind') = 'permission_request'
                    ORDER BY a.creation_seq""", (run_id,),
@@ -914,7 +929,7 @@ class RunRepository(Repository):
                 run_id,
                 frozenset({
                     RunStatus.RUNNING,
-                    RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT,
+                    RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT, RunStatus.WAITING_AGENTS,
                     RunStatus.FINALIZING,
                 }),
                 RunStatus.FAILED,
@@ -949,7 +964,7 @@ class RunRepository(Repository):
                 "queued",
                 "running",
                 "waiting_approval",
-                "waiting_input",
+                "waiting_input", "waiting_agents",
                 "finalizing",
                 "canceled",
                 "interrupted",
@@ -1032,7 +1047,7 @@ class RunRepository(Repository):
             expected = frozenset({
                 RunStatus.QUEUED,
                 RunStatus.RUNNING,
-                RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT,
+                RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT, RunStatus.WAITING_AGENTS,
                 RunStatus.FINALIZING,
             })
             if current not in expected:
@@ -1070,7 +1085,7 @@ class RunRepository(Repository):
                 """
                 SELECT id FROM runs
                 WHERE status IN (
-                    'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'
+                    'queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'
                 )
                 ORDER BY creation_seq
                 """
@@ -1113,7 +1128,7 @@ class RunRepository(Repository):
         expected = expected or frozenset({
             RunStatus.QUEUED,
             RunStatus.RUNNING,
-            RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT,
+            RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT, RunStatus.WAITING_AGENTS,
             RunStatus.FINALIZING,
         })
         current = RunStatus(row["status"])
@@ -1154,7 +1169,7 @@ class RunRepository(Repository):
                 raise ResourceNotFoundError("run not found")
             if row["status"] == "interrupted":
                 return CommittedMutation(self.read_run(run_id), ())
-            if row["status"] not in {"running", "waiting_approval", "waiting_input"}:
+            if row["status"] not in {"running", "waiting_approval", "waiting_input", "waiting_agents"}:
                 raise InvalidRunStateError("run cannot be interrupted")
             now = _now_ms()
             events = list(settle_run_children(
@@ -1163,7 +1178,7 @@ class RunRepository(Repository):
             run, event = transition_run(
                 connection,
                 run_id,
-                frozenset({RunStatus.RUNNING, RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT}),
+                frozenset({RunStatus.RUNNING, RunStatus.WAITING_APPROVAL, RunStatus.WAITING_INPUT, RunStatus.WAITING_AGENTS}),
                 RunStatus.INTERRUPTED,
                 "runtime_interrupted",
             )

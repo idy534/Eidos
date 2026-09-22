@@ -32,6 +32,7 @@ export function taskStatusPresentation(
   completedRead = false,
   activeRunStatus?: Session["activeRunStatus"],
 ): TaskStatusPresentation | undefined {
+  if (activeRunStatus === "waiting_agents") return { label: "等待子任务", tone: "progress", spinning: false };
   if (activeRunStatus === "waiting_input") return { label: "等待回答", tone: "progress", spinning: false };
   if (activeRunStatus === "waiting_approval") return { label: "等待批准", tone: "progress", spinning: false };
   switch (status) {
@@ -52,7 +53,7 @@ export function taskStatusPresentation(
 export function taskStatusFromRun(
   run: Pick<Run, "status" | "reconciliationRequired">
 ): Session["taskStatus"] {
-  if (["queued", "running", "waiting_input", "waiting_approval", "finalizing"].includes(run.status)) {
+  if (["queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing"].includes(run.status)) {
     return "in_progress";
   }
   if (run.status === "succeeded" && run.reconciliationRequired !== true) {
@@ -421,6 +422,7 @@ export function terminalRunPresentation(
     case "queued":
     case "finalizing":
     case "running":
+    case "waiting_agents":
     case "waiting_input":
     case "waiting_approval":
       return undefined;
@@ -449,7 +451,7 @@ export type ComposerMode =
   | "read_only";         // storageHealth = health_only; block all writes
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
-  "queued", "running", "waiting_input", "waiting_approval", "finalizing",
+  "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",
 ]);
 
 /**

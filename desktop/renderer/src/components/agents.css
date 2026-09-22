@@ -1,0 +1,9 @@
+.agent-panel { margin: 12px 20px; padding: 12px; border: 1px solid var(--border-color, #8886); border-radius: 10px; font-size: 13px; }
+.agent-panel h3 { margin: 0; font-size: 14px; }
+.agent-panel article { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color, #8886); }
+.agent-heading { display: flex; align-items: center; gap: 12px; }
+.agent-heading span { flex: 1; }
+.agent-text, .agent-transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-transcript { max-height: 360px; overflow: auto; }
+.agent-panel summary { cursor: pointer; padding: 6px 0; }
+.agent-panel button { margin: 4px; }
