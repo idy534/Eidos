@@ -60,6 +60,7 @@ import {
   OutputContent,
   useCompleteSessionItems,
 } from "../components/TurnResults.js";
+import { ToastContainer, type ToastItem } from "../components/ToastContainer.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
@@ -245,6 +246,55 @@ export function AppShell({ runtime }: AppShellProps) {
   }, []);
 
   const topError = sessionState.error ?? runState.error;
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    sessionActions.setError(undefined);
+    const activeSessionId = activeSnapshot?.session.id;
+    if (activeSessionId) {
+      runActions.clearError(activeSessionId);
+    }
+  }, [sessionActions, runActions, activeSnapshot?.session.id]);
+
+  const previousTopErrorRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (topError && topError !== previousTopErrorRef.current) {
+      const id = `error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setToasts((prev) => [
+        ...prev.filter((t) => t.type !== "error"),
+        {
+          id,
+          message: topError,
+          type: "error",
+          duration: 5000,
+        },
+      ]);
+    } else if (!topError && previousTopErrorRef.current) {
+      setToasts((prev) => prev.filter((t) => t.type !== "error"));
+    }
+    previousTopErrorRef.current = topError;
+  }, [topError]);
+
+  const previousWarningRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const warningDesc = runtimePresentation.tone === "warning" ? runtimePresentation.description : undefined;
+    if (warningDesc && warningDesc !== previousWarningRef.current) {
+      const id = `warning-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setToasts((prev) => [
+        ...prev.filter((t) => t.type !== "warning"),
+        {
+          id,
+          message: warningDesc,
+          type: "warning",
+          duration: 6000,
+        },
+      ]);
+    } else if (!warningDesc && previousWarningRef.current) {
+      setToasts((prev) => prev.filter((t) => t.type !== "warning"));
+    }
+    previousWarningRef.current = warningDesc;
+  }, [runtimePresentation.tone, runtimePresentation.description]);
 
   // -----------------------------------------------------------------------
   // Bootstrap: load sessions, model, approvals independently
@@ -1104,6 +1154,7 @@ export function AppShell({ runtime }: AppShellProps) {
         handleNavigateToSession(target);
       }}>
     <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <SessionSidebar
         collapsed={!sidebarOpen || settingsOpen}
         sessions={sessionState.sessions}
@@ -1143,14 +1194,6 @@ export function AppShell({ runtime }: AppShellProps) {
       />
 
       <section ref={workspaceRef} className="workspace" aria-label="Agent 工作区" tabIndex={-1}>
-        {/* Global Runtime error banner */}
-        {runtimePresentation.tone === "warning" && runtimePresentation.description && (
-          <p className="error-banner" role="alert">{runtimePresentation.description}</p>
-        )}
-
-        {/* Domain error banner */}
-        {topError && <p className="error-banner" role="alert">{topError}</p>}
-
         {currentSnapshot?.session.worktreeRestoreAvailable === true && !isDraft && (
           <div className="worktree-restore-banner" role="status">
             <span>本地工作树已清理，以释放磁盘空间</span>
