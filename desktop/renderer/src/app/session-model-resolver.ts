@@ -2,7 +2,7 @@ import type { ModelId, Run } from "../contracts.js";
 import { findActiveRun } from "../session-state.js";
 
 /**
- * Resolves the ModelId for a session based on its runs.
+ * Resolves the Run that supplies a session's current model and approval defaults.
  *
  * Priority:
  * 1. Active Run returned by findActiveRun(runs)
@@ -10,7 +10,7 @@ import { findActiveRun } from "../session-state.js";
  * 3. Most recently created Run
  * 4. undefined (if no runs exist)
  */
-export function resolveSessionModelId(runs: Run[]): ModelId | undefined {
+export function resolveSessionRun(runs: Run[]): Run | undefined {
   if (!Array.isArray(runs) || runs.length === 0) {
     return undefined;
   }
@@ -18,7 +18,7 @@ export function resolveSessionModelId(runs: Run[]): ModelId | undefined {
   // 1. Active Run priority
   const activeRun = findActiveRun(runs);
   if (activeRun) {
-    return activeRun.modelId;
+    return activeRun;
   }
 
   // 2 & 3. Most recently updated / created Run with deterministic tie-breaking
@@ -32,5 +32,9 @@ export function resolveSessionModelId(runs: Run[]): ModelId | undefined {
     return b.id.localeCompare(a.id);
   });
 
-  return sorted[0]?.modelId;
+  return sorted[0];
+}
+
+export function resolveSessionModelId(runs: Run[]): ModelId | undefined {
+  return resolveSessionRun(runs)?.modelId;
 }

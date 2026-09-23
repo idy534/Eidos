@@ -617,7 +617,9 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 
 调用链保持为 `Composer → preload → Main → run/start → Run 快照 → PermissionPolicyEvaluator → ApprovalCoordinator → 原 Tool 执行链`。权限决定仍属于 Eidos。实现复用现有 Model Gateway、Approval 事务和权限物化，没有新增依赖、独立 Agent Loop 或第二套审批状态机。
 
-Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。Renderer 在当前会话保留草稿选择，重新加载时从最近的 Run 读取模式。审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。模型和 Tool 参数没有切换模式的入口。重新生成回答保留自动审批模式，但不会继承完全访问；完全访问必须重新通过 Composer 选择并确认。
+Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。已有 Run 的会话从同一个最近 Run 读取模型和审批模式。Draft 会话在首个 Run 被 Runtime 接受后，Renderer 将返回 Run 的模型和审批模式保存到 `localStorage`，作为新会话默认值。Draft 和没有 Run 的会话使用这组默认值；没有有效默认值时，审批模式使用 `manual`，模型使用列表中的第一个模型。设置控件的临时修改只影响当前会话。已有会话的后续 Run 不会改写新会话默认值。
+
+审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。保存的默认值可以是 `full_access`，后续新 Draft 会沿用该模式，载入默认值时不会再次弹出确认框。模型和 Tool 参数没有切换模式的入口。重新生成回答保留自动审批模式，但不会继承完全访问；完全访问必须重新通过 Composer 选择并确认。
 
 Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 在 `runs` 增加 `approval_mode`，旧 Run 默认为 `manual`；该版本在 `approvals` 增加 `review_json`，旧审批默认为空。迁移沿用事务和失败回滚。Runtime 在执行前检查 Run 模式与权限快照一致。当前自定义权限没有配置、解析器或 UI；后续可以在既有 Run 权限快照工厂和 PermissionPolicyEvaluator 中接入 `config.toml`，本期不接受 `custom` 模式。
 

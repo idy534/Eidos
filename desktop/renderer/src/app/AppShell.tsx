@@ -45,9 +45,10 @@ import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { usePlanningState } from "./usePlanningState.js";
 import { useModelController } from "./useModelController.js";
+import { loadRunDefaults, saveRunDefaults } from "./run-defaults.js";
 import { useResponseActionController } from "./useResponseActionController.js";
 import { useContextUsageController } from "./useContextUsageController.js";
-import { resolveSessionModelId } from "./session-model-resolver.js";
+import { resolveSessionRun } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { useGitReviewController } from "./useGitReviewController.js";
 import { applyNotification, userFacingError } from "../session-state.js";
@@ -106,6 +107,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const activeSnapshot = sessionState.snapshot ?? sessionState.draft;
   const [runState, runActions] = useRunController(activeSnapshot, isStorageReady);
   const [approvalState, approvalActions] = useApprovalController();
+  const [runDefaults, setRunDefaults] = useState(loadRunDefaults);
   const [modelState, modelActions] = useModelController();
   const [extensionState, extensionActions] = useExtensionController();
   const [gitReviewState, gitReviewActions] = useGitReviewController({
@@ -118,10 +120,16 @@ export function AppShell({ runtime }: AppShellProps) {
   const latestRun = sessionState.snapshot?.runs.length
     ? sessionState.snapshot.runs[sessionState.snapshot.runs.length - 1]
     : undefined;
+  const sessionConfigRun = resolveSessionRun(sessionState.snapshot?.runs ?? []);
   const [approvalModes, setApprovalModes] = useState<Record<string, ApprovalMode>>({});
-  const approvalSessionId = activeSnapshot?.session.id;
+  const approvalSessionId = sessionState.draft && !sessionState.snapshot?.runs.length
+    ? sessionState.draft.session.id
+    : activeSnapshot?.session.id;
+  const sessionApprovalMode = sessionConfigRun
+    ? sessionConfigRun.approvalMode ?? "manual"
+    : runDefaults.approvalMode ?? "manual";
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
-    ?? latestRun?.approvalMode ?? "manual";
+    ?? sessionApprovalMode;
   const [workModes, setWorkModes] = useState<Record<string, "execute" | "plan">>({});
   const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestRun?.workMode ?? "execute";
   const contextRun = runState.activeRun ?? latestRun;
@@ -246,7 +254,7 @@ export function AppShell({ runtime }: AppShellProps) {
     void Promise.allSettled([
       sessionActions.loadProjects(),
       sessionActions.loadSessions(),
-      modelActions.load(),
+      modelActions.load(undefined, runDefaults.modelId),
       approvalActions.loadPending(),
     ]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -254,14 +262,29 @@ export function AppShell({ runtime }: AppShellProps) {
 
   useEffect(() => {
     const snapshot = sessionState.snapshot;
-    if (!snapshot || !modelState.list) return;
+    const draft = sessionState.draft;
+    if (!modelState.list) return;
+    if (draft && !snapshot?.runs.length) {
+      if (modelSessionInitializedRef.current === draft.session.id) return;
+      modelSessionInitializedRef.current = draft.session.id;
+      modelActions.initialize(modelState.list, undefined, runDefaults.modelId);
+      return;
+    }
+    if (!snapshot) return;
     if (modelSessionInitializedRef.current === snapshot.session.id) return;
     modelSessionInitializedRef.current = snapshot.session.id;
     modelActions.initialize(
       modelState.list,
-      resolveSessionModelId(snapshot.runs),
+      resolveSessionRun(snapshot.runs)?.modelId,
+      runDefaults.modelId,
     );
-  }, [modelState.list, sessionState.snapshot?.session.id]);
+  }, [
+    modelState.list,
+    sessionState.snapshot?.session.id,
+    sessionState.snapshot?.runs.length,
+    sessionState.draft?.session.id,
+    runDefaults.modelId,
+  ]);
 
   useEffect(() => {
     const sessionId = sessionState.snapshot?.session.id;
@@ -637,7 +660,12 @@ export function AppShell({ runtime }: AppShellProps) {
         isStorageReady,
         inputOverride: draftInput,
         referencesOverride: draftReferences,
-        onRunProjected: sessionActions.projectRun,
+        onRunProjected: (sessionId, run) => {
+          sessionActions.projectRun(sessionId, run);
+          if (draftSnapshot.runs.length === 0) {
+            setRunDefaults(saveRunDefaults(run));
+          }
+        },
       });
       if (started) {
         runActions.clearDraftIfUnchanged(draftSnapshot.session.id, draftInput, draftReferences);
