@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.collaboration import ACTIVE_STATUSES
+
 from dataclasses import dataclass
 from enum import StrEnum
 import json
@@ -160,6 +162,10 @@ class RunSupervisor:
         self._async_kernel_frozen = False
         self.repository_runtime = repository_runtime
         self._runtime_dependency_catalog = runtime_dependency_catalog
+        from eidos_runtime.application.collaboration import CollaborationApplication
+
+        self.collaboration = CollaborationApplication(store, self.schedule_next, self.cancel_agent, self.events.deliver_pending)
+        self._agent_maintenance: RuntimeAsyncTask[None] | None = None
 
     def bind_async_kernel(self, kernel: RuntimeAsyncKernel) -> None:
         """Bind the process-owned kernel before the first Run is dispatched."""
@@ -227,11 +233,71 @@ class RunSupervisor:
             return self._start_worker_locked(run_id)
 
     def schedule_next(self) -> None:
+        if self.store.health_state == "ready" and self.lifecycle is RuntimeLifecycle.RUNNING:
+            self._ensure_agent_maintenance()
+            self.collaboration.repository.wake()
         while True:
             start = self.prepare_next()
             if start is None:
                 return
             start.gate.set()
+
+    async def _maintain_agents(self) -> None:
+        # One kernel-owned timer restores persisted deadlines after restart.
+        # Polling wakes the scheduler, never the model, and creates no thread.
+        try:
+            while self.lifecycle is RuntimeLifecycle.RUNNING:
+                await anyio.sleep(0.5)
+                if self.store.health_state == "ready":
+                    try:
+                        await anyio.to_thread.run_sync(self._settle_agents)
+                    except Exception:
+                        logger.exception("Agent scheduling failed; durable state retained")
+                    if not self.collaboration.repository.has_pending_waits():
+                        return
+        finally:
+            with self.lock:
+                self._agent_maintenance = None
+
+    def _ensure_agent_maintenance(self) -> None:
+        if not self.collaboration.repository.has_pending_waits():
+            return
+        with self.lock:
+            if (
+                self._agent_maintenance is not None
+                or self.lifecycle is not RuntimeLifecycle.RUNNING
+                or self.control_state is not RuntimeControlState.RUNNING
+                or self._async_kernel is None
+            ):
+                return
+            self._agent_maintenance = self._async_kernel.start_task(
+                self._maintain_agents, owner_id="collaboration"
+            )
+
+    def _settle_agents(self) -> None:
+        if self.lifecycle is not RuntimeLifecycle.RUNNING:
+            return
+        for run_id in self.collaboration.repository.orphan_runs():
+            self.cancel_agent(run_id)
+        self.schedule_next()
+        self.events.deliver_pending()
+
+    def cancel_agent(self, run_id: str) -> None:
+        if self.store.read_run(run_id)["status"] not in ACTIVE_STATUSES:
+            return
+        try:
+            self.events.publish(self.store.request_cancel_committed(run_id))
+        except InvalidRunStateError:
+            if self.store.read_run(run_id)["status"] in ACTIVE_STATUSES:
+                raise
+            return
+        if not self.request_cancel(run_id):
+            try:
+                self.store.cancel_run(run_id)
+            except InvalidRunStateError:
+                if self.store.read_run(run_id)["status"] in ACTIVE_STATUSES:
+                    raise
+        self.events.deliver_pending()
 
     @staticmethod
     def release(start: WorkerStart | None) -> None:
@@ -249,6 +315,9 @@ class RunSupervisor:
     ) -> dict[str, object]:
         hit_fault("cancel_claim_race")
         self.store.read_run(run_id)
+        self.events.publish(self.store.request_cancel_committed(run_id))
+        for child_id in self.collaboration.repository.child_runs(run_id):
+            self.cancel_agent(child_id)
         task_repository = self.store.long_task_repository()
         task = task_repository.read(run_id)
         if task is not None and task.status not in {
@@ -526,12 +595,17 @@ class RunSupervisor:
         with self.lock:
             active_ids = tuple(self._handles)
             tasks = tuple(self._managed_tasks.values())
+            maintenance = self._agent_maintenance
+            if maintenance is not None:
+                maintenance.cancel()
             for task in tasks:
                 task.cancellation.set()
         hit_fault("shutdown_tool_completion_race")
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
         self.wait_managed_tasks(self.shutdown_timeout)
+        if maintenance is not None:
+            maintenance.wait(self.shutdown_timeout)
         registered = tuple(
             resource
             for resource in self.resources.active_resources()
@@ -865,6 +939,7 @@ class RunSupervisor:
                 "events": self.events,
             }
             if self.engine_factory is RuntimeEngine:
+                engine_kwargs["collaboration"] = self.collaboration
                 engine_kwargs["async_kernel"] = self._async_kernel
                 engine_kwargs["repository_runtime"] = self.repository_runtime
                 engine_kwargs["runtime_dependency_catalog"] = (
@@ -928,7 +1003,7 @@ class RunSupervisor:
             if run["status"] in {
                 "running",
                 "waiting_approval",
-                "waiting_input",
+                "waiting_input", "waiting_agents",
                 "finalizing",
             }:
                 mutation = self.store.fail_run_committed(run_id, "INTERNAL_ERROR")

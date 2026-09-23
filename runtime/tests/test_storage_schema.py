@@ -24,6 +24,7 @@ from eidos_runtime.db.schema import (  # noqa: E402
     V11_SCHEMA_SQL,
     V11_SCHEMA_VERSION,
     V12_SCHEMA_SQL,
+    V15_SCHEMA_SQL,
     V12_SCHEMA_VERSION,
     V7_SCHEMA_SQL,
     V7_SCHEMA_VERSION,
@@ -97,6 +98,9 @@ EXPECTED_TABLES = {
     "plans",
     "plan_revisions",
     "user_input_requests",
+    "agent_delegations",
+    "agent_messages",
+    "agent_waits",
 }
 
 EXPECTED_COLUMNS = {
@@ -361,14 +365,11 @@ class StorageSchemaTests(unittest.TestCase):
             )
 
     def test_legacy_waiting_run_is_interrupted_on_startup(self) -> None:
-        legacy_schema = SCHEMA_SQL.replace(
-            "'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing',",
-            "'queued', 'running', 'waiting_approval', 'waiting_user_input', 'finalizing',",
-            1,
+        legacy_schema = V15_SCHEMA_SQL.replace(
+            "'waiting_input'", "'waiting_user_input'"
         ).replace(
             "'queued', 'running', 'completed', 'failed', 'canceled'",
             "'queued', 'running', 'waiting_user_input', 'completed', 'failed', 'canceled'",
-            1,
         )
         database = self.data / DATABASE_NAME
         connection = sqlite3.connect(database)
@@ -408,7 +409,7 @@ class StorageSchemaTests(unittest.TestCase):
             ) VALUES ('segment', 'run', 1, 'waiting_user_input', 1)
             """
         )
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.execute("PRAGMA user_version = 15")
         connection.commit()
         connection.close()
         os.chmod(database, 0o600)
@@ -477,6 +478,8 @@ class StorageSchemaTests(unittest.TestCase):
                 "run_dependency_bindings_run",
                 "plans_session",
                 "one_pending_user_input",
+                "agent_delegations_parent",
+                "agent_messages_recipient",
             },
         )
         for table, expected in EXPECTED_COLUMNS.items():
@@ -527,8 +530,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 15)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 14)
+        self.assertEqual(SCHEMA_VERSION, 16)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 15)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

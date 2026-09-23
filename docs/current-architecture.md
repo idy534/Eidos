@@ -326,7 +326,7 @@ Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建�
 
 完整 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。`state.sqlite` 只保存版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
-当前 `SCHEMA_VERSION` 是 8。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 16。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
 
@@ -674,3 +674,21 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 ### 澄清参数纠错与展示
 
 `request_user_input` 的字段说明提供完整嵌套示例、题型约束和自定义输入说明，工具名称与原始描述保持不变。Pydantic 校验最多保留八项字段路径与错误原因，不回传参数值；参数错误反馈说明问题尚未提交，并给出修正方式。Runtime 的参数错误指纹区分首项字段路径和原因，不包含参数值、错误文案或问题措辞。连续相同校验错误仍受原有 LoopGuard 限制。失败或取消的澄清调用沿用普通工具结果展示，只有成功的回答结果进入澄清历史。
+
+## 只读子任务委派（Schema v16，已完成代码与自动化定向测试）
+
+本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文、父 Run 的模型快照和 `manual` 权限模式。子任务不继承父任务的全部对话、扩权 Grant、Plugin 或 MCP 快照。
+
+Runtime 在工具注册边界只向子任务提供 `list_files`、`read_file`、`read_file_range`、`search_text`、`search_text_wait`、`read_tool_output` 和发给父任务的 `send_message`。子任务不能执行 Shell、修改文件、调用 MCP、请求扩权或派生后代。工具参数不能改变这个身份。子 Session 不能通过普通 `run/start` 变成可写任务，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除会在同一数据库事务中删除子会话事实，子会话的借用工作目录不会被删除。
+
+SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
+
+父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 只能启动已经结束的子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 2 个子 Run。每个接收 Session 最多保存 16 条 Agent 消息，每条最多 2,000 字符。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
+
+`wait_agents` 将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；等待不占用模型调用或专属等待线程。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务不能在子任务仍活跃时正常结束。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交也必须先结束或停止子任务。
+
+用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。父任务异常结束后，监督任务会收敛剩余子 Run。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
+
+Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。任务页面展示状态、摘要、停止按钮和分页记录。
+
+v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。本阶段已补充迁移回滚、重复创建、并发名额、子任务工具隔离、等待超时、父任务取消、父会话删除、协议边界和 Desktop 停止操作测试。协作相关定向 Runtime 测试 28/28 通过，Renderer 状态测试 129/129 通过，Renderer 行为测试 356/356 通过。本次 Runtime 全量运行观察到 85 个失败，失败集中在本轮之外的 apply_patch、Shell、Workspace 和 Reconciliation 路径。Seatbelt native 和 Electron smoke 也受当前环境限制，不能据此宣称本功能已经通过完整发布验收。

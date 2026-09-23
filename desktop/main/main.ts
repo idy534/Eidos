@@ -1175,6 +1175,14 @@ ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event) => {
   }
 });
 
+ipcMain.handle(IPC.AGENT_READ, (event, sessionId: unknown) => {
+  inputOwner(event);
+  return clientOrThrow().readAgents(inputKey(sessionId));
+});
+ipcMain.handle(IPC.AGENT_STOP, (event, parentRunId: unknown, agentId: unknown) => {
+  inputOwner(event);
+  return clientOrThrow().stopAgent(inputKey(parentRunId), inputKey(agentId));
+});
 ipcMain.handle(IPC.PLANNING_READ, (event, sessionId: unknown) => {
   inputOwner(event);
   return clientOrThrow().readPlanning(inputKey(sessionId));

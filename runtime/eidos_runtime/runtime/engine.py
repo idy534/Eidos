@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.planning import PlanningSuspended
+from eidos_runtime.domain.collaboration import AgentSuspended, WaitAgents
 from eidos_runtime.persistence.planning import PlanningRepository
 
 import logging
@@ -96,6 +97,7 @@ EMPTY_EXTENSION_SNAPSHOT = {
 logger = logging.getLogger("eidos.runtime")
 
 if TYPE_CHECKING:
+    from eidos_runtime.application.collaboration import CollaborationApplication
     from eidos_runtime.application.context import ContextApplication
 
 
@@ -127,7 +129,9 @@ class RuntimeEngine:
         events: RuntimeEvents | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
+        collaboration: CollaborationApplication | None = None,
     ) -> None:
+        self.collaboration = collaboration
         self.store = store
         self.model = model
         self.events = events or RuntimeEvents(notify, store=store)
@@ -270,6 +274,7 @@ class RuntimeEngine:
                 ),
                 events=self.events,
                 runtime_dependency_catalog=self.runtime_dependency_catalog,
+                collaboration=self.collaboration,
             ) as resources:
                 bind_image_authority = getattr(
                     self.model, "set_image_authority_provider", None
@@ -277,7 +282,7 @@ class RuntimeEngine:
                 if callable(bind_image_authority):
                     bind_image_authority(resources.image_authority)
                 self._drive(run_context, resources, cancel, repository_context)
-        except PlanningSuspended:
+        except (PlanningSuspended, AgentSuspended):
             self.events.deliver_pending()
             return
         except RunResourceError as error:
@@ -312,7 +317,7 @@ class RuntimeEngine:
             if current["status"] in {
                 "running",
                 "waiting_approval",
-                "waiting_input",
+                "waiting_input", "waiting_agents",
                 "finalizing",
             }:
                 self._fail(run_id, "TOOL_INFRASTRUCTURE_FAILURE")
@@ -371,9 +376,15 @@ class RuntimeEngine:
             reviewer=self.model,
         )
 
+        agent_wait = self.collaboration.repository.wait_record(run.run_id) if self.collaboration else None
+        if agent_wait is not None and agent_wait.item_id is not None:
+            saved_item = self.store.read_item(agent_wait.item_id)
+            if saved_item["toolCall"]["status"] != "running":
+                self.collaboration.repository.clear_wait(run.run_id)
+                agent_wait = None
         input_request = PlanningRepository(self.store.database).unfinished(run.run_id)
-        if input_request is not None or self.store.read_run(run.run_id)["status"] == "waiting_approval":
-            pending = input_request or self.store.typed_runtime_repository().read_pending_approval(run.run_id)
+        if input_request is not None or (agent_wait is not None and agent_wait.item_id is not None) or self.store.read_run(run.run_id)["status"] == "waiting_approval":
+            pending = input_request or agent_wait or self.store.typed_runtime_repository().read_pending_approval(run.run_id)
             if pending is None or resources.dispatcher is None:
                 raise InvalidRunStateError("pending approval is unavailable")
             item = self.store.read_item(pending.item_id)
@@ -416,6 +427,9 @@ class RuntimeEngine:
                 raise InvalidRunStateError("pending action could not be restored")
             self.store.complete_current_step(run.run_id, "completed")
 
+        if self.collaboration:
+            self.collaboration.repository.clear_wait(run.run_id)
+
         while True:
             self._check_cancel(run.run_id, cancel)
             self._pause_effective_time(run.run_id)
@@ -452,6 +466,7 @@ class RuntimeEngine:
                 snapshot.available_names,
                 self.store.run_permission_grants(run.run_id),
             )
+            agent_baseline = self.collaboration.repository.state(run.run_id) if self.collaboration else None
             built = context_builder.build(
                 run.run_id,
                 tool_definitions=tool_definitions,
@@ -872,6 +887,18 @@ class RuntimeEngine:
                     decision.failure.code if decision.failure else "INTERNAL_ERROR",
                 )
                 return
+            if decision.action == LoopAction.COMPLETE and self.collaboration and (
+                self.collaboration.repository.child_runs(run.run_id)
+                or self.collaboration.repository.state(run.run_id) != agent_baseline
+            ):
+                resources.shell_process_manager.cleanup()
+                if sampled.assistant_item is not None:
+                    mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item["id"]))
+                    self.events.publish(mutation, item=mutation.value)
+                self.store.complete_current_step(run.run_id, "completed")
+                self.collaboration.wait(run.run_id, None, WaitAgents(timeout_ms=300000))
+                run = run.model_copy(update={"model_context": ()})
+                continue
             if decision.action == LoopAction.COMPLETE:
                 assert sampled.assistant_item is not None
                 shell_stopped = resources.shell_process_manager.has_running()
@@ -963,6 +990,10 @@ class RuntimeEngine:
                 plans = PlanningRepository(self.store.database).list_plans(run.session_id)
                 ready = next((p for p in plans if p.run_id == run.run_id and p.status == "review"), None)
                 if ready is not None and outcome.status == "completed" and not outcome.error_fingerprints and validation.tool_calls[0].arguments.get("readyForReview") is True:
+                    if self.collaboration and self.collaboration.repository.state(run.run_id) != agent_baseline:
+                        self.store.complete_current_step(run.run_id, "completed")
+                        run = run.model_copy(update={"model_context": ()})
+                        continue
                     shell_stopped = resources.shell_process_manager.has_running()
                     resources.shell_process_manager.cleanup()
                     self.store.complete_current_step(run.run_id, "completed")
@@ -1198,7 +1229,7 @@ class RuntimeEngine:
         self.state_machine.track(RuntimeState.CANCELED, "run_canceled")
         self.store.complete_current_step(run_id, "canceled", reason="canceled")
         completed = self.store.read_run(run_id)
-        if completed["status"] in {"running", "waiting_approval", "waiting_input", "finalizing"}:
+        if completed["status"] in {"running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing"}:
             mutation = self.store.cancel_run_committed(run_id)
             items = {
                 str(item["id"]): item

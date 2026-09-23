@@ -101,7 +101,7 @@ class SessionDto(ClosedModel):
     project: SessionProjectDto | None = None
     worktree: SessionWorktreeDto | None = None
     title: StrictStr | None = None
-    active_run_status: Literal["queued", "running", "waiting_approval", "waiting_input", "finalizing"] | None = Field(default=None, alias="activeRunStatus")
+    active_run_status: Literal["queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing"] | None = Field(default=None, alias="activeRunStatus")
     task_status: Literal[
         "new", "in_progress", "completed", "failed", "canceled"
     ] = Field(alias="taskStatus")
@@ -245,7 +245,7 @@ class RunDto(ClosedModel):
     user_input: StrictStr | None = Field(default=None, alias="userInput")
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     status: Literal[
-        "queued", "running", "waiting_approval", "waiting_input", "finalizing", "stopped",
+        "queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing", "stopped",
         "succeeded", "failed", "canceled", "interrupted",
     ]
     runtime_state: Literal[

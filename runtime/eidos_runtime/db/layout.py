@@ -12,6 +12,7 @@ from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.schema import REPOSITORY_SCHEMA_SQL
 from eidos_runtime.db.schema import (
     SCHEMA_VERSION,
+    V15_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
     V5_TO_V6_MIGRATION_SQL,
     V6_SCHEMA_VERSION,
@@ -610,39 +611,43 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V12_SCHEMA_VERSION,
         V13_SCHEMA_VERSION,
         V14_SCHEMA_VERSION,
+        V15_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
-    migration = ""
-    if revision < V8_SCHEMA_VERSION:
-        migration += V7_TO_V8_MIGRATION_SQL
-    if revision <= V8_SCHEMA_VERSION:
-        migration += V8_TO_V9_MIGRATION_SQL
-    elif revision == V9_SCHEMA_VERSION:
-        migration += V9_TO_V10_MIGRATION_SQL
-    if revision == V5_SCHEMA_VERSION:
-        migration = V5_TO_V6_MIGRATION_SQL + V6_TO_V7_MIGRATION_SQL + migration
-    elif revision == V6_SCHEMA_VERSION:
-        migration = V6_TO_V7_MIGRATION_SQL + migration
-    if revision <= V10_SCHEMA_VERSION:
-        migration += V10_TO_V11_MIGRATION_SQL
-    if revision <= V11_SCHEMA_VERSION:
-        migration += V11_TO_V12_MIGRATION_SQL
-    if revision <= V12_SCHEMA_VERSION:
-        migration += V12_TO_V13_MIGRATION_SQL
-    if revision <= V13_SCHEMA_VERSION:
-        migration += V13_TO_V14_MIGRATION_SQL
     try:
         with state.lock:
             connection = state.connection()
-            connection.execute("PRAGMA foreign_keys = OFF")
-            connection.executescript(
-                "BEGIN IMMEDIATE;\n"
-                + migration
-                + f"\nPRAGMA user_version = {V14_SCHEMA_VERSION};\nCOMMIT;"
-            )
-            connection.execute("PRAGMA foreign_keys = ON")
-            from eidos_runtime.db.planning_migration import migrate_planning
-            migrate_planning(connection, PLANNING_SCHEMA_SQL)
+            if revision != V15_SCHEMA_VERSION:
+                migration = ""
+                if revision < V8_SCHEMA_VERSION:
+                    migration += V7_TO_V8_MIGRATION_SQL
+                if revision <= V8_SCHEMA_VERSION:
+                    migration += V8_TO_V9_MIGRATION_SQL
+                elif revision == V9_SCHEMA_VERSION:
+                    migration += V9_TO_V10_MIGRATION_SQL
+                if revision == V5_SCHEMA_VERSION:
+                    migration = V5_TO_V6_MIGRATION_SQL + V6_TO_V7_MIGRATION_SQL + migration
+                elif revision == V6_SCHEMA_VERSION:
+                    migration = V6_TO_V7_MIGRATION_SQL + migration
+                if revision <= V10_SCHEMA_VERSION:
+                    migration += V10_TO_V11_MIGRATION_SQL
+                if revision <= V11_SCHEMA_VERSION:
+                    migration += V11_TO_V12_MIGRATION_SQL
+                if revision <= V12_SCHEMA_VERSION:
+                    migration += V12_TO_V13_MIGRATION_SQL
+                if revision <= V13_SCHEMA_VERSION:
+                    migration += V13_TO_V14_MIGRATION_SQL
+                connection.execute("PRAGMA foreign_keys = OFF")
+                connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + migration
+                    + f"\nPRAGMA user_version = {V14_SCHEMA_VERSION};\nCOMMIT;"
+                )
+                connection.execute("PRAGMA foreign_keys = ON")
+                from eidos_runtime.db.planning_migration import migrate_planning
+                migrate_planning(connection, PLANNING_SCHEMA_SQL)
+            from eidos_runtime.db.collaboration_migration import migrate_collaboration
+            migrate_collaboration(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

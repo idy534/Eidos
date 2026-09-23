@@ -1,3 +1,4 @@
+import type { CollaborationState } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
 import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
 import type {
@@ -237,6 +238,9 @@ export interface EidosRuntimeAPI {
   pasteInputImage(): Promise<InputReference | null>;
   readInputDraft(key: string): Promise<InputDraft>;
   writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;
+
+  readAgents(sessionId: string): Promise<CollaborationState>;
+  stopAgent(parentRunId: string, agentId: string): Promise<CollaborationState>;
 
   readPlanning(sessionId: string): Promise<PlanningReadResponse>;
   answerUserInput(request: AnswerInputRequest): Promise<UserInputRequest>;

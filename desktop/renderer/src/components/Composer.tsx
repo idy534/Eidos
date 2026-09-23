@@ -488,7 +488,7 @@ export function CloseIcon({ className }: { className?: string } = {}) {
 
 export function statusText(status: Run["status"]): string {
   return ({
-    queued: "已排队", running: "正在执行", waiting_input: "等待回答", waiting_approval: "等待批准",
+    queued: "已排队", running: "正在执行", waiting_input: "等待回答", waiting_agents: "等待子任务", waiting_approval: "等待批准",
     finalizing: "正在收尾", stopped: "已停止",
     succeeded: "已完成", failed: "失败", canceled: "已取消", interrupted: "已中断",
   } as const)[status];

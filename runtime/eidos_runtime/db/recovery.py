@@ -116,6 +116,20 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     """)
     for row in connection.execute("SELECT r.id FROM runs r JOIN resumable_input_runs s ON s.id=r.id WHERE r.status='running'").fetchall():
         transition_run(connection, row['id'], frozenset({RunStatus.RUNNING}), RunStatus.WAITING_INPUT if connection.execute("SELECT 1 FROM user_input_requests WHERE run_id=? AND status='pending'", (row['id'],)).fetchone() else RunStatus.QUEUED, 'user_input_recovered')
+    connection.execute("""
+        CREATE TEMP TABLE resumable_agent_runs AS
+        SELECT r.id FROM runs r JOIN agent_waits w ON w.run_id=r.id
+        WHERE r.status IN ('waiting_agents','running','queued') AND w.status IN ('pending','ready')
+          AND r.cancel_requested_at IS NULL AND r.reconciliation_required=0
+          AND (w.item_id IS NULL OR EXISTS (SELECT 1 FROM tool_calls t WHERE t.item_id=w.item_id AND t.status='running' AND t.tool_name='wait_agents'))
+          AND NOT EXISTS (SELECT 1 FROM tool_calls t JOIN items i ON i.id=t.item_id
+              WHERE i.run_id=r.id AND t.status='running' AND (w.item_id IS NULL OR t.item_id != w.item_id))
+          AND NOT EXISTS (SELECT 1 FROM durable_intents d WHERE d.run_id=r.id AND d.status IN ('running','uncertain','interrupted'))
+          AND NOT EXISTS (SELECT 1 FROM tool_attempts a JOIN tool_calls t ON t.id=a.tool_call_id JOIN items i ON i.id=t.item_id
+              WHERE i.run_id=r.id AND a.status IN ('running','uncertain'))
+    """)
+    for row in connection.execute("SELECT r.id,w.status FROM runs r JOIN resumable_agent_runs a ON a.id=r.id JOIN agent_waits w ON w.run_id=r.id WHERE r.status='running'").fetchall():
+        transition_run(connection, row['id'], frozenset({RunStatus.RUNNING}), RunStatus.WAITING_AGENTS if row['status']=='pending' else RunStatus.QUEUED, 'agent_wait_recovered')
     # Only a structured approval pause with no unknown execution can resume.
     # A completed network-denied Shell carries its verified result in the
     # approval transaction, so recovery returns that result without replay.
@@ -179,7 +193,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         """
         SELECT DISTINCT runs.id, runs.status
         FROM runs
-        WHERE runs.status IN ('running', 'waiting_approval', 'waiting_input', 'finalizing')
+        WHERE runs.status IN ('running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
           AND runs.id NOT IN (SELECT id FROM resumable_approval_runs)
           AND (
               EXISTS (
@@ -271,7 +285,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
           AND cancel_completed_at IS NULL
           AND reconciliation_required = 0
           AND status IN (
-              'queued', 'running', 'waiting_approval', 'waiting_input', 'finalizing'
+              'queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'
           )
         """
     ).fetchall()
@@ -288,10 +302,11 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     active_runs = connection.execute(
         """
         SELECT id, status FROM runs
-        WHERE status IN ('running', 'waiting_approval', 'waiting_input', 'finalizing')
+        WHERE status IN ('running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
           AND id NOT IN (SELECT id FROM resumable_approval_runs)
           AND id NOT IN (SELECT id FROM requeue_model_runs)
           AND id NOT IN (SELECT id FROM resumable_input_runs)
+          AND id NOT IN (SELECT id FROM resumable_agent_runs)
         """
     ).fetchall()
     for row in active_runs:
@@ -342,4 +357,5 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE resumable_approval_runs")
     connection.execute("UPDATE user_input_requests SET status='canceled' WHERE status='pending' AND run_id IN (SELECT id FROM runs WHERE status IN ('canceled','interrupted','failed','stopped'))")
     connection.execute("DROP TABLE resumable_input_runs")
+    connection.execute("DROP TABLE IF EXISTS resumable_agent_runs")
     verify_runtime_invariants(connection)
