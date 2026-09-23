@@ -53,9 +53,9 @@
 - 回答流式输出已完成代码修订，尚未进入测试阶段。普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。本次没有新增模型请求、工具参数流式展示或传输服务。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
-- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的九个推荐模型预设模板，不再强制全等校验。
-- 内置多模态支持模型包括 `glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码模型包括 `glm-5.3` 以及 DeepSeek 系列。
-- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/coding/v3`，包含 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。
+- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的十个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
+- 内置多模态支持模型包括 `deepseek-v4.1-flash`（火山引擎 Coding Plan 原生图像理解）、`glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码目录项包括 `glm-5.3` 和 `deepseek-flash`。
+- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/coding/v3`，包含 `deepseek-v4.1-flash`、`deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。V4.1 Flash 使用 Coding Plan 的 OpenAI-compatible Chat Completions 接口，目录声明 1M 上下文和图像输入。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
 - Runtime 同时支持 OpenAI-compatible Chat Completions 和 OpenAI Responses。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。
@@ -63,10 +63,10 @@
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
 - Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。
-- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 的选择会映射到 Provider 请求。火山 Coding Plan 的选择目前只校验并保存在 Run 快照中，尚未映射到 `/api/coding/v3` 请求字段。
+- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 和火山 Coding Plan `deepseek-v4.1-flash` 的选择会映射到 Provider 请求。V4.1 Flash 使用顶层 `reasoning_effort`；Coding Plan 端点对该模型的实际接受情况尚未经过受控请求验证。
 - 设置中的已保存模型列表会把提供商名称显示在模型名称后面。添加、编辑模型对话框会在提供商选择器旁显示 Logo 和提供商名称。Logo 作为 Renderer 静态资源打包。
 - `run/start` 会按所选模型校验可选的思考设置。请求省略该设置时，Runtime 使用该模型的默认值。Runtime 把解析后的值固化到 Run 的 `ModelProfileSnapshot`，并保存在现有 `runs.model_profile_json` 中；SQLite 不新增列。
-- Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/coding/v3` wire 字段和值尚未经过受控请求验证；UI 选项不代表 Provider 已验证接受该参数。
+- Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/coding/v3` 对 V4.1 Flash 思考参数的实际接受情况尚未经过受控请求验证；代码已发送顶层 `reasoning_effort`，但这不代表 Provider 已验证接受该参数。
 
 ## Agent Loop
 

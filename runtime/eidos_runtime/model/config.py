@@ -257,9 +257,23 @@ MODEL_PROVIDERS = (
         id="volcengine",
         name="火山引擎 / Volcengine",
         vendor="Volcengine",
-        # Values come from the requested model matrix. The Coding Plan endpoint
-        # still needs provider-specific wire verification before mapping them.
+        # Coding Plan uses a separate endpoint; model-specific request fields
+        # still need provider verification.
         models=(
+            CatalogModel(
+                id="deepseek-v4.1-flash",
+                name="DeepSeek V4.1 Flash",
+                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="high",
+                    selections=("none", "low", "medium", "high", "max"),
+                ),
+                contextWindowTokens=1_048_576,
+                maxOutputTokens=131_072,
+            ),
             CatalogModel(
                 id="deepseek-v4-pro-ga-260813",
                 name="DeepSeek V4 Pro GA",
@@ -417,6 +431,10 @@ class ModelCatalog:
             supports_custom_tools=False,
             supports_tool_grammar=False,
         )
+
+    def reasoning_config(self, model_id: str) -> ModelReasoningConfig | None:
+        selected = self._models.get(self.canonical_id(model_id))
+        return selected[1].reasoning if selected is not None else None
 
     def reasoning_selection(
         self,
@@ -660,9 +678,15 @@ class ModelConfigStore:
 
 
 def public_model_config(config: ModelConfig) -> ModelPublicConfig:
+    reasoning = config.reasoning
+    if reasoning is None and config.supports_reasoning:
+        reasoning = MODEL_CATALOG.reasoning_config(config.id)
     return ModelPublicConfig(
-        **config.model_dump(mode="json", by_alias=True, exclude={"api_key"}),
+        **config.model_dump(
+            mode="json", by_alias=True, exclude={"api_key", "reasoning"}
+        ),
         provider=MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor),
+        reasoning=reasoning,
     )
 
 

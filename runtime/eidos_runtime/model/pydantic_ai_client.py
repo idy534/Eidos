@@ -145,13 +145,18 @@ class PydanticAIModelClient:
                 }
             }
         elif profile_spec.provider_id == "volcengine":
-            # Do not guess Coding Plan /api/coding/v3 request fields.
             self._settings_extra_body = None
         else:
             self._settings_extra_body = None
         self._parallel_tool_calls = parallel_tool_calls
         if reasoning_effort is not None:
             self._reasoning_effort = reasoning_effort
+        elif (
+            profile_spec.provider_id == "volcengine"
+            and profile_spec.model_id == "deepseek-v4.1-flash"
+            and reasoning_selection in ("none", "low", "medium", "high", "max")
+        ):
+            self._reasoning_effort = reasoning_selection
         elif (
             profile_spec.provider_id == "deepseek"
             and reasoning_selection in ("low", "high", "max")
@@ -161,8 +166,7 @@ class PydanticAIModelClient:
             and reasoning_selection in ("low", "high", "max")
         ):
             self._reasoning_effort = reasoning_selection
-        # Volcengine selections are persisted in the run snapshot but are not
-        # sent until the Coding Plan endpoint's mapping is verified.
+        # Other Volcengine selections remain snapshot-only until verified.
         else:
             self._reasoning_effort = None
         self._image_authority = image_authority

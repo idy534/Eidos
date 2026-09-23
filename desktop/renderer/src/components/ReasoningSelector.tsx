@@ -44,6 +44,7 @@ const FULL_MULTIMODAL_MODELS = new Set([
 ]);
 
 const MODEL_CONTEXT_LIMITS: Record<string, string> = {
+  "deepseek-v4.1-flash": "1M",
   "glm-5.3-flash": "1M",
   "glm-5.3": "1M",
   "deepseek-v4-flash-ga-260731": "1M",
