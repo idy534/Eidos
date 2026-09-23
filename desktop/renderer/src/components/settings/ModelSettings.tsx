@@ -8,6 +8,7 @@ import type {
 import { Button } from "../Button.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import { SettingSection } from "./SettingSection.js";
 import { SettingRow } from "./SettingRow.js";
 
@@ -37,6 +38,7 @@ export function ModelSettings({
 }: ModelSettingsProps) {
   const [presets, setPresets] = useState<ModelPresetsResult | undefined>(undefined);
   const [draft, setDraft] = useState<ModelDraft | undefined>(undefined);
+  const [modelToDelete, setModelToDelete] = useState<ModelOption | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | undefined>(undefined);
 
@@ -55,11 +57,13 @@ export function ModelSettings({
     const model = provider?.models[0];
     if (!provider || !model) return;
     setLocalError(undefined);
+    setModelToDelete(undefined);
     setDraft({ provider: provider.id, modelId: model.id, apiKey: "" });
   };
 
   const openEdit = (model: ModelOption) => {
     setLocalError(undefined);
+    setModelToDelete(undefined);
     setDraft({
       originalId: model.id,
       provider: model.provider as ModelProviderPreset["id"],
@@ -100,12 +104,14 @@ export function ModelSettings({
     }
   }
 
-  async function remove(model: ModelOption) {
+  async function confirmDelete() {
+    if (!modelToDelete) return;
     setBusy(true);
     setLocalError(undefined);
     try {
-      await window.eidosRuntime.deleteModel(model.id);
+      await window.eidosRuntime.deleteModel(modelToDelete.id);
       await onModelsChanged();
+      setModelToDelete(undefined);
       onShowToast("模型已删除", "success");
     } catch {
       setLocalError("模型删除失败，请查看 Runtime 日志。");
@@ -162,7 +168,10 @@ export function ModelSettings({
                     variant="ghost"
                     aria-label={`删除 ${model.name}`}
                     disabled={busy}
-                    onClick={() => void remove(model)}
+                    onClick={() => {
+                      setLocalError(undefined);
+                      setModelToDelete(model);
+                    }}
                   >删除</Button>
                 </div>
               }
@@ -173,7 +182,9 @@ export function ModelSettings({
         )}
       </SettingSection>
 
-      {(localError ?? modelError) && <p className="setting-field-error" role="alert">{localError ?? modelError}</p>}
+      {(localError ?? modelError) && !modelToDelete && !draft && (
+        <p className="setting-field-error" role="alert">{localError ?? modelError}</p>
+      )}
       <ModelDialog
         draft={draft}
         presets={presets}
@@ -182,6 +193,23 @@ export function ModelSettings({
         onChange={setDraft}
         onCancel={() => { if (!busy) { setDraft(undefined); setLocalError(undefined); } }}
         onSave={() => void save()}
+      />
+      <ConfirmDialog
+        open={Boolean(modelToDelete)}
+        title={`删除模型 “${modelToDelete?.name ?? ""}”？`}
+        description={`确定要删除模型 “${modelToDelete?.name ?? ""}” 吗？删除后该模型将从本地配置中移除，无法在会话中继续使用。`}
+        confirmLabel="删除"
+        cancelLabel="取消"
+        isDestructive
+        busy={busy}
+        error={localError}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          if (!busy) {
+            setModelToDelete(undefined);
+            setLocalError(undefined);
+          }
+        }}
       />
     </div>
   );
