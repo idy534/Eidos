@@ -231,6 +231,40 @@ class JsonBlobStore:
             reference = JsonBlobReference.from_json(stored)
             if reference is not None:
                 retained.add(reference.relative_path)
+                if reference.kind == "context-snapshot-v2":
+                    # Resolve children before deleting anything. A corrupt manifest
+                    # must never cause live request blocks to be collected.
+                    manifest = json.loads(self._read(reference))
+                    if (
+                        not isinstance(manifest, dict)
+                        or set(manifest)
+                        != {
+                            "$eidosContextBlocks",
+                            "snapshot",
+                            "modelContextRefs",
+                            "toolDefinitionsRef",
+                        }
+                        or manifest["$eidosContextBlocks"] != 1
+                    ):
+                        raise JsonBlobCorruptionError("context manifest is invalid")
+                    children = manifest["modelContextRefs"]
+                    if not isinstance(children, list) or len(children) > 10000:
+                        raise JsonBlobCorruptionError("context manifest is invalid")
+                    block_references = [(value, "context-item") for value in children]
+                    block_references.append(
+                        (manifest["toolDefinitionsRef"], "context-tools")
+                    )
+                    for value, kind in block_references:
+                        if not isinstance(value, str):
+                            raise JsonBlobCorruptionError(
+                                "context block reference is invalid"
+                            )
+                        child = JsonBlobReference.from_json(value)
+                        if child is None or child.kind != kind:
+                            raise JsonBlobCorruptionError(
+                                "context block reference is invalid"
+                            )
+                        retained.add(child.relative_path)
         deleted = 0
         for directory, directory_names, file_names in os.walk(
             self.root, topdown=True, followlinks=False
@@ -253,10 +287,7 @@ class JsonBlobStore:
                 if relative in retained:
                     continue
                 metadata = path.stat()
-                if (
-                    not stat.S_ISREG(metadata.st_mode)
-                    or metadata.st_uid != os.getuid()
-                ):
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
                     raise JsonBlobCorruptionError("blob file is invalid")
                 path.unlink()
                 deleted += 1
