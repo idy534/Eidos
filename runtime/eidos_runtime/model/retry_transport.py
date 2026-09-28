@@ -18,8 +18,8 @@ from pydantic_ai.retries import (
 from tenacity import RetryCallState, retry_if_exception, stop_after_attempt, wait_exponential
 
 from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig
-from eidos_runtime.model_gateway.models import RetryPolicy
-from eidos_runtime.model_gateway.retry import (
+from eidos_runtime.model.gateway_types import RetryPolicy
+from eidos_runtime.model.retry import (
     RetryState,
     is_retryable_transport_exception,
     retry_decision,
@@ -202,6 +202,6 @@ def build_retrying_http_client(
 def _retryable_statuses() -> frozenset[int]:
     # Keep the only status authority in retry.py while avoiding a mutable module
     # alias in the transport's public construction path.
-    from eidos_runtime.model_gateway.retry import RETRYABLE_HTTP_STATUSES
+    from eidos_runtime.model.retry import RETRYABLE_HTTP_STATUSES
 
     return RETRYABLE_HTTP_STATUSES

@@ -137,7 +137,7 @@
 ## Implementation Anchors
 
 - `runtime/eidos_runtime/model/config.py`
-- `runtime/eidos_runtime/model_gateway/`
+- `runtime/eidos_runtime/model/`
 - `runtime/eidos_runtime/runtime/supervisor.py`
 - `runtime/eidos_runtime/runtime/engine.py`
 - `runtime/eidos_runtime/context/compactor.py`
