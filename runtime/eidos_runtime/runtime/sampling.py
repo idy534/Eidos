@@ -8,8 +8,8 @@ from eidos_runtime.model.client import (
     ModelRequestError,
     ModelRequestFailure,
 )
-from eidos_runtime.model_gateway.retry import RetryDecision, RetryState, retry_decision
-from eidos_runtime.model_gateway.models import RetryPolicy
+from eidos_runtime.model.retry import RetryDecision, RetryState, retry_decision
+from eidos_runtime.model.gateway_types import RetryPolicy
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext, ToolBatchOutcome
 from eidos_runtime.runtime.events import RuntimeEvents

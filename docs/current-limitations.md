@@ -1,5 +1,7 @@
 # Eidos 当前限制
 
+旧版完整 ContextSnapshot 仍可读取，但新共享块格式只用于新快照。当前版本不会自动重写历史 Blob，所以升级后不会立刻释放既有快照占用的空间。
+
 - Runtime Loop 目前只有内部、非权威的生命周期观察点。它们不持久化为业务 Event，也不提供用户可配置或可阻断的 Hook；诊断观察者失败不会改变 Run 结果。
 
 > 权限模式范围：本文原有的逐操作请求审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。权限模式相关单元与行为测试已纳入测试套件。
@@ -137,7 +139,7 @@
 ## Implementation Anchors
 
 - `runtime/eidos_runtime/model/config.py`
-- `runtime/eidos_runtime/model_gateway/`
+- `runtime/eidos_runtime/model/`
 - `runtime/eidos_runtime/runtime/supervisor.py`
 - `runtime/eidos_runtime/runtime/engine.py`
 - `runtime/eidos_runtime/context/compactor.py`

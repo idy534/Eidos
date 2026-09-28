@@ -65,7 +65,7 @@ from eidos_runtime.model.config import (
 )
 from eidos_runtime.model.prompts import TITLE_PROMPT, TITLE_SYSTEM_INSTRUCTIONS
 from eidos_runtime.model.response_phase import resolve_chat_completion_phase
-from eidos_runtime.model_gateway.retry_transport import (
+from eidos_runtime.model.retry_transport import (
     RetryBackoffCanceled,
     RetryTracker,
     RetryTransportClient,

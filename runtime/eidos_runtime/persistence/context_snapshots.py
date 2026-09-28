@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pydantic import ValidationError
 
 from eidos_runtime.context.plan import ContextSnapshot
@@ -7,6 +9,7 @@ from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.db.json_blobs import (
     JsonBlobCorruptionError,
+    JsonBlobReference,
     JsonBlobStore,
 )
 from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
@@ -46,9 +49,7 @@ class ContextSnapshotRepository(Repository):
         ):
             raise ValueError("context persistence snapshot lineage mismatch")
         with self.lock, self.blobs.lock, self._connection() as connection:
-            stored_snapshot = self.blobs.put_json(
-                "context-snapshot", snapshot.model_dump_json()
-            )
+            stored_snapshot = self._store_snapshot(snapshot)
             if retrieval is not None:
                 connection.execute(
                     """
@@ -58,9 +59,12 @@ class ContextSnapshotRepository(Repository):
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        retrieval.snapshot_id, retrieval.inventory_snapshot_id,
-                        retrieval.index_snapshot_id, retrieval.snapshot_hash,
-                        retrieval.model_dump_json(), retrieval.created_at_ms,
+                        retrieval.snapshot_id,
+                        retrieval.inventory_snapshot_id,
+                        retrieval.index_snapshot_id,
+                        retrieval.snapshot_hash,
+                        retrieval.model_dump_json(),
+                        retrieval.created_at_ms,
                     ),
                 )
                 connection.execute(
@@ -81,11 +85,16 @@ class ContextSnapshotRepository(Repository):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    plan.plan_id, run_id, plan.retrieval_snapshot_id,
+                    plan.plan_id,
+                    run_id,
+                    plan.retrieval_snapshot_id,
                     plan.model_profile_snapshot_hash,
                     plan.rule_resolution_snapshot_id,
-                    plan.inventory_snapshot_id, plan.index_snapshot_id,
-                    plan.snapshot_hash, plan.model_dump_json(), plan.created_at_ms,
+                    plan.inventory_snapshot_id,
+                    plan.index_snapshot_id,
+                    plan.snapshot_hash,
+                    plan.model_dump_json(),
+                    plan.created_at_ms,
                 ),
             )
             connection.execute(
@@ -96,38 +105,42 @@ class ContextSnapshotRepository(Repository):
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    snapshot.snapshot_id, run_id, snapshot.model_attempt_id,
-                    snapshot.plan_id, snapshot.snapshot_hash,
-                    stored_snapshot, snapshot.created_at_ms,
+                    snapshot.snapshot_id,
+                    run_id,
+                    snapshot.model_attempt_id,
+                    snapshot.plan_id,
+                    snapshot.snapshot_hash,
+                    stored_snapshot,
+                    snapshot.created_at_ms,
                 ),
             )
         return self.read(snapshot.snapshot_id)
 
     def read(self, snapshot_id: str) -> ContextSnapshot:
         with self.lock:
-            row = self._connection().execute(
-                "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
-                (snapshot_id,),
-            ).fetchone()
+            row = (
+                self._connection()
+                .execute(
+                    "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+                    (snapshot_id,),
+                )
+                .fetchone()
+            )
         if row is None:
             raise LookupError("context snapshot not found")
         try:
-            return ContextSnapshot.model_validate_json(
-                self.blobs.read_json(
-                    row["snapshot_json"], expected_kind="context-snapshot"
-                )
-            )
+            return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
 
-    def read_for_model_attempt(
-        self, model_attempt_id: str
-    ) -> ContextSnapshot | None:
+    def read_for_model_attempt(self, model_attempt_id: str) -> ContextSnapshot | None:
         with self.lock:
-            row = self._connection().execute(
-                """
+            row = (
+                self._connection()
+                .execute(
+                    """
                 SELECT context_snapshots.snapshot_json
                 FROM context_snapshots
                 LEFT JOIN model_attempts
@@ -136,16 +149,14 @@ class ContextSnapshotRepository(Repository):
                    OR model_attempts.id = ?
                 LIMIT 1
                 """,
-                (model_attempt_id, model_attempt_id),
-            ).fetchone()
+                    (model_attempt_id, model_attempt_id),
+                )
+                .fetchone()
+            )
         if row is None:
             return None
         try:
-            return ContextSnapshot.model_validate_json(
-                self.blobs.read_json(
-                    row["snapshot_json"], expected_kind="context-snapshot"
-                )
-            )
+            return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
@@ -166,7 +177,9 @@ class ContextSnapshotRepository(Repository):
                 (run_id,),
             ).fetchone()
             if row is None or row["id"] != snapshot.model_attempt_id:
-                raise ValueError("running model attempt does not match context snapshot")
+                raise ValueError(
+                    "running model attempt does not match context snapshot"
+                )
             changed = connection.execute(
                 """
                 UPDATE model_attempts SET context_snapshot_id = ?
@@ -179,14 +192,19 @@ class ContextSnapshotRepository(Repository):
                     "SELECT context_snapshot_id FROM model_attempts WHERE id = ?",
                     (snapshot.model_attempt_id,),
                 ).fetchone()
-                if current is None or current["context_snapshot_id"] != snapshot.snapshot_id:
+                if (
+                    current is None
+                    or current["context_snapshot_id"] != snapshot.snapshot_id
+                ):
                     raise ValueError("model attempt context snapshot is immutable")
         return persisted
 
     def read_running_for_run(self, run_id: str) -> ContextSnapshot | None:
         with self.lock:
-            row = self._connection().execute(
-                """
+            row = (
+                self._connection()
+                .execute(
+                    """
                 SELECT context_snapshots.snapshot_json FROM model_attempts
                 JOIN steps ON steps.id = model_attempts.step_id
                 JOIN context_snapshots
@@ -194,16 +212,14 @@ class ContextSnapshotRepository(Repository):
                 WHERE steps.run_id = ? AND model_attempts.status = 'running'
                 ORDER BY model_attempts.creation_seq DESC LIMIT 1
                 """,
-                (run_id,),
-            ).fetchone()
+                    (run_id,),
+                )
+                .fetchone()
+            )
         if row is None:
             return None
         try:
-            return ContextSnapshot.model_validate_json(
-                self.blobs.read_json(
-                    row["snapshot_json"], expected_kind="context-snapshot"
-                )
-            )
+            return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
@@ -213,27 +229,91 @@ class ContextSnapshotRepository(Repository):
         """Return the latest exact model-request projection for a Run."""
 
         with self.lock:
-            row = self._connection().execute(
-                """
+            row = (
+                self._connection()
+                .execute(
+                    """
                 SELECT snapshot_json FROM context_snapshots
                 WHERE run_id = ?
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
-                (run_id,),
-            ).fetchone()
+                    (run_id,),
+                )
+                .fetchone()
+            )
         if row is None:
             return None
         try:
-            return ContextSnapshot.model_validate_json(
-                self.blobs.read_json(
-                    row["snapshot_json"], expected_kind="context-snapshot"
-                )
-            )
+            return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
+
+    def _store_snapshot(self, snapshot: ContextSnapshot) -> str:
+        """Share immutable request items across attempts without changing their hash."""
+        payload = snapshot.model_dump(mode="json")
+        context = payload.pop("model_context")
+        tools = payload.pop("tool_definitions")
+        manifest = {
+            "$eidosContextBlocks": 1,
+            "snapshot": payload,
+            "modelContextRefs": [
+                self.blobs.put_json(
+                    "context-item", json.dumps(item, ensure_ascii=False, sort_keys=True)
+                )
+                for item in context
+            ],
+            "toolDefinitionsRef": self.blobs.put_json(
+                "context-tools", json.dumps(tools, ensure_ascii=False, sort_keys=True)
+            ),
+        }
+        return self.blobs.put_json(
+            "context-snapshot-v2", json.dumps(manifest, ensure_ascii=False)
+        )
+
+    def _decode_snapshot(self, stored: str) -> ContextSnapshot:
+        reference = JsonBlobReference.from_json(stored)
+        if reference is None or reference.kind == "context-snapshot":
+            return ContextSnapshot.model_validate_json(
+                self.blobs.read_json(stored, expected_kind="context-snapshot")
+            )
+        if reference.kind != "context-snapshot-v2":
+            raise JsonBlobCorruptionError("context snapshot kind is invalid")
+        manifest = json.loads(self.blobs.read(reference))
+        if (
+            not isinstance(manifest, dict)
+            or set(manifest)
+            != {
+                "$eidosContextBlocks",
+                "snapshot",
+                "modelContextRefs",
+                "toolDefinitionsRef",
+            }
+            or manifest["$eidosContextBlocks"] != 1
+        ):
+            raise JsonBlobCorruptionError("context manifest is invalid")
+        payload = manifest["snapshot"]
+        refs = manifest["modelContextRefs"]
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(refs, list)
+            or len(refs) > 10000
+        ):
+            raise JsonBlobCorruptionError("context manifest is invalid")
+        payload["model_context"] = [
+            json.loads(self.blobs.read_json(value, expected_kind="context-item"))
+            for value in refs
+        ]
+        payload["tool_definitions"] = json.loads(
+            self.blobs.read_json(
+                manifest["toolDefinitionsRef"], expected_kind="context-tools"
+            )
+        )
+        return ContextSnapshot.model_validate_json(
+            json.dumps(payload, ensure_ascii=False)
+        )
 
 
 __all__ = ["ContextSnapshotRepository"]
