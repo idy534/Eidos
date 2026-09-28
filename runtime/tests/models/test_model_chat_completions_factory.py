@@ -8,7 +8,7 @@ from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from eidos_runtime.model.config import MODEL_CATALOG
-from eidos_runtime.model_gateway.pydantic_factory import build_model, build_provider
+from eidos_runtime.model.pydantic_factory import build_model, build_provider
 
 
 @pytest.mark.anyio

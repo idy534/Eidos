@@ -68,7 +68,7 @@ from eidos_runtime.model.config import (
 from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
 )
-from eidos_runtime.model_gateway.gateway import ModelGateway
+from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.git.manager import WorktreeManager
 from eidos_runtime.persistence.review_comments import ReviewCommentRepository

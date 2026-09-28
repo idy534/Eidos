@@ -12,7 +12,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from eidos_runtime.model.config import ModelProfileSpec
 from eidos_runtime.model.pydantic_ai_client import PydanticAIModelClient, encode_tool_definition
-from eidos_runtime.model_gateway.native_custom import encode_responses_tool_definition as encode_native_definition
+from eidos_runtime.model.native_custom import encode_responses_tool_definition as encode_native_definition
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.tools.workspace import ToolExecutor
 
