@@ -108,6 +108,8 @@ consume input → resolve rules → build context → sample model
 → continue, compact, recover, pause or finish
 ```
 
+模型响应完成后，`LoopDecisionEngine` 先给出动作，`RuntimeEngine._settle_sample_boundary` 再提交对应的 Step、Assistant 和 Run 状态。该边界返回“重建上下文、执行工具或返回”三种控制结果。协议修复由同一个决策入口限制次数；循环保护命中时不再尝试修复。这个拆分不改变当前数据库事实或终态语义。
+
 RuntimeEngine 下的主要职责是：
 
 - `ContextBuilder` 和 `InstructionResolver` 构建本次模型请求；
@@ -119,9 +121,13 @@ RuntimeEngine 下的主要职责是：
 - `LoopGuard` 处理语义状态收敛；
 - `RunFinalizer` 生成有界、无 Tool 的最终回答。
 
+`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。它不是用户可配置 Hook，也不允许观察者阻断工具；可阻断的 Hook 仍需独立设计和验证。
+
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
 Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。Sampling 收到的 provisional text 在完整响应通过校验前不会持久化。可重试的 transport failure 即使已经收到 provisional text，也会复用同一个 frozen ContextSnapshot 创建新的 Model Attempt。已收到的文本或 ToolCall 不会自动重放。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。
+
+`SamplingRuntime.accept_validated_response` 是模型尝试完成与有效文本提交的单一入口。它只接受通过工具批次校验的 `ready` 或有文本的 `no_tools` 响应。工具批次随后按模型声明的顺序记录与执行；只读批次可以并行执行，但结果仍按原顺序汇总。失败的模型输出不会通过该入口进入下一次模型请求。
 
 确定的 Tool Error 只表示本次尝试失败，不会单独把 Run 置为终态。Runtime 会把失败事实交给下一次模型决策。模型可以修正参数、选择替代 Tool，或者在没有安全路径时结束。等价重复且没有新事实时，LoopGuard 负责收敛。
 

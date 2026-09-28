@@ -11,7 +11,7 @@ from eidos_runtime.model.client import (
 from eidos_runtime.model.retry import RetryDecision, RetryState, retry_decision
 from eidos_runtime.model.gateway_types import RetryPolicy
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
-from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext
+from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext, ToolBatchOutcome
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.model_runner import ModelRunner, ModelStreamInterrupted
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
@@ -261,6 +261,7 @@ class SamplingRuntime:
         response_text_bytes, response_text_sha256 = response_text_metrics(
             sampled.text
         )
+
         self.store.complete_current_model_attempt(
             step.run_id,
             status,
@@ -289,6 +290,29 @@ class SamplingRuntime:
                 "retryAfterApplied": False,
             },
         )
+
+    def accept_validated_response(
+        self,
+        step: StepContext,
+        sampled: SamplingOutcome,
+        validation: ToolBatchOutcome,
+        cancel: threading.Event,
+    ) -> SamplingOutcome:
+        """Publish a complete model response only after its tool batch is valid."""
+        if validation.status not in {"ready", "no_tools"}:
+            raise ValueError("only validated responses may be accepted")
+        if validation.status == "no_tools" and not sampled.text:
+            raise ValueError("an empty response cannot complete a step")
+        self.complete_attempt(
+            step, sampled, status="completed", retry=False,
+            retry_reason="completed",
+        )
+        if validation.status == "ready" and sampled.text:
+            self.commit_commentary(step, sampled.text, cancel)
+        elif validation.status == "no_tools":
+            assistant_item = self.commit_assistant(step, sampled.text, cancel)
+            sampled = sampled.model_copy(update={"assistant_item": assistant_item})
+        return sampled
 
     def commit_assistant(
         self,

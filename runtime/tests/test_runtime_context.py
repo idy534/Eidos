@@ -492,6 +492,7 @@ class LoopGuardTests(unittest.TestCase):
             decision.decide(context_budget=over).action,
             LoopAction.COMPACT,
         )
+
         fitting = estimate_context_budget(
             [],
             context_window_tokens=4_096,
@@ -511,6 +512,14 @@ class LoopGuardTests(unittest.TestCase):
             decision.decide(context_budget=over).action,
             LoopAction.COMPACT,
         )
+
+    def test_protocol_repair_is_bounded_and_respects_loop_guard(self) -> None:
+        decision = LoopDecisionEngine()
+        self.assertTrue(decision.protocol_repair(error_count=1))
+        self.assertFalse(decision.protocol_repair(error_count=2))
+        self.assertFalse(decision.protocol_repair(
+            error_count=1, guard_reason="repeated_empty_response"
+        ))
 
 
 class ContextPersistenceTests(unittest.TestCase):
