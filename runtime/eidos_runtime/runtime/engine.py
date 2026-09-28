@@ -814,22 +814,9 @@ class RuntimeEngine:
 
                 guard.observe_empty_response(False)
                 self.store.clear_protocol_errors(run.run_id)
-                sampling.complete_attempt(
-                    step,
-                    sampled,
-                    status="completed",
-                    retry=False,
-                    retry_reason="completed",
+                sampled = sampling.accept_validated_response(
+                    step, sampled, validation, cancel
                 )
-                if validation.status == "ready" and sampled.text:
-                    sampling.commit_commentary(step, sampled.text, cancel)
-                elif validation.status == "no_tools" and sampled.text:
-                    assistant_item = sampling.commit_assistant(
-                        step, sampled.text, cancel
-                    )
-                    sampled = sampled.model_copy(
-                        update={"assistant_item": assistant_item}
-                    )
                 break
 
             if context_recovered:

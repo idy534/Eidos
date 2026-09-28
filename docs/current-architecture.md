@@ -125,6 +125,8 @@ Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和
 
 Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。Sampling 收到的 provisional text 在完整响应通过校验前不会持久化。可重试的 transport failure 即使已经收到 provisional text，也会复用同一个 frozen ContextSnapshot 创建新的 Model Attempt。已收到的文本或 ToolCall 不会自动重放。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。
 
+`SamplingRuntime.accept_validated_response` 是模型尝试完成与有效文本提交的单一入口。它只接受通过工具批次校验的 `ready` 或有文本的 `no_tools` 响应。工具批次随后按模型声明的顺序记录与执行；只读批次可以并行执行，但结果仍按原顺序汇总。失败的模型输出不会通过该入口进入下一次模型请求。
+
 确定的 Tool Error 只表示本次尝试失败，不会单独把 Run 置为终态。Runtime 会把失败事实交给下一次模型决策。模型可以修正参数、选择替代 Tool，或者在没有安全路径时结束。等价重复且没有新事实时，LoopGuard 负责收敛。
 
 串行和并行批次都只把成功结果计入新的进展事实。失败调用仍保留在 SQLite 和模型历史中，但不会仅因参数变化而重置进展。真实 Workspace 变化、权限变化和用户输入仍参与已有的收敛判断。
