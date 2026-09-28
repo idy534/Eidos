@@ -108,6 +108,8 @@ consume input → resolve rules → build context → sample model
 → continue, compact, recover, pause or finish
 ```
 
+模型响应完成后，`LoopDecisionEngine` 先给出动作，`RuntimeEngine._settle_sample_boundary` 再提交对应的 Step、Assistant 和 Run 状态。该边界返回“重建上下文、执行工具或返回”三种控制结果。协议修复由同一个决策入口限制次数；循环保护命中时不再尝试修复。这个拆分不改变当前数据库事实或终态语义。
+
 RuntimeEngine 下的主要职责是：
 
 - `ContextBuilder` 和 `InstructionResolver` 构建本次模型请求；
