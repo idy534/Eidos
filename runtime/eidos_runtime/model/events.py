@@ -6,8 +6,8 @@ from typing import Literal
 from pydantic import Field
 
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.model_gateway.errors import EidosModelError
-from eidos_runtime.model_gateway.usage import NormalizedUsage
+from eidos_runtime.model.errors import EidosModelError
+from eidos_runtime.model.usage import NormalizedUsage
 
 
 class GatewayEvent(EidosFrozenStrictModel):

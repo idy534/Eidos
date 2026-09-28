@@ -252,7 +252,7 @@ Schema 变更必须有版本、Migration 或明确的开发期基线决策，并
 | Tool Contract | `runtime/eidos_runtime/tools/` |
 | Context | `runtime/eidos_runtime/context/` |
 | Sandbox | `runtime/eidos_runtime/sandbox/` |
-| Model | `runtime/eidos_runtime/model/`、`model_gateway/` |
+| Model | `runtime/eidos_runtime/model/`（Profile、Provider、Gateway 与客户端） |
 | Extensions | `runtime/eidos_runtime/extensions/` |
 目标 DTO 按 `session`、`run`、`tool`、`model`、`extensions` 拆分到 `protocol/schemas/`。
 `storage.py` 只保留必要兼容入口，逐步减少机械转发。
