@@ -46,6 +46,11 @@ from eidos_runtime.runtime.loop_guard import (
     context_fact_frontier_hash,
     tool_call_fingerprint,
 )
+from eidos_runtime.runtime.lifecycle import (
+    LoopLifecycle,
+    LoopLifecycleEvent,
+    LoopStage,
+)
 from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
 from eidos_runtime.runtime.shell_process_manager import ShellSessionFinalizationError
@@ -131,6 +136,7 @@ class RuntimeEngine:
         events: RuntimeEvents | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
+        lifecycle_observer: Callable[[LoopLifecycleEvent], None] | None = None,
     ) -> None:
         self.store = store
         self.model = model
@@ -148,6 +154,7 @@ class RuntimeEngine:
         self.repository_runtime = repository_runtime
         self.runtime_dependency_catalog = runtime_dependency_catalog
         self.tool_concurrency_gate = ToolConcurrencyGate()
+        self.lifecycle = LoopLifecycle(lifecycle_observer)
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
@@ -235,7 +242,12 @@ class RuntimeEngine:
                 self._run(run_id, cancel, run, repository_context)
             finally:
                 try:
-                    finish_run(span, self.store.read_run(run_id).get("status"))
+                    status = self.store.read_run(run_id).get("status")
+                    finish_run(span, status)
+                    self.lifecycle.emit(
+                        LoopStage.RUN_EXITED, run_id,
+                        reason=status if isinstance(status, str) else None,
+                    )
                 except Exception:
                     logger.debug(
                         "Could not read final run status for telemetry",
@@ -503,6 +515,10 @@ class RuntimeEngine:
                     else "pre_turn"
                 )
                 try:
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_COMPACT, run.run_id,
+                        reason="projection_overflow",
+                    )
                     compactor.compact(run.run_id, phase)
                 except ContextCompactionError as error:
                     raise ContextLimitExceeded(
@@ -526,6 +542,10 @@ class RuntimeEngine:
             ):
                 soft_compaction_frontier = uncompressed_ids
                 try:
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_COMPACT, run.run_id,
+                        reason="soft_context_target",
+                    )
                     compactor.compact(
                         run.run_id, "mid_turn",
                         keep_recent_items=SOFT_COMPACTION_KEEP_ITEMS,
@@ -558,6 +578,10 @@ class RuntimeEngine:
                     else "pre_turn"
                 )
                 try:
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_COMPACT, run.run_id,
+                        reason="context_over_budget",
+                    )
                     compactor.compact(run.run_id, phase)
                 except ContextLimitExceeded:
                     raise
@@ -631,8 +655,19 @@ class RuntimeEngine:
             while True:
                 try:
                     self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_MODEL, run.run_id,
+                        step_id=step.step_id,
+                        model_attempt_id=step.model_attempt_id,
+                    )
                     sampled = sampling.sample(step, cancel)
                     self._pause_at(run.run_id, SafePoint.AFTER_MODEL, cancel)
+                    self.lifecycle.emit(
+                        LoopStage.AFTER_MODEL, run.run_id,
+                        step_id=step.step_id,
+                        model_attempt_id=step.model_attempt_id,
+                        tool_count=len(sampled.tool_calls),
+                    )
                 except SamplingCancelled:
                     raise
                 except SensitiveScanError:
@@ -664,6 +699,11 @@ class RuntimeEngine:
                         else "pre_turn"
                     )
                     try:
+                        self.lifecycle.emit(
+                            LoopStage.BEFORE_COMPACT, run.run_id,
+                            step_id=step.step_id,
+                            reason="provider_context_exceeded",
+                        )
                         compacted = compactor.compact(run.run_id, phase)
                     except ContextCompactionError:
                         finalizer.finalize(
@@ -918,7 +958,16 @@ class RuntimeEngine:
                 )
                 return
             self._pause_at(run.run_id, SafePoint.BEFORE_TOOL, cancel)
+            self.lifecycle.emit(
+                LoopStage.BEFORE_TOOL_BATCH, run.run_id,
+                step_id=step.step_id, tool_count=len(validation.tool_calls),
+            )
             outcome = tools.execute(step, validation.tool_calls, cancel)
+            self.lifecycle.emit(
+                LoopStage.AFTER_TOOL_BATCH, run.run_id,
+                step_id=step.step_id, tool_count=len(validation.tool_calls),
+                reason=outcome.status,
+            )
             if len(validation.tool_calls) == 1 and validation.tool_calls[0].name == "write_plan":
                 plans = PlanningRepository(self.store.database).list_plans(run.session_id)
                 ready = next((p for p in plans if p.run_id == run.run_id and p.status == "review"), None)
