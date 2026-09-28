@@ -13,7 +13,7 @@ Eidos 是可独立安装的 macOS 桌面 Agent Runtime。
 目标能力：多项目、多 Session、多编码线程、独立 Git Worktree、多 Provider、多 Model Profile、代码理解、搜索、修改、测试、完整 Diff、Checkpoint、Rewind、Fork、Sandbox、权限审查、长任务恢复、Skill、Plugin、MCP、有限并行 Agent、日志、诊断、备份、迁移和升级。
 优先完成可靠的产品闭环，不为假想需求提前构建复杂抽象。
 不要以理论上的绝对安全阻断主要流程；已建立的安全边界必须 fail closed。
-单次 PR 范围必须小、单一、可测试、可回滚、可完整审查。
+PR 应围绕用户的一次明确目标，范围可审查、可测试、可回滚。相关子任务可以在同一分支中分别提交多个 Commit，并统一创建一个 PR；不要仅因子任务数量拆出多个 PR。
 ## 3. Overall architecture
 ```text
 Electron Renderer
@@ -313,8 +313,8 @@ Compaction 必须保留当前目标、确认事实、未完成事项、Approval 
 OpenTelemetry 和 Sentry 必须作为后续独立 PR，不得混入核心重构。
 默认诊断必须本地可用，不依赖远程遥测。
 ## 24. PR scope
-单次 PR 必须只解决一个核心问题，边界明确，可独立测试、回滚和审查，不混入无关格式化、顺手重命名或跨层清理。
-推荐范围：一个依赖替换、一个 Repository 领域、一个 RPC 领域、一个异步资源类型、一个 Tool Driver 或一个 Context 能力。
+默认每个 PR 聚焦一个核心问题。用户明确要求将相关问题一起完成时，使用同一分支和一个 PR；按问题分成独立 Commit，并在 PR 描述中列出每个 Commit 的边界、测试和回滚方式。不要把独立 Commit 误当作必须拆 PR 的理由。
+推荐每个 Commit 的范围：一个依赖替换、一个 Repository 领域、一个 RPC 领域、一个异步资源类型、一个 Tool Driver 或一个 Context 能力。避免混入无关格式化、顺手重命名或跨层清理。
 禁止一次 PR 同时包含目录重组、Async 迁移、DB Schema、Protocol 变更和 UI 修改。
 必须先兼容迁移，再删除旧实现。
 删除旧代码前必须有行为等价测试。
@@ -401,7 +401,7 @@ git diff --check
 - 无界读取文件、输出、线程或 Task
 - 远程解析 JSON Schema `$ref`
 - 动态 import 用户 Plugin
-- 一个 PR 混合多阶段重构
+- 一个 Commit 混合不相关的多阶段重构，或一个 PR 混入用户目标之外的改动
 - 为减少行数删除必要领域语义
 - 为假想需求提前构建复杂抽象
 - 未经测试修改稳定错误码
@@ -420,7 +420,7 @@ git diff --check
 ```
 不得为了数字牺牲可靠性。
 ## 30. Final checklist
-- [ ] PR 只有一个明确主题
+- [ ] PR 对应用户的一次明确目标；相关子任务各有独立、可审查的 Commit
 - [ ] 已区分核心自研和通用基建
 - [ ] 已优先评估成熟依赖
 - [ ] 没有引入第二套 Runtime 或状态权威
