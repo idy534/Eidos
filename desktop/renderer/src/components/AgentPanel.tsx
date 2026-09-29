@@ -47,11 +47,11 @@ export function useAgentState(sessionId: string | undefined, ready: boolean) {
 }
 
 export function AgentList({
-  agents, onOpen,
-}: { agents: AgentSummary[]; onOpen: (agent: AgentSummary) => void }) {
+  agents, onOpen, approvalCounts = {},
+}: { agents: AgentSummary[]; onOpen: (agent: AgentSummary) => void; approvalCounts?: Readonly<Record<string, number>> }) {
   return <div className="agent-list">
     {agents.map((agent) => <button key={agent.id} type="button" className="environment-popover__row agent-list__row" onClick={() => onOpen(agent)}>
-      <span>{agent.taskName}</span><span>{labels[agent.status]}</span>
+      <span>{agent.taskName}</span><span>{labels[agent.status]}{approvalCounts[agent.sessionId] ? ` · 待审批 ${approvalCounts[agent.sessionId]}` : ""}</span>
     </button>)}
   </div>;
 }
@@ -93,6 +93,7 @@ function AgentTranscript({ agent, approvals, respondingApprovalIds, respondingKi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.sessionId, agent.runId]);
   return <section className="agent-transcript" aria-label="子 Agent 执行记录">
+    {approvals.some((request) => request.sessionId === agent.sessionId) && <h3>来自子 Agent：{agent.taskName} 的审批</h3>}
     {approvals.filter((request) => request.sessionId === agent.sessionId).map((request) => {
       const run = snapshot?.runs.find((entry) => entry.id === request.runId);
       return run ? <ApprovalComposer key={request.id} run={run} approval={request}

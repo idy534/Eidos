@@ -14,6 +14,19 @@ describe("AgentWorkspacePanel", () => {
     else delete (window as Partial<Window>).eidosRuntime;
   });
 
+  it("marks the child that needs approval even when its transcript is closed", () => {
+    const child = {
+      id: "agent-approval", taskName: "fix-tests", role: "worker" as const,
+      parentRunId: "parent-run", sessionId: "child-session", runId: "child-run",
+      status: "waiting_approval" as const, task: "Run the tests", createdAt: 1,
+    };
+    const onOpen = vi.fn();
+    render(<AgentList agents={[child]} onOpen={onOpen} approvalCounts={{ "child-session": 1 }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /fix-tests.*待审批 1/ }));
+    expect(onOpen).toHaveBeenCalledWith(child);
+  });
+
   it("loads agents and stops an active child through the runtime API", async () => {
     const state: CollaborationState = {
       parentRunId: "parent-run",

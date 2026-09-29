@@ -427,5 +427,5 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 - Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
 - 每个父 Run 最多有 16 个子 Session，其中最多 2 个子 Run 同时执行。探索角色仅可读取；执行角色可使用现有文件、Shell、Skill 和已授权扩展工具。子 Run 继承父 Run 的审批模式和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代或直接申请新 Grant。
 - 父任务等待使用持久 `waiting_agents` 状态。Worker 会退出，运行资源会释放。满足条件后，Runtime 继续同一等待调用。
-- Desktop 在环境信息中展示子 Agent 列表；点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消。
+- Desktop 在环境信息中展示子 Agent 列表和待审批数量；右侧工作区关闭时，环境信息入口仍提示待审批数。点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消；父任务异常结束后，正常调度也会取消其孤立子任务。
 - 本阶段没有新增依赖。生产 DTO 从 Python Schema 生成。完整验证结果以当前 PR 记录为准。

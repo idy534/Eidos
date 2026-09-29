@@ -805,6 +805,11 @@ export function AppShell({ runtime }: AppShellProps) {
   );
   const outputArtifacts = collectOutputArtifacts(completeSessionItems.items);
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
+  const agentApprovalCounts = Object.fromEntries((agents.state?.agents ?? []).map((agent) => [
+    agent.sessionId,
+    approvals.filter((request) => request.sessionId === agent.sessionId).length,
+  ]));
+  const pendingAgentApprovals = Object.values(agentApprovalCounts).reduce((total, count) => total + count, 0);
   const sessionWorktree = currentSnapshot?.session.worktree;
   const sessionIsLocal = currentSnapshot?.session.executionMode === "local"
     || (currentSnapshot?.session.executionMode === undefined && sessionWorktree === undefined);
@@ -1064,7 +1069,7 @@ export function AppShell({ runtime }: AppShellProps) {
           <summary
             className="icon-button"
             role="button"
-            aria-label="环境信息"
+            aria-label={pendingAgentApprovals > 0 ? `环境信息，${pendingAgentApprovals} 条子任务待审批` : "环境信息"}
             onClick={(event) => {
               event.preventDefault();
               setEnvironmentPopoverOpen((open) => !open);
@@ -1076,6 +1081,7 @@ export function AppShell({ runtime }: AppShellProps) {
               <circle cx="4.5" cy="15" r="1.5" />
               <path d="M9 5h7M9 10h7M9 15h7" />
             </svg>
+            {pendingAgentApprovals > 0 && <span className="agent-approval-badge" aria-hidden="true">{pendingAgentApprovals}</span>}
           </summary>
           <section
             className="environment-popover__panel"
@@ -1107,8 +1113,8 @@ export function AppShell({ runtime }: AppShellProps) {
             )}
             {agents.state?.agents && agents.state.agents.length > 0 && (
               <div className="environment-popover__section">
-                <div className="environment-popover__section-title">子 Agent · {agents.state.agents.length}</div>
-                <AgentList agents={agents.state.agents} onOpen={openAgent} />
+                <div className="environment-popover__section-title">子 Agent · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
+                <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} />
               </div>
             )}
             {agents.error && <p role="alert">{agents.error}</p>}

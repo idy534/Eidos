@@ -241,6 +241,37 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(screen.getByRole("textbox", { name: "告诉 Eidos 要做什么" })).toBeInTheDocument();
   });
 
+  it("shows a child approval on the environment entry while the dock is closed", async () => {
+    const snapshot: SessionSnapshot = {
+      session: startupSession, runs: [], items: [], stepResolutions: [], throughEventId: 0,
+    };
+    setupMockRuntime({
+      listSessions: vi.fn().mockResolvedValue({ items: [startupSession] }),
+      readSession: vi.fn().mockResolvedValue(snapshot),
+      listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
+      listPendingApprovals: vi.fn().mockResolvedValue([{
+        id: "approval-1", sessionId: "child-session", runId: "child-run", itemId: "item",
+        toolCallId: "tool", summary: "执行测试命令", kind: "command_execution",
+        command: "go test ./...", cwd: "/workspace", networkEnabled: false, timeoutSeconds: 30,
+      }]),
+      readAgents: vi.fn().mockResolvedValue({ agents: [{
+        id: "child-1", taskName: "fix-tests", role: "worker", parentRunId: "parent-run",
+        sessionId: "child-session", runId: "child-run", status: "waiting_approval",
+        task: "Run the tests", createdAt: 1,
+      }], messages: [], parentRunId: "parent-run" }),
+    });
+
+    const { container } = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(startupSession.title!) }));
+    const environmentButton = await screen.findByRole("button", { name: /环境信息，1 条子任务待审批/ });
+    expect(environmentButton).toHaveTextContent("1");
+    expect(container.querySelector(".workspace-main .agent-workspace")).not.toBeInTheDocument();
+    fireEvent.click(environmentButton);
+    const environment = await screen.findByRole("region", { name: "环境信息预览" });
+    fireEvent.click(within(environment).getByRole("button", { name: /fix-tests.*待审批 1/ }));
+    expect(await screen.findByRole("tab", { name: "fix-tests" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("opens project tools while keeping the conversation mounted", async () => {
     const switchSessionGitBranch = vi.fn().mockResolvedValue({ branch: "main" });
     const project: Project = {
