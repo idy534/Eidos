@@ -1,4 +1,5 @@
-import { AgentPanel } from "../components/AgentPanel.js";
+import { AgentList, AgentWorkspacePanel, useAgentState } from "../components/AgentPanel.js";
+import type { AgentSummary } from "../../../shared/collaboration.generated.js";
 import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { PlanPanel } from "../components/PlanPanel.js";
 import type { PlanDocument } from "../../../shared/planning.generated.js";
@@ -46,9 +47,10 @@ import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { usePlanningState } from "./usePlanningState.js";
 import { useModelController } from "./useModelController.js";
+import { loadRunDefaults, saveRunDefaults } from "./run-defaults.js";
 import { useResponseActionController } from "./useResponseActionController.js";
 import { useContextUsageController } from "./useContextUsageController.js";
-import { resolveSessionModelId } from "./session-model-resolver.js";
+import { resolveSessionRun } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { useGitReviewController } from "./useGitReviewController.js";
 import { applyNotification, userFacingError } from "../session-state.js";
@@ -60,6 +62,7 @@ import {
   OutputContent,
   useCompleteSessionItems,
 } from "../components/TurnResults.js";
+import { ToastContainer, type ToastItem } from "../components/ToastContainer.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
@@ -107,6 +110,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const activeSnapshot = sessionState.snapshot ?? sessionState.draft;
   const [runState, runActions] = useRunController(activeSnapshot, isStorageReady);
   const [approvalState, approvalActions] = useApprovalController();
+  const [runDefaults, setRunDefaults] = useState(loadRunDefaults);
   const [modelState, modelActions] = useModelController();
   const [extensionState, extensionActions] = useExtensionController();
   const [gitReviewState, gitReviewActions] = useGitReviewController({
@@ -119,10 +123,16 @@ export function AppShell({ runtime }: AppShellProps) {
   const latestRun = sessionState.snapshot?.runs.length
     ? sessionState.snapshot.runs[sessionState.snapshot.runs.length - 1]
     : undefined;
+  const sessionConfigRun = resolveSessionRun(sessionState.snapshot?.runs ?? []);
   const [approvalModes, setApprovalModes] = useState<Record<string, ApprovalMode>>({});
-  const approvalSessionId = activeSnapshot?.session.id;
+  const approvalSessionId = sessionState.draft && !sessionState.snapshot?.runs.length
+    ? sessionState.draft.session.id
+    : activeSnapshot?.session.id;
+  const sessionApprovalMode = sessionConfigRun
+    ? sessionConfigRun.approvalMode ?? "manual"
+    : runDefaults.approvalMode ?? "manual";
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
-    ?? latestRun?.approvalMode ?? "manual";
+    ?? sessionApprovalMode;
   const [workModes, setWorkModes] = useState<Record<string, "execute" | "plan">>({});
   const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestRun?.workMode ?? "execute";
   const contextRun = runState.activeRun ?? latestRun;
@@ -138,6 +148,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const handleContextUsageNotification = contextUsageActions.handleNotification;
 
   const planning = usePlanningState(
+    sessionState.snapshot?.session.id,
+    runtimeStatus.state === "ready" && isStorageReady,
+  );
+  const agents = useAgentState(
     sessionState.snapshot?.session.id,
     runtimeStatus.state === "ready" && isStorageReady,
   );
@@ -238,6 +252,55 @@ export function AppShell({ runtime }: AppShellProps) {
   }, []);
 
   const topError = sessionState.error ?? runState.error;
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    sessionActions.setError(undefined);
+    const activeSessionId = activeSnapshot?.session.id;
+    if (activeSessionId) {
+      runActions.clearError(activeSessionId);
+    }
+  }, [sessionActions, runActions, activeSnapshot?.session.id]);
+
+  const previousTopErrorRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (topError && topError !== previousTopErrorRef.current) {
+      const id = `error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setToasts((prev) => [
+        ...prev.filter((t) => t.type !== "error"),
+        {
+          id,
+          message: topError,
+          type: "error",
+          duration: 5000,
+        },
+      ]);
+    } else if (!topError && previousTopErrorRef.current) {
+      setToasts((prev) => prev.filter((t) => t.type !== "error"));
+    }
+    previousTopErrorRef.current = topError;
+  }, [topError]);
+
+  const previousWarningRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const warningDesc = runtimePresentation.tone === "warning" ? runtimePresentation.description : undefined;
+    if (warningDesc && warningDesc !== previousWarningRef.current) {
+      const id = `warning-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setToasts((prev) => [
+        ...prev.filter((t) => t.type !== "warning"),
+        {
+          id,
+          message: warningDesc,
+          type: "warning",
+          duration: 6000,
+        },
+      ]);
+    } else if (!warningDesc && previousWarningRef.current) {
+      setToasts((prev) => prev.filter((t) => t.type !== "warning"));
+    }
+    previousWarningRef.current = warningDesc;
+  }, [runtimePresentation.tone, runtimePresentation.description]);
 
   // -----------------------------------------------------------------------
   // Bootstrap: load sessions, model, approvals independently
@@ -247,7 +310,7 @@ export function AppShell({ runtime }: AppShellProps) {
     void Promise.allSettled([
       sessionActions.loadProjects(),
       sessionActions.loadSessions(),
-      modelActions.load(),
+      modelActions.load(undefined, runDefaults.modelId),
       approvalActions.loadPending(),
     ]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -255,14 +318,29 @@ export function AppShell({ runtime }: AppShellProps) {
 
   useEffect(() => {
     const snapshot = sessionState.snapshot;
-    if (!snapshot || !modelState.list) return;
+    const draft = sessionState.draft;
+    if (!modelState.list) return;
+    if (draft && !snapshot?.runs.length) {
+      if (modelSessionInitializedRef.current === draft.session.id) return;
+      modelSessionInitializedRef.current = draft.session.id;
+      modelActions.initialize(modelState.list, undefined, runDefaults.modelId);
+      return;
+    }
+    if (!snapshot) return;
     if (modelSessionInitializedRef.current === snapshot.session.id) return;
     modelSessionInitializedRef.current = snapshot.session.id;
     modelActions.initialize(
       modelState.list,
-      resolveSessionModelId(snapshot.runs),
+      resolveSessionRun(snapshot.runs)?.modelId,
+      runDefaults.modelId,
     );
-  }, [modelState.list, sessionState.snapshot?.session.id]);
+  }, [
+    modelState.list,
+    sessionState.snapshot?.session.id,
+    sessionState.snapshot?.runs.length,
+    sessionState.draft?.session.id,
+    runDefaults.modelId,
+  ]);
 
   useEffect(() => {
     const sessionId = sessionState.snapshot?.session.id;
@@ -638,7 +716,12 @@ export function AppShell({ runtime }: AppShellProps) {
         isStorageReady,
         inputOverride: draftInput,
         referencesOverride: draftReferences,
-        onRunProjected: sessionActions.projectRun,
+        onRunProjected: (sessionId, run) => {
+          sessionActions.projectRun(sessionId, run);
+          if (draftSnapshot.runs.length === 0) {
+            setRunDefaults(saveRunDefaults(run));
+          }
+        },
       });
       if (started) {
         runActions.clearDraftIfUnchanged(draftSnapshot.session.id, draftInput, draftReferences);
@@ -749,6 +832,7 @@ export function AppShell({ runtime }: AppShellProps) {
     : "empty";
   const availableTools: WorkspaceToolKind[] = currentSnapshot
     ? [
+        ...(agents.state?.agents?.length ? ["agent" as const] : []),
         ...(sessionHasGit ? ["review" as const] : []),
         ...(sessionHasProject ? ["terminal", "files"] as const : []),
         "browser",
@@ -871,6 +955,16 @@ export function AppShell({ runtime }: AppShellProps) {
     setActiveTabId(tab.id);
     setDockOpen(true);
     return tab.id;
+  }
+
+  function openAgent(agent: AgentSummary): void {
+    if (!currentSnapshot || !agents.state?.agents?.some((entry) => entry.id === agent.id)) return;
+    if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
+    setEnvironmentPopoverOpen(false);
+    const id = `agent-${agent.id}`;
+    setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title: agent.taskName }]);
+    setActiveTabId(id);
+    setDockOpen(true);
   }
 
   function handleOpenBrowser(url: string): void {
@@ -1011,6 +1105,13 @@ export function AppShell({ runtime }: AppShellProps) {
                 </button>
               </div>
             )}
+            {agents.state?.agents && agents.state.agents.length > 0 && (
+              <div className="environment-popover__section">
+                <div className="environment-popover__section-title">子 Agent · {agents.state.agents.length}</div>
+                <AgentList agents={agents.state.agents} onOpen={openAgent} />
+              </div>
+            )}
+            {agents.error && <p role="alert">{agents.error}</p>}
             {sessionHasGit && (
               <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
                 <span>变更</span>
@@ -1077,6 +1178,7 @@ export function AppShell({ runtime }: AppShellProps) {
         handleNavigateToSession(target);
       }}>
     <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <SessionSidebar
         collapsed={!sidebarOpen || settingsOpen}
         sessions={sessionState.sessions}
@@ -1116,14 +1218,6 @@ export function AppShell({ runtime }: AppShellProps) {
       />
 
       <section ref={workspaceRef} className="workspace" aria-label="Agent 工作区" tabIndex={-1}>
-        {/* Global Runtime error banner */}
-        {runtimePresentation.tone === "warning" && runtimePresentation.description && (
-          <p className="error-banner" role="alert">{runtimePresentation.description}</p>
-        )}
-
-        {/* Domain error banner */}
-        {topError && <p className="error-banner" role="alert">{topError}</p>}
-
         {currentSnapshot?.session.worktreeRestoreAvailable === true && !isDraft && (
           <div className="worktree-restore-banner" role="status">
             <span>本地工作树已清理，以释放磁盘空间</span>
@@ -1249,7 +1343,6 @@ export function AppShell({ runtime }: AppShellProps) {
                   </p>
                 )}
 
-                <AgentPanel key={currentSnapshot.session.id} sessionId={currentSnapshot.session.id} ready={isStorageReady && runtimeStatus.state === "ready"} />
                 <ExecutionFeed
                   key={currentSnapshot.session.id}
                   items={currentSnapshot.items}
@@ -1385,6 +1478,22 @@ export function AppShell({ runtime }: AppShellProps) {
                 onSelectTab={setActiveTabId}
                 onToggleExpanded={() => setDockExpanded((expanded) => !expanded)}
                 renderTab={(tab) => {
+                  if (tab.kind === "agent") return <AgentWorkspacePanel
+                    key={`${currentSnapshot.session.id}:${tab.id}`}
+                    agents={agents.state?.agents ?? []}
+                    agentId={tab.id.startsWith("agent-") ? tab.id.slice(6) : undefined}
+                    error={agents.error}
+                    stopping={agents.stopping}
+                    onOpen={openAgent}
+                    onStop={(agent) => { void agents.stop(agent); }}
+                    approvals={approvals}
+                    respondingApprovalIds={respondingApprovalIds}
+                    respondingKindByApprovalId={respondingKindByApprovalId}
+                    expiredApprovalIds={approvalState.expiredApprovalIds}
+                    errorsByApprovalId={errorsByApprovalId}
+                    onApprove={(request) => void approvalActions.approve(request)}
+                    onReject={(request) => void approvalActions.reject(request)}
+                  />;
                   if (tab.kind === "text-review" && reviewRequest) return <TextReviewPanel
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}
                     runId={reviewRequest.runId} path={reviewRequest.path} items={completeSessionItems.items}

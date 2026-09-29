@@ -108,6 +108,8 @@ consume input → resolve rules → build context → sample model
 → continue, compact, recover, pause or finish
 ```
 
+模型响应完成后，`LoopDecisionEngine` 先给出动作，`RuntimeEngine._settle_sample_boundary` 再提交对应的 Step、Assistant 和 Run 状态。该边界返回“重建上下文、执行工具或返回”三种控制结果。协议修复由同一个决策入口限制次数；循环保护命中时不再尝试修复。这个拆分不改变当前数据库事实或终态语义。
+
 RuntimeEngine 下的主要职责是：
 
 - `ContextBuilder` 和 `InstructionResolver` 构建本次模型请求；
@@ -119,9 +121,13 @@ RuntimeEngine 下的主要职责是：
 - `LoopGuard` 处理语义状态收敛；
 - `RunFinalizer` 生成有界、无 Tool 的最终回答。
 
+`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。它不是用户可配置 Hook，也不允许观察者阻断工具；可阻断的 Hook 仍需独立设计和验证。
+
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
 Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。Sampling 收到的 provisional text 在完整响应通过校验前不会持久化。可重试的 transport failure 即使已经收到 provisional text，也会复用同一个 frozen ContextSnapshot 创建新的 Model Attempt。已收到的文本或 ToolCall 不会自动重放。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。
+
+`SamplingRuntime.accept_validated_response` 是模型尝试完成与有效文本提交的单一入口。它只接受通过工具批次校验的 `ready` 或有文本的 `no_tools` 响应。工具批次随后按模型声明的顺序记录与执行；只读批次可以并行执行，但结果仍按原顺序汇总。失败的模型输出不会通过该入口进入下一次模型请求。
 
 确定的 Tool Error 只表示本次尝试失败，不会单独把 Run 置为终态。Runtime 会把失败事实交给下一次模型决策。模型可以修正参数、选择替代 Tool，或者在没有安全路径时结束。等价重复且没有新事实时，LoopGuard 负责收敛。
 
@@ -165,7 +171,8 @@ API Key 会经过本地模型配置写入链路：Renderer 通过 typed IPC 把�
 deepseek: deepseek-flash
 minimax:  MiniMax-M3
 kimi:    kimi-k3, kimi-k2.7-code-highspeed
-volcengine: deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
+volcengine: deepseek-v4.1-flash,
+            deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
             glm-5.3, glm-5.3-flash, minimax-m3
 ```
 
@@ -177,6 +184,7 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 | MiniMax | `MiniMax-M3` | 关闭、思考 | 思考 |
 | Kimi | `kimi-k3` | Low、High、Max | Max |
 | Kimi | `kimi-k2.7-code-highspeed` | 固定思考，无强度选择 | 思考 |
+| Volcengine Coding Plan | `deepseek-v4.1-flash` | 关闭、Low、Medium、High、Max | High |
 | Volcengine Coding Plan | `deepseek-v4-pro-ga-260813` | 关闭、Low、High、Max | High |
 | Volcengine Coding Plan | `deepseek-v4-flash-ga-260731` | 关闭、Low、High、Max | High |
 | Volcengine Coding Plan | `glm-5.3-flash` | Low、High、Max；thinking 固定开启 | Max |
@@ -185,11 +193,11 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 直连 Provider 的公开文档分别说明了不同能力。DeepSeek 使用 `thinking` 开关和 `reasoning_effort`；Low、High、Max 是有效档位，`minimal`、`medium`、`xhigh`、`ultra` 会映射到重复的实际档位。Kimi K3 使用顶层 `reasoning_effort`，可选 Low、High、Max，默认 Max，并且不能关闭思考。Kimi K2.7 Code HighSpeed 固定开启思考，没有公开的强度档位。MiniMax M3 使用 `thinking.type` 开关，`adaptive` 表示启用，`disabled` 表示关闭，省略时默认启用；没有离散 effort 档位。MiniMax 的 `reasoning_split` 只控制思考内容的返回格式，不控制思考开关。参考：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)、[Kimi Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort)、[Kimi K2.7 Code](https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart)、[MiniMax OpenAI SDK](https://platform.minimax.io/docs/api-reference/text-openai-api)。
 
-Volcengine Coding Plan 表格依据当前任务提供的官方文档检索结果整理。`/api/coding/v3` 的模型专属请求字段、实际 wire 值和默认行为尚未通过可独立读取的官方端点文档或受控请求核验。Catalog 选项不能作为 Provider 已接受这些字段的证据。
+火山引擎 `deepseek-v4.1-flash` 会通过 OpenAI-compatible Chat Completions 的顶层 `reasoning_effort` 发送 `none`、`low`、`medium`、`high` 或 `max`；Catalog 默认值为 `high`。方舟公开 [Chat API 文档](https://docs.volcengine.com/docs/ark/chat-api?lang=zh&redirect=1)说明了该字段和这些取值。Coding Plan `/api/coding/v3` 对此模型的实际接受情况还没有受控请求验证。其他 Coding Plan 模型的思考设置仍未映射。
 
 `run/start` 接受所选模型允许的思考设置。Runtime 会拒绝该模型未声明的设置；请求没有设置时，Runtime 使用 Catalog 默认值。Runtime 将解析后的设置放入 Run 的不可变 `ModelProfileSnapshot`，并写入现有 `runs.model_profile_json`。这项改动不增加 SQLite 列，也不改变 schema 版本。
 
-`models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。ModelConfigStore 负责从 `models.json` 读取模型配置，校验文件权限、格式与 ID 唯一性，内置 Catalog 仅作为新建模型时的推荐预设模板，不再强制全等校验。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Chat Completions 是不支持 Responses、Custom Tool 或 Grammar 的模型的兼容路径，不是废弃路径。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。Responses stream 只有 `response.completed` 可以产生可执行的 normalized response。`response.failed`、`response.incomplete`、`error` 和没有 terminal event 的 EOF 都 fail closed。模型请求取消覆盖流式上下文建立和 SSE 等待阶段。流建立后，Runtime 关闭 Responses stream，并取消等待中的 `anext` task。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供主动 capability probe。
+`models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。ModelConfigStore 负责从 `models.json` 读取模型配置，校验文件权限、格式与 ID 唯一性。内置 Catalog 提供新建模型的默认值。已有配置未保存思考档位时，公开模型列表会回退到 Catalog 档位；已有非空设置优先。本逻辑只影响读取，不改写 `models.json`。Catalog 不再强制全等校验。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Chat Completions 是不支持 Responses、Custom Tool 或 Grammar 的模型的兼容路径，不是废弃路径。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。Responses stream 只有 `response.completed` 可以产生可执行的 normalized response。`response.failed`、`response.incomplete`、`error` 和没有 terminal event 的 EOF 都 fail closed。模型请求取消覆盖流式上下文建立和 SSE 等待阶段。流建立后，Runtime 关闭 Responses stream，并取消等待中的 `anext` task。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供主动 capability probe。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
@@ -324,7 +332,7 @@ Session 展示快照与执行快照使用不同的读取入口。`session/read` 
 
 Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。`memories.sqlite` 只保存 Memory metadata，正文使用 content-addressed Markdown 文件。当前 verified compaction 尚未自动写入 MemoryStore。
 
-完整 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。`state.sqlite` 只保存版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
+ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，其中每条模型上下文项与工具定义各自按内容哈希存为共享 Blob。读取时 Runtime 按顺序重组完整请求并验证原有快照哈希；旧版完整 ContextSnapshot 仍可读取。`state.sqlite` 只保存顶层 Blob 的版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Blob GC 在删除前解析新清单并保留其共享块。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
 当前 `SCHEMA_VERSION` 是 16。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
@@ -617,7 +625,9 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 
 调用链保持为 `Composer → preload → Main → run/start → Run 快照 → PermissionPolicyEvaluator → ApprovalCoordinator → 原 Tool 执行链`。权限决定仍属于 Eidos。实现复用现有 Model Gateway、Approval 事务和权限物化，没有新增依赖、独立 Agent Loop 或第二套审批状态机。
 
-Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。Renderer 在当前会话保留草稿选择，重新加载时从最近的 Run 读取模式。审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。模型和 Tool 参数没有切换模式的入口。重新生成回答保留自动审批模式，但不会继承完全访问；完全访问必须重新通过 Composer 选择并确认。
+Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。已有 Run 的会话从同一个最近 Run 读取模型和审批模式。Draft 会话在首个 Run 被 Runtime 接受后，Renderer 将返回 Run 的模型和审批模式保存到 `localStorage`，作为新会话默认值。Draft 和没有 Run 的会话使用这组默认值；没有有效默认值时，审批模式使用 `manual`，模型使用列表中的第一个模型。设置控件的临时修改只影响当前会话。已有会话的后续 Run 不会改写新会话默认值。
+
+审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。保存的默认值可以是 `full_access`，后续新 Draft 会沿用该模式，载入默认值时不会再次弹出确认框。模型和 Tool 参数没有切换模式的入口。重新生成回答保留自动审批模式，但不会继承完全访问；完全访问必须重新通过 Composer 选择并确认。
 
 Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 在 `runs` 增加 `approval_mode`，旧 Run 默认为 `manual`；该版本在 `approvals` 增加 `review_json`，旧审批默认为空。迁移沿用事务和失败回滚。Runtime 在执行前检查 Run 模式与权限快照一致。当前自定义权限没有配置、解析器或 UI；后续可以在既有 Run 权限快照工厂和 PermissionPolicyEvaluator 中接入 `config.toml`，本期不接受 `custom` 模式。
 
@@ -675,13 +685,13 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 
 `request_user_input` 的字段说明提供完整嵌套示例、题型约束和自定义输入说明，工具名称与原始描述保持不变。Pydantic 校验最多保留八项字段路径与错误原因，不回传参数值；参数错误反馈说明问题尚未提交，并给出修正方式。Runtime 的参数错误指纹区分首项字段路径和原因，不包含参数值、错误文案或问题措辞。连续相同校验错误仍受原有 LoopGuard 限制。失败或取消的澄清调用沿用普通工具结果展示，只有成功的回答结果进入澄清历史。
 
-## 只读子任务委派（Schema v16，已完成代码与自动化定向测试）
+## 子 Agent 委派（Schema v16）
 
-本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文、父 Run 的模型快照和 `manual` 权限模式。子任务不继承父任务的全部对话、扩权 Grant、Plugin 或 MCP 快照。
+本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文、父 Run 的模型、审批模式和扩展快照；父 Run 活跃时可使用它已批准的 Run 范围 Grant。子任务不继承父任务的完整对话。
 
-Runtime 在工具注册边界只向子任务提供 `list_files`、`read_file`、`read_file_range`、`search_text`、`search_text_wait`、`read_tool_output` 和发给父任务的 `send_message`。子任务不能执行 Shell、修改文件、调用 MCP、请求扩权或派生后代。工具参数不能改变这个身份。子 Session 不能通过普通 `run/start` 变成可写任务，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除会在同一数据库事务中删除子会话事实，子会话的借用工作目录不会被删除。
+`explorer` 只获得文件读取与发给父任务的 `send_message`。默认 `worker` 复用已有文件、Shell、Skill 与扩展工具执行链，受自身 Run 权限快照、审批、Seatbelt、Intent 和结果核验约束。子任务不暴露委派工具、`request_permissions` 或 `declare_outputs`。子 Session 不能通过普通 `run/start` 独立启动，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除只清理其事实，不删除借用的目录。
 
-SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
+SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、角色、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
 
 父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 只能启动已经结束的子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 2 个子 Run。每个接收 Session 最多保存 16 条 Agent 消息，每条最多 2,000 字符。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
 
@@ -689,6 +699,6 @@ SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当�
 
 用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。父任务异常结束后，监督任务会收敛剩余子 Run。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
 
-Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。任务页面展示状态、摘要、停止按钮和分页记录。
+Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和分页记录。主 Session 不嵌入子任务面板。
 
-v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。本阶段已补充迁移回滚、重复创建、并发名额、子任务工具隔离、等待超时、父任务取消、父会话删除、协议边界和 Desktop 停止操作测试。协作相关定向 Runtime 测试 28/28 通过，Renderer 状态测试 129/129 通过，Renderer 行为测试 356/356 通过。本次 Runtime 全量运行观察到 85 个失败，失败集中在本轮之外的 apply_patch、Shell、Workspace 和 Reconciliation 路径。Seatbelt native 和 Electron smoke 也受当前环境限制，不能据此宣称本功能已经通过完整发布验收。
+v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。

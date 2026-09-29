@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import Field
 
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.model_gateway.models import WireAPI
+from eidos_runtime.model.gateway_types import WireAPI
 
 
 _SECRET = re.compile(

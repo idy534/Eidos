@@ -1,5 +1,9 @@
 # Eidos 当前限制
 
+旧版完整 ContextSnapshot 仍可读取，但新共享块格式只用于新快照。当前版本不会自动重写历史 Blob，所以升级后不会立刻释放既有快照占用的空间。
+
+- Runtime Loop 目前只有内部、非权威的生命周期观察点。它们不持久化为业务 Event，也不提供用户可配置或可阻断的 Hook；诊断观察者失败不会改变 Run 结果。
+
 > 权限模式范围：本文原有的逐操作请求审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。权限模式相关单元与行为测试已纳入测试套件。
 
 - `session/read` 不提供 Step Resolution Review 内容，兼容字段 `stepResolutions` 固定为空数组。Desktop 当前不展示这些信息，Runtime 也未新增按需详情 RPC。完整执行快照仍持久化并由执行读取入口校验；打开 Session 不承担这些 Blob 的完整性检查。本项代码修订尚未验证，不能据此宣称 UI 打开耗时已经达标。
@@ -17,10 +21,10 @@
 
 ### Model Provider
 
-- ModelConfigStore 以 `models.json` 为事实来源。内置 Catalog 覆盖 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 中的九个推荐 Model ID；用户在 `models.json` 中配置的有效自定义模型通过标准 OpenAI-compatible 协议适配。
+- ModelConfigStore 以 `models.json` 为事实来源。内置 Catalog 覆盖 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan，共十个推荐 Model ID；用户在 `models.json` 中配置的有效自定义模型通过标准 OpenAI-compatible 协议适配。
 - 当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
-- 思考强度选项和默认值按模型配置。当前 Catalog 中的选择项不证明 Provider 已接受对应请求参数。Volcengine Coding Plan `/api/coding/v3` 的模型专属 wire 字段、值和默认行为尚未通过可独立读取的官方端点文档或受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
+- 思考强度选项和默认值按模型配置。火山引擎 `deepseek-v4.1-flash` 已在 Runtime 映射关闭、低、中、高、最高五档到顶层 `reasoning_effort`，默认高。Coding Plan `/api/coding/v3` 对该模型是否接受这些值尚未通过受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
 - 用户要求分阶段验收：生产代码修改完成后先等待用户确认；确认后再编写测试并集中验证。等待期间不新增测试，也不把尚未做的 Provider endpoint 验证写成通过。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
 - 回答流式输出的代码修订尚未编写或执行测试。敏感扫描仍按完整行释放文本，无换行的长段落会等到响应结束。尚未闭合的尖括号文本会等待闭合或完整响应校验，以避免跨片段的 Provider 控制标记进入 Feed。当前实现不是逐 token 输出。
@@ -99,7 +103,7 @@
 - Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Managed 和 Local Git Checkpoint 会保存 HEAD、staged、unstaged 和 untracked Git 状态。Managed Fork 会恢复独立 Worktree 的完整 checkpoint Git 状态。Managed 和 Local Rewind 会恢复原 checkout 的完整 checkpoint Git 状态。Local Rewind 只允许用户显式调用。Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshots。Ignored 文件不进入 Checkpoint artifact。
 - Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前仍不提供 Permanent Worktree、Pinned Chat、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
 - Linked Worktree 的 Git metadata read 和获批后的精确 write 已在真实 macOS Seatbelt 中验证。默认 write、原始 repository working-tree access 和不匹配的 Worktree recovery 仍会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
-- 只读 subagent 的第一阶段生产代码已加入，并已完成协作相关 Runtime、协议和 Desktop 定向自动化测试。每个父 Run 最多有 16 个子 Session，同时最多运行 2 个子 Run。写入型子任务、独立 Worktree 交付与合并、cross-worktree Repository Intelligence sharing 尚未实现。本次 Runtime 全量为 1850 通过、85 失败、31 跳过，另有 2 个 large_repository 用例按命令排除；失败集中在本轮之外的 apply_patch、Shell、Workspace 和 Reconciliation 路径，因此当前分支不能被描述为完整门槛全绿。
+- 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 2 个子 Run。独立 Worktree 交付与合并、跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
 - Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用且执行状态未知的操作必须先进入 reconciliation，Runtime 不会自动重放。已明确 `termination=exit` 且有 `exitCode` 的 Shell 即使 Workspace observation 不完整，也不会因此进入只读模式或阻止后续 ToolCall。取消已停止的 Run 正常返回。未清除的 reconciliation barrier 保留在 `interrupted` 终态中；`sideEffectsMayExist` 不会单独阻断取消。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果仍然 fail closed。
 
 ### Compaction 与 Context
@@ -135,7 +139,7 @@
 ## Implementation Anchors
 
 - `runtime/eidos_runtime/model/config.py`
-- `runtime/eidos_runtime/model_gateway/`
+- `runtime/eidos_runtime/model/`
 - `runtime/eidos_runtime/runtime/supervisor.py`
 - `runtime/eidos_runtime/runtime/engine.py`
 - `runtime/eidos_runtime/context/compactor.py`
@@ -235,12 +239,12 @@ Plan 没有另建只读权限系统。模型通过模式指令遵守“先规划
 计划正文最多 65,536 个字符和 256 KiB。计划面板展示最近记录，并按协议大小预算截取；完整版本仍保存在数据库。计划文件不会随 Session 删除自动清理。本次不增加独立的计划文件清理策略。
 
 
-## 只读子任务的阶段边界
+## 子 Agent 的阶段边界
 
-本阶段只交付父任务管理的单层只读委派。子任务共享当前工作目录，读取的是实时文件，不是固定提交或文件系统快照。其他 Session 或外部编辑器可能改变文件。子任务结论需要父任务重新核对。子任务没有 Shell，所以子任务不能运行测试或命令行检查。
+本阶段交付父任务管理的单层委派。`explorer` 只读；`worker` 可在父 Run 固定审批模式下使用文件、Shell、Skill 和已授权扩展工具。子任务共享当前工作目录。多个执行者可能修改同一文件，父任务需要分配不相交的修改范围并复核结果。子任务读取的是实时文件，不是固定提交或文件系统快照。
 
-本阶段没有可写子 Agent、自动分配独立 Worktree、补丁交付与合并、多层委派、不同子任务选择不同模型、整组费用预算或自动重试中断任务。父任务沿用已有 Loop Guard；子 Session 数量上限不是费用上限。消息不打断正在执行的模型调用；消息在下一次上下文构建时生效。`followup_task` 会复用子 Session 的已有上下文。已结束的父 Run 不能继续管理新委派，新用户回合需要创建新的委派关系。
+本阶段没有自动分配独立 Worktree、补丁交付与合并、多层委派、不同子任务选择不同模型、整组费用预算或自动重试中断任务。父任务沿用已有 Loop Guard；子 Session 数量上限不是费用上限。消息不打断正在执行的模型调用；消息在下一次上下文构建时生效。`followup_task` 复用子 Session 的已有上下文。已结束的父 Run 不能继续管理新委派，新用户回合需要创建新的委派关系。
 
-Agent 消息每个接收 Session 最多保存 16 条，每条最多 2,000 字符。子任务摘要会截断任务和结果，Desktop 可以分页查看完整会话记录。子任务中的工具输出仍受原有有界输出与分页契约限制。父会话面板展示该会话最近一组委派。当前面板没有跨组历史浏览器。
+Agent 消息每个接收 Session 最多保存 16 条，每条最多 2,000 字符。子任务摘要会截断任务和结果，Desktop 可以分页查看完整会话记录。环境信息展示该会话最近一组委派，当前没有跨组历史浏览器。
 
-本阶段已覆盖 v15 升级与迁移回滚、重复创建、2 个并发名额、子任务工具隔离、父任务取消与迟到结果、等待超时和恢复、父会话删除、协议边界以及桌面停止操作。Runtime 重启后的完整协作恢复、Outbox 重投和真实模型端到端流程仍未完成。Seatbelt native 在当前环境返回 `seatbelt_unavailable`，Electron smoke 以 `SIGABRT` 退出。当前分支不能被描述为已经通过完整验收或可直接发布。
+Runtime 重启后的完整协作恢复、Outbox 重投、真实模型端到端流程及子 Agent 在真实 macOS 上的审批链路仍需验证。完整测试结果以当前 PR 记录为准。

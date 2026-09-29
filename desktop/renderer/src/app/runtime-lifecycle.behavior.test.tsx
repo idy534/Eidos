@@ -210,6 +210,37 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(screen.queryByLabelText("会话上下文")).not.toBeInTheDocument();
   });
 
+  it("opens a child from environment information in the workspace dock", async () => {
+    const snapshot: SessionSnapshot = {
+      session: startupSession, runs: [], items: [], stepResolutions: [], throughEventId: 0,
+    };
+    const childSnapshot: SessionSnapshot = {
+      ...snapshot, session: { ...startupSession, id: "child-session" },
+    };
+    setupMockRuntime({
+      listSessions: vi.fn().mockResolvedValue({ items: [startupSession] }),
+      readSession: vi.fn().mockImplementation(async (id: string) => id === "child-session" ? childSnapshot : snapshot),
+      listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
+      readAgents: vi.fn().mockResolvedValue({ agents: [{
+        id: "child-1", taskName: "inspect-runtime", role: "explorer", parentRunId: "parent-run",
+        sessionId: "child-session", runId: "child-run", status: "running", task: "Inspect runtime", createdAt: 1,
+      }], messages: [], parentRunId: "parent-run" }),
+    });
+
+    const { container } = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(startupSession.title!) }));
+    expect(await screen.findByRole("button", { name: "环境信息" })).toBeInTheDocument();
+    expect(container.querySelector(".workspace-main .agent-workspace")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
+    const environment = await screen.findByRole("region", { name: "环境信息预览" });
+    fireEvent.click(await within(environment).findByRole("button", { name: /inspect-runtime/ }));
+
+    expect(await screen.findByRole("complementary", { name: "工作区工具" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "inspect-runtime" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("region", { name: "子 Agent 工作区" })).toHaveTextContent("Inspect runtime");
+    expect(screen.getByRole("textbox", { name: "告诉 Eidos 要做什么" })).toBeInTheDocument();
+  });
+
   it("opens project tools while keeping the conversation mounted", async () => {
     const switchSessionGitBranch = vi.fn().mockResolvedValue({ branch: "main" });
     const project: Project = {

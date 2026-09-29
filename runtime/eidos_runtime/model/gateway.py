@@ -14,8 +14,8 @@ from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
     PydanticAIModelClient,
 )
-from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
-from eidos_runtime.model_gateway.pydantic_factory import build_pydantic_model
+from eidos_runtime.model.native_custom import OpenAIResponsesModelClient
+from eidos_runtime.model.pydantic_factory import build_pydantic_model
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
 

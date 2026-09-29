@@ -47,8 +47,8 @@ export interface ModelControllerState {
 }
 
 export interface ModelControllerActions {
-  initialize(list: ModelListResult, currentSessionModelId?: ModelId): void;
-  load(currentSessionModelId?: ModelId): Promise<void>;
+  initialize(list: ModelListResult, currentSessionModelId?: ModelId, defaultModelId?: ModelId): void;
+  load(currentSessionModelId?: ModelId, defaultModelId?: ModelId): Promise<void>;
   selectModel(modelId: ModelId): void;
   setReasoningSelection(modelId: ModelId, selection: ModelReasoningSelection): void;
   clearError(): void;
@@ -58,10 +58,14 @@ export function resolveSelectedModel(
   list: ModelListResult | undefined,
   currentSessionModelId?: ModelId,
   currentSelectedModelId?: ModelId,
+  defaultModelId?: ModelId,
 ): { selectedModelId: ModelId | undefined } {
   const ids = new Set(list?.models.map((model) => model.id) ?? []);
   if (currentSessionModelId && ids.has(currentSessionModelId)) {
     return { selectedModelId: currentSessionModelId };
+  }
+  if (defaultModelId && ids.has(defaultModelId)) {
+    return { selectedModelId: defaultModelId };
   }
   if (currentSelectedModelId && ids.has(currentSelectedModelId)) {
     return { selectedModelId: currentSelectedModelId };
@@ -84,27 +88,27 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
     saveReasoningOverrides(reasoningOverrides);
   }, [reasoningOverrides]);
 
-  const applyList = useCallback((next: ModelListResult, sessionModelId?: ModelId) => {
+  const applyList = useCallback((next: ModelListResult, sessionModelId?: ModelId, defaultModelId?: ModelId) => {
     setList(next);
-    const resolved = resolveSelectedModel(next, sessionModelId, selectedRef.current);
+    const resolved = resolveSelectedModel(next, sessionModelId, selectedRef.current, defaultModelId);
     setSelectedModelId(resolved.selectedModelId);
     selectedRef.current = resolved.selectedModelId;
     setError(undefined);
   }, []);
 
-  const initialize = useCallback((next: ModelListResult, sessionModelId?: ModelId) => {
+  const initialize = useCallback((next: ModelListResult, sessionModelId?: ModelId, defaultModelId?: ModelId) => {
     setList(next);
-    const resolved = resolveSelectedModel(next, sessionModelId, selectedRef.current);
+    const resolved = resolveSelectedModel(next, sessionModelId, selectedRef.current, defaultModelId);
     setSelectedModelId(resolved.selectedModelId);
     selectedRef.current = resolved.selectedModelId;
     setError(undefined);
   }, []);
 
-  const load = useCallback(async (sessionModelId?: ModelId) => {
+  const load = useCallback(async (sessionModelId?: ModelId, defaultModelId?: ModelId) => {
     setLoading(true);
     setError(undefined);
     try {
-      applyList(await window.eidosRuntime.listModels(), sessionModelId);
+      applyList(await window.eidosRuntime.listModels(), sessionModelId, defaultModelId);
     } catch (cause) {
       setError(userFacingError(cause));
     } finally {

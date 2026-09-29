@@ -31,9 +31,13 @@ from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.contracts import (
     LoopAction,
+    LoopDecision,
     RunContext,
     RuntimeCancelled,
+    SampleBoundaryAction,
+    SamplingOutcome,
     StepContext,
+    ToolBatchOutcome,
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine
 from eidos_runtime.runtime.events import RuntimeEvents
@@ -42,6 +46,11 @@ from eidos_runtime.runtime.loop_guard import (
     LoopGuard,
     context_fact_frontier_hash,
     tool_call_fingerprint,
+)
+from eidos_runtime.runtime.lifecycle import (
+    LoopLifecycle,
+    LoopLifecycleEvent,
+    LoopStage,
 )
 from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
 from eidos_runtime.runtime.run_resources import RunResourceError, RunResources
@@ -130,6 +139,7 @@ class RuntimeEngine:
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
         collaboration: CollaborationApplication | None = None,
+        lifecycle_observer: Callable[[LoopLifecycleEvent], None] | None = None,
     ) -> None:
         self.collaboration = collaboration
         self.store = store
@@ -148,6 +158,7 @@ class RuntimeEngine:
         self.repository_runtime = repository_runtime
         self.runtime_dependency_catalog = runtime_dependency_catalog
         self.tool_concurrency_gate = ToolConcurrencyGate()
+        self.lifecycle = LoopLifecycle(lifecycle_observer)
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
@@ -235,7 +246,12 @@ class RuntimeEngine:
                 self._run(run_id, cancel, run, repository_context)
             finally:
                 try:
-                    finish_run(span, self.store.read_run(run_id).get("status"))
+                    status = self.store.read_run(run_id).get("status")
+                    finish_run(span, status)
+                    self.lifecycle.emit(
+                        LoopStage.RUN_EXITED, run_id,
+                        reason=status if isinstance(status, str) else None,
+                    )
                 except Exception:
                     logger.debug(
                         "Could not read final run status for telemetry",
@@ -514,6 +530,10 @@ class RuntimeEngine:
                     else "pre_turn"
                 )
                 try:
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_COMPACT, run.run_id,
+                        reason="projection_overflow",
+                    )
                     compactor.compact(run.run_id, phase)
                 except ContextCompactionError as error:
                     raise ContextLimitExceeded(
@@ -537,6 +557,10 @@ class RuntimeEngine:
             ):
                 soft_compaction_frontier = uncompressed_ids
                 try:
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_COMPACT, run.run_id,
+                        reason="soft_context_target",
+                    )
                     compactor.compact(
                         run.run_id, "mid_turn",
                         keep_recent_items=SOFT_COMPACTION_KEEP_ITEMS,
@@ -569,6 +593,10 @@ class RuntimeEngine:
                     else "pre_turn"
                 )
                 try:
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_COMPACT, run.run_id,
+                        reason="context_over_budget",
+                    )
                     compactor.compact(run.run_id, phase)
                 except ContextLimitExceeded:
                     raise
@@ -642,8 +670,19 @@ class RuntimeEngine:
             while True:
                 try:
                     self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
+                    self.lifecycle.emit(
+                        LoopStage.BEFORE_MODEL, run.run_id,
+                        step_id=step.step_id,
+                        model_attempt_id=step.model_attempt_id,
+                    )
                     sampled = sampling.sample(step, cancel)
                     self._pause_at(run.run_id, SafePoint.AFTER_MODEL, cancel)
+                    self.lifecycle.emit(
+                        LoopStage.AFTER_MODEL, run.run_id,
+                        step_id=step.step_id,
+                        model_attempt_id=step.model_attempt_id,
+                        tool_count=len(sampled.tool_calls),
+                    )
                 except SamplingCancelled:
                     raise
                 except SensitiveScanError:
@@ -675,6 +714,11 @@ class RuntimeEngine:
                         else "pre_turn"
                     )
                     try:
+                        self.lifecycle.emit(
+                            LoopStage.BEFORE_COMPACT, run.run_id,
+                            step_id=step.step_id,
+                            reason="provider_context_exceeded",
+                        )
                         compacted = compactor.compact(run.run_id, phase)
                     except ContextCompactionError:
                         finalizer.finalize(
@@ -719,7 +763,7 @@ class RuntimeEngine:
                         protocol_errors = self.store.record_protocol_error(
                             run.run_id
                         )
-                        if protocol_errors < 2:
+                        if decisions.protocol_repair(error_count=protocol_errors):
                             attempt_id = self.store.start_retry_model_attempt(
                                 run.run_id
                             )
@@ -742,7 +786,7 @@ class RuntimeEngine:
                 if validation.status == "validation_failed":
                     reason = validation.error_code or "invalid_response"
                     protocol_errors = self.store.record_protocol_error(run.run_id)
-                    should_retry = protocol_errors < 2
+                    should_retry = decisions.protocol_repair(error_count=protocol_errors)
                     sampling.complete_attempt(
                         step,
                         sampled,
@@ -780,7 +824,9 @@ class RuntimeEngine:
                 if validation.status == "no_tools" and not sampled.text:
                     protocol_errors = self.store.record_protocol_error(run.run_id)
                     empty_reason = guard.observe_empty_response(True)
-                    should_retry = protocol_errors < 2 and empty_reason is None
+                    should_retry = decisions.protocol_repair(
+                        error_count=protocol_errors, guard_reason=empty_reason
+                    )
                     sampling.complete_attempt(
                         step,
                         sampled,
@@ -823,22 +869,9 @@ class RuntimeEngine:
 
                 guard.observe_empty_response(False)
                 self.store.clear_protocol_errors(run.run_id)
-                sampling.complete_attempt(
-                    step,
-                    sampled,
-                    status="completed",
-                    retry=False,
-                    retry_reason="completed",
+                sampled = sampling.accept_validated_response(
+                    step, sampled, validation, cancel
                 )
-                if validation.status == "ready" and sampled.text:
-                    sampling.commit_commentary(step, sampled.text, cancel)
-                elif validation.status == "no_tools" and sampled.text:
-                    assistant_item = sampling.commit_assistant(
-                        step, sampled.text, cancel
-                    )
-                    sampled = sampled.model_copy(
-                        update={"assistant_item": assistant_item}
-                    )
                 break
 
             if context_recovered:
@@ -857,59 +890,14 @@ class RuntimeEngine:
                 pending_user_input=pending_user_input,
                 cancelled=cancel.is_set(),
             )
-            if decision.reason == "pending_input":
-                if sampled.assistant_item is not None:
-                    mutation = self.store.complete_assistant_item_committed(
-                        str(sampled.assistant_item["id"])
-                    )
-                    self.events.publish(mutation, item=mutation.value)
-                self.store.complete_current_step(run.run_id, "completed")
+            sample_action = self._settle_sample_boundary(
+                run.run_id, decision, sampled, validation, built, resources,
+                finalizer, cancel, agent_baseline=agent_baseline,
+            )
+            if sample_action == SampleBoundaryAction.REBUILD_CONTEXT:
                 run = run.model_copy(update={"model_context": ()})
                 continue
-            if decision.action == LoopAction.CONTINUE and validation.status != "ready":
-                run = run.model_copy(update={"model_context": ()})
-                continue
-            if decision.action == LoopAction.PAUSE:
-                self.store.complete_current_step(
-                    run.run_id, "failed", reason=decision.reason
-                )
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    decision.reason or "loop_guard",
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
-            if decision.action == LoopAction.FAIL:
-                self._fail(
-                    run.run_id,
-                    decision.failure.code if decision.failure else "INTERNAL_ERROR",
-                )
-                return
-            if decision.action == LoopAction.COMPLETE and self.collaboration and (
-                self.collaboration.repository.child_runs(run.run_id)
-                or self.collaboration.repository.state(run.run_id) != agent_baseline
-            ):
-                resources.shell_process_manager.cleanup()
-                if sampled.assistant_item is not None:
-                    mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item["id"]))
-                    self.events.publish(mutation, item=mutation.value)
-                self.store.complete_current_step(run.run_id, "completed")
-                self.collaboration.wait(run.run_id, None, WaitAgents(timeout_ms=300000))
-                run = run.model_copy(update={"model_context": ()})
-                continue
-            if decision.action == LoopAction.COMPLETE:
-                assert sampled.assistant_item is not None
-                shell_stopped = resources.shell_process_manager.has_running()
-                resources.shell_process_manager.cleanup()
-                self.store.complete_current_step(run.run_id, "completed")
-                mutation = self.store.complete_assistant_and_run_committed(
-                    str(sampled.assistant_item["id"]), run.run_id, shell_stopped=shell_stopped,
-                )
-                item, completed = mutation.value
-                self.events.publish(mutation, item=item, run=completed)
-                self.state_machine.track(RuntimeState.COMPLETED, str(completed["status"]))
+            if sample_action == SampleBoundaryAction.RETURN:
                 return
 
             permission_frontier = self.store.run_permission_grants(run.run_id).model_dump(mode="json")
@@ -985,7 +973,16 @@ class RuntimeEngine:
                 )
                 return
             self._pause_at(run.run_id, SafePoint.BEFORE_TOOL, cancel)
+            self.lifecycle.emit(
+                LoopStage.BEFORE_TOOL_BATCH, run.run_id,
+                step_id=step.step_id, tool_count=len(validation.tool_calls),
+            )
             outcome = tools.execute(step, validation.tool_calls, cancel)
+            self.lifecycle.emit(
+                LoopStage.AFTER_TOOL_BATCH, run.run_id,
+                step_id=step.step_id, tool_count=len(validation.tool_calls),
+                reason=outcome.status,
+            )
             if len(validation.tool_calls) == 1 and validation.tool_calls[0].name == "write_plan":
                 plans = PlanningRepository(self.store.database).list_plans(run.session_id)
                 ready = next((p for p in plans if p.run_id == run.run_id and p.status == "review"), None)
@@ -1079,6 +1076,71 @@ class RuntimeEngine:
             if mutation is not None:
                 self.events.publish(mutation, run=mutation.value)
             run = run.model_copy(update={"model_context": ()})
+
+    def _settle_sample_boundary(
+        self,
+        run_id: str,
+        decision: LoopDecision,
+        sampled: SamplingOutcome,
+        validation: ToolBatchOutcome,
+        built: ContextBuild,
+        resources: RunResources,
+        finalizer: RunFinalizer,
+        cancel: threading.Event,
+        agent_baseline: object | None = None,
+    ) -> SampleBoundaryAction:
+        """Commit the sampling boundary before allowing another step or a tool."""
+        if decision.reason == "pending_input":
+            if sampled.assistant_item is not None:
+                mutation = self.store.complete_assistant_item_committed(
+                    str(sampled.assistant_item["id"])
+                )
+                self.events.publish(mutation, item=mutation.value)
+            self.store.complete_current_step(run_id, "completed")
+            return SampleBoundaryAction.REBUILD_CONTEXT
+        if decision.action == LoopAction.CONTINUE and validation.status != "ready":
+            return SampleBoundaryAction.REBUILD_CONTEXT
+        if decision.action == LoopAction.PAUSE:
+            self.store.complete_current_step(run_id, "failed", reason=decision.reason)
+            finalizer.finalize(
+                run_id, built.model_context, decision.reason or "loop_guard",
+                cancel, instructions=built.instructions,
+            )
+            return SampleBoundaryAction.RETURN
+        if decision.action == LoopAction.FAIL:
+            self._fail(
+                run_id,
+                decision.failure.code if decision.failure else "INTERNAL_ERROR",
+            )
+            return SampleBoundaryAction.RETURN
+        if decision.action == LoopAction.COMPLETE:
+            if self.collaboration and (
+                self.collaboration.repository.child_runs(run_id)
+                or self.collaboration.repository.state(run_id) != agent_baseline
+            ):
+                resources.shell_process_manager.cleanup()
+                if sampled.assistant_item is not None:
+                    mutation = self.store.complete_assistant_item_committed(
+                        str(sampled.assistant_item["id"])
+                    )
+                    self.events.publish(mutation, item=mutation.value)
+                self.store.complete_current_step(run_id, "completed")
+                self.collaboration.wait(run_id, None, WaitAgents(timeout_ms=300000))
+                return SampleBoundaryAction.REBUILD_CONTEXT
+            assert sampled.assistant_item is not None
+            shell_stopped = resources.shell_process_manager.has_running()
+            resources.shell_process_manager.cleanup()
+            self.store.complete_current_step(run_id, "completed")
+            mutation = self.store.complete_assistant_and_run_committed(
+                str(sampled.assistant_item["id"]), run_id, shell_stopped=shell_stopped,
+            )
+            item, completed = mutation.value
+            self.events.publish(mutation, item=item, run=completed)
+            self.state_machine.track(RuntimeState.COMPLETED, str(completed["status"]))
+            return SampleBoundaryAction.RETURN
+        if decision.action != LoopAction.CONTINUE or validation.status != "ready":
+            raise RuntimeError("unexpected sampling boundary decision")
+        return SampleBoundaryAction.EXECUTE_TOOLS
 
     def _run_context(
         self,

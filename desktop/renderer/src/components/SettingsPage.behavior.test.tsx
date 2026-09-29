@@ -268,4 +268,58 @@ describe("Model settings", () => {
     expect(onRemoveMcp).toHaveBeenCalledWith("filesystem");
     expect(await screen.findByText("MCP Server “filesystem” 已卸载")).toBeInTheDocument();
   });
+
+  it("deleting a model requires confirmation and can be canceled or confirmed", async () => {
+    const user = userEvent.setup();
+    const deleteModel = vi.fn().mockResolvedValue(undefined);
+    const onModelsChanged = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      listModelPresets: vi.fn().mockResolvedValue(presets),
+      deleteModel,
+    } as EidosRuntimeAPI;
+    render(<SettingsPage {...props({ onModelsChanged })} />);
+
+    await screen.findByRole("button", { name: "添加模型" });
+    const deleteBtn = screen.getByRole("button", { name: "删除 DeepSeek-V4 Flash" });
+    await user.click(deleteBtn);
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("删除模型 “DeepSeek-V4 Flash”？");
+    expect(dialog).toHaveTextContent("确定要删除模型 “DeepSeek-V4 Flash” 吗？删除后该模型将从本地配置中移除，无法在会话中继续使用。");
+
+    // Click cancel
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(deleteModel).not.toHaveBeenCalled();
+
+    // Reopen and confirm
+    await user.click(deleteBtn);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("alertdialog").querySelector("button.btn--danger")!);
+
+    expect(deleteModel).toHaveBeenCalledWith("deepseek-v4-flash");
+    expect(onModelsChanged).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("模型已删除")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("shows error inside confirm dialog when model deletion fails", async () => {
+    const user = userEvent.setup();
+    const deleteModel = vi.fn().mockRejectedValue(new Error("runtime failure"));
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      listModelPresets: vi.fn().mockResolvedValue(presets),
+      deleteModel,
+    } as EidosRuntimeAPI;
+    render(<SettingsPage {...props()} />);
+
+    await screen.findByRole("button", { name: "添加模型" });
+    await user.click(screen.getByRole("button", { name: "删除 DeepSeek-V4 Flash" }));
+    await user.click(screen.getByRole("alertdialog").querySelector("button.btn--danger")!);
+
+    expect(deleteModel).toHaveBeenCalledWith("deepseek-v4-flash");
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("模型删除失败，请查看 Runtime 日志。");
+  });
 });

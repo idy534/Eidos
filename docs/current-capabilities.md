@@ -53,9 +53,9 @@
 - 回答流式输出已完成代码修订，尚未进入测试阶段。普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。本次没有新增模型请求、工具参数流式展示或传输服务。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
-- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的九个推荐模型预设模板，不再强制全等校验。
-- 内置多模态支持模型包括 `glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码模型包括 `glm-5.3` 以及 DeepSeek 系列。
-- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/coding/v3`，包含 `deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。
+- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的十个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
+- 内置多模态支持模型包括 `deepseek-v4.1-flash`（火山引擎 Coding Plan 原生图像理解）、`glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码目录项包括 `glm-5.3` 和 `deepseek-flash`。
+- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/coding/v3`，包含 `deepseek-v4.1-flash`、`deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。V4.1 Flash 使用 Coding Plan 的 OpenAI-compatible Chat Completions 接口，目录声明 1M 上下文和图像输入。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Key 不进入模型列表/读取响应、SQLite、Event/Feed 或正常日志。
 - Runtime 同时支持 OpenAI-compatible Chat Completions 和 OpenAI Responses。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。
@@ -63,10 +63,10 @@
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
 - Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。
-- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 的选择会映射到 Provider 请求。火山 Coding Plan 的选择目前只校验并保存在 Run 快照中，尚未映射到 `/api/coding/v3` 请求字段。
-- 设置中的已保存模型列表会把提供商名称显示在模型名称后面。添加、编辑模型对话框会在提供商选择器旁显示 Logo 和提供商名称。Logo 作为 Renderer 静态资源打包。
+- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 和火山 Coding Plan `deepseek-v4.1-flash` 的选择会映射到 Provider 请求。V4.1 Flash 使用顶层 `reasoning_effort`；Coding Plan 端点对该模型的实际接受情况尚未经过受控请求验证。
+- 设置中的已保存模型列表会把提供商名称显示在模型名称后面。添加、编辑模型对话框会在提供商选择器旁显示 Logo 和提供商名称。Logo 作为 Renderer 静态资源打包。删除已保存模型时通过破坏性确认对话框（ConfirmDialog）进行二次确认，避免误删。
 - `run/start` 会按所选模型校验可选的思考设置。请求省略该设置时，Runtime 使用该模型的默认值。Runtime 把解析后的值固化到 Run 的 `ModelProfileSnapshot`，并保存在现有 `runs.model_profile_json` 中；SQLite 不新增列。
-- Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/coding/v3` wire 字段和值尚未经过受控请求验证；UI 选项不代表 Provider 已验证接受该参数。
+- Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/coding/v3` 对 V4.1 Flash 思考参数的实际接受情况尚未经过受控请求验证；代码已发送顶层 `reasoning_effort`，但这不代表 Provider 已验证接受该参数。
 
 ## Agent Loop
 
@@ -249,7 +249,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 当前 state schema 是 v13。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 包含旧版本逐级迁移到 v13 的代码；本次 v12 → v13 迁移尚待验证。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
-- ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。主库保存带 checksum 和大小的引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
+- ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
 - 每个 SQLite 数据库都使用私有目录、WAL、busy timeout 和完整性检查。`state.sqlite` 继续使用单实例锁和 health-only 失败状态。跨库数据只作为 projection、artifact 或可重建缓存，不建立第二个业务状态权威。
 
 ## Recovery
@@ -421,11 +421,11 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 澄清工具的 Schema 提供题型规则与完整参数示例。参数校验失败时，模型会收到有界的多项诊断与修正提示；界面显示工具错误，不把失败当作用户跳过。不同校验原因可以被循环检测区分，相同错误重复发生时仍保留原有恢复与停止机制。
 
-## 只读多 Agent（已完成代码与自动化定向测试）
+## 子 Agent 委派
 
-- 父任务可以创建只读子任务、发送消息、继续已结束的子任务、等待和停止子任务。
+- 父任务可以创建探索或执行型子任务、发送消息、继续已结束的子任务、等待和停止子任务。
 - Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
-- 每个父 Run 最多有 16 个子 Session，其中最多 2 个子 Run 同时执行。Runtime 的工具允许列表禁止子任务写文件、执行 Shell、使用 MCP、扩权和继续派生。
+- 每个父 Run 最多有 16 个子 Session，其中最多 2 个子 Run 同时执行。探索角色仅可读取；执行角色可使用现有文件、Shell、Skill 和已授权扩展工具。子 Run 继承父 Run 的审批模式和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代或直接申请新 Grant。
 - 父任务等待使用持久 `waiting_agents` 状态。Worker 会退出，运行资源会释放。满足条件后，Runtime 继续同一等待调用。
-- Desktop 展示只读子任务面板。用户可以查看状态、摘要、分页记录，并停止单个子任务。父任务取消会同时发起子任务取消。
-- 本阶段没有新增依赖。生产 DTO 已从 Python Schema 生成。协作相关 Runtime 定向测试 28/28、Renderer 状态测试 129/129、Renderer 行为测试 356/356 通过。本次 Runtime 全量运行观察到 85 个失败，Seatbelt native 与 Electron smoke 受当前环境限制。上述结果不代表已经通过完整发布验收。
+- Desktop 在环境信息中展示子 Agent 列表；点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消。
+- 本阶段没有新增依赖。生产 DTO 从 Python Schema 生成。完整验证结果以当前 PR 记录为准。

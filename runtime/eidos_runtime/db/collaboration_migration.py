@@ -9,6 +9,7 @@ CREATE TABLE agent_delegations (
     child_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
     spawn_item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE RESTRICT,
     task_name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('explorer', 'worker')),
     task TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     UNIQUE(parent_run_id, task_name)

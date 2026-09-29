@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -17,6 +18,7 @@ from eidos_runtime.domain.collaboration import (
     WaitAgents,
 )
 from eidos_runtime.persistence.collaboration import CollaborationRepository
+from eidos_runtime.sandbox.permissions import BasePermissionProfile
 from eidos_runtime.runtime.run_resources import RunResources
 
 
@@ -42,6 +44,7 @@ def _spawn(
     request = SpawnAgent(
         task_name=f"inspect-{index}",
         message=f"Read the relevant files and report evidence for task {index}.",
+        role="explorer",
     )
     return repository, repository.spawn(str(parent["id"]), str(item["id"]), request), str(item["id"])
 
@@ -89,6 +92,7 @@ def test_spawn_is_idempotent_and_keeps_child_session_out_of_normal_listing(tmp_p
             SpawnAgent(
                 task_name=first.task_name,
                 message=first.task,
+                role="explorer",
             ),
         )
 
@@ -143,8 +147,96 @@ def test_child_resources_expose_only_read_tools_and_parent_message_channel(
         ) as resources:
             names = {entry.spec.name for entry in resources.registry.entries}
 
-        assert names <= READ_ONLY_TOOLS | {"send_message"}
+        assert child.role == "explorer"
         assert names == READ_ONLY_TOOLS | {"send_message"}
+    finally:
+        store.close()
+
+
+def test_worker_inherits_parent_approval_and_extension_snapshot(tmp_path: Path) -> None:
+    store, _session, parent = _parent(tmp_path)
+    try:
+        repository = CollaborationRepository(store.database)
+        item = store.create_tool_item(str(parent["id"]), 1, 42, "worker-call", "spawn_agent", "{}")
+        worker = repository.spawn(
+            str(parent["id"]), str(item["id"]),
+            SpawnAgent(task_name="worker", message="Run the tests and fix the failure", role="worker"),
+        )
+        child_run = store.read_run(worker.run_id)
+        assert worker.role == "worker"
+        assert child_run.get("approvalMode", "manual") == store.read_run(str(parent["id"])).get("approvalMode", "manual")
+        assert child_run["extensionSnapshot"] == store.read_run(str(parent["id"]))["extensionSnapshot"]
+        application = CollaborationApplication(store, lambda: None, lambda _run: None, lambda: None)
+        with RunResources(store, worker.run_id, child_run["extensionSnapshot"], collaboration=application) as resources:
+            names = {entry.spec.name for entry in resources.registry.entries}
+        assert {"run_shell", "apply_patch", "declare_outputs", "send_message"} <= names
+        assert "spawn_agent" not in names
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("mode", ["manual", "auto_review", "full_access"])
+def test_child_permission_snapshot_follows_parent_run(tmp_path: Path, mode: str) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        parent, _ = store.create_run(str(session["id"]), "delegate", approval_mode=mode)
+        child = _spawn(store, parent, 0)[1]
+        run = store.read_run(child.run_id)
+        resolution = store.read_run_resolution_snapshot(child.run_id)
+        policy = json.loads(resolution.sandbox_policy_json)
+        profile = BasePermissionProfile.model_validate_json(resolution.permission_profile_json)
+        assert run.get("approvalMode", "manual") == mode
+        assert policy["approvalMode"] == mode
+        assert profile.full_access is (mode == "full_access")
+    finally:
+        store.close()
+
+
+def test_worker_followup_keeps_role_and_parent_permission_mode(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        parent, _ = store.create_run(str(session["id"]), "delegate", approval_mode="auto_review")
+        repository = CollaborationRepository(store.database)
+        spawn_item = store.create_tool_item(str(parent["id"]), 1, 5, "spawn-worker", "spawn_agent", "{}")
+        worker = repository.spawn(str(parent["id"]), str(spawn_item["id"]),
+            SpawnAgent(task_name="worker", message="Inspect and fix the issue", role="worker"))
+        assert store.claim_next_run()["id"] == worker.run_id
+        store.fail_run(worker.run_id, "done")
+        followup_item = store.create_tool_item(str(parent["id"]), 2, 6, "followup-worker", "followup_task", "{}")
+        resumed = repository.followup(str(parent["id"]), str(followup_item["id"]), worker.id, "Check the fix")
+        assert resumed.role == "worker"
+        assert resumed.session_id == worker.session_id
+        assert resumed.run_id != worker.run_id
+        assert store.read_run(resumed.run_id)["approvalMode"] == "auto_review"
+    finally:
+        store.close()
+
+
+def test_child_uses_parent_approved_run_grant_only_while_parent_is_active(tmp_path: Path) -> None:
+    store, _session, parent = _parent(tmp_path)
+    try:
+        item = store.create_tool_item(str(parent["id"]), 1, 1, "permission-call", "request_permissions", "{}")
+        with store.database.transaction() as connection:
+            tool_call = connection.execute("SELECT id FROM tool_calls WHERE item_id=?", (item["id"],)).fetchone()
+            connection.execute(
+                """INSERT INTO approvals (id,tool_call_id,run_id,item_id,status,request_hash,request_json,created_at)
+                   VALUES (?,?,?,?, 'approved',?,?,?)""",
+                ("approved-parent-grant", tool_call["id"], parent["id"], item["id"], "hash",
+                 json.dumps({"kind": "permission_request", "grantScope": "run",
+                             "permissions": {"network": {"enabled": True}}}), 1),
+            )
+        child = _spawn(store, parent, 2)[1]
+        assert store.run_permission_grants(child.run_id).network.enabled is True
+        store.fail_run(str(parent["id"]), "done")
+        assert store.run_permission_grants(child.run_id).network is None
     finally:
         store.close()
 

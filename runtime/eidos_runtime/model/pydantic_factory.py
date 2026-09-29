@@ -15,7 +15,7 @@ from eidos_runtime.model.config import (
     MODEL_CATALOG,
     ModelConfig,
 )
-from eidos_runtime.model_gateway.retry_transport import (
+from eidos_runtime.model.retry_transport import (
     RetryTransportClient,
     build_retrying_http_client,
 )

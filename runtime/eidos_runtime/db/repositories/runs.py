@@ -593,13 +593,23 @@ class RunRepository(Repository):
 
         granted = AdditionalPermissionProfile()
         with self.lock:
-            rows = self._connection().execute(
+            connection = self._connection()
+            parent = connection.execute(
+                """SELECT d.parent_run_id FROM agent_delegations d
+                   JOIN runs child ON child.session_id = d.child_session_id
+                   WHERE child.id = ?""", (run_id,),
+            ).fetchone()
+            # Run-scoped grants remain bounded by the parent's active lifetime.
+            # A child cannot request a grant, but can use one already approved
+            # for the parent through the same effective permission checks.
+            run_ids = (run_id, parent['parent_run_id'] if parent else run_id)
+            rows = connection.execute(
                 """SELECT a.request_json FROM approvals a JOIN runs r ON r.id = a.run_id
-                   WHERE a.run_id = ? AND a.status = 'approved'
+                   WHERE a.run_id IN (?, ?) AND a.status = 'approved'
                      AND r.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')
                      AND json_extract(a.request_json, '$.grantScope') = 'run'
                      AND json_extract(a.request_json, '$.kind') = 'permission_request'
-                   ORDER BY a.creation_seq""", (run_id,),
+                   ORDER BY a.creation_seq""", run_ids,
             )
             for row in rows:
                 profile = AdditionalPermissionProfile.model_validate_json(

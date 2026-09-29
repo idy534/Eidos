@@ -76,7 +76,8 @@ class RunResources:
         collaboration: CollaborationApplication | None = None,
     ) -> None:
         self.collaboration = collaboration
-        self.is_child = CollaborationRepository(store.database).child_for_run(run_id)
+        self.child_role = CollaborationRepository(store.database).child_role_for_run(run_id)
+        self.is_child = self.child_role is not None
         self.store = store
         self.run_id = run_id
         self.extension_snapshot = extension_snapshot
@@ -127,7 +128,7 @@ class RunResources:
                 sandbox=self.mcp_sandbox and not self.tool_executor.full_access,
                 resource_registry=self.resources,
             )
-            self._external_entries = self.mcp.start()
+            self._external_entries = () if self.child_role == "explorer" else self.mcp.start()
             self.skill_catalog_snapshot = self.skills.catalog_snapshot(
                 self.extension_snapshot
             )
@@ -172,7 +173,7 @@ class RunResources:
         if self.mcp is None:
             raise RuntimeError("run resources are not started")
         try:
-            entries = self.mcp.refresh_if_changed()
+            entries = None if self.child_role == "explorer" else self.mcp.refresh_if_changed()
             if entries is not None:
                 self._external_entries = entries
             if new_inputs:
@@ -247,12 +248,24 @@ class RunResources:
             ),
             external_entries=self._external_entries,
         )
-        if self.is_child:
-            base = ToolRegistry(tuple(entry for entry in base.entries if (entry.spec.name in READ_ONLY_TOOLS and entry.provenance.kind == "builtin") or (entry.spec.name == "send_message" and entry.provenance.source_id == "eidos.collaboration")))
+        if self.child_role == "explorer":
+            base = ToolRegistry(tuple(
+                entry for entry in base.entries
+                if (entry.spec.name in READ_ONLY_TOOLS and entry.provenance.kind == "builtin")
+                or (entry.spec.name == "send_message" and entry.provenance.source_id == "eidos.collaboration")
+            ))
+        elif self.child_role == "worker":
+            # The worker inherits the parent's normal tools and per-run policy.
+            # Coordination and direct permission expansion stay with the parent.
+            base = ToolRegistry(tuple(
+                entry for entry in base.entries
+                if entry.spec.name != "request_permissions"
+                and (entry.provenance.source_id != "eidos.collaboration" or entry.spec.name == "send_message")
+            ))
         deferred = tuple(
             entry for entry in base.entries if entry.spec.visibility == "deferred"
         )
-        self.registry = base if self.is_child else ToolRegistry((*base.entries, tool_search_entry(deferred)))
+        self.registry = base if self.child_role == "explorer" else ToolRegistry((*base.entries, tool_search_entry(deferred)))
         self.dispatcher = ToolDispatcher(self.registry)
 
     def _activate_mentions(self, user_input: str) -> None:

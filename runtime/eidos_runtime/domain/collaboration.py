@@ -7,10 +7,11 @@ from pydantic import Field
 from eidos_runtime.domain.run import RunStatus
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
-# Read-only delegation is intentionally one level deep. These bounds also cap
-# persisted context and UI responses; ordinary user Sessions keep their policy.
+# Delegation is currently one level deep. These bounds cap persisted context
+# and UI responses; ordinary user Sessions keep their policy.
 MAX_AGENTS = 16
 MAX_ACTIVE_AGENTS = 2
+AgentRole = Literal["explorer", "worker"]
 READ_ONLY_TOOLS = frozenset({
     "list_files", "read_file", "read_file_range", "search_text", "search_text_wait", "read_tool_output",
 })
@@ -22,7 +23,8 @@ ACTIVE_STATUSES = ("queued", "running", "waiting_approval", "waiting_input", "wa
 
 class SpawnAgent(EidosFrozenStrictModel):
     task_name: str = Field(min_length=1, max_length=60, pattern=r"^[a-z][a-z0-9_-]*$")
-    message: str = Field(min_length=1, max_length=8000, description="A self-contained read-only assignment, with scope, evidence to inspect and acceptance criteria. The child receives this task, not the whole parent conversation.")
+    message: str = Field(min_length=1, max_length=8000, description="A self-contained assignment with scope and acceptance criteria. The child receives this task, not the whole parent conversation.")
+    role: AgentRole = "worker"
 
 
 class AgentTarget(EidosFrozenStrictModel):
@@ -41,6 +43,7 @@ class WaitAgents(EidosFrozenStrictModel):
 class AgentSummary(EidosFrozenStrictModel):
     id: str
     task_name: str
+    role: AgentRole
     parent_run_id: str
     session_id: str
     run_id: str
