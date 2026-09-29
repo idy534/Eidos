@@ -29,6 +29,7 @@ from eidos_runtime.protocol.server import (
     valid_request_id,
 )
 from eidos_runtime.telemetry.provider import initialize_telemetry
+from eidos_runtime.telemetry.tracing import record_current_exception, start_span
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -136,13 +137,24 @@ def run() -> int:
                 server.send(protocol_error(None, -32700, "Parse error"))
                 continue
 
-            try:
-                server.handle(message)
-            except Exception:
-                logger.exception("Runtime request failed")
-                request_id = message.get("id") if isinstance(message, dict) else None
-                if valid_request_id(request_id):
-                    server.send(business_error(request_id, "INTERNAL_ERROR"))
+            method = message.get("method") if isinstance(message, dict) else None
+            known_method = (
+                isinstance(method, str)
+                and (
+                    method in {"initialize", "runtime/shutdown", "runtime/health"}
+                    or server.method_registry.get(method) is not None
+                )
+            )
+            attributes = {"rpc.method": method} if known_method else None
+            with start_span("eidos.rpc", attributes=attributes):
+                try:
+                    server.handle(message)
+                except Exception as error:
+                    record_current_exception(error)
+                    logger.exception("Runtime request failed")
+                    request_id = message.get("id") if isinstance(message, dict) else None
+                    if valid_request_id(request_id):
+                        server.send(business_error(request_id, "INTERNAL_ERROR"))
     finally:
         try:
             if server is not None:

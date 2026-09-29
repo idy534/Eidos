@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.settings import ModelSettings
@@ -77,6 +78,7 @@ from eidos_runtime.runtime.resource_registry import (
 )
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.telemetry.provider import tracing_enabled
 from eidos_runtime.tools.view_image import (
     ViewImageAuthority,
     ViewImageError,
@@ -97,6 +99,16 @@ USAGE_DETAIL_KEYS = frozenset({
     "reasoning_tokens",
     "rejected_prediction_tokens",
 })
+
+
+def _model_instrumentation() -> InstrumentationSettings | bool:
+    if not tracing_enabled():
+        return False
+    return InstrumentationSettings(
+        include_content=False,
+        include_binary_content=False,
+        include_model_request_parameters=False,
+    )
 
 
 class PydanticAIModelClient:
@@ -345,7 +357,7 @@ class PydanticAIModelClient:
                     ),
                     model_settings=settings,
                     model_request_parameters=parameters,
-                    instrument=False,
+                    instrument=_model_instrumentation(),
                 ) as stream:
                     stream_ref[0] = stream
                     try:

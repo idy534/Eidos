@@ -346,15 +346,18 @@ In-memory 对象只保存当前协调状态、缓存、活跃资源引用和诊�
 
 Runtime 入口初始化进程级 `TelemetryProvider`。OpenTelemetry 是非权威 Observability 层，不参与 Run 状态迁移，也不替代 SQLite 业务事实。Telemetry 初始化、Span 写入、flush 或 shutdown 失败会被 Runtime 自身日志捕获，不应成为 Agent Loop 的状态来源。
 
-当前 Trace 覆盖三个主要执行边界：
+当前 Trace 覆盖入口和三个主要执行边界：
 
 ```text
-eidos.run
-  ├── eidos.model.attempt
-  └── eidos.tool.call
+eidos.rpc (仅 stdio 入口接收请求时)
+  └── eidos.run (异步 Run worker 继承入口上下文)
+       ├── eidos.model.attempt
+       │    └── Pydantic AI 原生模型 Span (仅 Direct Model API)
+       └── eidos.tool.call
+            └── eidos.run (同进程 spawn/followup 子 Agent)
 ```
 
-Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录配置 Provider、响应 Provider、resolved model、Provider response ID、响应状态、阶段、finish reason、Tool 数量、响应文本大小、TTFT、duration、transport retry 和 input/output/cache token usage。SQLite 的 Model Attempt 还记录响应文本哈希和受限协议诊断 JSON。诊断 JSON 只包含错误路径、Tool 名称、Call ID、参数字段名和类型、参数字节数、契约指纹与 Tool Snapshot 哈希。它不保存原始响应或参数值，也不生成模型 Tool 参数哈希。Tool Call Span 记录 Tool 名称、Call ID、Tool status、Workspace changed 和异常状态。
+Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录配置 Provider、响应 Provider、resolved model、Provider response ID、响应状态、阶段、finish reason、Tool 数量、响应文本大小、TTFT、duration、transport retry 和 `eidos.model.usage.*` 用量。原生模型 Span 的标准 `gen_ai.usage.*` 用量不会与 Attempt 重复计入标准聚合。模型原生埋点仅在显式配置 Trace exporter 且 SDK 未关闭时启用，关闭内容、二进制内容和请求参数采集。SQLite 的 Model Attempt 还记录响应文本哈希和受限协议诊断 JSON。诊断 JSON 只包含错误路径、Tool 名称、Call ID、参数字段名和类型、参数字节数、契约指纹与 Tool Snapshot 哈希。它不保存原始响应或参数值，也不生成模型 Tool 参数哈希。Tool Call Span 记录 Tool 名称、Call ID、Tool status、Workspace changed 和异常状态。Run worker 从入口或 spawn/followup 调用方继承 OTel 上下文；同进程暂停后恢复的 Run 沿用之前保存的上下文，避免把唤醒它的子 Agent 当作父节点。JSONL 日志在活跃 Span 内记录 `traceId`、`spanId`。
 
 `OTEL_TRACES_EXPORTER` 默认是 `none`。当前支持 `console` 和 `otlp`；console exporter 写 stderr，OTLP 使用 HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖默认的 `eidos-runtime`，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以设置 OTLP Trace endpoint。
 

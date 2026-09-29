@@ -201,22 +201,22 @@ def finish_model_attempt(span: Span, outcome: object) -> None:
         return
     set_span_attribute(
         span,
-        "gen_ai.usage.input_tokens",
+        "eidos.model.usage.input_tokens",
         getattr(usage, "input_tokens", None),
     )
     set_span_attribute(
         span,
-        "gen_ai.usage.output_tokens",
+        "eidos.model.usage.output_tokens",
         getattr(usage, "output_tokens", None),
     )
     set_span_attribute(
         span,
-        "gen_ai.usage.cache_read_input_tokens",
+        "eidos.model.usage.cache_read_input_tokens",
         getattr(usage, "cache_read_tokens", None),
     )
     set_span_attribute(
         span,
-        "gen_ai.usage.cache_write_input_tokens",
+        "eidos.model.usage.cache_write_input_tokens",
         getattr(usage, "cache_write_tokens", None),
     )
 

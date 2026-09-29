@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Lock
+
+from opentelemetry import context as otel_context
+from opentelemetry.context import Context
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.collaboration import (
@@ -19,6 +23,16 @@ class CollaborationApplication:
         self.schedule = schedule
         self.cancel = cancel
         self.publish = publish
+        self._trace_contexts: dict[str, Context] = {}
+        self._trace_lock = Lock()
+
+    def take_trace_context(self, run_id: str) -> Context | None:
+        with self._trace_lock:
+            return self._trace_contexts.pop(run_id, None)
+
+    def _remember_trace_context(self, run_id: str) -> None:
+        with self._trace_lock:
+            self._trace_contexts[run_id] = otel_context.get_current()
 
     def read_session(self, session_id: str) -> CollaborationState:
         return self.repository.read_session(session_id)
@@ -32,6 +46,7 @@ class CollaborationApplication:
 
     def spawn(self, run_id: str, item_id: str, request: SpawnAgent) -> AgentSummary:
         result = self.repository.spawn(run_id, item_id, request)
+        self._remember_trace_context(result.run_id)
         self.publish()
         self.schedule()
         return result
@@ -42,6 +57,7 @@ class CollaborationApplication:
 
     def followup(self, run_id: str, item_id: str, request: AgentMessageRequest) -> AgentSummary:
         result = self.repository.followup(run_id, item_id, request.agent_id, request.message)
+        self._remember_trace_context(result.run_id)
         self.publish()
         self.schedule()
         return result

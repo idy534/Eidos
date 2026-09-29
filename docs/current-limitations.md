@@ -127,7 +127,7 @@
 
 - 当前 OpenTelemetry 集成只配置 Traces。Runtime 的本地 JSONL 日志不等于 OTel Logs pipeline。Runtime 没有建立 OTel Metrics 或 Logs exporter，也没有把 Trace 或本地日志作为业务事实或恢复依据。
 - `OTEL_TRACES_EXPORTER` 默认是 `none`，因此默认不会把 Trace 导出到外部 Observability 后端。需要显式配置 `console` 或 `otlp` 才会导出。
-- 当前 Trace 主要覆盖 Run、Model Attempt 和 Tool Call。它不是完整的 Desktop 操作链、SQLite transaction、Repository Intelligence、Approval 或 Sandbox 内部阶段的全链路 tracing。
+- 当前 Trace 覆盖 stdio 入口、Run、Model Attempt、Tool Call，以及 Direct Model API 原生模型请求；同进程子 Agent 可以继承 Trace 上下文。它尚未覆盖 Renderer/Main 操作、OpenAI Responses 自定义请求的原生传输 Span、SQLite transaction、Repository Intelligence、Approval 或 Sandbox 内部阶段。Runtime 重启后等待中的 Run 会产生新的 Trace，仍可通过 `eidos.run.id` 对照 SQLite 事实。
 - 较短的默认导出预算和较长的批次间隔只限制遥测开销，不能修复不可用的 collector。SDK 在持续失败或队列耗尽时仍可能丢弃 spans；本地日志、SQLite 和 Outbox 保持独立。维护者的显式 OTEL 配置可以改变默认预算。
 
 ### Application 边界
