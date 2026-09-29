@@ -59,6 +59,12 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 context.events.deliver_pending()
             raise PlanningSuspended()
         request = WritePlan.model_validate(call.arguments)
+        if request.ready_for_review:
+            from eidos_runtime.persistence.collaboration import CollaborationRepository
+            if CollaborationRepository(context.store.database).child_runs(run_id):
+                return HandlerOutcome(tool_result(call.name, 'error', 'agents_still_active',
+                    'Wait for or stop child tasks before submitting the final plan.',
+                    data_model=PlanResultData), 'failed', 'failed')
         try:
             repository.validate_write(run_id, request)
             context.controller.authorize_workspace_side_effect(item=item, prepared=PreparedToolExecution(

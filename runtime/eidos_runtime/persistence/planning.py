@@ -135,7 +135,7 @@ class PlanningRepository:
                 raise ValueError('plan_revision_conflict')
             if row['status'] == 'accepted':
                 raise ValueError('accepted_plan_is_immutable')
-            if connection.execute("SELECT 1 FROM runs WHERE session_id = ? AND status IN ('running', 'waiting_input', 'waiting_approval', 'queued', 'finalizing')", (row['session_id'],)).fetchone():
+            if connection.execute("SELECT 1 FROM runs WHERE session_id = ? AND status IN ('running', 'waiting_input', 'waiting_agents', 'waiting_approval', 'queued', 'finalizing')", (row['session_id'],)).fetchone():
                 raise ValueError('plan_run_still_active')
             current = self.file_text(self._plan(row))
             if current is not None and current not in {row['markdown'], markdown}:

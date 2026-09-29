@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import json
 from io import StringIO
+from pathlib import Path
 
 from eidos_runtime.protocol.server import RuntimeServer
+
+
+def _response(output: StringIO, request_id: str) -> dict[str, object]:
+    return next(
+        json.loads(line)
+        for line in output.getvalue().splitlines()
+        if json.loads(line).get("id") == request_id
+    )
 
 
 def test_business_method_registry_has_no_legacy_server_handler_adapter(tmp_path) -> None:
@@ -76,6 +86,38 @@ def test_runtime_application_container_composes_all_phase_ef_boundaries(tmp_path
         "review/listComments", "review/createComment", "review/deleteComment",
     } <= registered
     server.close()
+
+
+def test_agent_protocol_methods_validate_and_return_collaboration_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    output = StringIO()
+    server = RuntimeServer(output, data_directory=tmp_path / "data")
+    server.store.initialize()
+    server.initialized = True
+    session = server.store.create_session(str(workspace))
+
+    try:
+        server.handle({
+            "jsonrpc": "2.0",
+            "id": "client-agent-read",
+            "method": "agent/read",
+            "params": {"sessionId": session["id"]},
+        })
+        assert _response(output, "client-agent-read")["result"] == {
+            "agents": [],
+            "messages": [],
+        }
+
+        server.handle({
+            "jsonrpc": "2.0",
+            "id": "client-agent-invalid",
+            "method": "agent/read",
+            "params": {"sessionId": ""},
+        })
+        assert _response(output, "client-agent-invalid")["error"]["code"] == -32602
+    finally:
+        server.close()
 
 
 def test_runtime_server_close_stops_repository_watchers(tmp_path) -> None:

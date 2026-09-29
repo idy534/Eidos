@@ -1789,6 +1789,8 @@ class ToolCallRuntime:
             )
         if len(result.tool_calls) > 1 and any(call.name in {"request_user_input", "write_plan"} for call in result.tool_calls):
             return ToolBatchOutcome(status="validation_failed", error_code="planning_control_requires_single_call")
+        if len(result.tool_calls) > 1 and any(call.name in {"spawn_agent", "send_message", "followup_task", "wait_agents", "list_agents", "stop_agent"} for call in result.tool_calls):
+            return ToolBatchOutcome(status="validation_failed", error_code="agent_control_requires_single_call")
         if not result.tool_calls:
             if self.store.read_run(step.run_id).get("workMode") == "plan":
                 return ToolBatchOutcome(status="validation_failed", error_code="plan_requires_write_plan_ready_for_review")

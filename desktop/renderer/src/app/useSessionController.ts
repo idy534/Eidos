@@ -588,7 +588,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
       ) {
         next.add(run.sessionId);
       } else if ([
-        "queued", "running", "waiting_input", "waiting_approval", "finalizing", "succeeded",
+        "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing", "succeeded",
       ].includes(run.status)) {
         next.delete(run.sessionId);
       }
@@ -657,5 +657,5 @@ export function useSessionController(): [SessionControllerState, SessionControll
 }
 
 function activeStatus(status: Run["status"]): Session["activeRunStatus"] {
-  return status === "queued" || status === "running" || status === "waiting_input" || status === "waiting_approval" || status === "finalizing" ? status : undefined;
+  return status === "queued" || status === "running" || status === "waiting_input" || status === "waiting_agents" || status === "waiting_approval" || status === "finalizing" ? status : undefined;
 }

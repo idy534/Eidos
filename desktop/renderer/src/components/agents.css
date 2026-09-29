@@ -1,0 +1,12 @@
+.agent-workspace { padding: 16px; font-size: 13px; height: 100%; overflow: auto; }
+.agent-workspace h2 { margin: 0 0 12px; font-size: 16px; }
+.agent-heading { display: flex; align-items: center; gap: 12px; }
+.agent-heading span { flex: 1; }
+.agent-text, .agent-transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-transcript { margin-top: 12px; }
+.agent-transcript details { border-top: 1px solid var(--border-color, #8886); }
+.agent-transcript pre { max-height: 360px; overflow: auto; }
+.agent-transcript summary { cursor: pointer; padding: 8px 0; }
+.agent-workspace button { margin: 4px; }
+.agent-list__row { display: flex; width: 100%; justify-content: space-between; text-align: left; }
+.agent-approval-badge { position: absolute; top: -4px; right: -4px; min-width: 15px; padding: 1px 3px; border-radius: 12px; background: var(--danger, #b33); color: white; font-size: 10px; text-align: center; }

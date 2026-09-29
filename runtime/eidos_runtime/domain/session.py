@@ -30,7 +30,7 @@ class Session(EidosFrozenStrictModel):
     worktree_id: str | None = Field(default=None, min_length=1)
     associated_worktree_id: str | None = Field(default=None, min_length=1)
     title: str | None = None
-    active_run_status: Literal["queued", "running", "waiting_approval", "waiting_input", "finalizing"] | None = None
+    active_run_status: Literal["queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing"] | None = None
     task_status: SessionTaskStatus
     created_at: datetime
     updated_at: datetime

@@ -499,3 +499,9 @@ test("waiting approval has a distinct non-spinning session status", () => {
   });
   assert.equal(taskStatusPresentation("in_progress", false, "running")?.label, "进行中");
 });
+
+test("waiting child agents has a distinct non-spinning session status", () => {
+  assert.deepEqual(taskStatusPresentation("in_progress", false, "waiting_agents"), {
+    label: "等待子任务", tone: "progress", spinning: false,
+  });
+});
