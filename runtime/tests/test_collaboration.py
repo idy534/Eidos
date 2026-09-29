@@ -311,6 +311,7 @@ def test_parent_cancel_stops_active_children_and_rejects_late_child_message(
         supervisor.store = store
         supervisor.lock = threading.RLock()
         supervisor._handles = {}
+        supervisor._run_trace_contexts = {}
         supervisor.events = Events()
         supervisor.collaboration = CollaborationApplication(
             store, lambda: None, supervisor.cancel_agent, supervisor.events.deliver_pending

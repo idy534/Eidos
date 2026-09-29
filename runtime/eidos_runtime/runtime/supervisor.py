@@ -13,6 +13,8 @@ import uuid
 from typing import Callable
 
 import anyio
+from opentelemetry import context as otel_context
+from opentelemetry.context import Context
 from pydantic import ValidationError
 
 from eidos_runtime.db.storage import (
@@ -152,6 +154,7 @@ class RunSupervisor:
         self.resources = resource_registry or ResourceRegistry()
         self.lock = threading.RLock()
         self._handles: dict[str, RunHandle] = {}
+        self._run_trace_contexts: dict[str, Context] = {}
         self._managed_tasks: dict[str, ManagedTask] = {}
         self.approval_lock = threading.RLock()
         self.pending_approvals: dict[str, PendingApproval] = {}
@@ -302,6 +305,11 @@ class RunSupervisor:
             except InvalidRunStateError:
                 if self.store.read_run(run_id)["status"] in ACTIVE_STATUSES:
                     raise
+        if self.store.read_run(run_id)["status"] not in ACTIVE_STATUSES:
+            self.collaboration.take_trace_context(run_id)
+            with self.lock:
+                if run_id not in self._handles:
+                    self._run_trace_contexts.pop(run_id, None)
         self.events.deliver_pending()
 
     @staticmethod
@@ -887,9 +895,22 @@ class RunSupervisor:
             raise RuntimeError("run already has a worker")
         cancellation = threading.Event()
         gate = threading.Event()
+        parent_context = self.collaboration.take_trace_context(run_id)
+        if parent_context is None:
+            parent_context = self._run_trace_contexts.get(run_id)
+        if parent_context is None:
+            parent_context = otel_context.get_current()
+        self._run_trace_contexts[run_id] = parent_context
+
+        def run_with_trace_context() -> None:
+            token = otel_context.attach(parent_context)
+            try:
+                self._run_worker(run_id, cancellation, gate)
+            finally:
+                otel_context.detach(token)
+
         worker = threading.Thread(
-            target=self._run_worker,
-            args=(run_id, cancellation, gate),
+            target=run_with_trace_context,
             name=f"eidos-run-{run_id}",
         )
         resource = self.resources.register(
@@ -995,6 +1016,11 @@ class RunSupervisor:
             with self.lock:
                 handle.state = RunWorkerState.FINISHED
                 self._handles.pop(run_id, None)
+                try:
+                    if self.store.read_run(run_id)["status"] not in ACTIVE_STATUSES:
+                        self._run_trace_contexts.pop(run_id, None)
+                except Exception:
+                    self._run_trace_contexts.pop(run_id, None)
                 should_schedule = self.lifecycle is RuntimeLifecycle.RUNNING
             if handle.resource is not None:
                 handle.resource.close()

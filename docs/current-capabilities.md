@@ -282,12 +282,13 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Observability / OpenTelemetry
 
-- Runtime 入口初始化进程级 OpenTelemetry Trace Provider。默认 `OTEL_TRACES_EXPORTER=none`，因此默认不会向外部后端导出 Trace。
+- Runtime 入口初始化进程级 OpenTelemetry Trace Provider。默认 `OTEL_TRACES_EXPORTER=none`，因此默认不会向外部后端导出 Trace。stdio 入口请求拥有 `eidos.rpc` Span，同进程 Run worker 和子 Agent 继承调用方上下文。
 - 当前支持 `console` 和 OTLP HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖服务名，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以配置 OTLP Trace endpoint。
 - Runtime 创建 `eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call` Span。
 - Model Attempt Trace 可以记录 Provider、resolved model、finish reason、TTFT、duration、transport retry、input/output token 和 cache token usage。
 - Agent Loop 在 normalized response 需要 follow-up 时继续采样。没有 ToolCall 且不需要继续时，assistant-only response 可以完成当前 Turn，即使 MessagePhase 是 `None` 或 `unknown`。
 - Tool Trace 可以记录 Tool 名称、Call ID、终态、Workspace changed 和异常；Run Trace 可以记录 Run、Session、Model 和最终状态。
+- 显式启用 exporter 时，Pydantic AI Direct Model API 使用其原生 OTel 模型 Span，默认不采集消息、二进制内容和请求参数；Runtime JSONL 日志在活跃 Span 内保存 traceId 和 spanId。
 - OpenTelemetry 只提供 Observability，不参与 SQLite 事实、Run 状态迁移、Approval 或 Reconciliation 决策。
 
 ## Diagnostics / Tests
