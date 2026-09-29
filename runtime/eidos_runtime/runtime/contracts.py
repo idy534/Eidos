@@ -137,6 +137,14 @@ class LoopAction(StrEnum):
     CANCEL = "cancel"
 
 
+class SampleBoundaryAction(StrEnum):
+    """The orchestration action after a validated model response."""
+
+    REBUILD_CONTEXT = "rebuild_context"
+    EXECUTE_TOOLS = "execute_tools"
+    RETURN = "return"
+
+
 class RuntimeFailure(_FrozenModel):
     code: str
     retryable: bool = False

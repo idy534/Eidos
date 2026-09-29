@@ -249,7 +249,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 当前 state schema 是 v13。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 包含旧版本逐级迁移到 v13 的代码；本次 v12 → v13 迁移尚待验证。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
-- ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。主库保存带 checksum 和大小的引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
+- ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
 - 每个 SQLite 数据库都使用私有目录、WAL、busy timeout 和完整性检查。`state.sqlite` 继续使用单实例锁和 health-only 失败状态。跨库数据只作为 projection、artifact 或可重建缓存，不建立第二个业务状态权威。
 
 ## Recovery
@@ -282,12 +282,13 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Observability / OpenTelemetry
 
-- Runtime 入口初始化进程级 OpenTelemetry Trace Provider。默认 `OTEL_TRACES_EXPORTER=none`，因此默认不会向外部后端导出 Trace。
+- Runtime 入口初始化进程级 OpenTelemetry Trace Provider。默认 `OTEL_TRACES_EXPORTER=none`，因此默认不会向外部后端导出 Trace。stdio 入口请求拥有 `eidos.rpc` Span，同进程 Run worker 和子 Agent 继承调用方上下文。
 - 当前支持 `console` 和 OTLP HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖服务名，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以配置 OTLP Trace endpoint。
 - Runtime 创建 `eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call` Span。
 - Model Attempt Trace 可以记录 Provider、resolved model、finish reason、TTFT、duration、transport retry、input/output token 和 cache token usage。
 - Agent Loop 在 normalized response 需要 follow-up 时继续采样。没有 ToolCall 且不需要继续时，assistant-only response 可以完成当前 Turn，即使 MessagePhase 是 `None` 或 `unknown`。
 - Tool Trace 可以记录 Tool 名称、Call ID、终态、Workspace changed 和异常；Run Trace 可以记录 Run、Session、Model 和最终状态。
+- 显式启用 exporter 时，Pydantic AI Direct Model API 使用其原生 OTel 模型 Span，默认不采集消息、二进制内容和请求参数；Runtime JSONL 日志在活跃 Span 内保存 traceId 和 spanId。
 - OpenTelemetry 只提供 Observability，不参与 SQLite 事实、Run 状态迁移、Approval 或 Reconciliation 决策。
 
 ## Diagnostics / Tests
@@ -420,3 +421,12 @@ Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草
 Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Repository 和结果投影的回归用例。用例覆盖澄清答案恢复、计划成功保存、错误 ID 后修正重试、Intent 后版本冲突，以及内容提交后文件投影失败的对账保护。这些用例不调用真实 Provider，也不操作用户数据目录。
 
 澄清工具的 Schema 提供题型规则与完整参数示例。参数校验失败时，模型会收到有界的多项诊断与修正提示；界面显示工具错误，不把失败当作用户跳过。不同校验原因可以被循环检测区分，相同错误重复发生时仍保留原有恢复与停止机制。
+
+## 子 Agent 委派
+
+- 父任务可以创建探索或执行型子任务、发送消息、继续已结束的子任务、等待和停止子任务。
+- Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
+- 每个父 Run 最多有 16 个子 Session，其中最多 2 个子 Run 同时执行。探索角色仅可读取；执行角色可使用现有文件、Shell、Skill 和已授权扩展工具。子 Run 继承父 Run 的审批模式和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代或直接申请新 Grant。
+- 父任务等待使用持久 `waiting_agents` 状态。Worker 会退出，运行资源会释放。满足条件后，Runtime 继续同一等待调用。
+- Desktop 在环境信息中展示子 Agent 列表和待审批数量；右侧工作区关闭时，环境信息入口仍提示待审批数。点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消；父任务异常结束后，正常调度也会取消其孤立子任务。
+- 本阶段没有新增依赖。生产 DTO 从 Python Schema 生成。完整验证结果以当前 PR 记录为准。

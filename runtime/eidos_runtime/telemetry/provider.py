@@ -75,6 +75,11 @@ def initialize_telemetry() -> TelemetryProvider:
     return TelemetryProvider(provider)
 
 
+def tracing_enabled() -> bool:
+    """Only collect model details when a trace exporter is explicitly configured."""
+    return not _env_truthy("OTEL_SDK_DISABLED") and bool(_exporter_names())
+
+
 def _build_tracer_provider() -> TracerProvider:
     provider = TracerProvider(resource=_resource())
     for processor in _span_processors(_exporter_names()):

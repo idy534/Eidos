@@ -4,8 +4,8 @@ import httpx2 as httpx
 from pydantic import Field
 
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.model_gateway.errors import EidosModelError
-from eidos_runtime.model_gateway.models import RetryPolicy
+from eidos_runtime.model.errors import EidosModelError
+from eidos_runtime.model.gateway_types import RetryPolicy
 
 
 RETRYABLE_HTTP_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})

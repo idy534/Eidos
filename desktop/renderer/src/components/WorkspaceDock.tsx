@@ -3,7 +3,7 @@ import { DropdownMenu } from "./DropdownMenu.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import "./WorkspaceDock.css";
 
-export type WorkspaceToolKind = "text-review" | "plan" | "review" | "terminal" | "files" | "browser";
+export type WorkspaceToolKind = "text-review" | "plan" | "agent" | "review" | "terminal" | "files" | "browser";
 
 export interface WorkspaceTab {
   id: string;
@@ -27,6 +27,7 @@ interface WorkspaceDockProps {
 const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
   "text-review": "文本审查",
   plan: "计划",
+  agent: "子 Agent",
   review: "审查",
   terminal: "终端",
   files: "文件",

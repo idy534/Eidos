@@ -190,6 +190,7 @@ def _run_from_row(
         "running": ["cancel"],
         "waiting_approval": ["approve", "reject", "cancel"],
         "waiting_input": ["cancel"],
+        "waiting_agents": ["cancel"],
         "finalizing": ["cancel"],
     }.get(row["status"], [])
     if run["approvalMode"] != "manual":

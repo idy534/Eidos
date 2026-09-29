@@ -88,6 +88,14 @@ def test_protocol_repair_creates_a_new_exact_context_snapshot(tmp_path: Path) ->
 
         attempts = store.read_model_attempts(run_id)
         assert len(attempts) == 2
+        assert [attempt["status"] for attempt in attempts] == [
+            "failed", "completed",
+        ]
+        assistant_items = [
+            item for item in store.read_session_snapshot(_session_id)["items"]
+            if item["runId"] == run_id and item["kind"] == "assistant_message"
+        ]
+        assert len(assistant_items) == 1
         first = store.context_snapshot_repository().read_for_model_attempt(
             str(attempts[0]["id"])
         )

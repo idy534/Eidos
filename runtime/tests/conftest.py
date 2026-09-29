@@ -13,6 +13,7 @@ INTEGRATION_FILES = frozenset(
         "test_approval_application.py",
         "test_checkpoint_lineage.py",
         "test_checkpoint_managed_worktree.py",
+        "test_collaboration.py",
         "test_corrective_integration.py",
         "test_direct_workspace.py",
         "test_event_delivery_recovery.py",

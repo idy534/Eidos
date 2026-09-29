@@ -65,7 +65,7 @@ interface Segment {
 }
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
-  "queued", "running", "waiting_input", "waiting_approval", "finalizing",
+  "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",
 ]);
 
 const TERMINAL_RUN_STATUSES = new Set<Run["status"]>([
@@ -1262,6 +1262,7 @@ function splitRunIntoSegments(items: Item[]): Segment[] {
 
 function activeRunPresentation(run: Run) {
   switch (run.status) {
+    case "waiting_agents": return { label: "等待子任务", tone: "warning" as const };
     case "waiting_input": return { label: "等待回答", tone: "warning" as const };
     case "waiting_approval": return { label: "等待批准", tone: "warning" as const };
     default: return undefined;

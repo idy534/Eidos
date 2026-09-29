@@ -13,6 +13,11 @@ from eidos_runtime.runtime.contracts import (
 class LoopDecisionEngine:
     """Applies one priority order to every loop boundary."""
 
+    @staticmethod
+    def protocol_repair(*, error_count: int, guard_reason: str | None = None) -> bool:
+        """Allow one repair attempt, but never override a convergence stop."""
+        return error_count < 2 and guard_reason is None
+
     def decide(
         self,
         *,

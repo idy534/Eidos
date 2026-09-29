@@ -108,6 +108,8 @@ consume input → resolve rules → build context → sample model
 → continue, compact, recover, pause or finish
 ```
 
+模型响应完成后，`LoopDecisionEngine` 先给出动作，`RuntimeEngine._settle_sample_boundary` 再提交对应的 Step、Assistant 和 Run 状态。该边界返回“重建上下文、执行工具或返回”三种控制结果。协议修复由同一个决策入口限制次数；循环保护命中时不再尝试修复。这个拆分不改变当前数据库事实或终态语义。
+
 RuntimeEngine 下的主要职责是：
 
 - `ContextBuilder` 和 `InstructionResolver` 构建本次模型请求；
@@ -119,9 +121,13 @@ RuntimeEngine 下的主要职责是：
 - `LoopGuard` 处理语义状态收敛；
 - `RunFinalizer` 生成有界、无 Tool 的最终回答。
 
+`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。它不是用户可配置 Hook，也不允许观察者阻断工具；可阻断的 Hook 仍需独立设计和验证。
+
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
 Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。Sampling 收到的 provisional text 在完整响应通过校验前不会持久化。可重试的 transport failure 即使已经收到 provisional text，也会复用同一个 frozen ContextSnapshot 创建新的 Model Attempt。已收到的文本或 ToolCall 不会自动重放。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。
+
+`SamplingRuntime.accept_validated_response` 是模型尝试完成与有效文本提交的单一入口。它只接受通过工具批次校验的 `ready` 或有文本的 `no_tools` 响应。工具批次随后按模型声明的顺序记录与执行；只读批次可以并行执行，但结果仍按原顺序汇总。失败的模型输出不会通过该入口进入下一次模型请求。
 
 确定的 Tool Error 只表示本次尝试失败，不会单独把 Run 置为终态。Runtime 会把失败事实交给下一次模型决策。模型可以修正参数、选择替代 Tool，或者在没有安全路径时结束。等价重复且没有新事实时，LoopGuard 负责收敛。
 
@@ -326,9 +332,9 @@ Session 展示快照与执行快照使用不同的读取入口。`session/read` 
 
 Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。`memories.sqlite` 只保存 Memory metadata，正文使用 content-addressed Markdown 文件。当前 verified compaction 尚未自动写入 MemoryStore。
 
-完整 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。`state.sqlite` 只保存版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
+ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，其中每条模型上下文项与工具定义各自按内容哈希存为共享 Blob。读取时 Runtime 按顺序重组完整请求并验证原有快照哈希；旧版完整 ContextSnapshot 仍可读取。`state.sqlite` 只保存顶层 Blob 的版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Blob GC 在删除前解析新清单并保留其共享块。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
-当前 `SCHEMA_VERSION` 是 8。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 16。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
 
@@ -340,15 +346,18 @@ In-memory 对象只保存当前协调状态、缓存、活跃资源引用和诊�
 
 Runtime 入口初始化进程级 `TelemetryProvider`。OpenTelemetry 是非权威 Observability 层，不参与 Run 状态迁移，也不替代 SQLite 业务事实。Telemetry 初始化、Span 写入、flush 或 shutdown 失败会被 Runtime 自身日志捕获，不应成为 Agent Loop 的状态来源。
 
-当前 Trace 覆盖三个主要执行边界：
+当前 Trace 覆盖入口和三个主要执行边界：
 
 ```text
-eidos.run
-  ├── eidos.model.attempt
-  └── eidos.tool.call
+eidos.rpc (仅 stdio 入口接收请求时)
+  └── eidos.run (异步 Run worker 继承入口上下文)
+       ├── eidos.model.attempt
+       │    └── Pydantic AI 原生模型 Span (仅 Direct Model API)
+       └── eidos.tool.call
+            └── eidos.run (同进程 spawn/followup 子 Agent)
 ```
 
-Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录配置 Provider、响应 Provider、resolved model、Provider response ID、响应状态、阶段、finish reason、Tool 数量、响应文本大小、TTFT、duration、transport retry 和 input/output/cache token usage。SQLite 的 Model Attempt 还记录响应文本哈希和受限协议诊断 JSON。诊断 JSON 只包含错误路径、Tool 名称、Call ID、参数字段名和类型、参数字节数、契约指纹与 Tool Snapshot 哈希。它不保存原始响应或参数值，也不生成模型 Tool 参数哈希。Tool Call Span 记录 Tool 名称、Call ID、Tool status、Workspace changed 和异常状态。
+Run Span 记录 Run、Session、Model 和终态。Model Attempt Span 记录配置 Provider、响应 Provider、resolved model、Provider response ID、响应状态、阶段、finish reason、Tool 数量、响应文本大小、TTFT、duration、transport retry 和 `eidos.model.usage.*` 用量。原生模型 Span 的标准 `gen_ai.usage.*` 用量不会与 Attempt 重复计入标准聚合。模型原生埋点仅在显式配置 Trace exporter 且 SDK 未关闭时启用，关闭内容、二进制内容和请求参数采集。SQLite 的 Model Attempt 还记录响应文本哈希和受限协议诊断 JSON。诊断 JSON 只包含错误路径、Tool 名称、Call ID、参数字段名和类型、参数字节数、契约指纹与 Tool Snapshot 哈希。它不保存原始响应或参数值，也不生成模型 Tool 参数哈希。Tool Call Span 记录 Tool 名称、Call ID、Tool status、Workspace changed 和异常状态。Run worker 从入口或 spawn/followup 调用方继承 OTel 上下文；同进程暂停后恢复的 Run 沿用之前保存的上下文，避免把唤醒它的子 Agent 当作父节点。JSONL 日志在活跃 Span 内记录 `traceId`、`spanId`。
 
 `OTEL_TRACES_EXPORTER` 默认是 `none`。当前支持 `console` 和 `otlp`；console exporter 写 stderr，OTLP 使用 HTTP Trace exporter。`OTEL_SDK_DISABLED` 可以关闭 SDK，`OTEL_SERVICE_NAME` 可以覆盖默认的 `eidos-runtime`，`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 可以设置 OTLP Trace endpoint。
 
@@ -678,3 +687,21 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 ### 澄清参数纠错与展示
 
 `request_user_input` 的字段说明提供完整嵌套示例、题型约束和自定义输入说明，工具名称与原始描述保持不变。Pydantic 校验最多保留八项字段路径与错误原因，不回传参数值；参数错误反馈说明问题尚未提交，并给出修正方式。Runtime 的参数错误指纹区分首项字段路径和原因，不包含参数值、错误文案或问题措辞。连续相同校验错误仍受原有 LoopGuard 限制。失败或取消的澄清调用沿用普通工具结果展示，只有成功的回答结果进入澄清历史。
+
+## 子 Agent 委派（Schema v16）
+
+本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文、父 Run 的模型、审批模式和扩展快照；父 Run 活跃时可使用它已批准的 Run 范围 Grant。子任务不继承父任务的完整对话。
+
+`explorer` 只获得文件读取与发给父任务的 `send_message`。默认 `worker` 复用已有文件、Shell、Skill 与扩展工具执行链，受自身 Run 权限快照、审批、Seatbelt、Intent 和结果核验约束。子任务不暴露委派工具、`request_permissions` 或 `declare_outputs`。子 Session 不能通过普通 `run/start` 独立启动，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除只清理其事实，不删除借用的目录。
+
+SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、角色、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
+
+父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 只能启动已经结束的子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 2 个子 Run。每个接收 Session 最多保存 16 条 Agent 消息，每条最多 2,000 字符。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
+
+`wait_agents` 将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；等待不占用模型调用或专属等待线程。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务不能在子任务仍活跃时正常结束。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交也必须先结束或停止子任务。
+
+用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。每次调度都会检查并取消父任务已结束或请求取消的子 Run，即使父任务没有创建等待记录。监督任务在等待期间也会做同样的检查。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
+
+Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表及待审批数量；工作区关闭时，环境信息入口仍会提示待审批数。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和分页记录。主 Session 不嵌入子任务面板。
+
+v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。
