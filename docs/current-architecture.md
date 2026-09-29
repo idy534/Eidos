@@ -697,8 +697,8 @@ SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当�
 
 `wait_agents` 将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；等待不占用模型调用或专属等待线程。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务不能在子任务仍活跃时正常结束。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交也必须先结束或停止子任务。
 
-用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。父任务异常结束后，监督任务会收敛剩余子 Run。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
+用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。每次调度都会检查并取消父任务已结束或请求取消的子 Run，即使父任务没有创建等待记录。监督任务在等待期间也会做同样的检查。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
 
-Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和分页记录。主 Session 不嵌入子任务面板。
+Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表及待审批数量；工作区关闭时，环境信息入口仍会提示待审批数。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和分页记录。主 Session 不嵌入子任务面板。
 
 v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。

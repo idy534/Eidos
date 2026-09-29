@@ -339,3 +339,52 @@ def test_parent_session_delete_removes_managed_child_facts_only(tmp_path: Path) 
         assert workspace.exists()
     finally:
         store.close()
+
+
+def test_failed_parent_cancels_orphan_without_agent_wait(tmp_path: Path) -> None:
+    from eidos_runtime.runtime.supervisor import RunSupervisor
+
+    store, _session, parent = _parent(tmp_path)
+    try:
+        repository, child, _item_id = _spawn(store, parent, 0)
+        supervisor = RunSupervisor(
+            store, model_for=lambda _run_id: None, notify=lambda _event: None,
+            scan_feedback=lambda _text: "", can_run=lambda: False,
+            shell_available=lambda: False, sensitive=lambda: None,
+        )
+        store.fail_run(str(parent["id"]), "test_failure")
+
+        assert repository.orphan_runs() == (child.run_id,)
+        assert not repository.has_pending_waits()
+        supervisor.schedule_next()
+
+        assert store.read_run(child.run_id)["status"] == "canceled"
+        assert repository.orphan_runs() == ()
+    finally:
+        store.close()
+
+
+def test_failed_parent_requests_cancel_for_running_child(tmp_path: Path) -> None:
+    from eidos_runtime.runtime.supervisor import RunHandle, RunSupervisor, RunWorkerState
+
+    store, _session, parent = _parent(tmp_path)
+    try:
+        _repository, child, _item_id = _spawn(store, parent, 0)
+        assert store.claim_next_run()["id"] == child.run_id
+        supervisor = RunSupervisor(
+            store, model_for=lambda _run_id: None, notify=lambda _event: None,
+            scan_feedback=lambda _text: "", can_run=lambda: False,
+            shell_available=lambda: False, sensitive=lambda: None,
+        )
+        cancellation = threading.Event()
+        supervisor._handles[child.run_id] = RunHandle(
+            child.run_id, threading.Thread(), cancellation, RunWorkerState.RUNNING
+        )
+        store.fail_run(str(parent["id"]), "test_failure")
+
+        supervisor.schedule_next()
+
+        assert cancellation.is_set()
+        assert store.read_run(child.run_id)["cancelRequestedAt"] is not None
+    finally:
+        store.close()

@@ -236,6 +236,9 @@ class RunSupervisor:
         if self.store.health_state == "ready" and self.lifecycle is RuntimeLifecycle.RUNNING:
             self._ensure_agent_maintenance()
             self.collaboration.repository.wake()
+            # A parent can fail without ever calling wait_agents. Its children
+            # must be settled before the scheduler considers another Run.
+            self._cancel_orphan_agents()
         while True:
             start = self.prepare_next()
             if start is None:
@@ -277,10 +280,12 @@ class RunSupervisor:
     def _settle_agents(self) -> None:
         if self.lifecycle is not RuntimeLifecycle.RUNNING:
             return
-        for run_id in self.collaboration.repository.orphan_runs():
-            self.cancel_agent(run_id)
         self.schedule_next()
         self.events.deliver_pending()
+
+    def _cancel_orphan_agents(self) -> None:
+        for run_id in self.collaboration.repository.orphan_runs():
+            self.cancel_agent(run_id)
 
     def cancel_agent(self, run_id: str) -> None:
         if self.store.read_run(run_id)["status"] not in ACTIVE_STATUSES:
