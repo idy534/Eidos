@@ -666,8 +666,30 @@ class MemoryService:
         changed = False
         with self.database.transaction() as connection:
             self._cancel_revoked(connection)
+            revoked_revision = (
+                "(e.status IN ('forgotten','quarantined') OR (r.user_owned=0 AND EXISTS("
+                "SELECT 1 FROM memory_evidence v LEFT JOIN memory_source_items i ON i.item_id=v.item_id "
+                "LEFT JOIN memory_sources s ON s.session_id=v.session_id "
+                "WHERE v.entry_id=r.entry_id AND v.revision=r.revision AND "
+                "(i.item_id IS NULL OR i.eligible=0 OR i.item_revision<>v.item_revision OR s.deleted=1 OR s.temporary=1))))"
+            )
+            # Actions contain a second body copy. Scrub it even when the body
+            # file was already removed or filesystem cleanup must be retried.
+            redacted_actions = connection.execute(
+                "UPDATE memory_actions SET request_json='[privacy-revoked]' "
+                "WHERE request_json<>'[privacy-revoked]' AND EXISTS("
+                "SELECT 1 FROM memory_revisions r JOIN memory_entries e ON e.id=r.entry_id "
+                "WHERE r.entry_id=memory_actions.entry_id AND "
+                "r.revision=json_extract(memory_actions.result_json,'$.revision') AND "
+                + revoked_revision + ")"
+            ).rowcount
+            changed |= redacted_actions > 0
+            if redacted_actions:
+                logger.info("Memory revoked action payloads scrubbed count=%s", redacted_actions)
             rows = connection.execute(
-                "SELECT r.entry_id,r.revision,r.file_ref FROM memory_revisions r JOIN memory_entries e ON e.id=r.entry_id WHERE r.file_ref IS NOT NULL AND (e.status IN ('forgotten','quarantined') OR (r.user_owned=0 AND EXISTS(SELECT 1 FROM memory_evidence v LEFT JOIN memory_source_items i ON i.item_id=v.item_id LEFT JOIN memory_sources s ON s.session_id=v.session_id WHERE v.entry_id=r.entry_id AND v.revision=r.revision AND (i.item_id IS NULL OR i.eligible=0 OR i.item_revision<>v.item_revision OR s.deleted=1 OR s.temporary=1)))) LIMIT 500"
+                "SELECT r.entry_id,r.revision,r.file_ref FROM memory_revisions r "
+                "JOIN memory_entries e ON e.id=r.entry_id WHERE r.file_ref IS NOT NULL AND "
+                + revoked_revision + " LIMIT 500"
             ).fetchall()
             for row in rows:
                 try:

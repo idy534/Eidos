@@ -366,3 +366,38 @@ def test_short_word_search_continues_past_empty_scan_page(store):
     page = service.read(MemoryReadRequest(query="简洁", limit=5, cursor=page.next_cursor))
     assert [entry.id for entry in page.entries] == [best.entry_id]
     assert not page.truncated
+
+
+def test_source_cleanup_scrubs_action_copy_after_body_removal(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    run, item = store.create_run(session["id"], "private preference from a source")
+    saved = remember(store, "private preference from a source", session_id=session["id"], source_item_ids=[item["id"]])
+    store.fail_run(run["id"], "fixture_finished")
+    store.delete_session(session["id"])
+    service = store.database.memory
+    service.cleanup()
+    row = store.connection.execute("SELECT request_json,result_json,operation_id FROM memory_actions WHERE entry_id=?", (saved.entry_id,)).fetchone()
+    assert row["request_json"] == "[privacy-revoked]"
+    assert saved.entry_id in row["result_json"] and row["operation_id"]
+    assert store.connection.execute("SELECT file_ref FROM memory_revisions WHERE entry_id=?", (saved.entry_id,)).fetchone()[0] is None
+    # A previously removed body must not hide a lingering legacy action copy.
+    store.connection.execute("UPDATE memory_actions SET request_json='legacy private preference' WHERE entry_id=?", (saved.entry_id,))
+    store.connection.commit()
+    service.cleanup()
+    assert store.connection.execute("SELECT request_json FROM memory_actions WHERE entry_id=?", (saved.entry_id,)).fetchone()[0] == "[privacy-revoked]"
+
+
+def test_source_cleanup_preserves_independent_correction_and_its_action(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    run, item = store.create_run(session["id"], "old linked preference")
+    saved = remember(store, "old linked preference", session_id=session["id"], source_item_ids=[item["id"]])
+    service = store.database.memory
+    service.manage(MemoryManageRequest(session_id=session["id"], operation_id="own-correction", entry_id=saved.entry_id, expected_revision=1, action="correct", content="independent corrected preference"))
+    store.fail_run(run["id"], "fixture_finished")
+    store.delete_session(session["id"])
+    service.cleanup()
+    actions = dict(store.connection.execute("SELECT operation_id,request_json FROM memory_actions WHERE entry_id=?", (saved.entry_id,)))
+    assert "independent corrected preference" in actions.pop("own-correction")
+    assert set(actions.values()) == {"[privacy-revoked]"}
+    consumer = store.create_session(str(tmp_path / "workspace"))
+    assert service.get(MemoryGetRequest(session_id=consumer["id"], entry_id=saved.entry_id)).entry.content == "independent corrected preference"

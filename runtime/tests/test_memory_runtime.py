@@ -406,3 +406,23 @@ def test_model_search_tool_can_continue_after_empty_short_word_page(setup):
     assert results[1]["outcome"] == "success"
     assert results[1]["data"]["entries"][0]["id"] == target.entry_id
     assert results[1]["data"].get("next_cursor") is None
+
+
+def test_backup_excludes_revoked_source_action_body(setup, tmp_path):
+    import sqlite3
+
+    store, session = setup
+    run, item = store.create_run(session["id"], "private source preference")
+    entry = store.database.memory.record(MemoryWriteRequest(session_id=session["id"], operation_id="private-source", content="private source preference", source_item_ids=[item["id"]]))
+    store.fail_run(run["id"], "fixture_finished")
+    store.delete_session(session["id"])
+    archive = tmp_path / "cleaned.zip"
+    backup(store.database.memory, archive)
+    with zipfile.ZipFile(archive) as zipped:
+        state = tmp_path / "copied.sqlite"
+        state.write_bytes(zipped.read("state.sqlite"))
+    with sqlite3.connect(state) as connection:
+        request, result = connection.execute("SELECT request_json,result_json FROM memory_actions WHERE entry_id=?", (entry.entry_id,)).fetchone()
+        assert request == "[privacy-revoked]"
+        assert entry.entry_id in result
+        assert not connection.execute("SELECT 1 FROM memory_actions WHERE request_json LIKE '%private source preference%'").fetchone()

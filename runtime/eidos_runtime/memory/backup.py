@@ -25,7 +25,6 @@ def backup(service: MemoryService, destination: Path) -> None:
     """
     database = service.database
     blobs = database.json_blobs
-    service.cleanup()
     destination = destination.absolute()
     if destination.suffix != ".zip":
         raise MemoryRejected("memory_backup_path_invalid")
@@ -35,6 +34,8 @@ def backup(service: MemoryService, destination: Path) -> None:
     staged = Path(name)
     try:
         with database.lock, blobs.lock, tempfile.TemporaryDirectory() as scratch:
+            # Cleanup and the copied state share the privacy publication lock.
+            service.cleanup()
             collect_unreferenced_blobs(database, blobs)
             connection = database.connection()
             if connection.in_transaction:
