@@ -196,6 +196,8 @@ class ResponseActionRepository:
                 """,
                 (run_id, source_run_id, revision_kind, now_ms()),
             )
+            from eidos_runtime.memory.lifecycle import invalidate_source
+            invalidate_source(connection, source['session_id'], reason='revision', run_id=source_run_id)
 
     def _connection(self) -> sqlite3.Connection:
         connection = self._store.connection

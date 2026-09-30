@@ -68,6 +68,8 @@ from eidos_runtime.model.config import (
 from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
 )
+from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
+from eidos_runtime.memory.jobs import MemoryJobs
 from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.git.manager import WorktreeManager
@@ -642,6 +644,7 @@ class RuntimeServer:
         self.model_config = ModelConfigStore(data_directory)
         self.model = model
         self.model_gateway: ModelGateway | None = None
+        self.memory_jobs: MemoryJobs | None = None
         self._frozen_model_configs: dict[str, ModelConfig] = {}
         self._frozen_model_configs_lock = threading.RLock()
         self.async_kernel: RuntimeAsyncKernel | None = None
@@ -1014,6 +1017,9 @@ class RuntimeServer:
                     request
                 ),
             ),
+            *((method, request, response,
+               lambda _id, payload, method=method: MemoryApplication(self.store, self.memory_jobs).dispatch(method, payload))
+              for method, request, response in MEMORY_METHODS),
             ("agent/read", AgentReadRequest, CollaborationState,
              lambda _id, request: self.supervisor.collaboration.read_session(request.session_id)),
             ("agent/stop", AgentStopRequest, CollaborationState,
@@ -1308,6 +1314,7 @@ class RuntimeServer:
             "mcp/update",
             "mcp/remove",
         }
+        draining_blocked.update(method for method, _request, _response in MEMORY_METHODS if method not in {"memory/list", "memory/get", "memory/export"})
         reconfiguration_blocked = {"run/start"}
         for name, request_type, response_type, handler in handlers:
             registry.register(
@@ -1574,6 +1581,10 @@ class RuntimeServer:
                 self.supervisor.verify_restart_state()
                 self._applications = self._build_applications()
                 self._applications.sessions.recover_handoffs()
+                self.store.database.memory.on_cleanup = self.store.collect_unreferenced_blobs
+                self.memory_jobs = MemoryJobs(self.store.database.memory, self.model_config, self.model_gateway,
+                                              lambda: self.supervisor.has_active_workers() or self.supervisor.control_state is not RuntimeControlState.RUNNING)
+                self.supervisor.start_managed_task("memory", self.memory_jobs.run, persistent=True)
         except (
             StorageError,
             ModelConfigError,

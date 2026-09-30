@@ -144,6 +144,13 @@ class InputEventPayload(ClosedModel):
     input_id: str = Field(alias="inputId")
 
 
+class MemoryChangedPayload(ClosedModel):
+    scope_id: str = Field(alias="scopeId")
+    generation: int
+    privacy_epoch: int = Field(alias="privacyEpoch")
+    reason: str
+
+
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_CREATED: SessionCreatedPayload,
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
@@ -174,6 +181,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.CONTEXT_COMPACTED: ContextCompactedPayload,
     EventType.INPUT_QUEUED: InputEventPayload,
     EventType.INPUT_INJECTED: InputEventPayload,
+    EventType.MEMORY_CHANGED: MemoryChangedPayload,
 }
 
 

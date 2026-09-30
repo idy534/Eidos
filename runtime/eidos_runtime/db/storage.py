@@ -530,6 +530,11 @@ class SessionStore:
             )
         )
 
+    def collect_unreferenced_blobs(self) -> None:
+        layout = self._persistence_layout
+        if layout is not None:
+            layout.garbage_collect_blobs(self._database)
+
     def delete_session(
         self,
         session_id: str,

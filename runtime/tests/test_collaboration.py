@@ -74,7 +74,7 @@ def test_v15_migration_creates_collaboration_tables_and_rolls_back_on_fk_failure
     clean = SessionStore(tmp_path / "clean-data")
     clean.initialize()
     try:
-        assert SCHEMA_VERSION == 16
+        assert SCHEMA_VERSION == 18
         assert clean.connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_waits'"
         ).fetchone() is not None

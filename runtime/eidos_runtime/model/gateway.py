@@ -10,6 +10,7 @@ from eidos_runtime.model.config import (
     ModelReasoningSelection,
 )
 from eidos_runtime.model.client import ModelClient
+from eidos_runtime.model.gateway_types import RetryPolicy
 from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
     PydanticAIModelClient,
@@ -69,9 +70,16 @@ class ModelGateway:
         config: ModelConfig,
         *,
         reasoning_selection: ModelReasoningSelection | None = None,
+        max_output_tokens: int | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> ModelGatewayLease:
         spec = MODEL_CATALOG.profile(config.id, config=config)
-        built = build_pydantic_model(config, wire_api=spec.wire_api)
+        if max_output_tokens is not None:
+            if not 1 <= max_output_tokens <= spec.max_output_tokens:
+                raise ValueError("model_output_limit_invalid")
+            spec = spec.model_copy(update={"max_output_tokens": max_output_tokens})
+        built = (build_pydantic_model(config, wire_api=spec.wire_api, retry_policy=retry_policy)
+                 if retry_policy is not None else build_pydantic_model(config, wire_api=spec.wire_api))
         profile_snapshot = spec.snapshot(
             config, reasoning_selection=reasoning_selection
         )

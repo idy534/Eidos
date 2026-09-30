@@ -13,7 +13,7 @@ MAX_AGENTS = 16
 MAX_ACTIVE_AGENTS = 2
 AgentRole = Literal["explorer", "worker"]
 READ_ONLY_TOOLS = frozenset({
-    "list_files", "read_file", "read_file_range", "search_text", "search_text_wait", "read_tool_output",
+    "list_files", "read_file", "read_file_range", "search_text", "search_text_wait", "read_tool_output", "memory_search", "memory_read",
 })
 AGENT_TOOLS = frozenset({
     "spawn_agent", "send_message", "followup_task", "wait_agents", "list_agents", "stop_agent",

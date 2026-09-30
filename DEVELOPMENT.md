@@ -379,3 +379,30 @@ macOS 原生验收需要覆盖完全访问的网络、外部 cwd、外部普通�
 Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦点、原生右键菜单、Finder 多文件拖放、剪贴板图片、批量部分失败、引用预览与移除、行范围和历史消息选择，以及 Run 执行时修改下一轮草稿。macOS 真机行为不能由 Renderer mock 代替。
 
 测试阶段沿用本文和 AGENTS.md 的现有协议、Runtime、Main、Desktop、构建、Seatbelt native 和 Electron smoke 门槛。开发者还需要同步旧 Schema 版本断言和现有调用 Fixture。本批没有增加生产依赖，也没有改变安装与启动命令。
+
+## 记忆系统开发与验收
+
+契约修改后运行 `node scripts/generate-memory-contracts.mjs` 并提交三份 `desktop/shared/memory*.generated.ts`。定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_jobs.py runtime/tests/test_memory_runtime.py
+pnpm test:desktop
+```
+
+人工验收使用新的数据目录和已配置模型：
+
+1. 设置 → 记忆：默认使用开启、生成关闭；保存中文偏好，在另一会话检索、读取并跳转来源。
+2. 确认自动生成，完成含明确偏好的会话，等待去抖，检查证据、任务和候选确认。关闭再开启应跳过关闭期间资料，历史必须单独回填。
+3. 检查不同 Project、Projectless、Child 的授权范围，以及临时模式禁用使用/学习。
+4. 纠正、固定、归档、遗忘；请求途中遗忘时旧响应应丢弃，后续请求重建；删除或修订来源也应撤销相关正文。
+5. 删除或重配置任务模型，检查 blocked_model 与显式重试；调整预算并检查 paused_budget、重启恢复。
+6. 导出当前页 Markdown，保存完整 ZIP；退出 Runtime 后导入新目录，核对正文、版本、隐私状态，并确认自动学习关闭。
+
+离线恢复（目标目录必须不存在，不能与运行中的数据合并）：
+
+```bash
+uv run --locked python -m eidos_runtime.memory.backup /absolute/path/backup.zip /absolute/path/new-eidos-data
+EIDOS_DATA_DIR=/absolute/path/new-eidos-data pnpm start
+```
+
+ZIP 含私有聊天、记忆和执行状态，可能含 MCP 环境配置，未加密。Provider 配置和 Workspace 不包含在内，需另行配置/恢复路径。旧备份可能恢复之后被遗忘资料；恢复默认取消旧作业与回填授权、关闭生成，需要明确确认后重新启用。不要仅复制 `state.sqlite` 当作完整备份。

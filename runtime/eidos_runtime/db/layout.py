@@ -418,27 +418,8 @@ class PersistenceLayout:
             database.close()
 
     def garbage_collect_blobs(self, state: StateDatabase) -> int:
-        with state.lock, self.json_blobs.lock:
-            references: list[str] = []
-            connection = state.connection()
-            tables = _table_names(connection)
-            for table in ("context_snapshots", "step_resolution_snapshots", "input_references"):
-                if table not in tables:
-                    continue
-                references.extend(
-                    str(row[0])
-                    for row in connection.execute(
-                        f"SELECT snapshot_json FROM {table}"
-                    )
-                )
-            if "manual_mcp_servers" in tables:
-                references.extend(
-                    str(row[0])
-                    for row in connection.execute(
-                        "SELECT env_blob_ref FROM manual_mcp_servers"
-                    )
-                )
-            return self.json_blobs.garbage_collect(references)
+        return collect_unreferenced_blobs(state, self.json_blobs)
+
 
 
 def migrate_legacy_state_database(data_directory: Path) -> None:
@@ -650,6 +631,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
                 migrate_planning(connection, PLANNING_SCHEMA_SQL)
             from eidos_runtime.db.collaboration_migration import migrate_collaboration
             migrate_collaboration(connection)
+            from eidos_runtime.memory.schema import migrate_memory, migrate_memory_use
+            migrate_memory(connection)
+            migrate_memory_use(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()
@@ -870,3 +854,27 @@ __all__ = [
     "migrate_legacy_state_database",
     "prune_repository_generations",
 ]
+
+
+def collect_unreferenced_blobs(state: StateDatabase, blobs: JsonBlobStore) -> int:
+    with state.lock, blobs.lock:
+        references: list[str] = []
+        connection = state.connection()
+        tables = _table_names(connection)
+        for table in ("context_snapshots", "step_resolution_snapshots", "input_references"):
+            if table not in tables:
+                continue
+            references.extend(
+                str(row[0])
+                for row in connection.execute(
+                    f"SELECT snapshot_json FROM {table}"
+                )
+            )
+        if "manual_mcp_servers" in tables:
+            references.extend(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT env_blob_ref FROM manual_mcp_servers"
+                )
+            )
+        return blobs.garbage_collect(references)

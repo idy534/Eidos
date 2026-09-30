@@ -1,3 +1,4 @@
+import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
 import { isCollaborationState } from "../shared/collaboration.js";
 import type { CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
@@ -316,7 +317,7 @@ export class RuntimeRequestError extends Error {
   readonly businessCode: string | undefined;
 
   constructor(error: RpcError) {
-    const businessCode = RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "")
+    const businessCode = (RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "") || /^MEMORY_[A-Z_]{1,80}$/.test(error.data?.code ?? ""))
       ? error.data?.code
       : "INTERNAL_ERROR";
     super(`EIDOS_RUNTIME_ERROR:${businessCode}`);
@@ -1054,6 +1055,11 @@ export class RuntimeClient {
         reject(error);
       });
     });
+  }
+
+  async memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]> {
+    if (!isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
+    return this.validatedRequest(method, Object.fromEntries(Object.entries(request)), (value): value is MemoryMethods[K]["response"] => isMemoryResponse(method, value));
   }
 
   private async validatedRequest<T>(

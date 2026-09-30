@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 
+from eidos_runtime.memory.context import context_epochs
+from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import (
     ModelClient,
@@ -64,6 +66,10 @@ class SamplingProtocolError(SamplingError):
     pass
 
 
+class SamplingMemoryRevoked(SamplingError):
+    pass
+
+
 class SamplingCancelled(SamplingError):
     pass
 
@@ -108,7 +114,25 @@ class SamplingRuntime:
             finish_model_attempt(span, outcome)
             return outcome
 
-    def _sample(
+    def _sample(self, step: StepContext, cancel: threading.Event) -> SamplingOutcome:
+        guard = None
+        try:
+            frozen = self.store.read_running_context_snapshot(step.run_id)
+            if frozen is None:
+                raise RuntimeError("running model attempt context snapshot is required")
+            with self.store.database.memory.admit(context_epochs(frozen.model_context), cancel) as guard:
+                if self._writer is not None:
+                    self._writer.check_cancel = lambda: self._check_cancel(guard)
+                return self._sample_unprotected(step, guard)
+        except (MemoryRejected, SamplingError) as error:
+            revoked = isinstance(error, MemoryRejected) or (guard is not None and guard.is_set() and not cancel.is_set())
+            if not revoked:
+                raise
+            self.store.complete_current_model_attempt(step.run_id, "failed", error_code="memory_snapshot_revoked",
+                                                      retry_decision={"retry": False, "reason": "memory_snapshot_revoked"})
+            raise SamplingMemoryRevoked("memory_snapshot_revoked") from None
+
+    def _sample_unprotected(
         self, step: StepContext, cancel: threading.Event
     ) -> SamplingOutcome:
         provisional_text: list[str] = []

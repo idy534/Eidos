@@ -181,6 +181,13 @@ class CheckpointRepository(Repository):
                 or row["target_run_id"] != target_run_id
             ):
                 raise StorageError("checkpoint_action_conflict")
+            from eidos_runtime.memory.lifecycle import fork_source, invalidate_source
+            source_session = connection.execute('SELECT session_id FROM runs WHERE id=?', (checkpoint.run_id,)).fetchone()[0]
+            if action == 'rewind':
+                invalidate_source(connection, source_session, reason='rewind', run_id=checkpoint.run_id, after_ordinal=checkpoint.item_ordinal)
+            else:
+                target_session = connection.execute('SELECT session_id FROM runs WHERE id=?', (target_run_id,)).fetchone()[0]
+                fork_source(connection, source_session, target_session)
 
     def action_exists(self, action_id: str) -> bool:
         with self.lock:

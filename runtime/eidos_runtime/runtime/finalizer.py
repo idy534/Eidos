@@ -7,6 +7,8 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
+from eidos_runtime.memory.context import context_epochs
+from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
 from eidos_runtime.model.client import (
     ModelClient,
@@ -159,13 +161,11 @@ class RunFinalizer:
                 "stopReason": stop_reason,
             })
             runner = ModelRunner(self.model, self.sensitive)
-            result = runner.run(
-                base_context,
-                request_cancel,
-                writer.stream,
-                instructions=resolved.text,
-                allow_tools=False,
-            )
+            with self.store.database.memory.admit(context_epochs(base_context), request_cancel) as memory_cancel:
+                result = runner.run(
+                    base_context, memory_cancel, writer.stream,
+                    instructions=resolved.text, allow_tools=False,
+                )
             if cancel.is_set():
                 raise RuntimeCancelled
             if timed_out.is_set():
@@ -174,6 +174,8 @@ class RunFinalizer:
                 writer.finish_stream()
             else:
                 failure_reason = "finalization_protocol_error"
+        except MemoryRejected:
+            failure_reason = "memory_snapshot_revoked"
         except SensitiveScanError:
             failure_reason = "finalization_sensitive_content_rejected"
         except ModelStreamInterrupted as error:

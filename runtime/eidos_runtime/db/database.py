@@ -12,6 +12,10 @@ import stat
 import threading
 import time
 from typing import Callable, Generic, Iterator, TypeVar
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eidos_runtime.memory.service import MemoryService
 
 from eidos_runtime.db.errors import (
     OperationConflictError,
@@ -37,6 +41,8 @@ from eidos_runtime.db.schema import (
     V13_SCHEMA_VERSION,
     V14_SCHEMA_VERSION,
     V15_SCHEMA_VERSION,
+    V16_SCHEMA_VERSION,
+    V17_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -109,6 +115,7 @@ class Database:
         self.health_state = "starting"
         self.health_code: str | None = None
         self._json_blobs: JsonBlobStore | None = None
+        self._memory: MemoryService | None = None
 
     def initialize(self) -> None:
         with self.lock:
@@ -154,6 +161,8 @@ class Database:
                     V13_SCHEMA_VERSION,
                     V14_SCHEMA_VERSION,
                     V15_SCHEMA_VERSION,
+                    V16_SCHEMA_VERSION,
+                    V17_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -271,6 +280,18 @@ class Database:
                     migrate_collaboration(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V16_SCHEMA_VERSION:
+                from eidos_runtime.memory.schema import migrate_memory
+                try:
+                    migrate_memory(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V17_SCHEMA_VERSION:
+                from eidos_runtime.memory.schema import migrate_memory_use
+                try:
+                    migrate_memory_use(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
             self._connection = connection
             self.health_state = "ready"
@@ -296,6 +317,14 @@ class Database:
             self._json_blobs = JsonBlobStore(self.data_directory)
         return self._json_blobs
 
+    @property
+    def memory(self) -> MemoryService:
+        with self.lock:
+            if self._memory is None:
+                from eidos_runtime.memory.service import MemoryService
+                self._memory = MemoryService(self)
+            return self._memory
+
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         with self.lock, self.connection() as connection:
@@ -312,6 +341,7 @@ class Database:
         self.health_code = _safe_health_code(error)
 
     def _close_resources(self) -> None:
+        self._memory = None
         if self._connection is not None:
             self._connection.close()
             self._connection = None

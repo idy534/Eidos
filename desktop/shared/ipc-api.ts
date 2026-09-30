@@ -1,3 +1,4 @@
+import type { MemoryMethods } from "./memory.js";
 import type { CollaborationState } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
 import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
@@ -72,6 +73,9 @@ import type {
 export type Unsubscribe = () => void;
 
 export interface EidosRuntimeAPI {
+  backupMemory(): Promise<void>;
+  memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]>;
+
   // Runtime
   getStatus(): Promise<RuntimeStatus>;
   getHealth(): Promise<RuntimeHealth>;

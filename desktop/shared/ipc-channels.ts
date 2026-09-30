@@ -86,6 +86,8 @@ export const IPC = {
   INPUT_DRAFT_WRITE: "input:draftWrite",
   AGENT_READ: "agent:read",
   AGENT_STOP: "agent:stop",
+  MEMORY_BACKUP: "memory:backup",
+  MEMORY_REQUEST: "memory:request",
   PLANNING_READ: "planning:read",
   PLANNING_ANSWER: "planning:answer",
   PLAN_READ: "plan:read",
