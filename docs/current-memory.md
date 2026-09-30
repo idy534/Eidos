@@ -67,11 +67,11 @@ FTS、摘要与目录是可重建投影。旧 `memories.sqlite` / MemoryStore me
 
 ## Desktop、备份和验收
 
-设置页提供范围、独立使用/生成开关、临时模式、手动保存、候选确认、搜索分页、历史版本、来源跳转、纠正/固定/归档/遗忘、预算、任务状态、重试、索引重建、导出与完整备份。旧版本管理按钮不能修改当前版本。
+设置页提供范围、独立使用/生成开关、临时模式、手动保存、候选确认、搜索分页、历史版本、来源跳转、纠正/固定/归档/遗忘、预算、任务状态、重试、索引重建、导出与完整备份。旧版本管理按钮不能修改当前版本。搜索列表提供短预览；纠正前读取完整当前版本，并用该版本执行 CAS，读取失败时不打开编辑框。
 
 Python 严格 DTO 是共享契约来源；`node scripts/generate-memory-contracts.mjs` 生成 TypeScript 类型与 JSON Schema。Main 使用 AJV2020 校验白名单请求/响应，preload 暴露 typed IPC。备份路径只由 Main 原生保存对话框选择，Renderer 不能自由指定。
 
-Markdown 导出仅当前页，并提供截断提示。完整 ZIP 一致复制 SQLite、所有被引用记忆/派生文件与执行 Blob，核对引用、文件与 epoch 后原子发布。Provider 配置和 Workspace 不包含在内。ZIP 包含私有聊天，可能含 MCP 环境配置，未加密。
+Markdown 导出仅当前页，并提供截断提示；页内包含完整正文，历史搜索导出对应的具体版本。完整 ZIP 一致复制 SQLite、所有被引用记忆/派生文件与执行 Blob，核对引用、文件与 epoch 后原子发布。Provider 配置和 Workspace 不包含在内。ZIP 包含私有聊天，可能含 MCP 环境配置，未加密。
 
 恢复只支持离线导入新的目录，禁止覆盖或合并运行数据。旧备份无法知道之后的遗忘：保留备份中的 epoch 和 suppression，但默认关闭自动生成、取消旧待执行作业及回填授权，用户确认后才能重新学习。命令和人工验收见 [DEVELOPMENT.md](../DEVELOPMENT.md)。
 

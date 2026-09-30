@@ -257,3 +257,18 @@ def test_modified_evidence_invalidates_memory_even_with_same_item_count(
         store.database.memory.get(
             MemoryGetRequest(session_id=session["id"], entry_id=saved.entry_id)
         )
+
+
+def test_search_export_preserves_full_body_and_exact_historical_revision(store):
+    service = store.database.memory
+    body = 'SQLite ' + 'detail ' * 160 + 'IMPORTANT TAIL'
+    saved = remember(store, body)
+    assert len(service.read(MemoryReadRequest(query='SQLite')).entries[0].content) == 512
+    exported = service.export(MemoryReadRequest(query='SQLite'))
+    assert body in exported.markdown
+    service.manage(MemoryManageRequest(operation_id='export-correction', entry_id=saved.entry_id,
+                                      expected_revision=1, action='correct', content='Use PostgreSQL instead'))
+    historical = service.export(MemoryReadRequest(query='SQLite', include_history=True))
+    assert body in historical.markdown
+    assert 'revision: 1; status: superseded' in historical.markdown
+    assert 'PostgreSQL' not in historical.markdown

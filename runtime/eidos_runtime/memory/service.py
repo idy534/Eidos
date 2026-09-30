@@ -566,16 +566,19 @@ class MemoryService:
 
     def export(self, request: MemoryReadRequest) -> MemoryExport:
         # An explicit, bounded export contains bodies plus an epoch manifest.
-        state = self.read(request)
+        with self.database.transaction() as connection:
+            scopes = self.repository.scopes(connection, request.session_id, request.scope)
+            entries, truncated, _cursor = self.repository.search(connection, request)
+            epochs = {s.id: s.privacy_epoch for s in scopes}
         markdown = "# Eidos memories\n\n" + "\n\n".join(
             f"## {e.title}\n\nID: {e.id}; revision: {e.revision}; status: {e.status}\n\n{e.content}"
-            for e in state.entries
+            for e in entries
         )
-        if state.truncated:
+        if truncated:
             markdown += "\n\n[This page is incomplete. Continue with the returned cursor before making a backup.]"
         return MemoryExport(
             markdown=markdown,
-            privacy_epochs={s.id: s.privacy_epoch for s in state.scopes},
+            privacy_epochs=epochs,
         )
 
     def refresh_generation(self, scope_id: str) -> None:

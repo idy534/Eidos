@@ -60,3 +60,37 @@ describe("Memory settings", () => {
     expect(screen.getByRole("button", {name: "固定"})).toBeEnabled();
   });
 });
+
+it("loads the full current revision before correcting a search preview", async () => {
+  const {memory} = mount();
+  const user = userEvent.setup();
+  const body = "默认使用中文" + "完整内容".repeat(200) + "保留尾部";
+  memory.mockImplementation(async (method) => {
+    if (method === "memory/get") return {entry: {...state.entries[0], revision: 4, content: body}};
+    return state;
+  });
+  await screen.findByText("默认使用中文");
+  await user.type(screen.getByRole("textbox", {name: "搜索记忆"}), "中文");
+  await user.click(screen.getByRole("button", {name: "纠正"}));
+  const editor = await screen.findByRole("textbox", {name: "纠正记忆正文"});
+  expect(memory).toHaveBeenCalledWith("memory/get", {sessionId: "session", entryId: "entry"});
+  expect(editor).toHaveValue(body);
+  await user.type(editor, "补充");
+  await user.click(screen.getByRole("button", {name: "确认"}));
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/manage", expect.objectContaining({
+    expectedRevision: 4, content: body + "补充", action: "correct",
+  })));
+});
+
+it("keeps the correction dialog closed when the full body cannot be loaded", async () => {
+  const {memory} = mount();
+  const user = userEvent.setup();
+  memory.mockImplementation(async (method) => {
+    if (method === "memory/get") throw new Error("MEMORY_ENTRY_UNAVAILABLE");
+    return state;
+  });
+  await screen.findByText("默认使用中文");
+  await user.click(screen.getByRole("button", {name: "纠正"}));
+  await screen.findByText("MEMORY_ENTRY_UNAVAILABLE");
+  expect(screen.queryByRole("textbox", {name: "纠正记忆正文"})).not.toBeInTheDocument();
+});

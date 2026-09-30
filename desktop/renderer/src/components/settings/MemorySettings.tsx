@@ -54,6 +54,18 @@ export function MemorySettings({sessionId, onOpenSource}: {sessionId?: string | 
     return window.eidosRuntime.memory("memory/manage", {sessionId: sessionId ?? null, entryId: entry.id, expectedRevision: entry.revision,
       action, operationId: crypto.randomUUID(), ...(revised === undefined ? {} : {content: revised})});
   }
+  async function openCorrection(entry: MemoryEntry) {
+    setBusy(true); setError("");
+    const token = generation.current;
+    try {
+      // Search rows contain previews. Editing always starts from a full version.
+      const result = await window.eidosRuntime.memory("memory/get", {sessionId: sessionId ?? null, entryId: entry.id});
+      if (token !== generation.current) return;
+      setEditing(result.entry); setEditContent(result.entry.content);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "无法读取完整记忆，请刷新后重试。");
+    } finally { setBusy(false); }
+  }
   const selected = state?.scopes[0];
   function update(settings: Settings) {
     return perform(() => window.eidosRuntime.memory("memory/settingsUpdate", {sessionId: sessionId ?? null, scope, settings}));
@@ -90,7 +102,7 @@ export function MemorySettings({sessionId, onOpenSource}: {sessionId?: string | 
         <p>{entry.userOwned ? "用户独立保存" : `来源：${entry.evidenceClass}`} · {new Date(entry.updatedAt).toLocaleString()}</p>
         {entry.validFrom != null && <p>有效期：{new Date(entry.validFrom).toLocaleDateString()} — {entry.validTo == null ? "未设结束日期" : new Date(entry.validTo).toLocaleDateString()}</p>}
         {entry.evidence.map((source) => <Button key={source.itemId} size="small" variant="ghost" disabled={!onOpenSource} onClick={() => onOpenSource?.(source.sessionId)}>查看来源对话</Button>)}
-        <Button size="small" variant="secondary" disabled={busy || entry.status === "superseded"} onClick={() => {setEditing(entry); setEditContent(entry.content);}}>纠正</Button>
+        <Button size="small" variant="secondary" disabled={busy || entry.status === "superseded"} onClick={() => void openCorrection(entry)}>纠正</Button>
         <Button size="small" variant="ghost" disabled={busy || entry.status === "superseded"} onClick={() => void perform(() => manage(entry, entry.pinned ? "unpin" : "pin"))}>{entry.pinned ? "取消固定" : "固定"}</Button>
         {entry.status === "candidate" && <Button size="small" disabled={busy} onClick={() => void perform(() => manage(entry, "accept"))}>确认生效</Button>}
         {entry.status !== "archived" && <Button size="small" variant="ghost" disabled={busy || entry.status === "superseded"} onClick={() => void perform(() => manage(entry, "archive"))}>归档</Button>}
