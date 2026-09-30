@@ -16,11 +16,14 @@ import { PluginSettings } from "./PluginSettings.js";
 import { SkillSettings } from "./SkillSettings.js";
 import { McpSettings } from "./McpSettings.js";
 import { RuntimeSettings } from "./RuntimeSettings.js";
+import { MemorySettings } from "./MemorySettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
 import { Button } from "../Button.js";
 
 interface SettingsPageProps {
   initialCategory?: SettingsCategory;
+  sessionId?: string | undefined;
+  onOpenMemorySource?: ((id: string) => void) | undefined;
   runtime: RuntimeStatus;
   modelList?: ModelListResult | undefined;
   modelLoading?: boolean | undefined;
@@ -46,6 +49,8 @@ interface SettingsPageProps {
 
 export function SettingsPage({
   initialCategory = "model",
+  sessionId,
+  onOpenMemorySource,
   runtime,
   modelList,
   modelLoading,
@@ -99,6 +104,7 @@ export function SettingsPage({
   const mcpHasError = mcpServers.some((s) => Boolean(s.errorCode));
   const categories: SettingsCategoryItem[] = [
     { id: "model", label: "模型" },
+    { id: "memory", label: "记忆" },
     { id: "plugins", label: "Plugins", count: plugins.length },
     { id: "skills", label: "技能", count: skills.length },
     {
@@ -147,6 +153,8 @@ export function SettingsPage({
               <p className="error-banner" role="alert">{extensionError}</p>
             )}
 
+            {activeCategory === "memory" && storageReady && <MemorySettings sessionId={sessionId} onOpenSource={onOpenMemorySource}/>}
+            {activeCategory === "memory" && !storageReady && <p role="alert">Runtime 尚未就绪。</p>}
             {activeCategory === "model" && (
               <ModelSettings
                 modelList={modelList}

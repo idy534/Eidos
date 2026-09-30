@@ -1,3 +1,4 @@
+import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell as electronShell } from "electron";
@@ -1182,6 +1183,18 @@ ipcMain.handle(IPC.AGENT_READ, (event, sessionId: unknown) => {
 ipcMain.handle(IPC.AGENT_STOP, (event, parentRunId: unknown, agentId: unknown) => {
   inputOwner(event);
   return clientOrThrow().stopAgent(inputKey(parentRunId), inputKey(agentId));
+});
+ipcMain.handle(IPC.MEMORY_BACKUP, async (event) => {
+  inputOwner(event);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner) throw new Error("无法打开备份保存窗口。");
+  const result = await dialog.showSaveDialog(owner, {title: "备份记忆和对话（明文）", defaultPath: "eidos-memory-backup.zip", filters: [{name: "ZIP", extensions: ["zip"]}]});
+  if (!result.canceled && result.filePath) await clientOrThrow().memory("memory/backup", {destination: result.filePath});
+});
+ipcMain.handle(IPC.MEMORY_REQUEST, (event, method: unknown, request: unknown) => {
+  inputOwner(event);
+  if (!isMemoryMethod(method) || method === "memory/backup" || !isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
+  return clientOrThrow().memory(method, request);
 });
 ipcMain.handle(IPC.PLANNING_READ, (event, sessionId: unknown) => {
   inputOwner(event);

@@ -6488,3 +6488,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
 .input-thumbnail { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; overflow: hidden; border-radius: 3px; }
 .input-thumbnail img { width: 18px; height: 18px; object-fit: cover; }
 
+
+.memory-entry { padding: 16px 0; border-bottom: 1px solid var(--border-color, #ddd); }
+.memory-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-entry small { font-size: 12px; font-weight: normal; }
+.memory-entry-list + button { margin-top: 8px; }

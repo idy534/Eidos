@@ -1,4 +1,4 @@
-export type SettingsCategory = "model" | "plugins" | "skills" | "mcp" | "worktrees" | "runtime";
+export type SettingsCategory = "memory" | "model" | "plugins" | "skills" | "mcp" | "worktrees" | "runtime";
 
 export type SettingsPendingAction =
   | { type: "configure_model" }
