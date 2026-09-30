@@ -382,3 +382,27 @@ def test_temporary_switch_revokes_tool_payload_even_without_projection(setup):
     assert "Chinese" not in str(tools)
     assert "memory_snapshot_revoked" in tools[0]["resultJson"]
     assert "Chinese" not in str([i for i in model.contexts[-1] if str(i.get("name", "")).startswith("memory_")])
+
+
+def test_model_search_tool_can_continue_after_empty_short_word_page(setup):
+    store, session = setup
+    service = store.database.memory
+    for index in range(500):
+        service.record(MemoryWriteRequest(session_id=session["id"], operation_id=f"other-{index}", content=f"无关条目 {index}"))
+    target = service.record(MemoryWriteRequest(session_id=session["id"], operation_id="target", content="请保持简洁"))
+    # Discover the same opaque cursor that the actual tool must expose.
+    cursor = service.read(MemoryReadRequest(session_id=session["id"], query="简洁", limit=5), for_use=True).next_cursor
+    run, _ = store.create_run(session["id"], "检索简洁偏好")
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("first", "memory_search", {"query": "简洁"}),)),
+        ModelResponse(tool_calls=(ModelToolCall("next", "memory_search", {"query": "简洁", "cursor": cursor}),)),
+        ModelResponse(text="已找到偏好。"),
+    ])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    results = [json.loads(i["toolCall"]["resultJson"]) for i in store.read_session_snapshot(session["id"])["items"] if i["kind"] == "tool_call"]
+    assert results[0]["outcome"] == "success"
+    assert results[0]["data"]["entries"] == []
+    assert results[0]["data"]["truncated"] and results[0]["data"]["next_cursor"] == cursor
+    assert results[1]["outcome"] == "success"
+    assert results[1]["data"]["entries"][0]["id"] == target.entry_id
+    assert results[1]["data"].get("next_cursor") is None

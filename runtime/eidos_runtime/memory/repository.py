@@ -376,59 +376,75 @@ class MemoryRepository:
         )
         parameters: list[object] = list(identifiers)
         query = request.query.strip()
-        # Search bounded pages. Short-word fallback never scans every body.
-        sql += f" AND {position}>? ORDER BY {position} LIMIT 501"
-        parameters.append(request.cursor)
+        # Query cursors pack a bounded candidate-window offset and the position
+        # in that window's relevance ordering. Plain lists retain rowid cursors.
+        window_offset, ranked_offset = divmod(request.cursor, 1024) if query else (0, 0)
+        if query:
+            sql += f" ORDER BY {position} LIMIT 501 OFFSET ?"
+            parameters.append(window_offset)
+        else:
+            sql += f" AND {position}>? ORDER BY {position} LIMIT 501"
+            parameters.append(request.cursor)
         rows = connection.execute(sql, parameters).fetchall()
-        truncated = len(rows) > 500
-        rows = rows[:500]
         ranks: dict[str, float] = {}
-        index_truncated = False
         if query and not request.include_history:
             terms = re.findall(r"[\w]+", query, flags=re.UNICODE)[:12]
-            expression = " OR ".join(
-                '"' + word.replace('"', '""') + '"' for word in terms
-            )
-            for table in [
+            expression = " OR ".join('"' + word.replace('"', '""') + '"' for word in terms)
+            ctes = []
+            unions = []
+            index_parameters: list[object] = []
+            for index, table in enumerate([
                 "memory_fts_word",
-                *(
-                    ["memory_fts_trigram"]
-                    if self.trigram_available and len(query) >= 3
-                    else []
-                ),
-            ]:
+                *(["memory_fts_trigram"] if self.trigram_available and len(query) >= 3 else []),
+            ]):
                 if not expression:
                     continue
-                try:
-                    hits = connection.execute(
-                        f"SELECT {table}.entry_id,bm25({table}) AS relevance FROM {table} JOIN memory_entries e ON e.id={table}.entry_id WHERE {table} MATCH ? AND {table}.scope_id IN ({placeholders}) AND e.status IN {statuses} AND e.rowid>? ORDER BY e.rowid LIMIT 201",
-                        [expression, *identifiers, request.cursor],
-                    ).fetchall()
-                except sqlite3.OperationalError:
-                    logger.warning("Memory search index unavailable index=%s", table)
-                    continue
-                index_truncated |= len(hits) > 200
-                # Lower BM25 means more relevant. Fusion ranks, not raw scores,
-                # are comparable across tokenizers.
-                for rank, hit in enumerate(
-                    sorted(hits[:200], key=lambda value: value["relevance"])
-                ):
-                    ranks[hit[0]] = ranks.get(hit[0], 0.0) + 1 / (60 + rank)
-        if query and not request.include_history:
+                # SQLite ranks index hits before applying the candidate bound.
+                # MATERIALIZED separates bm25 from the window-function context.
+                ctes.append(
+                    f"hits{index} AS MATERIALIZED (SELECT {table}.entry_id,bm25({table}) AS relevance "
+                    f"FROM {table} JOIN memory_entries e ON e.id={table}.entry_id "
+                    f"WHERE {table} MATCH ? AND {table}.scope_id IN ({placeholders}) AND e.status IN {statuses})"
+                )
+                ctes.append(
+                    f"ranked{index} AS (SELECT entry_id,1.0/(60+row_number() OVER(ORDER BY relevance,entry_id)) AS score FROM hits{index})"
+                )
+                unions.append(f"SELECT entry_id,score FROM ranked{index}")
+                index_parameters.extend([expression, *identifiers])
             exact = connection.execute(
-                f"SELECT e.*,e.rowid AS position FROM memory_entries e WHERE e.id=? AND e.scope_id IN ({placeholders}) AND e.status IN {statuses} AND e.rowid>?",
-                [query, *identifiers, request.cursor],
+                f"SELECT e.*,e.rowid AS position FROM memory_entries e WHERE e.id=? AND e.scope_id IN ({placeholders}) AND e.status IN {statuses}",
+                [query, *identifiers],
             ).fetchone()
             if exact is not None:
-                rows = [exact]
+                rows = [exact] if not window_offset else []
                 ranks[exact["id"]] = 10.0
-                truncated = False
-            elif ranks:
-                rows = connection.execute(
-                    f"SELECT e.*,e.rowid AS position FROM memory_entries e WHERE e.id IN ({','.join('?' for _ in ranks)}) AND e.scope_id IN ({placeholders}) AND e.status IN {statuses} ORDER BY e.rowid",
-                    [*ranks, *identifiers],
-                ).fetchall()
-                truncated = index_truncated
+            elif unions:
+                ctes.extend([
+                    "combined AS (" + " UNION ALL ".join(unions) + ")",
+                    "fused AS (SELECT entry_id,sum(score) AS relevance FROM combined GROUP BY entry_id)",
+                ])
+                try:
+                    hits = connection.execute(
+                        "WITH " + ",".join(ctes) +
+                        " SELECT e.*,e.rowid AS position,f.relevance FROM fused f "
+                        "JOIN memory_entries e ON e.id=f.entry_id "
+                        "JOIN memory_revisions r ON r.entry_id=e.id AND r.revision=e.current_revision "
+                        "ORDER BY (f.relevance + CASE WHEN instr(lower(r.title || ' ' || r.aliases_json),lower(?))>0 THEN 1.0 ELSE 0.5 END) DESC, "
+                        "e.pinned DESC,(r.evidence_class='inferred'),e.updated_at DESC,e.id LIMIT 501 OFFSET ?",
+                        [*index_parameters, query, window_offset],
+                    ).fetchall()
+                    # An empty later index window is the end, rather than a
+                    # switch to a different candidate source halfway through.
+                    has_index_hits = bool(hits) or (window_offset > 0 and connection.execute(
+                        "WITH " + ",".join(ctes) + " SELECT 1 FROM fused LIMIT 1", index_parameters
+                    ).fetchone() is not None)
+                    if has_index_hits:
+                        rows = hits
+                        ranks = {row["id"]: row["relevance"] for row in rows}
+                except sqlite3.OperationalError:
+                    logger.warning("Memory search index unavailable; using bounded scan")
+        truncated = len(rows) > 500
+        rows = rows[:500]
         results: list[tuple[float, MemoryEntry, int]] = []
         for row in rows:
             try:
@@ -462,12 +478,18 @@ class MemoryRepository:
                 v[1].id,
             )
         )
+        if query:
+            selected = results[ranked_offset:ranked_offset + request.limit]
+            next_offset = ranked_offset + len(selected)
+            if next_offset < len(results):
+                return [v[1] for v in selected], True, window_offset * 1024 + next_offset
+            if truncated:
+                return [v[1] for v in selected], True, (window_offset + 500) * 1024
+            return [v[1] for v in selected], False, None
         if len(results) > request.limit:
-            # Keep pagination deterministic in rowid order when continuation is
-            # needed; ranking within the page must not skip unseen entries.
-            results.sort(key=lambda v: v[2])
+            results.sort(key=lambda value: value[2])
             cursor = results[request.limit - 1][2]
-            return [v[1] for v in results[: request.limit]], True, cursor
+            return [v[1] for v in results[:request.limit]], True, cursor
         cursor = rows[-1]["position"] if truncated and rows else None
         return [v[1] for v in results], truncated, cursor
 

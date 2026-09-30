@@ -34,11 +34,11 @@ FTS、摘要与目录是可重建投影。旧 `memories.sqlite` / MemoryStore me
 
 ## 检索、投影和撤销
 
-检索使用 FTS5 unicode61、可用时的 trigram、标题/别名、短词片段及 RapidFuzz 重排，不依赖向量模型。查询表达式安全构造，短词和历史扫描有候选上限，响应提供 truncated 与 cursor。默认读取当前 active 正文，历史查询读取具体不可变版本和有效时间。启动可恢复遗失索引，UI 也可显式重建。
+检索使用 FTS5 unicode61、可用时的 trigram、标题/别名、短词片段及 RapidFuzz 重排，不依赖向量模型。查询表达式安全构造，短词和历史扫描有候选上限，响应提供 truncated 与 cursor。查询页保留相关性排序；游标同时保存最多 500 个候选窗口的位置和窗口内的排序偏移。FTS5 先按 BM25 生成排名，SQLite 完成融合后才截取候选；短词和历史查询仍分窗口扫描。翻页应保持查询和过滤条件不变，期间增删改记忆可能改变排序。默认读取当前 active 正文，历史查询读取具体不可变版本和有效时间。启动可恢复遗失索引，UI 也可显式重建。
 
 | 内置工具 | 行为 |
 | --- | --- |
-| memory_search | 授权范围内有界检索，可请求历史 |
+| memory_search | 授权范围内有界检索，可请求历史，支持 cursor/next_cursor |
 | memory_read | 按 ID/revision 读取正文及来源，最多 4096 字符 |
 | memory_record | 提交真实证据候选，或经审批明确保存 |
 | memory_manage | 受控接受、纠正、固定、归档、遗忘，使用版本 CAS |

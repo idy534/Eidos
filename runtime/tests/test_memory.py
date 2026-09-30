@@ -324,3 +324,45 @@ def test_memory_use_migration_from_v17_preserves_entries_and_rolls_back(tmp_path
     assert connection.execute("SELECT status FROM memory_entries WHERE id='entry'").fetchone()[0] == "active"
     assert "session:legacy" in connection.execute("SELECT epochs_json FROM memory_tool_reads").fetchone()[0]
     connection.close()
+
+
+def test_search_keeps_relevance_order_across_pages(store):
+    for index in range(5):
+        remember(store, f"SQLite miscellaneous {index}", title=f"miscellaneous {index}")
+    best = remember(store, "SQLite is our database", title="SQLite")
+    service = store.database.memory
+    service.manage(MemoryManageRequest(operation_id="pin-best", entry_id=best.entry_id, expected_revision=1, action="pin"))
+    first = service.read(MemoryReadRequest(query="SQLite", limit=5))
+    assert first.entries[0].id == best.entry_id
+    assert first.truncated and first.next_cursor is not None
+    second = service.read(MemoryReadRequest(query="SQLite", limit=5, cursor=first.next_cursor))
+    assert len(second.entries) == 1
+    assert len({e.id for e in first.entries + second.entries}) == 6
+    assert not second.truncated and second.next_cursor is None
+
+
+def test_fts_candidates_rank_before_limit_and_continue_without_duplicates(store):
+    for index in range(505):
+        remember(store, f"SQLite database choice {index}", title="other")
+    best = remember(store, "SQLite", title="SQLite")
+    service = store.database.memory
+    service.manage(MemoryManageRequest(operation_id="pin-newest", entry_id=best.entry_id, expected_revision=1, action="pin"))
+    page = service.read(MemoryReadRequest(query="SQLite", limit=100))
+    assert page.entries[0].id == best.entry_id
+    identifiers = [e.id for e in page.entries]
+    while page.next_cursor is not None:
+        page = service.read(MemoryReadRequest(query="SQLite", limit=100, cursor=page.next_cursor))
+        identifiers.extend(e.id for e in page.entries)
+    assert len(identifiers) == len(set(identifiers)) == 506
+
+
+def test_short_word_search_continues_past_empty_scan_page(store):
+    for index in range(500):
+        remember(store, f"无关条目 {index}", title="无关")
+    best = remember(store, "请保持简洁", title="偏好")
+    service = store.database.memory
+    page = service.read(MemoryReadRequest(query="简洁", limit=5))
+    assert page.entries == [] and page.truncated and page.next_cursor is not None
+    page = service.read(MemoryReadRequest(query="简洁", limit=5, cursor=page.next_cursor))
+    assert [entry.id for entry in page.entries] == [best.entry_id]
+    assert not page.truncated
