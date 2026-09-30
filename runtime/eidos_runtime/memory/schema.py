@@ -156,3 +156,35 @@ def migrate_memory(connection: sqlite3.Connection) -> None:
     except BaseException:
         connection.rollback()
         raise
+
+
+MEMORY_USE_SCHEMA_SQL = """
+ALTER TABLE memory_sources ADD COLUMN use_epoch INTEGER NOT NULL DEFAULT 0;
+CREATE TRIGGER memory_session_use_revoke AFTER UPDATE OF use_epoch ON memory_sources
+WHEN NEW.use_epoch <> OLD.use_epoch BEGIN
+    UPDATE context_snapshots SET memory_revoked=1 WHERE id IN
+      (SELECT snapshot_id FROM memory_snapshot_refs
+       WHERE scope_id='session:' || NEW.session_id AND privacy_epoch<>NEW.use_epoch);
+END;
+"""
+
+
+def migrate_memory_use(connection: sqlite3.Connection) -> None:
+    """Invalidate legacy memory snapshots that have no session-use fence."""
+    try:
+        connection.executescript("BEGIN IMMEDIATE;\n" + MEMORY_USE_SCHEMA_SQL)
+        connection.execute(
+            "UPDATE context_snapshots SET memory_revoked=1 WHERE id IN "
+            "(SELECT snapshot_id FROM memory_snapshot_refs)"
+        )
+        connection.execute(
+            "UPDATE memory_tool_reads SET epochs_json=?",
+            ('{"session:legacy":0}',),
+        )
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise sqlite3.IntegrityError("memory use migration foreign key violation")
+        connection.execute("PRAGMA user_version=18")
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise

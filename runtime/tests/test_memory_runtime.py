@@ -312,3 +312,73 @@ def test_memory_candidate_tool_requires_original_evidence_and_stays_pending(setu
     assert result["outcome"] == "success" and result["data"]["action"]["status"] == "pending"
     state = store.database.memory.read(MemoryReadRequest(session_id=session["id"]))
     assert len(state.entries) == 1 and state.entries[0].status == "candidate"
+
+
+@pytest.mark.parametrize("scope", ["current", "global"])
+def test_temporary_switch_discards_independent_memory_response_and_snapshot(setup, scope):
+    from eidos_runtime.memory.contracts import MemoryTemporaryRequest
+
+    store, session = setup
+    service = store.database.memory
+    entry = service.record(MemoryWriteRequest(
+        session_id=session["id"], operation_id="independent", scope=scope,
+        content="Prefer concise Chinese responses",
+    ))
+    run, _ = store.create_run(session["id"], "Answer briefly")
+    frozen_ids = []
+
+    class SwitchingModel(ScriptedModel):
+        def complete(self, context, cancel, on_text, **kwargs):
+            if not self.contexts:
+                self.contexts.append(context)
+                attempts = store.read_model_attempts(run["id"])
+                frozen = store.context_snapshot_repository().read_for_model_attempt(str(attempts[0]["id"]))
+                frozen_ids.append(frozen.snapshot_id)
+                service.set_temporary(MemoryTemporaryRequest(session_id=session["id"], temporary=True))
+                assert cancel.is_set()
+                return ModelResponse(text="Stale memory response.")
+            return super().complete(context, cancel, on_text, **kwargs)
+
+    model = SwitchingModel([ModelResponse(text="Fresh temporary response.")])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    assert len(model.contexts) == 2
+    assert not any(item.get("sectionId") == "memory-evidence" for item in model.contexts[1])
+    snapshot = store.read_session_snapshot(session["id"])
+    assert snapshot["runs"][0]["status"] == "succeeded"
+    assert not any(i.get("content") == "Stale memory response." and not i["incomplete"] for i in snapshot["items"])
+    with pytest.raises(MemoryRejected, match="snapshot_revoked"):
+        store.context_snapshot_repository().read(frozen_ids[0])
+    # Re-enabling cannot resurrect a frozen request from before the switch.
+    service.set_temporary(MemoryTemporaryRequest(session_id=session["id"], temporary=False))
+    with pytest.raises(MemoryRejected, match="snapshot_revoked"):
+        store.context_snapshot_repository().read(frozen_ids[0])
+    assert service.get(MemoryGetRequest(session_id=session["id"], entry_id=entry.entry_id)).entry.content
+
+
+def test_temporary_switch_revokes_tool_payload_even_without_projection(setup):
+    from eidos_runtime.memory.contracts import MemoryTemporaryRequest
+
+    store, session = setup
+    saved(store, session)
+    run, _ = store.create_run(session["id"], "Recall my preference")
+    service = store.database.memory
+
+    class SwitchingModel(ScriptedModel):
+        def complete(self, context, cancel, on_text, **kwargs):
+            if len(self.contexts) == 1:
+                self.contexts.append(context)
+                service.set_temporary(MemoryTemporaryRequest(session_id=session["id"], temporary=True))
+                assert cancel.is_set()
+                return ModelResponse(text="Stale tool response.")
+            return super().complete(context, cancel, on_text, **kwargs)
+
+    model = SwitchingModel([
+        ModelResponse(tool_calls=(ModelToolCall("search", "memory_search", {"query": "Chinese"}),)),
+        ModelResponse(text="Fresh response."),
+    ])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    assert len(model.contexts) == 3
+    tools = [i["toolCall"] for i in store.read_session_snapshot(session["id"])["items"] if i["kind"] == "tool_call"]
+    assert "Chinese" not in str(tools)
+    assert "memory_snapshot_revoked" in tools[0]["resultJson"]
+    assert "Chinese" not in str([i for i in model.contexts[-1] if str(i.get("name", "")).startswith("memory_")])

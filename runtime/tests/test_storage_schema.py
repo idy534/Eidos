@@ -535,8 +535,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 17)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 16)
+        self.assertEqual(SCHEMA_VERSION, 18)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 17)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

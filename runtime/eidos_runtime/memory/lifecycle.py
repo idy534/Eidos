@@ -20,7 +20,7 @@ def invalidate_source(
         "INSERT OR IGNORE INTO memory_sources(session_id) VALUES(?)", (session_id,)
     )
     connection.execute(
-        "UPDATE memory_sources SET revision=revision+1,deleted=max(deleted,?) WHERE session_id=?",
+        "UPDATE memory_sources SET revision=revision+1,use_epoch=use_epoch+1,deleted=max(deleted,?) WHERE session_id=?",
         (int(reason == "delete"), session_id),
     )
     condition = "session_id=?"

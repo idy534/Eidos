@@ -94,15 +94,17 @@ class MemoryToolRuntime(AdapterToolRuntime):
         try:
             if call.name == "memory_search":
                 request = MemorySearch.model_validate(call.arguments)
-                state = service.read(
-                    MemoryReadRequest(session_id=session_id, **request.model_dump()),
-                    for_use=True,
-                )
-                data = MemoryResultData(
-                    entries=state.entries,
-                    epochs={s.id: s.privacy_epoch for s in state.scopes},
-                    truncated=state.truncated,
-                )
+                with service.database.lock:
+                    state = service.read(
+                        MemoryReadRequest(session_id=session_id, **request.model_dump()),
+                        for_use=True,
+                    )
+                    data = MemoryResultData(
+                        entries=state.entries,
+                        epochs=service.use_epochs(service.database.connection(), session_id,
+                                                 {s.id: s.privacy_epoch for s in state.scopes}),
+                        truncated=state.truncated,
+                    )
             elif call.name == "memory_read":
                 request = MemoryRead.model_validate(call.arguments)
                 with service.database.lock:
@@ -123,7 +125,8 @@ class MemoryToolRuntime(AdapterToolRuntime):
                                 update={"content": entry.content[: request.max_chars]}
                             )
                         ],
-                        epochs={scope.id: scope.privacy_epoch},
+                        epochs=service.use_epochs(service.database.connection(), session_id,
+                                                 {scope.id: scope.privacy_epoch}),
                         truncated=len(entry.content) > request.max_chars,
                     )
             else:
@@ -218,7 +221,8 @@ class MemoryToolRuntime(AdapterToolRuntime):
                         service.database.connection(), session_id
                     )
                     data = MemoryResultData(
-                        action=action, epochs={s.id: s.privacy_epoch for s in scopes}
+                        action=action, epochs=service.use_epochs(service.database.connection(), session_id,
+                                                               {s.id: s.privacy_epoch for s in scopes})
                     )
                 context.events.deliver_pending()
             result = tool_result(

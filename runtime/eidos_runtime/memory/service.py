@@ -483,20 +483,41 @@ class MemoryService:
             if not references:
                 text = ""
             return MemoryProjection(
-                epochs={s.id: s.privacy_epoch for s in scopes} if text else {},
+                epochs=self.use_epochs(connection, session_id, {s.id: s.privacy_epoch for s in scopes}) if text else {},
                 generations={s.id: s.generation for s in scopes} if text else {},
                 entries=references,
                 rendered_payload=text,
                 token_estimate=len(text.encode()),
             )
 
+    def use_epochs(
+        self, connection: sqlite3.Connection, session_id: str | None, epochs: dict[str, int]
+    ) -> dict[str, int]:
+        """Bind retrieved data to its Root's persistent use eligibility version."""
+        if session_id is None:
+            return epochs
+        root = self.repository.root_session(connection, session_id)
+        connection.execute("INSERT OR IGNORE INTO memory_sources(session_id) VALUES(?)", (root,))
+        row = connection.execute(
+            "SELECT use_epoch,temporary,deleted FROM memory_sources WHERE session_id=?", (root,)
+        ).fetchone()
+        if row[1] or row[2]:
+            raise MemoryRejected("memory_temporary_session")
+        return {**epochs, "session:" + root: row[0]}
+
     def valid_epochs(
         self, connection: sqlite3.Connection, epochs: dict[str, int]
     ) -> bool:
         for identifier, epoch in epochs.items():
-            row = connection.execute(
-                "SELECT privacy_epoch FROM memory_scopes WHERE id=?", (identifier,)
-            ).fetchone()
+            if identifier.startswith("session:"):
+                row = connection.execute(
+                    "SELECT use_epoch FROM memory_sources WHERE session_id=? AND temporary=0 AND deleted=0",
+                    (identifier.removeprefix("session:"),),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT privacy_epoch FROM memory_scopes WHERE id=?", (identifier,)
+                ).fetchone()
             if row is None or row[0] != epoch:
                 return False
         return True

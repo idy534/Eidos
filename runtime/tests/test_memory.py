@@ -211,7 +211,7 @@ def test_memory_migration_preserves_existing_v16_data(tmp_path):
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 18
         remember(store)
     finally:
         store.close()
@@ -272,3 +272,55 @@ def test_search_export_preserves_full_body_and_exact_historical_revision(store):
     assert body in historical.markdown
     assert 'revision: 1; status: superseded' in historical.markdown
     assert 'PostgreSQL' not in historical.markdown
+
+
+def test_session_use_revocation_is_isolated_and_persists_after_reopen(store, tmp_path):
+    service = store.database.memory
+    first = store.create_session(str(tmp_path / "workspace"))
+    second = store.create_session(str(tmp_path / "workspace"))
+    remember(store, session_id=first["id"])
+    first_epochs = service.project(first["id"], 100000, run_id="first").epochs
+    second_epochs = service.project(second["id"], 100000, run_id="second").epochs
+    with pytest.raises(MemoryRejected, match="snapshot_revoked"):
+        with service.admit(first_epochs, threading.Event()) as first_cancel, service.admit(second_epochs, threading.Event()) as second_cancel:
+            service.set_temporary(MemoryTemporaryRequest(session_id=first["id"], temporary=True))
+            assert first_cancel.is_set()
+            assert not second_cancel.is_set()
+    service.set_temporary(MemoryTemporaryRequest(session_id=first["id"], temporary=False))
+    directory = store.data_directory
+    store.close()
+    reopened = SessionStore(directory)
+    reopened.initialize()
+    try:
+        assert not reopened.database.memory.valid_epochs(reopened.connection, first_epochs)
+        assert reopened.database.memory.valid_epochs(reopened.connection, second_epochs)
+    finally:
+        reopened.close()
+
+
+def test_memory_use_migration_from_v17_preserves_entries_and_rolls_back(tmp_path):
+    from eidos_runtime.db.schema import V17_SCHEMA_SQL
+    from eidos_runtime.memory.schema import migrate_memory_use
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(V17_SCHEMA_SQL + "\nPRAGMA user_version=17;")
+    connection.execute("INSERT INTO memory_sources(session_id,temporary) VALUES('existing',1)")
+    connection.execute("INSERT INTO memory_scopes(id,kind,settings_json) VALUES('scope','global','{}')")
+    connection.execute("INSERT INTO memory_entries(id,scope_id,kind,status,current_revision,created_at,updated_at) VALUES('entry','scope','preference','active',1,1,1)")
+    connection.execute("INSERT INTO memory_tool_reads(item_id,run_id,epochs_json,output_bytes) VALUES('tool','run','{}',20)")
+    connection.commit()
+    # Force a failure after DDL. No partial column/trigger may survive.
+    connection.execute("ALTER TABLE memory_tool_reads RENAME TO missing_tool_reads")
+    connection.commit()
+    with pytest.raises(sqlite3.OperationalError):
+        migrate_memory_use(connection)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+    assert "use_epoch" not in {r[1] for r in connection.execute("PRAGMA table_info(memory_sources)")}
+    connection.execute("ALTER TABLE missing_tool_reads RENAME TO memory_tool_reads")
+    connection.commit()
+    migrate_memory_use(connection)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+    assert connection.execute("SELECT temporary,use_epoch FROM memory_sources").fetchone() == (1, 0)
+    assert connection.execute("SELECT status FROM memory_entries WHERE id='entry'").fetchone()[0] == "active"
+    assert "session:legacy" in connection.execute("SELECT epochs_json FROM memory_tool_reads").fetchone()[0]
+    connection.close()
