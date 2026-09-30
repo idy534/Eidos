@@ -50,6 +50,12 @@ def invalidate_source(
     connection.execute(
         f"UPDATE memory_source_items SET eligible=0 WHERE {condition}", parameters
     )
+    # Re-derive quarantined atomic claims from surviving original evidence.
+    # Do not promote a residual fragment synchronously or detach its provenance.
+    connection.execute(
+        "UPDATE memory_sources SET revision=revision+1,processed_frontier=min(processed_frontier,COALESCE((SELECT min(i.sequence)-1 FROM memory_source_items i JOIN memory_evidence v ON v.item_id=i.item_id JOIN memory_entries e ON e.id=v.entry_id WHERE i.session_id=memory_sources.session_id AND i.eligible=1 AND e.status='quarantined'),processed_frontier)),processed_offset=0 "
+        "WHERE deleted=0 AND temporary=0 AND session_id IN (SELECT v.session_id FROM memory_evidence v JOIN memory_entries e ON e.id=v.entry_id JOIN memory_source_items i ON i.item_id=v.item_id WHERE e.status='quarantined' AND i.eligible=1)"
+    )
     connection.execute(
         "UPDATE memory_jobs SET state='superseded',lease_token=NULL,extraction_json=NULL,proposals_json=NULL WHERE session_id=?",
         (session_id,),

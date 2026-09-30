@@ -104,7 +104,7 @@ EXPECTED_TABLES = {
     "memory_scopes", "memory_sources", "memory_source_items", "memory_entries",
     "memory_revisions", "memory_evidence", "memory_actions", "memory_suppressions",
     "memory_jobs", "memory_model_attempts", "memory_generations", "memory_snapshot_refs",
-    "memory_usage",
+    "memory_usage", "memory_tool_budget", "memory_tool_reads",
 }
 
 EXPECTED_COLUMNS = {

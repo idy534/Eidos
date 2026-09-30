@@ -6,12 +6,13 @@ import sqlite3
 MEMORY_SCHEMA_SQL = """
 CREATE TABLE memory_scopes (
     id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('global','project')),
-    project_id TEXT UNIQUE, settings_json TEXT NOT NULL,
+    project_id TEXT UNIQUE, settings_json TEXT NOT NULL, generate_since INTEGER NOT NULL DEFAULT 0,
     privacy_epoch INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE memory_sources (
     session_id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 1,
-    processed_frontier INTEGER NOT NULL DEFAULT 0,
+    processed_frontier INTEGER NOT NULL DEFAULT 0, processed_offset INTEGER NOT NULL DEFAULT 0,
+    backfill_enabled INTEGER NOT NULL DEFAULT 0,
     temporary INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
     enabled_after INTEGER NOT NULL DEFAULT 0, lineage_session_id TEXT
 );
@@ -31,7 +32,7 @@ CREATE TABLE memory_entries (
 CREATE INDEX memory_entries_scope ON memory_entries(scope_id,status,updated_at);
 CREATE TABLE memory_revisions (
     entry_id TEXT NOT NULL REFERENCES memory_entries(id), revision INTEGER NOT NULL,
-    file_ref TEXT, title TEXT NOT NULL, aliases_json TEXT NOT NULL,
+    file_ref TEXT, file_size INTEGER, file_mtime_ns INTEGER, user_owned INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL, aliases_json TEXT NOT NULL,
     evidence_class TEXT NOT NULL, valid_from INTEGER, valid_to INTEGER,
     created_at INTEGER NOT NULL, PRIMARY KEY(entry_id,revision)
 );
@@ -57,11 +58,13 @@ CREATE TABLE memory_jobs (
     base_generation INTEGER NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL,
     policy_version INTEGER NOT NULL DEFAULT 1, model_id TEXT NOT NULL, model_snapshot_json TEXT NOT NULL,
     frontier INTEGER NOT NULL, target_frontier INTEGER NOT NULL,
+    start_offset INTEGER NOT NULL DEFAULT 0, target_offset INTEGER NOT NULL DEFAULT 0,
+    source_since INTEGER NOT NULL DEFAULT 0,
     attempts INTEGER NOT NULL DEFAULT 0, lease_token TEXT, lease_until INTEGER,
     not_before INTEGER NOT NULL, created_at INTEGER NOT NULL, error_code TEXT,
     tokens INTEGER NOT NULL DEFAULT 0, estimated_usage INTEGER NOT NULL DEFAULT 0,
     extraction_json TEXT, proposals_json TEXT,
-    UNIQUE(kind,session_id,source_revision,frontier,policy_version)
+    UNIQUE(kind,session_id,source_revision,frontier,start_offset,policy_version,privacy_epoch,base_generation)
 );
 CREATE INDEX memory_jobs_queue ON memory_jobs(state,not_before,created_at);
 CREATE TABLE memory_model_attempts (
@@ -72,7 +75,7 @@ CREATE TABLE memory_model_attempts (
 CREATE INDEX memory_model_attempts_time ON memory_model_attempts(created_at);
 CREATE TABLE memory_generations (
     scope_id TEXT NOT NULL, generation INTEGER NOT NULL, manifest_json TEXT NOT NULL,
-    summary_ref TEXT NOT NULL, catalog_ref TEXT NOT NULL, created_at INTEGER NOT NULL,
+    summary_ref TEXT NOT NULL, catalog_ref TEXT NOT NULL, created_at INTEGER NOT NULL, privacy_epoch INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(scope_id,generation)
 );
 CREATE TABLE memory_snapshot_refs (
@@ -83,6 +86,14 @@ CREATE TABLE memory_usage (
     run_id TEXT NOT NULL, step_id TEXT NOT NULL, entry_id TEXT NOT NULL,
     revision INTEGER NOT NULL, kind TEXT NOT NULL, created_at INTEGER NOT NULL,
     PRIMARY KEY(run_id,step_id,entry_id,revision,kind)
+);
+CREATE TABLE memory_tool_budget (
+    run_id TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0,
+    output_bytes INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE memory_tool_reads (
+    item_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, epochs_json TEXT NOT NULL,
+    output_bytes INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0
 );
 CREATE VIRTUAL TABLE memory_fts_word USING fts5(entry_id UNINDEXED,scope_id UNINDEXED,title,aliases,body,tokenize='unicode61');
 ALTER TABLE context_snapshots ADD COLUMN memory_revoked INTEGER NOT NULL DEFAULT 0;
@@ -101,7 +112,9 @@ CREATE TRIGGER memory_source_change AFTER UPDATE OF content,status,incomplete ON
 WHEN OLD.content IS NOT NEW.content OR OLD.status IS NOT NEW.status OR OLD.incomplete IS NOT NEW.incomplete BEGIN
     UPDATE memory_sources SET revision=revision+1 WHERE session_id=NEW.session_id;
     UPDATE memory_source_items SET item_revision=item_revision+1 WHERE item_id=NEW.id;
-    UPDATE memory_entries SET status='quarantined' WHERE user_owned=0
+    UPDATE memory_sources SET processed_offset=CASE WHEN processed_frontier>=NEW.creation_seq-1 THEN 0 ELSE processed_offset END,
+      processed_frontier=min(processed_frontier,NEW.creation_seq-1) WHERE session_id=NEW.session_id;
+    UPDATE memory_entries SET status='quarantined' WHERE user_owned=0 AND status<>'forgotten'
       AND id IN (SELECT entry_id FROM memory_evidence WHERE item_id=NEW.id);
     UPDATE memory_scopes SET privacy_epoch=privacy_epoch+1 WHERE id IN
       (SELECT e.scope_id FROM memory_entries e JOIN memory_evidence v ON v.entry_id=e.id WHERE v.item_id=NEW.id);
@@ -109,7 +122,7 @@ END;
 CREATE TRIGGER memory_source_delete BEFORE DELETE ON items BEGIN
     UPDATE memory_sources SET revision=revision+1 WHERE session_id=OLD.session_id;
     UPDATE memory_source_items SET eligible=0,item_revision=item_revision+1 WHERE item_id=OLD.id;
-    UPDATE memory_entries SET status='quarantined' WHERE user_owned=0
+    UPDATE memory_entries SET status='quarantined' WHERE user_owned=0 AND status<>'forgotten'
       AND id IN (SELECT entry_id FROM memory_evidence WHERE item_id=OLD.id);
     UPDATE memory_scopes SET privacy_epoch=privacy_epoch+1 WHERE id IN
       (SELECT e.scope_id FROM memory_entries e JOIN memory_evidence v ON v.entry_id=e.id WHERE v.item_id=OLD.id);

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path, PurePosixPath
 import stat
+import time
 import uuid
 
 from eidos_runtime.db.database import _prepare_private_directory
@@ -95,6 +96,67 @@ class MemoryFiles:
                 return body.decode("utf-8")
         finally:
             os.close(directory)
+
+    def signature(self, reference: str) -> tuple[int, int]:
+        parts = PurePosixPath(reference).parts
+        if len(parts) != 4 or parts[0] != "scopes" or parts[2] != "revisions":
+            raise ValueError("memory_path_invalid")
+        directory = self._directory(parts[:-1])
+        try:
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+            try:
+                value = os.fstat(fd)
+                if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
+                    raise ValueError("memory_body_invalid")
+                return value.st_size, value.st_mtime_ns
+            finally:
+                os.close(fd)
+        finally:
+            os.close(directory)
+
+    def collect_unreferenced(
+        self, referenced: set[str], *, grace_seconds: int = 3600
+    ) -> int:
+        removed = 0
+        scanned = 0
+        try:
+            scopes = self._directory(("scopes",))
+        except FileNotFoundError:
+            return 0
+        try:
+            names = [
+                entry.name
+                for entry in os.scandir(scopes)
+                if entry.is_dir(follow_symlinks=False)
+            ]
+        finally:
+            os.close(scopes)
+        for scope in names:
+            try:
+                uuid.UUID(scope)
+                directory = self._directory(("scopes", scope, "revisions"))
+            except (OSError, ValueError):
+                continue
+            try:
+                for entry in os.scandir(directory):
+                    scanned += 1
+                    if scanned > 100000:
+                        return removed
+                    reference = f"scopes/{scope}/revisions/{entry.name}"
+                    if reference in referenced or not entry.is_file(
+                        follow_symlinks=False
+                    ):
+                        continue
+                    metadata = entry.stat(follow_symlinks=False)
+                    # The grace interval protects the small pre-registration
+                    # window of file preparation; age alone never deletes a ref.
+                    if metadata.st_mtime > time.time() - grace_seconds:
+                        continue
+                    os.unlink(entry.name, dir_fd=directory)
+                    removed += 1
+            finally:
+                os.close(directory)
+        return removed
 
     def remove(self, reference: str) -> None:
         parts = PurePosixPath(reference).parts

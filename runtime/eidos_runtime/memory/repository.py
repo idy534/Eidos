@@ -11,6 +11,7 @@ from rapidfuzz.fuzz import WRatio
 from eidos_runtime.db.database import Database, now_ms
 from eidos_runtime.memory.contracts import (
     MemoryActionResult,
+    MemoryBackfillRequest,
     MemoryEntry,
     MemoryEvidence,
     MemoryJob,
@@ -43,6 +44,21 @@ class MemoryRepository:
                 "INSERT OR IGNORE INTO memory_scopes(id,kind,settings_json) VALUES(?,?,?)",
                 (GLOBAL_SCOPE_ID, "global", MemorySettings().model_dump_json()),
             )
+            word_existed = (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='memory_fts_word'"
+                ).fetchone()
+                is not None
+            )
+            trigram_existed = (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='memory_fts_trigram'"
+                ).fetchone()
+                is not None
+            )
+            connection.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts_word USING fts5(entry_id UNINDEXED,scope_id UNINDEXED,title,aliases,body,tokenize='unicode61')"
+            )
             try:
                 connection.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts_trigram USING fts5(entry_id UNINDEXED,scope_id UNINDEXED,title,aliases,body,tokenize='trigram')"
@@ -50,6 +66,27 @@ class MemoryRepository:
                 self.trigram_available = True
             except sqlite3.OperationalError:
                 self.trigram_available = False
+            if not word_existed or (self.trigram_available and not trigram_existed):
+                self.rebuild_indices(connection)
+
+    def rebuild_indices(self, connection: sqlite3.Connection) -> None:
+        connection.execute("DELETE FROM memory_fts_word")
+        if self.trigram_available:
+            connection.execute("DELETE FROM memory_fts_trigram")
+        cursor = 0
+        while True:
+            rows = connection.execute(
+                "SELECT *,rowid AS position FROM memory_entries WHERE status='active' AND rowid>? ORDER BY rowid LIMIT 100",
+                (cursor,),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                try:
+                    self.index(connection, self._read(connection, row))
+                except MemoryRejected:
+                    continue
+            cursor = rows[-1]["position"]
 
     def root_session(self, connection: sqlite3.Connection, session_id: str) -> str:
         row = connection.execute(
@@ -175,6 +212,21 @@ class MemoryRepository:
                 raise MemoryRejected("memory_tool_evidence_required")
             if row["kind"] != "user_message" and evidence_class == "inferred":
                 raise MemoryRejected("memory_original_user_evidence_required")
+            if evidence_class == "observed_verified":
+                tool = connection.execute(
+                    "SELECT tool_name,result_json FROM tool_calls WHERE item_id=? AND status='completed'",
+                    (item_id,),
+                ).fetchone()
+                try:
+                    result = json.loads(tool["result_json"]) if tool else {}
+                except (TypeError, ValueError):
+                    result = {}
+                if (
+                    tool is None
+                    or tool["tool_name"].startswith("memory_")
+                    or result.get("outcome") != "success"
+                ):
+                    raise MemoryRejected("memory_verified_tool_evidence_required")
             values.append(
                 MemoryEvidence(
                     item_id=item_id,
@@ -218,7 +270,7 @@ class MemoryRepository:
                 (row["id"], revision),
             )
         ]
-        if not row["user_owned"]:
+        if not saved["user_owned"]:
             for value in evidence:
                 source = connection.execute(
                     "SELECT v.item_revision,v.eligible,s.temporary,s.deleted FROM memory_source_items v "
@@ -241,7 +293,12 @@ class MemoryRepository:
             if not evidence:
                 raise MemoryRejected("memory_evidence_required")
         try:
+            expected = (saved["file_size"], saved["file_mtime_ns"])
+            if self.files.signature(saved["file_ref"]) != expected:
+                raise ValueError("memory_body_changed")
             content = self.files.read(saved["file_ref"])
+            if self.files.signature(saved["file_ref"]) != expected:
+                raise ValueError("memory_body_changed")
         except (OSError, ValueError, UnicodeError):
             logger.warning(
                 "Memory body unavailable entry_id=%s revision=%s", row["id"], revision
@@ -305,23 +362,29 @@ class MemoryRepository:
             return [], False, None
         placeholders = ",".join("?" for _ in identifiers)
         statuses = (
-            "('active','superseded','archived')"
+            "('active','candidate','superseded','archived')"
             if request.include_history
             else "('active')"
             if for_use
             else "('active','candidate')"
         )
-        sql = f"SELECT e.*,e.rowid AS position FROM memory_entries e WHERE e.scope_id IN ({placeholders}) AND e.status IN {statuses}"
+        position = "r.rowid" if request.include_history else "e.rowid"
+        sql = (
+            f"SELECT e.*,r.revision AS matched_revision,r.rowid AS position FROM memory_entries e JOIN memory_revisions r ON r.entry_id=e.id WHERE e.scope_id IN ({placeholders}) AND e.status IN {statuses}"
+            if request.include_history else
+            f"SELECT e.*,e.rowid AS position FROM memory_entries e WHERE e.scope_id IN ({placeholders}) AND e.status IN {statuses}"
+        )
         parameters: list[object] = list(identifiers)
         query = request.query.strip()
         # Search bounded pages. Short-word fallback never scans every body.
-        sql += " AND e.rowid>? ORDER BY e.rowid LIMIT 501"
+        sql += f" AND {position}>? ORDER BY {position} LIMIT 501"
         parameters.append(request.cursor)
         rows = connection.execute(sql, parameters).fetchall()
         truncated = len(rows) > 500
         rows = rows[:500]
         ranks: dict[str, float] = {}
-        if query:
+        index_truncated = False
+        if query and not request.include_history:
             terms = re.findall(r"[\w]+", query, flags=re.UNICODE)[:12]
             expression = " OR ".join(
                 '"' + word.replace('"', '""') + '"' for word in terms
@@ -338,18 +401,38 @@ class MemoryRepository:
                     continue
                 try:
                     hits = connection.execute(
-                        f"SELECT entry_id FROM {table} WHERE {table} MATCH ? AND scope_id IN ({placeholders}) ORDER BY bm25({table}) ASC LIMIT 200",
-                        [expression, *identifiers],
+                        f"SELECT {table}.entry_id,bm25({table}) AS relevance FROM {table} JOIN memory_entries e ON e.id={table}.entry_id WHERE {table} MATCH ? AND {table}.scope_id IN ({placeholders}) AND e.status IN {statuses} AND e.rowid>? ORDER BY e.rowid LIMIT 201",
+                        [expression, *identifiers, request.cursor],
                     ).fetchall()
                 except sqlite3.OperationalError:
                     logger.warning("Memory search index unavailable index=%s", table)
                     continue
-                for rank, hit in enumerate(hits):
+                index_truncated |= len(hits) > 200
+                # Lower BM25 means more relevant. Fusion ranks, not raw scores,
+                # are comparable across tokenizers.
+                for rank, hit in enumerate(
+                    sorted(hits[:200], key=lambda value: value["relevance"])
+                ):
                     ranks[hit[0]] = ranks.get(hit[0], 0.0) + 1 / (60 + rank)
+        if query and not request.include_history:
+            exact = connection.execute(
+                f"SELECT e.*,e.rowid AS position FROM memory_entries e WHERE e.id=? AND e.scope_id IN ({placeholders}) AND e.status IN {statuses} AND e.rowid>?",
+                [query, *identifiers, request.cursor],
+            ).fetchone()
+            if exact is not None:
+                rows = [exact]
+                ranks[exact["id"]] = 10.0
+                truncated = False
+            elif ranks:
+                rows = connection.execute(
+                    f"SELECT e.*,e.rowid AS position FROM memory_entries e WHERE e.id IN ({','.join('?' for _ in ranks)}) AND e.scope_id IN ({placeholders}) AND e.status IN {statuses} ORDER BY e.rowid",
+                    [*ranks, *identifiers],
+                ).fetchall()
+                truncated = index_truncated
         results: list[tuple[float, MemoryEntry, int]] = []
         for row in rows:
             try:
-                entry = self._read(connection, row)
+                entry = self._read(connection, row, row["matched_revision"] if request.include_history else None)
             except MemoryRejected:
                 continue
             if request.valid_at is not None and (
@@ -357,7 +440,7 @@ class MemoryRepository:
                 or (entry.valid_to is not None and entry.valid_to <= request.valid_at)
             ):
                 continue
-            score = ranks.get(entry.id, 0.0)
+            score = ranks.get(entry.id, 0.0) + (10.0 if query == entry.id else 0.0)
             if query:
                 q = query.casefold()
                 title = " ".join([entry.title, *entry.aliases]).casefold()
@@ -453,12 +536,16 @@ class MemoryRepository:
             )
             if changed.rowcount != 1:
                 raise MemoryRejected("memory_revision_conflict")
+        size, modified = self.files.signature(file_ref)
         connection.execute(
-            "INSERT INTO memory_revisions(entry_id,revision,file_ref,title,aliases_json,evidence_class,valid_from,valid_to,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO memory_revisions(entry_id,revision,file_ref,file_size,file_mtime_ns,user_owned,title,aliases_json,evidence_class,valid_from,valid_to,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 entry_id,
                 revision,
                 file_ref,
+                size,
+                modified,
+                int(user_owned),
                 record.title or record.content[:80],
                 json.dumps(record.aliases, ensure_ascii=False),
                 evidence_class,
@@ -512,7 +599,7 @@ class MemoryRepository:
     def save_action(
         self,
         connection: sqlite3.Connection,
-        request: MemoryWriteRequest | MemoryManageRequest,
+        request: MemoryWriteRequest | MemoryManageRequest | MemoryBackfillRequest,
         scope_id: str,
         action: str,
         result: MemoryActionResult,

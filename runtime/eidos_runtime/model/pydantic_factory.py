@@ -19,6 +19,7 @@ from eidos_runtime.model.retry_transport import (
     RetryTransportClient,
     build_retrying_http_client,
 )
+from eidos_runtime.model.gateway_types import RetryPolicy
 
 
 OpenAICompatibleProvider = OpenAIProvider | DeepSeekProvider | MoonshotAIProvider
@@ -36,10 +37,11 @@ def build_provider(
     *,
     timeout: httpx.Timeout,
     wire_api: str = "chat_completions",
+    retry_policy: RetryPolicy | None = None,
 ) -> tuple[OpenAICompatibleProvider, AsyncOpenAI, RetryTransportClient]:
     provider_id = MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
     retry_client = build_retrying_http_client(
-        config, timeout=timeout, wire_api=wire_api
+        config, timeout=timeout, wire_api=wire_api, retry_policy=retry_policy
     )
     client = AsyncOpenAI(
         api_key=config.api_key,
@@ -64,7 +66,10 @@ def build_model(config: ModelConfig, provider: OpenAICompatibleProvider) -> Mode
 
 
 def build_pydantic_model(
-    config: ModelConfig, *, wire_api: str = "chat_completions"
+    config: ModelConfig,
+    *,
+    wire_api: str = "chat_completions",
+    retry_policy: RetryPolicy | None = None,
 ) -> BuiltPydanticModel:
     timeout = httpx.Timeout(
         connect=min(10.0, DEFAULT_REQUEST_TIMEOUT_SECONDS),
@@ -73,7 +78,7 @@ def build_pydantic_model(
         pool=min(10.0, DEFAULT_REQUEST_TIMEOUT_SECONDS),
     )
     provider, provider_client, retry_client = build_provider(
-        config, timeout=timeout, wire_api=wire_api
+        config, timeout=timeout, wire_api=wire_api, retry_policy=retry_policy
     )
     return BuiltPydanticModel(
         model=build_model(config, provider),

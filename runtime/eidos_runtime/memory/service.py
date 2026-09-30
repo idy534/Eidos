@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
 from typing import Iterator
+from collections.abc import Callable
+import time
 
 from eidos_runtime.db.database import Database, now_ms
 from eidos_runtime.memory.contracts import (
@@ -16,6 +19,7 @@ from eidos_runtime.memory.contracts import (
     MemoryProjection,
     MemoryProjectionRef,
     MemoryReadRequest,
+    MemoryRebuildRequest,
     MemoryRecord,
     MemorySettingsRequest,
     MemoryState,
@@ -34,9 +38,11 @@ class MemoryService:
     """One entry point for tools, Desktop and background publication."""
 
     def __init__(self, database: Database) -> None:
+        self.on_cleanup: Callable[[], None] | None = None
         self.database = database
         self.repository = MemoryRepository(database)
         self._admitted: dict[int, tuple[dict[str, int], threading.Event]] = {}
+        self._preparing: set[str] = set()
 
     def read(self, request: MemoryReadRequest, *, for_use: bool = False) -> MemoryState:
         with start_span("memory.search"), self.database.transaction() as connection:
@@ -60,6 +66,59 @@ class MemoryService:
                 next_cursor=cursor,
                 trigram_available=self.repository.trigram_available,
             )
+
+    def track_tool(
+        self,
+        run_id: str,
+        item_id: str,
+        epochs: dict[str, int],
+        result: dict[str, object],
+        *,
+        retrieval: bool,
+    ) -> None:
+        size = len(json.dumps(result, ensure_ascii=False).encode())
+        with self.database.transaction() as connection:
+            if not self.valid_epochs(connection, epochs):
+                raise MemoryRejected("memory_snapshot_revoked")
+            previous = connection.execute(
+                "SELECT revoked FROM memory_tool_reads WHERE item_id=?", (item_id,)
+            ).fetchone()
+            if previous:
+                if previous[0]:
+                    raise MemoryRejected("memory_snapshot_revoked")
+                return
+            if retrieval:
+                connection.execute(
+                    "INSERT OR IGNORE INTO memory_tool_budget(run_id) VALUES(?)",
+                    (run_id,),
+                )
+                row = connection.execute(
+                    "SELECT calls,output_bytes FROM memory_tool_budget WHERE run_id=?",
+                    (run_id,),
+                ).fetchone()
+                if row[0] >= 3 or row[1] + size > 16384:
+                    raise MemoryRejected("memory_retrieval_budget_exceeded")
+                connection.execute(
+                    "UPDATE memory_tool_budget SET calls=calls+1,output_bytes=output_bytes+? WHERE run_id=?",
+                    (size, run_id),
+                )
+            connection.execute(
+                "INSERT INTO memory_tool_reads(item_id,run_id,epochs_json,output_bytes) VALUES(?,?,?,?)",
+                (item_id, run_id, json.dumps(epochs), size),
+            )
+            if result.get("toolName") == "memory_read":
+                from eidos_runtime.memory.contracts import MemoryEntry
+
+                data = result.get("data")
+                if isinstance(data, dict):
+                    for value in data.get("entries", []):
+                        self.repository.usage(
+                            connection,
+                            run_id,
+                            item_id,
+                            MemoryEntry.model_validate(value),
+                            "read",
+                        )
 
     def get(
         self,
@@ -327,21 +386,15 @@ class MemoryService:
                 and not scope.settings.generate_enabled
             ):
                 # Enabling starts at now. History backfill is a separate control.
-                if request.scope == "global":
-                    connection.execute(
-                        "UPDATE memory_sources SET enabled_after=max(enabled_after,?)",
-                        (now_ms(),),
-                    )
-                elif request.session_id:
-                    connection.execute(
-                        "INSERT OR IGNORE INTO memory_sources(session_id) VALUES(?)",
-                        (request.session_id,),
-                    )
-                    connection.execute(
-                        "UPDATE memory_sources SET enabled_after=? WHERE session_id=?",
-                        (now_ms(), request.session_id),
-                    )
+                connection.execute(
+                    "UPDATE memory_scopes SET generate_since=? WHERE id=?",
+                    (now_ms(), scope.id),
+                )
             if not request.settings.generate_enabled:
+                connection.execute(
+                    "UPDATE memory_sources SET backfill_enabled=0 WHERE session_id IN (SELECT session_id FROM memory_jobs WHERE scope_id=?)",
+                    (scope.id,),
+                )
                 connection.execute(
                     "UPDATE memory_jobs SET state='canceled',lease_token=NULL WHERE scope_id=? AND state IN ('queued','running','retry_wait','paused_budget','blocked_model')",
                     (scope.id,),
@@ -366,7 +419,7 @@ class MemoryService:
             if old != request.temporary:
                 invalidate_source(connection, request.session_id, reason="temporary")
                 connection.execute(
-                    "UPDATE memory_sources SET temporary=?,enabled_after=? WHERE session_id=?",
+                    "UPDATE memory_sources SET temporary=?,enabled_after=?,backfill_enabled=0 WHERE session_id=?",
                     (int(request.temporary), now_ms(), request.session_id),
                 )
             self._cancel_revoked(connection)
@@ -453,11 +506,15 @@ class MemoryService:
         reference = (
             self.repository.files.prepare(scope_id, body) if body is not None else ""
         )
+        if reference:
+            with self.database.lock:
+                self._preparing.add(reference)
         try:
             yield reference
         finally:
             if reference:
                 with self.database.lock:
+                    self._preparing.discard(reference)
                     linked = (
                         self.database.connection()
                         .execute(
@@ -466,6 +523,15 @@ class MemoryService:
                         )
                         .fetchone()
                     )
+                    if linked is None:
+                        linked = (
+                            self.database.connection()
+                            .execute(
+                                "SELECT 1 FROM memory_generations WHERE summary_ref=? OR catalog_ref=?",
+                                (reference, reference),
+                            )
+                            .fetchone()
+                        )
                     if linked is None:
                         self.repository.files.remove(reference)
 
@@ -493,6 +559,11 @@ class MemoryService:
             if not self.valid_epochs(connection, epochs):
                 cancel.set()
 
+    def rebuild(self, request: MemoryRebuildRequest) -> MemoryState:
+        with self.database.transaction() as connection:
+            self.repository.rebuild_indices(connection)
+        return self.read(MemoryReadRequest(session_id=request.session_id))
+
     def export(self, request: MemoryReadRequest) -> MemoryExport:
         # An explicit, bounded export contains bodies plus an epoch manifest.
         state = self.read(request)
@@ -507,12 +578,72 @@ class MemoryService:
             privacy_epochs={s.id: s.privacy_epoch for s in state.scopes},
         )
 
+    def refresh_generation(self, scope_id: str) -> None:
+        with self.database.transaction() as connection:
+            scope = self.repository.scope(connection, scope_id)
+            rows = connection.execute(
+                "SELECT * FROM memory_entries WHERE scope_id=? AND status='active' ORDER BY pinned DESC,use_count DESC,updated_at DESC LIMIT 100",
+                (scope_id,),
+            ).fetchall()
+            entries = []
+            for row in rows:
+                try:
+                    entries.append(self.repository._read(connection, row))
+                except MemoryRejected:
+                    continue
+        manifest = [{"entry_id": e.id, "revision": e.revision} for e in entries]
+        summary = "\n".join(
+            f"[{e.id}@{e.revision}] {e.content[:280]}" for e in entries[:20]
+        )
+        catalog = "\n".join(f"[{e.id}@{e.revision}] {e.title}" for e in entries)
+        with (
+            self.prepared(scope_id, summary) as summary_ref,
+            self.prepared(scope_id, catalog) as catalog_ref,
+            self.database.transaction() as connection,
+        ):
+            current = self.repository.scope(connection, scope_id)
+            if (
+                current.generation != scope.generation
+                or current.privacy_epoch != scope.privacy_epoch
+            ):
+                return
+            connection.execute(
+                "INSERT OR IGNORE INTO memory_generations(scope_id,generation,manifest_json,summary_ref,catalog_ref,created_at,privacy_epoch) VALUES(?,?,?,?,?,?,?)",
+                (
+                    scope_id,
+                    scope.generation,
+                    json.dumps(manifest),
+                    summary_ref,
+                    catalog_ref,
+                    now_ms(),
+                    scope.privacy_epoch,
+                ),
+            )
+
+    def collect_unreferenced_files(self) -> int:
+        with self.database.lock:
+            connection = self.database.connection()
+            referenced = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT file_ref FROM memory_revisions WHERE file_ref IS NOT NULL"
+                )
+            }
+            for row in connection.execute(
+                "SELECT summary_ref,catalog_ref FROM memory_generations"
+            ):
+                referenced.update(row)
+            return self.repository.files.collect_unreferenced(
+                referenced | self._preparing
+            )
+
     def cleanup(self) -> None:
-        """Remove revoked payloads. Metadata tombstones intentionally remain."""
+        """Remove revoked payloads; retain tombstones and stable diagnostics."""
+        changed = False
         with self.database.transaction() as connection:
             self._cancel_revoked(connection)
             rows = connection.execute(
-                "SELECT r.entry_id,r.revision,r.file_ref FROM memory_revisions r JOIN memory_entries e ON e.id=r.entry_id WHERE e.status IN ('forgotten','quarantined') AND r.file_ref IS NOT NULL LIMIT 500"
+                "SELECT r.entry_id,r.revision,r.file_ref FROM memory_revisions r JOIN memory_entries e ON e.id=r.entry_id WHERE r.file_ref IS NOT NULL AND (e.status IN ('forgotten','quarantined') OR (r.user_owned=0 AND EXISTS(SELECT 1 FROM memory_evidence v LEFT JOIN memory_source_items i ON i.item_id=v.item_id LEFT JOIN memory_sources s ON s.session_id=v.session_id WHERE v.entry_id=r.entry_id AND v.revision=r.revision AND (i.item_id IS NULL OR i.eligible=0 OR i.item_revision<>v.item_revision OR s.deleted=1 OR s.temporary=1)))) LIMIT 500"
             ).fetchall()
             for row in rows:
                 try:
@@ -523,21 +654,71 @@ class MemoryService:
                     )
                     continue
                 connection.execute(
-                    "UPDATE memory_revisions SET file_ref=NULL WHERE entry_id=? AND revision=?",
+                    "UPDATE memory_revisions SET file_ref=NULL,title='',aliases_json='[]' WHERE entry_id=? AND revision=?",
                     (row["entry_id"], row["revision"]),
                 )
-            # Revoked exact snapshots are tombstoned, never rehashed and presented
-            # as an original request. Blob GC removes now-unreferenced blocks.
-            connection.execute(
-                "UPDATE context_snapshots SET snapshot_json='{}' WHERE memory_revoked=1"
+                changed = True
+            changed |= (
+                connection.execute(
+                    "UPDATE context_snapshots SET snapshot_json='{}' WHERE memory_revoked=1 AND snapshot_json<>'{}'"
+                ).rowcount
+                > 0
             )
+            generations = connection.execute(
+                "SELECT g.* FROM memory_generations g JOIN memory_scopes s ON s.id=g.scope_id WHERE g.privacy_epoch<>s.privacy_epoch OR g.generation<s.generation-2 ORDER BY g.created_at LIMIT 100"
+            ).fetchall()
+            for generation in generations:
+                try:
+                    self.repository.files.remove(generation["summary_ref"])
+                    self.repository.files.remove(generation["catalog_ref"])
+                except OSError:
+                    continue
+                connection.execute(
+                    "DELETE FROM memory_generations WHERE scope_id=? AND generation=?",
+                    (generation["scope_id"], generation["generation"]),
+                )
+                changed = True
+            from eidos_runtime.runtime.errors import tool_error
+
+            for row in connection.execute(
+                "SELECT * FROM memory_tool_reads WHERE revoked=0 LIMIT 10000"
+            ).fetchall():
+                if self.valid_epochs(connection, json.loads(row["epochs_json"])):
+                    continue
+                tool = connection.execute(
+                    "SELECT tool_name FROM tool_calls WHERE item_id=?",
+                    (row["item_id"],),
+                ).fetchone()
+                if tool:
+                    redacted = json.dumps(
+                        tool_error(
+                            tool[0],
+                            "memory_snapshot_revoked",
+                            "Historical memory payload revoked.",
+                        )
+                    )
+                    connection.execute(
+                        "UPDATE tool_calls SET arguments_json='{}',raw_arguments_json=NULL,result_json=?,model_result_json=?,ui_result_json=?,approval_diff=NULL,approval_feedback=NULL WHERE item_id=?",
+                        (redacted, redacted, redacted, row["item_id"]),
+                    )
+                    connection.execute(
+                        "UPDATE approvals SET request_json='{}',feedback=NULL WHERE item_id=?",
+                        (row["item_id"],),
+                    )
+                    changed = True
+                connection.execute(
+                    "UPDATE memory_tool_reads SET revoked=1 WHERE item_id=?",
+                    (row["item_id"],),
+                )
             connection.execute(
-                "DELETE FROM memory_generations WHERE scope_id IN (SELECT DISTINCT e.scope_id FROM memory_entries e WHERE e.status IN ('forgotten','quarantined'))"
+                "UPDATE memory_jobs SET extraction_json=NULL,proposals_json=NULL WHERE state IN ('superseded','canceled') OR privacy_epoch<>(SELECT privacy_epoch FROM memory_scopes WHERE id=memory_jobs.scope_id)"
             )
             if self.repository.trigram_available:
                 connection.execute(
                     "DELETE FROM memory_fts_trigram WHERE entry_id IN (SELECT id FROM memory_entries WHERE status IN ('forgotten','quarantined'))"
                 )
+        if changed and self.on_cleanup:
+            self.on_cleanup()
 
 
 class MemoryCancellation(threading.Event):
@@ -562,9 +743,10 @@ class MemoryCancellation(threading.Event):
         return super().is_set()
 
     def wait(self, timeout: float | None = None) -> bool:
-        if self.is_set():
-            return True
-        return (
-            super().wait(min(timeout, 0.05) if timeout is not None else 0.05)
-            or self.is_set()
-        )
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not self.is_set():
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                break
+            super().wait(0.05 if remaining is None else min(0.05, remaining))
+        return self.is_set()

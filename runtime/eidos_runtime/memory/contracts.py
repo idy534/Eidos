@@ -49,15 +49,15 @@ class MemoryEvidence(EidosFrozenStrictModel):
     item_id: str
     session_id: str
     run_id: str
-    item_revision: int = Field(ge=1)
-    source_revision: int = Field(ge=1)
+    item_revision: JsonSafeInt = Field(ge=1)
+    source_revision: JsonSafeInt = Field(ge=1)
     evidence_class: EvidenceClass
 
 
 class MemoryEntry(EidosFrozenStrictModel):
     id: str
     scope_id: str
-    revision: int = Field(ge=1)
+    revision: JsonSafeInt = Field(ge=1)
     kind: MemoryKind
     status: MemoryStatus
     title: str
@@ -98,6 +98,14 @@ class MemoryReadRequest(EidosFrozenStrictModel):
     cursor: int = Field(default=0, ge=0)
     include_history: bool = False
     valid_at: JsonSafeInt | None = None
+
+
+class MemoryRebuildRequest(EidosFrozenStrictModel):
+    session_id: str | None = None
+
+
+class MemoryExportRequest(MemoryReadRequest):
+    pass
 
 
 class MemoryState(EidosFrozenStrictModel):
@@ -154,7 +162,7 @@ class MemoryWriteRequest(MemoryRecord):
 class MemoryManage(EidosFrozenStrictModel):
     action: Literal["correct", "forget", "pin", "unpin", "accept", "archive"]
     entry_id: str = Field(min_length=1, max_length=256)
-    expected_revision: int = Field(ge=1)
+    expected_revision: JsonSafeInt = Field(ge=1)
     content: str | None = Field(default=None, min_length=1, max_length=8192)
 
     @model_validator(mode="after")
@@ -205,8 +213,18 @@ class MemoryExport(EidosFrozenStrictModel):
     encrypted: Literal[False] = False
 
 
+class MemoryBackupRequest(EidosFrozenStrictModel):
+    destination: str = Field(min_length=1, max_length=4096)
+
+
+class MemoryBackupResult(EidosFrozenStrictModel):
+    saved: Literal[True] = True
+    encrypted: Literal[False] = False
+
+
 class MemoryCandidate(MemoryRecord):
     evidence_class: EvidenceClass = "inferred"
+    source_quotes: dict[str, str] = Field(default_factory=dict, max_length=16)
 
 
 class MemoryExtraction(EidosFrozenStrictModel):
