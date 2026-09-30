@@ -12,6 +12,8 @@ from eidos_runtime.memory.contracts import (
     MemoryGetRequest,
     MemoryManageRequest,
     MemoryReadRequest,
+    MemorySettings,
+    MemorySettingsRequest,
     MemoryWriteRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected
@@ -157,6 +159,9 @@ def test_retrieval_budget_is_durable_and_retry_idempotent(setup):
 def test_online_backup_restores_body_revisions_tombstones_and_epochs(setup, tmp_path):
     store, session = setup
     entry = saved(store, session)
+    store.database.memory.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="current", settings=MemorySettings(generate_enabled=True),
+    ))
     store.database.memory.manage(
         MemoryManageRequest(
             session_id=session["id"],
@@ -189,14 +194,10 @@ def test_online_backup_restores_body_revisions_tombstones_and_epochs(setup, tmp_
             ).entry.status
             == "superseded"
         )
-        assert (
-            reopened.database.memory.read(
-                MemoryReadRequest(session_id=session["id"])
-            ).scopes
-            == store.database.memory.read(
-                MemoryReadRequest(session_id=session["id"])
-            ).scopes
-        )
+        restored_scopes = reopened.database.memory.read(MemoryReadRequest(session_id=session["id"])).scopes
+        original_scopes = store.database.memory.read(MemoryReadRequest(session_id=session["id"])).scopes
+        assert all(not scope.settings.generate_enabled for scope in restored_scopes)
+        assert [(s.id, s.privacy_epoch, s.generation) for s in restored_scopes] == [(s.id, s.privacy_epoch, s.generation) for s in original_scopes]
     finally:
         reopened.close()
     with pytest.raises(MemoryRejected, match="new_directory"):

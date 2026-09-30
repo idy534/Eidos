@@ -11,6 +11,7 @@ import zipfile
 
 from eidos_runtime.db.layout import collect_unreferenced_blobs
 from eidos_runtime.db.schema import SCHEMA_VERSION
+from eidos_runtime.memory.contracts import MemorySettings
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.memory.service import MemoryService
@@ -184,10 +185,21 @@ def restore(archive_path: Path, destination: Path) -> None:
                     "UPDATE memory_revisions SET file_size=?,file_mtime_ns=? WHERE file_ref=?",
                     (size, modified, reference),
                 )
-            # A restored worker must claim a fresh lease. In-flight work never
-            # inherits submission authority from the process that made the backup.
+            # An old backup cannot know subsequent privacy revocations. Preserve
+            # its tombstones, but require fresh user consent before any learning.
+            for scope_id, settings_json in connection.execute(
+                "SELECT id,settings_json FROM memory_scopes"
+            ).fetchall():
+                settings = MemorySettings.model_validate_json(settings_json).model_copy(
+                    update={"generate_enabled": False}
+                )
+                connection.execute(
+                    "UPDATE memory_scopes SET settings_json=? WHERE id=?",
+                    (settings.model_dump_json(), scope_id),
+                )
+            connection.execute("UPDATE memory_sources SET backfill_enabled=0")
             connection.execute(
-                "UPDATE memory_jobs SET state='retry_wait',lease_token=NULL,lease_until=NULL WHERE state='running'"
+                "UPDATE memory_jobs SET state='canceled',lease_token=NULL,lease_until=NULL WHERE state IN ('queued','running','retry_wait','paused_budget','blocked_model')"
             )
         os.rename(staged, destination)
     finally:

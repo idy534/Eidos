@@ -430,3 +430,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 - 父任务等待使用持久 `waiting_agents` 状态。Worker 会退出，运行资源会释放。满足条件后，Runtime 继续同一等待调用。
 - Desktop 在环境信息中展示子 Agent 列表和待审批数量；右侧工作区关闭时，环境信息入口仍提示待审批数。点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消；父任务异常结束后，正常调度也会取消其孤立子任务。
 - 本阶段没有新增依赖。生产 DTO 从 Python Schema 生成。完整验证结果以当前 PR 记录为准。
+
+## 记忆
+
+支持全局/Project 记忆、来源证据、不可变版本、无向量检索、常驻摘要与四个模型工具、独立使用/生成控制、临时会话、两阶段后台学习及预算恢复。Desktop 提供候选确认、来源跳转、纠正、固定、归档、遗忘、显式历史学习、任务重试、索引重建、导出和完整 ZIP 备份。详见 [current-memory.md](current-memory.md)。
