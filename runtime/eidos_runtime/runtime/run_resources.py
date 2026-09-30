@@ -37,6 +37,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
+from eidos_runtime.tools.memory import memory_entries
 from eidos_runtime.tools.planning import planning_entries
 from eidos_runtime.tools.collaboration import collaboration_entries
 from eidos_runtime.domain.collaboration import READ_ONLY_TOOLS
@@ -238,6 +239,7 @@ class RunResources:
                 read_tool_output_entry(self.store, self.run_id),
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
+                *memory_entries(child=self.is_child),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
                 *(planning_entries() if self.store.read_run(self.run_id).get("workMode") == "plan" else ()),
                 *self.skills.tool_entries(

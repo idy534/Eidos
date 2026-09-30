@@ -4,6 +4,8 @@ import json
 
 from pydantic import ValidationError
 
+from eidos_runtime.memory.context import context_epochs
+from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.context.plan import ContextSnapshot
 from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
@@ -49,6 +51,9 @@ class ContextSnapshotRepository(Repository):
         ):
             raise ValueError("context persistence snapshot lineage mismatch")
         with self.lock, self.blobs.lock, self._connection() as connection:
+            epochs = context_epochs(snapshot.model_context)
+            if not self.database.memory.valid_epochs(connection, epochs):
+                raise MemoryRejected("memory_snapshot_revoked")
             stored_snapshot = self._store_snapshot(snapshot)
             if retrieval is not None:
                 connection.execute(
@@ -114,6 +119,9 @@ class ContextSnapshotRepository(Repository):
                     snapshot.created_at_ms,
                 ),
             )
+            for scope, epoch in epochs.items():
+                connection.execute("INSERT OR IGNORE INTO memory_snapshot_refs(snapshot_id,scope_id,privacy_epoch) VALUES(?,?,?)",
+                                   (snapshot.snapshot_id, scope, epoch))
         return self.read(snapshot.snapshot_id)
 
     def read(self, snapshot_id: str) -> ContextSnapshot:
@@ -121,13 +129,15 @@ class ContextSnapshotRepository(Repository):
             row = (
                 self._connection()
                 .execute(
-                    "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+                    "SELECT snapshot_json, memory_revoked FROM context_snapshots WHERE id = ?",
                     (snapshot_id,),
                 )
                 .fetchone()
             )
         if row is None:
             raise LookupError("context snapshot not found")
+        if row["memory_revoked"]:
+            raise MemoryRejected("memory_snapshot_revoked")
         try:
             return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
@@ -141,7 +151,7 @@ class ContextSnapshotRepository(Repository):
                 self._connection()
                 .execute(
                     """
-                SELECT context_snapshots.snapshot_json
+                SELECT context_snapshots.snapshot_json, context_snapshots.memory_revoked
                 FROM context_snapshots
                 LEFT JOIN model_attempts
                   ON model_attempts.context_snapshot_id = context_snapshots.id
@@ -155,6 +165,8 @@ class ContextSnapshotRepository(Repository):
             )
         if row is None:
             return None
+        if row["memory_revoked"]:
+            raise MemoryRejected("memory_snapshot_revoked")
         try:
             return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
@@ -205,7 +217,7 @@ class ContextSnapshotRepository(Repository):
                 self._connection()
                 .execute(
                     """
-                SELECT context_snapshots.snapshot_json FROM model_attempts
+                SELECT context_snapshots.snapshot_json, context_snapshots.memory_revoked FROM model_attempts
                 JOIN steps ON steps.id = model_attempts.step_id
                 JOIN context_snapshots
                   ON context_snapshots.id = model_attempts.context_snapshot_id
@@ -218,6 +230,8 @@ class ContextSnapshotRepository(Repository):
             )
         if row is None:
             return None
+        if row["memory_revoked"]:
+            raise MemoryRejected("memory_snapshot_revoked")
         try:
             return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):
@@ -233,7 +247,7 @@ class ContextSnapshotRepository(Repository):
                 self._connection()
                 .execute(
                     """
-                SELECT snapshot_json FROM context_snapshots
+                SELECT snapshot_json, memory_revoked FROM context_snapshots
                 WHERE run_id = ?
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
@@ -244,6 +258,8 @@ class ContextSnapshotRepository(Repository):
             )
         if row is None:
             return None
+        if row["memory_revoked"]:
+            raise MemoryRejected("memory_snapshot_revoked")
         try:
             return self._decode_snapshot(row["snapshot_json"])
         except (TypeError, ValidationError, ValueError, JsonBlobCorruptionError):

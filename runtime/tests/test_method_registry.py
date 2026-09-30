@@ -16,6 +16,7 @@ from eidos_runtime.protocol.registry import (
     MethodValidationError,
 )
 from eidos_runtime.domain.collaboration import CollaborationState
+from eidos_runtime.memory.contracts import MemoryState, MemoryActionResult
 from eidos_runtime.protocol.schemas import ClosedModel
 from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.input_context import DraftResponse
@@ -203,7 +204,7 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         response_type
         for response_type, count in response_type_counts.items()
         if count > 1
-    } == {CollaborationState, DraftResponse, PlanResponse}
+    } == {CollaborationState, DraftResponse, PlanResponse, MemoryState, MemoryActionResult}
     assert all(
         not registration.response_type.__pydantic_root_model__
         for registration in server.method_registry

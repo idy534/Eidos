@@ -186,6 +186,8 @@ def _tool_result(item: ContextItemFact) -> dict[str, object]:
 
 
 def _tool_text(item: ContextItemFact) -> str:
+    if (item.tool_name or "").startswith("memory_"):
+        return f"{item.tool_name}: historical memory reference; retrieve current evidence again when needed."
     result = _tool_result(item)
     parts = [
         item.tool_name or "tool",

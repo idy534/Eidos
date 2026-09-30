@@ -111,6 +111,7 @@ class ManagedTask:
     async_task_handle: RuntimeAsyncTask[None]
     resource: RuntimeResource
     async_request_resource: RuntimeResource | None
+    persistent: bool = False
 
 
 @dataclass(frozen=True)
@@ -616,7 +617,7 @@ class RunSupervisor:
         hit_fault("shutdown_tool_completion_race")
         self._release_approval_waits()
         self.wait(self.shutdown_timeout)
-        self.wait_managed_tasks(self.shutdown_timeout)
+        self.wait_managed_tasks(self.shutdown_timeout, include_services=True)
         if maintenance is not None:
             maintenance.wait(self.shutdown_timeout)
         registered = tuple(
@@ -627,7 +628,7 @@ class RunSupervisor:
         if (
             self.has_active_workers()
             or self.has_active_model_leases()
-            or self.has_active_managed_tasks()
+            or self.has_active_managed_tasks(include_services=True)
             or registered
         ):
             for run_id in active_ids:
@@ -686,6 +687,7 @@ class RunSupervisor:
         target: Callable[[threading.Event], None],
         *,
         operation_id: str | None = None,
+        persistent: bool = False,
     ) -> bool:
         task_id = str(uuid.uuid4())
         cancellation = threading.Event()
@@ -758,6 +760,7 @@ class RunSupervisor:
                 handle,
                 resource,
                 async_resource,
+                persistent,
             )
             resource.start()
             if async_resource is not None:
@@ -765,20 +768,22 @@ class RunSupervisor:
             registered.set()
         return True
 
-    def has_active_managed_tasks(self) -> bool:
+    def has_active_managed_tasks(self, *, include_services: bool = False) -> bool:
         with self.lock:
             return any(
                 not task.async_task_handle.done()
                 for task in self._managed_tasks.values()
+                if include_services or not task.persistent
             )
 
-    def wait_managed_tasks(self, timeout: float) -> bool:
+    def wait_managed_tasks(self, timeout: float, *, include_services: bool = False) -> bool:
         deadline = time.monotonic() + timeout
         with self.lock:
             tasks = tuple(self._managed_tasks.values())
         for task in tasks:
-            task.async_task_handle.wait(max(0.0, deadline - time.monotonic()))
-        return not self.has_active_managed_tasks()
+            if include_services or not task.persistent:
+                task.async_task_handle.wait(max(0.0, deadline - time.monotonic()))
+        return not self.has_active_managed_tasks(include_services=include_services)
 
     def begin_reconfiguration(self) -> bool:
         hit_fault("configure_worker_race")
@@ -796,6 +801,7 @@ class RunSupervisor:
                 or any(
                     not task.async_task_handle.done()
                     for task in self._managed_tasks.values()
+                    if not task.persistent
                 )
             ):
                 return False

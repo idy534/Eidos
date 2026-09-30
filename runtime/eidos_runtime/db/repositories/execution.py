@@ -1444,6 +1444,16 @@ class ExecutionRepository(Repository):
             ensure_transition(
                 ToolCallStatus(fact["tool_status"]), ToolCallStatus(tool_status)
             )
+            # Revocation may race a tool's return and its durable completion.
+            # Never publish a retrieved body after the scope epoch has changed.
+            if fact["tool_name"].startswith("memory_"):
+                read = connection.execute("SELECT epochs_json,revoked FROM memory_tool_reads WHERE item_id=?", (item_id,)).fetchone()
+                if read is not None and (read["revoked"] or not self.database.memory.valid_epochs(connection, json.loads(read["epochs_json"]))):
+                    from eidos_runtime.runtime.errors import tool_error
+                    result_json = json.dumps(tool_error(fact["tool_name"], "memory_snapshot_revoked", "Historical memory payload revoked."))
+                    model_result_json = ui_result_json = result_json
+                    connection.execute("UPDATE tool_calls SET arguments_json='{}',raw_arguments_json=NULL WHERE item_id=?", (item_id,))
+
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.memory.repository import MemoryRejected
+
 from eidos_runtime.domain.planning import PlanningSuspended
 from eidos_runtime.domain.collaboration import AgentSuspended, WaitAgents
 from eidos_runtime.persistence.planning import PlanningRepository
@@ -60,6 +62,7 @@ from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
     SamplingCancelled,
+    SamplingMemoryRevoked,
     SamplingContextExceeded,
     SamplingError,
     SamplingInvalidRequest,
@@ -635,12 +638,14 @@ class RuntimeEngine:
                 workspace_version=built.facts.workspace_version,
                 new_user_input_ids=tuple(item_id for item_id, _content in injected),
             )
-            self._capture_model_attempt_context(
-                context_application,
-                step,
-                rule_snapshot,
-                repository_context,
-            )
+            try:
+                self._capture_model_attempt_context(
+                    context_application, step, rule_snapshot, repository_context,
+                )
+            except MemoryRejected:
+                self.store.complete_current_model_attempt(run.run_id, "failed", error_code="memory_snapshot_revoked")
+                self.store.complete_current_step(run.run_id, "failed", reason="memory_snapshot_revoked")
+                continue
 
             tools = ToolCallRuntime(
                 self.store,
@@ -683,6 +688,10 @@ class RuntimeEngine:
                         model_attempt_id=step.model_attempt_id,
                         tool_count=len(sampled.tool_calls),
                     )
+                except SamplingMemoryRevoked:
+                    self.store.complete_current_step(run.run_id, "failed", reason="memory_snapshot_revoked")
+                    context_recovered = True
+                    break
                 except SamplingCancelled:
                     raise
                 except SensitiveScanError:
@@ -748,9 +757,12 @@ class RuntimeEngine:
                         and error.retry_decision is not None
                         and error.retry_decision.retry
                     ):
-                        frozen = self.store.context_snapshot_repository().read_for_model_attempt(
-                            step.model_attempt_id
-                        )
+                        try:
+                            frozen = self.store.context_snapshot_repository().read_for_model_attempt(step.model_attempt_id)
+                        except MemoryRejected:
+                            self.store.complete_current_step(run.run_id, "failed", reason="memory_snapshot_revoked")
+                            context_recovered = True
+                            break
                         if frozen is not None:
                             self.store.start_retry_model_attempt(
                                 run.run_id,
@@ -772,12 +784,18 @@ class RuntimeEngine:
                                 attempt_id=attempt_id,
                                 code=repair_code,
                             )
-                            self._capture_model_attempt_context(
-                                context_application,
-                                step,
-                                rule_snapshot,
-                                repository_context,
-                            )
+                            try:
+                                self._capture_model_attempt_context(
+                                    context_application,
+                                    step,
+                                    rule_snapshot,
+                                    repository_context,
+                                )
+                            except MemoryRejected:
+                                self.store.complete_current_model_attempt(run.run_id, "failed", error_code="memory_snapshot_revoked")
+                                self.store.complete_current_step(run.run_id, "failed", reason="memory_snapshot_revoked")
+                                context_recovered = True
+                                break
                             continue
                     self._handle_sampling_failure(run.run_id, error)
                     return
@@ -808,12 +826,18 @@ class RuntimeEngine:
                             code=reason,
                             diagnostic=validation.protocol_diagnostic,
                         )
-                        self._capture_model_attempt_context(
-                            context_application,
-                            step,
-                            rule_snapshot,
-                            repository_context,
-                        )
+                        try:
+                            self._capture_model_attempt_context(
+                                context_application,
+                                step,
+                                rule_snapshot,
+                                repository_context,
+                            )
+                        except MemoryRejected:
+                            self.store.complete_current_model_attempt(run.run_id, "failed", error_code="memory_snapshot_revoked")
+                            self.store.complete_current_step(run.run_id, "failed", reason="memory_snapshot_revoked")
+                            context_recovered = True
+                            break
                         continue
                     self.store.complete_current_step(
                         run.run_id, "failed", reason=reason
@@ -844,12 +868,18 @@ class RuntimeEngine:
                         step = _protocol_repair_step(
                             step, attempt_id=attempt_id, code="empty_response"
                         )
-                        self._capture_model_attempt_context(
-                            context_application,
-                            step,
-                            rule_snapshot,
-                            repository_context,
-                        )
+                        try:
+                            self._capture_model_attempt_context(
+                                context_application,
+                                step,
+                                rule_snapshot,
+                                repository_context,
+                            )
+                        except MemoryRejected:
+                            self.store.complete_current_model_attempt(run.run_id, "failed", error_code="memory_snapshot_revoked")
+                            self.store.complete_current_step(run.run_id, "failed", reason="memory_snapshot_revoked")
+                            context_recovered = True
+                            break
                         continue
                     reason = empty_reason or "empty_response"
                     self.store.complete_current_step(

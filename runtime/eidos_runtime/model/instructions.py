@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from eidos_runtime.model.prompts import (
     BASE_AGENT_INSTRUCTIONS,
+    MEMORY_POLICY_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     InstructionLayer,
@@ -152,6 +153,7 @@ class InstructionResolver:
         selected_skill_context: tuple[RetainedContextSection, ...] = (),
         step_policy: StepPermissionPolicy | None = None,
         work_mode: str = "execute",
+        memory_enabled: bool = False,
     ) -> ResolvedInstructions:
         layers: list[InstructionLayer] = [
             InstructionLayer.create(
@@ -176,6 +178,10 @@ class InstructionResolver:
                 content=RUNTIME_POLICY_INSTRUCTIONS,
             ),
         ]
+        if memory_enabled or (step_policy is not None and any(name.startswith("memory_") for name in step_policy.available_tools)):
+            layers.append(InstructionLayer.create(
+                id="memory-policy", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:memory-policy", content=MEMORY_POLICY_INSTRUCTIONS,
+            ))
         if work_mode == "plan":
             layers.append(InstructionLayer.create(
                 id="work-mode", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:plan",
