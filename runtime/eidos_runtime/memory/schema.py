@@ -177,6 +177,9 @@ def migrate_memory_use(connection: sqlite3.Connection) -> None:
             "UPDATE context_snapshots SET memory_revoked=1 WHERE id IN "
             "(SELECT snapshot_id FROM memory_snapshot_refs)"
         )
+        # Legacy tool result bodies also carry scope epochs. Advancing them
+        # closes admission before deferred cleanup rewrites those payloads.
+        connection.execute("UPDATE memory_scopes SET privacy_epoch=privacy_epoch+1")
         connection.execute(
             "UPDATE memory_tool_reads SET epochs_json=?",
             ('{"session:legacy":0}',),

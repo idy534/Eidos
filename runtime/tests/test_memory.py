@@ -322,6 +322,7 @@ def test_memory_use_migration_from_v17_preserves_entries_and_rolls_back(tmp_path
     assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
     assert connection.execute("SELECT temporary,use_epoch FROM memory_sources").fetchone() == (1, 0)
     assert connection.execute("SELECT status FROM memory_entries WHERE id='entry'").fetchone()[0] == "active"
+    assert connection.execute("SELECT privacy_epoch FROM memory_scopes WHERE id='scope'").fetchone()[0] == 1
     assert "session:legacy" in connection.execute("SELECT epochs_json FROM memory_tool_reads").fetchone()[0]
     connection.close()
 

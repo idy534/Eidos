@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 
 from eidos_runtime.db.layout import collect_unreferenced_blobs
-from eidos_runtime.db.schema import SCHEMA_VERSION
+from eidos_runtime.db.schema import SCHEMA_VERSION, V17_SCHEMA_VERSION
 from eidos_runtime.memory.contracts import MemorySettings
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
@@ -119,7 +119,7 @@ def restore(archive_path: Path, destination: Path) -> None:
             manifest = json.loads(archive.read("manifest.json"))
             if (
                 manifest.get("format") != "eidos-memory-backup-v1"
-                or manifest.get("schemaVersion") != SCHEMA_VERSION
+                or manifest.get("schemaVersion") not in {V17_SCHEMA_VERSION, SCHEMA_VERSION}
             ):
                 raise MemoryRejected("memory_backup_incompatible")
             seen: set[str] = set()
@@ -152,9 +152,9 @@ def restore(archive_path: Path, destination: Path) -> None:
                     shutil.copyfileobj(source, stream)
         files = MemoryFiles(staged)
         with sqlite3.connect(staged / "state.sqlite") as connection:
+            stored_version = connection.execute("PRAGMA user_version").fetchone()[0]
             if (
-                connection.execute("PRAGMA user_version").fetchone()[0]
-                != SCHEMA_VERSION
+                stored_version != manifest["schemaVersion"]
                 or connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok"
                 or connection.execute("PRAGMA foreign_key_check").fetchone()
             ):
@@ -186,6 +186,11 @@ def restore(archive_path: Path, destination: Path) -> None:
                     "UPDATE memory_revisions SET file_size=?,file_mtime_ns=? WHERE file_ref=?",
                     (size, modified, reference),
                 )
+            if stored_version == V17_SCHEMA_VERSION:
+                from eidos_runtime.memory.schema import migrate_memory_use
+
+                connection.commit()
+                migrate_memory_use(connection)
             # An old backup cannot know subsequent privacy revocations. Preserve
             # its tombstones, but require fresh user consent before any learning.
             for scope_id, settings_json in connection.execute(

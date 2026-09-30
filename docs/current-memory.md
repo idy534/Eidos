@@ -4,7 +4,7 @@
 
 ## 权威与发布
 
-`state.sqlite` schema v18 保存作用域、不可变版本、证据、操作、抑制记录、作业、预算、使用记录、快照引用及派生 generation。v16→v17→v18 通过既有入口分阶段在事务内升级。v18 保存 Root 会话的 use epoch，升级时撤销未绑定会话资格的旧记忆快照和工具载荷。正文位于数据目录的 `memory/` 下，使用服务端 UUID，不按正文哈希命名。
+`state.sqlite` schema v18 保存作用域、不可变版本、证据、操作、抑制记录、作业、预算、使用记录、快照引用及派生 generation。v16→v17→v18 通过既有入口分阶段在事务内升级。v18 保存 Root 会话的 use epoch，升级时推进作用域 epoch，撤销未绑定会话资格的旧记忆快照和工具载荷，旧工具正文在清理前也不能进入新请求。正文位于数据目录的 `memory/` 下，使用服务端 UUID，不按正文哈希命名。
 
 私有目录与文件使用目录 FD、`O_NOFOLLOW`、普通文件/硬链接校验、临时写入、fsync 和原子 rename。发布事务重新检查来源、租约、版本 CAS 和 privacy epoch；未提交文件不会成为可读事实。读取检查保存的大小与 mtime，缺失或变更正文 fail closed。这不能发现主动保留大小及 mtime 的恶意篡改。
 
@@ -73,6 +73,6 @@ Python 严格 DTO 是共享契约来源；`node scripts/generate-memory-contract
 
 Markdown 导出仅当前页，并提供截断提示；页内包含完整正文，历史搜索导出对应的具体版本。完整 ZIP 一致复制 SQLite、所有被引用记忆/派生文件与执行 Blob，核对引用、文件与 epoch 后原子发布。Provider 配置和 Workspace 不包含在内。ZIP 包含私有聊天，可能含 MCP 环境配置，未加密。
 
-恢复只支持离线导入新的目录，禁止覆盖或合并运行数据。旧备份无法知道之后的遗忘：保留备份中的 epoch 和 suppression，但默认关闭自动生成、取消旧待执行作业及回填授权，用户确认后才能重新学习。命令和人工验收见 [DEVELOPMENT.md](../DEVELOPMENT.md)。
+v17 完整备份可在离线恢复中迁移至 v18。恢复只支持离线导入新的目录，禁止覆盖或合并运行数据。旧备份无法知道之后的遗忘：保留备份中的 epoch 和 suppression，但默认关闭自动生成、取消旧待执行作业及回填授权，用户确认后才能重新学习。命令和人工验收见 [DEVELOPMENT.md](../DEVELOPMENT.md)。
 
 自动化覆盖迁移、中文检索、作用域、CAS、来源失效、遗忘、两阶段作业、预算/租约/配置恢复、长资料、真实 Engine 工具流程、请求中撤销、冻结快照、文件异常、投影重建、孤立文件、ZIP 恢复及 Desktop 确认与错误展示。这不证明真实模型的提炼准确率或语义召回率；真实 Provider、Codex 对照、macOS 原生沙盒和 sidecar 验收仍需对应环境。
