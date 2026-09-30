@@ -101,6 +101,7 @@ class EventType(StrEnum):
     CONTEXT_COMPACTED = "context.compacted"
     INPUT_QUEUED = "input.queued"
     INPUT_INJECTED = "input.injected"
+    MEMORY_CHANGED = "memory.changed"
 
 
 TRANSITIONS: dict[type[StrEnum], dict[StrEnum, frozenset[StrEnum]]] = {

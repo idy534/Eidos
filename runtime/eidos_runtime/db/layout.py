@@ -650,6 +650,8 @@ def _migrate_state_schema(state: StateDatabase) -> None:
                 migrate_planning(connection, PLANNING_SCHEMA_SQL)
             from eidos_runtime.db.collaboration_migration import migrate_collaboration
             migrate_collaboration(connection)
+            from eidos_runtime.memory.schema import migrate_memory
+            migrate_memory(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()
