@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.planning import PlanningSuspended
-from eidos_runtime.domain.collaboration import AgentSuspended, WaitAgents
+from eidos_runtime.domain.collaboration import AgentSuspended, CollaborationState, WaitAgents
+from eidos_runtime.db.errors import RunCompletionDeferred
 from eidos_runtime.persistence.planning import PlanningRepository
 
 import logging
@@ -1087,10 +1088,12 @@ class RuntimeEngine:
         resources: RunResources,
         finalizer: RunFinalizer,
         cancel: threading.Event,
-        agent_baseline: object | None = None,
+        agent_baseline: CollaborationState | None = None,
     ) -> SampleBoundaryAction:
         """Commit the sampling boundary before allowing another step or a tool."""
-        if decision.reason == "pending_input":
+        if decision.action == LoopAction.CANCEL:
+            raise RuntimeCancelled
+        if decision.reason in {"pending_input", "model_follow_up"}:
             if sampled.assistant_item is not None:
                 mutation = self.store.complete_assistant_item_committed(
                     str(sampled.assistant_item["id"])
@@ -1131,9 +1134,24 @@ class RuntimeEngine:
             shell_stopped = resources.shell_process_manager.has_running()
             resources.shell_process_manager.cleanup()
             self.store.complete_current_step(run_id, "completed")
-            mutation = self.store.complete_assistant_and_run_committed(
-                str(sampled.assistant_item["id"]), run_id, shell_stopped=shell_stopped,
-            )
+            try:
+                mutation = self.store.complete_assistant_and_run_committed(
+                    str(sampled.assistant_item["id"]), run_id, shell_stopped=shell_stopped,
+                    expected_collaboration=agent_baseline,
+                )
+            except RunCompletionDeferred as deferred:
+                # Recheck inside the final transaction: input or child results
+                # can arrive after the optimistic checks above.
+                if deferred.reason == "cancel_requested":
+                    raise RuntimeCancelled from deferred
+                logger.info("Run completion deferred run_id=%s reason=%s", run_id, deferred.reason)
+                mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item["id"]))
+                self.events.publish(mutation, item=mutation.value)
+                if deferred.reason == "active_children":
+                    if self.collaboration is None:
+                        raise InvalidRunStateError("active children require collaboration runtime") from deferred
+                    self.collaboration.wait(run_id, None, WaitAgents(timeout_ms=300000))
+                return SampleBoundaryAction.REBUILD_CONTEXT
             item, completed = mutation.value
             self.events.publish(mutation, item=item, run=completed)
             self.state_machine.track(RuntimeState.COMPLETED, str(completed["status"]))

@@ -19,6 +19,7 @@ from eidos_runtime.db.database import (
 )
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
+    RunCompletionDeferred,
     ResourceNotFoundError,
     StorageError,
 )
@@ -39,6 +40,7 @@ from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
 from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.domain.collaboration import ACTIVE_STATUSES, CollaborationState
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.protocol_diagnostics import (
     ProtocolDiagnostic,
@@ -1207,15 +1209,42 @@ class ExecutionRepository(Repository):
 
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str, *, shell_stopped: bool = False,
+        expected_collaboration: CollaborationState | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
             now = _now_ms()
             run_state = connection.execute(
-                "SELECT reconciliation_required FROM runs WHERE id = ?",
+                "SELECT status, cancel_requested_at, reconciliation_required FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
             if run_state is None:
                 raise ResourceNotFoundError("run not found")
+            if run_state["cancel_requested_at"] is not None:
+                raise RunCompletionDeferred("cancel_requested")
+            if run_state["status"] != "running":
+                raise InvalidRunStateError("run is not active")
+            # Input admission and the final status update share this transaction.
+            # A message accepted before completion must be sampled before success.
+            if connection.execute(
+                "SELECT 1 FROM input_mailbox WHERE run_id=? AND status='pending' LIMIT 1",
+                (run_id,),
+            ).fetchone():
+                raise RunCompletionDeferred("pending_input")
+            if connection.execute(
+                """SELECT 1 FROM agent_delegations d
+                JOIN runs r ON r.session_id=d.child_session_id
+                WHERE d.parent_run_id=? AND r.status IN (SELECT value FROM json_each(?)) LIMIT 1""",
+                (run_id, json.dumps(ACTIVE_STATUSES)),
+            ).fetchone():
+                raise RunCompletionDeferred("active_children")
+            if expected_collaboration is not None:
+                from eidos_runtime.persistence.collaboration import CollaborationRepository
+
+                current = CollaborationRepository(self.database).state_in_connection(connection, run_id)
+                if current != expected_collaboration:
+                    raise RunCompletionDeferred("collaboration_changed")
             interrupted = bool(run_state["reconciliation_required"]) or shell_stopped
             reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else None
             item_update = connection.execute(

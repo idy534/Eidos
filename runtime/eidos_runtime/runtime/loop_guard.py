@@ -129,6 +129,10 @@ class LoopGuard:
         return self._last_loop_state
 
     def observe_progress(self, signature: ProgressSignature) -> str | None:
+        # A verified live process/search wait is neither task progress nor a
+        # repeated failed attempt. Keep the previous convergence evidence intact.
+        if signature.managed_shell_poll:
+            return None
         if not signature.reconciliation_required or signature.reconciliation_epoch != self._reconciliation_epoch:
             self._reconciliation_rounds = 0
         self._reconciliation_epoch = signature.reconciliation_epoch

@@ -66,16 +66,21 @@ class CollaborationRepository:
 
     def state(self, run_id: str) -> CollaborationState:
         with self.database.lock:
-            connection = self.database.connection()
-            run = connection.execute('SELECT session_id FROM runs WHERE id=?', (run_id,)).fetchone()
-            if run is None:
-                raise CollaborationRejected('agent_run_not_found')
-            child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (run['session_id'],)).fetchone()
-            parent_id = child['parent_run_id'] if child else run_id
-            rows = connection.execute('SELECT * FROM agent_delegations WHERE parent_run_id=? ORDER BY created_at,id LIMIT ?', (parent_id, MAX_AGENTS)).fetchall()
-            messages = connection.execute('SELECT id,sender_session_id,recipient_session_id,content,created_at FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence LIMIT 16', (parent_id, run['session_id'])).fetchall()
-            return CollaborationState(parent_run_id=parent_id if rows else None,
-                agents=[self._summary(connection, row) for row in rows if child is None or row["id"] == child["id"]], messages=[AgentMessage(**dict(row)) for row in messages])
+            return self.state_in_connection(self.database.connection(), run_id)
+
+    def state_in_connection(
+        self, connection: sqlite3.Connection, run_id: str,
+    ) -> CollaborationState:
+        """Read the same projection inside the caller's completion transaction."""
+        run = connection.execute('SELECT session_id FROM runs WHERE id=?', (run_id,)).fetchone()
+        if run is None:
+            raise CollaborationRejected('agent_run_not_found')
+        child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (run['session_id'],)).fetchone()
+        parent_id = child['parent_run_id'] if child else run_id
+        rows = connection.execute('SELECT * FROM agent_delegations WHERE parent_run_id=? ORDER BY created_at,id LIMIT ?', (parent_id, MAX_AGENTS)).fetchall()
+        messages = connection.execute('SELECT id,sender_session_id,recipient_session_id,content,created_at FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence LIMIT 16', (parent_id, run['session_id'])).fetchall()
+        return CollaborationState(parent_run_id=parent_id if rows else None,
+            agents=[self._summary(connection, row) for row in rows if child is None or row["id"] == child["id"]], messages=[AgentMessage(**dict(row)) for row in messages])
 
     def read_session(self, session_id: str) -> CollaborationState:
         with self.database.lock:
