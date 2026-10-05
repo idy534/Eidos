@@ -55,6 +55,8 @@ EIDOS_PYTHON=/absolute/path/to/python3 pnpm start
 EIDOS_DATA_DIR=/private/tmp/eidos-dev-data pnpm start
 ```
 
+Run 调度默认最多 4 个执行名额和 8 个驻留 Worker。启动前可通过 `EIDOS_MAX_ACTIVE_RUNS`（1–64）和 `EIDOS_MAX_RUN_WORKERS`（1–128，且不小于执行名额）调整；无效配置会拒绝启动。审批和共享工作区等待释放执行名额，但仍占驻留 Worker。等待结束后重新排队取得名额；取消和退出会打断等待。该配置不会设置模型步数、任务时长或 token 成本上限。
+
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
 ## 4. Test

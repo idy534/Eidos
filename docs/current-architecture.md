@@ -95,7 +95,7 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 
 ## 5. Run Orchestration
 
-RunSupervisor 负责按 Session 维护持久 FIFO、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 独立持有 `ToolConcurrencyGate` 和 `ShellProcessManager`。不同 Session 的 Run 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
+Run 按 Session 维护持久 FIFO。默认最多 4 个执行中的 Run、8 个驻留 Worker，超出容量的任务保留在 SQLite 队列。审批等待和共享工作区等待释放执行名额，等待结束后按恢复队列重新取得名额；驻留 Worker 总量仍有上限。同一 Session 只运行一个 Run。不同 Session 可以并行采样和只读操作；同一 canonical execution root 的文件写入、Shell、MCP 和其他受控副作用窗口共用门。长 Shell 保留该工作区的副作用所有权至终态提交或确认进程静止；其所属 Run 继续使用 write_stdin，其他 Run 可取消地等待。不同 Worktree 使用不同的门。
 
 RunSupervisor 把同步 Durable Runtime Core 与进程级 `RuntimeAsyncKernel` 连接起来。RuntimeAsyncKernel 持有一个 AnyIO Blocking Portal。Model 异步 I/O、MCP Connection、Managed Task 和安全只读并行批次通过这个 Kernel 执行。Run Worker 仍是当前 Run 的同步控制边界。
 
@@ -132,6 +132,8 @@ Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归
 确定的 Tool Error 只表示本次尝试失败，不会单独把 Run 置为终态。Runtime 会把失败事实交给下一次模型决策。模型可以修正参数、选择替代 Tool，或者在没有安全路径时结束。等价重复且没有新事实时，LoopGuard 负责收敛。
 
 串行和并行批次都只把成功结果计入新的进展事实。失败调用仍保留在 SQLite 和模型历史中，但不会仅因参数变化而重置进展。真实 Workspace 变化、权限变化和用户输入仍参与已有的收敛判断。
+
+正常 assistant-only 完成调用在 SQLite 写事务中检查取消、input_mailbox、活动子 Run 与原采样协作投影。事务拒绝过期完成后，Engine 保存有效回答并重新构建 Context，或进入已有 waiting_agents；这些控制事实不依赖额外模型判分。正常无工具 follow-up 先完成 Item/Step，取消在采样边界优先处理。合法受管轮询对 LoopGuard 为中性，不覆盖先前收敛证据。
 
 RunFinalizer 为 context pressure、loop guard 等需要提前停止的路径生成有界、无 Tool 的回答。它不改变普通 Agent Loop 的 `needs_follow_up` 判定。Finalization Attempt 仍然记录自己的 timeout、model failure 和 output item 状态。
 

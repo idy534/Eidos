@@ -35,10 +35,12 @@
 
 ### Run 并发与资源模型
 
-- 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
+- 本次 Loop 优化仍需测试阶段确认。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩、PTY、用户 Hooks 和流式工具调度仍属后续工作。
+
+- Run 按 Session 维护持久 FIFO。默认最多 4 个执行中的 Run、8 个驻留 Worker，超出容量的任务保留在 SQLite 队列。审批等待和共享工作区等待释放执行名额，等待结束后按恢复队列重新取得名额；驻留 Worker 总量仍有上限。同一 Session 只运行一个 Run。不同 Session 可以并行采样和只读操作；同一 canonical execution root 的文件写入、Shell、MCP 和其他受控副作用窗口共用门。长 Shell 保留该工作区的副作用所有权至终态提交或确认进程静止；其所属 Run 继续使用 write_stdin，其他 Run 可取消地等待。不同 Worktree 使用不同的门。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
 - Managed Task 的提交与事件循环清理之间存在过同步锁循环等待。当前代码已将完整任务生命周期移到 worker，测试按用户要求延后。事故没有保留线程栈，因此该代码缺陷与事故之间尚未完成动态验证。该修订不解决所有慢 Git、stdout/stderr 背压或遥测关闭问题，也不改变既有 RPC deadline。
-- Workspace 写入、Shell、MCP、external 和 Eidos-state 的实际副作用窗口只在各自 Run 内独占。不同 Session 的 Run 可以并行，即使共享同一个 Workspace。安全只读的 `parallel_safe` 批次保留自身的有界并行。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
+- 工作区副作用门仅覆盖同一 Runtime 中、相同 canonical execution root 的受控 Agent 操作。它不隔离外部编辑器、用户 Terminal、另一个 Runtime、嵌套但不同的根目录或共同操作同一个远程服务的不同工作区。需要严格归属的并行编码仍应使用独立 Worktree。只读批次保留现有有界并行，混合批次仍串行。
 - 当前没有用户可配置的统一 Run 成本、模型步数或有效时长上限。现有 step、segment 和 effective time 字段主要用于 telemetry 和 operational lifecycle。
 
 ### Workspace 与工具
@@ -73,7 +75,7 @@
 - `outputComplete=false` 表示输出尚未完整获得，原因可能是仍在运行、捕获失败或原始输出截断。旧结果缺少该字段时，系统不能推断输出完整。`outputCaptureError` 只保存捕获原因码，不能恢复已经丢失的内容；当前 Shell 聚合输出不会因可识别凭据被拒绝。本次历史 Run 的具体捕获子原因不会被新代码补写。
 - 同一对账 epoch 最多允许三轮工具恢复，随后现有 Finalizer 收尾并保留对账事实。系统不自动重放未知操作。模型的测试报告指引要求区分收集数与完成数，也要求标明缺失汇总和未执行阶段；这项指引不等于系统能够自动证明任意测试结论。
 
-- Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 会阻止该 Run 启动新的副作用。
+- Agent Shell 按 Run 管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。相同 execution root 的 Shell 与其他 Agent 副作用共享协调门；不同 Worktree 可并行。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Skill 依赖自动绑定只适用于现有识别器能识别的直接脚本调用，包括 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE`。Runtime 不会从任意 Shell 包装、变量脚本路径或已激活 Skill 列表推断普通命令的依赖，也不会自动安装缺失包。
