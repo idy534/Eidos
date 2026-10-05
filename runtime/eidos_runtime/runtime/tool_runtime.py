@@ -897,7 +897,7 @@ class ShellToolHandler:
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
             nonlocal dependency_binding, dependency_environment, dependency_provenance
-            nonlocal manifest_after, refresh_error_code, workspace_diff
+            nonlocal manifest_before, manifest_after, refresh_error_code, workspace_diff
             manifest_after = manifest_before
             refresh_error_code = None
             try:
@@ -928,6 +928,12 @@ class ShellToolHandler:
                     ),
                     None,
                 )
+            if self.dependencies.concurrency is not None and self.dependencies.concurrency.shares_workspace:
+                # Waiting for approval/admission can outlive another Run's edits.
+                # Capture the baseline while this attempt owns the workspace gate.
+                observe_workspace({}, cancel)
+                manifest_before = manifest_after
+                refresh_error_code = None
             if dependency_binding is not None:
                 coordinator = self.dependencies.runtime_dependencies
                 assert coordinator is not None

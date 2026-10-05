@@ -3,6 +3,7 @@ from __future__ import annotations
 from eidos_runtime.domain.collaboration import ACTIVE_STATUSES
 
 from dataclasses import dataclass
+from collections import deque
 from enum import StrEnum
 import json
 import logging
@@ -10,6 +11,7 @@ import os
 import threading
 import time
 import uuid
+from weakref import WeakValueDictionary
 from typing import Callable
 
 import anyio
@@ -53,6 +55,8 @@ from eidos_runtime.domain.long_task import (
     SafePoint,
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle
+from eidos_runtime.runtime.scheduling import RunSchedulingLimits
+from eidos_runtime.runtime.tool_execution import ToolConcurrencyGate
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 
 
@@ -75,6 +79,8 @@ class RunWorkerState(StrEnum):
     STARTING = "starting"
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
+    WAITING_SLOT = "waiting_slot"
+    WAITING_WORKSPACE = "waiting_workspace"
     CANCEL_REQUESTED = "cancel_requested"
     CANCELING = "canceling"
     FINISHED = "finished"
@@ -139,6 +145,7 @@ class RunSupervisor:
         resource_registry: ResourceRegistry | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
+        scheduling_limits: RunSchedulingLimits | None = None,
     ) -> None:
         self.store = store
         self.model_for = model_for
@@ -153,6 +160,10 @@ class RunSupervisor:
         self.shutdown_timeout = shutdown_timeout
         self.resources = resource_registry or ResourceRegistry()
         self.lock = threading.RLock()
+        self.scheduling_limits = scheduling_limits or RunSchedulingLimits.from_environment()
+        self._capacity = threading.Condition(self.lock)
+        self._resume_waiters: deque[str] = deque()
+        self._workspace_gates: WeakValueDictionary[str, ToolConcurrencyGate] = WeakValueDictionary()
         self._handles: dict[str, RunHandle] = {}
         self._run_trace_contexts: dict[str, Context] = {}
         self._managed_tasks: dict[str, ManagedTask] = {}
@@ -222,6 +233,12 @@ class RunSupervisor:
             if (
                 self.lifecycle is not RuntimeLifecycle.RUNNING
                 or self.control_state is not RuntimeControlState.RUNNING
+            ):
+                return None
+            if (
+                len(self._handles) >= self.scheduling_limits.max_workers
+                or self._active_worker_count_locked() >= self.scheduling_limits.max_active_runs
+                or self._resume_waiters
             ):
                 return None
             for waiting_id in self.store.waiting_approval_run_ids():
@@ -523,18 +540,9 @@ class RunSupervisor:
                     return ApprovalDecision("reject")
             return pending.decision or ApprovalDecision("reject")
         finally:
-            with self.lock:
-                handle = self._handles.get(run_id)
-                if (
-                    handle is not None
-                    and handle.thread is threading.current_thread()
-                    and handle.state is RunWorkerState.WAITING_APPROVAL
-                    and not cancel.is_set()
-                    and self.lifecycle is RuntimeLifecycle.RUNNING
-                ):
-                    handle.state = RunWorkerState.RUNNING
             with self.approval_lock:
                 self.pending_approvals.pop(request_id, None)
+            self._resume_active_worker(run_id, cancel)
 
     def handle_approval_response(self, message: dict[str, object]) -> None:
         request_id = message.get("id")
@@ -981,6 +989,19 @@ class RunSupervisor:
             )
             if isinstance(engine, RuntimeEngine):
                 engine.terminalize_cancel = False
+                # A Run keeps its own shell ownership, while committed effects
+                # share a gate with other Runs bound to this execution root.
+                workspace_key = os.path.realpath(self.store.workspace_for_run(run_id).path)
+                with self.lock:
+                    workspace_gate = self._workspace_gates.get(workspace_key)
+                    if workspace_gate is None:
+                        workspace_gate = ToolConcurrencyGate()
+                        self._workspace_gates[workspace_key] = workspace_gate
+                engine.tool_concurrency_gate = ToolConcurrencyGate(
+                    shared_gate=workspace_gate, owner_id=run_id,
+                    on_wait=lambda: self._park_active_worker(run_id, RunWorkerState.WAITING_WORKSPACE),
+                    on_resume=lambda: self._resume_active_worker(run_id, cancellation),
+                )
             engine.run(run_id, cancellation)
         except RuntimeCancelled:
             with self.lock:
@@ -1016,6 +1037,7 @@ class RunSupervisor:
             with self.lock:
                 handle.state = RunWorkerState.FINISHED
                 self._handles.pop(run_id, None)
+                self._capacity.notify_all()
                 try:
                     if self.store.read_run(run_id)["status"] not in ACTIVE_STATUSES:
                         self._run_trace_contexts.pop(run_id, None)
@@ -1046,7 +1068,9 @@ class RunSupervisor:
         except Exception:
             logger.exception("Run worker cleanup failed")
 
-    def _park_active_worker(self, run_id: str) -> None:
+    def _park_active_worker(
+        self, run_id: str, state: RunWorkerState = RunWorkerState.WAITING_APPROVAL,
+    ) -> None:
         with self.lock:
             handle = self._handles.get(run_id)
             if (
@@ -1054,8 +1078,46 @@ class RunSupervisor:
                 or handle.thread is not threading.current_thread()
             ):
                 return
-            handle.state = RunWorkerState.WAITING_APPROVAL
+            if handle.cancellation.is_set():
+                return
+            handle.state = state
+            self._capacity.notify_all()
         self.schedule_next()
+
+    def _active_worker_count_locked(self) -> int:
+        return sum(handle.state not in {
+            RunWorkerState.WAITING_APPROVAL, RunWorkerState.WAITING_SLOT,
+            RunWorkerState.WAITING_WORKSPACE, RunWorkerState.FINISHED,
+        } for handle in self._handles.values())
+
+    def _resume_active_worker(self, run_id: str, cancel: threading.Event) -> None:
+        """Resolved approval/workspace waits reacquire execution capacity in FIFO order."""
+        with self._capacity:
+            handle = self._handles.get(run_id)
+            if (
+                handle is None or handle.thread is not threading.current_thread()
+                or handle.state not in {RunWorkerState.WAITING_APPROVAL, RunWorkerState.WAITING_WORKSPACE}
+                or cancel.is_set() or self.lifecycle is not RuntimeLifecycle.RUNNING
+            ):
+                return
+            handle.state = RunWorkerState.WAITING_SLOT
+            self._resume_waiters.append(run_id)
+            logger.debug("Run awaiting execution slot run_id=%s", run_id)
+            try:
+                while (
+                    self._resume_waiters[0] != run_id
+                    or self._active_worker_count_locked() >= self.scheduling_limits.max_active_runs
+                ):
+                    if cancel.is_set() or self.lifecycle is not RuntimeLifecycle.RUNNING:
+                        return
+                    self._capacity.wait(0.05)
+                if cancel.is_set() or self.lifecycle is not RuntimeLifecycle.RUNNING:
+                    return
+                handle.state = RunWorkerState.RUNNING
+                logger.debug("Run resumed execution slot run_id=%s", run_id)
+            finally:
+                self._resume_waiters.remove(run_id)
+                self._capacity.notify_all()
 
     def _record_safe_point(self, run_id: str, safe_point: SafePoint) -> None:
         repository = self.store.long_task_repository()
