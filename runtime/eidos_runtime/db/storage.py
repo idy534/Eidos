@@ -1305,6 +1305,9 @@ class SessionStore:
     def reconciliation_intent_scopes(self, run_id: str) -> frozenset[str]:
         return self._repository(self._execution).reconciliation_intent_scopes(run_id)
 
+    def reconciliation_file_paths(self, run_id: str) -> frozenset[str] | None:
+        return self._repository(self._execution).reconciliation_file_paths(run_id)
+
     def begin_durable_intent(
         self,
         item_id: str,

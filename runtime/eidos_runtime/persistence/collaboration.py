@@ -202,6 +202,19 @@ class CollaborationRepository:
             transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.WAITING_AGENTS, 'agents_waiting')
             return True
 
+    def inspect_wait(self, run_id: str, request: WaitAgents) -> tuple[CollaborationState, bool]:
+        """Inspect an owned dependency without suspending its resource owner."""
+        with self.database.lock:
+            connection = self.database.connection()
+            self._active(connection, run_id)
+            state = self.state_in_connection(connection, run_id)
+            available = {agent.id for agent in state.agents}
+            targets = set(request.agent_ids) or available
+            if not targets <= available:
+                raise CollaborationRejected('agent_not_owned_by_run')
+            pending = any(agent.id in targets and agent.status in ACTIVE_STATUSES for agent in state.agents)
+            return state, pending
+
     def wake(self) -> None:
         with self.database.transaction() as connection:
             rows = connection.execute("SELECT w.* FROM agent_waits w JOIN runs r ON r.id=w.run_id WHERE w.status='pending' AND r.status='waiting_agents' AND r.cancel_requested_at IS NULL LIMIT 256").fetchall()

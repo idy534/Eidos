@@ -236,7 +236,7 @@ Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliat
 
 Shell 每次 ToolCall 只等待一个窗口。Shell 输出会持续追加到原命令 Item。命令退出后，Runtime 更新原命令的完整 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
 
-只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Reconciliation 默认把 Run 置为 `CONTINUE_READ_ONLY`，而不是直接 interrupt。Barrier 只允许安全只读 Tool。其他副作用 Tool 会得到普通的 `reconciliation_required` Tool Error。Workspace refresh 只会清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
+只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。Reconciliation 默认把 Run 置为 `CONTINUE_READ_ONLY`，而不是直接 interrupt。Barrier 允许只读、Agent 消息和停止操作；内置文件变更按已知冲突路径判断，范围未知的副作用返回 `reconciliation_required`。Workspace refresh 只会清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
 
 Runtime 内部维护经过校验的 Python、ripgrep、Python import roots 和受支持包版本的 Catalog。内置依赖发现工具已移除。`run_shell` 对识别到的 Skill 脚本自动选择该 Skill 声明的 binding，并复用现有校验、权限和启动前复检。普通项目命令保留原环境，激活 Skill 本身不会切换环境。`dependencyBindingId` 输入保留兼容，显式值仍校验 Run 和 Skill 归属。
 
@@ -494,7 +494,7 @@ Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资
 
 Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/pause` 在模型、工具和 Approval 安全点生效。`run/resume` 需要重新记录 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 reconciliation 检查结果。未确认副作用不会自动重放。
 
-Workspace-local 的 reconciliation 可以在当前 Run 中通过受限只读 Tool 继续。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。未清除的 reconciliation barrier 仍然阻止成功终态。没有安全核验路径的 timeout、background child、unsandboxed、additional permission、MCP、external 和 Eidos-state 未知结果仍然 fail closed。
+Workspace-local 的 reconciliation 可以在当前 Run 中继续。Runtime 自动尝试 refresh，模型无需先调用只读 Tool；范围明确时允许不冲突的内置文件变更。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。未清除的 reconciliation barrier 仍然阻止成功终态。没有安全核验路径的 timeout、background child、unsandboxed、additional permission、MCP、external 和 Eidos-state 未知结果仍然 fail closed。
 
 Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。Managed 和 Local Git Checkpoint 都复用 `worktree_snapshots` metadata、Git patch artifact、checksum 和 hidden ref，保存 HEAD、staged、unstaged 和 untracked 状态。Managed Fork 创建新的 detached managed Worktree，并恢复完整 Checkpoint Git 状态。Local Fork 仍使用同一个 Project 和同一个 `workspace_root` 创建新的 Local Session、Run 和 lineage，所以两个 Local Thread 共享真实目录。Managed 和 Local Rewind 会在原 checkout 中恢复完整 Checkpoint Git 状态；Local Rewind 只允许用户显式调用。Non-Git Local Workspace 仍不提供 filesystem snapshot、copy-on-write 或 rewind。
 
@@ -559,13 +559,13 @@ Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替�
 
 Shell 结果使用可选字段 `outputComplete` 和 `outputCaptureError` 分别记录输出完整性与安全原因码。`truncated`、`omittedBytes` 继续只描述原始输出上限。进程明确正常退出后的 `output_read_failed` 不单独建立对账屏障；扫描拒绝、持久化失败、进程读取循环异常和未知退出继续保留对账。结果携带原命令的 `outputCallId`，模型用它读取持久化输出，不能把 Shell `sessionId` 当成该 ID。`read_tool_output` 的分页结果保留 `outputComplete`；读取到保留内容的末尾不代表原始输出完整，旧结果的该字段保持 NULL。
 
-Context 从未决 Durable Intent 投影最多 16 条 `reconciliationOrigins`，包含原工具、provider call ID、原因码和输出捕获原因，不注入原始命令或异常正文。空列表不代表对账已完成。LoopGuard 在同一 epoch 下最多接受三轮带有未解除对账的工具结果；新的普通读取结果不重置计数。Step 进度签名保存对账与有效 Shell poll 标记，旧签名默认没有该标记。正常 Run 不受该计数限制，有效空输入 Shell poll 不计数。达到限制后，Runtime 使用现有 Finalizer 汇报阻塞，保留未决 Intent 和对账事实。原 Shell 退出回调已经记录的不确定结果，不会因空输入轮询再次返回而重复增加 epoch。
+Context 从未决 Durable Intent 投影最多 16 条 `reconciliationOrigins`，包含原工具、provider call ID、原因码和输出捕获原因，不注入原始命令或异常正文。空列表不代表对账已完成。LoopGuard 不再设置同一对账 epoch 的三轮恢复上限；有真实新事实可以继续，语义重复与无进展检测仍然保留。Step 进度签名保存对账与有效 Shell poll 标记，旧签名默认没有该标记。有效空输入 Shell poll 保持中性。正常完成仍检查未决 Intent，不会把未知副作用记成成功。原 Shell 退出回调已经记录的不确定结果，不会因空输入轮询再次返回而重复增加 epoch。
 
 `ShellProcessManager` 继续使用现有 Run 资源和输出读取线程。每条输出流持有同一个敏感扫描器，轮询不会结束扫描器，也不会释放尚未完整的行。输出上限继续由原始字节计数控制。模型轮询只读取尚未交付的安全输出。
 
 启动 ToolCall 可以完成一次 `shell_running` 观察，但原 Durable Intent 保持 `running`。Runtime 在初次结果提交后才启用退出回调。退出回调更新原命令的 canonical/UI 结果、Workspace diff 和 Intent，并在同一 SQLite 事务中产生事件。Runtime 不会改写模型已经收到的历史结果。`read_tool_output` 在命令退出后读取原命令累计输出。
 
-当前 Run 的 `ToolConcurrencyGate` 在命令仍然运行或退出结果尚未提交时保留 Shell 占用。这个 Run 的其他副作用调用返回 `shell_session_busy`，模型可以继续只读工作、使用 `write_stdin` 管理原 Shell 或等待原命令。其他 Session 的 Run 使用各自的 gate，可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。空输入观察不会新建 Intent，也不会重复获取该 Run 的 gate；非空输入先核对 Run 内会话，再创建输入 Intent。输入沿用原进程权限，不能借此扩权。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。权限、Sandbox、Durable Intent、取消和进程组清理仍按各自 Run 独立记录和收敛。
+当前 Run 的 `ToolConcurrencyGate` 只保护提交/启动窗口，不保留整个 Shell 生命周期的占用。删除 `shell_session_busy` 和对应 retain/release 门控；同一 Run 可以继续启动命令、执行文件变更和协调子任务。其他 Session 的 Run 使用各自的 gate，可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。空输入观察不会新建 Intent，也不会重复获取该 Run 的 gate；非空输入先核对 Run 内会话，再创建输入 Intent。输入沿用原进程权限，不能借此扩权。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。权限、Sandbox、Durable Intent、取消和进程组清理仍按各自 Run 独立记录和收敛。
 
 模型直接提交最终答复时，Runtime 先停止活跃命令并完成退出记录。Runtime 保留答复，但把提前停止命令的 Run 记为 `interrupted`。其他最终化和取消路径也会清理会话。已知退出与副作用未知分别记录；Runtime 不会把正常等待写成 reconciliation。运行中的 Intent 在重启后继续走原有恢复流程，Runtime 不会根据 PID 重连或自动重放命令。LoopGuard 仅对当前 Run 中仍运行且参数有效的空输入观察跳过重复判断。
 
@@ -700,10 +700,18 @@ SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当�
 
 父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 只能启动已经结束的子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。每个接收 Session 最多保存 16 条 Agent 消息，每条最多 2,000 字符。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
 
-`wait_agents` 将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；等待不占用模型调用或专属等待线程。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务不能在子任务仍活跃时正常结束。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交也必须先结束或停止子任务。
+`wait_agents` 在没有活动 Shell 时将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。有活动 Shell 时保留其原 Worker，以可取消、有期限的本地等待继续托管进程；等待时不持有数据库事务或执行锁，不占用其他 Run 的名额。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；持久挂起不占用模型调用或专属等待线程；活动 Shell 的等待只保留原有资源所有者。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务不能在子任务仍活跃时正常结束。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交也必须先结束或停止子任务。
 
 用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。每次调度都会检查并取消父任务已结束或请求取消的子 Run，即使父任务没有创建等待记录。监督任务在等待期间也会做同样的检查。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
 
 Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表及待审批数量；工作区关闭时，环境信息入口仍会提示待审批数。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和分页记录。主 Session 不嵌入子任务面板。
 
 v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。
+
+### Loop 门控精简（PR #102）
+
+- Workspace 对账由 Runtime 在工具批次开始、结果提交后及恢复挂起调用时自动尝试，不以模型先调用只读工具为条件；只有完整 refresh 与匹配 epoch 能清除可核验的 Workspace Intent。Shell、外部与未知来源不会被扫描目录误清除。
+- 内置文件变更对已持久化、来源可信且范围明确的 Workspace 不确定 Intent 按真实准备路径判定冲突，覆盖多文件、移动目标与父子路径；提交窗口内再次检查。未知范围或外部文件 Intent 继续保守阻止变更；其他路径可以继续，不新增跨 Run 锁。
+- `send_message`、`stop_agent` 不再因已有不确定副作用被统一阻断；权限申请原本为无直接副作用工具，仍遵守现有审批。`spawn_agent`、`followup_task` 不允许绕过未知副作用屏障。
+- 非挂起协作工具可以同批顺序执行。`wait_agents` 与 Plan 控制工具仍需单独调用，避免持久挂起后丢失剩余批次；Plan 的用户提问仍要求先结束其自有 Shell，避免退出 Worker 时误杀。
+- 取消、最终退出、进程组清理、权限/所有权、文件身份/Base Hash、Durable Intent、结果契约以及最终提交事务检查保留。没有全局 Run/Worker 上限或跨 Run Workspace 门控；单父 Run 的 8 个执行中子任务上限保持不变。

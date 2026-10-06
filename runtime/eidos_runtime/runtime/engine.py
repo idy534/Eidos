@@ -429,15 +429,13 @@ class RuntimeEngine:
                     if resources.tool_executor is not None else None
                 ),
             )
-            outcome = tools.controller.execute(
+            tools._refresh_reconciliation(run_id=run.run_id, cancel=cancel)
+            tools.controller.execute(
                 run_id=run.run_id, item=item, call=call, plan=plan,
                 cancel=cancel, deadline=None,
             )
-            tools._refresh_reconciliation_after_result(
+            tools._refresh_reconciliation(
                 run_id=run.run_id,
-                call=call,
-                plan=plan,
-                outcome=outcome,
                 cancel=cancel,
             )
             if self.store.read_run(run.run_id)["status"] == "waiting_approval":
@@ -1121,14 +1119,16 @@ class RuntimeEngine:
                 self.collaboration.repository.child_runs(run_id)
                 or self.collaboration.repository.state(run_id) != agent_baseline
             ):
-                resources.shell_process_manager.cleanup()
                 if sampled.assistant_item is not None:
                     mutation = self.store.complete_assistant_item_committed(
                         str(sampled.assistant_item["id"])
                     )
                     self.events.publish(mutation, item=mutation.value)
                 self.store.complete_current_step(run_id, "completed")
-                self.collaboration.wait(run_id, None, WaitAgents(timeout_ms=300000))
+                self.collaboration.wait(
+                    run_id, None, WaitAgents(timeout_ms=300000), cancel=cancel,
+                    keep_worker=resources.shell_process_manager.has_running(),
+                )
                 return SampleBoundaryAction.REBUILD_CONTEXT
             assert sampled.assistant_item is not None
             shell_stopped = resources.shell_process_manager.has_running()

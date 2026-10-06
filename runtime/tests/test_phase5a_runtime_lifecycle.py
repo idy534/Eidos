@@ -27,7 +27,6 @@ from eidos_runtime.runtime.supervisor import (  # noqa: E402
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
 from eidos_runtime.runtime.tool_execution import (  # noqa: E402
-    ManagedShellBusy,
     ToolConcurrencyGate,
 )
 from eidos_runtime.tools.registry import ToolConcurrencyPolicy  # noqa: E402
@@ -674,19 +673,18 @@ class RunHandleTests(unittest.TestCase):
             self.assertIsNot(first_gate, second_gate)
 
             policy = ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1)
-            first_gate.retain_shell("first-shell")
+            first_permit = first_gate.acquire(policy, threading.Event())
             cancel = threading.Event()
             timeout = threading.Timer(1, cancel.set)
             timeout.start()
             try:
                 with second_gate.acquire(policy, cancel):
                     pass
-                with self.assertRaises(ManagedShellBusy):
-                    first_gate.acquire(policy, threading.Event())
+                self.assertEqual(first_gate.active_permits, 1)
             finally:
                 timeout.cancel()
                 timeout.join()
-                first_gate.release_shell("first-shell")
+                first_permit.__exit__(None, None, None)
         finally:
             _GateCapturingEngine.release.set()
             supervisor.wait(1)

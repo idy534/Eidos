@@ -859,6 +859,59 @@ class ExecutionRepository(Repository):
             for row in rows
         )
 
+    def reconciliation_file_paths(self, run_id: str) -> frozenset[str] | None:
+        """Known uncertain Workspace targets, or None when scope is unknown.
+
+        Healthy running processes are not reconciliation origins. This only
+        narrows a barrier; it never clears one or authorizes a file operation.
+        """
+        with self.lock:
+            connection = self._connection()
+            run = connection.execute(
+                "SELECT reconciliation_required FROM runs WHERE id = ?", (run_id,),
+            ).fetchone()
+            if run is None:
+                raise ResourceNotFoundError("run not found")
+            if not run["reconciliation_required"]:
+                return frozenset()
+            rows = connection.execute(
+                """
+                SELECT tool_calls.tool_name, tool_calls.provenance_json,
+                       durable_intents.preconditions_json
+                FROM durable_intents
+                JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
+                WHERE durable_intents.run_id = ?
+                  AND durable_intents.status IN ('uncertain', 'interrupted')
+                """, (run_id,),
+            ).fetchall()
+        if not rows:
+            return None
+        paths: set[str] = set()
+        for row in rows:
+            if row["tool_name"] not in _WORKSPACE_REFRESH_WORKSPACE_TOOLS:
+                return None
+            try:
+                provenance = json.loads(row["provenance_json"])
+                conditions = json.loads(row["preconditions_json"])
+            except (TypeError, ValueError):
+                return None
+            if (
+                not isinstance(provenance, dict)
+                or provenance.get("kind") != "builtin"
+                or provenance.get("sourceId") != "eidos"
+                or not isinstance(conditions, dict)
+                or conditions.get("mutationScope") not in (None, "workspace")
+            ):
+                return None
+            targets = conditions.get("paths", [conditions.get("path")])
+            if not isinstance(targets, list) or not targets:
+                return None
+            for target in targets:
+                if not isinstance(target, str) or not target or "\x00" in target or ".." in Path(target).parts:
+                    return None
+                paths.add(target)
+        return frozenset(paths)
+
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8
     ) -> tuple[ProgressSignature, ...]:

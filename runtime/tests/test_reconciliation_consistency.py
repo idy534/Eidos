@@ -1228,17 +1228,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         runtime.workspace_refresh = fail_refresh
 
-        runtime._refresh_reconciliation_after_result(
+        runtime._refresh_reconciliation(
             run_id=self.run["id"],
-            call=SimpleNamespace(name="external_tool"),
-            plan=SimpleNamespace(side_effect="external"),
-            outcome=SimpleNamespace(
-                result={
-                    "outcome": "error",
-                    "reconciliationRequired": True,
-                },
-                reconciliation_disposition=ReconciliationDisposition.CONTINUE,
-            ),
             cancel=threading.Event(),
         )
 
@@ -1295,17 +1286,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         runtime.workspace_refresh = refresh
 
-        runtime._refresh_reconciliation_after_result(
+        runtime._refresh_reconciliation(
             run_id=self.run["id"],
-            call=SimpleNamespace(name="read_file"),
-            plan=SimpleNamespace(side_effect="none"),
-            outcome=SimpleNamespace(
-                result={
-                    "outcome": "success",
-                    "reconciliationRequired": False,
-                },
-                reconciliation_disposition=ReconciliationDisposition.CONTINUE,
-            ),
             cancel=threading.Event(),
         )
 
@@ -1339,11 +1321,6 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             return SimpleNamespace(complete=True)
 
         runtime.workspace_refresh = refresh
-        plan = SimpleNamespace(side_effect="none")
-        outcome = SimpleNamespace(
-            result={"outcome": "success", "reconciliationRequired": False},
-            reconciliation_disposition=ReconciliationDisposition.CONTINUE,
-        )
 
         for scope in ("external", "eidos_state", "shell", "unknown"):
             with self.subTest(scope=scope):
@@ -1353,11 +1330,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                     "reconciliation_intent_scopes",
                     return_value=frozenset({scope}),
                 ):
-                    runtime._refresh_reconciliation_after_result(
+                    runtime._refresh_reconciliation(
                         run_id=self.run["id"],
-                        call=SimpleNamespace(name="read_file"),
-                        plan=plan,
-                        outcome=outcome,
                         cancel=threading.Event(),
                     )
                 self.assertFalse(refresh_called)
@@ -1382,17 +1356,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "reconciliation_intent_scopes",
             return_value=frozenset({"workspace"}),
         ):
-            runtime._refresh_reconciliation_after_result(
+            runtime._refresh_reconciliation(
                 run_id=self.run["id"],
-                call=SimpleNamespace(name="read_file"),
-                plan=SimpleNamespace(side_effect="none"),
-                outcome=SimpleNamespace(
-                    result={
-                        "outcome": "success",
-                        "reconciliationRequired": False,
-                    },
-                    reconciliation_disposition=ReconciliationDisposition.CONTINUE,
-                ),
                 cancel=threading.Event(),
             )
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))

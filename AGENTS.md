@@ -195,7 +195,7 @@ AnyIO 是目标异步运行内核。
 优先使用 `TaskGroup`、`CancelScope`、`fail_after`、Memory Object Stream 和 Async Process。
 不得新增每请求一个 Event Loop、每 MCP 连接一个专属线程、无上限 ThreadPool、无所有者后台线程、无 Cancel Scope 长任务或仅靠 `thread.join()` 的关闭协议。
 RunSupervisor、ResourceRegistry、Session FIFO 和 Shutdown Quiescence 语义必须保留。
-用户明确的并发策略：不设置跨 Session 的 Run/驻留 Worker 总量上限，不添加跨 Run 的共享工作区副作用门或长操作等待队列。每个父 Run 最多同时执行 8 个子 Agent Run，计数只作用于该父 Run；不得将其变成 Runtime 全局线程配额。保留现有受所有者管理的 Run Worker，不新增无所有者后台线程。不同 Run 的审批或 Shell 等待不能占用其他 Run 的执行名额。SQLite 短事务同步、同 Session FIFO、单 Run 内副作用顺序、明确的父子任务依赖以及现有权限与版本校验仍然保留。
+用户明确的并发策略：不设置跨 Session 的 Run/驻留 Worker 总量上限，不添加跨 Run 的共享工作区副作用门或长操作等待队列。每个父 Run 最多同时执行 8 个子 Agent Run，计数只作用于该父 Run；不得将其变成 Runtime 全局线程配额。保留现有受所有者管理的 Run Worker，不新增无所有者后台线程。不同 Run 的审批或 Shell 等待不能占用其他 Run 的执行名额。SQLite 短事务同步、同 Session FIFO、单 Run 内提交/启动窗口的顺序、明确的父子任务依赖以及现有权限与版本校验仍然保留。
 迁移必须证明：
 - Cancel 不会被迟到结果覆盖
 - Approval 等待不阻塞其他 Session 的 Run
@@ -206,7 +206,7 @@ RunSupervisor、ResourceRegistry、Session FIFO 和 Shutdown Quiescence 语义�
 ## 本期明确的权限模式例外
 用户明确要求增加 Codex 风格的完全访问模式。只有用户通过 Desktop 确认并创建的 `full_access` Run 可以关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批。该模式不能继续承诺 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久保护。第 14、15、28 节的相关沙盒和路径保护要求继续完整适用于 `manual` 与 `auto_review`。所有模式仍保留参数校验、Durable Intent、文件身份与版本核验、取消、结果验证和 Reconciliation。模型、项目文件和工具参数不能切换模式。
 
-用户本轮要求先完成生产代码及文档；测试代码和测试执行等待用户确认。当前工作不能因未进入测试阶段而宣称已通过验收。
+当前 Loop 优化 PR 已获用户授权进入测试阶段；Runtime 改动按 `runtime/AGENTS.md` 执行定向、Fast 和必要的 Full 验证。
 
 ## 14. Tool execution
 单 ToolCall 固定流程：
@@ -218,7 +218,7 @@ Validate → Prepare → Resolve Permission → Commit Durable Intent
 文件工具默认只能写入 Workspace。Workspace 外的普通路径必须经明确审批或已有有效 Run Grant 授权。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本。已有普通文件使用受控的原地写入：先打开并核验 fd，再截断、完整写入、fsync 和验证最终内容；新文件保留排他创建提交。Runtime 在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。无沙盒写入必须单独获得明确审批。普通 Skill 写入需要明确审批或有效 Run Grant；数据目录下 `skills/.system` 永久禁止工具修改。Projectless 当前 Workspace 的普通文件无需额外审批；不得开放整个数据目录或其他会话目录。永久拒绝路径不能通过审批放开。截断后的失败可能已改变文件，必须报告真实副作用；不确定结果进入 Reconciliation，不自动重试或回滚。
 Shell 必须每次受控执行、默认禁网、不继承敏感环境变量、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网和附加路径必须走明确扩权和 Approval。存在永久写入保护或 hard confidentiality deny 时，不得启动会丢失这些保护的裸 Shell 无沙盒执行；受控文件 helper 的无沙盒写入仍需独立审批和逐目标核验。
 普通只读工具仅在完整批次满足 `parallel_safe` 时并行。
-写入、Shell、MCP 和外部副作用工具默认独占。
+写入、Shell、MCP 和外部副作用工具只在当前 Run 的提交/启动窗口独占；活动 Shell 不得持续占有门控。跨 Run 不共享此锁。
 副作用结果不确定时必须进入 Reconciliation，不得猜测成功或失败。
 ## 15. Sandbox
 以下继续自研并保持 fail closed：Seatbelt Policy Compiler、Base/Additional/Effective Permission、永久拒绝路径、`.git` 保护、Eidos 数据目录保护、Runtime 代码目录保护、Workspace 根校验、inode/device/owner 校验、`O_NOFOLLOW`、fd-relative 访问、特殊文件检查、多硬链接检查、受控文件提交和 Sandbox Denial 分类。

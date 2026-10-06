@@ -37,14 +37,14 @@ class ReconciliationRecoveryBudgetTests(unittest.TestCase):
             managed_shell_poll=poll,
         )
 
-    def test_new_results_and_facts_do_not_extend_the_same_barrier(self) -> None:
+    def test_new_results_and_facts_continue_even_with_the_same_barrier(self) -> None:
         guard = LoopGuard()
-        for index, expected in enumerate((None, None, "reconciliation_required")):
+        for index in range(12):
             with self.subTest(index=index):
                 signature = self._signature(guard, index)
                 self.assertEqual(signature.successful_tool_result_hashes, (f"result-{index}",))
                 self.assertEqual(signature.new_context_fact_ids, (f"fact-{index}",))
-                self.assertEqual(guard.observe_progress(signature), expected)
+                self.assertIsNone(guard.observe_progress(signature))
 
     def test_ordinary_progress_has_no_reconciliation_round_limit(self) -> None:
         guard = LoopGuard()
@@ -54,7 +54,7 @@ class ReconciliationRecoveryBudgetTests(unittest.TestCase):
                     guard.observe_progress(self._signature(guard, index, required=False))
                 )
 
-    def test_managed_shell_polls_do_not_consume_recovery_rounds(self) -> None:
+    def test_managed_shell_polls_remain_neutral(self) -> None:
         guard = LoopGuard()
         self.assertIsNone(guard.observe_progress(self._signature(guard, 0)))
         self.assertIsNone(guard.observe_progress(self._signature(guard, 1)))
@@ -62,23 +62,17 @@ class ReconciliationRecoveryBudgetTests(unittest.TestCase):
             self.assertIsNone(
                 guard.observe_progress(self._signature(guard, index, poll=True))
             )
-        self.assertEqual(
-            guard.observe_progress(self._signature(guard, 7)),
-            "reconciliation_required",
-        )
+        self.assertIsNone(guard.observe_progress(self._signature(guard, 7)))
 
-    def test_new_epoch_starts_a_new_recovery_budget(self) -> None:
+    def test_changing_epoch_does_not_introduce_a_fixed_round_budget(self) -> None:
         guard = LoopGuard()
         self.assertIsNone(guard.observe_progress(self._signature(guard, 0)))
         self.assertIsNone(guard.observe_progress(self._signature(guard, 1)))
-        for index, expected in enumerate((None, None, "reconciliation_required"), start=2):
+        for index in range(2, 12):
             with self.subTest(index=index):
-                self.assertEqual(
-                    guard.observe_progress(self._signature(guard, index, epoch=2)),
-                    expected,
-                )
+                self.assertIsNone(guard.observe_progress(self._signature(guard, index, epoch=2)))
 
-    def test_restored_signatures_preserve_used_recovery_rounds(self) -> None:
+    def test_restored_signatures_do_not_restore_a_fixed_round_budget(self) -> None:
         guard = LoopGuard()
         signatures = []
         for index in range(2):
@@ -87,7 +81,11 @@ class ReconciliationRecoveryBudgetTests(unittest.TestCase):
             self.assertIsNone(guard.observe_progress(signature))
 
         restored = LoopGuard.from_signatures(tuple(signatures))
-        self.assertEqual(
-            restored.observe_progress(self._signature(restored, 2)),
-            "reconciliation_required",
-        )
+        self.assertIsNone(restored.observe_progress(self._signature(restored, 2)))
+
+    def test_unknown_effect_does_not_disable_no_progress_detection(self) -> None:
+        guard = LoopGuard()
+        self.assertIsNone(guard.observe_progress(self._signature(guard, 0)))
+        self.assertEqual(guard.observe_progress(self._signature(guard, 0)), "recover_no_progress")
+        guard.mark_recovery_attempted()
+        self.assertEqual(guard.observe_progress(self._signature(guard, 0)), "no_progress")

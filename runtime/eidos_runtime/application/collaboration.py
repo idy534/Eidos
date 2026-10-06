@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from threading import Lock
+from threading import Event, Lock
+import time
 
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
@@ -12,6 +13,7 @@ from eidos_runtime.domain.collaboration import (
     SpawnAgent, WaitAgents,
 )
 from eidos_runtime.persistence.collaboration import CollaborationRepository
+from eidos_runtime.runtime.contracts import RuntimeCancelled
 
 
 class CollaborationApplication:
@@ -68,7 +70,23 @@ class CollaborationApplication:
         self.schedule()
         return self.repository.state(run_id)
 
-    def wait(self, run_id: str, item_id: str | None, request: WaitAgents) -> CollaborationState:
+    def wait(self, run_id: str, item_id: str | None, request: WaitAgents, *,
+             cancel: Event | None = None, keep_worker: bool = False) -> CollaborationState:
+        if keep_worker:
+            # A live Shell belongs to this Worker. Durable suspension would
+            # close RunResources and kill it. Keep only its owner alive; never
+            # hold a DB transaction or a shared execution permit while waiting.
+            if cancel is None:
+                raise ValueError('resource-owning wait requires cancellation')
+            deadline = time.monotonic() + request.timeout_ms / 1000
+            while True:
+                if cancel.is_set():
+                    raise RuntimeCancelled
+                state, pending = self.repository.inspect_wait(run_id, request)
+                remaining = deadline - time.monotonic()
+                if not pending or remaining <= 0:
+                    return state
+                cancel.wait(min(0.1, remaining))
         if self.repository.wait(run_id, item_id, request):
             self.publish()
             self.schedule()

@@ -53,7 +53,7 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 return HandlerOutcome(tool_result(call.name, 'success', 'user_input_received',
                     'The user responded.', {'response': saved.response.to_wire_dict()}, data_model=InputResultData), 'completed', 'completed')
             if saved is None:
-                if context.concurrency.has_managed_shell:
+                if context.shell_process_manager and context.shell_process_manager.has_running():
                     raise ValueError('finish_running_shell_before_requesting_input')
                 repository.ask(run_id, str(item['id']), RequestUserInput.model_validate(call.arguments))
                 context.events.deliver_pending()
