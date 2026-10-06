@@ -18,6 +18,7 @@ from eidos_runtime.db.invariants import (  # noqa: E402
 )
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.pydantic_ai_client import ModelClientLease  # noqa: E402
+from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.supervisor import (  # noqa: E402
     RunCancelTimeout,
     RunSupervisor,
@@ -26,7 +27,6 @@ from eidos_runtime.runtime.supervisor import (  # noqa: E402
 )
 from eidos_runtime.runtime.state_machine import RuntimeLifecycle  # noqa: E402
 from eidos_runtime.runtime.tool_execution import (  # noqa: E402
-    ManagedShellBusy,
     ToolConcurrencyGate,
 )
 from eidos_runtime.tools.registry import ToolConcurrencyPolicy  # noqa: E402
@@ -507,18 +507,14 @@ class _BlockingEngine:
         self.release.wait(2)
 
 
-class _GateCapturingEngine:
+class _GateCapturingEngine(RuntimeEngine):
     entered = threading.Event()
     release = threading.Event()
     gates: list[ToolConcurrencyGate] = []
 
-    def __init__(self, *_args, **kwargs) -> None:
-        self.tool_concurrency_gate = kwargs.pop(
-            "tool_concurrency_gate", ToolConcurrencyGate()
-        )
-        self.__class__.gates.append(self.tool_concurrency_gate)
-
     def run(self, _run_id: str, _cancel: threading.Event) -> None:
+        # Capture after Supervisor setup, using the real Engine gate boundary.
+        self.__class__.gates.append(self.tool_concurrency_gate)
         self.entered.set()
         self.release.wait(2)
 
@@ -677,14 +673,18 @@ class RunHandleTests(unittest.TestCase):
             self.assertIsNot(first_gate, second_gate)
 
             policy = ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1)
-            first_gate.retain_shell("first-shell")
+            first_permit = first_gate.acquire(policy, threading.Event())
+            cancel = threading.Event()
+            timeout = threading.Timer(1, cancel.set)
+            timeout.start()
             try:
-                with second_gate.acquire(policy, threading.Event()):
+                with second_gate.acquire(policy, cancel):
                     pass
-                with self.assertRaises(ManagedShellBusy):
-                    first_gate.acquire(policy, threading.Event())
+                self.assertEqual(first_gate.active_permits, 1)
             finally:
-                first_gate.release_shell("first-shell")
+                timeout.cancel()
+                timeout.join()
+                first_permit.__exit__(None, None, None)
         finally:
             _GateCapturingEngine.release.set()
             supervisor.wait(1)

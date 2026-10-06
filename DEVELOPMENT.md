@@ -55,6 +55,8 @@ EIDOS_PYTHON=/absolute/path/to/python3 pnpm start
 EIDOS_DATA_DIR=/private/tmp/eidos-dev-data pnpm start
 ```
 
+Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使用工作区共享副作用门控。`EIDOS_MAX_ACTIVE_RUNS` 与 `EIDOS_MAX_RUN_WORKERS` 不再作为配置读取。每个父 Run 最多同时执行 8 个子 Agent Run，名额不与其他父 Run 共享；这不是单 Run 内工具线程池大小。同一 Session 仍按 FIFO 顺序执行，父任务仍可主动等待子任务结果。同目录并发修改可能冲突，现有文件版本核验、权限、取消和副作用对账继续生效；需要修改隔离时使用独立 Worktree。
+
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
 ## 4. Test

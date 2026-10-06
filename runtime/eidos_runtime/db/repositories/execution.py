@@ -19,6 +19,7 @@ from eidos_runtime.db.database import (
 )
 from eidos_runtime.db.errors import (
     InvalidRunStateError,
+    RunCompletionDeferred,
     ResourceNotFoundError,
     StorageError,
 )
@@ -39,6 +40,7 @@ from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
 from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.domain.collaboration import ACTIVE_STATUSES, CollaborationState
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.protocol_diagnostics import (
     ProtocolDiagnostic,
@@ -857,6 +859,59 @@ class ExecutionRepository(Repository):
             for row in rows
         )
 
+    def reconciliation_file_paths(self, run_id: str) -> frozenset[str] | None:
+        """Known uncertain Workspace targets, or None when scope is unknown.
+
+        Healthy running processes are not reconciliation origins. This only
+        narrows a barrier; it never clears one or authorizes a file operation.
+        """
+        with self.lock:
+            connection = self._connection()
+            run = connection.execute(
+                "SELECT reconciliation_required FROM runs WHERE id = ?", (run_id,),
+            ).fetchone()
+            if run is None:
+                raise ResourceNotFoundError("run not found")
+            if not run["reconciliation_required"]:
+                return frozenset()
+            rows = connection.execute(
+                """
+                SELECT tool_calls.tool_name, tool_calls.provenance_json,
+                       durable_intents.preconditions_json
+                FROM durable_intents
+                JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
+                WHERE durable_intents.run_id = ?
+                  AND durable_intents.status IN ('uncertain', 'interrupted')
+                """, (run_id,),
+            ).fetchall()
+        if not rows:
+            return None
+        paths: set[str] = set()
+        for row in rows:
+            if row["tool_name"] not in _WORKSPACE_REFRESH_WORKSPACE_TOOLS:
+                return None
+            try:
+                provenance = json.loads(row["provenance_json"])
+                conditions = json.loads(row["preconditions_json"])
+            except (TypeError, ValueError):
+                return None
+            if (
+                not isinstance(provenance, dict)
+                or provenance.get("kind") != "builtin"
+                or provenance.get("sourceId") != "eidos"
+                or not isinstance(conditions, dict)
+                or conditions.get("mutationScope") not in (None, "workspace")
+            ):
+                return None
+            targets = conditions.get("paths", [conditions.get("path")])
+            if not isinstance(targets, list) or not targets:
+                return None
+            for target in targets:
+                if not isinstance(target, str) or not target or "\x00" in target or ".." in Path(target).parts:
+                    return None
+                paths.add(target)
+        return frozenset(paths)
+
     def recent_progress_signatures(
         self, run_id: str, limit: int = 8
     ) -> tuple[ProgressSignature, ...]:
@@ -1207,15 +1262,42 @@ class ExecutionRepository(Repository):
 
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str, *, shell_stopped: bool = False,
+        expected_collaboration: CollaborationState | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
             now = _now_ms()
             run_state = connection.execute(
-                "SELECT reconciliation_required FROM runs WHERE id = ?",
+                "SELECT status, cancel_requested_at, reconciliation_required FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
             if run_state is None:
                 raise ResourceNotFoundError("run not found")
+            if run_state["cancel_requested_at"] is not None:
+                raise RunCompletionDeferred("cancel_requested")
+            if run_state["status"] != "running":
+                raise InvalidRunStateError("run is not active")
+            # Input admission and the final status update share this transaction.
+            # A message accepted before completion must be sampled before success.
+            if connection.execute(
+                "SELECT 1 FROM input_mailbox WHERE run_id=? AND status='pending' LIMIT 1",
+                (run_id,),
+            ).fetchone():
+                raise RunCompletionDeferred("pending_input")
+            if connection.execute(
+                """SELECT 1 FROM agent_delegations d
+                JOIN runs r ON r.session_id=d.child_session_id
+                WHERE d.parent_run_id=? AND r.status IN (SELECT value FROM json_each(?)) LIMIT 1""",
+                (run_id, json.dumps(ACTIVE_STATUSES)),
+            ).fetchone():
+                raise RunCompletionDeferred("active_children")
+            if expected_collaboration is not None:
+                from eidos_runtime.persistence.collaboration import CollaborationRepository
+
+                current = CollaborationRepository(self.database).state_in_connection(connection, run_id)
+                if current != expected_collaboration:
+                    raise RunCompletionDeferred("collaboration_changed")
             interrupted = bool(run_state["reconciliation_required"]) or shell_stopped
             reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else None
             item_update = connection.execute(

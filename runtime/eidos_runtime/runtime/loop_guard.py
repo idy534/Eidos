@@ -22,8 +22,6 @@ class LoopGuard:
         self._recovered_states: set[str] = set()
         self._last_loop_state: str | None = None
         self._empty_responses = 0
-        self._reconciliation_epoch: int | None = None
-        self._reconciliation_rounds = 0
 
     @classmethod
     def from_signatures(
@@ -129,11 +127,10 @@ class LoopGuard:
         return self._last_loop_state
 
     def observe_progress(self, signature: ProgressSignature) -> str | None:
-        if not signature.reconciliation_required or signature.reconciliation_epoch != self._reconciliation_epoch:
-            self._reconciliation_rounds = 0
-        self._reconciliation_epoch = signature.reconciliation_epoch
-        if signature.reconciliation_required and not signature.managed_shell_poll:
-            self._reconciliation_rounds += 1
+        # A verified live process/search wait is neither task progress nor a
+        # repeated failed attempt. Keep the previous convergence evidence intact.
+        if signature.managed_shell_poll:
+            return None
         unchanged = (
             self._last_progress is None
             or (
@@ -168,8 +165,6 @@ class LoopGuard:
         self._last_loop_state = state
         if signature.recovery_state_fingerprint is not None:
             self._recovered_states.add(signature.recovery_state_fingerprint)
-        if self._reconciliation_rounds >= 3:
-            return "reconciliation_required"
         if progressed:
             self._observed_states.add(state)
             return None

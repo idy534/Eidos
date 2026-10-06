@@ -44,6 +44,7 @@ from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
 from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolConcurrencyPolicy,
+    WorkspaceMutationRuntime,
 )
 from eidos_runtime.telemetry.tracing import (
     finish_tool_call,
@@ -130,33 +131,31 @@ class ToolInfrastructureError(RuntimeError):
     pass
 
 
-class ManagedShellBusy(RuntimeError):
-    """A managed command still owns the exclusive side-effect window."""
+def _uses_local_reconciliation_policy(plan: ToolDispatchPlan) -> bool:
+    descriptor = plan.descriptor
+    if descriptor is None or descriptor.provenance.kind != "builtin":
+        return False
+    if (
+        descriptor.provenance.source_id == "eidos"
+        and isinstance(descriptor.runtime, WorkspaceMutationRuntime)
+        and descriptor.spec.name in {"apply_patch", "write_file", "delete_file"}
+    ):
+        # The file handler checks actual prepared targets, again at commit.
+        return True
+    return (
+        descriptor.provenance.source_id == "eidos.collaboration"
+        and descriptor.spec.name in {"send_message", "stop_agent"}
+    )
 
 
 class ToolConcurrencyGate:
-    """Small cancellation-aware gate for immutable descriptor policies."""
+    """Run-local, cancellation-aware gate for short execution windows."""
 
     def __init__(self) -> None:
         self._condition = threading.Condition()
         self._active = 0
         self._exclusive = False
         self._keys: set[str] = set()
-        self._managed_shells: set[str] = set()
-
-    def retain_shell(self, session_id: str) -> None:
-        with self._condition:
-            self._managed_shells.add(session_id)
-
-    def release_shell(self, session_id: str) -> None:
-        with self._condition:
-            self._managed_shells.discard(session_id)
-            self._condition.notify_all()
-
-    @property
-    def has_managed_shell(self) -> bool:
-        with self._condition:
-            return bool(self._managed_shells)
 
     def acquire(
         self,
@@ -165,8 +164,6 @@ class ToolConcurrencyGate:
     ) -> "_ToolPermit":
         keys = set((*policy.resource_keys, *policy.exclusive_keys))
         with self._condition:
-            if self._managed_shells:
-                raise ManagedShellBusy
             while (
                 self._exclusive
                 or policy.mode == "exclusive" and self._active > 0
@@ -176,8 +173,6 @@ class ToolConcurrencyGate:
                 if cancel.is_set():
                     raise RuntimeCancelled
                 self._condition.wait(0.05)
-                if self._managed_shells:
-                    raise ManagedShellBusy
             if cancel.is_set():
                 raise RuntimeCancelled
             self._active += 1
@@ -342,7 +337,7 @@ class ToolExecutionController:
         cancel: threading.Event | None,
         execute: Callable[[], _T],
     ) -> _T:
-        """Run only the committed side-effect window under the shared gate."""
+        """Serialize only this Run's commit/launch window, not process lifetime."""
         with self.concurrency.acquire(
             _EXCLUSIVE_SIDE_EFFECT_POLICY,
             cancel or threading.Event(),
@@ -511,21 +506,17 @@ class ToolExecutionController:
             elif (
                 plan.side_effect != "none"
                 and self.store.side_effects_blocked(run_id)
+                and not _uses_local_reconciliation_policy(plan)
             ):
                 outcome = HandlerOutcome(
                     tool_error(
                         call.name,
                         "reconciliation_required",
-                        "A previous side effect must be reconciled. Consult Runtime reconciliationOrigins. "
-                        "Changing the command, deleting caches or requesting permissions cannot clear an uncertain Shell intent.",
+                        "An unresolved side effect has unknown scope. Runtime recovery does not require a preliminary read. "
+                        "Inspect reconciliationOrigins; do not replay the uncertain operation. Unrelated reads and agent messages or cancellation remain available.",
                     ),
                     "failed",
                     "failed",
-                )
-            elif plan.side_effect != "none" and self.concurrency.has_managed_shell:
-                outcome = HandlerOutcome(
-                    tool_error(call.name, "shell_session_busy", "A command is still running; wait for or stop it before another side effect"),
-                    "failed", "failed",
                 )
             elif not self.dispatcher.validate_execution(call, plan):
                 argument_validation = getattr(
@@ -600,11 +591,6 @@ class ToolExecutionController:
                                 "failed",
                                 "failed",
                             )
-                    except ManagedShellBusy:
-                        outcome = HandlerOutcome(
-                            tool_error(call.name, "shell_session_busy", "A command is still running; wait for or stop it before another side effect"),
-                            "failed", "failed",
-                        )
                     except RuntimeCancelled:
                         raise_after_commit = True
                         outcome = self._interrupted(

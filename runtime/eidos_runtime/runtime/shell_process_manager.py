@@ -69,7 +69,6 @@ class ShellProcessSession:
     committed: bool = False
     finalized: bool = False
     observer_lock: threading.RLock = field(default_factory=threading.RLock)
-    release: Callable[[], None] | None = None
     finalization_error: Exception | None = None
 
     @property
@@ -225,9 +224,6 @@ class ShellProcessManager:
     def require_session(self, session_id: str) -> None:
         self._session(session_id)
 
-    def retain(self, session_id: str, release: Callable[[], None]) -> None:
-        self._session(session_id).release = release
-
     def observe_exit(self, session_id: str, callback: Callable[[dict[str, object]], dict[str, object]]) -> None:
         session = self._session(session_id)
         with session.observer_lock:
@@ -260,16 +256,9 @@ class ShellProcessManager:
                 session.terminal_result = session.on_exit(self._wait_and_snapshot(session, 0, "run_shell", cumulative=True))
                 session.finalized = True
                 session.finalization_error = None
-                self._release(session)
             except Exception as error:
                 session.finalization_error = error
                 logging.getLogger("eidos.runtime").exception("Shell result commit failed")
-
-    @staticmethod
-    def _release(session: ShellProcessSession) -> None:
-        if session.release is not None:
-            release, session.release = session.release, None
-            release()
 
     def interrupt(
         self,
@@ -279,10 +268,11 @@ class ShellProcessManager:
     ) -> dict[str, object]:
         return self.write_stdin(session_id, "\x03", yield_time_ms=yield_time_ms)
 
-    def cleanup(self) -> None:
+    def cleanup(self, *, close: bool = True) -> None:
         with self._lock:
             sessions = tuple(self._sessions.values())
-            self._closed = True
+            if close:
+                self._closed = True
         for session in sessions:
             self._terminate(session)
         for session in sessions:
@@ -298,9 +288,7 @@ class ShellProcessManager:
             if resource is not None and quiescent and resource.diagnostics().state.value != "closed":
                 resource.close()
             self._finalize(session)
-            if quiescent:
-                self._release(session)
-            else:
+            if not quiescent:
                 session.finalization_error = ShellSessionFinalizationError("shell_process_still_running")
         with self._lock:
             self._sessions = {session.session_id: session for session in sessions if session.finalization_error is not None}
