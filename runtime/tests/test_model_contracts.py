@@ -151,7 +151,7 @@ class ModelContractTests(unittest.TestCase):
         )
         self.assertRegex(
             policy,
-            r"reconciliation.*read[- ]only.*(?:first|before).*"
+            r"reconciliation.*automatic(?:ally)?.*read[- ]only.*not a prerequisite.*"
             r"(?:not|never).*automatic(?:ally)?\s+replay.*side[- ]effect",
         )
         self.assertRegex(

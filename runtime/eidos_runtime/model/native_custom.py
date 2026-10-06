@@ -35,7 +35,7 @@ from eidos_runtime.model.pydantic_ai_client import (
     map_model_error,
 )
 from eidos_runtime.model.response_phase import resolve_chat_completion_phase
-from eidos_runtime.model_gateway.retry_transport import (
+from eidos_runtime.model.retry_transport import (
     RetryBackoffCanceled,
     RetryTracker,
     RetryTransportClient,

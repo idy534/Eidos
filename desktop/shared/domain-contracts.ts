@@ -58,7 +58,8 @@ export interface Session {
   worktree?: SessionWorktree;
   title?: string;
   activeRunStatus?: "queued" | "running" | "waiting_input"
-  | "waiting_approval" | "finalizing" | undefined;
+    | "waiting_agents"
+    | "waiting_approval" | "finalizing" | undefined;
   taskStatus: "new" | "in_progress" | "completed" | "failed" | "canceled";
   createdAt: number;
   updatedAt: number;
@@ -272,7 +273,8 @@ export interface Run {
     | "queued"
     | "running"
     | "waiting_input"
-  | "waiting_approval"
+    | "waiting_agents"
+    | "waiting_approval"
     | "finalizing"
     | "stopped"
     | "succeeded"
@@ -284,7 +286,7 @@ export interface Run {
     | "thinking"
     | "tool_executing"
     | "waiting_input"
-  | "waiting_approval"
+    | "waiting_approval"
     | "finalizing"
     | "terminal";
   modelId: ModelId;

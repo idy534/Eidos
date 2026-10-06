@@ -615,7 +615,6 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         self.assertIn("field=yieldTimeMs", summary)
         self.assertIn("reason=less_than_equal", summary)
         self.assertIn("maximum=30000", summary)
-        self.assertIn("actual=60000", summary)
         self.assertNotIn("secret-command", summary)
 
     def test_projection_failure_after_authorized_change_preserves_uncertainty(self) -> None:

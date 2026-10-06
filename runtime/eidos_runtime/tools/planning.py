@@ -53,12 +53,18 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 return HandlerOutcome(tool_result(call.name, 'success', 'user_input_received',
                     'The user responded.', {'response': saved.response.to_wire_dict()}, data_model=InputResultData), 'completed', 'completed')
             if saved is None:
-                if context.concurrency.has_managed_shell:
+                if context.shell_process_manager and context.shell_process_manager.has_running():
                     raise ValueError('finish_running_shell_before_requesting_input')
                 repository.ask(run_id, str(item['id']), RequestUserInput.model_validate(call.arguments))
                 context.events.deliver_pending()
             raise PlanningSuspended()
         request = WritePlan.model_validate(call.arguments)
+        if request.ready_for_review:
+            from eidos_runtime.persistence.collaboration import CollaborationRepository
+            if CollaborationRepository(context.store.database).child_runs(run_id):
+                return HandlerOutcome(tool_result(call.name, 'error', 'agents_still_active',
+                    'Wait for or stop child tasks before submitting the final plan.',
+                    data_model=PlanResultData), 'failed', 'failed')
         try:
             repository.validate_write(run_id, request)
             context.controller.authorize_workspace_side_effect(item=item, prepared=PreparedToolExecution(

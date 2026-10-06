@@ -44,12 +44,24 @@ def test_context_plan_captures_canonical_builder_payload_without_reprojecting(
     )
     context = (
         {"type": "user", "sectionId": "workspace", "content": "goal"},
-        {"type": "tool_call", "callId": "call-1", "name": "read_file", "arguments": "{}"},
-        {"type": "tool_result", "callId": "call-1", "name": "read_file", "result": "{}"},
+        {
+            "type": "tool_call",
+            "callId": "call-1",
+            "name": "read_file",
+            "arguments": "{}",
+        },
+        {
+            "type": "tool_result",
+            "callId": "call-1",
+            "name": "read_file",
+            "result": "{}",
+        },
     )
     tools = (
         ModelToolDefinition(
-            name="read_file", description="Read", parameters_json_schema={"type": "object"}
+            name="read_file",
+            description="Read",
+            parameters_json_schema={"type": "object"},
         ),
     )
     budget = estimate_context_budget(
@@ -89,10 +101,12 @@ def test_context_plan_captures_canonical_builder_payload_without_reprojecting(
             tool_definitions=tools,
         )
     with pytest.raises(ValidationError):
-        ContextSnapshot.model_validate({
-            **snapshot.model_dump(mode="json"),
-            "instructions": "tampered",
-        })
+        ContextSnapshot.model_validate(
+            {
+                **snapshot.model_dump(mode="json"),
+                "instructions": "tampered",
+            }
+        )
 
 
 def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
@@ -101,8 +115,13 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
     root = tmp_path / "repo"
     root.mkdir()
     rules = RuleResolutionSnapshot.create(
-        workspace_root=str(root), cwd=str(root), budget_bytes=1024,
-        used_bytes=0, rules=(), shadowed=(), warnings=(),
+        workspace_root=str(root),
+        cwd=str(root),
+        budget_bytes=1024,
+        used_bytes=0,
+        rules=(),
+        shadowed=(),
+        warnings=(),
     )
     context = ({"type": "user", "content": "goal"},)
     budget = estimate_context_budget(
@@ -142,21 +161,57 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
                 """
             )
         repository = ContextSnapshotRepository(database)
-        assert repository.persist(
-            run_id="run", retrieval=None, snapshot=snapshot
-        ) == snapshot
+        assert (
+            repository.persist(run_id="run", retrieval=None, snapshot=snapshot)
+            == snapshot
+        )
         assert repository.read_for_model_attempt("attempt-1") == snapshot
-        stored = database.connection().execute(
-            "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
-            (snapshot.snapshot_id,),
-        ).fetchone()[0]
+        stored = (
+            database.connection()
+            .execute(
+                "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+                (snapshot.snapshot_id,),
+            )
+            .fetchone()[0]
+        )
         reference = json.loads(stored)["$eidosBlob"]
-        assert reference["kind"] == "context-snapshot"
+        assert reference["kind"] == "context-snapshot-v2"
         assert reference["sha256"]
         assert len(stored) < 512
+        assert (database.data_directory / "blobs" / reference["relativePath"]).is_file()
+        shared_blocks = set(
+            (database.data_directory / "blobs" / "context-item").rglob("*.json.gz")
+        )
+        second = plan.for_model_attempt(
+            "attempt-2", model_context=context, instructions="", tool_definitions=()
+        )
         assert (
-            database.data_directory / "blobs" / reference["relativePath"]
-        ).is_file()
+            repository.persist(run_id="run", retrieval=None, snapshot=second) == second
+        )
+        assert (
+            set((database.data_directory / "blobs" / "context-item").rglob("*.json.gz"))
+            == shared_blocks
+        )
+        # Startup GC must keep blocks referenced by either manifest.
+        second_stored = (
+            database.connection()
+            .execute(
+                "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+                (second.snapshot_id,),
+            )
+            .fetchone()[0]
+        )
+        database.json_blobs.garbage_collect((stored, second_stored))
+        assert repository.read(snapshot.snapshot_id) == snapshot
+        legacy = database.json_blobs.put_json(
+            "context-snapshot", snapshot.model_dump_json()
+        )
+        with database.transaction() as connection:
+            connection.execute(
+                "UPDATE context_snapshots SET snapshot_json = ? WHERE id = ?",
+                (legacy, snapshot.snapshot_id),
+            )
+        assert repository.read(snapshot.snapshot_id) == snapshot
     finally:
         database.close()
 
@@ -165,14 +220,23 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
     try:
         repository = ContextSnapshotRepository(reopened)
         assert repository.read(snapshot.snapshot_id) == snapshot
-        stored = reopened.connection().execute(
-            "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
-            (snapshot.snapshot_id,),
-        ).fetchone()[0]
+        assert repository.read(second.snapshot_id) == second
+        shared = next(
+            iter((reopened.data_directory / "blobs" / "context-item").rglob("*.json.gz"))
+        )
+        shared.unlink()
+        with pytest.raises(PersistenceCorruptionError, match="persistence_record_invalid"):
+            repository.read(second.snapshot_id)
+        stored = (
+            reopened.connection()
+            .execute(
+                "SELECT snapshot_json FROM context_snapshots WHERE id = ?",
+                (snapshot.snapshot_id,),
+            )
+            .fetchone()[0]
+        )
         reference = json.loads(stored)["$eidosBlob"]
-        (
-            reopened.data_directory / "blobs" / reference["relativePath"]
-        ).unlink()
+        (reopened.data_directory / "blobs" / reference["relativePath"]).unlink()
         with pytest.raises(
             PersistenceCorruptionError,
             match="persistence_record_invalid",

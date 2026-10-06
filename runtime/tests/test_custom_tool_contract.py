@@ -144,7 +144,7 @@ def test_bare_dict_with_custom_shape_is_still_a_function_payload() -> None:
 def test_function_payload_kind_round_trips_through_context_without_collision() -> None:
     from pydantic_ai.messages import ModelResponse as PAIModelResponse, ToolCallPart
 
-    from eidos_runtime.model_gateway.native_custom import encode_responses_context
+    from eidos_runtime.model.native_custom import encode_responses_context
     from eidos_runtime.model.pydantic_ai_client import (
         encode_context,
         map_model_response,
@@ -495,7 +495,7 @@ def test_function_and_native_apply_patch_share_workspace_commit_semantics(
 
 
 def test_responses_custom_wire_keeps_grammar_and_raw_input() -> None:
-    from eidos_runtime.model_gateway.native_custom import (
+    from eidos_runtime.model.native_custom import (
         encode_responses_context,
         encode_responses_tool_definition,
         map_responses_response,
@@ -568,7 +568,7 @@ def test_responses_custom_wire_keeps_grammar_and_raw_input() -> None:
 
 
 def test_responses_wire_keeps_function_compatibility_without_custom_capability() -> None:
-    from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
+    from eidos_runtime.model.native_custom import OpenAIResponsesModelClient
 
     class FakeResponses:
         def __init__(self) -> None:
@@ -680,7 +680,7 @@ def test_pydantic_ai_boundary_does_not_downgrade_custom_definition() -> None:
 
 
 def test_responses_client_sends_native_custom_tool_to_mock_provider() -> None:
-    from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
+    from eidos_runtime.model.native_custom import OpenAIResponsesModelClient
 
     raw = '*** Begin Patch\n+quoted "\\界"\n*** End Patch'
 
@@ -768,7 +768,7 @@ def test_responses_client_sends_native_custom_tool_to_mock_provider() -> None:
 
 
 def test_responses_stream_reassembles_custom_input_without_json_encoding() -> None:
-    from eidos_runtime.model_gateway.native_custom import (
+    from eidos_runtime.model.native_custom import (
         OpenAIResponsesModelClient,
         map_responses_response,
     )
@@ -895,7 +895,7 @@ def test_responses_stream_reassembles_custom_input_without_json_encoding() -> No
 
 def test_responses_stream_requires_a_completed_terminal_event() -> None:
     from eidos_runtime.model.client import ModelRequestError
-    from eidos_runtime.model_gateway.native_custom import (
+    from eidos_runtime.model.native_custom import (
         OpenAIResponsesModelClient,
     )
 
@@ -937,7 +937,7 @@ def test_responses_stream_requires_a_completed_terminal_event() -> None:
 
 def test_responses_stream_cancel_before_request_is_not_sent() -> None:
     from eidos_runtime.model.client import ModelRequestError
-    from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
+    from eidos_runtime.model.native_custom import OpenAIResponsesModelClient
 
     class FakeResponses:
         calls = 0
@@ -995,7 +995,7 @@ def test_responses_stream_cancel_before_request_is_not_sent() -> None:
 
 def test_responses_stream_cancel_closes_and_cleans_blocking_anext() -> None:
     from eidos_runtime.model.client import ModelRequestError
-    from eidos_runtime.model_gateway.native_custom import OpenAIResponsesModelClient
+    from eidos_runtime.model.native_custom import OpenAIResponsesModelClient
 
     async def run() -> None:
         class BlockingStream:
@@ -1045,7 +1045,7 @@ def test_responses_stream_cancel_closes_and_cleans_blocking_anext() -> None:
 
 def test_responses_direct_noncompleted_status_is_not_executable() -> None:
     from eidos_runtime.model.client import ModelRequestError
-    from eidos_runtime.model_gateway.native_custom import map_responses_response
+    from eidos_runtime.model.native_custom import map_responses_response
 
     for status in ("failed", "incomplete"):
         with pytest.raises(ModelRequestError) as raised:
@@ -1066,7 +1066,7 @@ def test_responses_direct_noncompleted_status_is_not_executable() -> None:
 
 
 def test_completed_responses_map_to_the_runtime_completion_state() -> None:
-    from eidos_runtime.model_gateway.native_custom import map_responses_response
+    from eidos_runtime.model.native_custom import map_responses_response
 
     response = map_responses_response(SimpleNamespace(
         output=(),

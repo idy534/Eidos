@@ -25,7 +25,6 @@ from eidos_runtime.runtime.tool_execution import (  # noqa: E402
     HandlerOutcome,
     PreparedToolExecution,
     ToolConcurrencyGate,
-    ManagedShellBusy,
     ToolExecutionController,
     VerifiedToolExecutionResult,
 )
@@ -261,16 +260,14 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertEqual(outcome.result["outcome"], "success")
         self.assertEqual(handler.calls, 1)
 
-    def test_managed_shell_reserves_gate_between_tool_calls(self) -> None:
+    def test_launch_permit_is_released_between_tool_calls(self) -> None:
         from eidos_runtime.tools.registry import ToolConcurrencyPolicy
 
         gate = ToolConcurrencyGate()
         policy = ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1)
         with gate.acquire(policy, threading.Event()):
-            gate.retain_shell("process")
-        with self.assertRaises(ManagedShellBusy):
-            gate.acquire(policy, threading.Event())
-        gate.release_shell("process")
+            self.assertEqual(gate.active_permits, 1)
+        self.assertEqual(gate.active_permits, 0)
         with gate.acquire(policy, threading.Event()):
             self.assertEqual(gate.active_permits, 1)
 

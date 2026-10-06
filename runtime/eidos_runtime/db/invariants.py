@@ -11,6 +11,14 @@ def verify_runtime_invariants(connection: sqlite3.Connection) -> None:
     """Fail on persisted lifecycle contradictions; intended for tests and recovery."""
     checks = (
         (
+            "waiting_agents_requires_pending_wait",
+            "SELECT 1 FROM runs r LEFT JOIN agent_waits w ON w.run_id=r.id WHERE r.status='waiting_agents' AND (w.status IS NULL OR w.status!='pending') LIMIT 1",
+        ),
+        (
+            "pending_agent_wait_requires_waiting_run",
+            "SELECT 1 FROM agent_waits w JOIN runs r ON r.id=w.run_id WHERE w.status='pending' AND r.status!='waiting_agents' LIMIT 1",
+        ),
+        (
             "waiting_input_requires_one_pending_question",
             """SELECT 1 FROM runs r LEFT JOIN user_input_requests q
                ON q.run_id=r.id AND q.status='pending'

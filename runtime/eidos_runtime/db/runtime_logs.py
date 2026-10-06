@@ -11,6 +11,8 @@ import threading
 import time
 import uuid
 
+from opentelemetry import trace
+
 from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.thread_history import SqliteConnectionOwner
 
@@ -45,6 +47,14 @@ class RuntimeLogStore:
     def append(self, record: logging.LogRecord) -> None:
         timestamp = int(record.created * 1000)
         message = _bounded_text(record.getMessage(), _MAX_LOG_MESSAGE_BYTES)
+        span_context = trace.get_current_span().get_span_context()
+        correlation = (
+            {
+                "traceId": format(span_context.trace_id, "032x"),
+                "spanId": format(span_context.span_id, "016x"),
+            }
+            if span_context.is_valid else {}
+        )
         encoded = json.dumps(
             {
                 "timestamp": timestamp,
@@ -53,6 +63,7 @@ class RuntimeLogStore:
                 "message": message,
                 "processId": record.process,
                 "threadName": record.threadName,
+                **correlation,
                 "exceptionType": (
                     record.exc_info[0].__name__
                     if record.exc_info is not None

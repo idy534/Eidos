@@ -13,6 +13,7 @@ class RunStatus(StrEnum):
     RUNNING = "running"
     WAITING_APPROVAL = "waiting_approval"
     WAITING_INPUT = "waiting_input"
+    WAITING_AGENTS = "waiting_agents"
     FINALIZING = "finalizing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"

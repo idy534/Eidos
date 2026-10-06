@@ -312,6 +312,9 @@ class RunApplication:
         except SensitiveScanError as error:
             raise ApplicationError("SENSITIVE_SCAN_FAILED", str(error)) from error
 
+        from eidos_runtime.persistence.collaboration import CollaborationRepository
+        if CollaborationRepository(store.database).is_child(request.session_id):
+            raise ApplicationError("INVALID_STATE", "Delegate follow-up work through the parent agent.")
         session = store.read_session(request.session_id)
         if session is None:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
@@ -518,7 +521,7 @@ class RunApplication:
             "queued",
             "running",
             "waiting_approval",
-            "waiting_input",
+            "waiting_input", "waiting_agents",
             "finalizing",
             "canceled",
             "interrupted",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import threading
@@ -10,6 +11,8 @@ from unittest.mock import patch as mock_patch
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.runtime.loop import RuntimeLoop
+from eidos_runtime.runtime.errors import tool_result
+from eidos_runtime.runtime.tool_execution import HandlerOutcome
 
 
 class LoopRecoveryTests(unittest.TestCase):
@@ -29,7 +32,7 @@ class LoopRecoveryTests(unittest.TestCase):
         self.store.close()
         self.temporary.cleanup()
 
-    def test_unresolved_shell_interrupts_after_three_distinct_read_rounds(self) -> None:
+    def test_unresolved_shell_allows_progress_but_cannot_report_success(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Inspect failed test evidence")
         original = self.store.create_tool_item(run["id"], 0, 0, "original-shell", "run_shell", "{}")
         self.store.begin_durable_intent(original["id"], preconditions={}, approval_required=False)
@@ -47,13 +50,22 @@ class LoopRecoveryTests(unittest.TestCase):
             ),)) for index in range(3)
         ] + [ModelResponse(text="The output remains incomplete; test totals are unverified.")])
 
-        RuntimeLoop(self.store, model, lambda _message: None).run(run["id"], threading.Event())
+        def read_evidence(_run, _item, call, _cancel, _runtime):
+            content = str(call.arguments["path"])
+            return HandlerOutcome(tool_result("read_file", "success", "ok", "Read evidence", {
+                "path": content, "content": content, "sizeBytes": len(content),
+                "sha256": hashlib.sha256(content.encode()).hexdigest(), "truncated": False,
+            }), "completed")
+
+        # Exercise Loop progress separately from the macOS-only file identity layer.
+        with mock_patch("eidos_runtime.runtime.tool_runtime.ReadOnlyToolHandler.execute", side_effect=read_evidence):
+            RuntimeLoop(self.store, model, lambda _message: None).run(run["id"], threading.Event())
 
         interrupted = self.store.read_run(run["id"])
         self.assertEqual(interrupted["status"], "interrupted")
         self.assertEqual(interrupted["errorCode"], "RUNTIME_INTERRUPTED")
         self.assertTrue(interrupted["reconciliationRequired"])
-        self.assertEqual(interrupted["modelStepCount"], 3)
+        self.assertEqual(interrupted["modelStepCount"], 4)
         self.assertEqual(len(model.contexts), 4)
         state = " ".join(str(part.get("content", "")) for part in model.contexts[0])
         self.assertIn("original-shell", state)

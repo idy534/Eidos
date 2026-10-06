@@ -55,6 +55,8 @@ EIDOS_PYTHON=/absolute/path/to/python3 pnpm start
 EIDOS_DATA_DIR=/private/tmp/eidos-dev-data pnpm start
 ```
 
+Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使用工作区共享副作用门控。`EIDOS_MAX_ACTIVE_RUNS` 与 `EIDOS_MAX_RUN_WORKERS` 不再作为配置读取。每个父 Run 最多同时执行 8 个子 Agent Run，名额不与其他父 Run 共享；这不是单 Run 内工具线程池大小。同一 Session 仍按 FIFO 顺序执行，父任务仍可主动等待子任务结果。同目录并发修改可能冲突，现有文件版本核验、权限、取消和副作用对账继续生效；需要修改隔离时使用独立 Worktree。
+
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
 ## 4. Test
@@ -276,7 +278,7 @@ pnpm start
 - `OTEL_TRACES_EXPORTER=none|console|otlp`：选择 Trace exporter；
 - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=<url>`：设置 OTLP HTTP Trace endpoint。
 
-当前 Trace 主要覆盖 `eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call`。它用于诊断，不是 SQLite 业务事实来源，也不改变 Run、Approval、Tool 或 Reconciliation 行为。
+Trace 包括入口 `eidos.rpc`、`eidos.run`、`eidos.model.attempt` 和 `eidos.tool.call`。配置 exporter 后，Pydantic AI Direct Model API 还会产生原生模型 Span，且关闭消息内容、二进制内容和 Tool Schema 采集；OpenAI Responses 自定义请求仍由 Eidos 的 Attempt Span 表示。子 Agent 在同一 Runtime 进程内继承 spawn/followup 时的 Trace 上下文；暂停后恢复的 Run 沿用进程内保存的上下文；本地 JSONL 日志在活跃 Span 内带 `traceId`、`spanId`。可以把 OTLP HTTP endpoint 指向本机 Phoenix 等支持 OTLP 的查看器；查看器单独启动，不参与 Eidos 的运行和打包。Trace 用于诊断，不是 SQLite 业务事实来源，也不改变 Run、Approval、Tool 或 Reconciliation 行为。
 
 ## 12. Shell manual test
 
