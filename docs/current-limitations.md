@@ -37,10 +37,10 @@
 
 - 本次 Loop 优化仍需测试阶段确认。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩、PTY、用户 Hooks 和流式工具调度仍属后续工作。
 
-- Run 按 Session 维护持久 FIFO。默认最多 4 个执行中的 Run、8 个驻留 Worker，超出容量的任务保留在 SQLite 队列。审批等待和共享工作区等待释放执行名额，等待结束后按恢复队列重新取得名额；驻留 Worker 总量仍有上限。同一 Session 只运行一个 Run。不同 Session 可以并行采样和只读操作；同一 canonical execution root 的文件写入、Shell、MCP 和其他受控副作用窗口共用门。长 Shell 保留该工作区的副作用所有权至终态提交或确认进程静止；其所属 Run 继续使用 write_stdin，其他 Run 可取消地等待。不同 Worktree 使用不同的门。
+- 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
 - Managed Task 的提交与事件循环清理之间存在过同步锁循环等待。当前代码已将完整任务生命周期移到 worker，测试按用户要求延后。事故没有保留线程栈，因此该代码缺陷与事故之间尚未完成动态验证。该修订不解决所有慢 Git、stdout/stderr 背压或遥测关闭问题，也不改变既有 RPC deadline。
-- 工作区副作用门仅覆盖同一 Runtime 中、相同 canonical execution root 的受控 Agent 操作。它不隔离外部编辑器、用户 Terminal、另一个 Runtime、嵌套但不同的根目录或共同操作同一个远程服务的不同工作区。需要严格归属的并行编码仍应使用独立 Worktree。只读批次保留现有有界并行，混合批次仍串行。
+- Workspace 写入、Shell、MCP、external 和 Eidos-state 的实际副作用窗口只在各自 Run 内独占。不同 Session 的 Run 可以并行，即使共享同一个 Workspace。安全只读的 `parallel_safe` 批次保留自身的有界并行。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
 - 当前没有用户可配置的统一 Run 成本、模型步数或有效时长上限。现有 step、segment 和 effective time 字段主要用于 telemetry 和 operational lifecycle。
 
 ### Workspace 与工具
@@ -75,7 +75,7 @@
 - `outputComplete=false` 表示输出尚未完整获得，原因可能是仍在运行、捕获失败或原始输出截断。旧结果缺少该字段时，系统不能推断输出完整。`outputCaptureError` 只保存捕获原因码，不能恢复已经丢失的内容；当前 Shell 聚合输出不会因可识别凭据被拒绝。本次历史 Run 的具体捕获子原因不会被新代码补写。
 - 同一对账 epoch 最多允许三轮工具恢复，随后现有 Finalizer 收尾并保留对账事实。系统不自动重放未知操作。模型的测试报告指引要求区分收集数与完成数，也要求标明缺失汇总和未执行阶段；这项指引不等于系统能够自动证明任意测试结论。
 
-- Agent Shell 按 Run 管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。相同 execution root 的 Shell 与其他 Agent 副作用共享协调门；不同 Worktree 可并行。
+- Agent Shell 按 Run 独立管理，支持同一 Run 内的管道 stdin 和分段等待，但不提供 PTY，也不跨 Run 或 Runtime 重启恢复进程。不同 Session 的 Shell 可以并行，即使共享同一个 Workspace；同一 Run 的长 Shell 会阻止该 Run 启动新的副作用。
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Skill 依赖自动绑定只适用于现有识别器能识别的直接脚本调用，包括 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE`。Runtime 不会从任意 Shell 包装、变量脚本路径或已激活 Skill 列表推断普通命令的依赖，也不会自动安装缺失包。
@@ -105,7 +105,7 @@
 - Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Managed 和 Local Git Checkpoint 会保存 HEAD、staged、unstaged 和 untracked Git 状态。Managed Fork 会恢复独立 Worktree 的完整 checkpoint Git 状态。Managed 和 Local Rewind 会恢复原 checkout 的完整 checkpoint Git 状态。Local Rewind 只允许用户显式调用。Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshots。Ignored 文件不进入 Checkpoint artifact。
 - Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前仍不提供 Permanent Worktree、Pinned Chat、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
 - Linked Worktree 的 Git metadata read 和获批后的精确 write 已在真实 macOS Seatbelt 中验证。默认 write、原始 repository working-tree access 和不匹配的 Worktree recovery 仍会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
-- 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 2 个子 Run。独立 Worktree 交付与合并、跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
+- 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。独立 Worktree 交付与合并、跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
 - Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用且执行状态未知的操作必须先进入 reconciliation，Runtime 不会自动重放。已明确 `termination=exit` 且有 `exitCode` 的 Shell 即使 Workspace observation 不完整，也不会因此进入只读模式或阻止后续 ToolCall。取消已停止的 Run 正常返回。未清除的 reconciliation barrier 保留在 `interrupted` 终态中；`sideEffectsMayExist` 不会单独阻断取消。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果仍然 fail closed。
 
 ### Compaction 与 Context

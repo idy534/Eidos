@@ -57,6 +57,7 @@ INTEGRATION_FILES = frozenset(
         "test_response_actions.py",
         "test_runtime_distribution.py",
         "test_runtime_loop.py",
+        "test_run_scheduling.py",
         "test_runtime_reliability_regressions.py",
         "test_sandbox_permissions.py",
         "test_seatbelt.py",

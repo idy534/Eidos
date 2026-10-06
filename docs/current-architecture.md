@@ -95,7 +95,7 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 
 ## 5. Run Orchestration
 
-Run 按 Session 维护持久 FIFO。默认最多 4 个执行中的 Run、8 个驻留 Worker，超出容量的任务保留在 SQLite 队列。审批等待和共享工作区等待释放执行名额，等待结束后按恢复队列重新取得名额；驻留 Worker 总量仍有上限。同一 Session 只运行一个 Run。不同 Session 可以并行采样和只读操作；同一 canonical execution root 的文件写入、Shell、MCP 和其他受控副作用窗口共用门。长 Shell 保留该工作区的副作用所有权至终态提交或确认进程静止；其所属 Run 继续使用 write_stdin，其他 Run 可取消地等待。不同 Worktree 使用不同的门。
+RunSupervisor 负责按 Session 维护持久 FIFO、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 独立持有 `ToolConcurrencyGate` 和 `ShellProcessManager`。不同 Session 的 Run 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 
 RunSupervisor 把同步 Durable Runtime Core 与进程级 `RuntimeAsyncKernel` 连接起来。RuntimeAsyncKernel 持有一个 AnyIO Blocking Portal。Model 异步 I/O、MCP Connection、Managed Task 和安全只读并行批次通过这个 Kernel 执行。Run Worker 仍是当前 Run 的同步控制边界。
 
@@ -698,7 +698,7 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 
 SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、角色、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
 
-父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 只能启动已经结束的子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 2 个子 Run。每个接收 Session 最多保存 16 条 Agent 消息，每条最多 2,000 字符。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
+父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 只能启动已经结束的子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。每个接收 Session 最多保存 16 条 Agent 消息，每条最多 2,000 字符。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
 
 `wait_agents` 将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；等待不占用模型调用或专属等待线程。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务不能在子任务仍活跃时正常结束。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交也必须先结束或停止子任务。
 

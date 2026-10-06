@@ -137,36 +137,21 @@ class ManagedShellBusy(RuntimeError):
 class ToolConcurrencyGate:
     """Small cancellation-aware gate for immutable descriptor policies."""
 
-    def __init__(
-        self, *, shared_gate: "ToolConcurrencyGate | None" = None,
-        owner_id: str | None = None,
-        on_wait: Callable[[], None] | None = None,
-        on_resume: Callable[[], None] | None = None,
-    ) -> None:
-        if shared_gate is not None and not owner_id:
-            raise ValueError("a shared workspace gate requires a Run owner")
+    def __init__(self) -> None:
         self._condition = threading.Condition()
         self._active = 0
         self._exclusive = False
         self._keys: set[str] = set()
-        self._managed_shells: dict[str, str | None] = {}
-        self._shared_gate = shared_gate
-        self._owner_id = owner_id
-        self._on_wait = on_wait
-        self._on_resume = on_resume
+        self._managed_shells: set[str] = set()
 
-    def retain_shell(self, session_id: str, *, owner_id: str | None = None) -> None:
+    def retain_shell(self, session_id: str) -> None:
         with self._condition:
-            self._managed_shells[session_id] = owner_id or self._owner_id
-        if self._shared_gate is not None:
-            self._shared_gate.retain_shell(session_id, owner_id=self._owner_id)
+            self._managed_shells.add(session_id)
 
     def release_shell(self, session_id: str) -> None:
         with self._condition:
-            self._managed_shells.pop(session_id, None)
+            self._managed_shells.discard(session_id)
             self._condition.notify_all()
-        if self._shared_gate is not None:
-            self._shared_gate.release_shell(session_id)
 
     @property
     def has_managed_shell(self) -> bool:
@@ -177,96 +162,28 @@ class ToolConcurrencyGate:
         self,
         policy: ToolConcurrencyPolicy,
         cancel: threading.Event,
-        *, owner_id: str | None = None,
     ) -> "_ToolPermit":
         keys = set((*policy.resource_keys, *policy.exclusive_keys))
         with self._condition:
-            if self._shell_owned_by(owner_id):
+            if self._managed_shells:
                 raise ManagedShellBusy
             while (
                 self._exclusive
                 or policy.mode == "exclusive" and self._active > 0
                 or bool(self._keys & keys)
                 or self._active >= policy.max_concurrency
-                or bool(self._managed_shells)
             ):
                 if cancel.is_set():
                     raise RuntimeCancelled
                 self._condition.wait(0.05)
-                if self._shell_owned_by(owner_id):
+                if self._managed_shells:
                     raise ManagedShellBusy
             if cancel.is_set():
                 raise RuntimeCancelled
             self._active += 1
             self._exclusive = policy.mode == "exclusive"
             self._keys.update(keys)
-        permit = _ToolPermit(self, keys)
-        try:
-            if self._shared_gate is not None:
-                permit.shared_permit = self._shared_gate.try_acquire(
-                    policy, cancel, owner_id=self._owner_id,
-                )
-                if permit.shared_permit is None:
-                    # Never occupy a global execution slot while another Run's
-                    # shell owns this workspace; that Run may need to resume.
-                    suspend_deadline = getattr(cancel, "suspend_deadline", None)
-                    resume_deadline = getattr(cancel, "resume_deadline", None)
-                    if callable(suspend_deadline):
-                        suspend_deadline()
-                    try:
-                        if self._on_wait is not None:
-                            self._on_wait()
-                        permit.shared_permit = self._shared_gate.acquire(
-                            policy, cancel, owner_id=self._owner_id,
-                        )
-                    finally:
-                        try:
-                            if self._on_resume is not None:
-                                self._on_resume()
-                        finally:
-                            if callable(resume_deadline):
-                                resume_deadline()
-                    if cancel.is_set():
-                        raise RuntimeCancelled
-            return permit
-        except BaseException:
-            permit.__exit__()
-            raise
-
-    def try_acquire(
-        self, policy: ToolConcurrencyPolicy, cancel: threading.Event,
-        *, owner_id: str,
-    ) -> "_ToolPermit | None":
-        """Atomically attempt admission to a root workspace gate without waiting."""
-        if self._shared_gate is not None:
-            raise ValueError("only a root workspace gate supports nonblocking admission")
-        keys = set((*policy.resource_keys, *policy.exclusive_keys))
-        with self._condition:
-            if cancel.is_set():
-                raise RuntimeCancelled
-            if self._shell_owned_by(owner_id):
-                raise ManagedShellBusy
-            if (
-                self._exclusive or policy.mode == "exclusive" and self._active > 0
-                or bool(self._keys & keys) or self._active >= policy.max_concurrency
-                or self._managed_shells
-            ):
-                return None
-            self._active += 1
-            self._exclusive = policy.mode == "exclusive"
-            self._keys.update(keys)
-            return _ToolPermit(self, keys)
-
-    @property
-    def shares_workspace(self) -> bool:
-        return self._shared_gate is not None
-
-    def _shell_owned_by(self, owner_id: str | None) -> bool:
-        # The owning Run must poll/finish its existing shell. Another Run waits
-        # for the shared workspace instead of receiving a misleading tool error.
-        return bool(self._managed_shells) and (
-            owner_id is None or owner_id in self._managed_shells.values()
-        )
+        return _ToolPermit(self, keys)
 
     def _release(self, keys: set[str]) -> None:
         with self._condition:
@@ -291,7 +208,6 @@ class _ToolPermit:
         self._gate = gate
         self._keys = keys
         self._closed = False
-        self.shared_permit: _ToolPermit | None = None
 
     def __enter__(self) -> "_ToolPermit":
         return self
@@ -299,8 +215,6 @@ class _ToolPermit:
     def __exit__(self, *_error: object) -> None:
         if not self._closed:
             self._closed = True
-            if self.shared_permit is not None:
-                self.shared_permit.__exit__()
             self._gate._release(self._keys)
 
 
