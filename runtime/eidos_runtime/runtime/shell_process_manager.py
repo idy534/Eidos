@@ -268,10 +268,11 @@ class ShellProcessManager:
     ) -> dict[str, object]:
         return self.write_stdin(session_id, "\x03", yield_time_ms=yield_time_ms)
 
-    def cleanup(self) -> None:
+    def cleanup(self, *, close: bool = True) -> None:
         with self._lock:
             sessions = tuple(self._sessions.values())
-            self._closed = True
+            if close:
+                self._closed = True
         for session in sessions:
             self._terminate(session)
         for session in sessions:

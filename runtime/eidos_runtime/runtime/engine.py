@@ -1132,7 +1132,10 @@ class RuntimeEngine:
                 return SampleBoundaryAction.REBUILD_CONTEXT
             assert sampled.assistant_item is not None
             shell_stopped = resources.shell_process_manager.has_running()
-            resources.shell_process_manager.cleanup()
+            # Completion can still be deferred by input or child state in the
+            # final transaction. Settle processes but keep the owner reusable;
+            # RunResources closes admission when this Worker actually exits.
+            resources.shell_process_manager.cleanup(close=False)
             self.store.complete_current_step(run_id, "completed")
             try:
                 mutation = self.store.complete_assistant_and_run_committed(

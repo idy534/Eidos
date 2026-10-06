@@ -42,7 +42,7 @@
 - `session/restoreWorktree` 只恢复 Session 的 `associatedWorktreeId`。Deleted Worktree 会返回 `WORKTREE_RESTORE_REQUIRED`，invalid Worktree 会返回 `WORKTREE_RECOVERY_REQUIRED`。Restore 成功后，Run admission 可以重新使用原 Worktree；Runtime 不创建第二个 Worktree。
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
 - Git 观察、标题生成和其他 Managed Task 共用的入口已把执行与清理统一放到 AnyIO worker。该修订移除了任务清理在事件循环上等待 Supervisor 锁的路径，保留资源登记、协作取消和异常传播。该修订尚未通过回归测试，不能据此宣称 Runtime 无响应问题已完成验收。
-- Run 按 Session 分别使用持久 FIFO。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
+- Run 按 Session 分别使用持久 FIFO。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
 - 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消会停止执行。未清除的 reconciliation barrier 会使 Run 返回 `interrupted`，并保留副作用事实；Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。
 - Model Step Count、Segment Step Count 和 effective time 可以作为持久 telemetry 读取。
@@ -183,7 +183,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
 - 普通 Tool Error 不会单独终止 Run。模型可以根据错误事实修正参数或选择替代 Tool。
-- 只有安全只读的 `parallel_safe` Tool 批次可以在自身的有界范围内并发。每个 Run 的 Workspace write、Shell、MCP、external 和 Eidos-state Tool 使用自己的独占副作用门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使共享同一个 Workspace。等待 Approval 不占用该 Run 的门。结果按模型声明顺序提交。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
+- 只有安全只读的 `parallel_safe` Tool 批次可以在自身的有界范围内并发。每个 Run 的 Workspace write、Shell、MCP、external 和 Eidos-state Tool 使用自己的提交/启动窗口门；同一 Run 的活动 Shell 不持续占有该门，不同 Session 也可以在同一 Workspace 并行。等待 Approval 不占用该 Run 的门。结果按模型声明顺序提交。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
 
 ## Shell
 

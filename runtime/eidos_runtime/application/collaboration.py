@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Event, Lock
+import logging
 import time
 
 from opentelemetry import context as otel_context
@@ -14,6 +15,9 @@ from eidos_runtime.domain.collaboration import (
 )
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.runtime.contracts import RuntimeCancelled
+
+
+logger = logging.getLogger("eidos.runtime")
 
 
 class CollaborationApplication:
@@ -79,12 +83,15 @@ class CollaborationApplication:
             if cancel is None:
                 raise ValueError('resource-owning wait requires cancellation')
             deadline = time.monotonic() + request.timeout_ms / 1000
+            logger.info("Agent wait retains live resources run_id=%s timeout_ms=%s", run_id, request.timeout_ms)
             while True:
                 if cancel.is_set():
+                    logger.info("Resource-owning agent wait canceled run_id=%s", run_id)
                     raise RuntimeCancelled
                 state, pending = self.repository.inspect_wait(run_id, request)
                 remaining = deadline - time.monotonic()
                 if not pending or remaining <= 0:
+                    logger.info("Resource-owning agent wait finished run_id=%s reason=%s", run_id, "timeout" if pending else "children_finished")
                     return state
                 cancel.wait(min(0.1, remaining))
         if self.repository.wait(run_id, item_id, request):

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import sys
 import threading
@@ -11,9 +10,11 @@ import pytest
 
 from eidos_runtime.application.collaboration import CollaborationApplication
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db.errors import RunCompletionDeferred
 from eidos_runtime.domain.collaboration import AgentSuspended, CollaborationRejected, WaitAgents
 from eidos_runtime.model.client import ModelToolCall
-from eidos_runtime.runtime.contracts import RuntimeCancelled
+from eidos_runtime.runtime.contracts import LoopAction, LoopDecision, RuntimeCancelled, SampleBoundaryAction
+from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.run_resources import RunResources
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker
@@ -57,7 +58,8 @@ def _step(e):
 
 
 def _results(e):
-    return [(item["toolCall"]["toolName"], item["toolCall"].get("resultJson"))
+    return [(item["toolCall"]["toolName"], json.loads(item["toolCall"].get("resultJson") or "{}").get("code"),
+             json.loads(item["toolCall"].get("resultJson") or "{}").get("summary"))
             for item in e.store.read_session_snapshot(e.run["sessionId"])["items"] if item.get("toolCall")]
 
 
@@ -110,12 +112,9 @@ def test_two_shells_and_batched_collaboration_do_not_block_each_other(execution)
     assert e.runtime.controller.run_exclusive_side_effect(threading.Event(), lambda: "committed") == "committed"
 
 
-def test_live_shell_allows_actual_file_commit_and_second_shell(execution, monkeypatch):
+@pytest.mark.skipif(sys.platform != "darwin", reason="Secure file commit helper requires macOS descriptor identity")
+def test_live_shell_allows_actual_file_commit_and_second_shell(execution):
     e = execution
-    if sys.platform.startswith("linux"):
-        # Linux equivalent of the macOS F_GETPATH identity observation, not a
-        # bypass of the production descriptor/inode/base-hash checks.
-        monkeypatch.setattr("eidos_runtime.tools.workspace._fd_path", lambda fd: os.readlink(f"/proc/self/fd/{fd}"))
     result = _execute(e, (
         ModelToolCall("long-shell", "run_shell", {"command": "sleep 30", "yieldTimeMs": 250}),
     ), threading.Event())
@@ -141,6 +140,26 @@ def test_wait_tool_timeout_does_not_suspend_or_kill_its_shell(execution):
     assert e.store.read_run(e.run["id"])["status"] == "running"
     assert e.resources.shell_process_manager.is_running(session)
     assert e.app.repository.wait_record(e.run["id"]) is None
+
+
+def test_deferred_completion_keeps_shell_manager_available_for_continuation(execution, monkeypatch):
+    e = execution
+    step = _step(e)
+    item = e.store.create_assistant_item(e.run["id"], step.step_index)
+
+    def defer(*_args, **_kwargs):
+        raise RunCompletionDeferred("pending_input")
+
+    monkeypatch.setattr(e.store, "complete_assistant_and_run_committed", defer)
+    engine = RuntimeEngine(e.store, None, lambda _event: None)
+    action = engine._settle_sample_boundary(
+        e.run["id"], LoopDecision(action=LoopAction.COMPLETE),
+        SimpleNamespace(assistant_item=item), SimpleNamespace(status="no_tools"),
+        None, e.resources, None, threading.Event(),
+    )
+    assert action is SampleBoundaryAction.REBUILD_CONTEXT
+    assert e.store.read_run(e.run["id"])["status"] == "running"
+    assert _start_shell(e)
 
 
 @pytest.mark.parametrize("name", ["spawn_agent", "send_message", "followup_task", "list_agents", "stop_agent"])
