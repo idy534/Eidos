@@ -6,6 +6,7 @@ import errno
 import hashlib
 import json
 import logging
+from pathlib import Path
 import threading
 from typing import Callable, cast
 
@@ -58,7 +59,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
 from eidos_runtime.tools.registry import ToolArgumentValidationResult
 from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
-from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
+from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
     HandlerOutcome,
     PreparedToolExecution,
@@ -231,7 +232,6 @@ class _HandlerDependencies:
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
     permissions: PermissionRequests | None = None
-    concurrency: ToolConcurrencyGate | None = None
 
 
 class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
@@ -368,6 +368,38 @@ class FileChangeToolHandler:
         execute: Callable[[], dict[str, object]],
     ) -> VerifiedToolExecutionResult:
         executor = runtime.implementation.executor  # type: ignore[attr-defined]
+
+        def reconciliation_error() -> dict[str, object] | None:
+            unresolved = self.dependencies.store.reconciliation_file_paths(run_id)
+            if unresolved == frozenset():
+                return None
+            targets = prepared.intent_preconditions.get("paths", [prepared.intent_preconditions.get("path")])
+            try:
+                root = Path(executor.workspace.path)
+                blocked = None if unresolved is None else {(root / path).resolve() for path in unresolved}
+                requested = {(root / path).resolve() for path in targets}
+                conflict = blocked is None or not requested or any(
+                    target == origin or target in origin.parents or origin in target.parents
+                    for target in requested for origin in blocked
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                conflict = True
+            if conflict:
+                return tool_error(runtime.spec.name, "reconciliation_required",
+                    "This target overlaps an unresolved file effect, or the affected scope is unknown. "
+                    "Runtime attempts recovery automatically; a read-only tool call is not required.")
+            return None
+
+        error = reconciliation_error()
+        if error is not None:
+            return VerifiedToolExecutionResult(result=error)
+        unchecked_execute = execute
+
+        def execute() -> dict[str, object]:
+            # Approval/prepare may take time. Recheck after acquiring this Run's
+            # commit permit, without holding any cross-Run workspace lock.
+            return reconciliation_error() or unchecked_execute()
+
         external = bool(executor._external_writers)
         permissions = executor.write_permissions
         full_access = bool(permissions and permissions.full_access)
@@ -1081,24 +1113,11 @@ class ShellToolHandler:
         def gated_execute_shell_attempt(
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
-            def execute_managed() -> tuple[dict[str, object], SandboxDenied | None]:
-                result, denial = execute_shell_attempt(attempt)
-                data = result.get("data", {})
-                if data.get("executionStatus") == "running":
-                    assert self.dependencies.concurrency is not None
-                    session_id = str(data["sessionId"])
-                    gate = self.dependencies.concurrency
-                    gate.retain_shell(session_id)
-                    manager = self.dependencies.shell_process_manager
-                    assert manager is not None
-                    manager.retain(session_id, lambda: gate.release_shell(session_id))
-                return result, denial
-
             return cast(
                 tuple[dict[str, object], SandboxDenied | None],
                 self.dependencies.run_exclusive_side_effect(
                     cancel=cancel,
-                    execute=execute_managed,
+                    execute=lambda: execute_shell_attempt(attempt),
                 ),
             )
 
@@ -1278,8 +1297,7 @@ class ShellToolHandler:
             result["data"]["outputCallId"] = call.provider_call_id
         if result.get("data", {}).get("executionStatus") == "running":
             manager = self.dependencies.shell_process_manager
-            gate = self.dependencies.concurrency
-            assert manager is not None and gate is not None
+            assert manager is not None
             session_id = str(result["data"]["sessionId"])
             initial_result = result
 
@@ -1624,39 +1642,29 @@ class ToolCallRuntime:
             skill_access=self.skill_access,
             runtime_dependencies=runtime_dependencies,
             permissions=self.permissions,
-            concurrency=self.concurrency,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)
         self.shell_runtime = ShellToolHandler(dependencies)
         self.external_runtime = ExternalToolHandler(dependencies)
         self.eidos_state_runtime = EidosStateToolHandler(dependencies)
+        self._reconciliation_refresh_state: tuple[int, int] | None = None
 
-    def _refresh_reconciliation_after_result(
+    def _refresh_reconciliation(
         self,
         *,
         run_id: str,
-        call: ModelToolCall,
-        plan: ToolDispatchPlan,
-        outcome: HandlerOutcome,
         cancel: threading.Event,
     ) -> None:
-        """Clear a matching barrier only after a complete workspace refresh."""
+        """Runtime-owned recovery; no model-selected read is a prerequisite."""
         if self.workspace_refresh is None or not self.store.side_effects_blocked(run_id):
-            return
-        successful_workspace_read = (
-            call.name in _WORKSPACE_READ_TOOLS
-            and plan.side_effect == "none"
-            and outcome.result.get("outcome") == "success"
-        )
-        if not successful_workspace_read:
             return
         try:
             intent_scopes = self.store.reconciliation_intent_scopes(run_id)
         except Exception:
             logger.warning(
                 "reconciliation_intent_scope_lookup_failed",
-                extra={"run_id": run_id, "tool_name": call.name},
+                extra={"run_id": run_id},
                 exc_info=logger.isEnabledFor(logging.DEBUG),
             )
             return
@@ -1665,9 +1673,14 @@ class ToolCallRuntime:
             or not intent_scopes.issubset(_REFRESHABLE_RECONCILIATION_SCOPES)
         ):
             return
-        expected_epoch = self.store.context_projection_facts(
-            run_id
-        ).reconciliation_epoch
+        facts = self.store.context_projection_facts(run_id)
+        expected_epoch = facts.reconciliation_epoch
+        refresh_state = (expected_epoch, facts.workspace_version)
+        if getattr(self, "_reconciliation_refresh_state", None) == refresh_state:
+            return
+        # An unchanged incomplete observation must not trigger a full rescan
+        # after every tool in the same Step. A new epoch/version can retry.
+        self._reconciliation_refresh_state = refresh_state
         if cancel.is_set():
             raise RuntimeCancelled
         try:
@@ -1679,7 +1692,7 @@ class ToolCallRuntime:
                 raise RuntimeCancelled
             logger.warning(
                 "reconciliation_workspace_refresh_failed",
-                extra={"run_id": run_id, "tool_name": call.name},
+                extra={"run_id": run_id},
                 exc_info=logger.isEnabledFor(logging.DEBUG),
             )
             return
@@ -1789,7 +1802,7 @@ class ToolCallRuntime:
             )
         if len(result.tool_calls) > 1 and any(call.name in {"request_user_input", "write_plan"} for call in result.tool_calls):
             return ToolBatchOutcome(status="validation_failed", error_code="planning_control_requires_single_call")
-        if len(result.tool_calls) > 1 and any(call.name in {"spawn_agent", "send_message", "followup_task", "wait_agents", "list_agents", "stop_agent"} for call in result.tool_calls):
+        if len(result.tool_calls) > 1 and any(call.name == "wait_agents" for call in result.tool_calls):
             return ToolBatchOutcome(status="validation_failed", error_code="agent_control_requires_single_call")
         if not result.tool_calls:
             if self.store.read_run(step.run_id).get("workMode") == "plan":
@@ -1804,6 +1817,7 @@ class ToolCallRuntime:
         cancel: threading.Event,
     ) -> ToolBatchOutcome:
         self.state_machine.track(RuntimeState.TOOL_EXECUTING, "model_tool_calls")
+        self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
         if (
             self.dispatcher.is_parallel_read_batch(tool_calls)
             and self._parallel_arguments_are_safe(tool_calls)
@@ -1874,11 +1888,8 @@ class ToolCallRuntime:
                 deadline=None,
             )
             self._check_cancel(step.run_id, cancel)
-            self._refresh_reconciliation_after_result(
+            self._refresh_reconciliation(
                 run_id=step.run_id,
-                call=effective_call,
-                plan=plan,
-                outcome=outcome,
                 cancel=cancel,
             )
             if outcome.activations:
@@ -2054,18 +2065,9 @@ class ToolCallRuntime:
         errors: list[str] = []
         successes: list[str] = []
         context_facts: list[str] = []
+        self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
         for (item, call), outcome in zip(pending, outcomes, strict=True):
             self._check_cancel(step.run_id, cancel)
-            plan = self.dispatcher.plan(
-                call, step.tool_snapshot.binding(call.name)
-            )
-            self._refresh_reconciliation_after_result(
-                run_id=step.run_id,
-                call=call,
-                plan=plan,
-                outcome=outcome,
-                cancel=cancel,
-            )
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":

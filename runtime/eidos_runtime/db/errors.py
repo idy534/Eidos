@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 
 class StorageError(RuntimeError):
     pass
@@ -39,6 +41,16 @@ class ProjectWorktreeRecoveryRequiredError(RuntimeError):
 
 class InvalidRunStateError(RuntimeError):
     pass
+
+
+class RunCompletionDeferred(InvalidRunStateError):
+    """The final commit observed work that the sampled response did not see."""
+
+    def __init__(self, reason: Literal[
+        "pending_input", "active_children", "collaboration_changed", "cancel_requested",
+    ]) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 class ReconciliationRequiredError(InvalidRunStateError):

@@ -49,6 +49,13 @@ class LoopDecisionEngine:
             if (
                 tool_batch.status == "no_tools"
                 and sampling is not None
+                and sampling.text
+                and sampling.needs_follow_up
+            ):
+                return LoopDecision(action=LoopAction.CONTINUE, reason="model_follow_up")
+            if (
+                tool_batch.status == "no_tools"
+                and sampling is not None
                 and sampling.assistant_item is not None
                 and not sampling.needs_follow_up
             ):

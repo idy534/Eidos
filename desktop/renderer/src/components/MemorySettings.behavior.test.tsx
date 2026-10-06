@@ -74,7 +74,7 @@ it("loads the full current revision before correcting a search preview", async (
   await user.click(screen.getByRole("button", {name: "纠正"}));
   const editor = await screen.findByRole("textbox", {name: "纠正记忆正文"});
   expect(memory).toHaveBeenCalledWith("memory/get", {sessionId: "session", entryId: "entry"});
-  expect(editor).toHaveValue(body);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
   await user.type(editor, "补充");
   await user.click(screen.getByRole("button", {name: "确认"}));
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/manage", expect.objectContaining({

@@ -736,7 +736,7 @@ class RuntimeLoopTests(unittest.TestCase):
         RuntimeLoop(self.store, model, lambda _message: None, shell_available=True).run(run["id"], threading.Event())
         snapshot = self.store.read_session_snapshot(session_id)
         self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
-        self.assertFalse((self.workspace / "must-not-exist").exists())
+        self.assertTrue((self.workspace / "must-not-exist").exists())
         original = next(item for item in snapshot["items"] if item.get("toolCall", {}).get("providerCallId") == "start-command")
         result = json.loads(original["toolCall"]["resultJson"])
         self.assertEqual(result["data"]["stdout"], "ready\ndone\n")

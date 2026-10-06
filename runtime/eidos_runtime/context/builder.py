@@ -298,13 +298,14 @@ class ContextBuilder:
             context.append({
                 "type": "user",
                 "content": (
-                    "Recovery is limited to three tool rounds for this reconciliation epoch. "
+                    "Runtime attempts verifiable Workspace recovery automatically; no preliminary read-only call is required. "
                     "The listed origins come from unresolved durable intents, not from cache directories. "
-                    "Workspace reads can only reconcile verifiable Workspace file mutations. "
+                    "Workspace refresh can only reconcile verifiable Workspace file mutations. "
                     "They cannot clear Shell, MCP, external or unknown intents. Deleting caches or "
-                    "requesting permissions cannot clear those intents either. Read existing evidence "
-                    "and report the blocker if no supported recovery is available; do not vary commands "
-                    "or tools to retry blocked side effects. An empty origin list does not prove resolution."
+                    "requesting permissions cannot clear those intents either. Unrelated file targets may proceed "
+                    "when Runtime can prove the affected paths; messages and stopping agents remain available. "
+                    "Continue useful independent work and report unresolved effects honestly. Do not replay "
+                    "an uncertain operation. An empty origin list does not prove resolution."
                 ),
             })
         provider_usage = self.store.latest_model_usage(run_id)

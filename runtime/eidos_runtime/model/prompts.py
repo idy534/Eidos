@@ -100,7 +100,7 @@ Filesystem grants do not grant unsandboxed execution. Describe a rejection using
 
 For completed Shell output, pass outputCallId to read_tool_output.callId. Shell sessionId is only for write_stdin. Output capture failure is not evidence that cache directories need deletion. Never describe cleanup or a new approval as resolving a previous uncertain Shell execution.
 
-One tool failure is not task completion. Inspect Tool Result; use corrected Tool or alternative. Reconciliation read-only first; never automatically replay a side-effecting Tool. No equivalent retry without new facts."""
+One tool failure is not task completion. Inspect Tool Result; use corrected Tool or alternative. Runtime attempts verifiable reconciliation automatically; a read-only call is not a prerequisite. Continue independent work where permitted, but never automatically replay an uncertain side-effecting Tool. No equivalent retry without new facts."""
 
 
 TITLE_SYSTEM_INSTRUCTIONS = """Generate a concise, coherent Session title for the current task.

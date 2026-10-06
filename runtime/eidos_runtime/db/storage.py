@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.input_reference import InputReference
+from eidos_runtime.domain.collaboration import CollaborationState
 from eidos_runtime.persistence.input_context import InputContextRepository
 
 from eidos_runtime.domain.approval_policy import ApprovalReview
@@ -1056,11 +1057,13 @@ class SessionStore:
 
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str, *, shell_stopped: bool = False,
+        expected_collaboration: CollaborationState | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         return self._repository(self._execution).complete_assistant_and_run_committed(
             item_id,
             run_id,
             shell_stopped=shell_stopped,
+            expected_collaboration=expected_collaboration,
         )
 
     def create_tool_item(
@@ -1306,6 +1309,9 @@ class SessionStore:
 
     def reconciliation_intent_scopes(self, run_id: str) -> frozenset[str]:
         return self._repository(self._execution).reconciliation_intent_scopes(run_id)
+
+    def reconciliation_file_paths(self, run_id: str) -> frozenset[str] | None:
+        return self._repository(self._execution).reconciliation_file_paths(run_id)
 
     def begin_durable_intent(
         self,

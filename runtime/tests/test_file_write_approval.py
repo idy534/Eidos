@@ -51,7 +51,10 @@ class FileWriteApprovalTests(unittest.TestCase):
         )
         self.dependencies = SimpleNamespace(
             base_permissions=self.base, skill_access=None,
-            store=SimpleNamespace(run_permission_grants=Mock(return_value=None)),
+            store=SimpleNamespace(
+                run_permission_grants=Mock(return_value=None),
+                reconciliation_file_paths=Mock(return_value=frozenset()),
+            ),
             execute_side_effect=Mock(), execute_workspace_side_effect=Mock(),
         )
         self.handler = FileChangeToolHandler(self.dependencies)

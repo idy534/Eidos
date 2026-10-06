@@ -10,7 +10,8 @@ from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 # Delegation is currently one level deep. These bounds cap persisted context
 # and UI responses; ordinary user Sessions keep their policy.
 MAX_AGENTS = 16
-MAX_ACTIVE_AGENTS = 2
+# The scheduler counts executing children per parent Run, never across Runs.
+MAX_ACTIVE_AGENTS = 8
 AgentRole = Literal["explorer", "worker"]
 READ_ONLY_TOOLS = frozenset({
     "list_files", "read_file", "read_file_range", "search_text", "search_text_wait", "read_tool_output", "memory_search", "memory_read",

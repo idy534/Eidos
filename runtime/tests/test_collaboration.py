@@ -109,20 +109,36 @@ def test_spawn_is_idempotent_and_keeps_child_session_out_of_normal_listing(tmp_p
         store.close()
 
 
-def test_only_two_child_runs_can_be_claimed_at_once(tmp_path: Path) -> None:
+def test_eight_child_run_limit_is_per_parent_and_does_not_block_other_runs(tmp_path: Path) -> None:
     store, _session, parent = _parent(tmp_path)
     try:
         repository = CollaborationRepository(store.database)
-        children = [_spawn(store, parent, index)[1] for index in range(3)]
-        claimed = [store.claim_next_run(), store.claim_next_run()]
+        children = [_spawn(store, parent, index)[1] for index in range(9)]
+        claimed = [store.claim_next_run() for _ in range(8)]
 
         assert {str(run["id"]) for run in claimed if run is not None} == {
-            child.run_id for child in children[:2]
+            child.run_id for child in children[:8]
         }
         assert store.claim_next_run() is None
         assert set(repository.child_runs(str(parent["id"]))) == {
             child.run_id for child in children
         }
+
+        # A full delegation group must not consume another parent's capacity.
+        session = store.create_session(str(_session["workspaceRoot"]))
+        other, _ = store.enqueue_run(str(session["id"]), "independent task")
+        assert store.claim_next_run()["id"] == other["id"]
+        peers = [_spawn(store, other, index)[1] for index in range(9)]
+        claimed = [store.claim_next_run() for _ in range(8)]
+        assert {run["id"] for run in claimed if run is not None} == {
+            child.run_id for child in peers[:8]
+        }
+        assert store.claim_next_run() is None
+
+        # Freeing one local slot admits only that parent's queued child.
+        store.fail_run(children[0].run_id, "test_child_finished")
+        assert store.claim_next_run()["id"] == children[8].run_id
+        assert store.read_run(peers[8].run_id)["status"] == "queued"
     finally:
         store.close()
 
