@@ -251,6 +251,15 @@ class SkillCatalog:
     def catalog_snapshot(
         self, snapshot: dict[str, object]
     ) -> SkillCatalogSnapshot:
+        saved = snapshot.get('skillCatalogSnapshotJson')
+        if snapshot.get('skillLeaseVersion') == 1 and isinstance(saved, str):
+            catalog = SkillCatalogSnapshot.model_validate_json(saved)
+            if catalog.catalog_hash != snapshot.get('skillCatalogHash') or catalog.catalog_hash != catalog.canonical_hash():
+                raise SkillReadError('skill_snapshot_invalid')
+            # Immutable metadata survives removal of a never-activated root.
+            # Actual resources are still checked against this exact entry when
+            # leased and activated, including after Runtime restart.
+            return catalog
         sources = self._sources(snapshot)
         entries = tuple(_catalog_entry(source) for source in sources)
         expected_hash = snapshot.get("skillCatalogHash")
@@ -384,6 +393,10 @@ class SkillCatalog:
         entries = tuple(_catalog_entry(source) for source in self._sources(snapshot))
         snapshot["skillCatalogHash"] = _catalog_hash(entries)
         snapshot["skillCatalogIds"] = sorted(entry.qualified_id for entry in entries)
+        snapshot["skillLeaseVersion"] = 1
+        snapshot['skillCatalogSnapshotJson'] = SkillCatalogSnapshot(
+            catalog_hash=snapshot['skillCatalogHash'], entries=tuple(sorted(entries, key=lambda entry: entry.qualified_id.encode())),
+        ).model_dump_json()
         return snapshot
 
     def read_skill(
@@ -485,6 +498,26 @@ class SkillCatalog:
         for source in sources:
             if source.qualified_id == qualified_id:
                 return metadata, source
+        if isinstance(snapshot, SkillCatalogSnapshot):
+            entry = next((entry for entry in snapshot.entries if entry.qualified_id == qualified_id), None)
+            if entry is not None:
+                locator = urllib.parse.urlparse(entry.main_resource_locator)
+                if locator.scheme != 'file' or locator.netloc:
+                    raise SkillReadError('skill_snapshot_invalid')
+                root = Path(urllib.parse.unquote(locator.path)).parent
+                if entry.source_kind == 'plugin':
+                    self._manifest_for_snapshot({
+                        'id': entry.source_identity, 'version': entry.source_version,
+                        'contentHash': entry.source_hash,
+                    })
+                source = _source(
+                    qualified_id[:-len(entry.name)], root, entry.source_identity, entry.source_version,
+                    entry.source_hash if entry.source_kind == 'plugin' else None,
+                    private=entry.source_kind == 'system', owned=entry.source_kind != 'system', source_kind=entry.source_kind,
+                )
+                if _catalog_entry(source) != entry:
+                    raise SkillReadError('skill_snapshot_invalid')
+                return metadata, source
         raise SkillReadError("skill_unavailable")
 
     def _sources(self, snapshot: dict[str, object]) -> list[_SkillSource]:
@@ -545,7 +578,7 @@ class SkillCatalog:
                 _SkillReadAdapter(self, snapshot, activate_model_read),
             ),
             _skill_entry(
-                "skill_read_resource", _SkillResourceAdapter(self, snapshot)
+                "skill_read_resource", _SkillResourceAdapter(self, snapshot, activate_model_read)
             ),
             _skill_create_entry(_SkillCreateAdapter(self)),
             _skill_install_entry(_SkillInstallAdapter(self)),
@@ -568,21 +601,17 @@ class _SkillReadAdapter:
     ) -> dict[str, object]:
         if cancel.is_set():
             return _skill_error("skill_read", "tool_canceled", "Skill read canceled")
+        if self.activate_model_read is not None:
+            try:
+                self.activate_model_read(str(arguments['qualifiedId']))
+            except (RuntimeError, ValueError):
+                return _skill_error('skill_read', 'skill_access_unavailable', 'Skill filesystem access is unavailable')
         try:
             skill = self.catalog.read_skill(
                 self.snapshot, str(arguments["qualifiedId"])
             )
         except SkillReadError as error:
             return _skill_error("skill_read", str(error), "Skill is unavailable")
-        if self.activate_model_read is not None:
-            try:
-                self.activate_model_read(str(arguments["qualifiedId"]))
-            except (RuntimeError, ValueError):
-                return _skill_error(
-                    "skill_read",
-                    "skill_access_unavailable",
-                    "Skill filesystem access is unavailable",
-                )
         source = skill["source"]
         assert isinstance(source, dict)
         try:
@@ -606,9 +635,11 @@ class _SkillResourceAdapter:
         self,
         catalog: SkillCatalog,
         snapshot: dict[str, object] | SkillCatalogSnapshot,
+        activate_model_read: Callable[[str], object] | None = None,
     ) -> None:
         self.catalog = catalog
         self.snapshot = snapshot
+        self.activate_model_read = activate_model_read
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -617,6 +648,11 @@ class _SkillResourceAdapter:
             return _skill_error(
                 "skill_read_resource", "tool_canceled", "Skill resource read canceled"
             )
+        if self.activate_model_read is not None:
+            try:
+                self.activate_model_read(str(arguments['qualifiedId']))
+            except (RuntimeError, ValueError):
+                return _skill_error('skill_read_resource', 'skill_access_unavailable', 'Skill filesystem access is unavailable')
         try:
             resource = self.catalog.read_resource(
                 self.snapshot,

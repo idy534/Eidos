@@ -96,13 +96,7 @@ from eidos_runtime.sandbox.permissions import (
 from eidos_runtime.model.instructions import StepPermissionPolicy
 
 
-EMPTY_EXTENSION_SNAPSHOT = {
-    "schemaVersion": 1,
-    "extensionContractVersion": 1,
-    "plugins": [],
-    "skillCatalogHash": "",
-    "mcpConfigHash": "",
-}
+
 
 logger = logging.getLogger("eidos.runtime")
 
@@ -264,9 +258,7 @@ class RuntimeEngine:
         run: dict[str, object],
         repository_context: RunRepositoryContext,
     ) -> None:
-        extension_snapshot = run.get("extensionSnapshot")
-        if not isinstance(extension_snapshot, dict):
-            extension_snapshot = dict(EMPTY_EXTENSION_SNAPSHOT)
+        extension_snapshot = self.store.read_run_extension_snapshot(run_id)
         run_context = self._run_context(run, extension_snapshot)
 
         try:
@@ -871,6 +863,8 @@ class RuntimeEngine:
                 sampled = sampling.accept_validated_response(
                     step, sampled, validation, cancel
                 )
+                if self.collaboration is not None:
+                    self.collaboration.repository.record_model_delivery(run.run_id, step.model_attempt_id)
                 break
 
             if context_recovered:
@@ -931,7 +925,7 @@ class RuntimeEngine:
                 validation.tool_calls,
                 step.workspace_version,
                 step.reconciliation_epoch,
-                context_fact_frontier_hash=canonical_sha256([context_fact_frontier_hash(built.facts), permission_frontier]),
+                context_fact_frontier_hash=canonical_sha256([context_fact_frontier_hash(built.facts), permission_frontier, built.agent_message_ids]),
                 active_error_fingerprints=built.facts.active_error_fingerprints,
             )
             if repeated == "recover_repeated_tool_call":
@@ -1017,7 +1011,7 @@ class RuntimeEngine:
                     validation.tool_calls,
                     outcome.workspace_version,
                     outcome.reconciliation_epoch,
-                    context_fact_frontier_hash=canonical_sha256([context_fact_frontier_hash(post_facts), permission_frontier]),
+                    context_fact_frontier_hash=canonical_sha256([context_fact_frontier_hash(post_facts), permission_frontier, built.agent_message_ids]),
                     active_error_fingerprints=outcome.error_fingerprints,
                 )
                 signature = guard.make_signature(
@@ -1026,7 +1020,7 @@ class RuntimeEngine:
                     successful_tool_result_hashes=(
                         outcome.successful_tool_result_hashes
                     ),
-                    context_fact_ids=outcome.context_fact_ids,
+                    context_fact_ids=(*outcome.context_fact_ids, *built.agent_message_ids),
                     error_fingerprints=outcome.error_fingerprints,
                     reconciliation_epoch=outcome.reconciliation_epoch,
                     reconciliation_required=post_facts.reconciliation_required,
@@ -1125,6 +1119,14 @@ class RuntimeEngine:
             )
             return SampleBoundaryAction.RETURN
         if decision.action == LoopAction.COMPLETE:
+            if self.collaboration:
+                self.collaboration.stop_optional(run_id)
+                if self.collaboration.repository.has_unread_messages(run_id):
+                    if sampled.assistant_item is not None:
+                        mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item['id']))
+                        self.events.publish(mutation, item=mutation.value)
+                    self.store.complete_current_step(run_id, 'completed')
+                    return SampleBoundaryAction.REBUILD_CONTEXT
             if self.collaboration and (
                 self.collaboration.repository.child_runs(run_id)
                 or self.collaboration.repository.state(run_id) != agent_baseline

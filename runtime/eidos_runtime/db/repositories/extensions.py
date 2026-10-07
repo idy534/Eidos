@@ -59,6 +59,12 @@ class ExtensionRepository(Repository):
 
     def skill_referenced_by_nonterminal_run(self, qualified_id: str) -> bool:
         with self.lock:
+            if self._connection().execute(
+                "SELECT 1 FROM run_skill_leases l JOIN runs r ON r.id=l.run_id WHERE l.qualified_id=? "
+                "AND r.status NOT IN ('succeeded','failed','stopped','canceled','interrupted') LIMIT 1",
+                (qualified_id,),
+            ).fetchone():
+                return True
             rows = self._connection().execute(
                 """SELECT extension_snapshot_json FROM runs WHERE status NOT IN
                 ('succeeded', 'failed', 'stopped', 'canceled', 'interrupted')"""
@@ -67,6 +73,8 @@ class ExtensionRepository(Repository):
             snapshot = _load_json_object(row['extension_snapshot_json'])
             if not snapshot:
                 return True
+            if snapshot.get('skillLeaseVersion') == 1 and isinstance(snapshot.get('skillCatalogSnapshotJson'), str):
+                continue
             catalog_ids = snapshot.get('skillCatalogIds')
             if isinstance(catalog_ids, list) and all(isinstance(value, str) for value in catalog_ids):
                 if qualified_id in catalog_ids:
@@ -77,6 +85,24 @@ class ExtensionRepository(Repository):
                     # Old snapshots cannot prove which catalog roots were pinned.
                     return True
         return False
+
+    def acquire_skill_lease(self, run_id: str, qualified_id: str) -> None:
+        # Removal holds this same lock while changing catalog state and deleting
+        # roots, so cleanup cannot race the admission of an actual user.
+        with self.lock, self._connection() as connection:
+            run = connection.execute('SELECT status, extension_snapshot_json FROM runs WHERE id=?', (run_id,)).fetchone()
+            if run is None or run['status'] in {'succeeded','failed','stopped','canceled','interrupted'}:
+                raise ValueError('skill_run_not_active')
+            if connection.execute('SELECT 1 FROM run_skill_leases WHERE run_id=? AND qualified_id=?', (run_id, qualified_id)).fetchone():
+                return
+            state = connection.execute('SELECT removed FROM skill_states WHERE qualified_id=?', (qualified_id,)).fetchone()
+            if state is not None and state['removed']:
+                raise ValueError('skill_unavailable')
+            snapshot = _load_json_object(run['extension_snapshot_json'])
+            catalog = snapshot.get('skillCatalogIds')
+            if isinstance(catalog, list) and qualified_id not in catalog:
+                raise ValueError('skill_unavailable')
+            connection.execute('INSERT INTO run_skill_leases VALUES (?,?,?)', (run_id, qualified_id, _now_ms()))
 
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         with self.lock:
@@ -450,18 +476,20 @@ class ExtensionRepository(Repository):
         return tuple(values)
 
     def activate_tools(self, run_id: str, names: tuple[str, ...]) -> tuple[str, ...]:
-        current = set(self.activated_tools(run_id))
-        current.update(names)
-        ordered = tuple(sorted(current, key=lambda value: value.encode("utf-8")))[:32]
-        encoded = json.dumps(ordered, ensure_ascii=False, separators=(",", ":"))
         with self.lock, self._connection() as connection:
+            # Keep recency, rather than letting alphabetically early tools
+            # permanently displace a newly requested tool.
+            incoming = tuple(dict.fromkeys(names))
+            current = self.activated_tools(run_id)
+            ordered = (*incoming, *(name for name in current if name not in incoming))[:32]
+            encoded = json.dumps(ordered, ensure_ascii=False, separators=(",", ":"))
             updated = connection.execute(
                 "UPDATE runs SET activated_tools_json = ?, updated_at = ? WHERE id = ?",
                 (encoded, _now_ms(), run_id),
             )
             if updated.rowcount != 1:
                 raise ResourceNotFoundError("run not found")
-        return ordered
+        return tuple(ordered)
 
     def record_mcp_tool_list_changed(self, plugin_id: str, server_id: str) -> None:
         with self.lock, self._connection() as connection:

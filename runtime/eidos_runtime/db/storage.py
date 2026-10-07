@@ -636,6 +636,9 @@ class SessionStore:
     def read_run(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).read_run(run_id)
 
+    def read_run_extension_snapshot(self, run_id: str) -> dict[str, object]:
+        return self._repository(self._runs).read_run_extension_snapshot(run_id)
+
     def approval_user_evidence(self, run_id: str) -> tuple[str, ...]:
         return self._repository(self._runs).approval_user_evidence(run_id)
 
@@ -673,6 +676,9 @@ class SessionStore:
 
     def skill_referenced_by_nonterminal_run(self, qualified_id: str) -> bool:
         return self._repository(self._extensions).skill_referenced_by_nonterminal_run(qualified_id)
+
+    def acquire_skill_lease(self, run_id: str, qualified_id: str) -> None:
+        self._repository(self._extensions).acquire_skill_lease(run_id, qualified_id)
 
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         return self._repository(self._extensions).plugin_record(plugin_id)

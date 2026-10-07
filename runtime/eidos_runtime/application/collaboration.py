@@ -61,6 +61,13 @@ class CollaborationApplication:
         self.repository.send(run_id, item_id, request.agent_id, request.message)
         self.publish()
 
+    def stop_optional(self, run_id: str) -> None:
+        from eidos_runtime.domain.collaboration import ACTIVE_STATUSES
+
+        for agent in self.repository.state(run_id).agents:
+            if agent.parent_run_id == run_id and not agent.required_for_completion and agent.status.value in ACTIVE_STATUSES:
+                self.stop(run_id, agent.id)
+
     def followup(self, run_id: str, item_id: str, request: AgentMessageRequest) -> AgentSummary:
         result = self.repository.followup(run_id, item_id, request.agent_id, request.message)
         self._remember_trace_context(result.run_id)

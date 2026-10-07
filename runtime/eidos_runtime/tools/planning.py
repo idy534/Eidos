@@ -46,7 +46,7 @@ class PlanningToolRuntime(AdapterToolRuntime):
     def invoke(self, context: ToolCallRuntime, run_id: str, item: dict[str, object], call: ModelToolCall, cancel: threading.Event) -> HandlerOutcome:
         from eidos_runtime.runtime.tool_execution import HandlerOutcome, PreparedToolExecution
         repository = PlanningRepository(context.store.database)
-        if context.store.read_run(run_id).get('workMode') != 'plan':
+        if call.name != 'request_user_input' and context.store.read_run(run_id).get('workMode') != 'plan':
             raise ValueError('plan_run_required')
         if call.name == 'request_user_input':
             saved = repository.for_item(str(item['id']))
@@ -87,6 +87,15 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 if callable(suspend_deadline):
                     suspend_deadline()
                 try:
+                    while True:
+                        state = context.collaboration.repository.state(run_id)
+                        from eidos_runtime.domain.collaboration import ACTIVE_STATUSES
+                        required = [agent.id for agent in state.agents if agent.parent_run_id == run_id
+                                    and agent.required_for_completion and agent.status.value in ACTIVE_STATUSES]
+                        if not required:
+                            break
+                        context.collaboration.wait(run_id, None, WaitAgents(agent_ids=required, timeout_ms=300000), cancel=cancel, keep_worker=True)
+                    context.collaboration.stop_optional(run_id)
                     while context.collaboration.repository.child_runs(run_id):
                         context.collaboration.wait(run_id, None, WaitAgents(timeout_ms=300000), cancel=cancel, keep_worker=True)
                 finally:
@@ -111,12 +120,14 @@ class PlanningToolRuntime(AdapterToolRuntime):
             {'planId': document.id, 'revision': document.revision, 'path': document.path, 'sha256': document.sha256, 'title': document.title}, data_model=PlanResultData), 'completed', 'completed')
 
 
-def planning_entries() -> tuple[ToolRegistryEntry, ...]:
+def planning_entries(*, include_plan: bool = True) -> tuple[ToolRegistryEntry, ...]:
     entries = []
     for name, description, input_model, output_model in (
-        ('request_user_input', 'Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.', RequestUserInput, InputResultData),
+        ('request_user_input', 'Request user input for one to three short questions and wait for the response. Ask only when missing information affects the task; do not ask again for authorization already given.', RequestUserInput, InputResultData),
         ('write_plan', 'Save a Markdown plan outside the project. Include the goal, findings, clarified decisions, implementation steps and verification. For a new plan, omit planId and expectedRevision; Eidos generates the ID. When revising, supply the exact planId and current revision returned by write_plan as expectedRevision. Never invent an ID. Set readyForReview to submit the complete plan and end this turn. This tool is only available in Plan mode.', WritePlan, PlanResultData),
     ):
+        if name == 'write_plan' and not include_plan:
+            continue
         spec = ToolSpec(name=name, description=description, sideEffect='eidos_state' if name == 'write_plan' else 'none', approvalRequired=False,
             timeoutSeconds=60, inputSchema=input_model.model_json_schema(by_alias=True),
             resultSchema=result_model(output_model).model_json_schema(by_alias=True))

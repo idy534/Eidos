@@ -211,6 +211,7 @@ class _SearchSession:
     thread: threading.Thread | None = None
     result: WorkspaceSearchResult | None = None
     error: SearchDriverError | DiscoveryScopeError | WorkspacePathError | None = None
+    request: tuple[str, bool, tuple[str, ...], int] | None = None
 
 
 # Function fallback has no grammar constraint, so its description carries a
@@ -476,6 +477,7 @@ class ToolExecutor:
         self.search_driver = search_driver or RipgrepSearchDriver()
         self._search_lock = threading.Lock()
         self._search_sessions: dict[str, _SearchSession] = {}
+        self._search_closed = False
         self._active_skill_roots: Callable[[], tuple[Path, ...]] = lambda: ()
         self.supports_custom_tools = supports_custom_tools
         self.supports_tool_grammar = supports_tool_grammar
@@ -567,10 +569,13 @@ class ToolExecutor:
 
     def close(self) -> None:
         with self._search_lock:
+            self._search_closed = True
             sessions = tuple(self._search_sessions.values())
             self._search_sessions.clear()
         for session in sessions:
             session.cancel.set()
+            if session.thread is None:
+                session.done.set()
         for session in sessions:
             if session.thread is not None:
                 session.thread.join(timeout=2)
@@ -1499,28 +1504,21 @@ class ToolExecutor:
             ):
                 self._search_sessions.pop(completed[0], None)
                 completed = completed[1:]
-            active_searches = sum(
-                not existing.done.is_set()
-                for existing in self._search_sessions.values()
-            )
-            if active_searches >= MAX_ACTIVE_SEARCHES:
+            if self._search_closed:
+                raise ToolCancelled
+            if len(self._search_sessions) >= MAX_RETAINED_SEARCHES:
                 return _error(
-                    "search_text", "search_session_limit", "Too many searches are running"
+                    "search_text", "search_session_limit", "The bounded search queue is full"
                 )
             session = _SearchSession(
                 session_id=str(uuid.uuid4()),
                 resolved=resolved,
                 cancel=threading.Event(),
                 done=threading.Event(),
-            )
-            session.thread = threading.Thread(
-                target=self._run_search,
-                args=(session, query, regex, tuple(include_globs), max_results),
-                name=f"eidos-search-{session.session_id[:8]}",
-                daemon=True,
+                request=(query, regex, tuple(include_globs), max_results),
             )
             self._search_sessions[session.session_id] = session
-            session.thread.start()
+            self._start_queued_searches()
         return self._wait_for_search("search_text", session, yield_time_ms, cancel)
 
     def _search_text_wait(
@@ -1537,6 +1535,28 @@ class ToolExecutor:
                 "search_text_wait", "search_session_unavailable", "Search session is unavailable"
             )
         return self._wait_for_search("search_text_wait", session, yield_time_ms, cancel)
+
+    def _start_queued_searches(self) -> None:
+        # Called under the owner's lock. Queued requests own no extra thread,
+        # process or open reader; only this executor can admit them.
+        if self._search_closed:
+            return
+        active = sum(session.thread is not None and not session.done.is_set() for session in self._search_sessions.values())
+        for session in self._search_sessions.values():
+            if session.thread is not None or session.done.is_set():
+                continue
+            if session.cancel.is_set():
+                session.done.set()
+                continue
+            if active >= MAX_ACTIVE_SEARCHES:
+                break
+            assert session.request is not None
+            session.thread = threading.Thread(
+                target=self._run_search, args=(session, *session.request),
+                name=f'eidos-search-{session.session_id[:8]}', daemon=True,
+            )
+            active += 1
+            session.thread.start()
 
     def _run_search(
         self,
@@ -1569,7 +1589,9 @@ class ToolExecutor:
         except (SearchDriverError, DiscoveryScopeError, WorkspacePathError) as error:
             session.error = error
         finally:
-            session.done.set()
+            with self._search_lock:
+                session.done.set()
+                self._start_queued_searches()
 
     def _wait_for_search(
         self,
@@ -1586,6 +1608,9 @@ class ToolExecutor:
             session.done.wait(min(0.1, remaining))
         if cancel.is_set():
             session.cancel.set()
+            with self._search_lock:
+                if session.thread is None:
+                    session.done.set()
             session.done.wait(2)
             if session.done.is_set():
                 with self._search_lock:

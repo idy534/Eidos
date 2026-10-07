@@ -185,7 +185,7 @@ class InstructionResolver:
         else:
             layers.append(InstructionLayer.create(
                 id="work-mode", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:execute",
-                content="You are in normal execution mode. Plan mode is available only through the user's explicit mode selection or /plan command. Do not enter Plan mode autonomously. request_user_input and write_plan are unavailable. If the user asks for Plan mode in plain text, explain how to select Plan or use /plan; do not pretend the mode changed. Follow any explicit request to analyze without implementing.",
+                content="You are in normal execution mode. Plan mode is available only through the user's explicit mode selection or /plan command. Do not enter Plan mode autonomously. request_user_input is available for missing task information; write_plan is unavailable. Do not ask again for authorization already provided. If the user asks for Plan mode in plain text, explain how to select Plan or use /plan; do not pretend the mode changed. Follow any explicit request to analyze without implementing.",
             ))
         if step_policy is not None:
             layers.append(InstructionLayer.create(

@@ -1402,11 +1402,11 @@ export function AppShell({ runtime }: AppShellProps) {
                   draftReady={runState.draftReady}
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
-                  workMode={activeRun?.workMode ?? workMode}
+                  workMode={workMode}
                   onWorkModeChange={(mode) => {
                     if (approvalSessionId) setWorkModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
                   }}
-                  approvalMode={activeRun?.approvalMode ?? approvalMode}
+                  approvalMode={approvalMode}
                   onApprovalModeChange={(mode) => {
                     if (approvalSessionId) setApprovalModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
                   }}

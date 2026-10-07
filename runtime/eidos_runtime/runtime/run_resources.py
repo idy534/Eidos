@@ -39,7 +39,6 @@ from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
 from eidos_runtime.tools.planning import planning_entries
 from eidos_runtime.tools.collaboration import collaboration_entries
-from eidos_runtime.domain.collaboration import READ_ONLY_TOOLS
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.tools.read_tool_output import read_tool_output_entry
 from eidos_runtime.tools.declare_outputs import declare_outputs_entry
@@ -239,7 +238,7 @@ class RunResources:
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
-                *(planning_entries() if self.store.read_run(self.run_id).get("workMode") == "plan" else ()),
+                *planning_entries(include_plan=self.store.read_run(self.run_id).get("workMode") == "plan"),
                 *self.skills.tool_entries(
                     self.skill_catalog_snapshot,
                     activate_model_read=self.activate_skill_model_read,
@@ -251,7 +250,8 @@ class RunResources:
         if self.child_role == "explorer":
             base = ToolRegistry(tuple(
                 entry for entry in base.entries
-                if (entry.spec.name in READ_ONLY_TOOLS and entry.provenance.kind == "builtin")
+                if (entry.spec.side_effect == "none" and entry.provenance.kind == "builtin"
+                    and entry.spec.name not in {"request_permissions", "request_user_input"})
                 or (entry.spec.name == "send_message" and entry.provenance.source_id == "eidos.collaboration")
             ))
         elif self.child_role == "worker":
@@ -259,13 +259,13 @@ class RunResources:
             # Coordination and direct permission expansion stay with the parent.
             base = ToolRegistry(tuple(
                 entry for entry in base.entries
-                if entry.spec.name != "request_permissions"
+                if entry.spec.name not in {"request_permissions", "request_user_input"}
                 and (entry.provenance.source_id != "eidos.collaboration" or entry.spec.name == "send_message")
             ))
         deferred = tuple(
             entry for entry in base.entries if entry.spec.visibility == "deferred"
         )
-        self.registry = base if self.child_role == "explorer" else ToolRegistry((*base.entries, tool_search_entry(deferred)))
+        self.registry = ToolRegistry((*base.entries, tool_search_entry(deferred)))
         self.dispatcher = ToolDispatcher(self.registry)
 
     def _activate_mentions(self, user_input: str) -> None:
@@ -308,6 +308,8 @@ class RunResources:
             selected = SelectedSkillSet(turn_id=turn_id, selected_qualified_ids=tuple(sorted(
                 set(selected.selected_qualified_ids) | explicit_ids
             )))
+        for qualified_id in selected.selected_qualified_ids:
+            self._acquire_skill_lease(qualified_id)
         self.selected_skill_context = (
             self.skills.render_selected(self.skill_catalog_snapshot, selected)
             if selected.selected_qualified_ids
@@ -321,10 +323,21 @@ class RunResources:
     def activate_skill_model_read(self, qualified_id: str):
         if self.skill_access is None:
             raise RuntimeError("run resources are not started")
+        self._acquire_skill_lease(qualified_id)
         record = self.skill_access.activate_model_read(qualified_id)
         self._bind_skill(qualified_id)
         self._refresh_skill_dependency_diagnostics()
         return record
+
+    def _acquire_skill_lease(self, qualified_id: str) -> None:
+        if self.skill_catalog_snapshot is None or not any(
+            entry.qualified_id == qualified_id for entry in self.skill_catalog_snapshot.entries
+        ):
+            raise SkillReadError('skill_unavailable')
+        try:
+            self.store.acquire_skill_lease(self.run_id, qualified_id)
+        except ValueError as error:
+            raise SkillReadError(str(error)) from error
 
     def image_authority(self) -> ViewImageRootAuthority:
         if self.skill_access is None:

@@ -2208,10 +2208,11 @@ function isExtensionSnapshot(value: unknown): value is Record<string, unknown> {
     isRecord(value)
     && hasOnlyKeys(value, [
       "schemaVersion", "extensionContractVersion", "plugins",
-      "skillCatalogHash", "mcpConfigHash", "excludedSkillIds", "skillCatalogIds",
+      "skillCatalogHash", "mcpConfigHash", "excludedSkillIds", "skillCatalogIds", "skillLeaseVersion",
     ])
     && value.schemaVersion === 1
     && value.extensionContractVersion === 1
+    && (value.skillLeaseVersion === undefined || value.skillLeaseVersion === null || value.skillLeaseVersion === 1)
     && (value.excludedSkillIds === undefined || (
       Array.isArray(value.excludedSkillIds) && value.excludedSkillIds.every((id) => typeof id === "string")
     ))

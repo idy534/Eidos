@@ -666,7 +666,7 @@ Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `
 
 调用链为 `Composer / PlanPanel → typed preload IPC → Main RuntimeClient → Method Registry → PlanningApplication / RunApplication → PlanningRepository / RunSupervisor → ToolExecutionController`。Python Pydantic 是新增 DTO 的定义来源。`scripts/generate-planning-contracts.mjs` 生成 Desktop 类型，`desktop/shared/planning.ts` 校验跨进程数据。
 
-Plan Run 的工具注册表额外注入 `request_user_input` 和 `write_plan`。普通 Run 不注入这两个工具。Runtime 在执行入口再次检查 Plan 模式。`request_user_input` 每次接收一到三个问题，支持单选、多选和文字回答；用户可以填写自定义回答或明确跳过。控制工具可在混合批次中按顺序执行；没有可执行计划时允许直接说明调查结论或阻塞原因。可审阅计划必须由 `write_plan` 保存，不能把普通文本当成已保存计划。
+主 Run 的工具注册表提供 `request_user_input`，Plan Run 额外提供 `write_plan`。Runtime 只对计划写入检查 Plan 模式；澄清仍要求 Run 活跃。`request_user_input` 每次接收一到三个问题，支持单选、多选和文字回答；用户可以填写自定义回答或明确跳过。控制工具可在混合批次中按顺序执行；没有可执行计划时允许直接说明调查结论或阻塞原因。可审阅计划必须由 `write_plan` 保存，不能把普通文本当成已保存计划。
 
 澄清请求、问题、答案和 ToolCall 关联保存在 SQLite，并写入 Event / Outbox。单独提问且没有活动 Shell 时，请求创建与 Run 转为 `waiting_input` 同事务提交，Worker 退出；回答后 Run 转回 `queued`，恢复原 ToolCall。混合批次或活动 Shell 下保持 Run `running`，原 Worker 暂停有效执行计时、等待答案并继续后续调用，不丢弃 Shell 所有者或剩余批次。答案提交仍检查请求和 Run 所有权，重复相同答案保持幂等。取消关闭待回答问题，启动恢复不重放未知副作用。
 
@@ -689,29 +689,35 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 
 `request_user_input` 的字段说明提供完整嵌套示例、题型约束和自定义输入说明，工具名称与原始描述保持不变。Pydantic 校验最多保留八项字段路径与错误原因，不回传参数值；参数错误反馈说明问题尚未提交，并给出修正方式。Runtime 的参数错误指纹区分首项字段路径和原因，不包含参数值、错误文案或问题措辞。连续相同校验错误仍受原有 LoopGuard 限制。失败或取消的澄清调用沿用普通工具结果展示，只有成功的回答结果进入澄清历史。
 
-## 子 Agent 委派（Schema v16）
+## 子 Agent 委派（Schema v17）
 
 本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文、父 Run 的模型、审批模式和扩展快照；父 Run 活跃时可使用它已批准的 Run 范围 Grant。子任务不继承父任务的完整对话。
 
-`explorer` 只获得文件读取与发给父任务的 `send_message`。默认 `worker` 复用已有文件、Shell、Skill 与扩展工具执行链，受自身 Run 权限快照、审批、Seatbelt、Intent 和结果核验约束。子任务不暴露委派工具、`request_permissions` 或 `declare_outputs`。子 Session 不能通过普通 `run/start` 独立启动，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除只清理其事实，不删除借用的目录。
+`explorer` 根据内置工具的只读副作用声明获得读取、图片查看和 Skill 查询能力，以及发给父任务的 `send_message` 和受角色过滤的 `tool_search`；不启动 MCP。默认 `worker` 复用已有文件、Shell、Skill 与扩展工具执行链，受自身 Run 权限快照、审批、Seatbelt、Intent 和结果核验约束。子任务不暴露委派工具、`request_permissions` 或 `declare_outputs`。子 Session 不能通过普通 `run/start` 独立启动，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除只清理其事实，不删除借用的目录。
 
 SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、角色、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
 
-父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 对活跃任务送达消息，对已结束任务启动新 Run，操作身份保持幂等。每个父 Run 最多创建 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。消息每条最多 2,000 字符，历史持久保存，上下文按时间顺序提供最近 16 条。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
+父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 对活跃任务送达消息，对已结束任务启动新 Run，操作身份保持幂等。每个父 Run 最多创建 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。消息每条最多 2,000 字符，历史持久保存，模型上下文优先按顺序提供最早 16 条未送达消息，成功接受模型响应后写入来自冻结 ContextSnapshot 的投递回执，后续上下文继续提供剩余页。失败、取消和预览不消费消息；无未读消息时展示最近 16 条。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
 
-`wait_agents` 在没有活动 Shell 时将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。有活动 Shell 时保留其原 Worker，以可取消、有期限的本地等待继续托管进程；等待时不持有数据库事务或执行锁，不占用其他 Run 的名额。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；持久挂起不占用模型调用或专属等待线程；活动 Shell 的等待只保留原有资源所有者。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务不能在子任务仍活跃时正常结束。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交也必须先结束或停止子任务。
+`wait_agents` 在没有活动 Shell 且没有后续批次调用时将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。有活动 Shell 时保留其原 Worker，以可取消、有期限的本地等待继续托管进程；等待时不持有数据库事务或执行锁，不占用其他 Run 的名额。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；持久挂起不占用模型调用或专属等待线程；活动 Shell 的等待只保留原有资源所有者。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务结束时等待必需的子任务；`required_for_completion=false` 的补充任务会被停止并等待资源清理。默认值 true 保留原有行为。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交只等待必需子任务，再停止可选任务并完成资源清理。
 
 用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。每次调度都会检查并取消父任务已结束或请求取消的子 Run，即使父任务没有创建等待记录。监督任务在等待期间也会做同样的检查。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
 
 Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表及待审批数量；工作区关闭时，环境信息入口仍会提示待审批数。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和分页记录。主 Session 不嵌入子任务面板。
 
-v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。旧版本不能直接打开 v16 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。
+v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。v16→v17 增加完成依赖标记、消息回执和实际 Skill 使用租约，采用事务和外键检查，失败回滚。旧版本不能直接打开 v17 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。
 
 ### Loop 门控精简（PR #102）
 
-- Workspace 对账由 Runtime 在工具批次开始、结果提交后及恢复挂起调用时自动尝试，不以模型先调用只读工具为条件；只有完整 refresh 与匹配 epoch 能清除可核验的 Workspace Intent。Shell、外部与未知来源不会被扫描目录误清除。
+- Workspace 对账由 Runtime 在真实文件冲突和恢复挂起调用时自动尝试，普通读取、协调消息和无关文件操作不等待整库扫描，不以模型先调用只读工具为条件；只有完整 refresh 与匹配 epoch 能清除可核验的 Workspace Intent。Shell、外部与未知来源不会被扫描目录误清除。
 - 内置文件变更对已持久化、来源可信且范围明确的 Workspace 不确定 Intent 按真实准备路径判定冲突，覆盖多文件、移动目标与父子路径；提交窗口内再次检查。未知范围或外部文件 Intent 继续保守阻止变更；其他路径可以继续，不新增跨 Run 锁。
 - `send_message`、`stop_agent`、忙碌子任务的续派消息和只读探索不因已有不确定副作用被统一阻断；新执行型子任务仍受屏障约束。`followup_task` 在事务中根据子任务当前状态决定发送消息或创建新 Run，并在新 Run 创建时检查屏障，避免状态竞态。权限申请仍遵守现有审批，不清除旧 Intent。
 - 所有控制工具可以同批顺序执行。混合批次、Plan 提问和子任务等待有活动 Shell 时保留 Worker 与原资源所有者。只有无剩余批次且没有活动 Shell 的控制等待才释放 Worker；不强制模型改变调用顺序。
 - 取消、最终退出、进程组清理、权限/所有权、文件身份/Base Hash、Durable Intent、结果契约以及最终提交事务检查保留。没有全局 Run/Worker 上限或跨 Run Workspace 门控；单父 Run 的 8 个执行中子任务上限保持不变。
 - 最终提交前的进程清理不提前关闭 Shell 管理器的接入能力；若事务因迟到输入或子任务状态而推迟完成，后续步骤仍能启动命令。真正退出 Worker 时才永久关闭管理器。带活动资源的子任务等待记录进入、超时、完成和取消日志，不记录任务正文。
+
+### 交互与资源门禁细化（PR #103）
+
+同 Session 后续输入通过既有 FIFO 排队；Composer 同时显示提交和取消，工作模式、模型、思考强度和审批模式用于下一轮草稿，当前 Run 快照保持不可变。安全的连续只读调用可以在混合批次中并行，副作用仍按顺序执行。搜索保留每 Run 四个实际执行者和十六个会话边界，超出执行槽位的请求进入可取消队列。延迟工具按最近激活顺序保留，再按稳定名称排序冻结。
+
+新 Run 持久保存内部 Skill 元数据快照，公共 Run DTO 不发送该快照；内部恢复读取保持完整。只有实际选择、读取或激活的 Skill 建立租约，其他 Skill 可删除；旧 Run 继续按目录引用保护。资源激活重新检查冻结身份和内容版本，已移除且未使用的 Skill 以普通工具错误反馈，不破坏整个 Run 的恢复。

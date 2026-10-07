@@ -232,6 +232,7 @@ class _HandlerDependencies:
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
     permissions: PermissionRequests | None = None
+    refresh_reconciliation: Callable[..., None] | None = None
 
 
 class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
@@ -391,6 +392,9 @@ class FileChangeToolHandler:
             return None
 
         error = reconciliation_error()
+        if error is not None and self.dependencies.refresh_reconciliation is not None:
+            self.dependencies.refresh_reconciliation(run_id=run_id, cancel=cancel)
+            error = reconciliation_error()
         if error is not None:
             return VerifiedToolExecutionResult(result=error)
         unchecked_execute = execute
@@ -1635,6 +1639,7 @@ class ToolCallRuntime:
             skill_access=self.skill_access,
             runtime_dependencies=runtime_dependencies,
             permissions=self.permissions,
+            refresh_reconciliation=self._refresh_reconciliation,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)
@@ -1800,8 +1805,7 @@ class ToolCallRuntime:
         self.state_machine.track(RuntimeState.TOOL_EXECUTING, "model_tool_calls")
         # A control call inside a batch retains its owner so later calls are
         # neither lost on suspension nor replayed when that owner resumes.
-        self.inline_control_wait = len(tool_calls) > 1
-        self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
+        self.inline_control_wait = False
         if (
             self.dispatcher.is_parallel_read_batch(tool_calls)
             and self._parallel_arguments_are_safe(tool_calls)
@@ -1812,7 +1816,24 @@ class ToolCallRuntime:
         errors: list[str] = []
         successes: list[str] = []
         context_facts: list[str] = []
-        for batch_order, call in enumerate(tool_calls):
+        batch_order = 0
+        while batch_order < len(tool_calls):
+            read_end = batch_order
+            if self.async_kernel is not None:
+                while read_end < len(tool_calls) and self.dispatcher.is_parallel_read_call(tool_calls[read_end]):
+                    read_end += 1
+            reads = tool_calls[batch_order:read_end]
+            if len(reads) > 1 and self._parallel_arguments_are_safe(reads):
+                self.store.clear_sensitive_tool_inputs(step.run_id)
+                group = self._execute_parallel_reads(step, reads, cancel, batch_offset=batch_order)
+                errors.extend(group.error_fingerprints)
+                successes.extend(group.successful_tool_result_hashes)
+                context_facts.extend(group.context_fact_ids)
+                batch_order = read_end
+                self.state_machine.track(RuntimeState.TOOL_EXECUTING, 'next_tool_batch_segment')
+                continue
+            call = tool_calls[batch_order]
+            self.inline_control_wait = batch_order < len(tool_calls) - 1
             self._check_cancel(step.run_id, cancel)
             try:
                 payload = _scan_tool_payload(self.sensitive, call)
@@ -1859,6 +1880,13 @@ class ToolCallRuntime:
             plan = self.dispatcher.plan(
                 effective_call, step.tool_snapshot.binding(call.name)
             )
+            if plan.side_effect != 'none' and not isinstance(plan.descriptor.runtime if plan.descriptor else None, WorkspaceMutationRuntime):
+                # Reads, coordination and unrelated file targets do not wait
+                # for a whole-Workspace recovery scan. File handlers recover
+                # only when their prepared targets actually conflict.
+                from eidos_runtime.runtime.tool_execution import _uses_local_reconciliation_policy
+                if not _uses_local_reconciliation_policy(plan, effective_call):
+                    self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
             assert (
                 plan.descriptor is not None
                 and plan.descriptor.execution_policy is not None
@@ -1872,10 +1900,6 @@ class ToolCallRuntime:
                 deadline=None,
             )
             self._check_cancel(step.run_id, cancel)
-            self._refresh_reconciliation(
-                run_id=step.run_id,
-                cancel=cancel,
-            )
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
@@ -1891,6 +1915,7 @@ class ToolCallRuntime:
                         outcome.progress_fingerprint or _hash_json(outcome.result)
                     ),
                 }))
+            batch_order += 1
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
@@ -1919,9 +1944,10 @@ class ToolCallRuntime:
         step: StepContext,
         calls: tuple[ModelToolCall, ...],
         cancel: threading.Event,
+        *, batch_offset: int = 0,
     ) -> ToolBatchOutcome:
         pending: list[tuple[dict[str, object], ModelToolCall]] = []
-        for batch_order, call in enumerate(calls):
+        for batch_order, call in enumerate(calls, start=batch_offset):
             self._check_cancel(step.run_id, cancel)
             mutation = self.store.create_tool_item_committed(
                 step.run_id,
@@ -2049,7 +2075,6 @@ class ToolCallRuntime:
         errors: list[str] = []
         successes: list[str] = []
         context_facts: list[str] = []
-        self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
         for (item, call), outcome in zip(pending, outcomes, strict=True):
             self._check_cancel(step.run_id, cancel)
             if outcome.activations:

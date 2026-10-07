@@ -11,7 +11,7 @@
 1. 先运行 `pnpm test:affected` 或直接相关的 Renderer/Main 测试。
 2. 测试失败后只重跑失败测试或所属 Desktop 领域。
 3. 任务收尾至少运行 `pnpm test:fast`。
-4. 只有涉及共享 DTO、Main/Runtime 协议、启动/退出生命周期、全局 Build/Test 配置或 PR 最终验证时补充 `pnpm test:full`。
+4. 只有涉及共享 DTO、Main/Runtime 协议、启动/退出生命周期、全局 Build/Test 配置时补充对应 Full；普通 Renderer PR 不自动触发 Runtime Full。
 
 `pnpm test:electron-smoke` 只在 Electron 启动、Runtime 子进程、Quit/Shutdown、preload 或窗口生命周期相关修改时运行。
 

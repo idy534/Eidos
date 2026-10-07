@@ -1303,6 +1303,8 @@ class ExecutionRepository(Repository):
             if expected_collaboration is not None:
                 from eidos_runtime.persistence.collaboration import CollaborationRepository
 
+                if CollaborationRepository.has_unread_in_connection(connection, run_id):
+                    raise RunCompletionDeferred("pending_agent_messages")
                 current = CollaborationRepository(self.database).state_in_connection(connection, run_id)
                 if current != expected_collaboration:
                     raise RunCompletionDeferred("collaboration_changed")

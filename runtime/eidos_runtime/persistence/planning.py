@@ -267,8 +267,8 @@ class PlanningRepository:
     def ask(self, run_id: str, item_id: str, request: RequestUserInput, *, suspend: bool = True) -> UserInputRequest:
         with self.database.transaction() as connection:
             run = connection.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
-            if run is None or run['work_mode'] != 'plan' or run['status'] != 'running' or run['cancel_requested_at'] is not None:
-                raise ValueError('plan_run_required')
+            if run is None or run['status'] != 'running' or run['cancel_requested_at'] is not None:
+                raise ValueError('user_input_run_not_active')
             connection.execute("INSERT INTO user_input_requests VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?)",
                 (str(uuid.uuid4()), run['session_id'], run_id, item_id, request.model_dump_json(), now_ms()))
             if suspend:

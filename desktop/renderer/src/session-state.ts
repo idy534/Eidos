@@ -495,7 +495,8 @@ export function deriveComposerMode(
 export function findActiveRun(runs: Run[]): Run | undefined {
   const latest = [...runs].reverse();
   return latest.find((run) => run.status === "waiting_approval")
-    ?? latest.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
+    ?? latest.find((run) => run.status !== "queued" && ACTIVE_RUN_STATUSES.has(run.status))
+    ?? runs.find((run) => run.status === "queued");
 }
 
 // ---------------------------------------------------------------------------
