@@ -551,13 +551,17 @@ class SeatbeltSmokeTests(unittest.TestCase):
 
             self.assertEqual(read(outside / "ordinary.txt").stdout, "ordinary")
             self.assertEqual(read(home / ".gitconfig").returncode, 0)
+            # Use the installed Git, as the linked-worktree smoke test does.
+            # Apple's /usr/bin/git shim writes xcrun caches outside this profile.
+            git = shutil.which("git") or "/usr/bin/git"
             git_name = run_sandboxed(
                 profile,
                 [
                     "/bin/sh",
                     "-c",
-                    'cd "$HOME" && git config --global user.name',
+                    'cd "$HOME" && "$1" config --global user.name',
                     "eidos-git-config",
+                    git,
                 ],
                 environment=environment,
             )
