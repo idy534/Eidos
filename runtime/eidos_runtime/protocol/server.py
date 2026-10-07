@@ -1649,10 +1649,11 @@ class RuntimeServer:
             self._close_workspace_explorer()
             self._cleanup_extensions()
             self._close_async_kernel()
-            self.store.cancel_active_async_operations()
-            self.supervisor.events.deliver_pending()
-            if self.store.pending_outbox_count():
-                raise ResourceRegistryError("event delivery is not quiescent")
+            if self.store.health_state == "ready":
+                self.store.cancel_active_async_operations()
+                self.supervisor.events.deliver_pending()
+                if self.store.pending_outbox_count():
+                    raise ResourceRegistryError("event delivery is not quiescent")
             self.supervisor.resources.ensure_empty()
         except (
             RuntimeShutdownTimeout,

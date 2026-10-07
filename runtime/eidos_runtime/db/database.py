@@ -282,6 +282,16 @@ class Database:
                     migrate_collaboration(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
+            if (
+                connection.execute("PRAGMA user_version").fetchone()[0] in {V17_SCHEMA_VERSION, V18_SCHEMA_VERSION}
+                and "memory_scopes" in _table_names(connection)
+                and "agent_message_receipts" not in _table_names(connection)
+            ):
+                from eidos_runtime.db.gate_refinements_migration import migrate_gate_refinements
+                try:
+                    migrate_gate_refinements(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
             if connection.execute("PRAGMA user_version").fetchone()[0] == V16_SCHEMA_VERSION:
                 from eidos_runtime.db.gate_refinements_migration import migrate_gate_refinements
                 try:

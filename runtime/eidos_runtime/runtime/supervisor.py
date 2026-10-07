@@ -21,6 +21,7 @@ from eidos_runtime.db.storage import (
     InvalidRunStateError,
     ResourceNotFoundError,
     SessionStore,
+    StorageError,
 )
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.pydantic_ai_client import ModelClientLease
@@ -589,7 +590,10 @@ class RunSupervisor:
                 return
             self.lifecycle = RuntimeLifecycle.DRAINING
             self.control_state = RuntimeControlState.DRAINING
-        run_ids = self.store.nonterminal_run_ids()
+        try:
+            run_ids = self.store.nonterminal_run_ids()
+        except StorageError:
+            run_ids = ()
         with self.lock:
             handled = frozenset(self._handles)
         for run_id in run_ids:

@@ -455,3 +455,29 @@ def test_source_cleanup_preserves_independent_correction_and_its_action(store, t
     assert set(actions.values()) == {"[privacy-revoked]"}
     consumer = store.create_session(str(tmp_path / "workspace"))
     assert service.get(MemoryGetRequest(session_id=consumer["id"], entry_id=saved.entry_id)).entry.content == "independent corrected preference"
+
+
+def test_premerge_v18_database_upgrades_to_v19_with_gate_refinements(tmp_path):
+    from eidos_runtime.db.schema import V16_SCHEMA_SQL
+    from eidos_runtime.memory.schema import MEMORY_SCHEMA_SQL, MEMORY_USE_SCHEMA_SQL
+    from eidos_runtime.db.database import Database
+
+    db_path = tmp_path / "state.sqlite"
+    connection = sqlite3.connect(db_path)
+    connection.executescript(V16_SCHEMA_SQL)
+    connection.executescript(MEMORY_SCHEMA_SQL)
+    connection.executescript(MEMORY_USE_SCHEMA_SQL)
+    connection.execute("PRAGMA user_version = 18")
+    connection.commit()
+    connection.close()
+    import os
+    os.chmod(db_path, 0o600)
+
+    db = Database(tmp_path)
+    db.initialize()
+    assert db.health_state == "ready"
+    conn = db.connection()
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+    assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_message_receipts'").fetchone() is not None
+    assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_skill_leases'").fetchone() is not None
+    db.close()

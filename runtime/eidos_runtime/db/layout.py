@@ -638,13 +638,16 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if revision < V16_SCHEMA_VERSION:
                 from eidos_runtime.db.collaboration_migration import migrate_collaboration
                 migrate_collaboration(connection)
-            if revision < V17_SCHEMA_VERSION:
+            if revision < V17_SCHEMA_VERSION or (
+                "memory_scopes" in _table_names(connection)
+                and "agent_message_receipts" not in _table_names(connection)
+            ):
                 from eidos_runtime.db.gate_refinements_migration import migrate_gate_refinements
                 migrate_gate_refinements(connection)
-            if revision < V18_SCHEMA_VERSION:
+            if revision < V18_SCHEMA_VERSION or connection.execute("PRAGMA user_version").fetchone()[0] == V17_SCHEMA_VERSION:
                 from eidos_runtime.memory.schema import migrate_memory
                 migrate_memory(connection)
-            if revision < SCHEMA_VERSION:
+            if revision < SCHEMA_VERSION or connection.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
                 from eidos_runtime.memory.schema import migrate_memory_use
                 migrate_memory_use(connection)
     except sqlite3.Error as error:
