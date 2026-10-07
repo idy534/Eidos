@@ -84,6 +84,8 @@ class RepositoryWatchController:
             stop_event=stop,
             debounce=200,
             step=50,
+            rust_timeout=250,
+            yield_on_timeout=True,
         ):
             normalized = coalesce_changes(
                 ((change, str(path)) for change, path in changes),
@@ -97,8 +99,9 @@ class RepositoryWatchController:
                     for change in normalized
                     if self._is_discoverable(change, scope)
                 )
-            if normalized:
-                on_invalidate(normalized)
+            # Idle callbacks let the owned worker build the first generation
+            # after the native watcher is listening, without a startup gap.
+            on_invalidate(normalized)
 
     def _load_discovery_scope(self) -> WorkspaceDiscoveryScope | None:
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)

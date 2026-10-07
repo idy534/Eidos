@@ -240,7 +240,26 @@ def test_memory_migration_preserves_existing_v16_data(tmp_path):
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        remember(store)
+    finally:
+        store.close()
+
+
+def test_memory_migration_preserves_existing_v17_data(tmp_path):
+    from eidos_runtime.db.schema import V17_SCHEMA_SQL
+
+    directory = tmp_path / "data-v17"
+    directory.mkdir(mode=0o700)
+    connection = sqlite3.connect(directory / "state.sqlite")
+    connection.executescript(V17_SCHEMA_SQL + "\nPRAGMA user_version=17;")
+    connection.close()
+    (directory / "state.sqlite").chmod(0o600)
+    store = SessionStore(directory)
+    store.initialize()
+    try:
+        assert store.health()["state"] == "ready"
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 19
         remember(store)
     finally:
         store.close()
@@ -332,12 +351,12 @@ def test_session_use_revocation_is_isolated_and_persists_after_reopen(store, tmp
         reopened.close()
 
 
-def test_memory_use_migration_from_v17_preserves_entries_and_rolls_back(tmp_path):
-    from eidos_runtime.db.schema import V17_SCHEMA_SQL
+def test_memory_use_migration_from_v18_preserves_entries_and_rolls_back(tmp_path):
+    from eidos_runtime.db.schema import V18_SCHEMA_SQL
     from eidos_runtime.memory.schema import migrate_memory_use
 
     connection = sqlite3.connect(":memory:")
-    connection.executescript(V17_SCHEMA_SQL + "\nPRAGMA user_version=17;")
+    connection.executescript(V18_SCHEMA_SQL + "\nPRAGMA user_version=18;")
     connection.execute("INSERT INTO memory_sources(session_id,temporary) VALUES('existing',1)")
     connection.execute("INSERT INTO memory_scopes(id,kind,settings_json) VALUES('scope','global','{}')")
     connection.execute("INSERT INTO memory_entries(id,scope_id,kind,status,current_revision,created_at,updated_at) VALUES('entry','scope','preference','active',1,1,1)")
@@ -348,12 +367,12 @@ def test_memory_use_migration_from_v17_preserves_entries_and_rolls_back(tmp_path
     connection.commit()
     with pytest.raises(sqlite3.OperationalError):
         migrate_memory_use(connection)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
     assert "use_epoch" not in {r[1] for r in connection.execute("PRAGMA table_info(memory_sources)")}
     connection.execute("ALTER TABLE missing_tool_reads RENAME TO memory_tool_reads")
     connection.commit()
     migrate_memory_use(connection)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
     assert connection.execute("SELECT temporary,use_epoch FROM memory_sources").fetchone() == (1, 0)
     assert connection.execute("SELECT status FROM memory_entries WHERE id='entry'").fetchone()[0] == "active"
     assert connection.execute("SELECT privacy_epoch FROM memory_scopes WHERE id='scope'").fetchone()[0] == 1

@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 
 from eidos_runtime.db.layout import collect_unreferenced_blobs
-from eidos_runtime.db.schema import SCHEMA_VERSION, V17_SCHEMA_VERSION
+from eidos_runtime.db.schema import SCHEMA_VERSION, V17_SCHEMA_VERSION, V18_SCHEMA_VERSION
 from eidos_runtime.memory.contracts import MemorySettings
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
@@ -119,7 +119,7 @@ def restore(archive_path: Path, destination: Path) -> None:
             manifest = json.loads(archive.read("manifest.json"))
             if (
                 manifest.get("format") != "eidos-memory-backup-v1"
-                or manifest.get("schemaVersion") not in {V17_SCHEMA_VERSION, SCHEMA_VERSION}
+                or manifest.get("schemaVersion") not in {V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, SCHEMA_VERSION}
             ):
                 raise MemoryRejected("memory_backup_incompatible")
             seen: set[str] = set()
@@ -186,7 +186,7 @@ def restore(archive_path: Path, destination: Path) -> None:
                     "UPDATE memory_revisions SET file_size=?,file_mtime_ns=? WHERE file_ref=?",
                     (size, modified, reference),
                 )
-            if stored_version == V17_SCHEMA_VERSION:
+            if stored_version in {V17_SCHEMA_VERSION, V18_SCHEMA_VERSION}:
                 from eidos_runtime.memory.schema import migrate_memory_use
 
                 connection.commit()

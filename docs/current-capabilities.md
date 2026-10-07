@@ -50,7 +50,7 @@
 
 ## Model
 
-- 回答流式输出已完成代码修订，尚未进入测试阶段。普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。本次没有新增模型请求、工具参数流式展示或传输服务。
+- 普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
 - `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的十个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
@@ -199,8 +199,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Feed 先按完整 Item 顺序区分过程消息和回复，再隐藏正常的 Shell 跟进卡片。隐藏 `write_stdin` 不会把它前面的进度文字变成最终回复。Run 仍在执行时，回复不显示最终操作栏；Run 进入终态后，只有最后一个消息段中的最后一条回复显示该操作栏。跟进失败仍显示中文错误提示。
 - Shell Result 存在 `attemptCount`、`sandboxed` 或 `escalated` 时，Execution Feed 会展示这些已有执行和权限事实，包括扩权重试信息。
 - `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 事实不会被模型投影覆盖。模型投影另用 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 标记模型省略的 stdout/stderr UTF-8 字节和继续读取方式。
-- `read_tool_output` 是只读工具。它要求前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。它只读取当前 Session 中已持久化的终态 Shell 结果，历史 Run 可以读取；运行中、跨 Session、缺失或歧义 ID 会拒绝。调用方可以用 `offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）或 `fromEnd` 分页读取。结果返回 UTF-8 边界对齐的实际 `startByte`、`endByte` 和 `nextOffset`，单页可能小于请求值，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell 或清除 reconciliation；Shell 原始输出上限已经丢失的字节无法恢复。
-- 模型使用 `write_stdin` 分段等待并读取增量输出。`read_tool_output` 仍只读取原命令已持久化的终态结果。
+- `read_tool_output` 是只读工具。它要求前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可以读取 stderr。当前 Run 的活动 Shell 可读取非消费式累计快照；当前 Session 的历史 Run 可读取已持久化的终态结果。跨 Run 的活动 Shell、跨 Session、缺失或歧义 ID 会拒绝。调用方可以用 `offsetBytes`、`maxBytes`（请求范围 4 字节至 16 KiB）或 `fromEnd` 分页读取。结果返回 UTF-8 边界对齐的实际 `startByte`、`endByte` 和 `nextOffset`，单页可能小于请求值，调用方必须按 `nextOffset` 继续。该工具不会移动 `write_stdin` 的增量游标、重新执行 Shell 或清除 reconciliation；Shell 原始输出上限已经丢失的字节无法恢复。
+- 模型仍可使用 `write_stdin` 分段等待、读取增量输出和发送输入。存在未确认副作用时，新的非空输入无法证明其影响与旧操作隔离，仍保守阻断；空输入和 Ctrl-C 保持可用。不同 Shell ID 不足以证明文件和外部影响不冲突。
 - Shell effective environment 使用真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Bundled `rg` 目录只追加在 `PATH` 末尾并去重。Provider 会在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。Runtime 不会强制设置 `LC_ALL`。
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
 - 数据目录内的当前 Workspace 支持 Shell 创建子目录和读写普通文件。Seatbelt 只为其祖先补充 metadata / 存在性检查；其他会话、数据文件和父目录内容继续受保护。
@@ -211,7 +211,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
 - 默认 sandboxed attempt 出现明确的 network denial 时，Runtime 会保留首次 attempt 和 denial 证据，但不会把它升级成 unsandboxed retry。Runtime 也不会自动重放可能已经产生 Workspace 副作用的命令。
 - 未清除的 reconciliation barrier 会阻止 Run 提交成功终态。Runtime 不会把 `sideEffectsMayExist` 当作清除条件，也不会自动重放有副作用的 Tool。
-- Reconciliation 默认继续 `CONTINUE_READ_ONLY`，而不是 interrupt。Barrier 允许只读、Agent 消息和停止操作；内置文件变更按已知冲突路径判断，范围未知的副作用返回 `reconciliation_required`。Workspace refresh 只清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。
+- 不确定结果由 Durable Intent 和 reconciliation 事实记录，不增加“下一步必须只读”的执行状态。Barrier 允许只读、安全协作、独立 Plan 写入和权限申请；内置文件变更按已知冲突路径判断，范围未知的副作用返回 `reconciliation_required`。Workspace refresh 只清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。
 - Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。
 
 ## Approval / Sandbox
@@ -262,7 +262,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
-- Workspace-local 的 reconciliation 沿用内部 `CONTINUE_READ_ONLY` 状态名，但 Runtime 自动尝试核验，不要求模型先读取文件；已知范围允许不冲突的内置文件变更和安全协作控制。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果不进入该路径，继续 fail closed。
+- Runtime 自动尝试核验 Workspace-local 的不确定副作用，不要求模型先读取文件；已知范围允许不冲突的内置文件变更和安全协作控制。已移除未被执行链消费的 reconciliation disposition 分类器。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
 - 不确定副作用不会自动重放。需要核验的事实会进入 reconciliation。
 
 ## Checkpoint
@@ -337,7 +337,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 普通 Shell 会继承 Run Grant。显式 `networkAccess=request`、`sandboxPermissions`、`additionalPermissions` 和 `justification` 保持兼容，显式动作审批不会建立 Run Grant。
 - 普通 Shell 遭遇可识别的网络 denial 后可以进入审批。批准后，模型收到 `permission_granted_retry_required`，再自行决定下一次调用。Runtime 不会自动重跑 Shell。拒绝只阻止同一审批请求的重复打扰。
 - R1 结构化待批请求可以在重启后恢复。Runtime 保留原审批，并重新核对 Tool 契约和待执行动作。网络 denial 的已完成结果可以恢复。不确定执行、契约变化和取消仍保持原有安全边界。
-- 所有审批共用底部 ApprovalComposer，等待时普通输入框不存在。Feed 只显示历史状态。Sidebar 会显示“等待批准”。
+- 人工审批使用底部 ApprovalComposer，审批和澄清期间继续保留草稿输入框。模型加载、执行收尾或工作区暂不可执行时仍可编辑已载入的草稿；执行提交继续遵守实际状态和模型配置。Feed 显示历史状态。Sidebar 会显示“等待批准”。
 - SQLite 同时保留原始 Tool 参数和规范化参数。旧数据的原始参数保持未知。
 
 ## Run 收尾与 Shell 执行期限
@@ -387,13 +387,13 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 设置页铺满当前应用窗口。项目侧栏、侧栏折叠按钮和浮动导航在设置期间隐藏；侧栏快捷键不会展开侧栏。用户退出设置后，侧栏恢复此前状态。设置分类导航继续保留。设置页顶部标题栏高度（2.75rem）与标题字体规格（0.85rem / 600）与 Session 标题栏保持对齐。
 - 技能页面提供搜索、个人/系统分类和双列列表，窄窗口改为单列。列表使用首字母图标、名称、简短说明和技能自身启用勾选，不展示 ID、只读、来源或版本。
 - 技能详情展示描述、状态与可滚动 Markdown 正文。左上角开关控制技能自身状态；右上角菜单提供“在 Finder 中显示”和“复制 Markdown”。复制内容包含原始 frontmatter。所属插件未启用时，详情会说明该限制，保存技能开关不会自动启用插件。
-- 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理会避开运行中的任务。插件技能的卸载保留插件包，确认文案会说明这一点。
-- 技能状态保存在 SQLite，后续 Turn 使用新状态，已开始的 Turn 保留原快照。UI、协议、数据库迁移和真实文件清理的验证尚未执行。
+- 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理只等待实际固定该 Skill Catalog 条目的非终态 Run。快照缺少条目列表时按旧快照和排除记录保守处理，不因无关 Run 阻断清理。插件技能的卸载保留插件包，确认文案会说明这一点。
+- 技能状态保存在 SQLite，后续 Turn 使用新状态，已开始的 Turn 保留原快照。
 
 ## 权限模式
 
 - Composer 底栏左侧已接入请求审批、替我审批（推荐）和完全访问（风险）。选择器采用与模型选择器一致的无外边框 Popover 样式。新会话默认使用请求审批，模式在每个 Run 创建时固定。
-- 替我审批只审查原本需要审批的操作。模型批准后沿原执行链继续；模型拒绝或审查失败直接返回理由，Desktop 不弹出人工审批框。审查期间底栏上方展示具备毛玻璃与旋转动效的状态胶囊（ApprovalStatusBanner）。
+- 替我审批只审查原本需要审批的操作。模型批准后沿原执行链继续；明确风险拒绝返回理由。审查失败、超时、不可用或无法确定风险时转为人工决定，保留原因和最终审批来源。相同请求的拒绝去重包含用户授权证据；模型自行重复不会重开审批，新用户指令可以触发重新评估。审查期间底栏上方展示状态胶囊（ApprovalStatusBanner）。
 - 完全访问在用户下拉切换至该模式时弹出风险确认对话框（ConfirmDialog）。确认后的 Run 关闭执行沙盒，使用当前 macOS 用户的文件和网络权限，并跳过逐项审批；任务启动前不再重复弹窗。
 - Runtime 保存模式、审批来源、判断和审查元数据。旧 Run 和旧快照继续按请求审批模式解释。数据库新增 v12 → v13 迁移。
 - 权限模式已覆盖组件单元与交互行为测试（包含 ApprovalModeSelector 行为、ApprovalComposer 状态胶囊、Composer 交互以及 Runtime 协议测试）。
@@ -408,18 +408,16 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
 
-本批生产代码包含协议、持久化、模型上下文和 Desktop 接入。用户尚未授权测试阶段，开发者尚未新增或调整测试，也没有运行构建、类型检查或原生验收。
 
-## Plan 模式（生产代码，Plan 自动化验证已完成）
+## Plan 模式
 
 - 用户可以通过模式选择或输入 `/` 呼出快捷指令选择 `/plan` 显式进入 Plan 模式。系统不会自主切换模式。
-- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，而是在底部输入框位置通过 `ClarificationComposer` 接管；支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。
+- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，底部展示 `ClarificationComposer` 并保留草稿输入；支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。混合工具批次或活动 Shell 下提问保留 Worker 和进程所有者，回答后顺序继续；单独提问且没有活动 Shell 时仍使用持久挂起。
 - Runtime 保存 Markdown 草稿与版本。文件位于 `~/.eidos/plans/`；自定义 `EIDOS_DATA_DIR` 时使用该目录下的 `plans/`。
 - 用户可以编辑计划正文、载入外部文件修改、让模型按意见修改计划，然后确认具体版本并启动普通执行 Run。
 - 澄清等待、答案、取消和安全恢复使用现有 SQLite、Event / Outbox 与 Run 调度流程。Plan 沿用现有权限模式。
 - 澄清界面隔离不同会话和不同请求的状态。计划写入失败或取消时，过程展示保留工具结果，不显示成功计划卡片。
 
-以上内容描述本次生产代码的接入范围。Runtime 全量测试、Integration 测试、协议契约、类型构建、Python 检查、Seatbelt 和 Electron smoke 已通过。Renderer 行为全量仍有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成，所以当前不能把这些代码视为完整验收通过的能力。
 
 Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Repository 和结果投影的回归用例。用例覆盖澄清答案恢复、计划成功保存、错误 ID 后修正重试、Intent 后版本冲突，以及内容提交后文件投影失败的对账保护。这些用例不调用真实 Provider，也不操作用户数据目录。
 
@@ -429,16 +427,30 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 - 父任务可以创建探索或执行型子任务、发送消息、继续已结束的子任务、等待和停止子任务。
 - Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
-- 每个父 Run 最多有 16 个子 Session，其中最多 2 个子 Run 同时执行。探索角色仅可读取；执行角色可使用现有文件、Shell、Skill 和已授权扩展工具。子 Run 继承父 Run 的审批模式和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代或直接申请新 Grant。
-- 父任务等待使用持久 `waiting_agents` 状态。Worker 会退出，运行资源会释放。满足条件后，Runtime 继续同一等待调用。
+- 每个父 Run 最多有 16 个子 Session，其中最多 8 个子 Run 同时执行。探索角色仅可读取；执行角色可使用现有文件、Shell、Skill 和已授权扩展工具。子 Run 继承父 Run 的审批模式和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代或直接申请新 Grant。
+- 父任务等待在没有活动 Shell 且没有剩余批次时使用持久 `waiting_agents` 状态。混合批次或活动 Shell 下保留 Worker，满足条件后顺序继续。忙碌子任务的 `followup_task` 作为消息送达；空闲子任务才创建新 Run。消息持久保存，模型优先逐页读取最早 16 条未送达消息，成功接受响应后才保存投递回执；失败、取消和预览不消费消息。无未读消息时展示最近 16 条。可选子任务通过 `required_for_completion=false` 声明，收尾时停止并清理；必需任务仍需完成。
 - Desktop 在环境信息中展示子 Agent 列表和待审批数量；右侧工作区关闭时，环境信息入口仍提示待审批数。点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消；父任务异常结束后，正常调度也会取消其孤立子任务。
 - 本阶段没有新增依赖。生产 DTO 从 Python Schema 生成。完整验证结果以当前 PR 记录为准。
 
 ### Loop 校验与协作放行（PR #102）
 
 - 移除“先只读核验”的模型硬要求，Runtime 自动尝试恢复可核验的 Workspace 副作用；明确文件范围只阻止冲突路径，未知范围继续保守处理。
-- 同 Run 的活动 Shell 不再封锁其他副作用或普通协作；等待子任务时保留 Shell 所有者，正常退出和取消仍清理进程。
-- 非挂起协作工具允许同批调用；消息和停止子任务不受已有不确定副作用屏障阻断。挂起类调用仍单独执行。
+- 所有控制工具允许与其他工具同批顺序执行；有剩余批次时原 Worker 保持等待，避免剩余调用丢失或重放。消息、停止子任务和只读探索不受已有不确定副作用屏障阻断；未知副作用下不创建新的执行型子任务。
+
+### 执行门控整体整改
+
+- Run 启动捕获当前可用 Repository generation；首次索引由已有 Workspace watcher 所有者构建，缺少索引时模型可使用文件和搜索工具，不等待索引就绪。
+- stage、commit、fetch、push 不再因当前 Session 有活动 Run 而禁用；切换分支、创建分支、merge、rebase、pull 仍保留工作树生命周期互斥及 Git 原有版本和锁检查。
+- Plan 可以直接说明调查结论或阻塞原因，无需为了结束答复伪造计划。提交可审阅计划仍由 `write_plan` 保存，必要的子任务依赖由 Runtime 等待。
+- Run 收尾仍终止其自有进程。只有实际终止尚存活的进程才记录 `active_shell_stopped`，不会因为清理前的旧状态误判自然退出的命令。
+- 全部保留、调整和移除项见 [执行门控清单](current-execution-gates.md)。
+
+### 交互与资源门禁细化（PR #103）
+
+- 同 Session 可以在运行、审批等待和子任务等待期间提交后续输入，由持久 FIFO 排队；取消入口继续可用。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
+- 连续安全的只读调用可在混合批次中并行。普通读取和协调不等待整库恢复扫描；冲突文件与未知副作用继续受保护。搜索执行槽位满时排队，取消和退出仍负责清理。
+- 延迟工具优先保留最新激活项，仍受工具定义大小预算约束。新 Run 的 Skill 删除保护基于实际使用租约和冻结元数据；旧 Run 继续保守保护目录引用。
+- CI 按改动范围选择 Runtime、Desktop 与原生检查，质量和安全检查独立执行；最终汇总保留必需检查，失败不会被其他成功结果掩盖。数据库升级至 Schema 17，Runtime 和 Desktop 应一起更新。
 
 ## 记忆
 

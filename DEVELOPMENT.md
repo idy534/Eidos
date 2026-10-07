@@ -98,7 +98,7 @@ pnpm test:full
 pnpm test
 ```
 
-`pnpm test` 保持为 `test:full` 的兼容入口。PR 最终验证、Runtime 核心生命周期、Persistence/Protocol、Tool Runtime、Sandbox、Git/Worktree 或全局测试配置变化时，应执行 Full。普通开发循环不要因为一个失败反复运行 Full。Full 不包含独立调度的 `large_repository` Scale 层。
+`pnpm test` 保持为 `test:full` 的兼容入口。Runtime 核心生命周期、Persistence/Protocol、Tool Runtime、Sandbox、Git/Worktree 或全局测试配置变化时，最终验证应执行相关 Full。普通 Renderer 修改只需要 Desktop 验证，不因创建 PR 自动触发 Runtime Full。普通开发循环不要因为一个失败反复运行 Full。Full 不包含独立调度的 `large_repository` Scale 层。
 
 Repository Scale 单独运行：
 
@@ -351,7 +351,7 @@ PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 
 
 ### Shell 分段等待验收
 
-测试者应先得到本次修改的测试授权，再运行验证。测试者应覆盖短命令、超过首次窗口的静默命令、持续输出、空输入轮询、stdin、Ctrl-C 及忽略中断的进程组清理。测试者应检查命令运行期间的排他副作用限制、只读工具可用、有效轮询不会触发 LoopGuard，以及退出结果在模型没有继续轮询时也会持久化。测试者应检查原命令卡片持续更新且没有 `write_stdin` 名称或正常轮询卡片。测试者还应覆盖审批重试、跨 Run session 拒绝、跨输出片段敏感扫描、取消竞争、存储失败和 Runtime 重启后的不确定 Intent。
+测试者应覆盖短命令、超过首次窗口的静默命令、持续输出、空输入轮询、stdin、Ctrl-C 及忽略中断的进程组清理。测试者应检查命令运行期间的排他副作用限制、只读工具可用、有效轮询不会触发 LoopGuard，以及退出结果在模型没有继续轮询时也会持久化。测试者应检查原命令卡片持续更新且没有 `write_stdin` 名称或正常轮询卡片。测试者还应覆盖审批重试、跨 Run session 拒绝、跨输出片段敏感扫描、取消竞争、存储失败和 Runtime 重启后的不确定 Intent。
 
 ## 文件编辑提交验证
 
@@ -360,27 +360,35 @@ PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 
 Projectless 文件提交和 Skill 写入权限的定向回归位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_permission_policy.py` 和 `runtime/tests/test_seatbelt.py`。验证者需要执行真实 macOS Seatbelt 用例，覆盖受保护数据目录内的 Projectless 新建、更新、删除，普通 Skill 的精确写入授权，以及系统 Skill 和相邻数据文件的拒写；mock 通过不能替代这些原生结果。
 
 
-## 权限模式修改的待验收项
+## 权限模式验收
 
-本次权限模式生产代码和文档先交由用户确认。开发者在用户确认前不新增测试代码，也不运行测试、构建或原生验收。静态类型、语法及 Diff 检查不能替代验收结果。
-
-用户确认后，测试需要覆盖三种模式的协议和 UI、旧请求默认值、无确认的完全访问拒绝、Run 模式不可变、v12 → v13 升级与事务回滚。审批测试需要覆盖所有原有入口、模型批准与拒绝、无效输出、未知风险、输出和证据超限、60 秒超时、取消与迟到结果、重启中断、拒绝去重及人工模式回归。测试还需要证明普通 Workspace 操作不产生额外审查请求，模型拒绝不会触发人工窗口。
+相关修改需要覆盖三种模式的协议和 UI、旧请求默认值、无确认的完全访问拒绝、Run 模式不可变、v12 → v13 升级与事务回滚。审批测试需要覆盖所有原有入口、模型批准与拒绝、无效输出、未知风险、输出和证据超限、60 秒超时、取消与迟到结果、重启中断、拒绝去重及人工模式回归。测试还需要证明普通 Workspace 操作不产生额外审查请求，明确风险拒绝不会触发人工窗口；不可用、超时和未知风险会转人工接管。
 
 macOS 原生验收需要覆盖完全访问的网络、外部 cwd、外部普通文件、Git metadata 和原 Eidos 保护路径。测试只能在隔离数据目录和临时文件上验证这些写入，不能破坏真实 Eidos 数据。验收还需要检查 manual/auto_review 的原有 Seatbelt deny、文件身份与版本冲突、Durable Intent、部分写入、取消、MCP 生命周期和 Reconciliation。真实 Provider 的结构化审查与拒绝理由需要单独验证。
 
 测试阶段沿用本文现有命令和 AGENTS.md 的门槛：协议、Runtime、Main、Desktop、Python 依赖检查、构建、Seatbelt native 和 Electron smoke。测试阶段还需要同步受影响的协议 Fixture 与旧 Schema 断言。当前代码没有增加生产依赖，也没有改变安装或启动命令。
 
-## 输入引用修改的待验收项
+## 输入引用验收
 
-本批工作按用户要求只修改生产代码和文档。开发者在用户确认前不新增测试代码，也不运行测试、类型检查、lint、构建、应用启动或原生验收。DTO 生成命令 `node scripts/generate-input-contracts.mjs` 只更新生产协议文件，不是验证结果。
-
-用户确认后，测试需要覆盖 `input/*` 与 Run 引用的协议 Fixture、v13 → v14 迁移及回滚、旧数据库升级、引用 Blob GC、512 MiB 总量限制、草稿恢复和写入失败、跨 Session 迟到结果，以及提交后继续输入时的草稿保留。测试还需要覆盖不支持图片的模型、图片编码和预算、历史引用截断、扩展失效、编辑重发、重新生成、Fork 与压缩后的来源保留。
+相关修改需要覆盖 `input/*` 与 Run 引用的协议 Fixture、v13 → v14 迁移及回滚、旧数据库升级、引用 Blob GC、512 MiB 总量限制、草稿恢复和写入失败、跨 Session 迟到结果，以及提交后继续输入时的草稿保留。测试还需要覆盖不支持图片的模型、图片编码和预算、历史引用截断、扩展失效、编辑重发、重新生成、Fork 与压缩后的来源保留。
 
 文件边界测试需要覆盖文件替换竞争、符号链接、硬链接、特殊文件、超限文件、Projectless 与 Managed Worktree，以及 Eidos 私有数据目录的拒绝读取。权限回归需要证明引用不会产生额外写权限，目录和位置引用不会被当作已读取正文。
 
 Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦点、原生右键菜单、Finder 多文件拖放、剪贴板图片、批量部分失败、引用预览与移除、行范围和历史消息选择，以及 Run 执行时修改下一轮草稿。macOS 真机行为不能由 Renderer mock 代替。
 
 测试阶段沿用本文和 AGENTS.md 的现有协议、Runtime、Main、Desktop、构建、Seatbelt native 和 Electron smoke 门槛。开发者还需要同步旧 Schema 版本断言和现有调用 Fixture。本批没有增加生产依赖，也没有改变安装与启动命令。
+
+## 执行门控与 CI 验证
+
+运行、审批和收尾期间可提交下一轮请求，由同 Session FIFO 队列执行。模型、推理、权限和 Plan 设置属于下一轮草稿；当前 Run 保留创建时的固定配置。取消与排队提交可同时使用。普通 Execute Run 也能请求澄清，计划写入和确认仍属于 Plan 模式。
+
+子任务默认是必要依赖；明确设置 `requiredForCompletion=false` 的补充任务在父任务完成时取消，并等待进程和资源清理。必要依赖仍等待真实结果。协作消息优先投递最早未读的 16 条；只有已完成模型请求的固定上下文会建立投递回执，失败、重启和上下文预览不消费消息。Schema 17 事务迁移增加投递回执、Skill 使用租约及必要依赖标记，Schema 16 及更旧数据可升级。
+
+新 Run 持久固定 Skill 元数据，实际读取或激活时原子取得租约并核验源版本。删除未使用的 Skill 不阻塞无关 Run；实际使用者或无法证明引用范围的旧快照继续保护目录。删除后不能新取得租约，已有租约在 Run 终态后不再阻塞清理。
+
+Workspace 恢复扫描只在受影响目标或需要解除屏障的新副作用上进行，不在普通读取、协作消息或无关文件操作前强制扫描。单批次的连续安全只读片段可以并行，片段之间按模型声明顺序执行。搜索保留 4 个运行名额，额外请求进入该执行器的有界队列，不新增排队线程。
+
+CI 将质量、依赖审计、Runtime、Desktop 和原生打包拆为独立 Job。PR 按实际路径选择 Runtime、Desktop 和 native；main push 执行所有边界。静态和审计检查保持独立，不因审计失败跳过回归。汇总 `test` Job 要求所有已选检查成功，无法判定改动范围时不跳过验证。原生 Job 只在 Desktop build、Seatbelt、Electron 和 Bundle 验证通过后复用本 Job 的产物组装 DMG；其他 Job 的测试结果仍由汇总门禁判定。
 
 ## 记忆系统开发与验收
 

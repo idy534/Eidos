@@ -1,4 +1,4 @@
-"""v17 state schema. Indexes are disposable; evidence and actions are not."""
+"""v18/v19 state schema. Indexes are disposable; evidence and actions are not."""
 
 import sqlite3
 
@@ -151,7 +151,7 @@ def migrate_memory(connection: sqlite3.Connection) -> None:
         connection.executescript("BEGIN IMMEDIATE;\n" + MEMORY_SCHEMA_SQL)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise sqlite3.IntegrityError("memory migration foreign key violation")
-        connection.execute("PRAGMA user_version=17")
+        connection.execute("PRAGMA user_version=18")
         connection.commit()
     except BaseException:
         connection.rollback()
@@ -186,7 +186,7 @@ def migrate_memory_use(connection: sqlite3.Connection) -> None:
         )
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise sqlite3.IntegrityError("memory use migration foreign key violation")
-        connection.execute("PRAGMA user_version=18")
+        connection.execute("PRAGMA user_version=19")
         connection.commit()
     except BaseException:
         connection.rollback()

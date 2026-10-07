@@ -161,6 +161,132 @@ def test_planning_input_and_tool_contracts_keep_questions_bounded() -> None:
         RequestUserInput(questions=[question, question, question, question])
 
 
+@pytest.mark.parametrize('mixed_batch,live_shell', [(True, False), (False, True), (True, True)])
+def test_question_retains_owner_and_continues_remaining_batch(planning_runtime, monkeypatch, mixed_batch, live_shell):
+    import sys
+    import threading
+    from types import SimpleNamespace
+    from eidos_runtime.model.client import ModelToolCall, ModelResponse
+    from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
+    from eidos_runtime.sandbox.shell import ShellLaunchSpec
+
+    store, run_id, runtime = planning_runtime
+    manager = ShellProcessManager(owner_run_id=run_id)
+    runtime.shell_process_manager = manager
+    session_id = None
+    if live_shell:
+        shell = manager.start(ShellLaunchSpec(argv=(sys.executable, '-c', 'import time; time.sleep(30)'),
+            cwd=store.workspace_for_run(run_id).path, environment={'PATH': '/usr/bin:/bin'}, sandboxed=False), yield_time_ms=0)
+        session_id = shell['data']['sessionId']
+    asked = threading.Event()
+    original_ask = PlanningRepository.ask
+
+    def ask(*args, **kwargs):
+        result = original_ask(*args, **kwargs)
+        asked.set()
+        return result
+
+    monkeypatch.setattr(PlanningRepository, 'ask', ask)
+    calls = [ModelToolCall('question', 'request_user_input', {'questions': [{'id': 'scope', 'question': 'Which scope?', 'type': 'text'}]})]
+    if mixed_batch:
+        calls.append(ModelToolCall('plan', 'write_plan', {'title': 'Draft', 'markdown': '# Draft'}))
+    store.complete_current_step(run_id, 'completed')
+    snapshot = runtime.dispatcher.snapshot()
+    index = store.increment_model_step(run_id, tool_snapshot=snapshot.as_dict())
+    step = SimpleNamespace(run_id=run_id, step_index=index, tool_snapshot=snapshot)
+    validation = runtime.validate(step, ModelResponse(tool_calls=tuple(calls)))
+    assert validation.status == 'ready'
+    cancel = threading.Event()
+    results, errors = [], []
+
+    def execute():
+        try:
+            results.append(runtime.execute(step, validation.tool_calls, cancel))
+        except BaseException as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=execute)
+    worker.start()
+    try:
+        assert asked.wait(3)
+        assert store.read_run(run_id)['status'] == 'running'
+        repository = PlanningRepository(store.database)
+        question = repository.unfinished(run_id)
+        assert question is not None
+        if session_id:
+            assert manager.is_running(session_id)
+        repository.answer(question.id, UserInputResponse(status='answered', answers=[InputAnswer(question_id='scope', text='Runtime')]))
+        worker.join(3)
+        assert not worker.is_alive() and not errors
+        assert results[0].status == 'completed' and not results[0].error_fingerprints
+        assert store.read_run(run_id)['status'] == 'running'
+        if mixed_batch:
+            assert len(repository.list_plans(store.read_run(run_id)['sessionId'])) == 1
+        if session_id:
+            assert manager.is_running(session_id)
+    finally:
+        cancel.set()
+        worker.join(3)
+        manager.cleanup()
+
+
+def test_plan_run_can_report_a_blocker_without_saving_a_fictitious_plan(planning_runtime):
+    import threading
+    from eidos_runtime.model.client import ModelResponse, ScriptedModel
+    from eidos_runtime.runtime.engine import RuntimeEngine
+
+    store, run_id, _ = planning_runtime
+    store.complete_current_step(run_id, 'completed')
+    RuntimeEngine(store, ScriptedModel([ModelResponse(text='The required repository is unavailable.')]), lambda _: None).run(run_id, threading.Event())
+    assert store.read_run(run_id)['status'] == 'succeeded'
+    assert PlanningRepository(store.database).list_plans(store.read_run(run_id)['sessionId']) == []
+
+
+def test_ready_plan_waits_for_children_and_preserves_cancellation(planning_runtime, monkeypatch):
+    import threading
+    from eidos_runtime.application.collaboration import CollaborationApplication
+    from eidos_runtime.domain.collaboration import SpawnAgent
+    from eidos_runtime.runtime.contracts import RuntimeCancelled
+
+    store, run_id, runtime = planning_runtime
+    app = CollaborationApplication(store, lambda: None, store.request_cancel_committed, lambda: None)
+    runtime.collaboration = app
+    item = store.create_tool_item(run_id, 1, 42, 'spawn', 'spawn_agent', '{}')
+    child = app.repository.spawn(run_id, item['id'], SpawnAgent(task_name='explore', message='Inspect evidence', role='explorer'))
+    assert store.claim_next_run()['id'] == child.run_id
+    waiting = threading.Event()
+    original = app.repository.inspect_wait
+
+    def inspect(*args):
+        waiting.set()
+        return original(*args)
+
+    monkeypatch.setattr(app.repository, 'inspect_wait', inspect)
+    outcomes = []
+    worker = threading.Thread(target=lambda: outcomes.append(_execute_planning(planning_runtime, 'write_plan',
+        {'title': 'Ready', 'markdown': '# Ready', 'readyForReview': True})))
+    worker.start()
+    try:
+        assert waiting.wait(3)
+        assert not PlanningRepository(store.database).list_plans(store.read_run(run_id)['sessionId'])
+        store.fail_run(child.run_id, 'finished')
+        worker.join(3)
+        assert not worker.is_alive() and outcomes[0].result['code'] == 'plan_ready'
+    finally:
+        if worker.is_alive() and store.read_run(child.run_id)['status'] == 'running':
+            store.fail_run(child.run_id, 'fixture_cleanup')
+        worker.join(3)
+    # A canceled owner must never publish another ready plan.
+    def cancel_wait(*args, **kwargs):
+        raise RuntimeCancelled
+
+    monkeypatch.setattr(app.repository, 'child_runs', lambda _: (child.run_id,))
+    monkeypatch.setattr(app, 'wait', cancel_wait)
+    with pytest.raises(RuntimeCancelled):
+        _execute_planning(planning_runtime, 'write_plan', {'title': 'Another', 'markdown': '# Canceled', 'readyForReview': True})
+    assert len(PlanningRepository(store.database).list_plans(store.read_run(run_id)['sessionId'])) == 1
+
+
 @pytest.fixture
 def planning_runtime(tmp_path):
     from eidos_runtime.runtime.events import RuntimeEvents
@@ -285,7 +411,8 @@ def test_clarification_schema_example_is_valid_and_explains_question_types():
     question = schema['$defs']['InputQuestion']['properties']
     assert '2–6' in question['type']['description']
     assert 'omit for text' in question['options']['description']
-    assert entry.spec.description == 'Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.'
+    assert 'missing information' in entry.spec.description
+    assert 'Plan mode' not in entry.spec.description
 
 
 def test_invalid_clarifications_have_actionable_feedback_and_distinct_error_identity(planning_runtime):

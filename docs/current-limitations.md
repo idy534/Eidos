@@ -35,7 +35,7 @@
 
 ### Run 并发与资源模型
 
-- 本次 Loop 优化尚未通过完整验收。并发定向测试已通过；Linux Runtime Full 的失败用例集合与原始 dev 相同，原生 macOS 验证仍待完成，具体结果见 PR #102。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩、PTY、用户 Hooks 和流式工具调度仍属后续工作。
+- 执行门控整改的 Linux 定向验证与完整回归结果记录在 PR #103。Runtime Full 和 Desktop Main 仍有原始 main 上可复现的失败，原生 macOS 验证未完成。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩、PTY、用户 Hooks 和流式工具调度仍属后续工作。
 
 - 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
@@ -83,7 +83,7 @@
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
 - Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的展示脱敏片段顺序，并把 ANSI/OSC 控制序列按纯文本处理；聚合结果仍保留原始 stdout/stderr。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
-- `read_tool_output` 只读取当前 Session 中已持久化的终态 `run_shell` 输出，过去 Run 可以读取。它要求 provider tool call ID，默认 stdout，也支持 stderr；运行中、跨 Session、缺失或歧义 ID 会拒绝。请求的 `maxBytes` 范围是 4 字节至 16 KiB，实际页可能更小。分页结果按 UTF-8 边界返回 `startByte`、`endByte` 和 `nextOffset`，调用方必须按 `nextOffset` 继续。该工具不会重新执行 Shell，也不会清除 reconciliation。
+- `read_tool_output` 可读取当前 Run 活动 Shell 的累计快照和同 Session 历史 Run 的持久终态输出。跨 Run 活动 Shell、跨 Session、缺失或歧义 ID 仍拒绝。provider tool call ID 不能换成 Shell session ID。`maxBytes` 范围为 4 字节至 16 KiB，按 UTF-8 边界分页，调用方按 `nextOffset` 继续。该工具不消费等待游标，不重放 Shell，也不清除 reconciliation。
 - Desktop Terminal 是另一条 Main-owned PTY 路径。Agent Shell 的限制不会改变 Desktop Terminal 的现有说明。
 
 ### Repository Intelligence
@@ -213,7 +213,7 @@
 
 - 权限模式已通过组件单元与行为测试、协议校验和数据迁移测试。真实模型审查决策质量仍依赖于所配置模型的审查推理能力；静态检查不能证明所有外部第三方模型的审查决策稳定性。
 - 自动审批复用当前 Run 的模型和 Provider，没有单独的审查模型设置。模型可能误判；确定性硬拒绝继续生效，但模型审查不能保证识别所有风险或提示注入。
-- 自动审批只检查原本需要 Approval 的动作。默认允许的 Workspace 操作不会额外审查。审查证据只包括最近八条用户消息及当前动作事实；证据不足时策略要求拒绝。超限、超时、错误和重启中断不会转交人工，也不会自动重试同一请求。
+- 自动审批只检查原本需要 Approval 的动作，默认 Workspace 操作不额外审查。证据包括最近 32 条用户消息及当前动作，仍受 48 KiB 总预算约束。超限、超时、错误、不可用、重启中断和未知风险交由人工决定，不自动批准或重放同一操作。明确风险拒绝继续生效；新用户授权可以触发重新审查。
 - 完全访问会失去 Eidos 自身路径的沙盒保护。用户可以通过 Shell 改动 Eidos 数据、系统 Skill 或 Git metadata。macOS 的系统权限仍然有效，内置文件工具的普通文件约束仍然有效。
 - 当前模式作用于单个 Run。用户不能在 Run 执行中切换模式。重新生成完全访问 Run 的回答会回到人工模式；用户可以在 Composer 重新选择完全访问并确认。
 - 本期不实现自定义审批规则、`config.toml` 权限解析、域名代理或持久 allowlist。审批元数据保存可取得的审查 Token Usage，当前 UI 不提供独立的审查费用汇总。
@@ -247,13 +247,23 @@ Plan 没有另建只读权限系统。模型通过模式指令遵守“先规划
 
 本阶段没有自动分配独立 Worktree、补丁交付与合并、多层委派、不同子任务选择不同模型、整组费用预算或自动重试中断任务。父任务沿用已有 Loop Guard；子 Session 数量上限不是费用上限。消息不打断正在执行的模型调用；消息在下一次上下文构建时生效。`followup_task` 复用子 Session 的已有上下文。已结束的父 Run 不能继续管理新委派，新用户回合需要创建新的委派关系。
 
-Agent 消息每个接收 Session 最多保存 16 条，每条最多 2,000 字符。子任务摘要会截断任务和结果，Desktop 可以分页查看完整会话记录。环境信息展示该会话最近一组委派，当前没有跨组历史浏览器。
+Agent 消息持久保存，每条最多 2,000 字符，上下文展示最近 16 条。消息不提供逐条消费确认，超过窗口的旧消息仍在数据库中，但不会自动重新注入；重要任务约束应写入任务正文。子任务摘要会截断任务和结果，Desktop 可以分页查看完整会话记录。环境信息展示该会话最近一组委派，当前没有跨组历史浏览器。
 
 Runtime 重启后的完整协作恢复、Outbox 重投、真实模型端到端流程及子 Agent 在真实 macOS 上的审批链路仍需验证。完整测试结果以当前 PR 记录为准。
 
 ### 门控精简后的边界（PR #102）
 
-移除流程门控不代表放弃权限或一致性。Shell/外部操作的未知影响无法仅靠目录扫描证明恢复；旧 Intent 缺少可信目标时也不能按路径放行。文件冲突范围放行不提供自动合并。同 Run 的多个 Shell、不同 Run 的并发写入都需要任务分工。运行进程仍属于原 Run：等待子任务可以保持托管，但最终退出会清理，不提供跨 Run 后台服务生命周期。`wait_agents` 与 Plan 控制调用的单独批次约束、Plan 提问前结束本 Run Shell 的约束仍保留。
+Shell/外部操作的未知影响无法仅靠目录扫描证明恢复；旧 Intent 缺少可信目标时也不能按路径放行。文件冲突范围放行不提供自动合并。同 Run 的多个 Shell、不同 Run 的并发写入都需要任务分工。运行进程仍属于原 Run：等待子任务和 Plan 提问可以保持托管，最终退出会清理，不提供跨 Run 后台服务生命周期。控制调用允许混合批次，原 Worker 顺序等待后继续；取消或崩溃仍不重放不确定操作。
+
+### 整体门控整改后的边界
+
+首次 Repository 索引在已有 Workspace 所有者中构建，当前 Run 捕获不到 Snapshot 时依赖文件和搜索工具。索引仍然是有界的、按 generation 验证的能力，不承诺首次模型调用已经具备完整 Repository Map。
+
+审批或澄清期间可编辑草稿，提交仍受 Run 状态、模型配置和工作区可用性约束。自动审批无法作出可信决定时可由用户接管，明确风险拒绝不能由模型自行绕过。新用户授权会重新计算拒绝指纹，不代表自动批准。
+
+Git stage、commit、fetch 和 push 可与活动 Run 并存，Git 自身锁和已有操作幂等检查继续生效。工作树可能在操作期间变化，因此操作者仍需核对实际提交内容；切换分支、创建分支、merge、rebase 和 pull 保留工作树生命周期互斥。
+
+Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用集合时保守等待。活动 Shell 输出只允许在同 Run 所有者中读取，跨 Run 仍只读取持久终态结果。
 
 ## 记忆
 

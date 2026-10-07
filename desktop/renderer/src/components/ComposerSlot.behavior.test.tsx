@@ -58,7 +58,7 @@ describe("ComposerSlot", () => {
       </ComposerSlot>,
     );
 
-    expect(screen.queryByTestId("default-composer")).toBeNull();
+    expect(screen.getByTestId("default-composer")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "澄清问题" })).toBeInTheDocument();
     expect(screen.getByText("Confirm target architecture?")).toBeInTheDocument();
   });
@@ -88,7 +88,7 @@ describe("ComposerSlot", () => {
       </ComposerSlot>,
     );
 
-    expect(screen.queryByTestId("default-composer")).toBeNull();
+    expect(screen.getByTestId("default-composer")).toBeInTheDocument();
     expect(screen.getByText("正在准备澄清问题…")).toBeInTheDocument();
     expect(screen.getByText("正在同步需要补充的信息")).toBeInTheDocument();
   });

@@ -255,6 +255,14 @@ def test_concurrent_ensure_ready_runs_one_build(
         original_build = active.application.build
         entered = threading.Event()
         release = threading.Event()
+        waiter_entered = threading.Event()
+        original_wait = active._readiness.wait
+
+        def observed_wait(timeout=None):
+            waiter_entered.set()
+            return original_wait(timeout)
+
+        monkeypatch.setattr(active._readiness, 'wait', observed_wait)
         build_count = 0
 
         def blocked_build(**kwargs: object):
@@ -273,6 +281,7 @@ def test_concurrent_ensure_ready_runs_one_build(
         for worker in workers:
             worker.start()
         assert entered.wait(1)
+        assert waiter_entered.wait(2)
         release.set()
         for worker in workers:
             worker.join(2)
@@ -422,12 +431,11 @@ def test_invalidation_coalesces_paths_without_replacing_active_generation(
         original_snapshot = active.snapshot
         original_epoch = active.invalidation_epoch
 
-        watcher = _BlockingWatchController.instances[0]
-        watcher.emit(
+        active.invalidate((
             RepositoryChange(path="foo.py", change="modified"),
             RepositoryChange(path="foo.py", change="modified"),
-        )
-        watcher.emit(RepositoryChange(path="deleted.py", change="deleted"))
+        ))
+        active.invalidate((RepositoryChange(path="deleted.py", change="deleted"),))
 
         assert active.dirty_paths == frozenset({"foo.py", "deleted.py"})
         assert active.invalidation_epoch == original_epoch + 2
@@ -598,60 +606,45 @@ def test_runtime_engine_ensures_workspace_active_before_model_execution(
         store.close()
 
 
-def test_runtime_engine_publishes_user_item_before_repository_readiness(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "workspace"
+def test_runtime_engine_samples_while_owned_repository_build_is_blocked(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    root = tmp_path / 'workspace'
     root.mkdir()
-    store = SessionStore(tmp_path / "runtime-data")
+    store = SessionStore(tmp_path / 'runtime-data')
     store.initialize()
     repository_runtime = _runtime(store.repository_intelligence_repository())
-    readiness_started = threading.Event()
-    release_readiness = threading.Event()
+    build_started = threading.Event()
+    release_build = threading.Event()
+
+    def watch(self, stop, on_invalidate):
+        self.on_invalidate = on_invalidate
+        self.started.set()
+        on_invalidate(())
+        stop.wait()
+        self.stopped.set()
+
+    def blocked_build(*, cancel=None):
+        build_started.set()
+        assert release_build.wait(5)
+        return SimpleNamespace(complete=False, inventory=SimpleNamespace(generation=1))
+
+    monkeypatch.setattr(_BlockingWatchController, 'run', watch)
     try:
+        application = repository_runtime.application_factory.for_workspace(root)
+        monkeypatch.setattr(application, 'build', blocked_build)
+        repository_runtime.available_for_run(root)
+        assert build_started.wait(2)
         session = store.create_session(str(root))
-        run, _item = store.create_run(session["id"], "inspect")
-        original_ensure_ready = repository_runtime.ensure_ready
-
-        def blocked_ensure_ready(
-            workspace: Path,
-            *,
-            cancel: threading.Event | None = None,
-        ) -> object:
-            readiness_started.set()
-            assert release_readiness.wait(2)
-            return original_ensure_ready(workspace, cancel=cancel)
-
-        monkeypatch.setattr(repository_runtime, "ensure_ready", blocked_ensure_ready)
-        notifications: list[dict[str, object]] = []
-        errors: list[BaseException] = []
-
-        def run_engine() -> None:
-            try:
-                RuntimeEngine(
-                    store,
-                    ScriptedModel([ModelResponse(text="done")]),
-                    notifications.append,
-                    repository_runtime=repository_runtime,
-                ).run(run["id"], threading.Event())
-            except BaseException as error:
-                errors.append(error)
-
-        worker = threading.Thread(target=run_engine)
-        worker.start()
-        assert readiness_started.wait(2)
-        assert [message["method"] for message in notifications] == [
-            "run/started",
-            "item/started",
-            "item/completed",
-        ]
-        release_readiness.set()
-        worker.join(5)
-        assert not worker.is_alive()
-        assert errors == []
+        run, _ = store.create_run(session['id'], 'inspect')
+        model = ScriptedModel([ModelResponse(text='Investigate with ordinary tools.')])
+        RuntimeEngine(store, model, lambda _: None, repository_runtime=repository_runtime).run(run['id'], threading.Event())
+        assert store.read_run(run['id'])['status'] == 'succeeded'
+        assert len(model.contexts) == 1
+        assert not release_build.is_set()
+        assert repository_runtime.get_active(root).snapshot is None
     finally:
-        release_readiness.set()
+        release_build.set()
         repository_runtime.shutdown_all()
         store.close()
 
@@ -669,7 +662,7 @@ def test_runtime_engine_captures_repository_once_for_multi_step_run(
     try:
         session = store.create_session(str(root))
         run, _item = store.create_run(session["id"], "inspect")
-        active = repository_runtime.activate_workspace(root)
+        active = repository_runtime.ensure_ready(root)
         original_build = active.application.build
         build_count = 0
         original_retrieve = active.application.retrieve
@@ -699,9 +692,9 @@ def test_runtime_engine_captures_repository_once_for_multi_step_run(
         def complete_with_invalidation(*args: object, **kwargs: object):
             response = original_complete(*args, **kwargs)
             if len(model.contexts) == 1:
-                _BlockingWatchController.instances[0].emit(
-                    RepositoryChange(path="agent-write.py", change="added")
-                )
+                active.invalidate((
+                    RepositoryChange(path="agent-write.py", change="added"),
+                ))
             return response
 
         monkeypatch.setattr(model, "complete", complete_with_invalidation)
@@ -713,7 +706,7 @@ def test_runtime_engine_captures_repository_once_for_multi_step_run(
         ).run(run["id"], threading.Event())
 
         assert len(model.contexts) == 2
-        assert build_count == 1
+        assert build_count == 0
         assert retrieval_count == 1
         assert active.snapshot is not None
         assert active.snapshot.inventory.generation == 1
@@ -752,6 +745,7 @@ def test_first_model_request_contains_repository_overview_and_retrieval_evidence
             session["id"], "修改 authenticate_user 并更新相关测试"
         )
 
+        repository_runtime.ensure_ready(root)
         RuntimeEngine(
             store,
             model,
@@ -805,7 +799,7 @@ def test_retrieval_failure_does_not_block_normal_model_sampling(
     try:
         session = store.create_session(str(root))
         run, _item = store.create_run(session["id"], "inspect main.py")
-        active = repository_runtime.activate_workspace(root)
+        active = repository_runtime.ensure_ready(root)
         monkeypatch.setattr(
             active.application,
             "retrieve",
@@ -850,7 +844,7 @@ def test_run_repository_capture_excludes_invalidation_after_capture(
     try:
         session = store.create_session(str(root))
         run, _item = store.create_run(session["id"], "inspect workspace")
-        active = repository_runtime.activate_workspace(root)
+        active = repository_runtime.ensure_ready(root)
         original_retrieve = active.application.retrieve
 
         def record_retrieve(snapshot, query, **kwargs):
@@ -865,9 +859,9 @@ def test_run_repository_capture_excludes_invalidation_after_capture(
             nonlocal read_run_calls
             read_run_calls += 1
             if read_run_calls == 2:
-                _BlockingWatchController.instances[0].emit(
-                    RepositoryChange(path="main.py", change="modified")
-                )
+                active.invalidate((
+                    RepositoryChange(path="main.py", change="modified"),
+                ))
             return original_read_run(run_id)
 
         monkeypatch.setattr(store, "read_run", read_run_after_capture)
@@ -885,6 +879,7 @@ def test_run_repository_capture_excludes_invalidation_after_capture(
         assert active.snapshot is not None
         current_generation = active.snapshot.inventory.generation
 
+        repository_runtime.ensure_ready(root)
         next_run, _item = store.create_run(session["id"], "inspect workspace again")
         RuntimeEngine(
             store,

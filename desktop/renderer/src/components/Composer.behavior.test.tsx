@@ -54,13 +54,13 @@ describe("Composer DOM interaction & state behavior", () => {
     vi.restoreAllMocks();
   });
 
-  it("modelLoading disables textarea input and submit button", () => {
+  it("modelLoading retains draft editing and disables execution", () => {
     render(<Composer {...defaultProps} modelLoading={true} input="Some text" />);
 
     const textarea = screen.getByPlaceholderText("正在加载模型配置…");
     const submitBtn = screen.getByRole("button", { name: "加载中…" });
 
-    expect(textarea).toBeDisabled();
+    expect(textarea).toBeEnabled();
     expect(submitBtn).toBeDisabled();
   });
 
@@ -224,25 +224,31 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("Read-only storage (composerMode='read_only') disables input and submit button", () => {
+  it("read-only execution retains draft editing and disables submission", () => {
     render(<Composer {...defaultProps} composerMode="read_only" input="Valid task text" />);
 
-    const textarea = screen.getByPlaceholderText("存储只读，暂无法启动 Run");
+    const textarea = screen.getByPlaceholderText("暂无法执行，可继续编辑草稿");
     const submitBtn = screen.getByRole("button", { name: "开始" });
 
-    expect(textarea).toBeDisabled();
+    expect(textarea).toBeEnabled();
     expect(submitBtn).toBeDisabled();
   });
 
-  it("waiting_approval and finalizing disable input and submit", () => {
-    const { rerender } = render(<Composer {...defaultProps} composerMode="waiting_approval" input="Task text" />);
-
-    expect(screen.getByRole("textbox")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
-
-    rerender(<Composer {...defaultProps} composerMode="finalizing" input="Task text" />);
-    expect(screen.getByRole("textbox")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
+  it.each(["running", "waiting_approval", "finalizing"] as const)("%s permits queueing and retains cancellation", (status) => {
+    const onSubmit = vi.fn();
+    const onCancel = vi.fn();
+    const activeRun: Run = { id: "active", sessionId: "s", modelId: "deepseek-v4-flash", status,
+      modelStepCount: 1, createdAt: 1, updatedAt: 1, allowedActions: ["cancel"] };
+    render(<Composer {...defaultProps} composerMode={status} activeRun={activeRun}
+      input="Next task" onSubmit={onSubmit} onCancel={onCancel} />);
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    const submit = screen.getByRole("button", { name: "排队" });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "取消 Run" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeEnabled();
   });
 
   it("shows the approval mode selector and reports the next Run mode", () => {
@@ -281,7 +287,7 @@ describe("Composer DOM interaction & state behavior", () => {
         onApprovalModeChange={onApprovalModeChange}
       />,
     );
-    expect(screen.getByRole("button", { name: "审批模式：替我审批" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "审批模式：替我审批" })).toBeEnabled();
   });
 
   it("starting mode presents starting loading state", () => {
@@ -321,7 +327,7 @@ describe("Composer DOM interaction & state behavior", () => {
     );
 
     expect(screen.getByRole("button", { name: "取消 Run" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeEnabled();
 
     const activeRunDisallowed: Run = {
       ...activeRunAllowed,
@@ -472,7 +478,7 @@ describe("Composer DOM interaction & state behavior", () => {
     });
 
     const { rerender } = render(
-      <Composer {...defaultProps} composerMode="finalizing" input="" />,
+      <Composer {...defaultProps} draftReady={false} input="" />,
     );
 
     const textarea = screen.getByRole("textbox");
@@ -497,7 +503,7 @@ describe("Composer DOM interaction & state behavior", () => {
     });
 
     const { rerender, unmount } = render(
-      <Composer {...defaultProps} composerMode="finalizing" input="" />,
+      <Composer {...defaultProps} draftReady={false} input="" />,
     );
 
     rerender(<Composer {...defaultProps} composerMode="idle" input="" />);

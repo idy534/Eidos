@@ -15,7 +15,7 @@
 
 ## 什么时候必须 Full
 
-以下修改必须在最终验证阶段补充 `pnpm test:runtime:full`；PR 最终验证可使用 `pnpm test:full`：
+以下修改必须在最终验证阶段补充 `pnpm test:runtime:full`；涉及 Desktop 边界时同时运行对应 Desktop 验证：
 
 - RuntimeEngine、RunSupervisor、Runtime Loop 或最终化生命周期；
 - SQLite Schema、Migration、Persistence Contract、Recovery 或 Outbox；

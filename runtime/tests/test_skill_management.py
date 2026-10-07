@@ -174,6 +174,27 @@ class SkillManagementTests(unittest.TestCase):
         )
         self.assertFalse(state.cleanup_pending)
 
+    def test_user_remove_ignores_active_run_whose_catalog_excludes_the_skill(self) -> None:
+        self.manager.set_enabled('user:personal', False)
+        snapshot = self.manager.catalog.extension_snapshot()
+        self.assertNotIn('user:personal', snapshot['skillCatalogIds'])
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(session['id'], 'Unrelated task', extension_snapshot=snapshot)
+        result = self.manager.remove('user:personal')
+        self.assertFalse(result.cleanup_pending)
+        self.assertFalse((self.data / 'skills' / 'personal').exists())
+        self.assertEqual(self.store.read_run(run['id'])['status'], 'running')
+
+    def test_user_remove_waits_for_an_actual_lease(self) -> None:
+        snapshot = self.manager.catalog.extension_snapshot()
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(session['id'], 'Use the skill', extension_snapshot=snapshot)
+        self.store.acquire_skill_lease(run['id'], 'user:personal')
+        self.assertTrue(self.manager.remove('user:personal').cleanup_pending)
+        self.store.fail_run(run['id'], 'fixture_done')
+        self.manager.cleanup()
+        self.assertFalse((self.data / 'skills' / 'personal').exists())
+
 
 if __name__ == "__main__":
     unittest.main()

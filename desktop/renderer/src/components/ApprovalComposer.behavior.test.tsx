@@ -10,11 +10,11 @@ const approval: ApprovalRequest = {
 const run = { id: "r", status: "waiting_approval", allowedActions: ["approve", "reject"] } as Run;
 
 describe("Approval composer slot", () => {
-  it("replaces the input and exposes only two decisions", () => {
+  it("retains draft input alongside the approval decisions", () => {
     render(<ComposerSlot run={run} approval={approval} onApprove={vi.fn()} onReject={vi.fn()}>
       <textarea aria-label="message" />
     </ComposerSlot>);
-    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByRole("textbox")).toBeEnabled();
     expect(screen.getByRole("button", { name: "拒绝" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "批准" })).toBeEnabled();
   });
@@ -23,6 +23,17 @@ describe("Approval composer slot", () => {
       <textarea aria-label="message" />
     </ComposerSlot>);
     expect(screen.getByRole("textbox")).toBeInTheDocument();
+  });
+
+  it("lets the user decide after automatic review fails", () => {
+    render(<ComposerSlot run={{...run, approvalMode: 'auto_review', allowedActions: ['cancel']}}
+      approval={{...approval, reviewFallback: '自动审批超时'}} onApprove={vi.fn()} onReject={vi.fn()}>
+      <textarea aria-label="message" />
+    </ComposerSlot>);
+    expect(screen.getByRole('status')).toHaveTextContent('自动审批超时');
+    expect(screen.getByRole('button', {name: '批准'})).toBeEnabled();
+    expect(screen.getByRole('button', {name: '拒绝'})).toBeEnabled();
+    expect(screen.getByRole('textbox')).toBeEnabled();
   });
 
   it.each([
@@ -90,6 +101,6 @@ it.each([
   { ...approval, kind: "permission_request", grantScope: "run", permissions: { network: { enabled: true } } },
 ] as ApprovalRequest[])("renders $kind in the same composer", (request) => {
   render(<ComposerSlot run={run} approval={request} onApprove={vi.fn()} onReject={vi.fn()}><textarea /></ComposerSlot>);
-  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.getByRole("textbox")).toBeEnabled();
   expect(screen.getAllByRole("button")).toHaveLength(2);
 });

@@ -712,9 +712,9 @@ class ToolRegistry:
         }
         accepted: list[str] = []
         total = 0
-        for name in sorted(
-            set(activated_names) & deferred, key=lambda value: value.encode("utf-8")
-        ):
+        for name in dict.fromkeys(activated_names):
+            if name not in deferred:
+                continue
             entry = self._by_name[name]
             size = _definition_size(entry.model_definition())
             if size > MAX_SINGLE_DEFINITION_BYTES or total + size > MAX_ACTIVATED_SCHEMA_BYTES:
@@ -723,7 +723,7 @@ class ToolRegistry:
             total += size
             if len(accepted) >= MAX_ACTIVATED_TOOLS:
                 break
-        return tuple(accepted)
+        return tuple(sorted(accepted, key=lambda value: value.encode("utf-8")))
 
 
 def _validate_entry(entry: ToolRegistryEntry) -> None:

@@ -138,8 +138,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 
   const isReadOnly = composerMode === "read_only";
   const isIdle = composerMode === "idle";
-  const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
-  const inputDisabled = !draftReady || modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
+  const canCancel = Boolean(activeRun?.allowedActions?.includes("cancel"));
+  const inputDisabled = !draftReady || isSubmitting;
 
   const prevDisabledRef = useRef<boolean>(inputDisabled);
 
@@ -163,7 +163,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const placeholder = modelLoading
     ? "正在加载模型配置…"
     : isReadOnly
-      ? "存储只读，暂无法启动 Run"
+      ? "暂无法执行，可继续编辑草稿"
       : modelConfigured
         ? workMode === "plan"
           ? "先把想法变成计划"
@@ -184,7 +184,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     ? "加载中…"
     : submitKind === "start" || composerMode === "starting"
         ? "启动中…"
-        : "开始";
+        : activeRun ? "排队" : "开始";
 
   const unsupportedImage = references.some((reference) => reference.kind === "image") && !modelList?.models.find((model) => model.id === selectedModelId)?.supportsImages;
 
@@ -195,9 +195,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     || modelLoading
     || isSubmitting
     || composerMode === "starting"
-    || composerMode === "running"
-    || composerMode === "finalizing"
-    || composerMode === "waiting_approval"
     || composerMode === "read_only"
     || !modelConfigured
     || !selectedModelId
@@ -225,7 +222,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                     className="composer-context-project-action"
                     aria-label="不在项目中工作"
                     title="不在项目中工作"
-                    disabled={isSubmitting || Boolean(activeRun)}
+                    disabled={isSubmitting}
                     onClick={() => onLeaveProject()}
                   >
                     <FolderIcon />
@@ -279,7 +276,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                 type="button"
                 className="composer-context-project composer-context-project--empty"
                 onClick={() => onSelectProject()}
-                disabled={isSubmitting || Boolean(activeRun)}
+                disabled={isSubmitting}
               >
                 <FolderIcon />
                 <span>选择项目</span>
@@ -347,12 +344,12 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       <div className="composer-actions">
         <div className="composer-meta">
           <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
-            disabled={!draftReady || isSubmitting || isReadOnly || !context}
+            disabled={!draftReady || isSubmitting || !context}
             onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
           {onApprovalModeChange && (
             <ApprovalModeSelector
               mode={approvalMode}
-              disabled={composerMode !== "idle" || isSubmitting}
+              disabled={isSubmitting}
               onChange={onApprovalModeChange}
             />
           )}
@@ -360,7 +357,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             <button
               type="button"
               className="composer-plan-badge"
-              disabled={composerMode !== "idle" || isSubmitting}
+              disabled={isSubmitting}
               onClick={() => onWorkModeChange?.("execute")}
               aria-label="退出 Plan 模式"
               title="退出 Plan 模式"
@@ -387,28 +384,28 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
               models={modelList.models}
               selectedModelId={selectedModelId}
               selection={selectedReasoning}
-              disabled={composerMode !== "idle" || modelLoading || isSubmitting}
+              disabled={modelLoading || isSubmitting}
               onModelChange={onModelChange}
               onChange={(selection) => onReasoningSelectionChange?.(selection)}
             />
           )}
 
           {canCancel ? (
-          <Button
-            type="button"
-            variant="primary"
-            size="medium"
-            className="composer-submit-btn composer-cancel-btn"
-            disabled={Boolean(cancelingRunId)}
-            loading={Boolean(cancelingRunId)}
-            onClick={onCancel}
-            aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
-            title={cancelingRunId ? "取消中…" : "取消 Run"}
-            icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
-          >
-            <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
-          </Button>
-        ) : (
+            <Button
+              type="button"
+              variant="primary"
+              size="medium"
+              className="composer-submit-btn composer-cancel-btn"
+              disabled={Boolean(cancelingRunId)}
+              loading={Boolean(cancelingRunId)}
+              onClick={onCancel}
+              aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
+              title={cancelingRunId ? "取消中…" : "取消 Run"}
+              icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
+            >
+              <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
+            </Button>
+        ) : null}
           <Button
             type="submit"
             variant="primary"
@@ -426,7 +423,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           >
             <span className="sr-only">{buttonLabel}</span>
           </Button>
-        )}
         </div>
       </div>
     </form>

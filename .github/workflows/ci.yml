@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -14,40 +13,113 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      runtime: ${{ steps.scope.outputs.runtime }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+      native: ${{ steps.scope.outputs.native }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node scripts/ci-scope.mjs "$BASE_SHA" "$HEAD_SHA"
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - run: pnpm lint:python
+      - if: ${{ !cancelled() }}
+        run: pnpm deps:python
+      - if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
+            git diff --check "$BASE_SHA" HEAD
+          else
+            git show --format= --check HEAD
+          fi
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: bash scripts/audit-python.sh
+      - if: ${{ !cancelled() }}
+        run: pnpm audit:runtime-node
+
+  runtime:
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Set up uv
-        # v8.1.0
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
-        with:
-          version: "0.11.32"
-          enable-cache: true
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.7.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: uv sync --frozen
-#      - run: pnpm check:contracts:model-profile
-      - run: pnpm lint:python
-      - run: pnpm deps:python
-      - run: pnpm audit:python
-      - run: pnpm test:packaging
-      - run: pnpm test:full
+      - uses: ./.github/actions/setup
+      - run: pnpm test:runtime:full
+
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
       - run: pnpm build
-      - run: pnpm test:seatbelt-native
-      - run: pnpm test:electron-smoke
-      - run: pnpm build:runtime:mac
-      - run: pnpm test:runtime:bundled
-      - run: pnpm test:runtime:bundled-seatbelt
-      - name: Build and smoke-test the local packaged macOS DMG
+      - if: ${{ !cancelled() }}
+        run: pnpm test:contracts
+      - if: ${{ !cancelled() }}
+        run: pnpm test:renderer-state
+      - if: ${{ !cancelled() }}
+        run: pnpm test:renderer-behavior
+      - if: ${{ !cancelled() }}
+        run: pnpm test:main
+      - if: ${{ !cancelled() }}
+        run: pnpm test:packaging
+
+  native:
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - id: build
+        run: pnpm build
+      - id: seatbelt
+        if: ${{ !cancelled() }}
+        run: pnpm test:seatbelt-native
+      - id: electron
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm test:electron-smoke
+      - id: bundle
+        if: ${{ !cancelled() }}
+        run: pnpm build:runtime:mac
+      - id: bundled
+        if: ${{ !cancelled() && steps.bundle.outcome == 'success' }}
+        run: pnpm test:runtime:bundled
+      - id: bundled_seatbelt
+        if: ${{ !cancelled() && steps.bundle.outcome == 'success' }}
+        run: pnpm test:runtime:bundled-seatbelt
+      - if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.seatbelt.outcome == 'success' && steps.electron.outcome == 'success' && steps.bundled.outcome == 'success' && steps.bundled_seatbelt.outcome == 'success' }}
+        name: Build and smoke-test the local packaged macOS DMG
         run: EIDOS_PACKAGE_SKIP_TESTS=1 pnpm package:mac
-      - run: git diff --check
+
+  test:
+    needs: [changes, quality, security, runtime, desktop, native]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: node scripts/ci-result.mjs

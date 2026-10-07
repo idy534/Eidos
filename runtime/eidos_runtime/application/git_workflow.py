@@ -145,7 +145,7 @@ class GitWorkflowApplication:
         self._worktrees = worktrees
 
     def preflight_stage(self, request: SessionGitStageRequestDto) -> GitMutationPlan:
-        session, before = self._prepare_mutation(request.session_id)
+        session, before = self._prepare_mutation(request.session_id, require_idle=False)
         paths = _validated_paths(Path(before.worktree_root), request.paths)
         return GitMutationPlan(session=session, before=before, paths=paths)
 
@@ -160,7 +160,7 @@ class GitWorkflowApplication:
     def preflight_commit(
         self, request: SessionGitCommitRequestDto
     ) -> GitMutationPlan:
-        session, before = self._prepare_mutation(request.session_id)
+        session, before = self._prepare_mutation(request.session_id, require_idle=False)
         if before.branch is None:
             raise ApplicationError(
                 "GIT_BRANCH_REQUIRED", "Git commit requires an attached branch"
@@ -463,7 +463,7 @@ class GitWorkflowApplication:
     def preflight_fetch(
         self, session_id: str, requested_remote: str | None
     ) -> GitFetchPlan:
-        session, status = self._prepare_mutation(session_id)
+        session, status = self._prepare_mutation(session_id, require_idle=False)
         try:
             observation = self._worktrees.git.remote_status(
                 Path(status.worktree_root)
@@ -607,7 +607,7 @@ class GitWorkflowApplication:
         raise ApplicationError("GIT_REMOTE_OUTCOME_UNCERTAIN") from error
 
     def preflight_push(self, request: SessionGitPushRequestDto) -> GitPushPlan:
-        session, status = self._prepare_mutation(request.session_id)
+        session, status = self._prepare_mutation(request.session_id, require_idle=False)
         if status.branch is None:
             raise ApplicationError("GIT_BRANCH_REQUIRED")
         try:
@@ -740,14 +740,15 @@ class GitWorkflowApplication:
             raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
         return session
 
-    def _prepare_mutation(self, session_id: str) -> tuple[Session, GitStatusSnapshot]:
+    def _prepare_mutation(self, session_id: str, *, require_idle: bool = True) -> tuple[Session, GitStatusSnapshot]:
         session = self._read_session(session_id)
-        try:
-            self._repository.assert_session_deletable(session_id)
-        except SessionActiveError as error:
-            raise ApplicationError(
-                "GIT_WORKFLOW_BUSY", "session has an active Run"
-            ) from error
+        if require_idle:
+            try:
+                self._repository.assert_session_deletable(session_id)
+            except SessionActiveError as error:
+                raise ApplicationError(
+                    "GIT_WORKFLOW_BUSY", "session has an active Run"
+                ) from error
         return session, self._status(session)
 
     def _prepare_local_branch(

@@ -1407,11 +1407,11 @@ export function AppShell({ runtime }: AppShellProps) {
                   draftReady={runState.draftReady}
                   modelList={modelState.list}
                   selectedModelId={modelState.selectedModelId}
-                  workMode={activeRun?.workMode ?? workMode}
+                  workMode={workMode}
                   onWorkModeChange={(mode) => {
                     if (approvalSessionId) setWorkModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
                   }}
-                  approvalMode={activeRun?.approvalMode ?? approvalMode}
+                  approvalMode={approvalMode}
                   onApprovalModeChange={(mode) => {
                     if (approvalSessionId) setApprovalModes((previous) => ({ ...previous, [approvalSessionId]: mode }));
                   }}
@@ -1547,12 +1547,12 @@ export function AppShell({ runtime }: AppShellProps) {
                         reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
                         workflowDisabled={
                           isDraft
-                          || Boolean(activeRun)
                           || runState.isSubmitting
                           || handoffBusy
                           || sessionState.pending.branchSessionId === currentSnapshot.session.id
                           || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
                         }
+                        workspaceMutationDisabled={Boolean(activeRun)}
                         onCreateBranch={
                           !isDraft && (sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null))
                             ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")

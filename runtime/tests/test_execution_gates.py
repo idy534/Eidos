@@ -43,6 +43,7 @@ def execution(tmp_path: Path):
                     store.read_run_resolution_snapshot(run["id"]).permission_profile_json),
                 resource_registry=resources.resources,
                 shell_process_manager=resources.shell_process_manager,
+                collaboration=app,
             )
             yield SimpleNamespace(store=store, run=run, app=app, resources=resources,
                                   runtime=runtime, workspace=workspace)
@@ -112,6 +113,17 @@ def test_two_shells_and_batched_collaboration_do_not_block_each_other(execution)
     assert e.runtime.controller.run_exclusive_side_effect(threading.Event(), lambda: "committed") == "committed"
 
 
+def test_cleanup_distinguishes_a_natural_exit_from_stopping_live_work(execution):
+    e = execution
+    manager = e.resources.shell_process_manager
+    shell = manager.start(ShellLaunchSpec(argv=(sys.executable, '-c', 'print("done")'), cwd=e.workspace,
+        environment={'PATH': '/usr/bin:/bin'}, sandboxed=False), yield_time_ms=0)
+    assert manager._session(shell['data']['sessionId']).done.wait(3)
+    assert manager.cleanup(close=False) is False
+    _start_shell(e)
+    assert manager.cleanup(close=False) is True
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Secure file commit helper requires macOS descriptor identity")
 def test_live_shell_allows_actual_file_commit_and_second_shell(execution):
     e = execution
@@ -142,6 +154,33 @@ def test_wait_tool_timeout_does_not_suspend_or_kill_its_shell(execution):
     assert e.app.repository.wait_record(e.run["id"]) is None
 
 
+def test_mixed_wait_continues_after_timeout_without_replaying_prior_calls(execution):
+    e = execution
+    _spawn(e)
+    result = _execute(e, (
+        ModelToolCall('wait-in-batch', 'wait_agents', {'timeoutMs': 1000}),
+        ModelToolCall('after-wait', 'list_agents', {}),
+    ), threading.Event())
+    assert not result.error_fingerprints
+    assert e.store.read_run(e.run['id'])['status'] == 'running'
+    results = _results(e)
+    assert [name for name, _, _ in results] == ['spawn_agent', 'wait_agents', 'list_agents']
+    assert e.app.repository.wait_record(e.run['id']) is None
+
+
+def test_unknown_shell_allows_readonly_exploration_but_blocks_new_worker(execution):
+    e = execution
+    _uncertain(e, 'run_shell')
+    result = _execute(e, (
+        ModelToolCall('readonly-child', 'spawn_agent', {'taskName': 'explore', 'message': 'Inspect evidence', 'role': 'explorer'}),
+        ModelToolCall('worker-child', 'spawn_agent', {'taskName': 'execute', 'message': 'Modify files', 'role': 'worker'}),
+    ), threading.Event())
+    assert result.error_fingerprints
+    children = e.app.repository.state(e.run['id']).agents
+    assert len(children) == 1 and children[0].role == 'explorer'
+    assert e.store.side_effects_blocked(e.run['id'])
+
+
 def test_deferred_completion_keeps_shell_manager_available_for_continuation(execution, monkeypatch):
     e = execution
     step = _step(e)
@@ -163,7 +202,7 @@ def test_deferred_completion_keeps_shell_manager_available_for_continuation(exec
 
 
 @pytest.mark.parametrize("name", ["spawn_agent", "send_message", "followup_task", "list_agents", "stop_agent"])
-def test_only_suspending_agent_calls_require_single_call_batches(execution, name):
+def test_control_tools_accept_mixed_batches(execution, name):
     e = execution
     call = ModelToolCall("first", name, {})
     other = ModelToolCall("second", "list_agents", {})
@@ -171,7 +210,7 @@ def test_only_suspending_agent_calls_require_single_call_batches(execution, name
     result = e.runtime.validate(_step(e), SimpleNamespace(text="", tool_calls=(call, other)))
     assert result.status == "ready"
     result = e.runtime.validate(_step(e), SimpleNamespace(text="", tool_calls=(ModelToolCall("wait", "wait_agents", {}), other)))
-    assert result.error_code == "agent_control_requires_single_call"
+    assert result.status == "ready"
 
 
 def test_unknown_shell_does_not_block_messages_or_stopping_owned_children(execution):
@@ -251,25 +290,25 @@ def test_no_shell_wait_still_releases_worker_via_durable_suspension(execution):
     assert e.store.read_run(e.run["id"])["status"] == "waiting_agents"
 
 
-def test_workspace_recovery_is_automatic_and_needs_no_model_read(execution):
+def test_coordination_does_not_wait_for_workspace_recovery(execution):
     e = execution
     _uncertain(e)
     calls = []
     e.runtime.workspace_refresh = lambda _cancel: calls.append("refresh") or SimpleNamespace(complete=True)
-    # A control-only batch recovers the verifiable workspace intent up front.
+    # Coordination does not scan or falsely clear an unrelated uncertain effect.
     result = _execute(e, (ModelToolCall("list", "list_agents", {}),), threading.Event())
     assert not result.error_fingerprints
-    assert calls == ["refresh"]
-    assert not e.store.side_effects_blocked(e.run["id"])
+    assert calls == []
+    assert e.store.side_effects_blocked(e.run["id"])
 
 
-def test_incomplete_recovery_does_not_repeat_full_scan_within_unchanged_step(execution):
+def test_repeated_coordination_does_not_scan_unresolved_workspace(execution):
     e = execution
     _uncertain(e)
     calls = []
     e.runtime.workspace_refresh = lambda _cancel: calls.append("refresh") or SimpleNamespace(complete=False)
     _execute(e, tuple(ModelToolCall(f"list-{i}", "list_agents", {}) for i in range(3)), threading.Event())
-    assert calls == ["refresh"]
+    assert calls == []
     assert e.store.side_effects_blocked(e.run["id"])
 
 
@@ -323,3 +362,24 @@ def test_file_barrier_is_rechecked_inside_commit_window(execution):
     ), threading.Event(), runtime, lambda: calls.append("write") or {"outcome": "success"})
     assert result.result["code"] == "reconciliation_required"
     assert calls == []
+
+
+@pytest.mark.parametrize('origin,complete,status,scans', [
+    ('apply_patch', True, 'succeeded', 1),
+    ('apply_patch', False, 'interrupted', 1),
+    ('run_shell', True, 'interrupted', 0),
+])
+def test_completion_recovers_only_verifiable_workspace_effects(execution, origin, complete, status, scans):
+    e = execution
+    _uncertain(e, origin)
+    observed = []
+    e.runtime.workspace_refresh = lambda _cancel: observed.append('scan') or SimpleNamespace(complete=complete)
+    step = _step(e)
+    item = e.store.create_assistant_item(e.run['id'], step.step_index)
+    engine = RuntimeEngine(e.store, None, lambda _event: None)
+    action = engine._settle_sample_boundary(e.run['id'], LoopDecision(action=LoopAction.COMPLETE),
+        SimpleNamespace(assistant_item=item), SimpleNamespace(status='no_tools'), None, e.resources, None,
+        threading.Event(), completion_recovery=e.runtime._refresh_reconciliation)
+    assert action is SampleBoundaryAction.RETURN
+    assert e.store.read_run(e.run['id'])['status'] == status
+    assert len(observed) == scans

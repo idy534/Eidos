@@ -8,10 +8,13 @@ import json
 import logging
 from pathlib import Path
 import threading
-from typing import Callable, cast
+from typing import TYPE_CHECKING, Callable, cast
 
 import anyio
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.collaboration import CollaborationApplication
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.extensions.skill_access import (
@@ -49,9 +52,6 @@ from eidos_runtime.runtime.errors import (
 )
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.resource_registry import ResourceRegistry
-from eidos_runtime.runtime.reconciliation import (
-    classify_shell_reconciliation,
-)
 from eidos_runtime.runtime.runtime_dependencies import (
     RuntimeDependencyCatalogError,
     RuntimeDependencyCoordinator,
@@ -61,6 +61,7 @@ from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
+    _uses_local_reconciliation_policy,
     HandlerOutcome,
     PreparedToolExecution,
     ToolExecutionController,
@@ -232,6 +233,7 @@ class _HandlerDependencies:
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
     permissions: PermissionRequests | None = None
+    refresh_reconciliation: Callable[..., None] | None = None
 
 
 class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
@@ -391,6 +393,10 @@ class FileChangeToolHandler:
             return None
 
         error = reconciliation_error()
+        refresh = getattr(self.dependencies, 'refresh_reconciliation', None)
+        if error is not None and refresh is not None:
+            refresh(run_id=run_id, cancel=cancel)
+            error = reconciliation_error()
         if error is not None:
             return VerifiedToolExecutionResult(result=error)
         unchecked_execute = execute
@@ -629,7 +635,7 @@ class ShellToolHandler:
         manager = self.dependencies.shell_process_manager
         if manager is None:
             raise RuntimeError("shell process manager is unavailable")
-        # The existing process retains its permission and exclusive window.
+        # The existing process retains its permission, not an execution permit.
         # Empty reads create no new side effect; input gets its own intent.
         try:
             manager.require_session(arguments.sessionId)
@@ -637,7 +643,7 @@ class ShellToolHandler:
             return HandlerOutcome(tool_error(call.name, "shell_session_not_found", "Shell session is unavailable in this Run"), "failed", "failed")
         if arguments.chars:
             if arguments.chars != "\x03" and self.dependencies.store.side_effects_blocked(run_id):
-                return HandlerOutcome(tool_error(call.name, "reconciliation_required", "A previous side effect must be reconciled before sending input"), "failed", "failed")
+                return HandlerOutcome(tool_error(call.name, "reconciliation_required", "The effects of this input cannot be isolated from an unresolved operation"), "failed", "failed")
             self.dependencies.authorize_workspace_side_effect(
                 item=item,
                 prepared=PreparedToolExecution(
@@ -898,16 +904,14 @@ class ShellToolHandler:
             runtime.implementation.executor.workspace_index.manifest()  # type: ignore[attr-defined]
         )
         manifest_after = manifest_before
-        refresh_error_code: str | None = None
 
         def observe_workspace(
             result: dict[str, object], observation_cancel: threading.Event,
         ) -> WorkspaceDiff:
-            nonlocal manifest_after, refresh_error_code
+            nonlocal manifest_after
             try:
                 manifest_after = runtime.implementation.executor.refresh_workspace_index(observation_cancel)  # type: ignore[attr-defined]
             except WorkspacePathError as error:
-                refresh_error_code = error.code
                 # A failed scan may leave a cached complete manifest. It is not
                 # evidence that the command left the workspace unchanged.
                 manifest_after = replace(
@@ -929,9 +933,8 @@ class ShellToolHandler:
             attempt: SandboxAttempt,
         ) -> tuple[dict[str, object], SandboxDenied | None]:
             nonlocal dependency_binding, dependency_environment, dependency_provenance
-            nonlocal manifest_after, refresh_error_code, workspace_diff
+            nonlocal manifest_after, workspace_diff
             manifest_after = manifest_before
-            refresh_error_code = None
             try:
                 approved_cwd = runtime.implementation.prepare_shell(  # type: ignore[attr-defined]
                     cwd_value, cancel
@@ -1390,12 +1393,6 @@ class ShellToolHandler:
             else "failed"
         )
         changed = workspace_diff.changed if workspace_diff is not None else False
-        reconciliation_disposition = classify_shell_reconciliation(
-            result,
-            manifest_before_complete=manifest_before.complete,
-            manifest_after_complete=manifest_after.complete,
-            refresh_error_code=refresh_error_code,
-        )
         return HandlerOutcome(
             result,
             item_status,
@@ -1406,7 +1403,6 @@ class ShellToolHandler:
                 if changed and workspace_diff is not None
                 else None
             ),
-            reconciliation_disposition=reconciliation_disposition,
         )
 
 
@@ -1602,6 +1598,7 @@ class ToolCallRuntime:
         skill_access: SkillAccess | None = None,
         runtime_dependencies: RuntimeDependencyCoordinator | None = None,
         concurrency: ToolConcurrencyGate | None = None,
+        collaboration: CollaborationApplication | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -1612,6 +1609,8 @@ class ToolCallRuntime:
         self.skill_access = skill_access
         self.workspace_refresh = workspace_refresh
         self.shell_process_manager = shell_process_manager
+        self.collaboration = collaboration
+        self.inline_control_wait = False
         self.concurrency = concurrency or ToolConcurrencyGate()
         self.parallel_read_concurrency = ToolConcurrencyGate()
         self.controller = ToolExecutionController(
@@ -1642,6 +1641,7 @@ class ToolCallRuntime:
             skill_access=self.skill_access,
             runtime_dependencies=runtime_dependencies,
             permissions=self.permissions,
+            refresh_reconciliation=self._refresh_reconciliation,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)
@@ -1759,12 +1759,6 @@ class ToolCallRuntime:
                 result, "failed", "completed",
                 workspace_changed=data.get("workspaceChanged") is True,
                 diff_hash=data.get("workspaceDiffHash"),
-                reconciliation_disposition=classify_shell_reconciliation(
-                    result,
-                    manifest_before_complete=True,
-                    manifest_after_complete=True,
-                    refresh_error_code=None,
-                ),
             )
         return self.shell_runtime.execute(run_id, item, call, cancel, runtime)
 
@@ -1800,13 +1794,7 @@ class ToolCallRuntime:
                 error_code=result.error_code,
                 protocol_diagnostic=result.protocol_diagnostic,
             )
-        if len(result.tool_calls) > 1 and any(call.name in {"request_user_input", "write_plan"} for call in result.tool_calls):
-            return ToolBatchOutcome(status="validation_failed", error_code="planning_control_requires_single_call")
-        if len(result.tool_calls) > 1 and any(call.name == "wait_agents" for call in result.tool_calls):
-            return ToolBatchOutcome(status="validation_failed", error_code="agent_control_requires_single_call")
         if not result.tool_calls:
-            if self.store.read_run(step.run_id).get("workMode") == "plan":
-                return ToolBatchOutcome(status="validation_failed", error_code="plan_requires_write_plan_ready_for_review")
             return ToolBatchOutcome(status="no_tools")
         return ToolBatchOutcome(status="ready", tool_calls=result.tool_calls)
 
@@ -1817,7 +1805,9 @@ class ToolCallRuntime:
         cancel: threading.Event,
     ) -> ToolBatchOutcome:
         self.state_machine.track(RuntimeState.TOOL_EXECUTING, "model_tool_calls")
-        self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
+        # A control call inside a batch retains its owner so later calls are
+        # neither lost on suspension nor replayed when that owner resumes.
+        self.inline_control_wait = False
         if (
             self.dispatcher.is_parallel_read_batch(tool_calls)
             and self._parallel_arguments_are_safe(tool_calls)
@@ -1828,7 +1818,24 @@ class ToolCallRuntime:
         errors: list[str] = []
         successes: list[str] = []
         context_facts: list[str] = []
-        for batch_order, call in enumerate(tool_calls):
+        batch_order = 0
+        while batch_order < len(tool_calls):
+            read_end = batch_order
+            if self.async_kernel is not None:
+                while read_end < len(tool_calls) and self.dispatcher.is_parallel_read_call(tool_calls[read_end]):
+                    read_end += 1
+            reads = tool_calls[batch_order:read_end]
+            if len(reads) > 1 and self._parallel_arguments_are_safe(reads):
+                self.store.clear_sensitive_tool_inputs(step.run_id)
+                group = self._execute_parallel_reads(step, reads, cancel, batch_offset=batch_order)
+                errors.extend(group.error_fingerprints)
+                successes.extend(group.successful_tool_result_hashes)
+                context_facts.extend(group.context_fact_ids)
+                batch_order = read_end
+                self.state_machine.track(RuntimeState.TOOL_EXECUTING, 'next_tool_batch_segment')
+                continue
+            call = tool_calls[batch_order]
+            self.inline_control_wait = batch_order < len(tool_calls) - 1
             self._check_cancel(step.run_id, cancel)
             try:
                 payload = _scan_tool_payload(self.sensitive, call)
@@ -1875,6 +1882,12 @@ class ToolCallRuntime:
             plan = self.dispatcher.plan(
                 effective_call, step.tool_snapshot.binding(call.name)
             )
+            if plan.side_effect != 'none' and not isinstance(plan.descriptor.runtime if plan.descriptor else None, WorkspaceMutationRuntime):
+                # Reads, coordination and unrelated file targets do not wait
+                # for a whole-Workspace recovery scan. File handlers recover
+                # only when their prepared targets actually conflict.
+                if not _uses_local_reconciliation_policy(plan, effective_call):
+                    self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
             assert (
                 plan.descriptor is not None
                 and plan.descriptor.execution_policy is not None
@@ -1888,10 +1901,6 @@ class ToolCallRuntime:
                 deadline=None,
             )
             self._check_cancel(step.run_id, cancel)
-            self._refresh_reconciliation(
-                run_id=step.run_id,
-                cancel=cancel,
-            )
             if outcome.activations:
                 self.store.activate_tools(step.run_id, outcome.activations)
             if outcome.result.get("outcome") != "success":
@@ -1907,6 +1916,7 @@ class ToolCallRuntime:
                         outcome.progress_fingerprint or _hash_json(outcome.result)
                     ),
                 }))
+            batch_order += 1
         self.state_machine.track(RuntimeState.THINKING, "tool_batch_completed")
         facts = self.store.context_projection_facts(step.run_id)
         return ToolBatchOutcome(
@@ -1935,9 +1945,10 @@ class ToolCallRuntime:
         step: StepContext,
         calls: tuple[ModelToolCall, ...],
         cancel: threading.Event,
+        *, batch_offset: int = 0,
     ) -> ToolBatchOutcome:
         pending: list[tuple[dict[str, object], ModelToolCall]] = []
-        for batch_order, call in enumerate(calls):
+        for batch_order, call in enumerate(calls, start=batch_offset):
             self._check_cancel(step.run_id, cancel)
             mutation = self.store.create_tool_item_committed(
                 step.run_id,
@@ -2065,7 +2076,6 @@ class ToolCallRuntime:
         errors: list[str] = []
         successes: list[str] = []
         context_facts: list[str] = []
-        self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
         for (item, call), outcome in zip(pending, outcomes, strict=True):
             self._check_cancel(step.run_id, cancel)
             if outcome.activations:

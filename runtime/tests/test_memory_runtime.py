@@ -635,7 +635,7 @@ def test_backup_excludes_revoked_source_action_body(setup, tmp_path):
         assert not connection.execute("SELECT 1 FROM memory_actions WHERE request_json LIKE '%private source preference%'").fetchone()
 
 
-def test_v17_backup_restores_with_session_use_migration(setup, tmp_path):
+def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
     import sqlite3
 
     store, session = setup
@@ -644,17 +644,17 @@ def test_v17_backup_restores_with_session_use_migration(setup, tmp_path):
     backup(store.database.memory, current)
     with zipfile.ZipFile(current) as source:
         members = {name: source.read(name) for name in source.namelist()}
-    state = tmp_path / "v17.sqlite"
+    state = tmp_path / "v18.sqlite"
     state.write_bytes(members["state.sqlite"])
     with sqlite3.connect(state) as connection:
         connection.execute("DROP TRIGGER memory_session_use_revoke")
         connection.execute("ALTER TABLE memory_sources DROP COLUMN use_epoch")
-        connection.execute("PRAGMA user_version=17")
+        connection.execute("PRAGMA user_version=18")
     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     connection.close()
     members["state.sqlite"] = state.read_bytes()
     manifest = json.loads(members["manifest.json"])
-    manifest["schemaVersion"] = 17
+    manifest["schemaVersion"] = 18
     members["manifest.json"] = json.dumps(manifest).encode()
     legacy = tmp_path / "legacy.zip"
     with zipfile.ZipFile(legacy, "w") as target:
@@ -665,7 +665,7 @@ def test_v17_backup_restores_with_session_use_migration(setup, tmp_path):
     reopened = SessionStore(destination)
     reopened.initialize()
     try:
-        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 19
         assert reopened.database.memory.get(MemoryGetRequest(session_id=session["id"], entry_id=entry.entry_id)).entry.content == "Prefer concise Chinese responses"
     finally:
         reopened.close()

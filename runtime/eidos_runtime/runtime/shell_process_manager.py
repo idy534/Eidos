@@ -188,6 +188,10 @@ class ShellProcessManager:
     def poll(self, session_id: str) -> dict[str, object]:
         return self.wait(session_id, yield_time_ms=0)
 
+    def read_output(self, session_id: str) -> dict[str, object]:
+        """Observe bounded cumulative output without consuming wait cursors."""
+        return self._wait_and_snapshot(self._session(session_id), 0, "run_shell", cumulative=True)
+
     def write_stdin(
         self,
         session_id: str,
@@ -268,13 +272,14 @@ class ShellProcessManager:
     ) -> dict[str, object]:
         return self.write_stdin(session_id, "\x03", yield_time_ms=yield_time_ms)
 
-    def cleanup(self, *, close: bool = True) -> None:
+    def cleanup(self, *, close: bool = True) -> bool:
         with self._lock:
             sessions = tuple(self._sessions.values())
             if close:
                 self._closed = True
+        stopped = False
         for session in sessions:
-            self._terminate(session)
+            stopped = self._terminate(session) or stopped
         for session in sessions:
             thread = session.thread
             if thread is not None and thread is not threading.current_thread():
@@ -294,6 +299,7 @@ class ShellProcessManager:
             self._sessions = {session.session_id: session for session in sessions if session.finalization_error is not None}
         if any(session.finalization_error is not None for session in sessions):
             raise ShellSessionFinalizationError("shell_result_commit_failed")
+        return stopped
 
     close = cleanup
 
@@ -457,12 +463,14 @@ class ShellProcessManager:
                 else:
                     offset += written
 
-    def _terminate(self, session: ShellProcessSession) -> None:
+    def _terminate(self, session: ShellProcessSession) -> bool:
         with session.lock:
             session.stop.set()
-            if session.execution_status == "running":
+            stopped = session.process.poll() is None or _process_group_exists(session.process_group_id)
+            if stopped and session.execution_status == "running":
                 session.termination = "canceled"
         _terminate_group(session.process_group_id)
+        return stopped
 
     def _drain(self, session: ShellProcessSession) -> None:
         selector = selectors.DefaultSelector()

@@ -1546,7 +1546,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
       "def send(message): print(json.dumps(message, separators=(',', ':')), flush=True)",
       "json.loads(sys.stdin.readline())",
       "send({'jsonrpc':'2.0','id':'client-1','result':{'protocolVersion':1,'runtimeVersion':'0.3.0','capabilities':{'runShell':True,'modelConfigured':False}}})",
-      "send({'jsonrpc':'2.0','id':'server-file-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i1','toolCallId':'tc1','summary':'file summary','kind':'file_change','diff':'diff text','apiKey':'secret-key','environment':{'PRIVATE_TOKEN':'secret'}}})",
+      "send({'jsonrpc':'2.0','id':'server-file-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i1','toolCallId':'tc1','summary':'file summary','kind':'file_change','diff':'diff text','reviewFallback':'自动审批超时','apiKey':'secret-key','environment':{'PRIVATE_TOKEN':'secret'}}})",
       "sys.stdin.readline()",
       "send({'jsonrpc':'2.0','id':'server-cmd-1','method':'item/requestApproval','params':{'id':'forged-id','sessionId':'s1','runId':'r1','itemId':'i2','toolCallId':'tc2','summary':'cmd summary','kind':'command_execution','command':'ls','cwd':'/tmp','networkEnabled':False,'timeoutSeconds':30,'token':'secret-token'}})",
       "sys.stdin.readline()",
@@ -1586,12 +1586,13 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req1.id, "server-file-1");
     assert.equal(req1.kind, "file_change");
     assert.equal(req1.diff, "diff text");
+    assert.equal(req1.reviewFallback, "自动审批超时");
     assert.equal(req1.apiKey, undefined);
     assert.equal(req1.environment, undefined);
     assert.equal(req1.diffBytes, undefined);
     assert.equal(req1.diffHash, undefined);
     assert.deepEqual(Object.keys(req1).sort(), [
-      "diff", "diffBytes", "diffHash", "id", "itemId", "kind", "runId", "sessionId", "summary", "toolCallId",
+      "diff", "diffBytes", "diffHash", "id", "itemId", "kind", "reviewFallback", "runId", "sessionId", "summary", "toolCallId",
     ]);
 
     // 2. command_execution
@@ -1604,7 +1605,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.deepEqual(Object.keys(req2).sort(), [
       "additionalExecutableAccess", "additionalReadAccess", "additionalWriteAccess",
       "attemptOrdinal", "command", "cwd", "escalationReason", "executionMode",
-      "id", "itemId", "kind", "networkEnabled", "reason", "runId",
+      "id", "itemId", "kind", "networkEnabled", "reason", "reviewFallback", "runId",
       "sandboxPermissions", "sessionId", "summary", "timeoutSeconds", "toolCallId",
     ]);
 
@@ -1618,7 +1619,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     const prov = req3.provenance as Record<string, unknown>;
     assert.equal(prov.extraProvField, undefined);
     assert.deepEqual(Object.keys(req3).sort(), [
-      "arguments", "envNames", "id", "itemId", "kind", "permissionProfile", "provenance", "runId", "sessionId", "summary", "timeoutSeconds", "toolCallId", "toolName",
+      "arguments", "envNames", "id", "itemId", "kind", "permissionProfile", "provenance", "reviewFallback", "runId", "sessionId", "summary", "timeoutSeconds", "toolCallId", "toolName",
     ]);
 
     // 4. network_access
@@ -1628,7 +1629,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.deepEqual(req4.hosts, ["api.example.com"]);
     assert.equal(req4.secretHeader, undefined);
     assert.deepEqual(Object.keys(req4).sort(), [
-      "hosts", "id", "itemId", "kind", "runId", "sessionId", "summary", "target", "toolCallId", "toolName",
+      "hosts", "id", "itemId", "kind", "reviewFallback", "runId", "sessionId", "summary", "target", "toolCallId", "toolName",
     ]);
 
     const req5 = receivedRequests[4]!;

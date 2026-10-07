@@ -49,7 +49,7 @@
     "package:mac": "bash scripts/package-macos.sh local",
     "package:mac:release": "bash scripts/package-macos.sh release",
     "test:electron-packaged": "node scripts/packaged-electron-smoke.mjs",
-    "test:packaging": "node --test scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/macos-sign.test.mjs scripts/runtime-dependency-packaging.test.mjs scripts/test-affected.test.mjs"
+    "test:packaging": "node --test scripts/ci-scope.test.mjs scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/macos-sign.test.mjs scripts/runtime-dependency-packaging.test.mjs scripts/test-affected.test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
