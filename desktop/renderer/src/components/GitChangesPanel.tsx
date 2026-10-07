@@ -85,6 +85,7 @@ interface GitChangesPanelProps {
   onSendReviewFeedback?: (feedback: string) => Promise<void>;
   reviewFeedbackDisabled?: boolean;
   workflowDisabled?: boolean;
+  workspaceMutationDisabled?: boolean;
   workflowOpenRequest?: number | undefined;
   onCreateBranch?: (() => void) | undefined;
 }
@@ -208,6 +209,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     onSendReviewFeedback,
     reviewFeedbackDisabled = false,
     workflowDisabled = false,
+    workspaceMutationDisabled = false,
     workflowOpenRequest,
     onCreateBranch,
   } = props;
@@ -446,7 +448,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           {
             key: "create-branch",
             label: "创建分支...",
-            disabled: workflowDisabled || (status?.worktreeId === null && status?.dirty === true),
+            disabled: workflowDisabled || workspaceMutationDisabled || (status?.worktreeId === null && status?.dirty === true),
             onClick: () => onCreateBranch(),
           },
         ]
@@ -557,6 +559,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
               compact={true}
               expanded={expanded}
               disabled={workflowDisabled}
+              workspaceMutationDisabled={workspaceMutationDisabled}
               openRequest={workflowOpenRequest}
               onRefresh={onRefresh}
               onCreateBranch={onCreateBranch}

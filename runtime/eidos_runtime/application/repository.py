@@ -498,7 +498,15 @@ class RepositoryWorkspaceRuntime:
         *,
         cancel: threading.Event | None = None,
     ) -> ActiveRepositoryState:
-        active = self.activate_workspace(root)
+        return self._ensure_active_ready(self.activate_workspace(root), cancel=cancel)
+
+    def available_for_run(self, root: Path) -> ActiveRepositoryState:
+        """Capture whatever is ready without making indexing Run admission."""
+        return self.activate_workspace(root)
+
+    def _ensure_active_ready(
+        self, active: ActiveRepositoryState, *, cancel: threading.Event | None = None,
+    ) -> ActiveRepositoryState:
         if cancel is not None and cancel.is_set():
             return active
         if active.snapshot is not None and not active.reconciliation_required:
@@ -643,10 +651,22 @@ class RepositoryWorkspaceRuntime:
                 },
             )
 
-    @staticmethod
-    def _run_watcher(active: ActiveRepositoryState) -> None:
+    def _run_watcher(self, active: ActiveRepositoryState) -> None:
         try:
-            active.watcher.run(active.watcher_stop, active.invalidate)
+            initial_build = True
+
+            def invalidate(changes: tuple[RepositoryChange, ...]) -> None:
+                nonlocal initial_build
+                if changes:
+                    active.invalidate(changes)
+                if initial_build or changes:
+                    initial_build = False
+                    # Reuse the owned worker after watch registration. Failed
+                    # builds retry on changes or an explicit refresh, not idle.
+                    self._ensure_active_ready(active, cancel=active.watcher_stop)
+
+            if not active.watcher_stop.is_set():
+                active.watcher.run(active.watcher_stop, invalidate)
         except Exception:
             if not active.watcher_stop.is_set():
                 logger.exception(

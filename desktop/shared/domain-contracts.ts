@@ -504,6 +504,7 @@ interface ApprovalRequestBase {
   itemId: string;
   toolCallId: string;
   summary: string;
+  reviewFallback?: string;
 }
 
 export interface FileApprovalRequest extends ApprovalRequestBase {

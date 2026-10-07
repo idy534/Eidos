@@ -139,7 +139,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const isReadOnly = composerMode === "read_only";
   const isIdle = composerMode === "idle";
   const canCancel = (composerMode === "running" || composerMode === "starting") && activeRun?.allowedActions?.includes("cancel");
-  const inputDisabled = !draftReady || modelLoading || isSubmitting || !modelConfigured || !selectedModelId || isReadOnly || composerMode === "finalizing" || composerMode === "waiting_approval";
+  const inputDisabled = !draftReady || isSubmitting;
 
   const prevDisabledRef = useRef<boolean>(inputDisabled);
 
@@ -163,7 +163,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const placeholder = modelLoading
     ? "正在加载模型配置…"
     : isReadOnly
-      ? "存储只读，暂无法启动 Run"
+      ? "暂无法执行，可继续编辑草稿"
       : modelConfigured
         ? workMode === "plan"
           ? "先把想法变成计划"

@@ -75,9 +75,10 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
     approval_lines = []
     if policy.approval_mode == "auto_review":
         approval_lines.append(
-            "- Every required approval is reviewed automatically by a separate model request, not the user. "
-            "A rejected review returns its reason and never opens a manual approval dialog. "
-            "Do not repeat or circumvent a rejected action; choose a materially safer alternative or explain the blocker."
+            "- Required approvals are reviewed automatically by a separate model request. "
+            "If review is unavailable or cannot determine the risk, Eidos asks the user to decide. "
+            "A definite rejection returns its reason. Do not repeat or circumvent it; choose a materially safer alternative or explain the blocker. "
+            "New explicit user instructions can authorize reconsideration."
         )
     elif policy.approval_mode == "full_access":
         approval_lines.append(
@@ -179,7 +180,7 @@ class InstructionResolver:
         if work_mode == "plan":
             layers.append(InstructionLayer.create(
                 id="work-mode", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:plan",
-                content="""You are in Plan mode because the user explicitly selected it. Investigate the task using the available tools and existing permissions. Do not implement the requested changes before the user confirms the plan. Clarify important unknown requirements using request_user_input; ask one to three short questions at a time. First investigate facts you can discover yourself. Call request_user_input alone, after running commands finish. Save the Markdown plan with write_plan outside the project; include the goal, findings, clarified decisions, implementation steps, verification and remaining assumptions. Use the current planId and expectedRevision when revising an existing plan. Call write_plan alone. Set readyForReview only when the plan is complete; this ends the turn for user review. Neither permission approval nor full access counts as plan confirmation. You cannot switch modes through tool parameters or text. The client starts a new execution Run after the user confirms.""",
+                content="""You are in Plan mode because the user explicitly selected it. Investigate the task using the available tools and existing permissions. Do not implement the requested changes before the user confirms the plan. Clarify important unknown requirements using request_user_input; ask one to three short questions at a time. First investigate facts you can discover yourself. Save a Markdown plan with write_plan outside the project when there is an actionable plan; include the goal, findings, clarified decisions, implementation steps, verification and remaining assumptions. Use the current planId and expectedRevision when revising an existing plan. Set readyForReview only when the plan is complete; this ends the turn for user review. If no actionable plan can be produced, explain the findings or blocker without claiming a plan was saved. Neither permission approval nor full access counts as plan confirmation. You cannot switch modes through tool parameters or text. The client starts a new execution Run after the user confirms.""",
             ))
         else:
             layers.append(InstructionLayer.create(

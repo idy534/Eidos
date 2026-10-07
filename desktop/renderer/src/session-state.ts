@@ -447,8 +447,8 @@ export type ComposerMode =
   | "starting"           // startRun IPC call in-flight; block double submit
   | "running"            // Run is executing; show cancel if allowed
   | "waiting_approval"   // Approval card is the primary entry point
-  | "finalizing"         // Run wrapping up; block all input
-  | "read_only";         // storageHealth = health_only; block all writes
+  | "finalizing"         // Run wrapping up; draft editing remains available
+  | "read_only";         // execution unavailable; draft editing remains available
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
   "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",

@@ -23,7 +23,7 @@ export function ComposerSlot({
 }: ComposerSlotProps) {
   // 1. Waiting Approval has priority
   if (run?.status === "waiting_approval") {
-    if (run.approvalMode === "auto_review" || run.approvalMode === "full_access") {
+    if (!approval?.reviewFallback && (run.approvalMode === "auto_review" || run.approvalMode === "full_access")) {
       return (
         <>
           <ApprovalStatusBanner
@@ -35,7 +35,7 @@ export function ComposerSlot({
         </>
       );
     }
-    return approval
+    return <>{approval
       ? <ApprovalComposer {...props} run={run} approval={approval} />
       : (
         <ApprovalStatusBanner
@@ -43,28 +43,28 @@ export function ComposerSlot({
           title="正在恢复待批准请求…"
           hint="正在同步审批详情与变更内容"
         />
-      );
+      )}{children}</>;
   }
 
-  // 2. Pending User Input Clarification replaces the input box
+  // 2. Keep draft editing available alongside pending clarification.
   if (pendingUserInput) {
     return (
-      <ClarificationComposer
+      <><ClarificationComposer
         key={pendingUserInput.id}
         request={pendingUserInput}
         ready={userInputReady}
         onSaved={onAnswerUserInput ?? (() => {})}
-      />
+      />{children}</>
     );
   }
 
   // 3. Waiting input but question details not yet loaded
   if (run?.status === "waiting_input") {
     return (
-      <ClarificationStatusBanner
+      <><ClarificationStatusBanner
         title="正在准备澄清问题…"
         hint="正在同步需要补充的信息"
-      />
+      />{children}</>
     );
   }
 

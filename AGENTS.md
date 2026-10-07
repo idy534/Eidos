@@ -206,8 +206,6 @@ RunSupervisor、ResourceRegistry、Session FIFO 和 Shutdown Quiescence 语义�
 ## 本期明确的权限模式例外
 用户明确要求增加 Codex 风格的完全访问模式。只有用户通过 Desktop 确认并创建的 `full_access` Run 可以关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批。该模式不能继续承诺 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久保护。第 14、15、28 节的相关沙盒和路径保护要求继续完整适用于 `manual` 与 `auto_review`。所有模式仍保留参数校验、Durable Intent、文件身份与版本核验、取消、结果验证和 Reconciliation。模型、项目文件和工具参数不能切换模式。
 
-当前 Loop 优化 PR 已获用户授权进入测试阶段；Runtime 改动按 `runtime/AGENTS.md` 执行定向、Fast 和必要的 Full 验证。
-
 ## 14. Tool execution
 单 ToolCall 固定流程：
 ```text

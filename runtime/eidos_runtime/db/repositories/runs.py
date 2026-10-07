@@ -459,7 +459,7 @@ class RunRepository(Repository):
                    JOIN runs source ON source.id = i.run_id
                    WHERE i.session_id = current.session_id AND i.kind = 'user_message'
                      AND source.creation_seq <= current.creation_seq
-                   ORDER BY i.creation_seq DESC LIMIT 8""", (run_id,),
+                   ORDER BY i.creation_seq DESC LIMIT 32""", (run_id,),
             ).fetchall()
         return tuple(str(row["content"] or "") for row in reversed(rows))
 

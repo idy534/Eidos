@@ -57,12 +57,26 @@ class ExtensionRepository(Repository):
                     "qualifiedId": qualified_id, "enabled": True, "removed": False,
                 })
 
-    def has_nonterminal_runs(self) -> bool:
+    def skill_referenced_by_nonterminal_run(self, qualified_id: str) -> bool:
         with self.lock:
-            return self._connection().execute(
-                """SELECT 1 FROM runs WHERE status NOT IN
-                ('succeeded', 'failed', 'stopped', 'canceled', 'interrupted') LIMIT 1"""
-            ).fetchone() is not None
+            rows = self._connection().execute(
+                """SELECT extension_snapshot_json FROM runs WHERE status NOT IN
+                ('succeeded', 'failed', 'stopped', 'canceled', 'interrupted')"""
+            ).fetchall()
+        for row in rows:
+            snapshot = _load_json_object(row['extension_snapshot_json'])
+            if not snapshot:
+                return True
+            catalog_ids = snapshot.get('skillCatalogIds')
+            if isinstance(catalog_ids, list) and all(isinstance(value, str) for value in catalog_ids):
+                if qualified_id in catalog_ids:
+                    return True
+            else:
+                excluded = snapshot.get('excludedSkillIds')
+                if not isinstance(excluded, list) or qualified_id not in excluded:
+                    # Old snapshots cannot prove which catalog roots were pinned.
+                    return True
+        return False
 
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         with self.lock:

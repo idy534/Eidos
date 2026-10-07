@@ -2208,12 +2208,15 @@ function isExtensionSnapshot(value: unknown): value is Record<string, unknown> {
     isRecord(value)
     && hasOnlyKeys(value, [
       "schemaVersion", "extensionContractVersion", "plugins",
-      "skillCatalogHash", "mcpConfigHash", "excludedSkillIds",
+      "skillCatalogHash", "mcpConfigHash", "excludedSkillIds", "skillCatalogIds",
     ])
     && value.schemaVersion === 1
     && value.extensionContractVersion === 1
     && (value.excludedSkillIds === undefined || (
       Array.isArray(value.excludedSkillIds) && value.excludedSkillIds.every((id) => typeof id === "string")
+    ))
+    && (value.skillCatalogIds === undefined || value.skillCatalogIds === null || (
+      Array.isArray(value.skillCatalogIds) && value.skillCatalogIds.every((id) => typeof id === "string")
     ))
     && typeof value.skillCatalogHash === "string"
     && typeof value.mcpConfigHash === "string"
@@ -2376,6 +2379,11 @@ function approvalRequestFrom(
   if (!common) {
     return undefined;
   }
+  if (params.reviewFallback !== undefined && (
+    typeof params.reviewFallback !== "string" || params.reviewFallback.length > 1500
+  )) return undefined;
+  const reviewFallback = typeof params.reviewFallback === "string"
+    ? { reviewFallback: params.reviewFallback } : {};
   if (params.kind === "file_change") {
     if (typeof params.diff !== "string" || !hasTextReference(params, "diff")) {
       return undefined;
@@ -2387,6 +2395,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "file_change",
+      ...reviewFallback,
       summary: params.summary as string,
       diff: params.diff as string,
       diffBytes: typeof params.diffBytes === "number" ? params.diffBytes : undefined,
@@ -2413,6 +2422,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "external_tool",
+      ...reviewFallback,
       summary: params.summary as string,
       toolName: params.toolName as string,
       arguments: params.arguments as Record<string, unknown>,
@@ -2440,6 +2450,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "permission_request",
+      ...reviewFallback,
       summary: params.summary as string,
       grantScope: "run",
       permissions: {
@@ -2472,6 +2483,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "network_access",
+      ...reviewFallback,
       summary: params.summary as string,
       toolName: params.toolName as string,
       hosts: [...(params.hosts as string[])],
@@ -2505,6 +2517,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "command_execution",
+      ...reviewFallback,
       summary: params.summary as string,
       command: params.command as string,
       cwd: params.cwd as string,

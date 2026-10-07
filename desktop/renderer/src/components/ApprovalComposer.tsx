@@ -21,8 +21,8 @@ export function ApprovalComposer({run, approval, respondingApprovalIds,
     const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
     const isApproving = isResponding && respondingKindByApprovalId?.[approval.id] === "approve";
     const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
-    const canApprove = !isExpired && run.allowedActions?.includes("approve") && !isResponding;
-    const canReject = !isExpired && run.allowedActions?.includes("reject") && !isResponding;
+    const canApprove = !isExpired && (run.allowedActions?.includes("approve") || Boolean(approval.reviewFallback)) && !isResponding;
+    const canReject = !isExpired && (run.allowedActions?.includes("reject") || Boolean(approval.reviewFallback)) && !isResponding;
     const isUnsandboxed = approval.kind === "command_execution"
       && approval.executionMode === "unsandboxed";
 
@@ -56,6 +56,7 @@ export function ApprovalComposer({run, approval, respondingApprovalIds,
                   : commandApprovalDetails(approval)}
         </pre>}
         {localError && <p className="approval-error" role="alert">{localError}</p>}
+        {approval.reviewFallback && <p role="status">{approval.reviewFallback} 可在此手动决定。</p>}
         <div className="approval-actions">
           <Button
             variant="ghost"

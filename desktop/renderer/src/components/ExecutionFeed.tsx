@@ -929,7 +929,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
             {segment.content}
           </pre>
         ))}
-        {gateRejected && <p className="shell-error-code">未执行，等待只读核验</p>}
+        {gateRejected && <p className="shell-error-code">未执行：与尚未确认的操作冲突</p>}
         {!running && !gateRejected && !pendingVerification && !success && code && <p className="shell-error-code">失败 · {code}</p>}
         {!running && !success && !pendingVerification && summary && <p className="shell-error-summary">{summary}</p>}
         {truncated && (
@@ -938,7 +938,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           </p>
         )}
         {reconciliationRequired && !gateRejected && (
-          <p className="shell-diagnostic shell-diagnostic--warning">结果需要只读核验</p>
+          <p className="shell-diagnostic shell-diagnostic--warning">执行结果尚未确认</p>
         )}
         {!hasOutput && running && <p className="shell-empty">尚未输出</p>}
         {!hasOutput && !running && !pendingVerification && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
@@ -1199,7 +1199,7 @@ function RunNotice({ run }: { run: Run }) {
     <p className={`run-notice run-notice--${active.tone}`} role={active.tone === "error" ? "alert" : "status"}>
       {active.label}
       {run.reconciliationRequired === true
-        && "。副作用结果可能存在，下一步必须先只读核验"}
+        && "。部分操作的结果尚未确认"}
     </p>
   );
 }
@@ -1284,7 +1284,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
   const query = stringField(args, "query") || stringField(args, "pattern");
   const running = status === "in_progress";
   if (isReconciliationGate(result)) {
-    return `未执行，等待只读核验 ${path || query || toolCall.toolName}`;
+    return `未执行：与尚未确认的操作冲突 ${path || query || toolCall.toolName}`;
   }
   if (!running && status !== "completed") {
     return `${statusLabel(status)} ${path || query || toolCall.toolName}`;
@@ -1404,13 +1404,13 @@ function statusLabel(status: Item["status"]): string {
 
 function safeToolSummary(value: string | undefined, status: Item["status"]): string {
   const parsed = parseObject(value);
-  if (isReconciliationGate(parsed)) return "未执行，等待只读核验";
+  if (isReconciliationGate(parsed)) return "未执行：与尚未确认的操作冲突";
   return stringField(parsed, "summary") || stringField(parsed, "code") || statusLabel(status);
 }
 
 function isReconciliationGate(result: Record<string, unknown>): boolean {
-  const code = stringField(result, "code");
-  return code === "TOOL_RECONCILIATION_REQUIRED"
+  const code = stringField(result, "code").toUpperCase();
+  return code === "RECONCILIATION_REQUIRED" || code === "TOOL_RECONCILIATION_REQUIRED"
     || code.endsWith("_RECONCILIATION_REQUIRED");
 }
 

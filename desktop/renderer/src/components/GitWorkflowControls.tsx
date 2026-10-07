@@ -23,6 +23,7 @@ interface GitWorkflowControlsProps {
   workspaceRoot: string;
   status: SessionGitStatus;
   disabled: boolean;
+  workspaceMutationDisabled?: boolean;
   onRefresh(): void;
   openRequest?: number | undefined;
   compact?: boolean | undefined;
@@ -97,6 +98,7 @@ export function GitWorkflowControls({
   workspaceRoot,
   status,
   disabled,
+  workspaceMutationDisabled = false,
   onRefresh,
   openRequest,
   compact = false,
@@ -250,6 +252,7 @@ export function GitWorkflowControls({
   ): Promise<GitMergeResult | null> => run(name, requestKey, action, setOperation);
 
   const controlsDisabled = disabled || busy !== undefined;
+  const treeChangesDisabled = controlsDisabled || workspaceMutationDisabled;
   const upstream = remote?.upstream;
   const localSession = status.worktreeId === null;
   const canCreateBranch = onCreateBranch && (localSession || status.branch === null);
@@ -287,7 +290,7 @@ export function GitWorkflowControls({
     ...branches.map((branch) => ({
       key: `branch-${branch}`,
       label: branch === status.branch ? `✓ ${branch}` : branch,
-      disabled: controlsDisabled || status.dirty || branch === status.branch,
+      disabled: treeChangesDisabled || status.dirty || branch === status.branch,
       onClick: () => {
         void run(
           "switch-branch",
@@ -301,7 +304,7 @@ export function GitWorkflowControls({
           {
             key: "create-branch",
             label: localSession ? "创建分支..." : "在此创建分支...",
-            disabled: controlsDisabled || (localSession && status.dirty),
+            disabled: treeChangesDisabled || (localSession && status.dirty),
             onClick: () => onCreateBranch?.(),
           },
         ]
@@ -381,7 +384,7 @@ export function GitWorkflowControls({
                 "fetch", `fetch:${remote?.upstream?.remote ?? ""}:${status.head}`,
                 (id) => fetch(sessionId, id),
               )}>获取</Button>
-            <Button size="small" disabled={controlsDisabled || status.branch === null}
+            <Button size="small" disabled={treeChangesDisabled || status.branch === null}
               loading={busy === "pull"}
               onClick={() => void runRemote(
                 "pull", `pull:${remote?.upstream?.remote ?? ""}:${remote?.upstream?.branch ?? ""}:${status.head}`,
@@ -401,19 +404,19 @@ export function GitWorkflowControls({
               <select
                 aria-label="Git target"
                 value={target}
-                disabled={controlsDisabled || status.branch === null || targets.length === 0}
+                disabled={treeChangesDisabled || status.branch === null || targets.length === 0}
                 onChange={(event) => setTarget(event.target.value)}
               >
                 {targets.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
               </select>
-              <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
+              <Button size="small" disabled={treeChangesDisabled || !target || status.branch === null}
                 loading={busy === "merge"}
                 onClick={() => void runOperation(
                   "merge", `merge:${target}:${status.head}`, (id) => merge(sessionId, target, id),
                 )}>
                 Merge
               </Button>
-              <Button size="small" disabled={controlsDisabled || !target || status.branch === null}
+              <Button size="small" disabled={treeChangesDisabled || !target || status.branch === null}
                 loading={busy === "rebase"}
                 onClick={() => void runOperation(
                   "rebase", `rebase:${target}:${status.head}`, (id) => rebase(sessionId, target, id),
@@ -428,7 +431,7 @@ export function GitWorkflowControls({
               <strong>{operation.operationState === "merge" ? "Merge conflicts" : "Rebase conflicts"}</strong>
               <ul>{operation.conflictFiles.map((path) => <li key={path}>{path}</li>)}</ul>
               {operation.operationState === "merge" ? (
-                <Button size="small" variant="danger" disabled={controlsDisabled}
+                <Button size="small" variant="danger" disabled={treeChangesDisabled}
                   onClick={() => void runOperation(
                     "merge-abort", "merge-abort", (id) => mergeAbort(sessionId, id),
                   )}>
@@ -436,13 +439,13 @@ export function GitWorkflowControls({
                 </Button>
               ) : (
                 <div>
-                  <Button size="small" variant="primary" disabled={controlsDisabled}
+                  <Button size="small" variant="primary" disabled={treeChangesDisabled}
                     onClick={() => void runOperation(
                       "rebase-continue", "rebase-continue", (id) => rebaseContinue(sessionId, id),
                     )}>
                     Continue Rebase
                   </Button>
-                  <Button size="small" variant="danger" disabled={controlsDisabled}
+                  <Button size="small" variant="danger" disabled={treeChangesDisabled}
                     onClick={() => void runOperation(
                       "rebase-abort", "rebase-abort", (id) => rebaseAbort(sessionId, id),
                     )}>
@@ -522,7 +525,7 @@ export function GitWorkflowControls({
             <select
               aria-label="当前本地分支"
               value={status.branch ?? ""}
-              disabled={controlsDisabled || status.dirty}
+              disabled={treeChangesDisabled || status.dirty}
               onChange={(event) => {
                 const branch = event.target.value;
                 if (branch && branch !== status.branch) {
@@ -552,7 +555,7 @@ export function GitWorkflowControls({
         <Button
           size="small"
           variant={localSession ? "secondary" : "primary"}
-          disabled={controlsDisabled || (localSession && status.dirty)}
+          disabled={treeChangesDisabled || (localSession && status.dirty)}
           onClick={onCreateBranch}
         >
           {localSession ? "创建分支" : "在此创建分支"}

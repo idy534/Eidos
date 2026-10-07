@@ -11,6 +11,7 @@ from eidos_runtime.domain.planning import (
 )
 from eidos_runtime.persistence.planning import PlanningRepository, PlanWriteRejected
 from eidos_runtime.runtime.errors import tool_result
+from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.tools.contracts import StrictToolModel, result_model
 from eidos_runtime.tools.registry import AdapterToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec
 
@@ -53,18 +54,47 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 return HandlerOutcome(tool_result(call.name, 'success', 'user_input_received',
                     'The user responded.', {'response': saved.response.to_wire_dict()}, data_model=InputResultData), 'completed', 'completed')
             if saved is None:
-                if context.shell_process_manager and context.shell_process_manager.has_running():
-                    raise ValueError('finish_running_shell_before_requesting_input')
-                repository.ask(run_id, str(item['id']), RequestUserInput.model_validate(call.arguments))
+                keep_worker = context.inline_control_wait or bool(
+                    context.shell_process_manager and context.shell_process_manager.has_running()
+                )
+                repository.ask(run_id, str(item['id']), RequestUserInput.model_validate(call.arguments), suspend=not keep_worker)
                 context.events.deliver_pending()
+            if context.store.read_run(run_id)['status'] == 'running':
+                suspend_deadline = getattr(cancel, 'suspend_deadline', None)
+                resume_deadline = getattr(cancel, 'resume_deadline', None)
+                if callable(suspend_deadline):
+                    suspend_deadline()
+                try:
+                    while True:
+                        if cancel.is_set():
+                            raise RuntimeCancelled
+                        saved = repository.for_item(str(item['id']))
+                        if saved is not None and saved.response is not None:
+                            return HandlerOutcome(tool_result(call.name, 'success', 'user_input_received',
+                                'The user responded.', {'response': saved.response.to_wire_dict()}, data_model=InputResultData), 'completed', 'completed')
+                        cancel.wait(0.05)
+                finally:
+                    if callable(resume_deadline):
+                        resume_deadline()
             raise PlanningSuspended()
         request = WritePlan.model_validate(call.arguments)
         if request.ready_for_review:
             from eidos_runtime.persistence.collaboration import CollaborationRepository
-            if CollaborationRepository(context.store.database).child_runs(run_id):
-                return HandlerOutcome(tool_result(call.name, 'error', 'agents_still_active',
-                    'Wait for or stop child tasks before submitting the final plan.',
-                    data_model=PlanResultData), 'failed', 'failed')
+            from eidos_runtime.domain.collaboration import WaitAgents
+            if context.collaboration is not None:
+                suspend_deadline = getattr(cancel, 'suspend_deadline', None)
+                resume_deadline = getattr(cancel, 'resume_deadline', None)
+                if callable(suspend_deadline):
+                    suspend_deadline()
+                try:
+                    while context.collaboration.repository.child_runs(run_id):
+                        context.collaboration.wait(run_id, None, WaitAgents(timeout_ms=300000), cancel=cancel, keep_worker=True)
+                finally:
+                    if callable(resume_deadline):
+                        resume_deadline()
+            elif CollaborationRepository(context.store.database).child_runs(run_id):
+                return HandlerOutcome(tool_result(call.name, 'error', 'agent_runtime_unavailable',
+                    'Child tasks are active but their runtime is unavailable.', data_model=PlanResultData), 'failed', 'failed')
         try:
             repository.validate_write(run_id, request)
             context.controller.authorize_workspace_side_effect(item=item, prepared=PreparedToolExecution(

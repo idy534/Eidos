@@ -381,9 +381,9 @@ class SkillCatalog:
             state.qualified_id for state in self.plugins.store.skill_states()
             if not state.enabled or state.removed
         ]
-        snapshot["skillCatalogHash"] = _catalog_hash(tuple(
-            _catalog_entry(source) for source in self._sources(snapshot)
-        ))
+        entries = tuple(_catalog_entry(source) for source in self._sources(snapshot))
+        snapshot["skillCatalogHash"] = _catalog_hash(entries)
+        snapshot["skillCatalogIds"] = sorted(entry.qualified_id for entry in entries)
         return snapshot
 
     def read_skill(

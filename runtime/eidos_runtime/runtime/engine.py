@@ -173,9 +173,7 @@ class RuntimeEngine:
             and not self.store.run_is_projectless(run_id)
         ):
             workspace = self.store.workspace_for_run(run_id)
-            repository_state = self.repository_runtime.ensure_ready(
-                workspace.path, cancel=cancel
-            )
+            repository_state = self.repository_runtime.available_for_run(workspace.path)
             capture_for_run = getattr(repository_state, "capture_for_run")
             repository_capture = capture_for_run()
             repository_snapshot = repository_capture.snapshot
@@ -424,6 +422,7 @@ class RuntimeEngine:
                 concurrency=self.tool_concurrency_gate,
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
+                collaboration=self.collaboration,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None
@@ -658,6 +657,7 @@ class RuntimeEngine:
                 skill_access=resources.skill_access,
                 runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
+                collaboration=self.collaboration,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None
@@ -982,20 +982,30 @@ class RuntimeEngine:
                 step_id=step.step_id, tool_count=len(validation.tool_calls),
                 reason=outcome.status,
             )
-            if len(validation.tool_calls) == 1 and validation.tool_calls[0].name == "write_plan":
+            if any(call.name == "write_plan" and call.arguments.get("readyForReview") is True for call in validation.tool_calls):
                 plans = PlanningRepository(self.store.database).list_plans(run.session_id)
                 ready = next((p for p in plans if p.run_id == run.run_id and p.status == "review"), None)
-                if ready is not None and outcome.status == "completed" and not outcome.error_fingerprints and validation.tool_calls[0].arguments.get("readyForReview") is True:
+                if ready is not None and outcome.status == "completed" and not outcome.error_fingerprints:
                     if self.collaboration and self.collaboration.repository.state(run.run_id) != agent_baseline:
                         self.store.complete_current_step(run.run_id, "completed")
                         run = run.model_copy(update={"model_context": ()})
                         continue
-                    shell_stopped = resources.shell_process_manager.has_running()
-                    resources.shell_process_manager.cleanup()
+                    shell_stopped = resources.shell_process_manager.cleanup(close=False)
                     self.store.complete_current_step(run.run_id, "completed")
                     assistant = self.store.create_assistant_item(run.run_id, step.step_index)
                     self.store.append_item_content(str(assistant["id"]), f"计划已保存：{ready.title}。请审阅计划，确认或修改后再执行。")
-                    mutation = self.store.complete_assistant_and_run_committed(str(assistant["id"]), run.run_id, shell_stopped=shell_stopped)
+                    try:
+                        mutation = self.store.complete_assistant_and_run_committed(
+                            str(assistant["id"]), run.run_id, shell_stopped=shell_stopped,
+                            expected_collaboration=agent_baseline,
+                        )
+                    except RunCompletionDeferred as deferred:
+                        if deferred.reason == "cancel_requested":
+                            raise RuntimeCancelled from deferred
+                        mutation = self.store.complete_assistant_item_committed(str(assistant["id"]))
+                        self.events.publish(mutation, item=mutation.value)
+                        run = run.model_copy(update={"model_context": ()})
+                        continue
                     self.events.publish(mutation, item=mutation.value[0], run=mutation.value[1])
                     return
             self._pause_at(run.run_id, SafePoint.AFTER_TOOL, cancel)
@@ -1131,11 +1141,10 @@ class RuntimeEngine:
                 )
                 return SampleBoundaryAction.REBUILD_CONTEXT
             assert sampled.assistant_item is not None
-            shell_stopped = resources.shell_process_manager.has_running()
             # Completion can still be deferred by input or child state in the
             # final transaction. Settle processes but keep the owner reusable;
             # RunResources closes admission when this Worker actually exits.
-            resources.shell_process_manager.cleanup(close=False)
+            shell_stopped = resources.shell_process_manager.cleanup(close=False)
             self.store.complete_current_step(run_id, "completed")
             try:
                 mutation = self.store.complete_assistant_and_run_committed(

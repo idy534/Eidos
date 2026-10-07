@@ -1542,12 +1542,12 @@ export function AppShell({ runtime }: AppShellProps) {
                         reviewFeedbackDisabled={Boolean(activeRun) || runState.isSubmitting}
                         workflowDisabled={
                           isDraft
-                          || Boolean(activeRun)
                           || runState.isSubmitting
                           || handoffBusy
                           || sessionState.pending.branchSessionId === currentSnapshot.session.id
                           || sessionState.pending.creatingBranchSessionId === currentSnapshot.session.id
                         }
+                        workspaceMutationDisabled={Boolean(activeRun)}
                         onCreateBranch={
                           !isDraft && (sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null))
                             ? () => openCreateBranch(currentSnapshot.session.id, sessionIsLocal ? "local" : "worktree")

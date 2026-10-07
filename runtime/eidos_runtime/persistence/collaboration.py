@@ -78,7 +78,7 @@ class CollaborationRepository:
         child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (run['session_id'],)).fetchone()
         parent_id = child['parent_run_id'] if child else run_id
         rows = connection.execute('SELECT * FROM agent_delegations WHERE parent_run_id=? ORDER BY created_at,id LIMIT ?', (parent_id, MAX_AGENTS)).fetchall()
-        messages = connection.execute('SELECT id,sender_session_id,recipient_session_id,content,created_at FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence LIMIT 16', (parent_id, run['session_id'])).fetchall()
+        messages = connection.execute('SELECT id,sender_session_id,recipient_session_id,content,created_at FROM (SELECT id,sender_session_id,recipient_session_id,content,created_at,sequence FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence DESC LIMIT 16) ORDER BY sequence', (parent_id, run['session_id'])).fetchall()
         return CollaborationState(parent_run_id=parent_id if rows else None,
             agents=[self._summary(connection, row) for row in rows if child is None or row["id"] == child["id"]], messages=[AgentMessage(**dict(row)) for row in messages])
 
@@ -130,40 +130,46 @@ class CollaborationRepository:
 
     def send(self, run_id: str, item_id: str, agent_id: str, message: str) -> None:
         with self.database.transaction() as connection:
-            parent = self._active(connection, run_id)
-            child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (parent['session_id'],)).fetchone()
-            if child is not None:
-                if agent_id != 'parent':
-                    raise CollaborationRejected('child_can_only_message_parent')
-                owner = connection.execute('SELECT * FROM runs WHERE id=?', (child['parent_run_id'],)).fetchone()
-                if owner['status'] not in ACTIVE_STATUSES or owner['cancel_requested_at'] is not None:
-                    raise CollaborationRejected('parent_run_not_active')
-                recipient = owner['session_id']
-                owner_id = owner['id']
-            else:
-                recipient = self._target(connection, run_id, agent_id)['child_session_id']
-                owner_id = run_id
-            if connection.execute('SELECT 1 FROM agent_messages WHERE id=?', (item_id,)).fetchone():
-                return
-            if not message.strip():
-                raise CollaborationRejected('empty_agent_message')
-            if connection.execute('SELECT COUNT(*) FROM agent_messages WHERE recipient_session_id=?', (recipient,)).fetchone()[0] >= 16:
-                raise CollaborationRejected('agent_mailbox_limit')
-            connection.execute('INSERT INTO agent_messages (id,parent_run_id,sender_session_id,recipient_session_id,content,created_at) VALUES (?,?,?,?,?,?)',
-                (item_id, owner_id, parent['session_id'], recipient, message, now_ms()))
-            self._event(connection, owner_id)
+            self._send(connection, run_id, item_id, agent_id, message)
+
+    def _send(self, connection: sqlite3.Connection, run_id: str, item_id: str, agent_id: str, message: str) -> None:
+        parent = self._active(connection, run_id)
+        child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (parent['session_id'],)).fetchone()
+        if child is not None:
+            if agent_id != 'parent':
+                raise CollaborationRejected('child_can_only_message_parent')
+            owner = connection.execute('SELECT * FROM runs WHERE id=?', (child['parent_run_id'],)).fetchone()
+            if owner['status'] not in ACTIVE_STATUSES or owner['cancel_requested_at'] is not None:
+                raise CollaborationRejected('parent_run_not_active')
+            recipient = owner['session_id']
+            owner_id = owner['id']
+        else:
+            recipient = self._target(connection, run_id, agent_id)['child_session_id']
+            owner_id = run_id
+        if connection.execute('SELECT 1 FROM agent_messages WHERE id=?', (item_id,)).fetchone():
+            return
+        if not message.strip():
+            raise CollaborationRejected('empty_agent_message')
+        connection.execute('INSERT INTO agent_messages (id,parent_run_id,sender_session_id,recipient_session_id,content,created_at) VALUES (?,?,?,?,?,?)',
+            (item_id, owner_id, parent['session_id'], recipient, message, now_ms()))
+        self._event(connection, owner_id)
 
     def followup(self, run_id: str, item_id: str, agent_id: str, message: str) -> AgentSummary:
         with self.database.transaction() as connection:
             parent = self._active(connection, run_id)
             target = self._target(connection, run_id, agent_id)
+            if connection.execute('SELECT 1 FROM agent_messages WHERE id=?', (item_id,)).fetchone():
+                return self._summary(connection, target)
             # Deterministic identity makes a repeated tool attempt return the
             # same Run instead of starting the assignment twice.
             child_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'eidos:agent-followup:' + item_id))
             if connection.execute('SELECT 1 FROM runs WHERE id=?', (child_id,)).fetchone() is None:
                 current = connection.execute('SELECT status FROM runs WHERE id=?', (target['child_run_id'],)).fetchone()
                 if current['status'] in ACTIVE_STATUSES:
-                    raise CollaborationRejected('agent_busy_use_send_message')
+                    self._send(connection, run_id, item_id, agent_id, message)
+                    return self._summary(connection, target)
+                if target['role'] == 'worker' and parent['reconciliation_required']:
+                    raise CollaborationRejected('reconciliation_required')
                 self._create_run(connection, parent, target['child_session_id'], child_id, message)
                 connection.execute('UPDATE agent_delegations SET child_run_id=?,task=? WHERE id=?', (child_id, message, agent_id))
                 self._event(connection, run_id)

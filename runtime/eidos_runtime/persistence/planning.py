@@ -264,14 +264,17 @@ class PlanningRepository:
             row = self.database.connection().execute("SELECT q.* FROM user_input_requests q JOIN tool_calls t ON t.item_id=q.item_id WHERE q.run_id=? AND t.status='running' ORDER BY q.created_at DESC LIMIT 1", (run_id,)).fetchone()
             return self._request(row) if row else None
 
-    def ask(self, run_id: str, item_id: str, request: RequestUserInput) -> UserInputRequest:
+    def ask(self, run_id: str, item_id: str, request: RequestUserInput, *, suspend: bool = True) -> UserInputRequest:
         with self.database.transaction() as connection:
             run = connection.execute('SELECT * FROM runs WHERE id=?', (run_id,)).fetchone()
             if run is None or run['work_mode'] != 'plan' or run['status'] != 'running' or run['cancel_requested_at'] is not None:
                 raise ValueError('plan_run_required')
             connection.execute("INSERT INTO user_input_requests VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?)",
                 (str(uuid.uuid4()), run['session_id'], run_id, item_id, request.model_dump_json(), now_ms()))
-            transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.WAITING_INPUT, 'user_input_requested')
+            if suspend:
+                transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.WAITING_INPUT, 'user_input_requested')
+            else:
+                self._event(connection, run['session_id'], run_id, 'user_input_requested')
         result = self.for_item(item_id)
         if result is None:
             raise ValueError('user_input_not_found')
@@ -288,7 +291,7 @@ class PlanningRepository:
                     return request
                 raise ValueError('user_input_already_resolved')
             run = connection.execute('SELECT * FROM runs WHERE id=?', (request.run_id,)).fetchone()
-            if run['status'] != 'waiting_input' or run['cancel_requested_at'] is not None:
+            if run['status'] not in {'waiting_input', 'running'} or run['cancel_requested_at'] is not None:
                 raise ValueError('user_input_no_longer_active')
             answers = {answer.question_id: answer for answer in response.answers}
             if len(answers) != len(response.answers):
@@ -307,7 +310,10 @@ class PlanningRepository:
                     if not answer.option_ids and not answer.text.strip():
                         raise ValueError('empty_answer')
             connection.execute('UPDATE user_input_requests SET status=?, response_json=? WHERE id=?', (response.status, response.model_dump_json(), request_id))
-            transition_run(connection, request.run_id, frozenset({RunStatus.WAITING_INPUT}), RunStatus.QUEUED, 'user_input_answered')
+            if run['status'] == 'waiting_input':
+                transition_run(connection, request.run_id, frozenset({RunStatus.WAITING_INPUT}), RunStatus.QUEUED, 'user_input_answered')
+            else:
+                self._event(connection, run['session_id'], request.run_id, 'user_input_answered')
             return request.model_copy(update={'status': response.status, 'response': response})
 
     @staticmethod

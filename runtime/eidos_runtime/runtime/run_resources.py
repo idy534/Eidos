@@ -235,7 +235,7 @@ class RunResources:
         base = ToolRegistry.build(
             builtin_entries=(
                 *self.tool_executor.registry.entries,
-                read_tool_output_entry(self.store, self.run_id),
+                read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
