@@ -314,18 +314,18 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         )
 
     def test_engine_final_text_commits_interrupted_run_without_resampling(self) -> None:
-        workspace_mutation = self.store.create_tool_item(
-            self.run["id"], 0, 0, "workspace-mutation", "apply_patch", "{}"
+        mutation = self.store.create_tool_item(
+            self.run["id"], 0, 0, "shell-mutation", "run_shell", "{}"
         )
         self.store.begin_durable_intent(
-            workspace_mutation["id"], preconditions={}, approval_required=False
+            mutation["id"], preconditions={}, approval_required=False
         )
         self.store.complete_tool_item(
-            workspace_mutation["id"],
+            mutation["id"],
             json.dumps({
                 "outcome": "error",
                 "code": "outcome_unknown",
-                "summary": "Workspace mutation outcome is unknown",
+                "summary": "Shell mutation outcome is unknown",
                 "data": {},
                 "sideEffectsMayExist": True,
                 "reconciliationRequired": True,
