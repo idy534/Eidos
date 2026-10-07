@@ -61,6 +61,7 @@ from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
+    _uses_local_reconciliation_policy,
     HandlerOutcome,
     PreparedToolExecution,
     ToolExecutionController,
@@ -392,8 +393,9 @@ class FileChangeToolHandler:
             return None
 
         error = reconciliation_error()
-        if error is not None and self.dependencies.refresh_reconciliation is not None:
-            self.dependencies.refresh_reconciliation(run_id=run_id, cancel=cancel)
+        refresh = getattr(self.dependencies, 'refresh_reconciliation', None)
+        if error is not None and refresh is not None:
+            refresh(run_id=run_id, cancel=cancel)
             error = reconciliation_error()
         if error is not None:
             return VerifiedToolExecutionResult(result=error)
@@ -1884,7 +1886,6 @@ class ToolCallRuntime:
                 # Reads, coordination and unrelated file targets do not wait
                 # for a whole-Workspace recovery scan. File handlers recover
                 # only when their prepared targets actually conflict.
-                from eidos_runtime.runtime.tool_execution import _uses_local_reconciliation_policy
                 if not _uses_local_reconciliation_policy(plan, effective_call):
                     self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
             assert (

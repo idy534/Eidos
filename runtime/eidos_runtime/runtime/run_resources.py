@@ -251,7 +251,7 @@ class RunResources:
             base = ToolRegistry(tuple(
                 entry for entry in base.entries
                 if (entry.spec.side_effect == "none" and entry.provenance.kind == "builtin"
-                    and entry.spec.name not in {"request_permissions", "request_user_input"})
+                    and entry.spec.name not in {"request_permissions", "request_user_input", "declare_outputs"})
                 or (entry.spec.name == "send_message" and entry.provenance.source_id == "eidos.collaboration")
             ))
         elif self.child_role == "worker":

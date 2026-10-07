@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Item, Run, RuntimeNotification, SessionSnapshot } from "./contracts.js";
 import {
   applyNotification,
+  findActiveRun,
   groupSessionsByProject,
   SnapshotReadCoordinator,
   taskStatusFromRun,
@@ -504,4 +505,14 @@ test("waiting child agents has a distinct non-spinning session status", () => {
   assert.deepEqual(taskStatusPresentation("in_progress", false, "waiting_agents"), {
     label: "等待子任务", tone: "progress", spinning: false,
   });
+});
+
+
+test("cancellation targets the executing Run while follow-ups stay queued", () => {
+  const running = { ...run("running"), id: "executing" };
+  const first = { ...run("queued"), id: "first", createdAt: 2 };
+  const second = { ...run("queued"), id: "second", createdAt: 3 };
+  assert.equal(findActiveRun([running, first, second])?.id, "executing");
+  assert.equal(findActiveRun([first, second])?.id, "first");
+  assert.equal(findActiveRun([{ ...running, status: "waiting_agents" }, first])?.id, "executing");
 });

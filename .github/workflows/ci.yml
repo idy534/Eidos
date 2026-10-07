@@ -33,12 +33,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup
       - run: pnpm lint:python
       - if: ${{ !cancelled() }}
         run: pnpm deps:python
       - if: ${{ !cancelled() }}
-        run: git diff --check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$BASE_SHA" && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
+            git diff --check "$BASE_SHA" HEAD
+          else
+            git show --format= --check HEAD
+          fi
 
   security:
     runs-on: ubuntu-latest
@@ -110,18 +119,7 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          python3 - <<'PYTHON'
-          import json, os
-          checks = json.loads(os.environ['RESULTS'])
-          failed = [name for name, check in checks.items() if check['result'] not in {'success', 'skipped'}]
-          if checks['changes']['result'] != 'success':
-              raise SystemExit('Change detection did not succeed')
-          for name in ('runtime', 'desktop', 'native'):
-              if checks['changes']['outputs'].get(name) == 'true' and checks[name]['result'] != 'success':
-                  failed.append(name)
-          if failed:
-              raise SystemExit('Failed checks: ' + ', '.join(sorted(set(failed))))
-          PYTHON
+        run: node scripts/ci-result.mjs

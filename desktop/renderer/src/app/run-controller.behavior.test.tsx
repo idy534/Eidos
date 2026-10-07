@@ -71,6 +71,19 @@ describe("useRunController real behavior", () => {
     return api;
   }
 
+  it.each(["running", "waiting_approval", "waiting_agents"] as const)("queues a follow-up while %s with the next Run preferences", async (status) => {
+    const queued = { ...mockRunB, sessionId: "session-A", status: "queued" } as Run;
+    const api = setupMockRuntime({ startRun: vi.fn().mockResolvedValue(queued) });
+    const snapshot = { ...mockSnapshotA, runs: [{ ...mockRunA, status }] };
+    const { result } = renderHook(() => useRunController(snapshot, true));
+    act(() => result.current[1].setInput("Follow-up"));
+    await act(async () => { await result.current[1].submitInput({ snapshot,
+      selectedModelId: "deepseek-v4-flash", isStorageReady: true, planning: { workMode: "plan" }, approvalMode: "auto_review" }); });
+    expect(api.startRun).toHaveBeenCalledWith("session-A", "Follow-up", "deepseek-v4-flash", undefined, "auto_review", [], { workMode: "plan" });
+    expect(result.current[0].input).toBe("");
+    expect(result.current[0].activeRun?.id).toBe("run-A");
+  });
+
   describe("Atomic submission & Locking", () => {
     it("Two synchronous submitInput calls invoke startRun once", async () => {
       const startRunSpy = vi.fn().mockImplementation(

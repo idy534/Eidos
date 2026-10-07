@@ -259,6 +259,23 @@ class SkillCatalog:
             # Immutable metadata survives removal of a never-activated root.
             # Actual resources are still checked against this exact entry when
             # leased and activated, including after Runtime restart.
+            if catalog.catalog_hash not in self._pinned_sources:
+                sources: list[_SkillSource] = []
+                content_by_id: dict[str, str] = {}
+                for entry in catalog.entries:
+                    try:
+                        _, source = self._resolve(catalog, entry.qualified_id)
+                        content = _read_text(source.root / 'SKILL.md', MAX_SKILL_BYTES)
+                        if hashlib.sha256(content.encode('utf-8')).hexdigest() != entry.content_hash:
+                            continue
+                        sources.append(source)
+                        content_by_id[entry.qualified_id] = _scan(content)
+                    except SkillReadError:
+                        # Removal or version changes of an unused resource do
+                        # not prevent unrelated work from restoring its catalog.
+                        continue
+                self._pinned_sources[catalog.catalog_hash] = tuple(sources)
+                self._pinned_skill_content[catalog.catalog_hash] = content_by_id
             return catalog
         sources = self._sources(snapshot)
         entries = tuple(_catalog_entry(source) for source in sources)

@@ -12,6 +12,7 @@ from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.schema import REPOSITORY_SCHEMA_SQL
 from eidos_runtime.db.schema import (
     SCHEMA_VERSION,
+    V16_SCHEMA_VERSION,
     V15_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
     V5_TO_V6_MIGRATION_SQL,
@@ -614,12 +615,13 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V13_SCHEMA_VERSION,
         V14_SCHEMA_VERSION,
         V15_SCHEMA_VERSION,
+        V16_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
         with state.lock:
             connection = state.connection()
-            if revision != V15_SCHEMA_VERSION:
+            if revision < V15_SCHEMA_VERSION:
                 migration = ""
                 if revision < V8_SCHEMA_VERSION:
                     migration += V7_TO_V8_MIGRATION_SQL
@@ -649,7 +651,10 @@ def _migrate_state_schema(state: StateDatabase) -> None:
                 from eidos_runtime.db.planning_migration import migrate_planning
                 migrate_planning(connection, PLANNING_SCHEMA_SQL)
             from eidos_runtime.db.collaboration_migration import migrate_collaboration
-            migrate_collaboration(connection)
+            if revision < V16_SCHEMA_VERSION:
+                migrate_collaboration(connection)
+            from eidos_runtime.db.gate_refinements_migration import migrate_gate_refinements
+            migrate_gate_refinements(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

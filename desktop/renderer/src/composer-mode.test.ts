@@ -85,12 +85,11 @@ test("returns undefined when only terminal runs exist", () => {
   assert.equal(findActiveRun(runs), undefined);
 });
 
-test("returns the most recent active run", () => {
+test("keeps the executing run selected when a follow-up is queued", () => {
   const first = run("running", { id: "run-1", updatedAt: 1 });
   const second = run("queued", { id: "run-2", updatedAt: 2 });
-  // findActiveRun uses array order (last wins), not updatedAt
   const result = findActiveRun([first, second]);
-  assert.equal(result?.id, "run-2");
+  assert.equal(result?.id, "run-1");
 });
 
 test("active run is preferrred over a terminal run", () => {

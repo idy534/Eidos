@@ -234,15 +234,21 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(submitBtn).toBeDisabled();
   });
 
-  it("waiting_approval and finalizing retain editing and disable execution", () => {
-    const { rerender } = render(<Composer {...defaultProps} composerMode="waiting_approval" input="Task text" />);
-
+  it.each(["running", "waiting_approval", "finalizing"] as const)("%s permits queueing and retains cancellation", (status) => {
+    const onSubmit = vi.fn();
+    const onCancel = vi.fn();
+    const activeRun: Run = { id: "active", sessionId: "s", modelId: "deepseek-v4-flash", status,
+      modelStepCount: 1, createdAt: 1, updatedAt: 1, allowedActions: ["cancel"] };
+    render(<Composer {...defaultProps} composerMode={status} activeRun={activeRun}
+      input="Next task" onSubmit={onSubmit} onCancel={onCancel} />);
     expect(screen.getByRole("textbox")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
-
-    rerender(<Composer {...defaultProps} composerMode="finalizing" input="Task text" />);
-    expect(screen.getByRole("textbox")).toBeEnabled();
-    expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
+    const submit = screen.getByRole("button", { name: "排队" });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "取消 Run" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeEnabled();
   });
 
   it("shows the approval mode selector and reports the next Run mode", () => {
@@ -281,7 +287,7 @@ describe("Composer DOM interaction & state behavior", () => {
         onApprovalModeChange={onApprovalModeChange}
       />,
     );
-    expect(screen.getByRole("button", { name: "审批模式：替我审批" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "审批模式：替我审批" })).toBeEnabled();
   });
 
   it("starting mode presents starting loading state", () => {
@@ -321,7 +327,7 @@ describe("Composer DOM interaction & state behavior", () => {
     );
 
     expect(screen.getByRole("button", { name: "取消 Run" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeEnabled();
 
     const activeRunDisallowed: Run = {
       ...activeRunAllowed,

@@ -185,10 +185,11 @@ class SkillManagementTests(unittest.TestCase):
         self.assertFalse((self.data / 'skills' / 'personal').exists())
         self.assertEqual(self.store.read_run(run['id'])['status'], 'running')
 
-    def test_user_remove_waits_for_a_frozen_catalog_that_can_still_activate_it(self) -> None:
+    def test_user_remove_waits_for_an_actual_lease(self) -> None:
         snapshot = self.manager.catalog.extension_snapshot()
         session = self.store.create_session(str(self.workspace))
-        run, _ = self.store.create_run(session['id'], 'May use the skill', extension_snapshot=snapshot)
+        run, _ = self.store.create_run(session['id'], 'Use the skill', extension_snapshot=snapshot)
+        self.store.acquire_skill_lease(run['id'], 'user:personal')
         self.assertTrue(self.manager.remove('user:personal').cleanup_pending)
         self.store.fail_run(run['id'], 'fixture_done')
         self.manager.cleanup()

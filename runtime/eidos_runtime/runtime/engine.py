@@ -886,6 +886,7 @@ class RuntimeEngine:
             sample_action = self._settle_sample_boundary(
                 run.run_id, decision, sampled, validation, built, resources,
                 finalizer, cancel, agent_baseline=agent_baseline,
+                completion_recovery=tools._refresh_reconciliation,
             )
             if sample_action == SampleBoundaryAction.REBUILD_CONTEXT:
                 run = run.model_copy(update={"model_context": ()})
@@ -1091,6 +1092,7 @@ class RuntimeEngine:
         finalizer: RunFinalizer,
         cancel: threading.Event,
         agent_baseline: CollaborationState | None = None,
+        completion_recovery: Callable[..., None] | None = None,
     ) -> SampleBoundaryAction:
         """Commit the sampling boundary before allowing another step or a tool."""
         if decision.action == LoopAction.CANCEL:
@@ -1147,6 +1149,8 @@ class RuntimeEngine:
             # final transaction. Settle processes but keep the owner reusable;
             # RunResources closes admission when this Worker actually exits.
             shell_stopped = resources.shell_process_manager.cleanup(close=False)
+            if completion_recovery is not None:
+                completion_recovery(run_id=run_id, cancel=cancel)
             self.store.complete_current_step(run_id, "completed")
             try:
                 mutation = self.store.complete_assistant_and_run_committed(

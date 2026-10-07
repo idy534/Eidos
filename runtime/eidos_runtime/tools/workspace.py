@@ -1620,7 +1620,7 @@ class ToolExecutor:
             return {
                 **_success(
                     tool_name,
-                    "Search is still running",
+                    "Search is queued" if session.thread is None else "Search is still running",
                     {
                         "matches": [],
                         "scannedBytes": 0,

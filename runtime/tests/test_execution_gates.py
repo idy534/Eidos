@@ -290,25 +290,25 @@ def test_no_shell_wait_still_releases_worker_via_durable_suspension(execution):
     assert e.store.read_run(e.run["id"])["status"] == "waiting_agents"
 
 
-def test_workspace_recovery_is_automatic_and_needs_no_model_read(execution):
+def test_coordination_does_not_wait_for_workspace_recovery(execution):
     e = execution
     _uncertain(e)
     calls = []
     e.runtime.workspace_refresh = lambda _cancel: calls.append("refresh") or SimpleNamespace(complete=True)
-    # A control-only batch recovers the verifiable workspace intent up front.
+    # Coordination does not scan or falsely clear an unrelated uncertain effect.
     result = _execute(e, (ModelToolCall("list", "list_agents", {}),), threading.Event())
     assert not result.error_fingerprints
-    assert calls == ["refresh"]
-    assert not e.store.side_effects_blocked(e.run["id"])
+    assert calls == []
+    assert e.store.side_effects_blocked(e.run["id"])
 
 
-def test_incomplete_recovery_does_not_repeat_full_scan_within_unchanged_step(execution):
+def test_repeated_coordination_does_not_scan_unresolved_workspace(execution):
     e = execution
     _uncertain(e)
     calls = []
     e.runtime.workspace_refresh = lambda _cancel: calls.append("refresh") or SimpleNamespace(complete=False)
     _execute(e, tuple(ModelToolCall(f"list-{i}", "list_agents", {}) for i in range(3)), threading.Event())
-    assert calls == ["refresh"]
+    assert calls == []
     assert e.store.side_effects_blocked(e.run["id"])
 
 
@@ -362,3 +362,24 @@ def test_file_barrier_is_rechecked_inside_commit_window(execution):
     ), threading.Event(), runtime, lambda: calls.append("write") or {"outcome": "success"})
     assert result.result["code"] == "reconciliation_required"
     assert calls == []
+
+
+@pytest.mark.parametrize('origin,complete,status,scans', [
+    ('apply_patch', True, 'succeeded', 1),
+    ('apply_patch', False, 'interrupted', 1),
+    ('run_shell', True, 'interrupted', 0),
+])
+def test_completion_recovers_only_verifiable_workspace_effects(execution, origin, complete, status, scans):
+    e = execution
+    _uncertain(e, origin)
+    observed = []
+    e.runtime.workspace_refresh = lambda _cancel: observed.append('scan') or SimpleNamespace(complete=complete)
+    step = _step(e)
+    item = e.store.create_assistant_item(e.run['id'], step.step_index)
+    engine = RuntimeEngine(e.store, None, lambda _event: None)
+    action = engine._settle_sample_boundary(e.run['id'], LoopDecision(action=LoopAction.COMPLETE),
+        SimpleNamespace(assistant_item=item), SimpleNamespace(status='no_tools'), None, e.resources, None,
+        threading.Event(), completion_recovery=e.runtime._refresh_reconciliation)
+    assert action is SampleBoundaryAction.RETURN
+    assert e.store.read_run(e.run['id'])['status'] == status
+    assert len(observed) == scans

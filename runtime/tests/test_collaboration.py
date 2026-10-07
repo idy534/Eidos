@@ -13,7 +13,6 @@ from eidos_runtime.db.schema import SCHEMA_VERSION, V15_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.collaboration import (
     AgentSuspended,
-    READ_ONLY_TOOLS,
     SpawnAgent,
     WaitAgents,
     CollaborationRejected,
@@ -75,7 +74,7 @@ def test_v15_migration_creates_collaboration_tables_and_rolls_back_on_fk_failure
     clean = SessionStore(tmp_path / "clean-data")
     clean.initialize()
     try:
-        assert SCHEMA_VERSION == 16
+        assert SCHEMA_VERSION == 17
         assert clean.connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_waits'"
         ).fetchone() is not None
@@ -210,11 +209,13 @@ def test_child_resources_expose_only_read_tools_and_parent_message_channel(
             child.run_id,
             store.read_run(child.run_id)["extensionSnapshot"],
             collaboration=application,
+            supports_images=True,
         ) as resources:
             names = {entry.spec.name for entry in resources.registry.entries}
 
         assert child.role == "explorer"
-        assert names == READ_ONLY_TOOLS | {"send_message"}
+        assert {"read_file", "list_files", "search_text", "view_image", "skill_read", "tool_search", "send_message"} <= names
+        assert not names & {"run_shell", "apply_patch", "request_permissions", "request_user_input", "spawn_agent", "declare_outputs"}
     finally:
         store.close()
 

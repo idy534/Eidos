@@ -411,7 +411,8 @@ def test_clarification_schema_example_is_valid_and_explains_question_types():
     question = schema['$defs']['InputQuestion']['properties']
     assert '2–6' in question['type']['description']
     assert 'omit for text' in question['options']['description']
-    assert entry.spec.description == 'Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.'
+    assert 'missing information' in entry.spec.description
+    assert 'Plan mode' not in entry.spec.description
 
 
 def test_invalid_clarifications_have_actionable_feedback_and_distinct_error_identity(planning_runtime):
