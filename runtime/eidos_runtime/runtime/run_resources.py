@@ -233,13 +233,18 @@ class RunResources:
             if self.supports_images
             else None
         )
+        memory_access = self.store.database.memory.access(str(self.store.read_run(self.run_id)["sessionId"]))
         base = ToolRegistry.build(
             builtin_entries=(
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id),
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
-                *memory_entries(child=self.is_child),
+                *memory_entries(
+                    child=self.is_child,
+                    read_enabled=memory_access.read_enabled,
+                    write_enabled=memory_access.writable,
+                ),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
                 *(planning_entries() if self.store.read_run(self.run_id).get("workMode") == "plan" else ()),
                 *self.skills.tool_entries(

@@ -102,6 +102,7 @@ def test_two_stage_learning_publishes_once_and_closes_leases(setup):
     worker.process(task, threading.Event())
     state = store.database.memory.read(MemoryReadRequest(session_id=session["id"]))
     assert state.entries[0].content == "默认中文回答"
+    assert state.entries[0].status == "active"
     assert state.jobs[0].state == "succeeded"
     assert len(gateway.model.contexts) == 2 and all(
         lease.closed for lease in gateway.leases

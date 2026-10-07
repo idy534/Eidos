@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 
+from eidos_runtime.context.builder import ContextBuilder
 from eidos_runtime.db.schema import V16_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.memory.contracts import (
@@ -92,6 +93,34 @@ def test_project_ids_are_authorization_boundaries(store, tmp_path):
         store.database.memory.get(
             MemoryGetRequest(session_id=second["id"], entry_id=result.entry_id)
         )
+
+
+def test_candidate_respects_current_scope_and_generation_window(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    _run, old_source = store.create_run(session["id"], "I prefer Chinese")
+    service = store.database.memory
+    service.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="current",
+        settings=MemorySettings(generate_enabled=True),
+    ))
+    request = MemoryWriteRequest(
+        session_id=session["id"], operation_id="old-candidate",
+        content="Prefer Chinese", source_item_ids=[old_source["id"]],
+    )
+    with pytest.raises(MemoryRejected, match="memory_generation_source_outside_window"):
+        service.record(request, candidate=True)
+    store.fail_run(_run["id"], "fixture_finished")
+    _new_run, new_source = store.create_run(session["id"], "I prefer short answers")
+    with pytest.raises(MemoryRejected, match="memory_source_conflict"):
+        service.record(request.model_copy(update={
+            "operation_id": "stale-quote", "source_item_ids": [new_source["id"]],
+        }), candidate=True, source_revisions={new_source["id"]: 0})
+    with pytest.raises(MemoryRejected, match="memory_candidate_scope_invalid"):
+        service.record(request.model_copy(update={
+            "operation_id": "global-candidate", "scope": "global",
+            "source_item_ids": [new_source["id"]],
+        }), candidate=True)
+    assert service.read(MemoryReadRequest(session_id=session["id"])).entries == []
 
 
 def test_forget_removes_all_revisions_and_blocks_late_admitted_request(store):
@@ -238,7 +267,12 @@ def test_projection_budget_and_memory_are_user_data(store, tmp_path):
         remember(store, "中文偏好" + str(n), session_id=session["id"])
     projection = store.database.memory.project(session["id"], 10000, run_id="fixture")
     assert projection.entries and projection.token_estimate <= 300
-    assert "not current instructions or permission" in projection.rendered_payload
+    run, _ = store.create_run(session["id"], "Recall my preference")
+    built = ContextBuilder(store).build(run["id"])
+    evidence = next(item for item in built.model_context if item.get("sectionId") == "memory-evidence")
+    assert evidence["type"] == "user"
+    assert "中文偏好" in evidence["content"]
+    assert "中文偏好" not in built.instructions.system_text
 
 
 def test_modified_evidence_invalidates_memory_even_with_same_item_count(

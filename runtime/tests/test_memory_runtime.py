@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import zipfile
 
@@ -14,6 +15,7 @@ from eidos_runtime.memory.contracts import (
     MemoryReadRequest,
     MemorySettings,
     MemorySettingsRequest,
+    MemoryTemporaryRequest,
     MemoryWriteRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected
@@ -41,6 +43,160 @@ def saved(store, session, content="Prefer concise Chinese responses"):
             session_id=session["id"], operation_id="remember", content=content
         )
     )
+
+
+def memory_state(instructions):
+    match = re.search(r"<memory_state>\s*(.*?)\s*</memory_state>", instructions, re.S)
+    assert match is not None
+    return json.loads(match[1])
+
+
+@pytest.mark.parametrize(
+    ("global_use", "current_use", "temporary", "read_scopes"),
+    [
+        (True, True, False, ["global", "project"]),
+        (True, False, False, ["global"]),
+        (False, False, False, []),
+        (True, True, True, []),
+    ],
+)
+def test_engine_advertises_memory_access_from_current_settings(
+    setup, global_use, current_use, temporary, read_scopes
+):
+    store, session = setup
+    service = store.database.memory
+    service.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="global",
+        settings=MemorySettings(use_enabled=global_use),
+    ))
+    service.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="current",
+        settings=MemorySettings(use_enabled=current_use, generate_enabled=True),
+    ))
+    service.set_temporary(MemoryTemporaryRequest(
+        session_id=session["id"], temporary=temporary,
+    ))
+    run, _ = store.create_run(session["id"], "Answer briefly")
+    model = ScriptedModel([ModelResponse(text="Done")])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+
+    tools = {tool.name for tool in model.tool_definitions_history[0] if tool.name.startswith("memory_")}
+    expected = {"memory_search", "memory_read"} if read_scopes else set()
+    if not temporary:
+        expected.update({"memory_record", "memory_manage"})
+    assert tools == expected
+    assert memory_state(model.instructions_history[0]) == {
+        "currentScope": "project",
+        "readScopes": read_scopes,
+        "automaticLearning": not temporary,
+        "temporary": temporary,
+    }
+    assert store.read_run(run["id"])["status"] == "succeeded"
+
+
+def test_explicit_save_remains_available_when_memory_use_is_disabled(setup):
+    store, session = setup
+    service = store.database.memory
+    for scope in ("global", "current"):
+        service.settings(MemorySettingsRequest(
+            session_id=session["id"], scope=scope,
+            settings=MemorySettings(use_enabled=False),
+        ))
+    run, _ = store.create_run(
+        session["id"], "Remember that I prefer concise replies", approval_mode="full_access",
+    )
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("save", "memory_record", {
+            "mode": "remember", "content": "Prefer concise replies",
+            "sourceQuote": "I prefer concise replies",
+        }),)),
+        ModelResponse(text="Saved"),
+    ])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    tool = next(i["toolCall"] for i in store.read_session_snapshot(session["id"])["items"] if i["kind"] == "tool_call")
+    result = json.loads(tool["resultJson"])
+    assert result["outcome"] == "success" and result["data"]["action"]["status"] == "applied"
+    assert service.read(MemoryReadRequest(session_id=session["id"])).entries[0].status == "active"
+    assert not any(item.get("sectionId") == "memory-evidence" for context in model.contexts for item in context)
+
+
+@pytest.mark.parametrize("generate_enabled", [False, True])
+def test_projectless_memory_state_uses_the_global_generation_setting(setup, generate_enabled):
+    store, session = setup
+    service = store.database.memory
+    service.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="current", settings=MemorySettings(generate_enabled=True),
+    ))
+    service.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="global", settings=MemorySettings(generate_enabled=generate_enabled),
+    ))
+    root = store.data_directory / f".{store.data_directory.name}-projectless" / "memory"
+    root.mkdir(parents=True)
+    chat = store.typed_runtime_repository().create_session(str(root), projectless=True).value
+    run, _ = store.create_run(chat.id, "Answer briefly")
+    model = ScriptedModel([ModelResponse(text="Done")])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    assert memory_state(model.instructions_history[0]) == {
+        "currentScope": "global", "readScopes": ["global"],
+        "automaticLearning": generate_enabled, "temporary": False,
+    }
+    assert store.read_run(run["id"])["status"] == "succeeded"
+
+
+def test_memory_tools_and_settings_refresh_between_steps(setup):
+    store, session = setup
+    service = store.database.memory
+    run, _ = store.create_run(session["id"], "Inspect the workspace")
+
+    class SettingsModel(ScriptedModel):
+        def complete(self, context, cancel, on_text, **kwargs):
+            if not self.contexts:
+                for scope in ("global", "current"):
+                    service.settings(MemorySettingsRequest(
+                        session_id=session["id"], scope=scope,
+                        settings=MemorySettings(use_enabled=False, generate_enabled=scope == "current"),
+                    ))
+            return super().complete(context, cancel, on_text, **kwargs)
+
+    model = SettingsModel([
+        ModelResponse(tool_calls=(ModelToolCall("list", "list_files", {"path": "."}),)),
+        ModelResponse(text="Done"),
+    ])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    assert len(model.contexts) == 2
+    assert memory_state(model.instructions_history[0])["readScopes"] == ["global", "project"]
+    assert memory_state(model.instructions_history[1]) == {
+        "currentScope": "project", "readScopes": [], "automaticLearning": True, "temporary": False,
+    }
+    assert {tool.name for tool in model.tool_definitions_history[1] if tool.name.startswith("memory_")} == {
+        "memory_record", "memory_manage",
+    }
+    assert store.read_run(run["id"])["status"] == "succeeded"
+
+
+def test_child_receives_read_access_without_memory_write_instructions(setup):
+    from eidos_runtime.domain.collaboration import SpawnAgent
+    from eidos_runtime.persistence.collaboration import CollaborationRepository
+
+    store, session = setup
+    store.database.memory.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="current", settings=MemorySettings(generate_enabled=True),
+    ))
+    parent, _ = store.create_run(session["id"], "Coordinate")
+    item = store.create_tool_item(parent["id"], 1, 0, "spawn", "spawn_agent", "{}")
+    child = CollaborationRepository(store.database).spawn(
+        parent["id"], item["id"], SpawnAgent(task_name="inspect", message="Inspect", role="explorer"),
+    )
+    assert store.claim_next_run()["id"] == child.run_id
+    model = ScriptedModel([ModelResponse(text="Done")])
+    RuntimeEngine(store, model, lambda _message: None).run(child.run_id, threading.Event())
+    assert {tool.name for tool in model.tool_definitions_history[0] if tool.name.startswith("memory_")} == {
+        "memory_search", "memory_read",
+    }
+    instructions = model.instructions_history[0]
+    assert "memory_record" not in instructions and "memory_manage" not in instructions
+    assert memory_state(instructions)["automaticLearning"] is False
+    assert store.read_run(child.run_id)["status"] == "succeeded"
 
 
 def test_real_engine_projects_memory_and_runs_search_read_tools(setup):
@@ -300,11 +456,22 @@ def test_fresh_context_redacts_revoked_tool_arguments_before_cleanup(setup):
     assert "memory_snapshot_revoked" in result["result"]
 
 
-def test_memory_candidate_tool_requires_original_evidence_and_stays_pending(setup):
+@pytest.mark.parametrize("citation", ["latest", "item_id"])
+def test_memory_candidate_tool_requires_original_evidence_and_stays_pending(setup, citation):
     store, session = setup
-    run, source = store.create_run(session["id"], "Please use concise Chinese responses")
-    model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("candidate", "memory_record", {"content": "Prefer concise Chinese responses", "sourceItemIds": [source["id"]], "sourceQuotes": {source["id"]: "concise Chinese responses"}}),)), ModelResponse(text="Candidate proposed")])
+    store.database.memory.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="current",
+        settings=MemorySettings(generate_enabled=True),
+    ))
+    run, source = store.create_run(session["id"], "Propose a pending memory that I prefer concise Chinese responses")
+    quote = "concise Chinese responses"
+    evidence = (
+        {"sourceQuote": quote} if citation == "latest" else
+        {"sourceItemIds": [source["id"]], "sourceQuotes": {source["id"]: quote}}
+    )
+    model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("candidate", "memory_record", {"content": "Prefer concise Chinese responses", **evidence}),)), ModelResponse(text="Candidate proposed")])
     RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    assert memory_state(model.instructions_history[0])["automaticLearning"] is True
     snapshot = store.read_session_snapshot(session["id"])
     assert snapshot["runs"][0]["status"] == "succeeded"
     tool = next(item["toolCall"] for item in snapshot["items"] if item["kind"] == "tool_call")
@@ -312,6 +479,46 @@ def test_memory_candidate_tool_requires_original_evidence_and_stays_pending(setu
     assert result["outcome"] == "success" and result["data"]["action"]["status"] == "pending"
     state = store.database.memory.read(MemoryReadRequest(session_id=session["id"]))
     assert len(state.entries) == 1 and state.entries[0].status == "candidate"
+    assert state.entries[0].evidence[0].item_id == source["id"]
+
+
+def test_memory_candidate_tool_respects_disabled_generation(setup):
+    store, session = setup
+    run, _ = store.create_run(session["id"], "我喜欢吃香蕉")
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("candidate", "memory_record", {
+            "content": "用户喜欢吃香蕉。", "sourceQuote": "我喜欢吃香蕉",
+        }),)),
+        ModelResponse(text="No memory saved"),
+    ])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    snapshot = store.read_session_snapshot(session["id"])
+    tool = next(item["toolCall"] for item in snapshot["items"] if item["kind"] == "tool_call")
+    assert json.loads(tool["resultJson"])["code"] == "memory_generation_disabled"
+    assert store.database.memory.read(MemoryReadRequest(session_id=session["id"])).entries == []
+
+
+def test_memory_candidate_tool_rejects_invented_quote(setup):
+    store, session = setup
+    store.database.memory.settings(MemorySettingsRequest(
+        session_id=session["id"], scope="current",
+        settings=MemorySettings(generate_enabled=True),
+    ))
+    run, _ = store.create_run(session["id"], "我喜欢吃香蕉")
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("candidate", "memory_record", {
+            "content": "用户喜欢吃香蕉。", "sourceQuote": "我喜欢吃苹果",
+        }),)),
+        ModelResponse(text="No memory saved"),
+    ])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    snapshot = store.read_session_snapshot(session["id"])
+    tool = next(item["toolCall"] for item in snapshot["items"] if item["kind"] == "tool_call")
+    assert json.loads(tool["resultJson"])["code"] == "memory_evidence_quote_invalid"
+    assert store.connection.execute(
+        "SELECT count(*) FROM durable_intents WHERE tool_call_id=?", (tool["id"],)
+    ).fetchone()[0] == 0
+    assert store.database.memory.read(MemoryReadRequest(session_id=session["id"])).entries == []
 
 
 @pytest.mark.parametrize("scope", ["current", "global"])

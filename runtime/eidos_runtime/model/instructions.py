@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from typing import TYPE_CHECKING
 
 from eidos_runtime.model.prompts import (
     BASE_AGENT_INSTRUCTIONS,
     MEMORY_POLICY_INSTRUCTIONS,
+    MEMORY_WRITE_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     InstructionLayer,
@@ -15,6 +17,7 @@ from eidos_runtime.model.prompts import (
 
 if TYPE_CHECKING:
     from eidos_runtime.extensions.skills import RetainedContextSection
+    from eidos_runtime.memory.service import MemoryAccess
     from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 
 
@@ -153,7 +156,8 @@ class InstructionResolver:
         selected_skill_context: tuple[RetainedContextSection, ...] = (),
         step_policy: StepPermissionPolicy | None = None,
         work_mode: str = "execute",
-        memory_enabled: bool = False,
+        memory_tools: tuple[str, ...] = (),
+        memory_access: MemoryAccess | None = None,
     ) -> ResolvedInstructions:
         layers: list[InstructionLayer] = [
             InstructionLayer.create(
@@ -178,9 +182,29 @@ class InstructionResolver:
                 content=RUNTIME_POLICY_INSTRUCTIONS,
             ),
         ]
-        if memory_enabled or (step_policy is not None and any(name.startswith("memory_") for name in step_policy.available_tools)):
+        available = set(memory_tools)
+        if step_policy is not None:
+            available.update(step_policy.available_tools)
+        memory_content = []
+        read_enabled = (
+            memory_access.read_enabled if memory_access is not None
+            else bool(available & {"memory_search", "memory_read"})
+        )
+        if read_enabled:
+            memory_content.append(MEMORY_POLICY_INSTRUCTIONS)
+        if available & {"memory_record", "memory_manage"} and (memory_access is None or memory_access.writable):
+            memory_content.append(MEMORY_WRITE_INSTRUCTIONS)
+        if memory_access is not None:
+            state = json.dumps({
+                "currentScope": memory_access.scopes[-1].kind,
+                "readScopes": memory_access.read_scopes,
+                "automaticLearning": memory_access.generate_enabled,
+                "temporary": memory_access.temporary,
+            }, separators=(",", ":"))
+            memory_content.append(f"<memory_state>\n{state}\n</memory_state>")
+        if memory_content:
             layers.append(InstructionLayer.create(
-                id="memory-policy", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:memory-policy", content=MEMORY_POLICY_INSTRUCTIONS,
+                id="memory-policy", authority=RUNTIME_AUTHORITY, role="developer", source="eidos:memory-policy", content="\n".join(memory_content),
             ))
         if work_mode == "plan":
             layers.append(InstructionLayer.create(

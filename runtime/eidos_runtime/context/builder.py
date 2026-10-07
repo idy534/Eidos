@@ -78,12 +78,18 @@ class ContextBuilder:
                 catalog_context = section
             else:
                 user_retained_context.append(section)
+        memory_access = self.store.database.memory.access(facts.session_id)
+        memory_tools = tuple(tool.name for tool in tool_definitions if tool.name.startswith("memory_"))
+        memory_advertised = bool(memory_tools) or (
+            step_policy is not None and any(name.startswith("memory_") for name in step_policy.available_tools)
+        )
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             skill_catalog_context=catalog_context,
             selected_skill_context=selected_skill_context,
             step_policy=step_policy,
-            memory_enabled=any(tool.name.startswith("memory_") for tool in tool_definitions),
+            memory_tools=memory_tools,
+            memory_access=memory_access if memory_advertised or memory_access.temporary else None,
             work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
         )
         source_ids = set(
@@ -336,7 +342,8 @@ class ContextBuilder:
                 instructions = InstructionResolver().resolve(
                     rule_snapshot=rule_resolution_snapshot, skill_catalog_context=catalog_context,
                     selected_skill_context=selected_skill_context, step_policy=step_policy,
-                    work_mode=str(self.store.read_run(run_id).get("workMode", "execute")), memory_enabled=True,
+                    work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
+                    memory_tools=memory_tools, memory_access=memory_access,
                 )
             context.insert(0, {"type": "user", "sectionId": "memory-evidence",
                                "content": projection.rendered_payload,
