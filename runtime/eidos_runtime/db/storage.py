@@ -12,7 +12,7 @@ from eidos_runtime.domain.approval_policy import ApprovalMode
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Literal, TypeVar
+from typing import Callable, Literal, TypeVar
 
 from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.models.skill_settings import SkillState

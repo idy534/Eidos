@@ -409,7 +409,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。
 
 
-## Plan 模式（生产代码，Plan 自动化验证已完成）
+## Plan 模式
 
 - 用户可以通过模式选择或输入 `/` 呼出快捷指令选择 `/plan` 显式进入 Plan 模式。系统不会自主切换模式。
 - Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，底部展示 `ClarificationComposer` 并保留草稿输入；支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。混合工具批次或活动 Shell 下提问保留 Worker 和进程所有者，回答后顺序继续；单独提问且没有活动 Shell 时仍使用持久挂起。
@@ -418,7 +418,6 @@ Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草
 - 澄清等待、答案、取消和安全恢复使用现有 SQLite、Event / Outbox 与 Run 调度流程。Plan 沿用现有权限模式。
 - 澄清界面隔离不同会话和不同请求的状态。计划写入失败或取消时，过程展示保留工具结果，不显示成功计划卡片。
 
-以上内容描述本次生产代码的接入范围。Runtime 全量测试、Integration 测试、协议契约、类型构建、Python 检查、Seatbelt 和 Electron smoke 已通过。Renderer 行为全量仍有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成，所以当前不能把这些代码视为完整验收通过的能力。
 
 Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Repository 和结果投影的回归用例。用例覆盖澄清答案恢复、计划成功保存、错误 ID 后修正重试、Intent 后版本冲突，以及内容提交后文件投影失败的对账保护。这些用例不调用真实 Provider，也不操作用户数据目录。
 

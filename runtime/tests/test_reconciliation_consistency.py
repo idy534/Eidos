@@ -25,10 +25,6 @@ from eidos_runtime.runtime.approval import ApprovalDecision  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
-from eidos_runtime.runtime.reconciliation import (  # noqa: E402
-    ReconciliationDisposition,
-    classify_shell_reconciliation,
-)
 from eidos_runtime.runtime.permission_policy import (  # noqa: E402
     PermissionDecision,
     PermissionDisposition,
@@ -142,7 +138,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
 
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
-    def test_explicit_reconciliation_enters_read_only_mode(self) -> None:
+    def test_explicit_reconciliation_preserves_running_status_and_unknown_facts(self) -> None:
         item = self.store.create_tool_item(
             self.run["id"], 0, 0, "shell", "run_shell", "{}"
         )
@@ -160,22 +156,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             tool_status="failed",
         )
 
-        disposition = classify_shell_reconciliation(
-            {
-                "outcome": "error",
-                "code": "outcome_unknown",
-                "reconciliationRequired": True,
-            },
-            manifest_before_complete=True,
-            manifest_after_complete=True,
-            refresh_error_code=None,
-        )
-
         self.assertEqual(self.store.read_run(self.run["id"])["status"], "running")
-        self.assertIs(
-            disposition,
-            ReconciliationDisposition.CONTINUE_READ_ONLY,
-        )
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
 
     def test_managed_shell_commits_exit_without_rewriting_model_observation(self) -> None:
         index = self.store.increment_model_step(self.run["id"])

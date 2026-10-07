@@ -638,9 +638,9 @@ Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 �
 
 请求审批模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。硬拒绝仍由确定性策略直接拒绝。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请、MCP 和 Eidos-state 的原有审批。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。
 
-审查证据包括当前 Run 及之前最近 32 条用户消息、具体 Tool 参数、权限请求、完整 Diff 和 Base Hash。策略把项目内容、工具输出和操作理由作为不可信数据。请求最多 48 KiB、答复最多 4 KiB、审查超时 120 秒、理由最多 400 字符。明确风险拒绝保留；无法完成可信审查或未知风险时通过原审批通道交由用户决定。请求指纹纳入用户证据，新用户指令可触发重新评估，模型重复相同请求仍去重。
+审查证据包括当前 Run 及之前最近 32 条用户消息、具体 Tool 参数、权限请求、完整 Diff 和 Base Hash。策略把项目内容、工具输出和操作理由作为不可信数据。请求最多 48 KiB、答复最多 8 KiB、审查超时 60 秒、理由最多 400 字符。明确风险拒绝保留；无法完成可信审查或未知风险时通过原审批通道交由用户决定。请求指纹纳入用户证据，新用户指令可触发重新评估，模型重复相同请求仍去重。
 
-审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后不会重新采样未完成的自动审批，而是拒绝原请求并报告中断。Desktop 在自动审查时通过位于底栏上方的状态胶囊（ApprovalStatusBanner）展示“模型正在审查操作…”与动效进度，并保留取消入口；Feed 展示审批来源与拒绝理由。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
+审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后不重新采样未完成的自动审批，保留中断原因和未获批准事实，并交由用户决定原请求。Desktop 在自动审查时通过位于底栏上方的状态胶囊（ApprovalStatusBanner）展示“模型正在审查操作…”与动效进度，并保留取消入口；Feed 展示审批状态与拒绝理由；实际决定来源保存在 Approval 记录中。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
 
 完全访问使用 `fullAccess` 权限快照，启用网络并移除 Eidos 路径 deny。Shell、受控文件 helper 和 MCP 执行不使用 Seatbelt。普通操作跳过逐项审批；仍经过原 Coordinator 的操作以模式授权记录批准，不调用审查模型或人工窗口。文件工具允许绝对路径访问，但仍拒绝不支持的链接和特殊文件；Shell 使用当前 macOS 用户的权限，不能绕过操作系统 ACL、TCC 或只读卷。该模式没有管理员提权，也没有无界输出或自动重放不确定副作用。
 
@@ -660,7 +660,7 @@ Context Builder 从用户消息关联的持久引用读取内容，并标记来�
 
 Python 的输入 DTO 通过 `node scripts/generate-input-contracts.mjs` 生成 `desktop/shared/input-context.generated.ts`。生成器使用现有 Python 环境和已锁定的 `json-schema-to-typescript`，没有引入生产依赖。Main 与 RuntimeClient 继续执行边界校验。
 
-## Plan 模式（生产代码已接入，Plan 自动化验证已完成）
+## Plan 模式
 
 用户通过 Composer 的模式选择或输入开头的 `/plan` 显式选择 Plan。`run/start.workMode` 默认为 `execute`。Runtime 把模式保存在 Run 上。模型不能改变模式。Plan 与 `manual`、`auto_review`、`full_access` 权限模式独立；原有工具与权限流程继续生效。
 
@@ -676,7 +676,6 @@ Schema v15 增加 Run 模式与计划版本引用、`plans`、`plan_revisions` �
 
 `write_plan.readyForReview=true` 保存完整计划并结束当前 Run。用户通过 `plan/edit` 修改正文，或通过新的 Plan Run 提交修改意见。界面确认时提交 `planId + planRevision`。Runtime 在创建普通 Run 的事务中核验所属 Session、当前版本和待确认状态，记录确认并绑定执行 Run。已确认的版本不可修改，执行 Context 从对应的不可变版本读取正文。Main 只根据 Runtime 返回的计划路径打开文件。
 
-本次工作已经补充 Runtime 和 Renderer 的 Plan 定向测试。`pnpm test:runtime:full` 通过 1947 个测试，另有 2 个 `large_repository` 测试按配置跳过。`pnpm test:integration` 通过 761 个测试，另有 1188 个测试按标记排除。构建、协议契约、Renderer 状态、Main 全量、Python 检查、Seatbelt 和 Electron smoke 也已通过。Renderer 行为全量有 321 个测试通过，另有 2 个不属于 Plan 变更的既有测试失败。人工 UI 验收和真实 Provider 工具流程仍未完成。
 
 Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题或计划，旧请求的迟到响应也不能覆盖当前状态。澄清表单按请求 ID 重建，答案和跳过状态不跨请求复用。计划卡片只展示已完成且成功的 `write_plan`；失败、取消和拒绝沿用普通工具结果展示。快照中的澄清参数复用 `RequestUserInput` 校验与序列化；无效参数不进入展示投影，原始 ToolCall 记录保持不变。
 

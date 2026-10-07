@@ -374,7 +374,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
         from eidos_runtime.runtime.engine import RuntimeEngine
 
         class RejectingRepositoryRuntime:
-            def ensure_ready(self, *_args, **_kwargs):
+            def available_for_run(self, *_args, **_kwargs):
                 raise AssertionError("projectless runs must not build a repository index")
 
         with self.runtime() as (store, _session, _workspace):

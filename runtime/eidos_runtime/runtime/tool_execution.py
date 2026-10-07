@@ -141,8 +141,8 @@ def _uses_local_reconciliation_policy(plan: ToolDispatchPlan, call: ModelToolCal
     ):
         # The file handler checks actual prepared targets, again at commit.
         return True
-    if descriptor.provenance.source_id in {"eidos.planning", "eidos.permissions"}:
-        return descriptor.spec.name in {"write_plan", "request_permissions"}
+    if descriptor.provenance.source_id == "eidos.planning":
+        return descriptor.spec.name == "write_plan"
     return (
         descriptor.provenance.source_id == "eidos.collaboration"
         and (descriptor.spec.name in {"send_message", "stop_agent", "followup_task"}

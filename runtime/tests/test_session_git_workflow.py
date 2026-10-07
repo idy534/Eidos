@@ -438,7 +438,7 @@ def test_local_diff_accepts_a_resolved_compare_ref_and_rejects_an_unknown_one(
         store.close()
 
 
-def test_git_mutations_reject_active_run_invalid_paths_and_empty_selection(
+def test_git_stage_and_commit_allow_active_run_but_validate_paths_and_selection(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
@@ -448,20 +448,20 @@ def test_git_mutations_reject_active_run_invalid_paths_and_empty_selection(
         (repository / "tracked.txt").write_text("changed\n", encoding="utf-8")
         store.create_run(session["id"], "active")
         operation_id = str(uuid.uuid4())
-        with pytest.raises(ApplicationError) as busy:
-            application.git_stage(
-                SessionGitStageRequestDto(
-                    operationId=operation_id,
-                    sessionId=session["id"],
-                    paths=["tracked.txt"],
-                )
+        application.git_stage(
+            SessionGitStageRequestDto(
+                operationId=operation_id,
+                sessionId=session["id"],
+                paths=["tracked.txt"],
             )
-        assert busy.value.code == "GIT_WORKFLOW_BUSY"
+        )
+        application.git_commit(SessionGitCommitRequestDto(sessionId=session['id'], message='Commit during a Run'))
+        assert _git(repository, 'show', 'HEAD:tracked.txt') == 'changed'
         connection = store.connection
         assert connection is not None
         assert connection.execute(
             "SELECT COUNT(*) FROM operations WHERE id = ?", (operation_id,)
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 1
     finally:
         store.close()
 

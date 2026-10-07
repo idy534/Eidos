@@ -358,7 +358,7 @@ def test_fetch_remote_selection_and_pure_preflight_failures(tmp_path: Path) -> N
         store.close()
 
 
-def test_fetch_rejects_active_run_and_uncertain_operation_without_git(
+def test_fetch_allows_active_run_and_rejects_uncertain_replay_without_git(
     tmp_path: Path,
 ) -> None:
     _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
@@ -371,19 +371,16 @@ def test_fetch_rejects_active_run_and_uncertain_operation_without_git(
         ).root
         busy_operation = str(uuid.uuid4())
         store.create_run(session["id"], "active")
-        with pytest.raises(ApplicationError) as busy:
-            application.prepare_git_fetch(
-                SessionGitFetchRequestDto(
-                    operationId=busy_operation, sessionId=session["id"]
-                ),
-                request_id="client-busy",
-            )
-        assert busy.value.code == "GIT_WORKFLOW_BUSY"
+        prepared = application.prepare_git_fetch(
+            SessionGitFetchRequestDto(operationId=busy_operation, sessionId=session['id']),
+            request_id='client-active-run',
+        )
+        prepared.run(threading.Event())
         connection = store.connection
         assert connection is not None
         assert connection.execute(
             "SELECT COUNT(*) FROM operations WHERE id = ?", (busy_operation,)
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 1
 
         store.fail_run(
             connection.execute(
@@ -798,7 +795,7 @@ def test_pull_and_push_preflight_require_branch_upstream_and_remote(
     ("prepare_git_pull", SessionGitPullRequestDto),
     ("prepare_git_push", SessionGitPushRequestDto),
 ])
-def test_pull_and_push_reject_active_run_before_operation_reservation(
+def test_only_worktree_changing_remote_operations_reject_an_active_run(
     tmp_path: Path, method: str, request_type
 ) -> None:
     _remote, repo_a, _repo_b = _remote_fixture(tmp_path)
@@ -811,19 +808,19 @@ def test_pull_and_push_reject_active_run_before_operation_reservation(
         ).root
         store.create_run(session["id"], "active")
         operation_id = str(uuid.uuid4())
-        with pytest.raises(ApplicationError) as busy:
-            getattr(application, method)(
-                request_type(
-                    operationId=operation_id, sessionId=session["id"]
-                ),
-                request_id="client-busy",
-            )
-        assert busy.value.code == "GIT_WORKFLOW_BUSY"
+        request = request_type(operationId=operation_id, sessionId=session['id'])
+        if method == 'prepare_git_pull':
+            with pytest.raises(ApplicationError) as busy:
+                getattr(application, method)(request, request_id='client-busy')
+            assert busy.value.code == 'GIT_WORKFLOW_BUSY'
+        else:
+            prepared = getattr(application, method)(request, request_id='client-active-run')
+            prepared.run(threading.Event())
         connection = store.connection
         assert connection is not None
         assert connection.execute(
             "SELECT COUNT(*) FROM operations WHERE id = ?", (operation_id,)
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == (0 if method == 'prepare_git_pull' else 1)
     finally:
         store.close()
 

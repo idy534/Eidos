@@ -54,13 +54,13 @@ describe("Composer DOM interaction & state behavior", () => {
     vi.restoreAllMocks();
   });
 
-  it("modelLoading disables textarea input and submit button", () => {
+  it("modelLoading retains draft editing and disables execution", () => {
     render(<Composer {...defaultProps} modelLoading={true} input="Some text" />);
 
     const textarea = screen.getByPlaceholderText("正在加载模型配置…");
     const submitBtn = screen.getByRole("button", { name: "加载中…" });
 
-    expect(textarea).toBeDisabled();
+    expect(textarea).toBeEnabled();
     expect(submitBtn).toBeDisabled();
   });
 
@@ -224,24 +224,24 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(onOpenModelSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("Read-only storage (composerMode='read_only') disables input and submit button", () => {
+  it("read-only execution retains draft editing and disables submission", () => {
     render(<Composer {...defaultProps} composerMode="read_only" input="Valid task text" />);
 
-    const textarea = screen.getByPlaceholderText("存储只读，暂无法启动 Run");
+    const textarea = screen.getByPlaceholderText("暂无法执行，可继续编辑草稿");
     const submitBtn = screen.getByRole("button", { name: "开始" });
 
-    expect(textarea).toBeDisabled();
+    expect(textarea).toBeEnabled();
     expect(submitBtn).toBeDisabled();
   });
 
-  it("waiting_approval and finalizing disable input and submit", () => {
+  it("waiting_approval and finalizing retain editing and disable execution", () => {
     const { rerender } = render(<Composer {...defaultProps} composerMode="waiting_approval" input="Task text" />);
 
-    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toBeEnabled();
     expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
 
     rerender(<Composer {...defaultProps} composerMode="finalizing" input="Task text" />);
-    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toBeEnabled();
     expect(screen.getByRole("button", { name: "开始" })).toBeDisabled();
   });
 
@@ -472,7 +472,7 @@ describe("Composer DOM interaction & state behavior", () => {
     });
 
     const { rerender } = render(
-      <Composer {...defaultProps} composerMode="finalizing" input="" />,
+      <Composer {...defaultProps} draftReady={false} input="" />,
     );
 
     const textarea = screen.getByRole("textbox");
@@ -497,7 +497,7 @@ describe("Composer DOM interaction & state behavior", () => {
     });
 
     const { rerender, unmount } = render(
-      <Composer {...defaultProps} composerMode="finalizing" input="" />,
+      <Composer {...defaultProps} draftReady={false} input="" />,
     );
 
     rerender(<Composer {...defaultProps} composerMode="idle" input="" />);

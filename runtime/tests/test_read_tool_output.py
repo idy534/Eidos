@@ -15,6 +15,8 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.runtime.run_resources import RunResources  # noqa: E402
+from eidos_runtime.runtime.shell_process_manager import ShellProcessManager  # noqa: E402
+from eidos_runtime.sandbox.shell import ShellLaunchSpec  # noqa: E402
 from eidos_runtime.tools.contracts import project_tool_result  # noqa: E402
 from eidos_runtime.tools.read_tool_output import (  # noqa: E402
     READ_TOOL_OUTPUT_MODEL_PAGE_BYTES,
@@ -127,6 +129,37 @@ class ReadToolOutputTests(unittest.TestCase):
         self.assertEqual(tail["data"]["startByte"], 6)
         self.assertTrue(tail["data"]["hasMoreBefore"])
         self.assertFalse(tail["data"]["hasMoreAfter"])
+
+    def test_live_output_is_utf8_aligned_and_does_not_consume_wait_output(self) -> None:
+        manager = ShellProcessManager(owner_run_id=self.run['id'])
+        output_ready = threading.Event()
+        shell = manager.start(ShellLaunchSpec(argv=(sys.executable, '-c',
+            'import sys; print("甲乙", flush=True); sys.stdin.readline()'), cwd=self.workspace,
+            environment={'PATH': '/usr/bin:/bin'}, sandboxed=False), yield_time_ms=0,
+            on_output=lambda _: output_ready.set())
+        try:
+            self.assertTrue(output_ready.wait(3))
+            item = self.store.create_tool_item(self.run['id'], 1, 0, 'live-shell', 'run_shell', '{}')
+            self.store.complete_tool_item(item['id'], json.dumps(manager.read_output(shell['data']['sessionId'])))
+            entry = read_tool_output_entry(self.store, self.run['id'], manager)
+            pending = manager._session(shell['data']['sessionId'])
+            with pending.lock:
+                cursor = pending.stdout_cursor
+                expected_increment = pending.stdout_text[cursor:]
+            first = entry.adapter.execute({'callId': 'live-shell', 'maxBytes': 4}, threading.Event())
+            self.assertEqual(first['outcome'], 'success')
+            self.assertEqual(first['data']['content'], '甲')
+            self.assertEqual(first['data']['nextOffset'], 3)
+            self.assertFalse(first['data']['outputComplete'])
+            self.assertEqual(pending.stdout_cursor, cursor)
+            self.assertEqual(manager.wait(shell['data']['sessionId'], yield_time_ms=0)['data']['stdout'], expected_increment)
+            # Ownership stays enforced even when a callback is provided.
+            self.store.fail_run(self.run['id'], 'fixture_done')
+            later, _ = self.store.create_run(self.session['id'], 'Read another Run')
+            other = read_tool_output_entry(self.store, later['id'], manager)
+            self.assertEqual(other.adapter.execute({'callId': 'live-shell'}, threading.Event())['code'], 'tool_output_not_available')
+        finally:
+            manager.cleanup()
 
     def test_shell_session_id_error_explains_the_required_identifier(self) -> None:
         self._shell_item("original-call", stdout="persisted")

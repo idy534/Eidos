@@ -195,7 +195,7 @@ class ApprovalCoordinator:
             fallback_review = self.last_review if (
                 mode == "auto_review" and self.last_review is not None
                 and self.last_review.decision == "reject"
-                and (self.last_review.reason_code != "auto_review_rejected" or self.last_review.risk == "unknown")
+                and self.last_review.allows_manual_fallback
             ) else None
             if fallback_review is not None:
                 self.check_cancel(run_id, cancel)
@@ -209,7 +209,7 @@ class ApprovalCoordinator:
                 )
                 result = self._validated(result)
                 self.last_review = fallback_review.model_copy(update={
-                    "source": "mode", "decision": result.decision,
+                    "source": "manual", "decision": result.decision,
                     "rationale": fallback_review.rationale[:1470] + (" 用户手动批准。" if result.decision == "approve" else " 用户未批准。"),
                 })
             elif self.last_review is not None:

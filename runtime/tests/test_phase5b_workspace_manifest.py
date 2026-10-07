@@ -29,9 +29,6 @@ from eidos_runtime.runtime.approval import (  # noqa: E402
 )
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker  # noqa: E402
-from eidos_runtime.runtime.reconciliation import (  # noqa: E402
-    ReconciliationDisposition,
-)
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
 from eidos_runtime.runtime.tool_execution import ToolExecutionController  # noqa: E402
 from eidos_runtime.runtime.tool_runtime import (  # noqa: E402
@@ -416,10 +413,6 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.assertFalse(outcome.result["reconciliationRequired"])
         self.assertEqual(outcome.item_status, "completed")
         self.assertEqual(outcome.tool_status, "completed")
-        self.assertIs(
-            outcome.reconciliation_disposition,
-            ReconciliationDisposition.CONTINUE,
-        )
         self.assertEqual(
             self.store.context_projection_facts(self.run["id"]).workspace_version,
             0,
@@ -493,10 +486,6 @@ class ShellManifestIntegrationTests(unittest.TestCase):
         self.assertFalse(outcome.result["reconciliationRequired"])
         self.assertEqual(outcome.item_status, "failed")
         self.assertEqual(outcome.tool_status, "completed")
-        self.assertIs(
-            outcome.reconciliation_disposition,
-            ReconciliationDisposition.CONTINUE,
-        )
         assert outcome.item is not None
         self.assertEqual(outcome.item["status"], "failed")
         self.assertEqual(outcome.item["toolCall"]["status"], "completed")
@@ -564,10 +553,7 @@ class ShellManifestIntegrationTests(unittest.TestCase):
 
         self.assertEqual(outcome.item_status, "failed")
         self.assertEqual(outcome.tool_status, "failed")
-        self.assertIs(
-            outcome.reconciliation_disposition,
-            ReconciliationDisposition.CONTINUE_READ_ONLY,
-        )
+        self.assertTrue(outcome.result["reconciliationRequired"])
 
     def test_shell_process_starts_when_post_launch_index_is_incomplete(self) -> None:
         result = {

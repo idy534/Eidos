@@ -16,6 +16,7 @@ from eidos_runtime.domain.collaboration import (
     READ_ONLY_TOOLS,
     SpawnAgent,
     WaitAgents,
+    CollaborationRejected,
 )
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.sandbox.permissions import BasePermissionProfile
@@ -105,6 +106,55 @@ def test_spawn_is_idempotent_and_keeps_child_session_out_of_normal_listing(tmp_p
             "SELECT COUNT(*) FROM agent_delegations WHERE parent_run_id=?",
             (parent["id"],),
         ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_busy_followup_is_a_message_and_never_restarts_after_completion(tmp_path):
+    store, _, parent = _parent(tmp_path)
+    try:
+        repository, child, _ = _spawn(store, parent, 0)
+        item = store.create_tool_item(parent['id'], 2, 0, 'followup-call', 'followup_task', '{}')
+        first = repository.followup(parent['id'], item['id'], child.id, 'Include the new constraint.')
+        assert first.run_id == child.run_id
+        assert repository.state(child.run_id).messages[-1].content == 'Include the new constraint.'
+        assert store.claim_next_run()['id'] == child.run_id
+        store.fail_run(child.run_id, 'fixture_done')
+        repeated = repository.followup(parent['id'], item['id'], child.id, 'Include the new constraint.')
+        assert repeated.run_id == child.run_id
+        assert store.connection.execute('SELECT COUNT(*) FROM runs WHERE session_id=?', (child.session_id,)).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_agent_messages_keep_recent_context_and_archive_beyond_sixteen(tmp_path):
+    store, _, parent = _parent(tmp_path)
+    try:
+        repository, child, _ = _spawn(store, parent, 0)
+        for index in range(20):
+            repository.send(parent['id'], f'message-{index}', child.id, f'Update {index}')
+        assert [message.content for message in repository.state(child.run_id).messages] == [f'Update {index}' for index in range(4, 20)]
+        assert store.connection.execute('SELECT COUNT(*) FROM agent_messages').fetchone()[0] == 20
+    finally:
+        store.close()
+
+
+def test_worker_followup_checks_unknown_effects_when_creating_a_new_run(tmp_path):
+    store, _, parent = _parent(tmp_path)
+    try:
+        repository = CollaborationRepository(store.database)
+        spawn = store.create_tool_item(parent['id'], 1, 0, 'spawn-worker', 'spawn_agent', '{}')
+        child = repository.spawn(parent['id'], spawn['id'], SpawnAgent(task_name='worker', message='Work on the task', role='worker'))
+        assert store.claim_next_run()['id'] == child.run_id
+        store.connection.execute('UPDATE runs SET reconciliation_required=1 WHERE id=?', (parent['id'],))
+        store.connection.commit()
+        message = store.create_tool_item(parent['id'], 2, 0, 'busy-worker', 'followup_task', '{}')
+        assert repository.followup(parent['id'], message['id'], child.id, 'Review evidence').run_id == child.run_id
+        store.fail_run(child.run_id, 'fixture_done')
+        item = store.create_tool_item(parent['id'], 3, 0, 'idle-worker', 'followup_task', '{}')
+        with pytest.raises(CollaborationRejected, match='reconciliation_required'):
+            repository.followup(parent['id'], item['id'], child.id, 'Start new changes')
+        assert store.connection.execute('SELECT COUNT(*) FROM runs WHERE session_id=?', (child.session_id,)).fetchone()[0] == 1
     finally:
         store.close()
 

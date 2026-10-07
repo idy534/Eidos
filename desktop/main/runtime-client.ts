@@ -2382,8 +2382,7 @@ function approvalRequestFrom(
   if (params.reviewFallback !== undefined && (
     typeof params.reviewFallback !== "string" || params.reviewFallback.length > 1500
   )) return undefined;
-  const reviewFallback = typeof params.reviewFallback === "string"
-    ? { reviewFallback: params.reviewFallback } : {};
+  const reviewFallback = params.reviewFallback as string | undefined;
   if (params.kind === "file_change") {
     if (typeof params.diff !== "string" || !hasTextReference(params, "diff")) {
       return undefined;
@@ -2395,7 +2394,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "file_change",
-      ...reviewFallback,
+      reviewFallback,
       summary: params.summary as string,
       diff: params.diff as string,
       diffBytes: typeof params.diffBytes === "number" ? params.diffBytes : undefined,
@@ -2422,7 +2421,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "external_tool",
-      ...reviewFallback,
+      reviewFallback,
       summary: params.summary as string,
       toolName: params.toolName as string,
       arguments: params.arguments as Record<string, unknown>,
@@ -2450,7 +2449,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "permission_request",
-      ...reviewFallback,
+      reviewFallback,
       summary: params.summary as string,
       grantScope: "run",
       permissions: {
@@ -2483,7 +2482,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "network_access",
-      ...reviewFallback,
+      reviewFallback,
       summary: params.summary as string,
       toolName: params.toolName as string,
       hosts: [...(params.hosts as string[])],
@@ -2517,7 +2516,7 @@ function approvalRequestFrom(
       itemId: params.itemId as string,
       toolCallId: params.toolCallId as string,
       kind: "command_execution",
-      ...reviewFallback,
+      reviewFallback,
       summary: params.summary as string,
       command: params.command as string,
       cwd: params.cwd as string,

@@ -186,6 +186,8 @@ def resolve_approval_and_transition(
     if fact is None:
         raise InvalidRunStateError("approval is no longer pending")
     expected_source = {"manual": None, "auto_review": "model", "full_access": "mode"}[fact["approval_mode"]]
+    if fact["approval_mode"] == "auto_review" and review is not None and review.source == "manual" and review.allows_manual_fallback:
+        expected_source = "manual"
     if (review.source if review is not None else None) != expected_source:
         raise InvalidRunStateError("approval source does not match run policy")
     if review is not None and review.decision != decision:

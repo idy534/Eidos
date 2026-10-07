@@ -97,6 +97,17 @@ function openWorkflow() {
 }
 
 describe("GitWorkflowControls", () => {
+  it('allows metadata operations during a Run and disables worktree changes', async () => {
+    renderControls({workspaceMutationDisabled: true, openRequest: 1});
+    expect(await screen.findByRole('dialog', {name: '提交和推送'})).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', {name: '获取'})).toBeEnabled());
+    expect(screen.getByRole('button', {name: '推送'})).toBeEnabled();
+    expect(screen.getByRole('button', {name: '拉取'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Merge'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Rebase'})).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox', {name: '提交信息'}), {target: {value: 'Keep working'}});
+    expect(screen.getByRole('button', {name: '提交', exact: true})).toBeEnabled();
+  });
   it("opens the workflow without a navigation arrow", () => {
     renderControls();
 

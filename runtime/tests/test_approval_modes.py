@@ -20,7 +20,7 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.model.config import default_profile_snapshot
 from eidos_runtime.protocol.methods import RunStartRequestDto
-from eidos_runtime.runtime.approval import ApprovalCoordinator
+from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.approval_review import (
     MAX_REVIEW_INPUT_BYTES,
     review_approval,
@@ -252,6 +252,12 @@ def test_auto_review_persists_decision_and_deduplicates_the_same_rejected_action
         )
         assert second.decision == "reject"
         assert len(reviewer.calls) == 1
+        store.enqueue_input(str(run['id']), 'I explicitly authorize this exact action; reassess it.')
+        store.consume_pending_inputs(str(run['id']))
+        third_item = store.create_tool_item(str(run['id']), 3, 0, 'call-new-authorization', 'write_file', '{}')
+        coordinator.request(str(run['id']), third_item, {'kind': 'file_change'}, threading.Event(),
+            transition_reason='file_change_approval')
+        assert len(reviewer.calls) == 2
     finally:
         store.close()
 
@@ -273,6 +279,47 @@ def test_approval_transition_rejects_a_review_source_that_does_not_match_run_mod
             store.resolve_approval_committed(
                 item["id"], "approve", None, review=review
             )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('reviewer_kind', ['unavailable', 'unknown', 'invalid'])
+@pytest.mark.parametrize('decision', ['approve', 'reject'])
+def test_auto_review_uncertainty_uses_manual_decision_and_records_its_source(tmp_path, reviewer_kind, decision):
+    store, run, item = _approval_fixture(tmp_path, 'auto_review')
+    reviewer = None if reviewer_kind == 'unavailable' else _reviewer(risk='unknown')
+    if reviewer_kind == 'invalid':
+        reviewer.response = ModelResponse(text='invalid assessment')
+    requests = []
+
+    def transport(request, cancel):
+        requests.append(request)
+        return ApprovalDecision(decision)
+
+    coordinator = ApprovalCoordinator(store, transport, RuntimeEvents(lambda _: None), RuntimePhaseTracker(),
+        lambda _: None, lambda: None, lambda *_: None, lambda *_: None, requeue=False, reviewer=reviewer)
+    try:
+        result = coordinator.request(str(run['id']), item, {'kind': 'file_change'}, threading.Event(),
+            transition_reason='file_change_approval')
+        assert result.decision == decision
+        assert len(requests) == 1 and requests[0]['reviewFallback']
+        approval_id = store.connection.execute('SELECT id FROM approvals WHERE item_id=?', (item['id'],)).fetchone()[0]
+        approval = store.typed_runtime_repository().read_approval(approval_id)
+        assert approval.review.source == 'manual'
+        assert approval.review.decision == decision
+        assert store.read_run(str(run['id']))['approvalMode'] == 'auto_review'
+    finally:
+        store.close()
+
+
+def test_auto_review_definite_rejection_cannot_masquerade_as_manual_fallback(tmp_path):
+    store, run, item = _approval_fixture(tmp_path, 'auto_review')
+    try:
+        store.begin_approval(item['id'], '', None)
+        review = ApprovalReview(source='manual', decision='approve', reason_code='auto_review_rejected',
+            rationale='This is a definite rejection', risk='high')
+        with pytest.raises(InvalidRunStateError, match='approval source'):
+            store.resolve_approval_committed(item['id'], 'approve', None, review=review)
     finally:
         store.close()
 

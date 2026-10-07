@@ -386,7 +386,7 @@ test("distinguishes a reconciliation gate from an executed shell failure", () =>
     />,
   );
 
-  assert.match(html, /未执行，等待只读核验/);
+  assert.match(html, /未执行：与尚未确认的操作冲突/);
   assert.doesNotMatch(html, /失败 · TOOL_RECONCILIATION_REQUIRED/);
   assert.match(html, /A previous side effect must be reconciled/);
 });
@@ -651,7 +651,7 @@ test("does not show success for an error or a result that still needs reconcilia
 
   assert.doesNotMatch(html, /✓ 成功/);
   assert.match(html, /失败 · sandbox_denied/);
-  assert.match(html, /结果需要只读核验/);
+  assert.match(html, /执行结果尚未确认/);
   assert.doesNotMatch(html, /失败 · ok/);
   assert.match(html, /shell-status shell-status--warning/);
 });
@@ -681,7 +681,7 @@ test("distinguishes a reconciliation gate for a non-shell tool", () => {
     />,
   );
 
-  assert.match(html, /未执行，等待只读核验/);
+  assert.match(html, /未执行：与尚未确认的操作冲突/);
   assert.doesNotMatch(html, /失败 output\.txt/);
 });
 
