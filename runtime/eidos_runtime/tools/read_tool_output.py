@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import threading
-from typing import ClassVar, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from pydantic import Field, StrictInt, StrictStr, model_validator
 
@@ -19,6 +19,9 @@ from eidos_runtime.tools.registry import (
     ToolRegistryEntry,
     ToolSpec,
 )
+
+if TYPE_CHECKING:
+    from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 
 
 READ_TOOL_OUTPUT_MIN_BYTES = 4
@@ -109,6 +112,7 @@ class ReadToolOutputResultData(StrictToolModel):
 class ReadToolOutputAdapter:
     store: SessionStore
     run_id: str
+    shell_process_manager: ShellProcessManager | None = None
 
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
@@ -124,6 +128,7 @@ class ReadToolOutputAdapter:
                 offset_bytes=request.offsetBytes,
                 max_bytes=min(request.maxBytes, READ_TOOL_OUTPUT_MODEL_PAGE_BYTES),
                 from_end=request.fromEnd,
+                live_output_reader=(self.shell_process_manager.read_output if self.shell_process_manager is not None else None),
             )
         except ToolOutputReadError as error:
             return _error(error.code, _summary_for_code(error.code))
@@ -140,7 +145,7 @@ class ReadToolOutputAdapter:
 
 
 def read_tool_output_entry(
-    store: SessionStore, run_id: str
+    store: SessionStore, run_id: str, shell_process_manager: ShellProcessManager | None = None,
 ) -> ToolRegistryEntry:
     input_schema = ReadToolOutputInput.model_json_schema(by_alias=True)
     result_schema = result_model(
@@ -155,8 +160,8 @@ def read_tool_output_entry(
     spec = ToolSpec.model_validate({
         "name": "read_tool_output",
         "description": (
-            "Read a bounded stdout or stderr page from a completed or failed "
-            "run_shell call in the current Session. Pass its outputCallId as callId "
+            "Read a bounded stdout or stderr page from a run_shell call in the "
+            "current Session, including live output in this Run. Pass its outputCallId as callId "
             "(the original provider callId, never a Shell sessionId). "
             "Set fromEnd=true for the tail; raw bytes omitted by the Shell output "
             "limit are not recoverable."
@@ -179,7 +184,7 @@ def read_tool_output_entry(
             "sourceVersion": "1",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         }),
-        adapter=ReadToolOutputAdapter(store, run_id),
+        adapter=ReadToolOutputAdapter(store, run_id, shell_process_manager),
         input_model=ReadToolOutputInput,
         result_data_model=ReadToolOutputResultData,
     )
@@ -235,9 +240,9 @@ def _summary_for_code(code: str) -> str:
         return "The output offset is not at a UTF-8 character boundary"
     if code == "tool_output_not_available":
         return (
-            "No terminal run_shell output matches this provider callId in the current Session. "
+            "No available run_shell output matches this provider callId in the current Session. "
             "Use the original run_shell outputCallId, not its Shell sessionId. "
-            "For a running command, use write_stdin to wait."
+            "Live output belongs to its original Run; use write_stdin to wait for new output."
         )
     return "The persisted shell output could not be read"
 

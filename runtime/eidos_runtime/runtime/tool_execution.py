@@ -36,7 +36,6 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistryError,
     RuntimeResourceKind,
 )
-from eidos_runtime.runtime.reconciliation import ReconciliationDisposition
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
@@ -131,7 +130,7 @@ class ToolInfrastructureError(RuntimeError):
     pass
 
 
-def _uses_local_reconciliation_policy(plan: ToolDispatchPlan) -> bool:
+def _uses_local_reconciliation_policy(plan: ToolDispatchPlan, call: ModelToolCall) -> bool:
     descriptor = plan.descriptor
     if descriptor is None or descriptor.provenance.kind != "builtin":
         return False
@@ -142,9 +141,12 @@ def _uses_local_reconciliation_policy(plan: ToolDispatchPlan) -> bool:
     ):
         # The file handler checks actual prepared targets, again at commit.
         return True
+    if descriptor.provenance.source_id == "eidos.planning":
+        return descriptor.spec.name == "write_plan"
     return (
         descriptor.provenance.source_id == "eidos.collaboration"
-        and descriptor.spec.name in {"send_message", "stop_agent"}
+        and (descriptor.spec.name in {"send_message", "stop_agent", "followup_task"}
+             or descriptor.spec.name == "spawn_agent" and call.arguments.get("role") == "explorer")
     )
 
 
@@ -233,9 +235,6 @@ class HandlerOutcome:
     item: dict[str, object] | None = None
     progress_fingerprint: str | None = None
     argument_validation: ToolArgumentValidationResult | None = None
-    reconciliation_disposition: ReconciliationDisposition = (
-        ReconciliationDisposition.CONTINUE
-    )
 
 
 class ToolExecutionPhase(StrEnum):
@@ -506,7 +505,7 @@ class ToolExecutionController:
             elif (
                 plan.side_effect != "none"
                 and self.store.side_effects_blocked(run_id)
-                and not _uses_local_reconciliation_policy(plan)
+                and not _uses_local_reconciliation_policy(plan, call)
             ):
                 outcome = HandlerOutcome(
                     tool_error(

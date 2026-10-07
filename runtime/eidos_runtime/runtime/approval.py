@@ -121,6 +121,7 @@ class ApprovalCoordinator:
     ) -> ApprovalOutcome:
         self.last_review = None
         mode = self.store.read_run(run_id).get("approvalMode", "manual")
+        user_evidence = self.store.approval_user_evidence(run_id)
         fingerprint = hashlib.sha256(json.dumps({
             "tool": item.get("toolCall", {}).get("toolName"),
             "arguments": (None if description.get("kind") == "permission_request"
@@ -129,6 +130,7 @@ class ApprovalCoordinator:
                             if key not in {"reason", "summary"}},
             "diff": diff,
             "baseSha256": base_sha256,
+            "userEvidence": user_evidence,
         }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         request = {
             **(request or description),
@@ -184,13 +186,33 @@ class ApprovalCoordinator:
                         reason_code="auto_review_unavailable", rationale="自动审批模型不可用；操作未获批准。")
                 else:
                     evidence = json.dumps({
-                        "userMessages": self.store.approval_user_evidence(run_id),
+                        "userMessages": user_evidence,
                         "tool": item.get("toolCall", {}).get("toolName"),
                         "arguments": item.get("toolCall", {}).get("argumentsJson"),
                         "request": request, "diff": diff, "baseSha256": base_sha256,
                     }, ensure_ascii=False)
                     self.last_review = review_approval(self.reviewer, evidence, cancel)
-            if self.last_review is not None:
+            fallback_review = self.last_review if (
+                mode == "auto_review" and self.last_review is not None
+                and self.last_review.decision == "reject"
+                and self.last_review.allows_manual_fallback
+            ) else None
+            if fallback_review is not None:
+                self.check_cancel(run_id, cancel)
+                result = self.transport.request(
+                    ApprovalRequest({
+                        "sessionId": pending_item["sessionId"], "runId": pending_item["runId"],
+                        "itemId": pending_item["id"], "toolCallId": tool_call["id"],
+                        **project_approval_diff(description),
+                        "reviewFallback": fallback_review.rationale,
+                    }), cancel,
+                )
+                result = self._validated(result)
+                self.last_review = fallback_review.model_copy(update={
+                    "source": "manual", "decision": result.decision,
+                    "rationale": fallback_review.rationale[:1470] + (" 用户手动批准。" if result.decision == "approve" else " 用户未批准。"),
+                })
+            elif self.last_review is not None:
                 feedback = None
                 if self.last_review.decision == "reject":
                     feedback = self.last_review.rationale + " Do not retry the same action or circumvent this refusal. Choose a materially safer alternative or explain the blocker."

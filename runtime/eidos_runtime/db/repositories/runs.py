@@ -451,6 +451,16 @@ class RunRepository(Repository):
             raise ResourceNotFoundError("run not found")
         return _run_from_row(row)
 
+    def read_run_extension_snapshot(self, run_id: str) -> dict[str, object]:
+        """Internal immutable snapshot, including restart-only Skill metadata."""
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT extension_snapshot_json FROM runs WHERE id=?", (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("run not found")
+        return json.loads(row['extension_snapshot_json'])
+
     def approval_user_evidence(self, run_id: str) -> tuple[str, ...]:
         with self.lock:
             rows = self._connection().execute(
@@ -459,7 +469,7 @@ class RunRepository(Repository):
                    JOIN runs source ON source.id = i.run_id
                    WHERE i.session_id = current.session_id AND i.kind = 'user_message'
                      AND source.creation_seq <= current.creation_seq
-                   ORDER BY i.creation_seq DESC LIMIT 8""", (run_id,),
+                   ORDER BY i.creation_seq DESC LIMIT 32""", (run_id,),
             ).fetchall()
         return tuple(str(row["content"] or "") for row in reversed(rows))
 

@@ -37,6 +37,7 @@ from eidos_runtime.db.schema import (
     V13_SCHEMA_VERSION,
     V14_SCHEMA_VERSION,
     V15_SCHEMA_VERSION,
+    V16_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -154,6 +155,7 @@ class Database:
                     V13_SCHEMA_VERSION,
                     V14_SCHEMA_VERSION,
                     V15_SCHEMA_VERSION,
+                    V16_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -269,6 +271,12 @@ class Database:
                 from eidos_runtime.db.collaboration_migration import migrate_collaboration
                 try:
                     migrate_collaboration(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V16_SCHEMA_VERSION:
+                from eidos_runtime.db.gate_refinements_migration import migrate_gate_refinements
+                try:
+                    migrate_gate_refinements(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

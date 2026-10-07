@@ -1509,7 +1509,6 @@ class SessionApplication:
         self._store.start_async_operation(deferred.async_operation_id)
         try:
             with self._lifecycle.hold(deferred.plan.session.id):
-                self._repository.assert_session_deletable(deferred.plan.session.id)
                 result = self._git_workflow.fetch(deferred.plan, cancel)  # type: ignore[union-attr]
             completed = self._store.complete_operation(
                 deferred.operation_id,
@@ -1657,7 +1656,6 @@ class SessionApplication:
         self._store.start_async_operation(deferred.async_operation_id)
         try:
             with self._lifecycle.hold(deferred.plan.session.id):
-                self._repository.assert_session_deletable(deferred.plan.session.id)
                 result = self._git_workflow.push(deferred.plan, cancel)  # type: ignore[union-attr]
             completed = self._store.complete_operation(
                 deferred.operation_id,

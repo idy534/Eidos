@@ -160,13 +160,6 @@ export function useRunController(
     if (!storageReady || (inputOverride === undefined && !draftStore.ready)) return false;
     if (!sessionInput.trim() && !submittedReferences.length) return false;
 
-    const currentActiveRun = findActiveRun(currentSnapshot.runs);
-    const mode = deriveComposerMode(storageReady, currentActiveRun, false);
-    if (mode !== "idle") return false;
-
-    const freshActiveRun = findActiveRun(currentSnapshot.runs);
-    if (freshActiveRun) return false;
-
     const token = Symbol("run-submission");
     const operation: SubmissionOperation = {
       token,

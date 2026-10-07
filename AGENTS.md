@@ -202,11 +202,9 @@ RunSupervisor、ResourceRegistry、Session FIFO 和 Shutdown Quiescence 语义�
 - Shutdown 能达到资源静止
 - Runtime 重启不会重放不确定副作用
 - 并行结果保持模型声明顺序
-异步实现变化必须独立 PR，不得同时修改协议、DB Schema 和 UI。
+异步、协议、持久化和 UI 变化围绕同一用户目标时可以在同一 PR 中完成，分别验证取消、恢复、协议兼容和交互行为；不因跨层数量增加额外审批或拆 PR 门禁。
 ## 本期明确的权限模式例外
 用户明确要求增加 Codex 风格的完全访问模式。只有用户通过 Desktop 确认并创建的 `full_access` Run 可以关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批。该模式不能继续承诺 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久保护。第 14、15、28 节的相关沙盒和路径保护要求继续完整适用于 `manual` 与 `auto_review`。所有模式仍保留参数校验、Durable Intent、文件身份与版本核验、取消、结果验证和 Reconciliation。模型、项目文件和工具参数不能切换模式。
-
-当前 Loop 优化 PR 已获用户授权进入测试阶段；Runtime 改动按 `runtime/AGENTS.md` 执行定向、Fast 和必要的 Full 验证。
 
 ## 14. Tool execution
 单 ToolCall 固定流程：
@@ -217,7 +215,7 @@ Validate → Prepare → Resolve Permission → Commit Durable Intent
 不得绕过任何已存在阶段。
 文件工具默认只能写入 Workspace。Workspace 外的普通路径必须经明确审批或已有有效 Run Grant 授权。文件工具必须读取当前内容，生成 Base Hash 和完整 Diff，在 Durable Intent 后重新验证版本。已有普通文件使用受控的原地写入：先打开并核验 fd，再截断、完整写入、fsync 和验证最终内容；新文件保留排他创建提交。Runtime 在事务内提交 ToolResult 与 Event。Workspace 内普通文件写入使用现有 Workspace Permission，不逐次审批。无沙盒写入必须单独获得明确审批。普通 Skill 写入需要明确审批或有效 Run Grant；数据目录下 `skills/.system` 永久禁止工具修改。Projectless 当前 Workspace 的普通文件无需额外审批；不得开放整个数据目录或其他会话目录。永久拒绝路径不能通过审批放开。截断后的失败可能已改变文件，必须报告真实副作用；不确定结果进入 Reconciliation，不自动重试或回滚。
 Shell 必须每次受控执行、默认禁网、不继承敏感环境变量、使用明确 cwd 和 timeout、有界输出、终止完整进程组并记录有效权限。默认 Workspace Seatbelt 不逐次审批。联网和附加路径必须走明确扩权和 Approval。存在永久写入保护或 hard confidentiality deny 时，不得启动会丢失这些保护的裸 Shell 无沙盒执行；受控文件 helper 的无沙盒写入仍需独立审批和逐目标核验。
-普通只读工具仅在完整批次满足 `parallel_safe` 时并行。
+普通只读工具在连续调用片段满足 `parallel_safe` 时并行；片段之间的副作用顺序必须保持。
 写入、Shell、MCP 和外部副作用工具只在当前 Run 的提交/启动窗口独占；活动 Shell 不得持续占有门控。跨 Run 不共享此锁。
 副作用结果不确定时必须进入 Reconciliation，不得猜测成功或失败。
 ## 15. Sandbox
@@ -339,40 +337,15 @@ OpenTelemetry 和 Sentry 必须作为后续独立 PR，不得混入核心重构�
 7. 运行定向和完整验证
 完成后必须报告修改范围、Diff 规模、保留语义、采用依赖、删除机制、兼容性、数据影响、未完成事项和测试结果。
 ## 26. Test gates
-修改 Python Runtime：
-```bash
-pnpm lint:python
-pnpm test:runtime
-pnpm deps:python
-```
-修改协议：
-```bash
-pnpm test:contracts
-pnpm test:main
-pnpm test:runtime
-```
-修改 Desktop：
-```bash
-pnpm test:desktop
-pnpm build
-```
-修改 Sandbox 或 Shell：
-```bash
-pnpm test:seatbelt-native
-```
-修改启动或进程生命周期：
-```bash
-pnpm test:electron-smoke
-```
-合入前完整门槛：
-```bash
-pnpm check:python
-pnpm test
-pnpm build
-pnpm test:seatbelt-native
-pnpm test:electron-smoke
-git diff --check
-```
+按实际变更边界选择验证，具体分层遵循 `runtime/AGENTS.md`、`desktop/AGENTS.md` 和 `DEVELOPMENT.md`。
+- Python 变化执行 Ruff、Deptry 和相关 Runtime 测试；核心执行、持久化、恢复、权限或全局配置变化执行 Runtime Full。
+- 协议变化同步 Fixture 并执行双端协议验证。
+- Desktop 变化执行相关 Renderer/Main 测试和构建；共享协议或生命周期变化补充 Desktop Full。
+- Sandbox 或原生 Shell 边界变化执行真实 Seatbelt 验证。
+- 启动、退出、preload 和进程生命周期变化执行 Electron smoke。
+- Bundle、依赖、Packaging 或 Release 边界变化执行对应打包验证。
+- 提交前执行 `git diff --check`，检查锁文件和实际依赖审计结果。
+不因创建 PR 自动要求与变更无关的 Full、原生或 DMG 验证，也不因前置检查失败掩盖独立测试结果。
 测试无法执行时必须说明具体原因，不得把跳过写成“通过”。
 ## 27. Reliability cases
 涉及对应模块时必须覆盖：

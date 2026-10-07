@@ -60,6 +60,7 @@ class CollaborationRepository:
             "SELECT id, substr(content,1,2000) AS content FROM items WHERE run_id=? AND kind='assistant_message' AND status='completed' AND incomplete=0 ORDER BY ordinal DESC LIMIT 1", (run['id'],),
         ).fetchone() if run['status'] not in ACTIVE_STATUSES else None
         return AgentSummary(id=row['id'], task_name=row['task_name'], role=row['role'], parent_run_id=row['parent_run_id'],
+            required_for_completion=bool(row['required_for_completion']),
             session_id=row['child_session_id'], run_id=run['id'], status=DomainRunStatus(run['status']), task=row['task'][:512],
             result=result['content'] if result else None, result_item_id=result['id'] if result else None,
             error_code=run['error_code'] or run['stop_reason'], created_at=row['created_at'])
@@ -69,7 +70,7 @@ class CollaborationRepository:
             return self.state_in_connection(self.database.connection(), run_id)
 
     def state_in_connection(
-        self, connection: sqlite3.Connection, run_id: str,
+        self, connection: sqlite3.Connection, run_id: str, *, unread_first: bool = False,
     ) -> CollaborationState:
         """Read the same projection inside the caller's completion transaction."""
         run = connection.execute('SELECT session_id FROM runs WHERE id=?', (run_id,)).fetchone()
@@ -78,9 +79,66 @@ class CollaborationRepository:
         child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (run['session_id'],)).fetchone()
         parent_id = child['parent_run_id'] if child else run_id
         rows = connection.execute('SELECT * FROM agent_delegations WHERE parent_run_id=? ORDER BY created_at,id LIMIT ?', (parent_id, MAX_AGENTS)).fetchall()
-        messages = connection.execute('SELECT id,sender_session_id,recipient_session_id,content,created_at FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence LIMIT 16', (parent_id, run['session_id'])).fetchall()
+        messages = []
+        if unread_first:
+            messages = connection.execute(
+                'SELECT m.id,m.sender_session_id,m.recipient_session_id,m.content,m.created_at FROM agent_messages m '
+                'WHERE m.parent_run_id=? AND m.recipient_session_id=? AND NOT EXISTS '
+                '(SELECT 1 FROM agent_message_receipts a WHERE a.message_id=m.id) '
+                'ORDER BY m.sequence LIMIT 16', (parent_id, run['session_id']),
+            ).fetchall()
+        if not messages:
+            messages = connection.execute('SELECT id,sender_session_id,recipient_session_id,content,created_at FROM (SELECT id,sender_session_id,recipient_session_id,content,created_at,sequence FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence DESC LIMIT 16) ORDER BY sequence', (parent_id, run['session_id'])).fetchall()
         return CollaborationState(parent_run_id=parent_id if rows else None,
             agents=[self._summary(connection, row) for row in rows if child is None or row["id"] == child["id"]], messages=[AgentMessage(**dict(row)) for row in messages])
+
+    def model_state(self, run_id: str) -> CollaborationState:
+        with self.database.lock:
+            return self.state_in_connection(self.database.connection(), run_id, unread_first=True)
+
+    def has_unread_messages(self, run_id: str) -> bool:
+        with self.database.lock:
+            return self.has_unread_in_connection(self.database.connection(), run_id)
+
+    @staticmethod
+    def has_unread_in_connection(connection: sqlite3.Connection, run_id: str) -> bool:
+        return connection.execute(
+            'SELECT 1 FROM agent_messages m JOIN runs r ON r.session_id=m.recipient_session_id '
+            'WHERE r.id=? AND (m.parent_run_id=r.id OR EXISTS '
+            '(SELECT 1 FROM agent_delegations d WHERE d.child_session_id=r.session_id AND d.parent_run_id=m.parent_run_id)) '
+            'AND NOT EXISTS (SELECT 1 FROM agent_message_receipts a WHERE a.message_id=m.id) LIMIT 1',
+            (run_id,),
+        ).fetchone() is not None
+
+    def record_model_delivery(self, run_id: str, model_attempt_id: str) -> None:
+        from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
+
+        snapshot = ContextSnapshotRepository(self.database).read_for_model_attempt(model_attempt_id)
+        if snapshot is None:
+            return
+        ids: set[str] = set()
+        for section in snapshot.model_context:
+            if section.get('sectionId') == 'agent-evidence':
+                content = section.get('content', '')
+                if isinstance(content, str) and '\n' in content:
+                    state = CollaborationState.model_validate_json(content.split('\n', 1)[1])
+                    ids.update(message.id for message in state.messages)
+        if not ids:
+            return
+        with self.database.transaction() as connection:
+            # Only a successfully accepted response proves delivery. A failed,
+            # canceled or merely prepared request does not consume messages.
+            attempt = connection.execute(
+                "SELECT 1 FROM model_attempts a JOIN steps s ON s.id=a.step_id WHERE a.id=? AND s.run_id=? AND a.status='completed'",
+                (model_attempt_id, run_id),
+            ).fetchone()
+            if attempt is None:
+                return
+            connection.executemany(
+                'INSERT OR IGNORE INTO agent_message_receipts SELECT m.id,r.id,?,? FROM agent_messages m '
+                'JOIN runs r ON r.session_id=m.recipient_session_id WHERE r.id=? AND m.id=?',
+                ((model_attempt_id, now_ms(), run_id, identifier) for identifier in ids),
+            )
 
     def read_session(self, session_id: str) -> CollaborationState:
         with self.database.lock:
@@ -91,7 +149,7 @@ class CollaborationRepository:
         with self.database.transaction() as connection:
             existing = connection.execute('SELECT * FROM agent_delegations WHERE spawn_item_id=?', (item_id,)).fetchone()
             if existing is not None:
-                if existing['parent_run_id'] != run_id or existing['task_name'] != request.task_name or existing['task'] != request.message or existing['role'] != request.role:
+                if existing['parent_run_id'] != run_id or existing['task_name'] != request.task_name or existing['task'] != request.message or existing['role'] != request.role or bool(existing['required_for_completion']) != request.required_for_completion:
                     raise CollaborationRejected('agent_operation_conflict')
                 return self._summary(connection, existing)
             parent = self._active(connection, run_id)
@@ -109,8 +167,8 @@ class CollaborationRepository:
             connection.execute('INSERT INTO sessions (id,workspace_root,workspace_dev,workspace_inode,workspace_uid,title,created_at,updated_at,worktree_id,execution_mode) SELECT ?,workspace_root,workspace_dev,workspace_inode,workspace_uid,?,?,?,worktree_id,execution_mode FROM sessions WHERE id=?',
                 (session_id, request.task_name, now, now, parent['session_id']))
             self._create_run(connection, parent, session_id, child_run_id, request.message)
-            connection.execute('INSERT INTO agent_delegations (id,parent_run_id,child_session_id,child_run_id,spawn_item_id,task_name,role,task,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-                (agent_id, run_id, session_id, child_run_id, item_id, request.task_name, request.role, request.message, now))
+            connection.execute('INSERT INTO agent_delegations (id,parent_run_id,child_session_id,child_run_id,spawn_item_id,task_name,role,task,created_at,required_for_completion) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                (agent_id, run_id, session_id, child_run_id, item_id, request.task_name, request.role, request.message, now, int(request.required_for_completion)))
             self._event(connection, run_id)
             row = connection.execute('SELECT * FROM agent_delegations WHERE id=?', (agent_id,)).fetchone()
             return self._summary(connection, row)
@@ -130,40 +188,46 @@ class CollaborationRepository:
 
     def send(self, run_id: str, item_id: str, agent_id: str, message: str) -> None:
         with self.database.transaction() as connection:
-            parent = self._active(connection, run_id)
-            child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (parent['session_id'],)).fetchone()
-            if child is not None:
-                if agent_id != 'parent':
-                    raise CollaborationRejected('child_can_only_message_parent')
-                owner = connection.execute('SELECT * FROM runs WHERE id=?', (child['parent_run_id'],)).fetchone()
-                if owner['status'] not in ACTIVE_STATUSES or owner['cancel_requested_at'] is not None:
-                    raise CollaborationRejected('parent_run_not_active')
-                recipient = owner['session_id']
-                owner_id = owner['id']
-            else:
-                recipient = self._target(connection, run_id, agent_id)['child_session_id']
-                owner_id = run_id
-            if connection.execute('SELECT 1 FROM agent_messages WHERE id=?', (item_id,)).fetchone():
-                return
-            if not message.strip():
-                raise CollaborationRejected('empty_agent_message')
-            if connection.execute('SELECT COUNT(*) FROM agent_messages WHERE recipient_session_id=?', (recipient,)).fetchone()[0] >= 16:
-                raise CollaborationRejected('agent_mailbox_limit')
-            connection.execute('INSERT INTO agent_messages (id,parent_run_id,sender_session_id,recipient_session_id,content,created_at) VALUES (?,?,?,?,?,?)',
-                (item_id, owner_id, parent['session_id'], recipient, message, now_ms()))
-            self._event(connection, owner_id)
+            self._send(connection, run_id, item_id, agent_id, message)
+
+    def _send(self, connection: sqlite3.Connection, run_id: str, item_id: str, agent_id: str, message: str) -> None:
+        parent = self._active(connection, run_id)
+        child = connection.execute('SELECT * FROM agent_delegations WHERE child_session_id=?', (parent['session_id'],)).fetchone()
+        if child is not None:
+            if agent_id != 'parent':
+                raise CollaborationRejected('child_can_only_message_parent')
+            owner = connection.execute('SELECT * FROM runs WHERE id=?', (child['parent_run_id'],)).fetchone()
+            if owner['status'] not in ACTIVE_STATUSES or owner['cancel_requested_at'] is not None:
+                raise CollaborationRejected('parent_run_not_active')
+            recipient = owner['session_id']
+            owner_id = owner['id']
+        else:
+            recipient = self._target(connection, run_id, agent_id)['child_session_id']
+            owner_id = run_id
+        if connection.execute('SELECT 1 FROM agent_messages WHERE id=?', (item_id,)).fetchone():
+            return
+        if not message.strip():
+            raise CollaborationRejected('empty_agent_message')
+        connection.execute('INSERT INTO agent_messages (id,parent_run_id,sender_session_id,recipient_session_id,content,created_at) VALUES (?,?,?,?,?,?)',
+            (item_id, owner_id, parent['session_id'], recipient, message, now_ms()))
+        self._event(connection, owner_id)
 
     def followup(self, run_id: str, item_id: str, agent_id: str, message: str) -> AgentSummary:
         with self.database.transaction() as connection:
             parent = self._active(connection, run_id)
             target = self._target(connection, run_id, agent_id)
+            if connection.execute('SELECT 1 FROM agent_messages WHERE id=?', (item_id,)).fetchone():
+                return self._summary(connection, target)
             # Deterministic identity makes a repeated tool attempt return the
             # same Run instead of starting the assignment twice.
             child_id = str(uuid.uuid5(uuid.NAMESPACE_URL, 'eidos:agent-followup:' + item_id))
             if connection.execute('SELECT 1 FROM runs WHERE id=?', (child_id,)).fetchone() is None:
                 current = connection.execute('SELECT status FROM runs WHERE id=?', (target['child_run_id'],)).fetchone()
                 if current['status'] in ACTIVE_STATUSES:
-                    raise CollaborationRejected('agent_busy_use_send_message')
+                    self._send(connection, run_id, item_id, agent_id, message)
+                    return self._summary(connection, target)
+                if target['role'] == 'worker' and parent['reconciliation_required']:
+                    raise CollaborationRejected('reconciliation_required')
                 self._create_run(connection, parent, target['child_session_id'], child_id, message)
                 connection.execute('UPDATE agent_delegations SET child_run_id=?,task=? WHERE id=?', (child_id, message, agent_id))
                 self._event(connection, run_id)

@@ -21,6 +21,7 @@ architecture-overview.html
 - [Runtime Git Worktree Kernel](architecture/git-worktree.md)：说明 Project、Worktree、恢复和 Sandbox 边界。
 - [当前能力](current-capabilities.md)：说明当前 main 已经能做什么。
 - [当前限制](current-limitations.md)：说明当前 main 还没有形成哪些完整闭环。
+- [执行门控清单](current-execution-gates.md)：列举移除、调整和保留的检查及其依据。
 - [宏观架构图](architecture-overview.html)：离线可打开的当前架构视图。
 
 ## Development

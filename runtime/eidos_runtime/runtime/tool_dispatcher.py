@@ -342,13 +342,15 @@ class ToolDispatcher:
         return entry.projector.project(entry, result)
 
     def is_parallel_read_batch(self, calls: tuple[ModelToolCall, ...]) -> bool:
-        return len(calls) > 1 and all(
+        return len(calls) > 1 and all(self.is_parallel_read_call(call) for call in calls)
+
+    def is_parallel_read_call(self, call: ModelToolCall) -> bool:
+        return (
             (entry := self._registry.get(call.name)) is not None
             and isinstance(call.payload, FunctionToolPayload)
             and entry.spec.batch_policy == "parallel"
             and entry.execution_policy is not None
             and entry.execution_policy.concurrency.mode == "parallel_safe"
-            for call in calls
         )
 
 

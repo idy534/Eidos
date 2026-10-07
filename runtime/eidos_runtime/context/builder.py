@@ -34,6 +34,7 @@ class ContextBuild(BaseModel):
     instructions: ResolvedInstructions
     budget: ContextBudget
     facts: ContextFacts
+    agent_message_ids: tuple[str, ...] = ()
 
 
 class ContextBuilder:
@@ -93,7 +94,7 @@ class ContextBuilder:
         # the current user request (which comes later in history) has higher priority.
         user_context_messages: list[ModelContextItem] = []
         collaboration = CollaborationRepository(self.store.database)
-        agent_state = collaboration.state(run_id)
+        agent_state = collaboration.model_state(run_id)
         if agent_state.parent_run_id is not None:
             # A distinct source-labelled section keeps agent findings out of
             # user-message history and preserves them across compaction.
@@ -309,6 +310,7 @@ class ContextBuilder:
             instructions=instructions,
             budget=budget,
             facts=facts,
+            agent_message_ids=tuple('agent-message:' + message.id for message in agent_state.messages),
         )
 
 

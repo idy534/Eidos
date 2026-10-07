@@ -141,6 +141,11 @@ class RunExtensionSnapshotDto(ClosedModel):
     skill_catalog_hash: StrictStr = Field(alias="skillCatalogHash")
     mcp_config_hash: StrictStr = Field(alias="mcpConfigHash")
     excluded_skill_ids: list[StrictStr] = Field(default_factory=list, alias="excludedSkillIds")
+    skill_catalog_ids: list[StrictStr] | None = Field(default=None, alias="skillCatalogIds")
+    skill_lease_version: Literal[1] | None = Field(default=None, alias="skillLeaseVersion")
+    # Internal restart metadata is accepted when mapping a stored Run, never
+    # projected into Desktop responses or model context as an opaque payload.
+    skill_catalog_snapshot_json: StrictStr | None = Field(default=None, alias="skillCatalogSnapshotJson", exclude=True)
 
 
 class SkillMetadataDto(ClosedModel):

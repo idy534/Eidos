@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from typing import Literal
+from typing import Callable, Literal
 import uuid
 
 from pydantic import Field
@@ -223,6 +223,7 @@ class ExecutionRepository(Repository):
         offset_bytes: int,
         max_bytes: int,
         from_end: bool,
+        live_output_reader: Callable[[str], dict[str, object]] | None = None,
     ) -> ToolOutputPage:
         if stream not in {"stdout", "stderr"}:
             raise ToolOutputReadError("invalid_output_stream")
@@ -241,15 +242,15 @@ class ExecutionRepository(Repository):
                 raise ToolOutputReadError("tool_output_not_available")
             rows = connection.execute(
                 """
-                SELECT tool_calls.provider_call_id, tool_calls.result_json
+                SELECT tool_calls.provider_call_id, tool_calls.result_json, items.run_id
                 FROM tool_calls
                 JOIN items ON items.id = tool_calls.item_id
                 WHERE items.session_id = ?
                   AND tool_calls.provider_call_id = ?
                   AND tool_calls.tool_name = 'run_shell'
                   AND items.kind = 'command_execution'
-                  AND items.status IN ('completed', 'failed', 'canceled')
-                  AND tool_calls.status IN ('completed', 'failed', 'canceled')
+                  AND items.status IN ('in_progress', 'completed', 'failed', 'canceled')
+                  AND tool_calls.status IN ('running', 'completed', 'failed', 'canceled')
                   AND tool_calls.result_json IS NOT NULL
                 ORDER BY tool_calls.creation_seq ASC
                 LIMIT 2
@@ -266,7 +267,14 @@ class ExecutionRepository(Repository):
             raise ToolOutputReadError("output_unavailable") from None
         data = result.get("data") if isinstance(result, dict) else None
         if isinstance(data, dict) and data.get("executionStatus") == "running":
-            raise ToolOutputReadError("tool_output_not_available")
+            session_id = data.get("sessionId")
+            if live_output_reader is None or rows[0]['run_id'] != run_id or not isinstance(session_id, str):
+                raise ToolOutputReadError("tool_output_not_available")
+            try:
+                observed = live_output_reader(session_id)
+            except LookupError:
+                raise ToolOutputReadError("tool_output_not_available") from None
+            data = observed.get('data')
         content = data.get(stream) if isinstance(data, dict) else None
         if not isinstance(content, str):
             raise ToolOutputReadError("output_unavailable")
@@ -1295,6 +1303,8 @@ class ExecutionRepository(Repository):
             if expected_collaboration is not None:
                 from eidos_runtime.persistence.collaboration import CollaborationRepository
 
+                if CollaborationRepository.has_unread_in_connection(connection, run_id):
+                    raise RunCompletionDeferred("pending_agent_messages")
                 current = CollaborationRepository(self.database).state_in_connection(connection, run_id)
                 if current != expected_collaboration:
                     raise RunCompletionDeferred("collaboration_changed")

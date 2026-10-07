@@ -12,7 +12,7 @@ from eidos_runtime.domain.approval_policy import ApprovalMode
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Literal, TypeVar
+from typing import Callable, Literal, TypeVar
 
 from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.models.skill_settings import SkillState
@@ -636,6 +636,9 @@ class SessionStore:
     def read_run(self, run_id: str) -> dict[str, object]:
         return self._repository(self._runs).read_run(run_id)
 
+    def read_run_extension_snapshot(self, run_id: str) -> dict[str, object]:
+        return self._repository(self._runs).read_run_extension_snapshot(run_id)
+
     def approval_user_evidence(self, run_id: str) -> tuple[str, ...]:
         return self._repository(self._runs).approval_user_evidence(run_id)
 
@@ -671,8 +674,11 @@ class SessionStore:
     def restore_removed_skill(self, qualified_id: str) -> None:
         self._repository(self._extensions).restore_removed_skill(qualified_id)
 
-    def has_nonterminal_runs(self) -> bool:
-        return self._repository(self._extensions).has_nonterminal_runs()
+    def skill_referenced_by_nonterminal_run(self, qualified_id: str) -> bool:
+        return self._repository(self._extensions).skill_referenced_by_nonterminal_run(qualified_id)
+
+    def acquire_skill_lease(self, run_id: str, qualified_id: str) -> None:
+        self._repository(self._extensions).acquire_skill_lease(run_id, qualified_id)
 
     def plugin_record(self, plugin_id: str) -> dict[str, object] | None:
         return self._repository(self._extensions).plugin_record(plugin_id)
@@ -773,6 +779,7 @@ class SessionStore:
         offset_bytes: int,
         max_bytes: int,
         from_end: bool,
+        live_output_reader: Callable[[str], dict[str, object]] | None = None,
     ) -> ToolOutputPage:
         return self._repository(self._execution).read_tool_output(
             run_id,
@@ -781,6 +788,7 @@ class SessionStore:
             offset_bytes=offset_bytes,
             max_bytes=max_bytes,
             from_end=from_end,
+            live_output_reader=live_output_reader,
         )
 
     def read_tool_text(

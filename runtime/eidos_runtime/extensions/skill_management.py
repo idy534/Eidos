@@ -139,13 +139,14 @@ class SkillManagement:
         return SkillRemoval(qualified_id=qualified_id, cleanup_pending=state.cleanup_pending)
 
     def cleanup(self) -> None:
-        # ponytail: retain files while any Run is active; track individual roots if cleanup latency matters.
         with self.store.lock:
-            if self.store.has_nonterminal_runs() or self.store.data_directory is None:
+            if self.store.data_directory is None:
                 return
             root = self.store.data_directory / "skills"
             for state in self.store.skill_states():
                 if not state.removed or not state.cleanup_pending or state.source_kind != "user":
+                    continue
+                if self.store.skill_referenced_by_nonterminal_run(state.qualified_id):
                     continue
                 name = state.directory_name
                 if not name or name.startswith(".") or Path(name).name != name:

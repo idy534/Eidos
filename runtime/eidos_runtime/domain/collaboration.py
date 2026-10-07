@@ -13,9 +13,6 @@ MAX_AGENTS = 16
 # The scheduler counts executing children per parent Run, never across Runs.
 MAX_ACTIVE_AGENTS = 8
 AgentRole = Literal["explorer", "worker"]
-READ_ONLY_TOOLS = frozenset({
-    "list_files", "read_file", "read_file_range", "search_text", "search_text_wait", "read_tool_output",
-})
 AGENT_TOOLS = frozenset({
     "spawn_agent", "send_message", "followup_task", "wait_agents", "list_agents", "stop_agent",
 })
@@ -26,6 +23,7 @@ class SpawnAgent(EidosFrozenStrictModel):
     task_name: str = Field(min_length=1, max_length=60, pattern=r"^[a-z][a-z0-9_-]*$")
     message: str = Field(min_length=1, max_length=8000, description="A self-contained assignment with scope and acceptance criteria. The child receives this task, not the whole parent conversation.")
     role: AgentRole = "worker"
+    required_for_completion: bool = Field(default=True, description="Set false only for supplementary work whose result is not needed to finish the task. Runtime cancels optional tasks and awaits their resource cleanup at parent completion.")
 
 
 class AgentTarget(EidosFrozenStrictModel):
@@ -45,6 +43,7 @@ class AgentSummary(EidosFrozenStrictModel):
     id: str
     task_name: str
     role: AgentRole
+    required_for_completion: bool = True
     parent_run_id: str
     session_id: str
     run_id: str
