@@ -138,7 +138,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 
   const isReadOnly = composerMode === "read_only";
   const isIdle = composerMode === "idle";
-  const canCancel = Boolean(activeRun?.allowedActions?.includes("cancel"));
+  const canCancel = (composerMode === "running" || composerMode === "starting")
+    && Boolean(activeRun?.allowedActions?.includes("cancel"));
+  const hasDraft = Boolean(input.trim()) || references.length > 0;
+  const showCancelButton = canCancel && !hasDraft;
   const inputDisabled = !draftReady || isSubmitting;
 
   const prevDisabledRef = useRef<boolean>(inputDisabled);
@@ -390,7 +393,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             />
           )}
 
-          {canCancel ? (
+          {showCancelButton ? (
             <Button
               type="button"
               variant="primary"
@@ -405,24 +408,25 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             >
               <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
             </Button>
-        ) : null}
-          <Button
-            type="submit"
-            variant="primary"
-            size="medium"
-            className={`composer-submit-btn${!input.trim() && references.length === 0 ? " composer-submit-btn--empty" : ""}`}
-            disabled={isSubmitDisabled}
-            loading={isSubmitting || composerMode === "starting"}
-            aria-label={buttonLabel}
-            title={buttonLabel}
-            icon={
-              !isSubmitting && composerMode !== "starting" ? (
-                <UpArrowIcon />
-              ) : undefined
-            }
-          >
-            <span className="sr-only">{buttonLabel}</span>
-          </Button>
+          ) : (
+            <Button
+              type="submit"
+              variant="primary"
+              size="medium"
+              className={`composer-submit-btn${!hasDraft ? " composer-submit-btn--empty" : ""}`}
+              disabled={isSubmitDisabled}
+              loading={isSubmitting || composerMode === "starting"}
+              aria-label={buttonLabel}
+              title={buttonLabel}
+              icon={
+                !isSubmitting && composerMode !== "starting" ? (
+                  <UpArrowIcon />
+                ) : undefined
+              }
+            >
+              <span className="sr-only">{buttonLabel}</span>
+            </Button>
+          )}
         </div>
       </div>
     </form>

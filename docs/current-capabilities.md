@@ -337,7 +337,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 普通 Shell 会继承 Run Grant。显式 `networkAccess=request`、`sandboxPermissions`、`additionalPermissions` 和 `justification` 保持兼容，显式动作审批不会建立 Run Grant。
 - 普通 Shell 遭遇可识别的网络 denial 后可以进入审批。批准后，模型收到 `permission_granted_retry_required`，再自行决定下一次调用。Runtime 不会自动重跑 Shell。拒绝只阻止同一审批请求的重复打扰。
 - R1 结构化待批请求可以在重启后恢复。Runtime 保留原审批，并重新核对 Tool 契约和待执行动作。网络 denial 的已完成结果可以恢复。不确定执行、契约变化和取消仍保持原有安全边界。
-- 人工审批使用底部 ApprovalComposer，审批和澄清期间继续保留草稿输入框。模型加载、执行收尾或工作区暂不可执行时仍可编辑已载入的草稿；执行提交继续遵守实际状态和模型配置。Feed 显示历史状态。Sidebar 会显示“等待批准”。
+- 人工审批使用底部 ApprovalComposer 替换普通输入框；澄清等待也由 ClarificationComposer 替换普通输入框。等待结束后，Session Composer 会恢复并保留原草稿。模型加载、执行收尾或工作区暂不可执行时，普通 Composer 仍可编辑已载入的草稿，但提交受当前执行状态限制。Feed 显示审批历史。Sidebar 会显示“等待批准”。
 - SQLite 同时保留原始 Tool 参数和规范化参数。旧数据的原始参数保持未知。
 
 ## Run 收尾与 Shell 执行期限
@@ -412,7 +412,7 @@ Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草
 ## Plan 模式
 
 - 用户可以通过模式选择或输入 `/` 呼出快捷指令选择 `/plan` 显式进入 Plan 模式。系统不会自主切换模式。
-- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，底部展示 `ClarificationComposer` 并保留草稿输入；支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。混合工具批次或活动 Shell 下提问保留 Worker 和进程所有者，回答后顺序继续；单独提问且没有活动 Shell 时仍使用持久挂起。
+- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，底部 `ClarificationComposer` 会替换普通输入框；它支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。混合工具批次或活动 Shell 下提问保留 Worker 和进程所有者，回答后顺序继续；单独提问且没有活动 Shell 时仍使用持久挂起。
 - Runtime 保存 Markdown 草稿与版本。文件位于 `~/.eidos/plans/`；自定义 `EIDOS_DATA_DIR` 时使用该目录下的 `plans/`。
 - 用户可以编辑计划正文、载入外部文件修改、让模型按意见修改计划，然后确认具体版本并启动普通执行 Run。
 - 澄清等待、答案、取消和安全恢复使用现有 SQLite、Event / Outbox 与 Run 调度流程。Plan 沿用现有权限模式。
@@ -447,7 +447,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ### 交互与资源门禁细化（PR #103）
 
-- 同 Session 可以在运行、审批等待和子任务等待期间提交后续输入，由持久 FIFO 排队；取消入口继续可用。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
+- Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，专用面板继续替换普通输入框。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
 - 连续安全的只读调用可在混合批次中并行。普通读取和协调不等待整库恢复扫描；冲突文件与未知副作用继续受保护。搜索执行槽位满时排队，取消和退出仍负责清理。
 - 延迟工具优先保留最新激活项，仍受工具定义大小预算约束。新 Run 的 Skill 删除保护基于实际使用租约和冻结元数据；旧 Run 继续保守保护目录引用。
 - CI 按改动范围选择 Runtime、Desktop 与原生检查，质量和安全检查独立执行；最终汇总保留必需检查，失败不会被其他成功结果掩盖。数据库升级至 Schema 17，Runtime 和 Desktop 应一起更新。

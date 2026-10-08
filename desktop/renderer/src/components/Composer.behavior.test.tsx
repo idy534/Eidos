@@ -234,20 +234,29 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(submitBtn).toBeDisabled();
   });
 
-  it.each(["running", "waiting_approval", "finalizing"] as const)("%s permits queueing and retains cancellation", (status) => {
+  it.each(["running", "waiting_approval", "finalizing"] as const)("%s uses one action button for queueing or stopping", (status) => {
     const onSubmit = vi.fn();
     const onCancel = vi.fn();
     const activeRun: Run = { id: "active", sessionId: "s", modelId: "deepseek-v4-flash", status,
       modelStepCount: 1, createdAt: 1, updatedAt: 1, allowedActions: ["cancel"] };
-    render(<Composer {...defaultProps} composerMode={status} activeRun={activeRun}
+    const { rerender } = render(<Composer {...defaultProps} composerMode={status} activeRun={activeRun}
       input="Next task" onSubmit={onSubmit} onCancel={onCancel} />);
     expect(screen.getByRole("textbox")).toBeEnabled();
     const submit = screen.getByRole("button", { name: "排队" });
     expect(submit).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "取消 Run" })).not.toBeInTheDocument();
     fireEvent.click(submit);
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "取消 Run" }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    if (status === "running") {
+      rerender(<Composer {...defaultProps} composerMode={status} activeRun={activeRun}
+        input="" onSubmit={onSubmit} onCancel={onCancel} />);
+      expect(screen.getByRole("button", { name: "取消 Run" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "排队" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "取消 Run" }));
+      expect(onCancel).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("button", { name: "开始" })).not.toBeInTheDocument();
+    }
     expect(screen.getByRole("button", { name: /打开模型和思考强度菜单/ })).toBeEnabled();
   });
 
