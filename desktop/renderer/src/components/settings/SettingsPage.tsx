@@ -134,7 +134,7 @@ export function SettingsPage({
           <span className="settings-header-title">设置</span>
         </div>
         <div className="header-right">
-          <span className="version-pill">Eidos {runtime.state === "ready" ? runtime.runtimeVersion : "0.x"}</span>
+          <span className="version-pill">Eidos 0.5.0</span>
         </div>
       </header>
 
