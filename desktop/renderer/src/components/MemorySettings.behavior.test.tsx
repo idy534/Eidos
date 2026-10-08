@@ -31,11 +31,22 @@ describe("Memory settings", () => {
     expect(screen.getByText(/模型配置不可用/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", {name: "查看来源对话"}));
     expect(onOpenSource).toHaveBeenCalledWith("origin");
-    await user.click(screen.getByRole("switch", {name: "自动生成记忆"}));
+    await user.click(screen.getByRole("switch", {name: "自动记忆"}));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("后续对话");
     expect(memory.mock.calls.filter(([method]) => method === "memory/settingsUpdate")).toHaveLength(0);
     await user.click(screen.getByRole("button", {name: "确认"}));
     await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/settingsUpdate", expect.objectContaining({scope: "current", sessionId: "session", settings: expect.objectContaining({generateEnabled: true})})));
+  });
+
+  it("allows a bounded history selection while automatic memory is off", async () => {
+    const {memory} = mount();
+    const user = userEvent.setup();
+    await screen.findByText("默认使用中文");
+    await user.click(screen.getByRole("button", {name: "回填当前对话"}));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("后续消息需要再次选择");
+    expect(memory.mock.calls.filter(([method]) => method === "memory/backfill")).toHaveLength(0);
+    await user.click(screen.getByRole("button", {name: "确认"}));
+    await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/backfill", expect.objectContaining({sessionId: "session"})));
   });
 
   it("requires confirmation for forget and submits the visible revision", async () => {

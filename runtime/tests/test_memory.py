@@ -240,7 +240,7 @@ def test_memory_migration_preserves_existing_v16_data(tmp_path):
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 20
         remember(store)
     finally:
         store.close()
@@ -259,7 +259,7 @@ def test_memory_migration_preserves_existing_v17_data(tmp_path):
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 20
         remember(store)
     finally:
         store.close()
@@ -457,7 +457,7 @@ def test_source_cleanup_preserves_independent_correction_and_its_action(store, t
     assert service.get(MemoryGetRequest(session_id=consumer["id"], entry_id=saved.entry_id)).entry.content == "independent corrected preference"
 
 
-def test_premerge_v18_database_upgrades_to_v19_with_gate_refinements(tmp_path):
+def test_premerge_v18_database_upgrades_with_gate_refinements(tmp_path):
     from eidos_runtime.db.schema import V16_SCHEMA_SQL
     from eidos_runtime.memory.schema import MEMORY_SCHEMA_SQL, MEMORY_USE_SCHEMA_SQL
     from eidos_runtime.db.database import Database
@@ -477,7 +477,33 @@ def test_premerge_v18_database_upgrades_to_v19_with_gate_refinements(tmp_path):
     db.initialize()
     assert db.health_state == "ready"
     conn = db.connection()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_message_receipts'").fetchone() is not None
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_skill_leases'").fetchone() is not None
     db.close()
+
+
+def test_history_migration_preserves_memory_and_rolls_back_atomically():
+    from eidos_runtime.db.schema import V19_SCHEMA_SQL
+    from eidos_runtime.memory.schema import migrate_memory_history
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(V19_SCHEMA_SQL + "\nPRAGMA user_version=19;")
+    connection.execute("INSERT INTO memory_sources(session_id,backfill_enabled) VALUES('existing',1)")
+    connection.execute("INSERT INTO memory_scopes(id,kind,settings_json) VALUES('scope','global','{}')")
+    connection.execute("INSERT INTO memory_entries(id,scope_id,kind,status,current_revision,created_at,updated_at) VALUES('entry','scope','preference','active',1,1,1)")
+    connection.commit()
+    connection.execute("ALTER TABLE memory_model_attempts RENAME TO missing_attempts")
+    connection.commit()
+    with pytest.raises(sqlite3.OperationalError):
+        migrate_memory_history(connection)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+    assert "backfill_until" not in {r[1] for r in connection.execute("PRAGMA table_info(memory_sources)")}
+    assert connection.execute("SELECT backfill_enabled FROM memory_sources").fetchone()[0] == 1
+    connection.execute("ALTER TABLE missing_attempts RENAME TO memory_model_attempts")
+    connection.commit()
+    migrate_memory_history(connection)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 20
+    assert connection.execute("SELECT backfill_enabled,backfill_until FROM memory_sources").fetchone() == (0, 0)
+    assert connection.execute("SELECT status FROM memory_entries").fetchone()[0] == "active"
+    connection.close()

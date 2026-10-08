@@ -395,18 +395,26 @@ CI 将质量、依赖审计、Runtime、Desktop 和原生打包拆为独立 Job�
 契约修改后运行 `node scripts/generate-memory-contracts.mjs` 并提交三份 `desktop/shared/memory*.generated.ts`。定向验证：
 
 ```bash
-uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_jobs.py runtime/tests/test_memory_runtime.py
+uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_jobs.py runtime/tests/test_memory_runtime.py runtime/tests/test_memory_fact_review.py
 pnpm test:desktop
 ```
 
 人工验收使用新的数据目录和已配置模型：
 
 1. 设置 → 记忆：默认使用开启、生成关闭；保存中文偏好，在另一会话检索、读取并跳转来源。
-2. 确认自动生成，完成含明确偏好的会话，等待去抖，检查证据、任务和候选确认。关闭再开启应跳过关闭期间资料，历史必须单独回填。
+2. 确认自动记忆，在当前任务表达一次明确的长期做法，检查保存结果是否忠实保留适用条件和真实来源；重复陈述不应新增条目，更正应更新版本。关闭再开启应跳过关闭期间资料，普通新对话不创建后台模型任务。
 3. 检查不同 Project、Projectless、Child 的授权范围，以及临时模式禁用使用/学习。
 4. 纠正、固定、归档、遗忘；请求途中遗忘时旧响应应丢弃，后续请求重建；删除或修订来源也应撤销相关正文。
-5. 删除或重配置任务模型，检查 blocked_model 与显式重试；调整预算并检查 paused_budget、重启恢复。
+5. 显式选择历史整理，确认只处理选择时已经存在的资料；自动记忆关闭时仍可选择，临时会话不能选择。删除或重配置整理任务模型，检查 blocked_model 与显式重试；调整历史预算并检查 paused_budget、重启恢复。
 6. 导出当前页 Markdown，保存完整 ZIP；退出 Runtime 后导入新目录，核对正文、版本、隐私状态，并确认自动学习关闭。
+
+真实模型记忆验收使用合成对话和临时数据目录，不读取实际聊天或写入实际记忆。模型配置只读，API Key 不进入报告。脚本只向前台模型提供记忆工具，并保留内部事实核查的结果出口。每次最多 36 个模型调用（包含事实核查），每个 Run 最多等待 90 秒，产生实际模型费用：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-learning.py --model deepseek-v4.1-flash --output /absolute/path/memory-evaluation.json
+```
+
+可以通过重复的 `--case self_identity --case enduring_workflow` 参数选择样本，减少模型费用。报告包含已有身份与新增偏好分离、同一习惯换种说法后的复用、长期信息、单次要求、假设、已确认决定、未采纳提议、记忆使用、当前指令覆盖和更正样本。状态检查只验证保存路径；人工还应核对正文是否忠实、范围是否扩大、模型是否附加未声明的要求。准确描述“提议尚未采纳”的 continuity 可以是可用事实，不能仅因条目 active 就认定提议已成为项目规则。结果不能代表所有模型或所有表达。此脚本不运行连接测试或能力探测。
 
 离线恢复（目标目录必须不存在，不能与运行中的数据合并）：
 

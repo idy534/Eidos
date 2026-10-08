@@ -7,6 +7,7 @@ from typing import Callable
 
 from eidos_runtime.model.client import (
     AssistantMessagePhase,
+    ResponsePhaseSource,
     ModelClient,
     ModelContextItem,
     ModelResponse,
@@ -27,6 +28,8 @@ class ModelStepResult:
     text: str
     tool_calls: tuple[ModelToolCall, ...]
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
+    phase_source: ResponsePhaseSource = "unknown"
+    end_turn: bool | None = None
     usage: ModelUsage | None = None
     provider_name: str | None = None
     resolved_model_name: str | None = None
@@ -128,6 +131,8 @@ class ModelRunner:
             text=text,
             tool_calls=response.tool_calls,
             phase=response.phase,
+            phase_source=response.phase_source,
+            end_turn=response.end_turn,
             usage=response.usage,
             provider_name=response.provider_name,
             resolved_model_name=response.resolved_model_name,

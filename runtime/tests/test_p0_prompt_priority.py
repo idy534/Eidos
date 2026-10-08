@@ -237,6 +237,30 @@ class TestRuntimePermissionInjection(unittest.TestCase):
         ids = {layer.id for layer in instructions.layers}
         self.assertNotIn("runtime-permissions", ids)
 
+    def test_approval_modes_do_not_leak_other_mode_instructions(self):
+        for mode in ("manual", "auto_review", "full_access"):
+            with self.subTest(mode=mode):
+                text = self._resolve_with_policy(self._policy(
+                    approval_mode=mode,
+                    sandbox_mode="none" if mode == "full_access" else "workspace-write",
+                    network_enabled=mode == "full_access",
+                    writable_roots=("/",) if mode == "full_access" else ("/workspace",),
+                    available_tools=("read_file", "run_shell", "request_permissions"),
+                    network_permission_requestable=True,
+                    allow_escalated_execution=True,
+                )).system_text
+                if mode == "full_access":
+                    self.assertIn("without the Eidos sandbox", text)
+                    self.assertNotIn("request_permissions", text)
+                    self.assertNotIn("nested sandbox", text)
+                    self.assertNotIn("Filesystem grants", text)
+                    self.assertNotIn("reviewed automatically", text)
+                    self.assertNotIn("not all of /tmp", text)
+                else:
+                    self.assertIn("request_permissions", text)
+                    self.assertNotIn("without the Eidos sandbox", text)
+                    self.assertEqual("reviewed automatically" in text, mode == "auto_review")
+
     def test_sandbox_mode_reflected_in_layer(self):
         for mode in ("workspace-write", "read-only", "unsandboxed", "none"):
             with self.subTest(sandbox_mode=mode):
@@ -279,11 +303,7 @@ class TestRuntimePermissionInjection(unittest.TestCase):
 
         self.assertIn("Default Shell network: disabled", content)
         self.assertIn("Network access may be requested through Approval", content)
-        self.assertIn("Creating a project or installing dependencies", content)
-        self.assertIn(
-            "default Shell network being disabled does not mean network access is unavailable",
-            content,
-        )
+        self.assertIn("directly on run_shell", content)
 
     def test_additional_permissions_do_not_imply_network_request(self):
         policy = self._policy(
@@ -326,15 +346,15 @@ class TestRuntimePermissionInjection(unittest.TestCase):
         self.assertFalse(read_only_policy.network_enabled)
         self.assertFalse(read_only_policy.network_permission_requestable)
 
-    def test_available_tools_reflected_in_layer(self):
+    def test_permissions_do_not_repeat_available_tool_definitions(self):
         policy = self._policy(available_tools=("my_tool", "another_tool"))
         layer = next(
             layer
             for layer in self._resolve_with_policy(policy).layers
             if layer.id == "runtime-permissions"
         )
-        self.assertIn("my_tool", layer.content)
-        self.assertIn("another_tool", layer.content)
+        self.assertNotIn("my_tool", layer.content)
+        self.assertNotIn("another_tool", layer.content)
 
     def test_rejected_approvals_reflected_in_layer(self):
         policy = self._policy(rejected_approval_ids=("approval-1", "approval-2"))
@@ -393,7 +413,7 @@ class TestRuntimePermissionInjection(unittest.TestCase):
         )
         self.assertIn("disabled", perm_layer.content)
         self.assertIn("workspace-write", perm_layer.content)
-        self.assertNotIn("unsandboxed", perm_layer.content)
+        self.assertNotIn("Sandbox mode: unsandboxed", perm_layer.content)
 
     def test_runtime_permissions_layer_is_in_system_layers_not_user(self):
         policy = self._policy()

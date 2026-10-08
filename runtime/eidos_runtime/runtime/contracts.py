@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from eidos_runtime.model.client import (
     AssistantMessagePhase,
+    ResponsePhaseSource,
     ModelContextItem,
     ModelToolCall,
     ModelToolDefinitionLike,
@@ -71,6 +72,8 @@ class SamplingOutcome(_FrozenModel):
     needs_follow_up: bool
     assistant_item: dict[str, object] | None = None
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
+    phase_source: ResponsePhaseSource = "unknown"
+    end_turn: bool | None = None
     retry_count: int = 0
     usage: ModelUsage | None = None
     provider_name: str | None = None

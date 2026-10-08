@@ -14,6 +14,8 @@ from pydantic import Field
 from eidos_runtime.db.database import Database, now_ms
 from eidos_runtime.memory.contracts import (
     MemoryActionResult,
+    MemoryEntry,
+    MemoryEvidence,
     MemoryExport,
     MemoryGetRequest,
     MemoryGetResult,
@@ -30,6 +32,7 @@ from eidos_runtime.memory.contracts import (
     MemoryWriteRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected, MemoryRepository
+from eidos_runtime.memory.fact_review import MemoryFactAssessment, require_supported_fact
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.telemetry.tracing import start_span
@@ -193,13 +196,11 @@ class MemoryService:
         if not current.settings.generate_enabled:
             raise MemoryRejected("memory_generation_disabled")
         source = connection.execute(
-            "SELECT enabled_after,backfill_enabled FROM memory_sources WHERE session_id=?",
+            "SELECT enabled_after FROM memory_sources WHERE session_id=?",
             (request.session_id,),
         ).fetchone()
         if source is None:
             raise MemoryRejected("memory_evidence_required")
-        if source["backfill_enabled"]:
-            return
         since = max(
             source["enabled_after"],
             connection.execute(
@@ -213,37 +214,147 @@ class MemoryService:
             if item is None or item[0] < since:
                 raise MemoryRejected("memory_generation_source_outside_window")
 
+    def related_facts(self, request: MemoryRecord, session_id: str | None) -> list[MemoryEntry]:
+        with self.database.transaction() as connection:
+            scope = self.repository.scopes(connection, session_id, request.scope)[0]
+            if not scope.settings.use_enabled or self.repository.temporary(connection, session_id):
+                return []
+            related, _, _ = self.repository.search(connection, MemoryReadRequest(
+                session_id=session_id, scope=request.scope, query=(request.title + " " + request.content)[:512], limit=8,
+            ), for_use=True)
+            # Text search supplies relevance; a bounded recent window catches different wording.
+            rows = connection.execute("SELECT id FROM memory_entries WHERE scope_id=? AND status='active' ORDER BY pinned DESC,use_count DESC,updated_at DESC LIMIT 8", (scope.id,))
+            for row in rows:
+                if row[0] not in {e.id for e in related}:
+                    try:
+                        related.append(self.repository.get(connection, session_id, row[0], for_use=True))
+                    except MemoryRejected:
+                        continue
+            return related[:16]
+
+    def fact_review_input(self, request: MemoryWriteRequest) -> tuple[str, dict[str, int], list[MemoryEntry]]:
+        """Keep original evidence distinct from bounded matching context."""
+        with self.database.transaction() as connection:
+            scope = self.repository.scopes(connection, request.session_id, request.scope)[0]
+            sources = []
+            for identifier in request.source_item_ids:
+                row = connection.execute(
+                    # Oversized sources force the 48 KiB request check to reject;
+                    # a truncated prefix must never stand in for complete evidence.
+                    "SELECT i.id,i.kind,substr(COALESCE(NULLIF(i.content,''),t.result_json,''),1,49153) AS content "
+                    "FROM items i LEFT JOIN tool_calls t ON t.item_id=i.id WHERE i.id=? AND i.session_id=?",
+                    (identifier, request.session_id),
+                ).fetchone()
+                if row is None:
+                    raise MemoryRejected("memory_evidence_invalid")
+                sources.append(dict(row))
+            related = self.related_facts(request, request.session_id)
+            if scope.settings.use_enabled:
+                if request.target_entry_id and request.target_entry_id not in {e.id for e in related}:
+                    related.insert(0, self.repository.get(connection, request.session_id, request.target_entry_id, for_use=True))
+            related = related[:16]
+            epochs = self.use_epochs(connection, request.session_id, {scope.id: scope.privacy_epoch})
+            data = {"proposal": request.model_dump(mode="json"), "original_sources": sources, "related_entries": [],
+                "scope_id": scope.id, "base_generation": scope.generation}
+            retained = []
+            for entry in related:
+                value = {"id": entry.id, "revision": entry.revision, "kind": entry.kind, "content": entry.content,
+                    "valid_from": entry.valid_from, "valid_to": entry.valid_to, "status": entry.status}
+                trial = {**data, "related_entries": [*data["related_entries"], value]}
+                if len(json.dumps(trial, ensure_ascii=False).encode()) <= 48 * 1024:
+                    data = trial
+                    retained.append(entry)
+            return json.dumps(data, ensure_ascii=False), epochs, retained
+
+    def validate_record(
+        self, request: MemoryWriteRequest, source_revisions: dict[str, int],
+        assessment: MemoryFactAssessment | None = None,
+    ) -> None:
+        """Reject invalid evidence and update targets before committing an Intent."""
+        self._safe_record(request)
+        with self.database.transaction() as connection:
+            self._record_state(connection, request, source_revisions, assessment)
+
+    def _record_state(
+        self, connection: sqlite3.Connection, request: MemoryWriteRequest,
+        source_revisions: dict[str, int] | None,
+        assessment: MemoryFactAssessment | None = None,
+    ) -> tuple[MemoryScope, list[MemoryEvidence], MemoryEntry | None, bool]:
+        self.repository.assert_writable(connection, request.session_id)
+        if assessment is not None:
+            require_supported_fact(assessment.supported, assessment.atomic)
+            if assessment.action == "reject":
+                raise MemoryRejected("memory_claim_rejected")
+        scope = self.repository.scopes(connection, request.session_id, request.scope)[0]
+        self.validate_fact_snapshot(scope, assessment)
+        if request.mode in {"candidate", "automatic"}:
+            self._assert_candidate_allowed(connection, request, scope.id)
+        evidence = self.repository.evidence(
+            connection, request.session_id, request.source_item_ids, scope.id, request.evidence_class,
+        )
+        if source_revisions is not None and {
+            value.item_id: value.item_revision for value in evidence
+        } != source_revisions:
+            raise MemoryRejected("memory_source_conflict")
+        if not evidence and (request.mode != "remember" or request.evidence_class != "explicit_user"):
+            raise MemoryRejected("memory_evidence_required")
+        if request.mode != "candidate" and request.evidence_class == "inferred":
+            raise MemoryRejected("memory_confirmed_evidence_required")
+        candidate = request.mode == "candidate"
+        target = None
+        target_id = assessment.target_entry_id if assessment else request.target_entry_id
+        revision = assessment.expected_revision if assessment else request.expected_revision
+        reusing = assessment is not None and assessment.action == "reuse"
+        if target_id is not None:
+            target = self.repository.get(connection, request.session_id, target_id)
+            if target.scope_id != scope.id:
+                raise MemoryRejected("memory_proposal_target_invalid")
+            if target.revision != revision:
+                raise MemoryRejected("memory_revision_conflict")
+            if candidate and (not reusing or target.status != "candidate"):
+                raise MemoryRejected("memory_candidate_target_invalid")
+            if not candidate and target.status == "candidate":
+                raise MemoryRejected("memory_confirmed_evidence_required")
+            if request.mode == "automatic" and not reusing:
+                self.repository.assert_automatic_target(connection, target)
+        elif request.mode == "automatic" and not candidate:
+            duplicate = connection.execute(
+                "SELECT e.id FROM memory_fts_word f JOIN memory_entries e ON e.id=f.entry_id "
+                "WHERE e.scope_id=? AND e.status='active' AND f.body=? LIMIT 1",
+                (scope.id, request.content),
+            ).fetchone()
+            if duplicate:
+                target = self.repository.get(connection, request.session_id, duplicate[0])
+                if target.valid_from != request.valid_from or target.valid_to != request.valid_to:
+                    self.repository.assert_automatic_target(connection, target)
+        return scope, evidence, target, candidate
+
+    @staticmethod
+    def validate_fact_snapshot(scope: MemoryScope, assessment: MemoryFactAssessment | None) -> None:
+        if assessment is not None and assessment.base_generation is not None and (
+            assessment.scope_id != scope.id or assessment.base_generation != scope.generation
+        ):
+            raise MemoryRejected("memory_revision_conflict")
+
     def record(
         self, request: MemoryWriteRequest, *, candidate: bool = False,
         source_revisions: dict[str, int] | None = None,
+        cancel: threading.Event | None = None,
+        assessment: MemoryFactAssessment | None = None,
+        review_epochs: dict[str, int] | None = None,
     ) -> MemoryActionResult:
+        if candidate or (request.mode == "candidate" and request.evidence_class == "explicit_user"):
+            request = request.model_copy(update={"mode": "candidate", "evidence_class": "inferred"})
         self._safe_record(request)
         with self.database.transaction() as connection:
             self.repository.assert_writable(connection, request.session_id)
-            scopes = self.repository.scopes(
-                connection, request.session_id, request.scope
-            )
-            scope = scopes[0]
+            scope = self.repository.scopes(connection, request.session_id, request.scope)[0]
             replay = self.repository.replay(
                 connection, request.operation_id, {scope.id}, request.model_dump_json()
             )
             if replay:
                 return replay
-            if candidate:
-                self._assert_candidate_allowed(connection, request, scope.id)
-            evidence = self.repository.evidence(
-                connection,
-                request.session_id,
-                request.source_item_ids,
-                scope.id,
-                "explicit_user" if not candidate else "inferred",
-            )
-            if source_revisions is not None and {
-                value.item_id: value.item_revision for value in evidence
-            } != source_revisions:
-                raise MemoryRejected("memory_source_conflict")
-            if candidate and not evidence:
-                raise MemoryRejected("memory_evidence_required")
+            scope, evidence, _, candidate = self._record_state(connection, request, source_revisions, assessment)
         # Preparation outside the publication transaction never grants visibility.
         with (
             self.prepared(scope.id, request.content) as reference,
@@ -251,6 +362,10 @@ class MemoryService:
             self.database.transaction() as connection,
         ):
             self.repository.assert_writable(connection, request.session_id)
+            if cancel is not None and cancel.is_set():
+                raise MemoryRejected("memory_canceled")
+            if review_epochs is not None and not self.valid_epochs(connection, review_epochs):
+                raise MemoryRejected("memory_snapshot_revoked")
             replay = self.repository.replay(
                 connection, request.operation_id, {scope.id}, request.model_dump_json()
             )
@@ -261,39 +376,30 @@ class MemoryService:
                 != scope.privacy_epoch
             ):
                 raise MemoryRejected("memory_privacy_conflict")
-            if candidate:
-                self._assert_candidate_allowed(connection, request, scope.id)
-            refreshed = self.repository.evidence(
-                connection,
-                request.session_id,
-                request.source_item_ids,
-                scope.id,
-                "explicit_user" if not candidate else "inferred",
-            )
+            _, refreshed, target, candidate = self._record_state(connection, request, source_revisions, assessment)
             if refreshed != evidence:
                 raise MemoryRejected("memory_source_conflict")
-            entry = self.repository.publish(
-                connection,
-                scope.id,
-                request,
-                reference,
-                evidence,
-                status="candidate" if candidate else "active",
-                user_owned=not evidence,
-                evidence_class="inferred" if candidate else "explicit_user",
+            duplicate = target is not None and ((assessment is not None and assessment.action == "reuse") or (
+                request.mode == "automatic" and target.content == request.content and target.valid_from == request.valid_from and target.valid_to == request.valid_to))
+            entry = target if duplicate else self.repository.publish(
+                connection, scope.id, request, reference, evidence,
+                status="candidate" if candidate else "active", user_owned=not evidence,
+                evidence_class=request.evidence_class,
+                entry_id=target.id if target else None,
+                expected_revision=target.revision if target else None,
             )
             result = MemoryActionResult(
                 operation_id=request.operation_id,
                 status="pending" if candidate else "applied",
                 entry_id=entry.id,
                 revision=entry.revision,
-                code="memory_candidate_saved" if candidate else "memory_saved",
+                code="memory_unchanged" if duplicate else "memory_candidate_saved" if candidate else "memory_saved",
             )
             self.repository.save_action(
                 connection,
                 request,
                 scope.id,
-                "candidate" if candidate else "remember",
+                request.mode,
                 result,
             )
         logger.info(
@@ -305,7 +411,10 @@ class MemoryService:
         return result
 
     def manage(
-        self, request: MemoryManageRequest, *, source_item_ids: list[str] | None = None
+        self, request: MemoryManageRequest, *, source_item_ids: list[str] | None = None,
+        review_epochs: dict[str, int] | None = None, source_revisions: dict[str, int] | None = None,
+        cancel: threading.Event | None = None,
+        assessment: MemoryFactAssessment | None = None,
     ) -> MemoryActionResult:
         if request.content:
             self._safe_record(MemoryRecord(content=request.content))
@@ -343,6 +452,10 @@ class MemoryService:
             )
             if replay:
                 return replay
+            if cancel is not None and cancel.is_set():
+                raise MemoryRejected("memory_canceled")
+            if review_epochs is not None and not self.valid_epochs(connection, review_epochs):
+                raise MemoryRejected("memory_snapshot_revoked")
             entry = self.repository.get(
                 connection, request.session_id, request.entry_id
             )
@@ -352,6 +465,7 @@ class MemoryService:
                 != epoch
             ):
                 raise MemoryRejected("memory_revision_conflict")
+            self.validate_fact_snapshot(self.repository.scope(connection, entry.scope_id), assessment)
             if request.action == "forget":
                 self.repository.revoke(connection, entry, forgotten=True)
                 revision = entry.revision
@@ -369,6 +483,8 @@ class MemoryService:
                 )
                 # A UI acceptance/correction is an independent user-controlled
                 # source. A model-controlled action stays linked to its real item.
+                if source_revisions is not None and {e.item_id: e.item_revision for e in evidence} != source_revisions:
+                    raise MemoryRejected("memory_source_conflict")
                 record = MemoryRecord(
                     content=request.content or entry.content,
                     title=entry.title,
@@ -464,9 +580,9 @@ class MemoryService:
                     "UPDATE memory_scopes SET generate_since=? WHERE id=?",
                     (now_ms(), scope.id),
                 )
-            if not request.settings.generate_enabled:
+            if scope.settings.generate_enabled and not request.settings.generate_enabled:
                 connection.execute(
-                    "UPDATE memory_sources SET backfill_enabled=0 WHERE session_id IN (SELECT session_id FROM memory_jobs WHERE scope_id=?)",
+                    "UPDATE memory_sources SET backfill_enabled=0,backfill_until=0 WHERE session_id IN (SELECT session_id FROM memory_jobs WHERE scope_id=?)",
                     (scope.id,),
                 )
                 connection.execute(
@@ -493,7 +609,7 @@ class MemoryService:
             if old != request.temporary:
                 invalidate_source(connection, request.session_id, reason="temporary")
                 connection.execute(
-                    "UPDATE memory_sources SET temporary=?,enabled_after=?,backfill_enabled=0 WHERE session_id=?",
+                    "UPDATE memory_sources SET temporary=?,enabled_after=?,backfill_enabled=0,backfill_until=0 WHERE session_id=?",
                     (int(request.temporary), now_ms(), request.session_id),
                 )
             self._cancel_revoked(connection)

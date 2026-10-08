@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.completion import CompletionCheckRecord
+
 from eidos_runtime.domain.input_reference import InputReference
 from eidos_runtime.domain.collaboration import CollaborationState
 from eidos_runtime.persistence.input_context import InputContextRepository
@@ -939,6 +941,7 @@ class SessionStore:
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
+        completion_check: CompletionCheckRecord | None = None,
     ) -> bool:
         return self._repository(self._execution).complete_current_model_attempt(
             run_id,
@@ -960,6 +963,7 @@ class SessionStore:
             response_text_bytes=response_text_bytes,
             protocol_diagnostic=protocol_diagnostic,
             retry_decision=retry_decision,
+            completion_check=completion_check,
         )
 
     def start_retry_model_attempt(
@@ -1066,12 +1070,14 @@ class SessionStore:
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str, *, shell_stopped: bool = False,
         expected_collaboration: CollaborationState | None = None,
+        stop_reason: Literal["completion_unconfirmed"] | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         return self._repository(self._execution).complete_assistant_and_run_committed(
             item_id,
             run_id,
             shell_stopped=shell_stopped,
             expected_collaboration=expected_collaboration,
+            stop_reason=stop_reason,
         )
 
     def create_tool_item(

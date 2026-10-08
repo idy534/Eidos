@@ -26,6 +26,7 @@ from eidos_runtime.model.client import (
     CustomToolPayload,
     FunctionToolPayload,
     ModelResponse,
+    ModelClient,
     ModelToolCall,
     ToolPayload,
 )
@@ -1599,6 +1600,7 @@ class ToolCallRuntime:
         runtime_dependencies: RuntimeDependencyCoordinator | None = None,
         concurrency: ToolConcurrencyGate | None = None,
         collaboration: CollaborationApplication | None = None,
+        memory_model: ModelClient | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -1610,6 +1612,9 @@ class ToolCallRuntime:
         self.workspace_refresh = workspace_refresh
         self.shell_process_manager = shell_process_manager
         self.collaboration = collaboration
+        self.memory_model = memory_model
+        if self.memory_model is None and approval is not None:
+            self.memory_model = approval.reviewer
         self.inline_control_wait = False
         self.concurrency = concurrency or ToolConcurrencyGate()
         self.parallel_read_concurrency = ToolConcurrencyGate()

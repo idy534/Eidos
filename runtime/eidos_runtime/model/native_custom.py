@@ -34,7 +34,7 @@ from eidos_runtime.model.pydantic_ai_client import (
     _with_retry_diagnostics,
     map_model_error,
 )
-from eidos_runtime.model.response_phase import resolve_chat_completion_phase
+from eidos_runtime.model.response_phase import resolve_response_phase, validate_end_turn
 from eidos_runtime.model.retry_transport import (
     RetryBackoffCanceled,
     RetryTracker,
@@ -80,6 +80,7 @@ def encode_responses_context(
                     "type": "message",
                     "role": item_type,
                     "content": content,
+                    **({"phase": item["phase"]} if item_type == "assistant" and item.get("phase") in {"commentary", "final_answer"} else {}),
                 })
         elif item_type == "tool_call":
             call_id = item.get("callId")
@@ -204,14 +205,20 @@ def map_responses_response(
     text = _response_text(response)
     finish_reason = "tool_call" if calls else "stop"
     usage = _responses_usage(_field(response, "usage"))
+    phase, phase_source = resolve_response_phase(
+        (_field(item, "phase") for item in output if _field(item, "type") == "message" and _field(item, "role") == "assistant"),
+        has_tool_calls=bool(calls),
+    )
+    try:
+        end_turn = validate_end_turn(_field(response, "end_turn"))
+    except ValueError:
+        raise _protocol_error(_field(response, "provider_name")) from None
     return ModelResponse(
         text=text,
         tool_calls=tuple(calls),
-        phase=resolve_chat_completion_phase(
-            text=text,
-            has_tool_calls=bool(calls),
-            finish_reason=finish_reason,
-        ),
+        phase=phase,
+        phase_source=phase_source,
+        end_turn=end_turn,
         usage=usage,
         provider_name=_string_or_none(_field(response, "provider_name")),
         resolved_model_name=_string_or_none(_field(response, "model")),

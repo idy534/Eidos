@@ -44,6 +44,7 @@ from eidos_runtime.db.schema import (
     V16_SCHEMA_VERSION,
     V17_SCHEMA_VERSION,
     V18_SCHEMA_VERSION,
+    V19_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -165,6 +166,7 @@ class Database:
                     V16_SCHEMA_VERSION,
                     V17_SCHEMA_VERSION,
                     V18_SCHEMA_VERSION,
+                    V19_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -308,6 +310,12 @@ class Database:
                 from eidos_runtime.memory.schema import migrate_memory_use
                 try:
                     migrate_memory_use(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V19_SCHEMA_VERSION:
+                from eidos_runtime.memory.schema import migrate_memory_history
+                try:
+                    migrate_memory_history(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

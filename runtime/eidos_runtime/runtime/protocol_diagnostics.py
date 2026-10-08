@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.model.response_phase import ResponsePhaseSource
 
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
@@ -22,7 +23,7 @@ ArgumentType = Literal[
 
 
 class ProtocolDiagnostic(EidosFrozenStrictModel):
-    """Bounded, value-free evidence for a rejected model response."""
+    """Bounded protocol evidence without argument or response contents."""
 
     schema_version: Literal[1] = 1
     stage: Literal[
@@ -33,6 +34,8 @@ class ProtocolDiagnostic(EidosFrozenStrictModel):
         "sensitive_scan",
     ]
     code: str = Field(min_length=1, max_length=128)
+    end_turn: bool | None = None
+    phase_source: ResponsePhaseSource | None = None
     tool_call_count: int = Field(
         default=0, ge=0, le=_MAX_DIAGNOSTIC_TOOL_CALLS
     )

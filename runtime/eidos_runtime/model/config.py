@@ -147,6 +147,7 @@ class ModelProfileSpec(EidosFrozenStrictModel):
             ) is True
         )
         return ModelProfileSnapshot(
+            completion_check_version=1,
             provider_id=self.provider_id,
             model_id=self.model_id,
             wire_api=self.wire_api,
@@ -700,4 +701,4 @@ def default_profile_snapshot(model_id: str) -> ModelProfileSnapshot:
     selection = MODEL_CATALOG.reasoning_selection(model_id, None)
     return MODEL_CATALOG.profile(model_id).snapshot(
         config, reasoning_selection=selection
-    )
+    ).model_copy(update={"completion_check_version": 0})

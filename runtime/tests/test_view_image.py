@@ -84,6 +84,18 @@ def _canonical_view_image_result(
     }
 
 
+@pytest.mark.parametrize("exists", [True, False])
+def test_real_image_handler_output_satisfies_registered_result_contract(tmp_path: Path, exists: bool) -> None:
+    path = tmp_path / "image.png"
+    if exists:
+        path.write_bytes(_png_bytes())
+    entry = _entry(_authority(tmp_path))
+    result = entry.adapter.execute({"path": path.name}, threading.Event())
+    validated = entry.validate_result(result)
+    assert validated["toolName"] == "view_image"
+    assert validated["outcome"] == ("success" if exists else "error")
+
+
 def test_model_image_capability_flows_into_the_profile_snapshot() -> None:
     config = ModelConfig.model_validate({
         "id": "image-model",

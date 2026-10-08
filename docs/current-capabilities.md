@@ -101,7 +101,7 @@
 - Resolver 从 Workspace root 到 effective cwd 逐目录解析。
 - 每个目录只选一个最高优先级的非空候选。
 - Resolver 使用共享 32 KiB byte budget，并记录 shadowed candidates、warning、原始 hash、包含字节数、directory level 和 effective cwd。
-- InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。Skill Catalog 使用 developer capability context，实际加载的第三方 `SKILL.md` 使用 user context。
+- InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。Skill Catalog 使用 developer capability context，实际加载的第三方 `SKILL.md` 使用 user context。 模型目录只显示唯一调用名称、用途和入口路径，不显示 Hash、qualifiedId、source 或 sourceVersion；Runtime 冻结快照继续保存完整身份和核验信息。当前权限层按审批模式独立生成，full_access 不包含普通沙盒扩权指引。
 - Step Resolution 保存 resolved instruction hash。Project Rules 不会改变 Runtime Permission、Approval 或 Sandbox 的真实执行约束。
 
 ## Repository Discovery
@@ -454,4 +454,4 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ## 记忆
 
-支持全局/Project 记忆、来源证据、不可变版本、无向量检索、常驻摘要与四个模型工具、独立使用/生成控制、临时会话、两阶段后台学习及预算恢复。Desktop 提供候选确认、来源跳转、纠正、固定、归档、遗忘、显式历史学习、任务重试、索引重建、导出和完整 ZIP 备份。详见 [current-memory.md](current-memory.md)。
+支持全局/Project 记忆、来源证据、不可变版本、无向量检索、常驻摘要与四个模型工具、独立使用/生成控制、临时会话、当前 Run 即时自动保存、事实来源解析、版本更正与去重，以及两阶段有限历史整理和预算恢复。Desktop 提供候选确认、来源跳转、纠正、固定、归档、遗忘、显式历史学习、任务重试、索引重建、导出和完整 ZIP 备份。详见 [current-memory.md](current-memory.md)。

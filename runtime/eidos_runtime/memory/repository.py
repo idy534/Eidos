@@ -615,8 +615,22 @@ class MemoryRepository:
         if row["scope_id"] not in allowed:
             raise MemoryRejected("memory_operation_not_found")
         if row["request_json"] != request_json:
-            raise MemoryRejected("memory_operation_conflict")
+            # Old record actions predate the explicit mode and update fields.
+            previous = json.loads(row["request_json"])
+            if row["action"] in {"remember", "candidate", "automatic"} and "content" in previous:
+                defaults = {"mode": row["action"], "evidence_class": "inferred" if row["action"] == "candidate" else "explicit_user",
+                            "target_entry_id": None, "expected_revision": None}
+                previous = {**defaults, **previous}
+            if previous != json.loads(request_json):
+                raise MemoryRejected("memory_operation_conflict")
         return MemoryActionResult.model_validate_json(row["result_json"])
+
+    def assert_automatic_target(self, connection: sqlite3.Connection, entry: MemoryEntry) -> None:
+        if entry.pinned or entry.user_owned or connection.execute(
+            "SELECT 1 FROM memory_actions WHERE entry_id=? AND action NOT IN ('candidate','automatic')",
+            (entry.id,),
+        ).fetchone():
+            raise MemoryRejected("memory_explicit_action_protected")
 
     def save_action(
         self,

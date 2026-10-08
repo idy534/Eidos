@@ -17,6 +17,7 @@ from eidos_runtime.protocol.schemas import (
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.runtime.state_machine import EventType, RunStatus
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.domain.completion import CompletionCheckRecord
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -64,6 +65,7 @@ class RunStatusChangedPayload(ClosedModel):
 
 class RunUpdatedPayload(ClosedModel):
     reason: str
+    completion_check: CompletionCheckRecord | None = Field(default=None, alias="completionCheck")
     binding_id: str | None = Field(
         default=None,
         alias="bindingId",

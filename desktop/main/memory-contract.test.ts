@@ -10,6 +10,10 @@ test("memory IPC schema rejects invented methods, extra fields and unsafe revisi
   assert.equal(isMemoryRequest("memory/list", {projectId: "another-project"}), false);
   assert.equal(isMemoryRequest("memory/manage", {action: "forget", entryId: "id", expectedRevision: "3", operationId: "operation"}), false);
   assert.equal(isMemoryRequest("memory/remember", {content: "", operationId: "operation"}), false);
+  const automatic = {content: "Verified project fact", operationId: "automatic-operation", mode: "automatic", evidenceClass: "observed_verified", sourceItemIds: ["source"], targetEntryId: "entry", expectedRevision: 2};
+  assert.equal(isMemoryRequest("memory/remember", automatic), true);
+  assert.equal(isMemoryRequest("memory/remember", {...automatic, mode: "uncontrolled"}), false);
+  assert.equal(isMemoryRequest("memory/remember", {...automatic, expectedRevision: Number.MAX_SAFE_INTEGER + 1}), false);
   assert.equal(isMemoryResponse("memory/list", {scopes: [], entries: [], jobs: [], temporary: false, trigramAvailable: true}), true);
   assert.equal(isMemoryResponse("memory/list", {scopes: [], entries: [{id: "unvalidated"}], jobs: [], temporary: false, trigramAvailable: true}), false);
 });

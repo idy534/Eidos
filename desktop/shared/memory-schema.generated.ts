@@ -974,6 +974,7 @@ export const memorySchema = {
         },
         "scope": {
           "default": "current",
+          "description": "Use current for automatic or candidate writes. Global is allowed for those modes only when currentScope is global; otherwise it requires an explicit remember request and authorization.",
           "enum": [
             "current",
             "global"
@@ -1024,6 +1025,59 @@ export const memorySchema = {
           ],
           "default": null,
           "title": "Validto"
+        },
+        "mode": {
+          "default": "remember",
+          "description": "automatic saves confirmed facts as active; candidate submits a separate pending proposal. Both require the current scope generation setting. remember follows an explicit user save request.",
+          "enum": [
+            "candidate",
+            "remember",
+            "automatic"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "evidenceClass": {
+          "default": "explicit_user",
+          "description": "explicit_user for a clear user statement; observed_verified for successful ordinary tool evidence; inferred requires mode=candidate and stays pending.",
+          "enum": [
+            "explicit_user",
+            "observed_verified",
+            "repeated_user",
+            "inferred"
+          ],
+          "title": "Evidenceclass",
+          "type": "string"
+        },
+        "targetEntryId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Existing entry to revise after an explicit factual correction; omit for a new claim.",
+          "title": "Targetentryid"
+        },
+        "expectedRevision": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Current revision of targetEntryId. Supply both fields together.",
+          "title": "Expectedrevision"
         },
         "sessionId": {
           "anyOf": [

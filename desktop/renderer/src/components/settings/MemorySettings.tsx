@@ -180,7 +180,7 @@ export function MemorySettings({
           <div>
             <h1>记忆</h1>
             <p className="settings-panel-subtitle">
-              保存偏好、决策和有来源的经验。自动学习默认关闭；开启后会将后续对话发送给所选模型整理，并产生模型费用。
+              Eidos 保存偏好、决策和有来源的经验。自动记忆默认关闭；开启后，当前任务可以保存后续对话中的长期信息。历史整理需要单独确认。
             </p>
           </div>
           <div className="memory-scope-selector">
@@ -216,7 +216,7 @@ export function MemorySettings({
         <>
           <SettingSection
             title="记忆策略与预算"
-            description="配置模型记忆的读写权限，以及每日自动整理提炼的消耗配额限制。"
+            description="你可以分别控制已有记忆的使用、后续信息的自动保存和历史整理预算。"
           >
             <SettingRow
               title="使用记忆"
@@ -234,19 +234,19 @@ export function MemorySettings({
             />
 
             <SettingRow
-              title="自动生成记忆"
-              description="仅整理开启后的原始对话，后台失败不影响前台任务。"
+              title="自动记忆"
+              description="Eidos 可以在当前任务中保存能帮助后续工作的长期信息，并保留它的适用范围和来源。"
               action={
                 <Toggle
-                  label="自动生成记忆"
+                  label="自动记忆"
                   checked={selected.settings.generateEnabled ?? false}
                   disabled={busy}
                   onChange={(checked) => {
                     if (checked) {
                       setConfirmation({
-                        title: "开启自动学习",
+                        title: "开启自动记忆",
                         description:
-                          "后续对话将按当前模型配置发送给模型，最多执行提炼和整理两阶段请求。历史对话需单独选择回填。",
+                          "Eidos 可以从后续对话自动保存本作用域中的长期信息，并在当前任务中返回保存结果。保存可能增加模型调用和费用。历史对话需要单独选择整理。",
                         action: () =>
                           window.eidosRuntime.memory("memory/settingsUpdate", {
                             sessionId: sessionId ?? null,
@@ -263,8 +263,8 @@ export function MemorySettings({
             />
 
             <SettingRow
-              title="每日后台预算"
-              description="达到上限时暂停至下一天；无法取得真实用量时使用保守估计。"
+              title="每日历史整理预算"
+              description="历史整理达到上限时会暂停至下一天；当前任务中的记忆保存使用该任务的模型预算。"
             >
               <div className="memory-budget-grid">
                 <div className="memory-budget-item">
@@ -343,17 +343,17 @@ export function MemorySettings({
             {sessionId && (
               <SettingRow
                 title="历史对话回填"
-                description="整理当前对话历史。原始内容会发送给模型并计入后台预算；已遗忘的来源不会重新学习。"
+                description="Eidos 只整理确认时已经存在的对话内容。原始内容会发送给模型并计入历史整理预算。"
                 action={
                   <Button
                     variant="secondary"
                     size="small"
-                    disabled={busy || !selected.settings.generateEnabled || state?.temporary}
+                    disabled={busy || state?.temporary}
                     onClick={() =>
                       setConfirmation({
                         title: "整理当前对话历史",
                         description:
-                          "仅回填当前选中的对话。原始内容会发送给模型并计入后台预算；已遗忘的来源不会重新学习。",
+                          "Eidos 只整理此刻已经存在的当前对话内容，后续消息需要再次选择。原始内容会发送给模型并计入历史整理预算；已遗忘的来源不会重新学习。",
                         action: () =>
                           window.eidosRuntime.memory("memory/backfill", {
                             sessionId,

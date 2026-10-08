@@ -255,9 +255,11 @@ class SamplingRuntime:
         return SamplingOutcome(
             text=result.text,
             tool_calls=result.tool_calls,
-            needs_follow_up=bool(result.tool_calls),
+            needs_follow_up=bool(result.tool_calls) or result.end_turn is False,
             assistant_item=None,
             phase=result.phase,
+            phase_source=result.phase_source,
+            end_turn=result.end_turn,
             retry_count=result.transport_retry_count,
             usage=result.usage,
             provider_name=result.provider_name,
@@ -303,7 +305,11 @@ class SamplingRuntime:
             tool_call_count=len(sampled.tool_calls),
             response_text_bytes=response_text_bytes,
             response_text_sha256=response_text_sha256,
-            protocol_diagnostic=protocol_diagnostic,
+            protocol_diagnostic=protocol_diagnostic or ProtocolDiagnostic(
+                stage="response_completion", code="response_completed",
+                end_turn=sampled.end_turn, phase_source=sampled.phase_source,
+                tool_call_count=len(sampled.tool_calls),
+            ),
             retry_decision={
                 "retry": retry,
                 "reason": retry_reason,

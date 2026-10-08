@@ -1,4 +1,4 @@
-"""v18/v19 state schema. Indexes are disposable; evidence and actions are not."""
+"""Memory state schema. Indexes are disposable; evidence and actions are not."""
 
 import sqlite3
 
@@ -205,6 +205,33 @@ def migrate_memory_use(connection: sqlite3.Connection) -> None:
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise sqlite3.IntegrityError("memory use migration foreign key violation")
         connection.execute("PRAGMA user_version=19")
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+
+
+MEMORY_HISTORY_SCHEMA_SQL = """
+ALTER TABLE memory_sources ADD COLUMN backfill_until INTEGER NOT NULL DEFAULT 0;
+"""
+
+
+def migrate_memory_history(connection: sqlite3.Connection) -> None:
+    """End old unbounded learning grants while retaining entries and settings."""
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("ALTER TABLE memory_sources ADD COLUMN backfill_until INTEGER NOT NULL DEFAULT 0")
+        connection.execute("UPDATE memory_sources SET backfill_enabled=0")
+        connection.execute(
+            "UPDATE memory_jobs SET state='canceled',lease_token=NULL,error_code='memory_policy_changed' "
+            "WHERE state IN ('queued','running','retry_wait','paused_budget','blocked_model')"
+        )
+        connection.execute(
+            "UPDATE memory_model_attempts SET state='failed',error_code='memory_policy_changed' WHERE state='running'"
+        )
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise sqlite3.IntegrityError("memory history migration foreign key violation")
+        connection.execute("PRAGMA user_version=20")
         connection.commit()
     except BaseException:
         connection.rollback()

@@ -79,6 +79,9 @@ export type Temporary1 = boolean;
 export type Content1 = string;
 export type Title1 = string;
 export type Kind3 = "preference" | "decision" | "continuity" | "experience" | "event";
+/**
+ * Use current for automatic or candidate writes. Global is allowed for those modes only when currentScope is global; otherwise it requires an explicit remember request and authorization.
+ */
 export type Scope2 = "current" | "global";
 /**
  * @maxItems 12
@@ -90,6 +93,22 @@ export type Aliases1 = string[];
 export type Sourceitemids = string[];
 export type Validfrom1 = number | null;
 export type Validto1 = number | null;
+/**
+ * automatic saves confirmed facts as active; candidate submits a separate pending proposal. Both require the current scope generation setting. remember follows an explicit user save request.
+ */
+export type Mode = "candidate" | "remember" | "automatic";
+/**
+ * explicit_user for a clear user statement; observed_verified for successful ordinary tool evidence; inferred requires mode=candidate and stays pending.
+ */
+export type Evidenceclass2 = "explicit_user" | "observed_verified" | "repeated_user" | "inferred";
+/**
+ * Existing entry to revise after an explicit factual correction; omit for a new claim.
+ */
+export type Targetentryid = string | null;
+/**
+ * Current revision of targetEntryId. Supply both fields together.
+ */
+export type Expectedrevision = number | null;
 export type Sessionid6 = string | null;
 export type Operationid = string;
 export type Operationid1 = string;
@@ -99,7 +118,7 @@ export type Revision2 = number | null;
 export type Code = string;
 export type Action = "correct" | "forget" | "pin" | "unpin" | "accept" | "archive";
 export type Entryid2 = string;
-export type Expectedrevision = number;
+export type Expectedrevision1 = number;
 export type Content2 = string | null;
 export type Sessionid7 = string | null;
 export type Operationid2 = string;
@@ -240,6 +259,10 @@ export interface MemoryWriteRequest {
   sourceItemIds?: Sourceitemids;
   validFrom?: Validfrom1;
   validTo?: Validto1;
+  mode?: Mode;
+  evidenceClass?: Evidenceclass2;
+  targetEntryId?: Targetentryid;
+  expectedRevision?: Expectedrevision;
   sessionId?: Sessionid6;
   operationId: Operationid;
 }
@@ -253,7 +276,7 @@ export interface MemoryActionResult {
 export interface MemoryManageRequest {
   action: Action;
   entryId: Entryid2;
-  expectedRevision: Expectedrevision;
+  expectedRevision: Expectedrevision1;
   content?: Content2;
   sessionId?: Sessionid7;
   operationId: Operationid2;

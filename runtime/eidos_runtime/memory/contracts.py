@@ -133,7 +133,8 @@ class MemoryRecord(EidosFrozenStrictModel):
     content: str = Field(min_length=1, max_length=8192)
     title: str = Field(default="", max_length=160)
     kind: MemoryKind = "preference"
-    scope: Literal["current", "global"] = "current"
+    scope: Literal["current", "global"] = Field(default="current",
+        description="Use current for automatic or candidate writes. Global is allowed for those modes only when currentScope is global; otherwise it requires an explicit remember request and authorization.")
     aliases: list[str] = Field(default_factory=list, max_length=12)
     source_item_ids: list[str] = Field(default_factory=list, max_length=16)
     valid_from: JsonSafeInt | None = None
@@ -154,7 +155,30 @@ class MemoryRecord(EidosFrozenStrictModel):
         return self
 
 
-class MemoryWriteRequest(MemoryRecord):
+class MemoryRecordRequest(MemoryRecord):
+    mode: Literal["candidate", "remember", "automatic"] = Field(
+        default="remember",
+        description="automatic saves confirmed facts as active; candidate submits a separate pending proposal. Both require the current scope generation setting. remember follows an explicit user save request.",
+    )
+    evidence_class: EvidenceClass = Field(
+        default="explicit_user",
+        description="explicit_user for a clear user statement; observed_verified for successful ordinary tool evidence; inferred requires mode=candidate and stays pending.",
+    )
+    target_entry_id: str | None = Field(default=None, min_length=1, max_length=256,
+        description="Existing entry to revise after an explicit factual correction; omit for a new claim.")
+    expected_revision: JsonSafeInt | None = Field(default=None, ge=1,
+        description="Current revision of targetEntryId. Supply both fields together.")
+
+    @model_validator(mode="after")
+    def validate_target(self) -> MemoryRecordRequest:
+        if (self.target_entry_id is None) != (self.expected_revision is None):
+            raise ValueError("memory_proposal_target_required")
+        if self.target_entry_id is not None and (self.mode == "candidate" or self.evidence_class == "inferred"):
+            raise ValueError("memory_candidate_target_invalid")
+        return self
+
+
+class MemoryWriteRequest(MemoryRecordRequest):
     session_id: str | None = None
     operation_id: str = Field(min_length=1, max_length=256)
 
@@ -225,6 +249,8 @@ class MemoryBackupResult(EidosFrozenStrictModel):
 class MemoryCandidate(MemoryRecord):
     evidence_class: EvidenceClass = "inferred"
     source_quotes: dict[str, str] = Field(default_factory=dict, max_length=16)
+    requires_confirmation: bool = Field(default=True,
+        description="False only for supported facts or explicitly adopted decisions, with their actual scope preserved. Proposals and useful uncertainty stay true, regardless of source Run mode.")
 
 
 class MemoryExtraction(EidosFrozenStrictModel):
@@ -238,6 +264,8 @@ class MemoryProposal(EidosFrozenStrictModel):
     target_entry_id: str | None = None
     expected_revision: int | None = Field(default=None, ge=1)
     content: str | None = Field(default=None, min_length=1, max_length=8192)
+    grounded: bool = Field(default=False, description="Every part of the final content is supported by the selected original sources, not by related memory text.")
+    atomic: bool = Field(default=False, description="The final content is one independently maintainable fact. Do not mix an existing fact with a new one.")
 
     @model_validator(mode="after")
     def validate_target(self) -> MemoryProposal:

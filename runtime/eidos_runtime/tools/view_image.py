@@ -26,6 +26,7 @@ from eidos_runtime.tools.registry import (
     ToolRegistryEntry,
     ToolSpec,
 )
+from eidos_runtime.tools.workspace import canonical_tool_result
 
 
 MAX_VIEW_IMAGE_BYTES: Final = 10 * 1024 * 1024
@@ -119,7 +120,7 @@ class ViewImageTool:
                 "unsafe_path": "Image path is not a safe regular file",
             }
             return _error(error.code, summaries.get(error.code, "Image could not be read"))
-        return {
+        return canonical_tool_result("view_image", {
             "outcome": "success",
             "code": "ok",
             "summary": "Image loaded",
@@ -131,7 +132,7 @@ class ViewImageTool:
             },
             "sideEffectsMayExist": False,
             "reconciliationRequired": False,
-        }
+        }, data_model=ViewImageResultData)
 
 
 def view_image_entry(
@@ -416,11 +417,11 @@ def _validate_image_dimensions(image: Image.Image) -> None:
 
 
 def _error(code: str, summary: str) -> dict[str, object]:
-    return {
+    return canonical_tool_result("view_image", {
         "outcome": "error",
         "code": code,
         "summary": summary,
         "data": {},
         "sideEffectsMayExist": False,
         "reconciliationRequired": False,
-    }
+    }, data_model=ViewImageResultData)

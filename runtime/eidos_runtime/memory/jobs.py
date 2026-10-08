@@ -22,6 +22,7 @@ from eidos_runtime.memory.contracts import (
 )
 from eidos_runtime.memory.model_executor import MemoryModelExecutor
 from eidos_runtime.memory.repository import MemoryRejected
+from eidos_runtime.memory.fact_review import require_supported_fact
 from eidos_runtime.memory.service import MemoryCancellation, MemoryService
 from eidos_runtime.model.client import ModelRequestError
 from eidos_runtime.model.config import ModelConfigStore
@@ -94,12 +95,16 @@ class MemoryJobs:
 
     def enqueue_ready(self) -> None:
         with self.database.transaction() as connection:
-            # Select dirty *eligible* sources. A completed job advances its
-            # frontier, so unchanged startup never sends another learning call.
+            connection.execute(
+                "UPDATE memory_sources SET backfill_enabled=0 WHERE backfill_enabled=1 "
+                "AND processed_frontier>=backfill_until AND processed_offset=0"
+            )
+            # Only continue explicitly selected history, within its saved upper bound.
             rows = connection.execute(
                 "SELECT s.session_id,r.id AS run_id,r.model_id,max(i.creation_seq) AS frontier FROM memory_sources s "
                 "JOIN items i ON i.session_id=s.session_id JOIN runs r ON r.id=i.run_id "
-                "WHERE s.deleted=0 AND s.temporary=0 AND i.creation_seq>s.processed_frontier "
+                "WHERE s.deleted=0 AND s.temporary=0 AND s.backfill_enabled=1 "
+                "AND i.creation_seq<=s.backfill_until AND i.creation_seq>s.processed_frontier "
                 "AND i.status='completed' AND i.incomplete=0 AND r.status NOT IN "
                 + LIVE_STATES
                 + " AND NOT EXISTS(SELECT 1 FROM runs active WHERE active.session_id=s.session_id AND active.status IN "
@@ -114,12 +119,6 @@ class MemoryJobs:
                     connection, row["session_id"], "current"
                 )
                 scope = scopes[0]
-                if not scope.settings.generate_enabled:
-                    connection.execute(
-                        "UPDATE memory_sources SET processed_frontier=?,processed_offset=0 WHERE session_id=?",
-                        (row["frontier"], row["session_id"]),
-                    )
-                    continue
                 self._enqueue(connection, row["session_id"], scope.id, row["model_id"])
 
     def _enqueue(
@@ -139,9 +138,10 @@ class MemoryJobs:
             source is None
             or source["temporary"]
             or source["deleted"]
-            or not scope.settings.generate_enabled
+            or not source["backfill_enabled"]
+            or not source["backfill_until"]
         ):
-            raise MemoryRejected("memory_generation_disabled")
+            raise MemoryRejected("memory_history_not_authorized")
         connection.execute(
             "UPDATE memory_jobs SET state='superseded',lease_token=NULL WHERE session_id=? AND source_revision<>? AND state IN ('queued','running','retry_wait','paused_budget','blocked_model')",
             (session_id, source["revision"]),
@@ -151,20 +151,11 @@ class MemoryJobs:
             (session_id,),
         ).fetchone():
             return
-        earliest = (
-            0
-            if backfill or source["backfill_enabled"]
-            else max(
-                source["enabled_after"],
-                connection.execute(
-                    "SELECT generate_since FROM memory_scopes WHERE id=?", (scope_id,)
-                ).fetchone()[0],
-            )
-        )
+        earliest = 0
         frontier = 0 if backfill else source["processed_frontier"]
         start_offset = 0 if backfill else source["processed_offset"]
         sources, target, target_offset = self._window(
-            connection, session_id, scope_id, frontier, start_offset, earliest
+            connection, session_id, scope_id, frontier, start_offset, earliest, source["backfill_until"]
         )
         if target <= frontier and not target_offset:
             return
@@ -181,7 +172,7 @@ class MemoryJobs:
         config = self.configs.get(model_id)
         snapshot = config.model_dump_json(exclude={"api_key"}) if config else "{}"
         connection.execute(
-            "INSERT OR IGNORE INTO memory_jobs(id,scope_id,session_id,source_revision,privacy_epoch,base_generation,kind,state,model_id,model_snapshot_json,frontier,target_frontier,start_offset,target_offset,source_since,not_before,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO memory_jobs(id,scope_id,session_id,source_revision,privacy_epoch,base_generation,kind,state,model_id,model_snapshot_json,frontier,target_frontier,start_offset,target_offset,source_since,not_before,created_at,policy_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 str(uuid.uuid4()),
                 scope_id,
@@ -198,8 +189,9 @@ class MemoryJobs:
                 start_offset,
                 target_offset,
                 earliest,
-                now_ms() + scope.settings.debounce_seconds * 1000,
                 now_ms(),
+                now_ms(),
+                2,
             ),
         )
 
@@ -222,11 +214,14 @@ class MemoryJobs:
             ).fetchone()
             if latest is None:
                 raise MemoryRejected("memory_history_empty")
-            # Once explicitly selected, continuation windows use this same
-            # consented source. Repeating this control cannot create duplicate jobs.
-            connection.execute(
-                "UPDATE memory_sources SET enabled_after=0,backfill_enabled=1 WHERE session_id=?",
+            upper = connection.execute(
+                "SELECT COALESCE(max(creation_seq),0) FROM items WHERE session_id=?",
                 (request.session_id,),
+            ).fetchone()[0]
+            # Capture this selection once. Later messages require another explicit selection.
+            connection.execute(
+                "UPDATE memory_sources SET backfill_enabled=1,backfill_until=?,processed_frontier=0,processed_offset=0 WHERE session_id=?",
+                (upper, request.session_id),
             )
             self._enqueue(
                 connection, request.session_id, scope.id, latest[0], backfill=True
@@ -265,13 +260,16 @@ class MemoryJobs:
             if config is None:
                 raise MemoryRejected("memory_model_unavailable")
             source = connection.execute(
-                "SELECT revision FROM memory_sources WHERE session_id=?",
+                "SELECT revision,backfill_enabled,backfill_until FROM memory_sources WHERE session_id=?",
                 (row["session_id"],),
             ).fetchone()
             scope = self.service.repository.scope(connection, row["scope_id"])
             if (
                 source is None
                 or source[0] != row["source_revision"]
+                or not source["backfill_enabled"]
+                or source["backfill_until"] < row["target_frontier"]
+                or row["policy_version"] != 2
                 or scope.privacy_epoch != row["privacy_epoch"]
             ):
                 raise MemoryRejected("memory_job_stale")
@@ -316,7 +314,7 @@ class MemoryJobs:
             (job["id"],),
         ).fetchone()
         source = connection.execute(
-            "SELECT revision,temporary,deleted FROM memory_sources WHERE session_id=?",
+            "SELECT revision,temporary,deleted,backfill_enabled,backfill_until FROM memory_sources WHERE session_id=?",
             (job["session_id"],),
         ).fetchone()
         scope = self.service.repository.scope(connection, job["scope_id"])
@@ -332,12 +330,12 @@ class MemoryJobs:
             or source[0] != job["source_revision"]
             or source[1]
             or source[2]
+            or not source["backfill_enabled"]
+            or source["backfill_until"] < job["target_frontier"]
+            or job["policy_version"] != 2
         ):
             raise MemoryRejected("memory_source_conflict")
-        if (
-            scope.privacy_epoch != job["privacy_epoch"]
-            or not scope.settings.generate_enabled
-        ):
+        if scope.privacy_epoch != job["privacy_epoch"]:
             raise MemoryRejected("memory_privacy_conflict")
 
     def process(self, job: sqlite3.Row, parent_cancel: threading.Event) -> None:
@@ -384,15 +382,7 @@ class MemoryJobs:
                 self._validate(connection, job)
                 for candidate in extraction.candidates:
                     self._validate_candidate(connection, job, candidate, sources)
-                    matches, _, _ = self.service.repository.search(
-                        connection,
-                        MemoryReadRequest(
-                            session_id=job["session_id"],
-                            scope="current",
-                            query=candidate.title or candidate.content[:80],
-                            limit=10,
-                        ),
-                    )
+                    matches = self.service.related_facts(candidate, job["session_id"])
                     related.extend(
                         e for e in matches if e.id not in {v.id for v in related}
                     )
@@ -407,6 +397,7 @@ class MemoryJobs:
                 for entry in related[:32]:
                     trial = {
                         "extraction": extraction.model_dump(mode="json"),
+                        "original_sources": sources,
                         "related_entries": [
                             e.model_dump(mode="json") for e in [*retained, entry]
                         ],
@@ -421,6 +412,7 @@ class MemoryJobs:
                     json.dumps(
                         {
                             "extraction": extraction.model_dump(mode="json"),
+                            "original_sources": sources,
                             "related_entries": [
                                 e.model_dump(mode="json") for e in related[:32]
                             ],
@@ -644,6 +636,7 @@ class MemoryJobs:
                 for proposal in proposals.changes:
                     if proposal.action == "noop":
                         continue
+                    require_supported_fact(proposal.grounded, proposal.atomic)
                     candidate = extraction.candidates[proposal.candidate_index]
                     self._validate_candidate(connection, job, candidate, sources)
                     evidence = self.service.repository.evidence(
@@ -655,23 +648,20 @@ class MemoryJobs:
                     )
                     record = MemoryRecord.model_validate(
                         candidate.model_dump(
-                            exclude={"evidence_class", "source_quotes"}
+                            exclude={"evidence_class", "source_quotes", "requires_confirmation"}
                         )
                     )
                     if proposal.content:
                         record = record.model_copy(update={"content": proposal.content})
                     status = (
                         "candidate"
-                        if candidate.evidence_class == "inferred"
-                        or any(
-                            s["work_mode"] == "plan"
-                            for s in sources
-                            if s["item_id"] in candidate.source_item_ids
-                        )
+                        if candidate.evidence_class == "inferred" or candidate.requires_confirmation
                         else "active"
                     )
                     target = None
                     if proposal.target_entry_id:
+                        if status == "candidate":
+                            raise MemoryRejected("memory_candidate_target_invalid")
                         target = existing.get(proposal.target_entry_id)
                         if (
                             target is None
@@ -679,15 +669,7 @@ class MemoryJobs:
                         ):
                             raise MemoryRejected("memory_proposal_target_invalid")
                         # Background work must not override any explicit control.
-                        if (
-                            target.pinned
-                            or target.user_owned
-                            or connection.execute(
-                                "SELECT 1 FROM memory_actions WHERE entry_id=? AND action<>'candidate'",
-                                (target.id,),
-                            ).fetchone()
-                        ):
-                            raise MemoryRejected("memory_explicit_action_protected")
+                        self.service.repository.assert_automatic_target(connection, target)
                         if proposal.action in {"corroborate", "archive"}:
                             evidence = list(
                                 {
@@ -730,6 +712,11 @@ class MemoryJobs:
                     "UPDATE memory_jobs SET state='succeeded',proposals_json=?,lease_token=NULL WHERE id=? AND lease_token=?",
                     (proposals.model_dump_json(), job["id"], job["lease_token"]),
                 )
+                if not job["target_offset"]:
+                    connection.execute(
+                        "UPDATE memory_sources SET backfill_enabled=0 WHERE session_id=? AND backfill_until<=?",
+                        (job["session_id"], job["target_frontier"]),
+                    )
 
 
 class JobCancellation(MemoryCancellation):

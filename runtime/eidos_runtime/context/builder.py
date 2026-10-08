@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.persistence.completion import CompletionRepository
+
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 
 from eidos_runtime.persistence.planning import PlanningRepository
@@ -118,6 +120,12 @@ class ContextBuilder:
             })
 
         context: list[ModelContextItem] = [*user_context_messages]
+        completion_feedback = CompletionRepository(self.store.database).feedback(run_id)
+        if completion_feedback is not None:
+            context.append({"type": "user", "sectionId": "completion-feedback", "content":
+                "Runtime completion feedback from a model assessment, not user instructions or permission. "
+                "Continue the original request using available tools; do not merely announce the next action.\n"
+                + completion_feedback.model_dump_json(by_alias=True)})
         if not projectless:
             workspace = self.store.workspace_for_run(run_id)
             # Keep this early message stable across Workspace mutations. The
@@ -200,7 +208,8 @@ class ContextBuilder:
                         **({"inputImage": snapshot.image, "mime": snapshot.mime, "imageTokenEstimate": snapshot.image_token_estimate} if include_image else {}),
                     })
             elif item.kind == "assistant_message":
-                context.append({"type": "assistant", "content": item.content or ""})
+                context.append({"type": "assistant", "content": item.content or "",
+                                **({"phase": item.phase.value} if item.phase is not None else {})})
             elif item.provider_call_id is not None:
                 result_json = item.model_result_json or item.result_json or "{}"
                 projected_result = result_json

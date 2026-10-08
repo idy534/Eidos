@@ -43,6 +43,7 @@ from eidos_runtime.runtime.contracts import (
     ToolBatchOutcome,
 )
 from eidos_runtime.runtime.decision import LoopDecisionEngine
+from eidos_runtime.runtime.completion import CompletionGuard
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
 from eidos_runtime.runtime.loop_guard import (
@@ -358,6 +359,7 @@ class RuntimeEngine:
         rule_resolver = ProjectRuleResolver()
         projectless = self.store.session_is_projectless(run.session_id)
         sampling = SamplingRuntime(self.store, self.model, self.events, self.sensitive)
+        completion_guard = CompletionGuard(self.store, self.model, self.events, self.sensitive, self.resources, context_application)
         provider_recovery_states: set[tuple[object, ...]] = set()
         estimated_pressure_states: set[tuple[object, ...]] = set()
         pending_compaction_baseline: int | None = None
@@ -418,6 +420,7 @@ class RuntimeEngine:
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
                 collaboration=self.collaboration,
+                memory_model=self.model,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None
@@ -655,6 +658,7 @@ class RuntimeEngine:
                 runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
                 collaboration=self.collaboration,
+                memory_model=self.model,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None
@@ -917,6 +921,8 @@ class RuntimeEngine:
                 run.run_id, decision, sampled, validation, built, resources,
                 finalizer, cancel, agent_baseline=agent_baseline,
                 completion_recovery=tools._refresh_reconciliation,
+                completion_guard=completion_guard, completion_step=step,
+                completion_rule_snapshot=rule_snapshot,
             )
             if sample_action == SampleBoundaryAction.REBUILD_CONTEXT:
                 run = run.model_copy(update={"model_context": ()})
@@ -1123,6 +1129,9 @@ class RuntimeEngine:
         cancel: threading.Event,
         agent_baseline: CollaborationState | None = None,
         completion_recovery: Callable[..., None] | None = None,
+        completion_guard: CompletionGuard | None = None,
+        completion_step: StepContext | None = None,
+        completion_rule_snapshot: RuleResolutionSnapshot | None = None,
     ) -> SampleBoundaryAction:
         """Commit the sampling boundary before allowing another step or a tool."""
         if decision.action == LoopAction.CANCEL:
@@ -1175,6 +1184,27 @@ class RuntimeEngine:
                 )
                 return SampleBoundaryAction.REBUILD_CONTEXT
             assert sampled.assistant_item is not None
+            completion_stop_reason = None
+            if (completion_guard is not None and completion_step is not None and completion_rule_snapshot is not None
+                    and not resources.shell_process_manager.has_running()
+                    and self.store.read_run(run_id).get("reconciliationRequired") is not True):
+                try:
+                    checked = completion_guard.check(
+                        completion_step, sampled, cancel, completion_rule_snapshot,
+                        collaboration_hash=canonical_sha256(agent_baseline.model_dump(mode="json") if agent_baseline else None),
+                    )
+                    self._pause_at(run_id, SafePoint.AFTER_MODEL, cancel)
+                except SamplingMemoryRevoked:
+                    self.events.publish(self.store.mark_assistant_incomplete_committed(str(sampled.assistant_item["id"])))
+                    self.store.complete_current_step(run_id, "failed", reason="memory_snapshot_revoked")
+                    return SampleBoundaryAction.REBUILD_CONTEXT
+                if checked.action == "continue":
+                    mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item["id"]))
+                    self.events.publish(mutation, item=mutation.value)
+                    self.store.complete_current_step(run_id, "completed", reason=checked.reason)
+                    return SampleBoundaryAction.REBUILD_CONTEXT
+                if checked.action == "stop":
+                    completion_stop_reason = "completion_unconfirmed"
             # Completion can still be deferred by input or child state in the
             # final transaction. Settle processes but keep the owner reusable;
             # RunResources closes admission when this Worker actually exits.
@@ -1186,6 +1216,7 @@ class RuntimeEngine:
                 mutation = self.store.complete_assistant_and_run_committed(
                     str(sampled.assistant_item["id"]), run_id, shell_stopped=shell_stopped,
                     expected_collaboration=agent_baseline,
+                    stop_reason=completion_stop_reason,
                 )
             except RunCompletionDeferred as deferred:
                 # Recheck inside the final transaction: input or child results

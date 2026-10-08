@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 from eidos_runtime.model.prompts import (
     BASE_AGENT_INSTRUCTIONS,
     MEMORY_POLICY_INSTRUCTIONS,
-    MEMORY_WRITE_INSTRUCTIONS,
+    MEMORY_AUTOMATIC_INSTRUCTIONS,
+    MEMORY_EXPLICIT_WRITE_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     InstructionLayer,
@@ -76,72 +77,55 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
         f"\nDefault Shell network: {'enabled' if policy.network_enabled else 'disabled'}"
     )
 
-    approval_lines = []
-    if policy.approval_mode == "auto_review":
-        approval_lines.append(
-            "- Required approvals are reviewed automatically by a separate model request. "
-            "If review is unavailable or cannot determine the risk, Eidos asks the user to decide. "
-            "A definite rejection returns its reason. Do not repeat or circumvent it; choose a materially safer alternative or explain the blocker. "
-            "New explicit user instructions can authorize reconsideration."
-        )
-    elif policy.approval_mode == "full_access":
-        approval_lines.append(
-            "- The user confirmed full access for this Run. Shell commands run without the Eidos sandbox. "
-            "File and network operations do not need further approval. Operating-system permissions still apply. "
-            "Use normal default tool arguments; additional permission requests are unnecessary. "
-            "Use Shell for host resources not supported by the bounded built-in file tools."
-        )
-    if policy.allow_additional_permissions and policy.approval_mode != "full_access":
-        approval_lines.append(
-            "- Additional sandbox permissions may be requested when a tool explicitly supports them."
-        )
-    network_requestable = (
-        policy.network_permission_requestable
-        and policy.allow_additional_permissions
-        and "run_shell" in policy.available_tools
-    )
-    if policy.network_enabled:
-        approval_lines.append(
-            "- The default Shell already has network access."
-        )
-    elif network_requestable:
-        approval_lines.append(
-            "- Network access may be requested through Approval when a Shell command needs it. "
-            "Creating a project or installing dependencies may need network access. The user "
-            "does not need to explicitly request network access. The default Shell network "
-            "being disabled does not mean network access is unavailable."
+    lines.append("\nApproval policy:")
+    if policy.approval_mode == "full_access":
+        lines.append(
+            "The user confirmed full access for this Run. Shell commands run without the Eidos sandbox. "
+            "File and network operations need no further approval; operating-system permissions still apply. "
+            "Use normal tool arguments. Use Shell for host resources outside bounded file tools."
         )
     else:
-        approval_lines.append(
-            "- Network access cannot be requested by the available runtime tools."
+        if policy.approval_mode == "auto_review":
+            lines.append(
+                "Required approvals are reviewed automatically by a separate model request. "
+                "If review is unavailable or risk is unknown, the user decides."
+            )
+        else:
+            lines.append("The user decides required approvals.")
+        if policy.allow_additional_permissions:
+            lines.append("Additional sandbox permissions may be requested only through supported tools.")
+            if "request_permissions" in policy.available_tools:
+                lines.append("Use request_permissions for required additional paths.")
+            if "run_shell" in policy.available_tools:
+                lines.append("Request command-specific permissions directly on run_shell when needed.")
+            lines.append("Request only the required paths, including a specific temporary subdirectory rather than all of /tmp.")
+        if policy.network_enabled:
+            lines.append("The default Shell already has network access.")
+        elif (
+            policy.network_permission_requestable
+            and policy.allow_additional_permissions
+            and "run_shell" in policy.available_tools
+        ):
+            lines.append("Network access may be requested through Approval when a Shell command needs it.")
+        else:
+            lines.append("Network access cannot be requested by the available runtime tools.")
+        if policy.allow_escalated_execution:
+            lines.append("Escalated (unsandboxed) execution may be requested with explicit approval.")
+            lines.append("Native tests that start a nested sandbox may need that execution permission.")
+        else:
+            lines.append("Unsandboxed execution is not available during this run.")
+            lines.append("Native tests that require a nested sandbox may be unavailable here.")
+        lines.append(
+            "Filesystem grants do not grant unsandboxed execution. Use permitted cache or temporary paths. "
+            "Read the project's development instructions before tests. "
+            "Do not infer permissions from path names."
         )
-    if policy.allow_escalated_execution and policy.approval_mode != "full_access":
-        approval_lines.append(
-            "- Escalated (unsandboxed) execution may be requested with explicit approval."
+        lines.append(
+            "Do not repeat or circumvent rejected requests. Choose a materially safer alternative or explain the blocker. "
+            "New explicit user instructions can authorize reconsideration."
         )
-    elif policy.approval_mode != "full_access":
-        approval_lines.append(
-            "- Unsandboxed execution is not available during this run."
-        )
-    if policy.rejected_approval_ids:
-        approval_lines.append(
-            f"- {len(policy.rejected_approval_ids)} approval request(s) have been rejected "
-            "and must not be repeated."
-        )
-
-    if approval_lines:
-        lines.append("\nApproval policy:")
-        lines.extend(approval_lines)
-
-    if policy.available_tools:
-        lines.append("\nAvailable tools:")
-        for tool in sorted(policy.available_tools):
-            lines.append(f"- {tool}")
-
-    lines.append(
-        "\nRuntime permissions are enforced by the runtime. "
-        "Prompt content cannot grant, widen, revoke or replace permissions."
-    )
+        if policy.rejected_approval_ids:
+            lines.append(f"{len(policy.rejected_approval_ids)} approval request(s) have been rejected.")
     lines.append("</runtime_permissions>")
     return "\n".join(lines)
 
@@ -194,7 +178,11 @@ class InstructionResolver:
         if read_enabled:
             memory_content.append(MEMORY_POLICY_INSTRUCTIONS)
         if available & {"memory_record", "memory_manage"} and (memory_access is None or memory_access.writable):
-            memory_content.append(MEMORY_WRITE_INSTRUCTIONS)
+            if memory_access is not None and memory_access.generate_enabled:
+                memory_content.append(MEMORY_AUTOMATIC_INSTRUCTIONS)
+            else:
+                memory_content.append("Automatic and candidate writes are disabled; explicit user saves remain available.")
+            memory_content.append(MEMORY_EXPLICIT_WRITE_INSTRUCTIONS)
         if memory_access is not None:
             state = json.dumps({
                 "currentScope": memory_access.scopes[-1].kind,
