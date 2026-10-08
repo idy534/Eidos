@@ -126,8 +126,10 @@ class ApprovalCoordinator:
             "tool": item.get("toolCall", {}).get("toolName"),
             "arguments": (None if description.get("kind") == "permission_request"
                           else item.get("toolCall", {}).get("argumentsJson")),
+            # Derived display metadata must not invalidate old pending approvals
+            # or rejection fingerprints. Arguments and permission fields still bind the action.
             "description": {key: value for key, value in description.items()
-                            if key not in {"reason", "summary"}},
+                            if key not in {"reason", "summary", "additionalFileSystemAccess"}},
             "diff": diff,
             "baseSha256": base_sha256,
             "userEvidence": user_evidence,

@@ -15,6 +15,7 @@ from eidos_runtime.sandbox.denial import SandboxDenied, SandboxDenialCategory
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
     BasePermissionProfile,
+    FileSystemPermissionEntry,
     SandboxAttempt,
     SandboxPermissions,
     SandboxType,
@@ -54,6 +55,7 @@ class OrchestratorApprovalRequest:
     escalation_reason: str | None
     approval_key: str
     effective_permissions: dict[str, object]
+    file_system_permissions: tuple[FileSystemPermissionEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -320,6 +322,15 @@ class ToolOrchestrator:
             escalation_reason=attempt.escalation_reason,
             approval_key=key,
             effective_permissions=attempt.permissions.summary(),
+            file_system_permissions=tuple(
+                FileSystemPermissionEntry(
+                    path=entry.resolved_path,
+                    access=entry.access,
+                    recursive=entry.recursive,
+                )
+                for entry in attempt.permissions.entries
+                if entry.source == "additional"
+            ),
         )
 
     @staticmethod
