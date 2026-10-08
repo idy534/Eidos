@@ -644,6 +644,8 @@ class SessionRepository(Repository):
             connection: sqlite3.Connection, session_id: str = session_id,
         ) -> CommittedMutation[DeletedSession]:
             self._assert_session_deletable(connection, session_id)
+            from eidos_runtime.memory.lifecycle import invalidate_source
+            invalidate_source(connection, session_id, reason='delete')
             children = connection.execute(
                 'SELECT child_session_id FROM agent_delegations WHERE parent_run_id IN (SELECT id FROM runs WHERE session_id=?)',
                 (session_id,),

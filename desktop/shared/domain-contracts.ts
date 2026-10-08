@@ -507,11 +507,19 @@ interface ApprovalRequestBase {
   reviewFallback?: string | undefined;
 }
 
+export interface ApprovalFileSystemAccess {
+  path: string;
+  access: "read" | "write" | "execute" | "deny";
+  recursive: boolean;
+}
+
 export interface FileApprovalRequest extends ApprovalRequestBase {
   kind: "file_change";
   diff: string;
   diffBytes?: number | undefined;
   diffHash?: string | undefined;
+  sandboxPermissions?: "use_default" | "with_additional_permissions" | "require_escalated" | undefined;
+  additionalFileSystemAccess?: ApprovalFileSystemAccess[] | undefined;
 }
 
 export interface CommandApprovalRequest extends ApprovalRequestBase {
@@ -525,6 +533,7 @@ export interface CommandApprovalRequest extends ApprovalRequestBase {
   additionalReadAccess?: string[];
   additionalWriteAccess?: string[];
   additionalExecutableAccess?: string[];
+  additionalFileSystemAccess?: ApprovalFileSystemAccess[] | undefined;
   reason?: string;
   escalationReason?: string;
   attemptOrdinal?: 0 | 1;

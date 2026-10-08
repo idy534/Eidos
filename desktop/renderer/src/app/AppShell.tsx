@@ -1242,6 +1242,11 @@ export function AppShell({ runtime }: AppShellProps) {
         {settingsOpen ? (
           <SettingsPage
             initialCategory={settingsCategory}
+            sessionId={activeSnapshot?.session.id}
+            onOpenMemorySource={(id) => {
+              const source = sessionState.sessions.find((session) => session.id === id);
+              if (source) {setSettingsOpen(false); void handleSelectSession(source);}
+            }}
             runtime={runtimeStatus}
             modelList={modelState.list}
             modelLoading={modelState.loading}

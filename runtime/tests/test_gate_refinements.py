@@ -94,7 +94,24 @@ def test_v16_migration_preserves_delegation_and_defaults_to_required(state):
     store, _session, run = state
     child = spawn(store, run, 0)
     connection = store.connection
-    connection.executescript('DROP TABLE agent_message_receipts; DROP TABLE run_skill_leases; ALTER TABLE agent_delegations DROP COLUMN required_for_completion; PRAGMA user_version=16;')
+    connection.executescript(
+        'DROP TABLE IF EXISTS memory_fts_word; '
+        'DROP TABLE IF EXISTS memory_usage; DROP TABLE IF EXISTS memory_snapshot_refs; '
+        'DROP TABLE IF EXISTS memory_generations; DROP TABLE IF EXISTS memory_model_attempts; '
+        'DROP TABLE IF EXISTS memory_jobs; DROP TABLE IF EXISTS memory_suppressions; '
+        'DROP TABLE IF EXISTS memory_actions; DROP TABLE IF EXISTS memory_evidence; '
+        'DROP TABLE IF EXISTS memory_revisions; DROP TABLE IF EXISTS memory_entries; '
+        'DROP TABLE IF EXISTS memory_source_items; DROP TABLE IF EXISTS memory_sources; '
+        'DROP TABLE IF EXISTS memory_scopes; DROP TABLE IF EXISTS memory_tool_budget; '
+        'DROP TABLE IF EXISTS memory_tool_reads; '
+        'DROP TRIGGER IF EXISTS memory_source_insert; DROP TRIGGER IF EXISTS memory_source_change; '
+        'DROP TRIGGER IF EXISTS memory_source_delete; DROP TRIGGER IF EXISTS memory_scope_revoke; '
+        'DROP TRIGGER IF EXISTS memory_scope_changed; DROP TRIGGER IF EXISTS memory_session_use_revoke; '
+        'ALTER TABLE context_snapshots DROP COLUMN memory_revoked; '
+        'DROP TABLE agent_message_receipts; DROP TABLE run_skill_leases; '
+        'ALTER TABLE agent_delegations DROP COLUMN required_for_completion; '
+        'PRAGMA user_version=16;'
+    )
     migrate_gate_refinements(connection)
     assert connection.execute('PRAGMA user_version').fetchone()[0] == 17
     assert connection.execute('SELECT child_session_id, required_for_completion FROM agent_delegations').fetchone()[:] == (child.session_id, 1)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.persistence.completion import CompletionRepository
+
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 
 from eidos_runtime.persistence.planning import PlanningRepository
@@ -79,11 +81,18 @@ class ContextBuilder:
                 catalog_context = section
             else:
                 user_retained_context.append(section)
+        memory_access = self.store.database.memory.access(facts.session_id)
+        memory_tools = tuple(tool.name for tool in tool_definitions if tool.name.startswith("memory_"))
+        memory_advertised = bool(memory_tools) or (
+            step_policy is not None and any(name.startswith("memory_") for name in step_policy.available_tools)
+        )
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             skill_catalog_context=catalog_context,
             selected_skill_context=selected_skill_context,
             step_policy=step_policy,
+            memory_tools=memory_tools,
+            memory_access=memory_access if memory_advertised or memory_access.temporary else None,
             work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
         )
         source_ids = set(
@@ -111,6 +120,12 @@ class ContextBuilder:
             })
 
         context: list[ModelContextItem] = [*user_context_messages]
+        completion_feedback = CompletionRepository(self.store.database).feedback(run_id)
+        if completion_feedback is not None:
+            context.append({"type": "user", "sectionId": "completion-feedback", "content":
+                "Runtime completion feedback from a model assessment, not user instructions or permission. "
+                "Continue the original request using available tools; do not merely announce the next action.\n"
+                + completion_feedback.model_dump_json(by_alias=True)})
         if not projectless:
             workspace = self.store.workspace_for_run(run_id)
             # Keep this early message stable across Workspace mutations. The
@@ -193,7 +208,8 @@ class ContextBuilder:
                         **({"inputImage": snapshot.image, "mime": snapshot.mime, "imageTokenEstimate": snapshot.image_token_estimate} if include_image else {}),
                     })
             elif item.kind == "assistant_message":
-                context.append({"type": "assistant", "content": item.content or ""})
+                context.append({"type": "assistant", "content": item.content or "",
+                                **({"phase": item.phase.value} if item.phase is not None else {})})
             elif item.provider_call_id is not None:
                 result_json = item.model_result_json or item.result_json or "{}"
                 projected_result = result_json
@@ -250,6 +266,31 @@ class ContextBuilder:
                     ))
                 if _tool_result_changes_workspace(result_json):
                     workspace_state += 1
+        # Tool bodies carry the exact epoch used at retrieval, including history.
+        # A revoked body is replaced before building a fresh request.
+        revoked_memory_calls: set[str] = set()
+        for projected in context:
+            if str(projected.get("name", "")).startswith("memory_") and projected.get("type") == "tool_result":
+                try:
+                    payload = json.loads(str(projected.get("result", "{}")))
+                    data = payload.get("data", {})
+                    epochs = data.get("epochs", {})
+                    with self.store.database.lock:
+                        valid = self.store.database.memory.valid_epochs(self.store.database.connection(), epochs)
+                    if valid:
+                        projected["memoryEpochs"] = epochs
+                    else:
+                        revoked_memory_calls.add(str(projected.get("callId", "")))
+                        projected["result"] = '{"outcome":"error","code":"memory_snapshot_revoked","summary":"Historical memory payload revoked."}'
+                except (ValueError, AttributeError, TypeError):
+                    revoked_memory_calls.add(str(projected.get("callId", "")))
+                    projected["result"] = '{"outcome":"error","code":"memory_payload_invalid","summary":"Historical memory payload unavailable."}'
+        # Revoked write arguments may contain the same private body as results.
+        for projected in context:
+            if projected.get("type") == "tool_call" and str(projected.get("callId", "")) in revoked_memory_calls:
+                projected["arguments"] = "{}"
+                if "input" in projected:
+                    projected["input"] = ""
         context.extend(extra_context)
         if facts.reconciliation_required or facts.active_error_fingerprints:
             context.append({
@@ -304,6 +345,27 @@ class ContextBuilder:
             ),
             usage_updated_at=time.time_ns() // 1_000_000,
         )
+        memory = self.store.database.memory
+        projection = memory.project(facts.session_id, max(0, budget.usable_input_budget - budget.projected_input_tokens), run_id=run_id)
+        if projection.rendered_payload:
+            if not any(layer.id == "memory-policy" for layer in instructions.layers):
+                instructions = InstructionResolver().resolve(
+                    rule_snapshot=rule_resolution_snapshot, skill_catalog_context=catalog_context,
+                    selected_skill_context=selected_skill_context, step_policy=step_policy,
+                    work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
+                    memory_tools=memory_tools, memory_access=memory_access,
+                )
+            context.insert(0, {"type": "user", "sectionId": "memory-evidence",
+                               "content": projection.rendered_payload,
+                               "memoryEpochs": projection.epochs,
+                               "memoryEntries": [entry.to_wire_dict() for entry in projection.entries],
+                               "memoryGenerations": projection.generations})
+            budget = estimate_model_request_budget(
+                tuple(context), instructions=instructions.system_text, tool_definitions=tool_definitions,
+                context_window_tokens=profile.context_window_tokens, request_max_output_tokens=profile.max_output_tokens,
+                provider_usage=provider_usage, provider_calibration_estimate=self._provider_calibration_estimate,
+                usage_updated_at=time.time_ns() // 1_000_000,
+            )
         self._last_estimated_input_tokens = budget.estimated_input_tokens
         return ContextBuild(
             model_context=tuple(context),

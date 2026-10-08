@@ -12,6 +12,9 @@ from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.schema import REPOSITORY_SCHEMA_SQL
 from eidos_runtime.db.schema import (
     SCHEMA_VERSION,
+    V19_SCHEMA_VERSION,
+    V18_SCHEMA_VERSION,
+    V17_SCHEMA_VERSION,
     V16_SCHEMA_VERSION,
     V15_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
@@ -419,27 +422,8 @@ class PersistenceLayout:
             database.close()
 
     def garbage_collect_blobs(self, state: StateDatabase) -> int:
-        with state.lock, self.json_blobs.lock:
-            references: list[str] = []
-            connection = state.connection()
-            tables = _table_names(connection)
-            for table in ("context_snapshots", "step_resolution_snapshots", "input_references"):
-                if table not in tables:
-                    continue
-                references.extend(
-                    str(row[0])
-                    for row in connection.execute(
-                        f"SELECT snapshot_json FROM {table}"
-                    )
-                )
-            if "manual_mcp_servers" in tables:
-                references.extend(
-                    str(row[0])
-                    for row in connection.execute(
-                        "SELECT env_blob_ref FROM manual_mcp_servers"
-                    )
-                )
-            return self.json_blobs.garbage_collect(references)
+        return collect_unreferenced_blobs(state, self.json_blobs)
+
 
 
 def migrate_legacy_state_database(data_directory: Path) -> None:
@@ -616,6 +600,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V14_SCHEMA_VERSION,
         V15_SCHEMA_VERSION,
         V16_SCHEMA_VERSION,
+        V17_SCHEMA_VERSION,
+        V18_SCHEMA_VERSION,
+        V19_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -650,11 +637,24 @@ def _migrate_state_schema(state: StateDatabase) -> None:
                 connection.execute("PRAGMA foreign_keys = ON")
                 from eidos_runtime.db.planning_migration import migrate_planning
                 migrate_planning(connection, PLANNING_SCHEMA_SQL)
-            from eidos_runtime.db.collaboration_migration import migrate_collaboration
             if revision < V16_SCHEMA_VERSION:
+                from eidos_runtime.db.collaboration_migration import migrate_collaboration
                 migrate_collaboration(connection)
-            from eidos_runtime.db.gate_refinements_migration import migrate_gate_refinements
-            migrate_gate_refinements(connection)
+            if revision < V17_SCHEMA_VERSION or (
+                "memory_scopes" in _table_names(connection)
+                and "agent_message_receipts" not in _table_names(connection)
+            ):
+                from eidos_runtime.db.gate_refinements_migration import migrate_gate_refinements
+                migrate_gate_refinements(connection)
+            if revision < V18_SCHEMA_VERSION or connection.execute("PRAGMA user_version").fetchone()[0] == V17_SCHEMA_VERSION:
+                from eidos_runtime.memory.schema import migrate_memory
+                migrate_memory(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V18_SCHEMA_VERSION:
+                from eidos_runtime.memory.schema import migrate_memory_use
+                migrate_memory_use(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V19_SCHEMA_VERSION:
+                from eidos_runtime.memory.schema import migrate_memory_history
+                migrate_memory_history(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()
@@ -875,3 +875,27 @@ __all__ = [
     "migrate_legacy_state_database",
     "prune_repository_generations",
 ]
+
+
+def collect_unreferenced_blobs(state: StateDatabase, blobs: JsonBlobStore) -> int:
+    with state.lock, blobs.lock:
+        references: list[str] = []
+        connection = state.connection()
+        tables = _table_names(connection)
+        for table in ("context_snapshots", "step_resolution_snapshots", "input_references"):
+            if table not in tables:
+                continue
+            references.extend(
+                str(row[0])
+                for row in connection.execute(
+                    f"SELECT snapshot_json FROM {table}"
+                )
+            )
+        if "manual_mcp_servers" in tables:
+            references.extend(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT env_blob_ref FROM manual_mcp_servers"
+                )
+            )
+        return blobs.garbage_collect(references)

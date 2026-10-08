@@ -7,7 +7,7 @@ from typing import Annotated, Callable, Literal, Protocol, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from eidos_runtime.file_limits import MAX_PATCH_BYTES
-from eidos_runtime.model.response_phase import AssistantMessagePhase
+from eidos_runtime.model.response_phase import AssistantMessagePhase, ResponsePhaseSource
 
 
 MAX_FUNCTION_ARGUMENT_BYTES = 64 * 1024
@@ -124,6 +124,8 @@ class ModelResponse(_FrozenModel):
     text: str = ""
     tool_calls: tuple[ModelToolCall, ...] = ()
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
+    phase_source: ResponsePhaseSource = "unknown"
+    end_turn: bool | None = None
     usage: ModelUsage | None = None
     provider_name: str | None = None
     resolved_model_name: str | None = None
@@ -159,6 +161,7 @@ class ModelRequestError(RuntimeError):
 
 class ModelProfileSnapshot(_FrozenModel):
     schema_version: int = 1
+    completion_check_version: Literal[0, 1] = 0
     provider_id: str
     model_id: str
     wire_api: Literal[

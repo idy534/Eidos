@@ -15,8 +15,7 @@ from pydantic import ValidationError
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
-from eidos_runtime.context.budget import ContextUsageSnapshot
-from eidos_runtime.context.plan import ContextSnapshot
+from eidos_runtime.context.budget import ContextBudget, ContextUsageSnapshot
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
     TaskLifecycleApplication,
@@ -117,7 +116,9 @@ class RunStorePort(Protocol):
         context_snapshot_id: str | None = None,
     ) -> ModelUsage | None: ...
 
-    def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None: ...
+    def read_latest_context_budget(
+        self, run_id: str
+    ) -> tuple[str, ContextBudget] | None: ...
 
     def interrupt_run(self, run_id: str) -> dict[str, object]: ...
 
@@ -564,18 +565,18 @@ class RunApplication:
         store, _runtime = self._cancel_dependencies()
         try:
             profile = store.read_model_profile(request.run_id)
-            latest_context_snapshot = store.read_latest_context_snapshot(request.run_id)
-            usage = _context_usage_snapshot(
-                profile.context_window_tokens,
-                (
+            latest_budget = store.read_latest_context_budget(request.run_id)
+            usage = (
+                _context_usage_snapshot(
+                    profile.context_window_tokens,
                     store.latest_model_usage(
                         request.run_id,
-                        context_snapshot_id=latest_context_snapshot.snapshot_id,
-                    )
-                    if latest_context_snapshot is not None
-                    else None
-                ),
-                latest_context_snapshot,
+                        context_snapshot_id=latest_budget[0],
+                    ),
+                    latest_budget[1],
+                )
+                if latest_budget is not None
+                else None
             )
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
@@ -758,7 +759,7 @@ def _run_worktree_error_code(error: WorktreeError) -> str:
 def _context_usage_snapshot(
     context_window_tokens: int,
     provider_usage: ModelUsage | None,
-    latest_context_snapshot: ContextSnapshot | None,
+    budget: ContextBudget,
 ) -> ContextUsageSnapshot | None:
     refreshed_at = int(time.time() * 1000)
     if (
@@ -777,16 +778,8 @@ def _context_usage_snapshot(
             source="provider",
             updated_at=refreshed_at,
         )
-    plan = getattr(latest_context_snapshot, "plan", None)
-    budget = getattr(plan, "token_budget", None)
-    projected = getattr(budget, "projected_input_tokens", None)
-    if not isinstance(projected, int) or isinstance(projected, bool):
-        projected = getattr(budget, "estimated_input_tokens", None)
-    if (
-        isinstance(projected, int)
-        and not isinstance(projected, bool)
-        and projected >= 0
-    ):
+    projected = budget.projected_input_tokens
+    if projected >= 0:
         return ContextUsageSnapshot(
             active_tokens=projected,
             context_window_tokens=context_window_tokens,

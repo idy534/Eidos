@@ -15,7 +15,12 @@ from pydantic_ai.retries import (
     RetryConfig,
     wait_retry_after,
 )
-from tenacity import RetryCallState, retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import (
+    RetryCallState,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig
 from eidos_runtime.model.gateway_types import RetryPolicy
@@ -66,10 +71,11 @@ class RetryTransportClient:
         wrapped: httpx.AsyncBaseTransport | None = None,
         timeout: httpx.Timeout | None = None,
         wire_api: str = "chat_completions",
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         self._profile = profile
         self._wire_api = wire_api
-        self._policy = RetryPolicy()
+        self._policy = retry_policy or RetryPolicy()
         self._sleep_for_testing: Callable[[float], object] | None = None
         fallback = wait_exponential(
             multiplier=self._policy.initial_backoff_seconds,
@@ -133,7 +139,9 @@ class RetryTransportClient:
             return
         decision = retry_decision(
             error,
-            RetryState(attempt_number=state.attempt_number, canceled=scope.cancel.is_set()),
+            RetryState(
+                attempt_number=state.attempt_number, canceled=scope.cancel.is_set()
+            ),
             self._policy,
         )
         tracker = scope.tracker
@@ -193,9 +201,14 @@ def build_retrying_http_client(
     wrapped: httpx.AsyncBaseTransport | None = None,
     timeout: httpx.Timeout | None = None,
     wire_api: str = "chat_completions",
+    retry_policy: RetryPolicy | None = None,
 ) -> RetryTransportClient:
     return RetryTransportClient(
-        profile, wrapped=wrapped, timeout=timeout, wire_api=wire_api
+        profile,
+        wrapped=wrapped,
+        timeout=timeout,
+        wire_api=wire_api,
+        retry_policy=retry_policy,
     )
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from eidos_runtime.runtime.tool_orchestrator import (
@@ -18,6 +18,7 @@ from eidos_runtime.sandbox.denial import (
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
     BasePermissionProfile,
+    FileSystemPermissionEntry,
     NetworkPermissions,
     SandboxPermissions,
     SandboxType,
@@ -74,6 +75,28 @@ class ToolOrchestratorTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_approval_preserves_materialized_path_scopes_including_run_grants(self) -> None:
+        output = self.root / "output"
+        output.mkdir()
+        sdk = self.root / "sdk"
+        sdk.mkdir()
+        requested = FileSystemPermissionEntry(path=str(output), access="write", recursive=True)
+        granted = FileSystemPermissionEntry(path=str(sdk), access="read", recursive=False)
+        context = replace(self.context, granted_permissions=AdditionalPermissionProfile(fileSystem=(granted,)))
+        approvals = []
+        result = ToolOrchestrator().run(
+            _Runtime([]),
+            _Request(permissions=SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS,
+                     additional=AdditionalPermissionProfile(fileSystem=(requested,))),
+            context,
+            approve=lambda request: approvals.append(request) or False,
+        )
+        assert result.attempt_count == 0
+        assert {(entry.path, entry.access.value, entry.recursive)
+                for entry in approvals[0].file_system_permissions} == {
+            (str(output.resolve()), "write", True), (str(sdk.resolve()), "read", False),
+        }
 
     def test_skipped_approval_authorizes_immediately_before_execution(self) -> None:
         order: list[str] = []

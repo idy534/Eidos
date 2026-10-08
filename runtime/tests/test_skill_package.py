@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from pathlib import Path
 import stat
@@ -68,18 +69,16 @@ class SkillPackageTests(unittest.TestCase):
         prompt = catalog.content.lower()
 
         self.assertEqual(catalog.role, "developer")
-        for phrase in (
-            "discovery",
-            "trigger",
-            "progressive disclosure",
-            "relative",
-            "scripts",
-            "references",
-            "assets",
-            "safety",
-        ):
+        for phrase in ("read", "skill_read", "relative", "untrusted"):
             self.assertIn(phrase, prompt)
         self.assertNotIn("full body must not be in catalog", prompt)
+        entries = [json.loads(line) for line in catalog.content.splitlines() if line.startswith("{")]
+        entry = next(value for value in entries if value["name"] == "user:review")
+        self.assertEqual(set(entry), {"name", "description", "path"})
+        self.assertEqual(entry["path"], str((skill / "SKILL.md").resolve()))
+        self.assertIn("FULL BODY", self.skills.read_skill(snapshot, entry["name"])["content"])
+        for field in ("qualifiedId", "sourceHash", "contentHash", "sourceVersion", '"source"'):
+            self.assertNotIn(field, catalog.content)
 
     def test_binary_package_resources_are_bounded_and_not_scanned_as_utf8(self) -> None:
         skill = self.data / "skills" / "anthropic-files"

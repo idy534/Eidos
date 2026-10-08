@@ -1,3 +1,4 @@
+import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
 import { isCollaborationState } from "../shared/collaboration.js";
 import type { CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
@@ -316,7 +317,7 @@ export class RuntimeRequestError extends Error {
   readonly businessCode: string | undefined;
 
   constructor(error: RpcError) {
-    const businessCode = RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "")
+    const businessCode = (RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "") || /^MEMORY_[A-Z_]{1,80}$/.test(error.data?.code ?? ""))
       ? error.data?.code
       : "INTERNAL_ERROR";
     super(`EIDOS_RUNTIME_ERROR:${businessCode}`);
@@ -1054,6 +1055,11 @@ export class RuntimeClient {
         reject(error);
       });
     });
+  }
+
+  async memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]> {
+    if (!isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
+    return this.validatedRequest(method, Object.fromEntries(Object.entries(request)), (value): value is MemoryMethods[K]["response"] => isMemoryResponse(method, value));
   }
 
   private async validatedRequest<T>(
@@ -2363,6 +2369,18 @@ function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) > 0;
 }
 
+function projectApprovalFileSystemAccess(value: unknown): CommandApprovalRequest["additionalFileSystemAccess"] {
+  if (!Array.isArray(value) || !value.every((entry) =>
+    isRecord(entry) && typeof entry.path === "string" && entry.path.startsWith("/")
+    && !entry.path.includes("\0") && ["read", "write", "execute", "deny"].includes(String(entry.access))
+    && typeof entry.recursive === "boolean")) return undefined;
+  return value.map((entry) => ({
+    path: entry.path as string,
+    access: entry.access as "read" | "write" | "execute" | "deny",
+    recursive: entry.recursive as boolean,
+  }));
+}
+
 function approvalRequestFrom(
   message: { jsonrpc: "2.0"; id: string; method: string; params: unknown },
 ): ApprovalRequest | undefined {
@@ -2388,6 +2406,11 @@ function approvalRequestFrom(
     if (typeof params.diff !== "string" || !hasTextReference(params, "diff")) {
       return undefined;
     }
+    if (params.sandboxPermissions !== undefined && !["use_default", "with_additional_permissions", "require_escalated"].includes(String(params.sandboxPermissions))) return undefined;
+    if (params.additionalPermissions != null && !isRecord(params.additionalPermissions)) return undefined;
+    const fileSystem = isRecord(params.additionalPermissions) ? params.additionalPermissions.fileSystem : undefined;
+    const additionalFileSystemAccess = projectApprovalFileSystemAccess(fileSystem);
+    if (fileSystem !== undefined && additionalFileSystemAccess === undefined) return undefined;
     return {
       id: message.id,
       sessionId: params.sessionId as string,
@@ -2400,6 +2423,8 @@ function approvalRequestFrom(
       diff: params.diff as string,
       diffBytes: typeof params.diffBytes === "number" ? params.diffBytes : undefined,
       diffHash: typeof params.diffHash === "string" ? params.diffHash : undefined,
+      sandboxPermissions: params.sandboxPermissions as FileApprovalRequest["sandboxPermissions"],
+      additionalFileSystemAccess,
     };
   }
   if (params.kind === "external_tool") {
@@ -2510,6 +2535,8 @@ function approvalRequestFrom(
     && (params.escalationReason === undefined || typeof params.escalationReason === "string")
     && (params.attemptOrdinal === undefined || params.attemptOrdinal === 0 || params.attemptOrdinal === 1)
   ) {
+    const additionalFileSystemAccess = projectApprovalFileSystemAccess(params.additionalFileSystemAccess);
+    if (params.additionalFileSystemAccess !== undefined && additionalFileSystemAccess === undefined) return undefined;
     return {
       id: message.id,
       sessionId: params.sessionId as string,
@@ -2528,6 +2555,7 @@ function approvalRequestFrom(
       additionalReadAccess: [...(params.additionalReadAccess as string[] | undefined ?? [])],
       additionalWriteAccess: [...(params.additionalWriteAccess as string[] | undefined ?? [])],
       additionalExecutableAccess: [...(params.additionalExecutableAccess as string[] | undefined ?? [])],
+      additionalFileSystemAccess,
       reason: (params.reason as string | undefined) ?? "",
       escalationReason: (params.escalationReason as string | undefined) ?? "",
       attemptOrdinal: (params.attemptOrdinal ?? 0) as 0 | 1,

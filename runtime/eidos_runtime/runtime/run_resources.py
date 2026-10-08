@@ -37,6 +37,7 @@ from eidos_runtime.runtime.runtime_dependencies import (
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
+from eidos_runtime.tools.memory import memory_entries
 from eidos_runtime.tools.planning import planning_entries
 from eidos_runtime.tools.collaboration import collaboration_entries
 from eidos_runtime.persistence.collaboration import CollaborationRepository
@@ -231,12 +232,18 @@ class RunResources:
             if self.supports_images
             else None
         )
+        memory_access = self.store.database.memory.access(str(self.store.read_run(self.run_id)["sessionId"]))
         base = ToolRegistry.build(
             builtin_entries=(
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
                 declare_outputs_entry(self.tool_executor.workspace),
                 request_permissions_entry(),
+                *memory_entries(
+                    child=self.is_child,
+                    read_enabled=memory_access.read_enabled,
+                    write_enabled=memory_access.writable,
+                ),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
                 *planning_entries(include_plan=self.store.read_run(self.run_id).get("workMode") == "plan"),
                 *self.skills.tool_entries(

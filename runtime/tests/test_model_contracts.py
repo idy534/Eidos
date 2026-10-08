@@ -88,7 +88,7 @@ class ModelContractTests(unittest.TestCase):
 
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
         self.assertIn("Eidos", SYSTEM_SAFETY_INSTRUCTIONS)
-        self.assertIn("smallest coherent set of changes", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("smallest necessary actions", BASE_AGENT_INSTRUCTIONS)
         self.assertIn(
             "Prefer dedicated workspace tools for listing, reading, and searching files.",
             BASE_AGENT_INSTRUCTIONS,
@@ -99,29 +99,15 @@ class ModelContractTests(unittest.TestCase):
         )
         self.assertIn("Progress communication", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("confirmed findings", BASE_AGENT_INSTRUCTIONS)
-        self.assertIn("not required in every response", BASE_AGENT_INSTRUCTIONS)
-        self.assertIn("routine follow-up reads and searches", BASE_AGENT_INSTRUCTIONS)
-        self.assertIn("Never return a tool-free message", BASE_AGENT_INSTRUCTIONS)
-        self.assertNotIn("eidos-final-response", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("needs user input", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("clear blocker", BASE_AGENT_INSTRUCTIONS)
         self.assertIn("same response", BASE_AGENT_INSTRUCTIONS)
-        self.assertIn("without a tool call", BASE_AGENT_INSTRUCTIONS)
-        self.assertIn(
-            "When the task still requires tool execution, do not end the response "
-            "with plan or progress text alone; continue with the required ToolCall, "
-            "and return an assistant-only response only when no more tools are needed "
-            "or you must wait for user input.",
-            BASE_AGENT_INSTRUCTIONS,
-        )
-        self.assertIn("instead of repeating the rejected request", RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertIn("request_permissions", RUNTIME_POLICY_INSTRUCTIONS)
-        self.assertIn(
-            "or directly on run_shell when required by a specific command",
-            RUNTIME_POLICY_INSTRUCTIONS,
-        )
-        self.assertIn(
-            "Request only the permissions needed for the action.",
-            RUNTIME_POLICY_INSTRUCTIONS,
-        )
+        self.assertIn("declare_outputs", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("Do not claim operation success or verification without evidence", BASE_AGENT_INSTRUCTIONS)
+        self.assertNotIn("eidos-final-response", BASE_AGENT_INSTRUCTIONS)
+        self.assertIn("tool_search", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertNotIn("request_permissions", RUNTIME_POLICY_INSTRUCTIONS)
+        self.assertNotIn("unsandboxed execution", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertNotIn("gitWriteAccess", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertNotIn("networkAccess", RUNTIME_POLICY_INSTRUCTIONS)
         self.assertNotIn(".git", RUNTIME_POLICY_INSTRUCTIONS)
@@ -183,18 +169,18 @@ class ModelContractTests(unittest.TestCase):
     def test_final_response_contract_declares_only_requested_deliverables(self) -> None:
         contract = BASE_AGENT_INSTRUCTIONS
         self.assertIn(
-            "Use `declare_outputs` only for standalone files the user expects to receive",
+            "Declare only standalone files the user expects to receive",
             contract,
         )
         self.assertIn(
-            "A file is not a deliverable merely because it was created or edited",
+            "ordinary documentation edits are not deliverables unless explicitly requested",
             contract,
         )
-        self.assertIn("remain workspace changes unless the user explicitly asks", contract)
-        self.assertIn("Do not declare intermediate files", contract)
-        self.assertIn("declare it again after revising it", contract)
-        self.assertIn("When uncertain whether a file is a requested deliverable", contract)
-        self.assertIn("Links or other output markers do not replace `declare_outputs`", contract)
+        self.assertIn("Project source, configuration", contract)
+        self.assertIn("Do not declare dependencies, caches or other intermediate files", contract)
+        self.assertIn("declare it again after revision", contract)
+        self.assertIn("When uncertain, do not declare", contract)
+        self.assertIn("Links do not replace declaration", contract)
 
 
 if __name__ == "__main__":

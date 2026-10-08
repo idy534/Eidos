@@ -246,7 +246,7 @@ def test_auto_review_persists_decision_and_deduplicates_the_same_rejected_action
         second = coordinator.request(
             str(run["id"]),
             second_item,
-            {"kind": "file_change"},
+            {"kind": "file_change", "additionalFileSystemAccess": []},
             threading.Event(),
             transition_reason="file_change_approval",
         )

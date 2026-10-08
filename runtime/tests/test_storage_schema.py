@@ -103,6 +103,10 @@ EXPECTED_TABLES = {
     "agent_waits",
     "agent_message_receipts",
     "run_skill_leases",
+    "memory_scopes", "memory_sources", "memory_source_items", "memory_entries",
+    "memory_revisions", "memory_evidence", "memory_actions", "memory_suppressions",
+    "memory_jobs", "memory_model_attempts", "memory_generations", "memory_snapshot_refs",
+    "memory_usage", "memory_tool_budget", "memory_tool_reads",
 }
 
 EXPECTED_COLUMNS = {
@@ -443,6 +447,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
             if not row[0].startswith("repository_fts_")
+            and not row[0].startswith("memory_fts_")
         }
         indexes = {
             row[0]
@@ -452,7 +457,7 @@ class StorageSchemaTests(unittest.TestCase):
         }
         self.assertEqual(tables, EXPECTED_TABLES)
         self.assertEqual(
-            indexes,
+            indexes - {"memory_source_items_session", "memory_entries_scope", "memory_evidence_source", "memory_jobs_queue", "memory_model_attempts_time"},
             {
                 "one_active_run_per_session",
                 "one_pending_approval_per_item",
@@ -534,8 +539,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 17)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 16)
+        self.assertEqual(SCHEMA_VERSION, 20)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 19)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

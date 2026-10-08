@@ -113,4 +113,32 @@ describe("useContextUsageController", () => {
     });
     expect(result.current[0].usage).toEqual(updatedUsage);
   });
+
+  it("clears existing usage when a refresh returns no statistics", async () => {
+    const readContextUsage = vi.fn()
+      .mockResolvedValueOnce(usage)
+      .mockResolvedValueOnce(null);
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      readContextUsage,
+    } as EidosRuntimeAPI;
+    const { result } = renderHook(() => useContextUsageController({
+      ready: true,
+      sessionId: "session-1",
+      modelId: "deepseek-v4-flash",
+      runId: "run-1",
+    }));
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current[0].usage).toEqual(usage);
+
+    await act(async () => {
+      result.current[1].handleNotification({
+        method: "run/updated",
+        params: { sessionId: "session-1", run },
+      });
+      await Promise.resolve();
+    });
+
+    expect(result.current[0].usage).toBeUndefined();
+    expect(result.current[0].loading).toBe(false);
+  });
 });

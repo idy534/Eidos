@@ -17,6 +17,7 @@ from eidos_runtime.protocol.schemas import (
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.runtime.state_machine import EventType, RunStatus
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.domain.completion import CompletionCheckRecord
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -64,6 +65,7 @@ class RunStatusChangedPayload(ClosedModel):
 
 class RunUpdatedPayload(ClosedModel):
     reason: str
+    completion_check: CompletionCheckRecord | None = Field(default=None, alias="completionCheck")
     binding_id: str | None = Field(
         default=None,
         alias="bindingId",
@@ -144,6 +146,13 @@ class InputEventPayload(ClosedModel):
     input_id: str = Field(alias="inputId")
 
 
+class MemoryChangedPayload(ClosedModel):
+    scope_id: str = Field(alias="scopeId")
+    generation: int
+    privacy_epoch: int = Field(alias="privacyEpoch")
+    reason: str
+
+
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_CREATED: SessionCreatedPayload,
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
@@ -174,6 +183,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.CONTEXT_COMPACTED: ContextCompactedPayload,
     EventType.INPUT_QUEUED: InputEventPayload,
     EventType.INPUT_INJECTED: InputEventPayload,
+    EventType.MEMORY_CHANGED: MemoryChangedPayload,
 }
 
 

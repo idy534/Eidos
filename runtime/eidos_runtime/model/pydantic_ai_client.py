@@ -65,7 +65,7 @@ from eidos_runtime.model.config import (
     ModelProfileSpec,
 )
 from eidos_runtime.model.prompts import TITLE_PROMPT, TITLE_SYSTEM_INSTRUCTIONS
-from eidos_runtime.model.response_phase import resolve_chat_completion_phase
+from eidos_runtime.model.response_phase import resolve_response_phase, validate_end_turn
 from eidos_runtime.model.retry_transport import (
     RetryBackoffCanceled,
     RetryTracker,
@@ -484,7 +484,12 @@ def encode_context(
         elif item_type == "assistant":
             content = item.get("content")
             if isinstance(content, str):
-                messages.append(PAIModelResponse([TextPart(content)]))
+                phase = item.get("phase")
+                details = {"phase": phase} if phase in {"commentary", "final_answer"} else None
+                messages.append(PAIModelResponse([TextPart(
+                    content, provider_name="openai" if details else None,
+                    provider_details=details,
+                )]))
         elif item_type == "tool_call":
             call_id = item.get("callId")
             name = item.get("name")
@@ -744,15 +749,20 @@ def map_model_response(
         calls.append(ModelToolCall(call_id, call.tool_name, arguments))
     text = response.text or ""
     finish_reason = response.finish_reason or ("tool_call" if calls else "unknown")
-    phase = resolve_chat_completion_phase(
-        text=text,
+    phase, phase_source = resolve_response_phase(
+        ((part.provider_details or {}).get("phase") for part in response.parts if isinstance(part, TextPart)),
         has_tool_calls=bool(calls),
-        finish_reason=finish_reason,
     )
+    try:
+        end_turn = validate_end_turn((response.provider_details or {}).get("end_turn"))
+    except ValueError:
+        raise ModelRequestError(ModelRequestFailure(code="protocol_error", retryable=False, provider_name=response.provider_name)) from None
     return ModelResponse(
         text=text,
         tool_calls=tuple(calls),
         phase=phase,
+        phase_source=phase_source,
+        end_turn=end_turn,
         usage=_map_usage(response.usage),
         provider_name=response.provider_name,
         resolved_model_name=response.model_name,

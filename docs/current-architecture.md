@@ -153,9 +153,9 @@ CLAUDE.md
 
 每层只选择一个候选。Resolver 使用共享的 32 KiB UTF-8 byte budget。Resolver 记录 shadowed candidate、读取或预算 warning、原始 content hash、实际包含字节数、directory level、Workspace root 和 effective cwd。Run 使用 immutable rule snapshot，Step Resolution 保存 resolved instruction hash 和 effective cwd。
 
-`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。
+`InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。 模型可见的 Skill 目录只保留唯一调用名称、说明和入口路径；完整身份、版本与 hash 留在 Runtime 的冻结快照中。skill_read 继续使用现有参数读取该名称对应的 Skill。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。 通用 Runtime 提示不包含具体审批模式的扩权流程。当前权限层按 manual、auto_review、full_access 分别生成；完全访问层不混入沙盒扩权、嵌套沙盒或自动审查指引。可用工具由当前 Tool Schema 暴露，权限文本不重复整份名称列表。
 
-Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。Context Usage RPC 先读取当前 Run 最新的 ContextSnapshot，再读取与该 Snapshot 绑定的 ModelAttempt usage。该 Attempt 有正的 Provider `input_tokens` 时，RPC 返回 Provider 值；否则 RPC 返回该 Snapshot 的 `projected_input_tokens`，并标记为 `estimated`。RPC 不再使用当前 Snapshot 以前的 Attempt usage。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
+Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。Context Usage RPC 从 `context_snapshots` 选取当前 Run 最新的 Snapshot ID，并从关联的 `context_plans.plan_json` 读取已持久化预算，再读取与该 Snapshot 绑定的 ModelAttempt usage。该 Attempt 有正的 Provider `input_tokens` 时，RPC 返回 Provider 值；否则 RPC 返回该 Plan 的 `projected_input_tokens`，并标记为 `estimated`。RPC 不加载 Snapshot 正文或 Blob，也不使用当前 Snapshot 以前的 Attempt usage。正文撤销或清理不删除这些统计数字；数字表示最近一次已构建或请求的上下文大小，新合法上下文生成后再更新。完整 Snapshot 的读取和模型使用继续执行撤销检查。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
 Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,536 tokens、仍符合真实模型窗口、没有待处理 Approval 或 reconciliation，且距离上次尝试已有至少 32 条新的未压缩 Item 时，Runtime 尝试压缩旧历史。这个路径保留最近 16 条候选 Item、用户消息和 Skill 读取正文。它复用现有事实验证与事务提交，不删除原始历史。主动压缩失败后，Runtime 保留原投影并继续正常的窗口判断；65,536 不是 Run 停止阈值。
 
@@ -332,11 +332,11 @@ Session 展示快照与执行快照使用不同的读取入口。`session/read` 
 
 `state.sqlite` 是可变业务状态的唯一权威。它保存 Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context lineage、Compaction 和 Checkpoint。业务状态变化与 Event/Outbox 仍在同一个 `state.sqlite` transaction 中提交。
 
-Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。`memories.sqlite` 只保存 Memory metadata，正文使用 content-addressed Markdown 文件。当前 verified compaction 尚未自动写入 MemoryStore。
+Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。旧 `memories.sqlite` / MemoryStore metadata 接口保留兼容。新记忆系统以 `state.sqlite` 为业务权威，正文使用 UUID 命名的私有 Markdown 文件，检索与摘要是可重建投影。来源、版本、后台任务、隐私撤销与快照引用见 [current-memory.md](current-memory.md)。
 
 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，其中每条模型上下文项与工具定义各自按内容哈希存为共享 Blob。读取时 Runtime 按顺序重组完整请求并验证原有快照哈希；旧版完整 ContextSnapshot 仍可读取。`state.sqlite` 只保存顶层 Blob 的版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Blob GC 在删除前解析新清单并保留其共享块。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
-当前 `SCHEMA_VERSION` 是 16。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 17。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
 
@@ -718,6 +718,6 @@ v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，�
 
 ### 交互与资源门禁细化（PR #103）
 
-同 Session 后续输入通过既有 FIFO 排队；Composer 同时显示提交和取消，工作模式、模型、思考强度和审批模式用于下一轮草稿，当前 Run 快照保持不可变。安全的连续只读调用可以在混合批次中并行，副作用仍按顺序执行。搜索保留每 Run 四个实际执行者和十六个会话边界，超出执行槽位的请求进入可取消队列。延迟工具按最近激活顺序保留，再按稳定名称排序冻结。
+Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，ApprovalComposer 或 ClarificationComposer 替换普通输入框，Session 草稿会在等待结束后继续显示。工作模式、模型、思考强度和审批模式用于下一轮草稿，当前 Run 快照保持不可变。安全的连续只读调用可以在混合批次中并行，副作用仍按顺序执行。搜索保留每 Run 四个实际执行者和十六个会话边界，超出执行槽位的请求进入可取消队列。延迟工具按最近激活顺序保留，再按稳定名称排序冻结。
 
 新 Run 持久保存内部 Skill 元数据快照，公共 Run DTO 不发送该快照；内部恢复读取保持完整。只有实际选择、读取或激活的 Skill 建立租约，其他 Skill 可删除；旧 Run 继续按目录引用保护。资源激活重新检查冻结身份和内容版本，已移除且未使用的 Skill 以普通工具错误反馈，不破坏整个 Run 的恢复。

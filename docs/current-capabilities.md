@@ -21,8 +21,8 @@
 - Desktop 可以在 Session 对应的 managed Worktree 被 retention 清理后显示 Restore Worktree 提示。Restore 会调用 `session/restoreWorktree`，并继续使用同一个 Session 和同一个 `associatedWorktreeId`。当前 execution mode 是 Worktree 且 Worktree 已删除时，Composer 会保持只读。
 - Settings 可以读取和修改 `automaticCleanup` 与 `managedWorktreeLimit`。Worktree limit 的有效范围是 1 到 100，默认值是 15。
 - Execution Feed 可以展示用户消息、模型文本、ToolCall、Tool Result、Approval、终态和恢复后的历史。
-- Composer 可以选择已配置 Model，并显示当前选中 Model 最新 ContextSnapshot 的 Context Usage。该 Snapshot 有 Provider usage 时显示 Provider `input_tokens`，否则显示该 Snapshot 的 `projected_input_tokens` 估算值。
-- Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。新的 Run 在产生自己的 ContextSnapshot 前显示无数据状态。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
+- Composer 可以选择已配置 Model，并显示当前选中 Model 最新 ContextSnapshot 对应的持久化 Context Usage。Runtime 直接查询关联 Plan 的预算和 ModelAttempt usage，不加载快照正文。该 Snapshot 有正数 Provider `input_tokens` 时显示 Provider 值，否则显示该 Plan 的 `projected_input_tokens` 估算值。快照正文撤销或清理后，这些统计仍可查询。
+- Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。新的 Run 在产生自己的 ContextSnapshot 前显示无数据状态，刷新返回无数据时会清空旧读数。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
 - Quit 流程会先处理活动 Run，再关闭 Runtime 和窗口资源。
 
 ## Session / Run
@@ -101,7 +101,7 @@
 - Resolver 从 Workspace root 到 effective cwd 逐目录解析。
 - 每个目录只选一个最高优先级的非空候选。
 - Resolver 使用共享 32 KiB byte budget，并记录 shadowed candidates、warning、原始 hash、包含字节数、directory level 和 effective cwd。
-- InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。Skill Catalog 使用 developer capability context，实际加载的第三方 `SKILL.md` 使用 user context。
+- InstructionResolver 将 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 组成有来源的 immutable instructions。Skill Catalog 使用 developer capability context，实际加载的第三方 `SKILL.md` 使用 user context。 模型目录只显示唯一调用名称、用途和入口路径，不显示 Hash、qualifiedId、source 或 sourceVersion；Runtime 冻结快照继续保存完整身份和核验信息。当前权限层按审批模式独立生成，full_access 不包含普通沙盒扩权指引。
 - Step Resolution 保存 resolved instruction hash。Project Rules 不会改变 Runtime Permission、Approval 或 Sandbox 的真实执行约束。
 
 ## Repository Discovery
@@ -337,7 +337,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 普通 Shell 会继承 Run Grant。显式 `networkAccess=request`、`sandboxPermissions`、`additionalPermissions` 和 `justification` 保持兼容，显式动作审批不会建立 Run Grant。
 - 普通 Shell 遭遇可识别的网络 denial 后可以进入审批。批准后，模型收到 `permission_granted_retry_required`，再自行决定下一次调用。Runtime 不会自动重跑 Shell。拒绝只阻止同一审批请求的重复打扰。
 - R1 结构化待批请求可以在重启后恢复。Runtime 保留原审批，并重新核对 Tool 契约和待执行动作。网络 denial 的已完成结果可以恢复。不确定执行、契约变化和取消仍保持原有安全边界。
-- 人工审批使用底部 ApprovalComposer，审批和澄清期间继续保留草稿输入框。模型加载、执行收尾或工作区暂不可执行时仍可编辑已载入的草稿；执行提交继续遵守实际状态和模型配置。Feed 显示历史状态。Sidebar 会显示“等待批准”。
+- 人工审批使用底部 ApprovalComposer 替换普通输入框；澄清等待也由 ClarificationComposer 替换普通输入框。等待结束后，Session Composer 会恢复并保留原草稿。模型加载、执行收尾或工作区暂不可执行时，普通 Composer 仍可编辑已载入的草稿，但提交受当前执行状态限制。Feed 显示审批历史。Sidebar 会显示“等待批准”。
 - SQLite 同时保留原始 Tool 参数和规范化参数。旧数据的原始参数保持未知。
 
 ## Run 收尾与 Shell 执行期限
@@ -412,7 +412,7 @@ Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草
 ## Plan 模式
 
 - 用户可以通过模式选择或输入 `/` 呼出快捷指令选择 `/plan` 显式进入 Plan 模式。系统不会自主切换模式。
-- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，底部展示 `ClarificationComposer` 并保留草稿输入；支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。混合工具批次或活动 Shell 下提问保留 Worker 和进程所有者，回答后顺序继续；单独提问且没有活动 Shell 时仍使用持久挂起。
+- Plan Run 可以调用 `request_user_input`，一次询问一到三个问题。普通模式不会注入该工具。澄清问题不占用 Session 消息流，底部 `ClarificationComposer` 会替换普通输入框；它支持单题聚焦展示、多题 Tabs/步骤切换、卡片式选项选择、推荐徽标、自定义文字补充、跳过以及在 Session 历史中查看已完成的澄清记录。混合工具批次或活动 Shell 下提问保留 Worker 和进程所有者，回答后顺序继续；单独提问且没有活动 Shell 时仍使用持久挂起。
 - Runtime 保存 Markdown 草稿与版本。文件位于 `~/.eidos/plans/`；自定义 `EIDOS_DATA_DIR` 时使用该目录下的 `plans/`。
 - 用户可以编辑计划正文、载入外部文件修改、让模型按意见修改计划，然后确认具体版本并启动普通执行 Run。
 - 澄清等待、答案、取消和安全恢复使用现有 SQLite、Event / Outbox 与 Run 调度流程。Plan 沿用现有权限模式。
@@ -435,7 +435,6 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 ### Loop 校验与协作放行（PR #102）
 
 - 移除“先只读核验”的模型硬要求，Runtime 自动尝试恢复可核验的 Workspace 副作用；明确文件范围只阻止冲突路径，未知范围继续保守处理。
-- 同 Run 的活动 Shell 不再封锁其他副作用或普通协作；等待子任务时保留 Shell 所有者，正常退出和取消仍清理进程。
 - 所有控制工具允许与其他工具同批顺序执行；有剩余批次时原 Worker 保持等待，避免剩余调用丢失或重放。消息、停止子任务和只读探索不受已有不确定副作用屏障阻断；未知副作用下不创建新的执行型子任务。
 
 ### 执行门控整体整改
@@ -448,7 +447,11 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ### 交互与资源门禁细化（PR #103）
 
-- 同 Session 可以在运行、审批等待和子任务等待期间提交后续输入，由持久 FIFO 排队；取消入口继续可用。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
+- Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，专用面板继续替换普通输入框。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
 - 连续安全的只读调用可在混合批次中并行。普通读取和协调不等待整库恢复扫描；冲突文件与未知副作用继续受保护。搜索执行槽位满时排队，取消和退出仍负责清理。
 - 延迟工具优先保留最新激活项，仍受工具定义大小预算约束。新 Run 的 Skill 删除保护基于实际使用租约和冻结元数据；旧 Run 继续保守保护目录引用。
 - CI 按改动范围选择 Runtime、Desktop 与原生检查，质量和安全检查独立执行；最终汇总保留必需检查，失败不会被其他成功结果掩盖。数据库升级至 Schema 17，Runtime 和 Desktop 应一起更新。
+
+## 记忆
+
+支持全局/Project 记忆、来源证据、不可变版本、无向量检索、常驻摘要与四个模型工具、独立使用/生成控制、临时会话、当前 Run 即时自动保存、无二次模型审核的前台保存与更正、事实来源解析、版本更正与去重，以及两阶段有限历史整理和预算恢复。Desktop 提供候选确认、来源跳转、纠正、固定、归档、遗忘、显式历史学习、任务重试、索引重建、导出和完整 ZIP 备份。详见 [current-memory.md](current-memory.md)。

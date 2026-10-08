@@ -25,17 +25,14 @@ export function ComposerSlot({
   if (run?.status === "waiting_approval") {
     if (!approval?.reviewFallback && (run.approvalMode === "auto_review" || run.approvalMode === "full_access")) {
       return (
-        <>
-          <ApprovalStatusBanner
-            mode={run.approvalMode}
-            title={run.approvalMode === "auto_review" ? "模型正在审查操作…" : "正在处理完全访问授权…"}
-            hint={run.approvalMode === "auto_review" ? "正在评估工具调用的安全性与潜在风险" : "准备以系统直接权限执行当前操作"}
-          />
-          {children}
-        </>
+        <ApprovalStatusBanner
+          mode={run.approvalMode}
+          title={run.approvalMode === "auto_review" ? "模型正在审查操作…" : "正在处理完全访问授权…"}
+          hint={run.approvalMode === "auto_review" ? "正在评估工具调用的安全性与潜在风险" : "准备以系统直接权限执行当前操作"}
+        />
       );
     }
-    return <>{approval
+    return approval
       ? <ApprovalComposer {...props} run={run} approval={approval} />
       : (
         <ApprovalStatusBanner
@@ -43,28 +40,28 @@ export function ComposerSlot({
           title="正在恢复待批准请求…"
           hint="正在同步审批详情与变更内容"
         />
-      )}{children}</>;
+      );
   }
 
-  // 2. Keep draft editing available alongside pending clarification.
+  // 2. Pending user input replaces the ordinary composer.
   if (pendingUserInput) {
     return (
-      <><ClarificationComposer
+      <ClarificationComposer
         key={pendingUserInput.id}
         request={pendingUserInput}
         ready={userInputReady}
         onSaved={onAnswerUserInput ?? (() => {})}
-      />{children}</>
+      />
     );
   }
 
   // 3. Waiting input but question details not yet loaded
   if (run?.status === "waiting_input") {
     return (
-      <><ClarificationStatusBanner
+      <ClarificationStatusBanner
         title="正在准备澄清问题…"
         hint="正在同步需要补充的信息"
-      />{children}</>
+      />
     );
   }
 

@@ -167,7 +167,7 @@ if (runtimeClientText) {
 
   if (approvalRequest) {
     const expected = {
-      file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "diff", "diffBytes", "diffHash"],
+      file_change: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "diff", "diffBytes", "diffHash", "sandboxPermissions", "additionalFileSystemAccess"],
       external_tool: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "toolName", "arguments", "provenance", "permissionProfile", "timeoutSeconds", "envNames"],
       permission_request: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "grantScope", "permissions", "reason", "command", "cwd"],
       network_access: ["id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback", "toolName", "hosts", "target"],
@@ -175,7 +175,7 @@ if (runtimeClientText) {
         "id", "sessionId", "runId", "itemId", "toolCallId", "kind", "summary", "reviewFallback",
         "command", "cwd", "networkEnabled", "timeoutSeconds", "executionMode",
         "sandboxPermissions", "additionalReadAccess", "additionalWriteAccess",
-        "additionalExecutableAccess", "reason", "escalationReason", "attemptOrdinal",
+        "additionalExecutableAccess", "additionalFileSystemAccess", "reason", "escalationReason", "attemptOrdinal",
       ],
     };
     const returns = descendants(

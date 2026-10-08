@@ -682,7 +682,6 @@ function MoreActionsDropdown({
     const payload = {
       session,
       run,
-      traceId: run,
       item,
       step,
       model,

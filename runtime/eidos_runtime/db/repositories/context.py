@@ -13,6 +13,7 @@ from eidos_runtime.db.errors import (
 )
 from eidos_runtime.db.mappers import _compact_summary_from_row
 from eidos_runtime.runtime.contracts import ProgressSignature
+from eidos_runtime.model.response_phase import AssistantMessagePhase
 
 # The soft limits bound unprotected history selected in one projection. Recent
 # facts are protected from compaction and may exceed the soft limit when the
@@ -239,6 +240,17 @@ class ContextRepository(Repository):
                         (COMPACTION_FACT_VALUE_MAX_CHARS, *selected_ids),
                     ).fetchall()
             item_rows.sort(key=lambda row: int(row["creation_seq"]))
+            native_phases = {}
+            if selected_ids:
+                placeholders = ",".join("?" for _ in selected_ids)
+                phase_rows = connection.execute(f"""
+                    SELECT i.id, (SELECT CASE WHEN json_extract(a.protocol_diagnostics_json,'$.phaseSource')='provider'
+                        THEN a.phase END FROM model_attempts a JOIN steps s ON s.id=a.step_id
+                        WHERE s.run_id=i.run_id AND s.ordinal=i.model_step_index AND a.status='completed'
+                        ORDER BY a.ordinal LIMIT 1) AS phase
+                    FROM items i WHERE i.id IN ({placeholders}) AND i.kind='assistant_message'
+                """, selected_ids).fetchall()
+                native_phases = {row["id"]: AssistantMessagePhase(row["phase"]) for row in phase_rows if row["phase"] is not None}
             tool_rows: list[sqlite3.Row] = []
             if selected_ids:
                 placeholders = ",".join("?" for _ in selected_ids)
@@ -323,6 +335,7 @@ class ContextRepository(Repository):
                 kind=str(row["kind"]),
                 status=str(row["status"]),
                 content=row["content"],
+                phase=native_phases.get(row["id"]),
                 input_references=tuple(InputReference.model_validate(value) for value in json.loads(row["input_references_json"])),
                 provider_call_id=str(tool["provider_call_id"]) if tool else None,
                 tool_name=str(tool["tool_name"]) if tool else None,

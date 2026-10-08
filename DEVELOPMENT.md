@@ -389,3 +389,40 @@ Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦�
 Workspace 恢复扫描只在受影响目标或需要解除屏障的新副作用上进行，不在普通读取、协作消息或无关文件操作前强制扫描。单批次的连续安全只读片段可以并行，片段之间按模型声明顺序执行。搜索保留 4 个运行名额，额外请求进入该执行器的有界队列，不新增排队线程。
 
 CI 将质量、依赖审计、Runtime、Desktop 和原生打包拆为独立 Job。PR 按实际路径选择 Runtime、Desktop 和 native；main push 执行所有边界。静态和审计检查保持独立，不因审计失败跳过回归。汇总 `test` Job 要求所有已选检查成功，无法判定改动范围时不跳过验证。原生 Job 只在 Desktop build、Seatbelt、Electron 和 Bundle 验证通过后复用本 Job 的产物组装 DMG；其他 Job 的测试结果仍由汇总门禁判定。
+
+## 记忆系统开发与验收
+
+契约修改后运行 `node scripts/generate-memory-contracts.mjs` 并提交三份 `desktop/shared/memory*.generated.ts`。定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_jobs.py runtime/tests/test_memory_runtime.py runtime/tests/test_memory_fact_review.py
+pnpm test:desktop
+```
+
+人工验收使用新的数据目录和已配置模型：
+
+1. 设置 → 记忆：默认使用开启、生成关闭；保存中文偏好，在另一会话检索、读取并跳转来源。
+2. 确认自动记忆，在当前任务表达一次明确的长期做法，检查保存结果是否忠实保留适用条件和真实来源；重复陈述不应新增条目，更正应更新版本。关闭再开启应跳过关闭期间资料，普通新对话不创建后台模型任务。
+3. 检查不同 Project、Projectless、Child 的授权范围，以及临时模式禁用使用/学习。
+4. 纠正、固定、归档、遗忘；请求途中遗忘时旧响应应丢弃，后续请求重建；删除或修订来源也应撤销相关正文。
+5. 显式选择历史整理，确认只处理选择时已经存在的资料；自动记忆关闭时仍可选择，临时会话不能选择。删除或重配置整理任务模型，检查 blocked_model 与显式重试；调整历史预算并检查 paused_budget、重启恢复。
+6. 导出当前页 Markdown，保存完整 ZIP；退出 Runtime 后导入新目录，核对正文、版本、隐私状态，并确认自动学习关闭。
+
+真实模型记忆验收使用合成对话和临时数据目录，不读取实际聊天或写入实际记忆。模型配置只读，API Key 不进入报告。脚本只向前台模型提供记忆工具和完成检查出口，前台保存不会另发事实审核请求。合成 Run 使用 `full_access`，避免显式保存等待人工审批；脚本包含 Projectless 的语言偏好保存用例。每次最多 36 个模型调用（包含完成检查），每个 Run 最多等待 90 秒，产生实际模型费用：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-learning.py --model deepseek-v4.1-flash --output /absolute/path/memory-evaluation.json
+```
+
+关闭自动学习时的明确长期设置可用 `--case projectless_language_preference --disable-automatic-learning` 单独验收。
+
+可以通过重复的 `--case self_identity --case enduring_workflow` 参数选择样本，减少模型费用。报告包含已有身份与新增偏好分离、同一习惯换种说法后的复用、长期信息、单次要求、假设、已确认决定、未采纳提议、记忆使用、当前指令覆盖和更正样本。状态检查只验证保存路径；人工还应核对正文是否忠实、范围是否扩大、模型是否附加未声明的要求。准确描述“提议尚未采纳”的 continuity 可以是可用事实，不能仅因条目 active 就认定提议已成为项目规则。结果不能代表所有模型或所有表达。此脚本不运行连接测试或能力探测。
+
+离线恢复（目标目录必须不存在，不能与运行中的数据合并）：
+
+```bash
+uv run --locked python -m eidos_runtime.memory.backup /absolute/path/backup.zip /absolute/path/new-eidos-data
+EIDOS_DATA_DIR=/absolute/path/new-eidos-data pnpm start
+```
+
+ZIP 含私有聊天、记忆和执行状态，可能含 MCP 环境配置，未加密。Provider 配置和 Workspace 不包含在内，需另行配置/恢复路径。旧备份可能恢复之后被遗忘资料；恢复默认取消旧作业与回填授权、关闭生成，需要明确确认后重新启用。不要仅复制 `state.sqlite` 当作完整备份。

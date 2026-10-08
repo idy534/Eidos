@@ -10,6 +10,7 @@ import uuid
 from pydantic import Field
 
 from eidos_runtime.domain.approval_policy import ApprovalReview
+from eidos_runtime.domain.completion import CompletionCheckRecord
 from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
@@ -960,6 +961,7 @@ class ExecutionRepository(Repository):
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
+        completion_check: CompletionCheckRecord | None = None,
     ) -> bool:
         if status not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid model attempt status")
@@ -1015,6 +1017,13 @@ class ExecutionRepository(Repository):
                     attempt["id"],
                 ),
             )
+            if changed.rowcount == 1 and completion_check is not None:
+                if completion_check.model_attempt_id != attempt["id"]:
+                    raise InvalidRunStateError("completion attempt mismatch")
+                session = connection.execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
+                append_event(connection, EventType.RUN_UPDATED, now, {
+                    "reason": "completion_check", "completionCheck": completion_check.model_dump(mode="python", by_alias=True),
+                }, session_id=session["session_id"], run_id=run_id)
         return changed.rowcount == 1
 
     def start_retry_model_attempt(
@@ -1271,6 +1280,7 @@ class ExecutionRepository(Repository):
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str, *, shell_stopped: bool = False,
         expected_collaboration: CollaborationState | None = None,
+        stop_reason: Literal["completion_unconfirmed"] | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
             if not connection.in_transaction:
@@ -1309,7 +1319,7 @@ class ExecutionRepository(Repository):
                 if current != expected_collaboration:
                     raise RunCompletionDeferred("collaboration_changed")
             interrupted = bool(run_state["reconciliation_required"]) or shell_stopped
-            reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else None
+            reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else stop_reason
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -1337,16 +1347,20 @@ class ExecutionRepository(Repository):
                 ).fetchone()["session_id"],
                 run_id=run_id,
             )
+            finalizing_events = ()
+            if stop_reason and not interrupted:
+                _, finalizing_event = transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.FINALIZING, stop_reason)
+                finalizing_events = (finalizing_event,)
             run, run_event = transition_run(
                 connection,
                 run_id,
-                frozenset({RunStatus.RUNNING}),
-                RunStatus.INTERRUPTED if interrupted else RunStatus.SUCCEEDED,
+                frozenset({RunStatus.FINALIZING}) if finalizing_events else frozenset({RunStatus.RUNNING}),
+                RunStatus.INTERRUPTED if interrupted else RunStatus.STOPPED if stop_reason else RunStatus.SUCCEEDED,
                 reason,
             )
         item = self.read_item(item_id)
         return CommittedMutation(
-            (item, run), (*segment_events, item_event, run_event)
+            (item, run), (*segment_events, item_event, *finalizing_events, run_event)
         )
 
     def create_tool_item(
@@ -1536,6 +1550,16 @@ class ExecutionRepository(Repository):
             ensure_transition(
                 ToolCallStatus(fact["tool_status"]), ToolCallStatus(tool_status)
             )
+            # Revocation may race a tool's return and its durable completion.
+            # Never publish a retrieved body after the scope epoch has changed.
+            if fact["tool_name"].startswith("memory_"):
+                read = connection.execute("SELECT epochs_json,revoked FROM memory_tool_reads WHERE item_id=?", (item_id,)).fetchone()
+                if read is not None and (read["revoked"] or not self.database.memory.valid_epochs(connection, json.loads(read["epochs_json"]))):
+                    from eidos_runtime.runtime.errors import tool_error
+                    result_json = json.dumps(tool_error(fact["tool_name"], "memory_snapshot_revoked", "Historical memory payload revoked."))
+                    model_result_json = ui_result_json = result_json
+                    connection.execute("UPDATE tool_calls SET arguments_json='{}',raw_arguments_json=NULL WHERE item_id=?", (item_id,))
+
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls

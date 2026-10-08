@@ -1442,6 +1442,9 @@ class RuntimeLoopTests(unittest.TestCase):
             approvals[0]["additionalWriteAccess"],
             [str((self.workspace / ".git").resolve())],
         )
+        self.assertEqual(approvals[0]["additionalFileSystemAccess"], [{
+            "path": str((self.workspace / ".git").resolve()), "access": "write", "recursive": True,
+        }])
         subject = subprocess.run(
             ["git", "log", "-1", "--format=%s"],
             cwd=self.workspace,

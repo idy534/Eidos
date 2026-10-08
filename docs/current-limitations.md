@@ -115,7 +115,7 @@
 - 默认 ContextCompactor 使用 deterministic bounded extraction 生成候选摘要。当前没有 model-assisted proposal。
 - 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
 - MemoryStore 已经提供独立 `memories.sqlite` 和 content-addressed Markdown 存储，但当前 ContextCompactor、用户长期记忆和跨 Session 检索尚未接入这个 Store。
-- Context Usage Desktop 展示当前选中 Model 对应 Run 最新 ContextSnapshot 的有效 Context Usage。Snapshot 有 Provider usage 时，Runtime 使用该次请求的 `input_tokens`；Snapshot 没有 Provider usage 时，Runtime 使用 `projected_input_tokens` 的 estimated 值。新 Run 在产生自己的 Snapshot 前显示无数据状态。estimated 值仍然是本地启发式估算，不是 Provider tokenizer 的精确结果。
+- Context Usage Desktop 展示当前选中 Model 对应 Run 最新 ContextSnapshot 的持久化统计。Runtime 只读取关联 Plan 的预算和该 Snapshot 的 ModelAttempt usage。Provider `input_tokens` 为正数时，Runtime 使用该次请求的值；否则 Runtime 使用 `projected_input_tokens` 的 estimated 值。正文撤销或清理后，统计仍表示最近一次已构建或请求的大小，不证明撤销后的下一次输入已经重新计算。新 Run 在产生自己的 Snapshot 前显示无数据状态，刷新返回无数据时清空旧读数。estimated 值仍然是本地启发式估算，不是 Provider tokenizer 的精确结果。
 - Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
 
 ### Extension 与 MCP
@@ -264,3 +264,12 @@ Shell/外部操作的未知影响无法仅靠目录扫描证明恢复；旧 Inte
 Git stage、commit、fetch 和 push 可与活动 Run 并存，Git 自身锁和已有操作幂等检查继续生效。工作树可能在操作期间变化，因此操作者仍需核对实际提交内容；切换分支、创建分支、merge、rebase 和 pull 保留工作树生命周期互斥。
 
 Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用集合时保守等待。活动 Shell 输出只允许在同 Run 所有者中读取，跨 Run 仍只读取持久终态结果。
+
+## 记忆
+
+- 前台模型负责记忆改写的准确性、单条内容组织和语义匹配。Runtime 核对来源、权限和提交版本，前台保存与纠正不再调用第二个模型审核；这些检查不能证明模型改写完全符合原文。
+- 无向量检索使用 FTS5、可选 trigram 和有界模糊匹配，短词/历史扫描可能 truncated；不保证任意语义改写召回。真实 Provider 知识质量、长期冲突协调和 Codex 对比尚需评测。
+- 使用记录区分 served/read，尚不自动识别自由文本 cited/applied。空闲设置页不定期读取，也未接收记忆变更通知；其他会话的新记忆在手动刷新、重新打开页面或窗口恢复时显示。未结束的历史整理任务继续按状态安排读取。
+- 遗忘不删除原始聊天，不追回已发送内容、外部导出或旧备份。ZIP/Markdown 未加密，旧备份可恢复后续遗忘资料；恢复默认停止自动学习，需要用户重新确认。
+- 正文大小/mtime 校验不防主动保留元数据篡改。孤立文件按小时回收、保留一小时宽限，单次最多扫描十万项。
+- 离线恢复仅导入新目录，Workspace 和 Provider 配置另行处理；macOS 原生沙盒、sidecar 和安装包仍需支持平台验收。

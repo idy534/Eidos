@@ -1158,6 +1158,10 @@ class ShellToolHandler:
                 "additionalReadAccess": summary.get("read", []),
                 "additionalWriteAccess": summary.get("write", []),
                 "additionalExecutableAccess": summary.get("execute", []),
+                "additionalFileSystemAccess": [
+                    entry.model_dump(mode="json", by_alias=True)
+                    for entry in request.file_system_permissions
+                ],
                 "attemptOrdinal": request.attempt_ordinal,
                 **(
                     {"reason": display_justification}

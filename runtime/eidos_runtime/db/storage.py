@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.completion import CompletionCheckRecord
+
 from eidos_runtime.domain.input_reference import InputReference
 from eidos_runtime.domain.collaboration import CollaborationState
 from eidos_runtime.persistence.input_context import InputContextRepository
@@ -81,6 +83,7 @@ from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
 from eidos_runtime.persistence.worktree_snapshots import WorktreeSnapshotRepository
 from eidos_runtime.persistence.worktree_settings import WorktreeSettingsRepository
 from eidos_runtime.context.plan import ContextSnapshot
+from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.runtime.long_task import LongTaskRepository
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.runtime.contracts import ProgressSignature
@@ -272,6 +275,11 @@ class SessionStore:
 
     def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
         return self.context_snapshot_repository().read_latest_for_run(run_id)
+
+    def read_latest_context_budget(
+        self, run_id: str
+    ) -> tuple[str, ContextBudget] | None:
+        return self.context_snapshot_repository().read_latest_budget_for_run(run_id)
 
     def runtime_dependency_repository(self) -> RuntimeDependencyRepository:
         self._repository(self._sessions)
@@ -530,6 +538,11 @@ class SessionStore:
                 session_id, title, failure_reason=failure_reason
             )
         )
+
+    def collect_unreferenced_blobs(self) -> None:
+        layout = self._persistence_layout
+        if layout is not None:
+            layout.garbage_collect_blobs(self._database)
 
     def delete_session(
         self,
@@ -934,6 +947,7 @@ class SessionStore:
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
+        completion_check: CompletionCheckRecord | None = None,
     ) -> bool:
         return self._repository(self._execution).complete_current_model_attempt(
             run_id,
@@ -955,6 +969,7 @@ class SessionStore:
             response_text_bytes=response_text_bytes,
             protocol_diagnostic=protocol_diagnostic,
             retry_decision=retry_decision,
+            completion_check=completion_check,
         )
 
     def start_retry_model_attempt(
@@ -1061,12 +1076,14 @@ class SessionStore:
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str, *, shell_stopped: bool = False,
         expected_collaboration: CollaborationState | None = None,
+        stop_reason: Literal["completion_unconfirmed"] | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         return self._repository(self._execution).complete_assistant_and_run_committed(
             item_id,
             run_id,
             shell_stopped=shell_stopped,
             expected_collaboration=expected_collaboration,
+            stop_reason=stop_reason,
         )
 
     def create_tool_item(

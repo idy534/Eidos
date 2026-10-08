@@ -422,7 +422,7 @@ class SkillReadInput(StrictToolModel):
     qualifiedId: StrictStr = Field(
         min_length=1,
         max_length=129,
-        description="Qualified id of an enabled local Skill.",
+        description="Use the name value from the available Skill catalog to select the enabled local Skill.",
     )
     offset: int = Field(default=0, ge=0, le=1024 * 1024, description="UTF-8 byte offset; use nextOffset from the previous page.")
     maxBytes: int = Field(default=12_000, ge=4, le=12_000, description="Maximum content bytes per page.")

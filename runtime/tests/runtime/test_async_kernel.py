@@ -529,10 +529,11 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             assert kernel is not None
             self.assertEqual(kernel.state, AsyncKernelState.RUNNING)
             self.assertIs(server.supervisor.async_kernel, kernel)
-            self.assertEqual(
-                [resource.kind for resource in server.supervisor.resources.active_resources()],
-                [RuntimeResourceKind.ASYNC_KERNEL],
-            )
+            kinds = [resource.kind for resource in server.supervisor.resources.active_resources()]
+            self.assertEqual(kinds.count(RuntimeResourceKind.ASYNC_KERNEL), 1)
+            self.assertEqual(kinds.count(RuntimeResourceKind.MANAGED_TASK), 1)
+            self.assertTrue(set(kinds) <= {RuntimeResourceKind.ASYNC_KERNEL, RuntimeResourceKind.MANAGED_TASK, RuntimeResourceKind.ASYNC_TASK})
+            self.assertIsNotNone(server.memory_jobs)
 
             server.close()
 
@@ -559,10 +560,11 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             )
 
             self.assertIs(server.async_kernel, kernel)
-            self.assertEqual(
-                [resource.kind for resource in server.supervisor.resources.active_resources()],
-                [RuntimeResourceKind.ASYNC_KERNEL],
-            )
+            kinds = [resource.kind for resource in server.supervisor.resources.active_resources()]
+            self.assertEqual(kinds.count(RuntimeResourceKind.ASYNC_KERNEL), 1)
+            self.assertEqual(kinds.count(RuntimeResourceKind.MANAGED_TASK), 1)
+            self.assertTrue(set(kinds) <= {RuntimeResourceKind.ASYNC_KERNEL, RuntimeResourceKind.MANAGED_TASK, RuntimeResourceKind.ASYNC_TASK})
+            self.assertIsNotNone(server.memory_jobs)
             server.close()
 
     def test_failed_runtime_initialization_closes_the_started_kernel(self) -> None:
