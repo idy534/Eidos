@@ -80,13 +80,43 @@ export function MemorySettings({
     action: () => Promise<unknown>;
   }>();
   const generation = useRef(0);
+  const previousQuery = useRef(query);
 
   useEffect(() => {
     const token = ++generation.current;
+    const searchReadyAt = Date.now() + (previousQuery.current === query ? 0 : 250);
+    previousQuery.current = query;
     let canceled = false;
     let pending = false;
+    let timer: number | undefined;
+    let latest: MemoryState | undefined;
+
+    function clearTimer() {
+      window.clearTimeout(timer);
+      timer = undefined;
+    }
+
+    function schedule(delay: number) {
+      clearTimer();
+      if (canceled || document.visibilityState === "hidden") return;
+      timer = window.setTimeout(() => void load(), Math.min(delay, 2_147_483_647));
+    }
+
+    function scheduleJobs(value: MemoryState) {
+      let delay = Infinity;
+      for (const job of value.jobs) {
+        if (job.state === "queued" || job.state === "running") {
+          delay = Math.min(delay, 5_000);
+        } else if (job.state === "retry_wait" || job.state === "paused_budget") {
+          delay = Math.min(delay, Math.max(5_000, job.notBefore - Date.now()));
+        }
+      }
+      if (Number.isFinite(delay)) schedule(delay);
+    }
+
     async function load() {
-      if (pending) return;
+      if (canceled || pending || document.visibilityState === "hidden") return;
+      clearTimer();
       pending = true;
       try {
         const value = await window.eidosRuntime.memory("memory/list", {
@@ -96,18 +126,34 @@ export function MemorySettings({
           cursor,
           includeHistory: history,
         });
-        if (!canceled && token === generation.current) setState(value);
+        if (!canceled && token === generation.current) {
+          latest = value;
+          setState(value);
+        }
       } catch {
         if (!canceled) setError("无法读取记忆，请检查 Runtime 状态。");
       } finally {
         pending = false;
+        if (!canceled && latest) scheduleJobs(latest);
       }
     }
-    void load();
-    const timer = window.setInterval(() => void load(), 3000);
+
+    function refreshWhenVisible() {
+      clearTimer();
+      if (document.visibilityState === "hidden") return;
+      const delay = searchReadyAt - Date.now();
+      if (delay > 0) schedule(delay);
+      else void load();
+    }
+
+    refreshWhenVisible();
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       canceled = true;
-      window.clearInterval(timer);
+      clearTimer();
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [sessionId, scope, query, cursor, history, refresh]);
 
@@ -184,6 +230,17 @@ export function MemorySettings({
             </p>
           </div>
           <div className="memory-scope-selector">
+            <Button
+              variant="ghost"
+              size="small"
+              disabled={busy}
+              onClick={() => {
+                setError("");
+                setRefresh((value) => value + 1);
+              }}
+            >
+              刷新记忆
+            </Button>
             <label className="memory-scope-label">
               <span className="memory-scope-tag">作用域</span>
               <select

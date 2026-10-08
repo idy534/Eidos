@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EidosRuntimeAPI } from "../contracts.js";
 import type { MemoryState } from "../../../shared/memory.generated.js";
@@ -12,16 +12,172 @@ const state: MemoryState = {
   temporary: false, trigramAvailable: true,
 };
 
-function mount() {
-  const memory = vi.fn(async (method: string) => method === "memory/list" ? structuredClone(state) : {status: "applied", operationId: "operation", code: "memory_saved"});
+function mount(snapshot = state, list?: () => Promise<MemoryState>) {
+  const memory = vi.fn(async (method: string) => method === "memory/list" ? list ? list() : structuredClone(snapshot) : {status: "applied", operationId: "operation", code: "memory_saved"});
   const api: Partial<EidosRuntimeAPI> = {memory: memory as EidosRuntimeAPI["memory"], backupMemory: vi.fn(async () => {})};
   (window as unknown as {eidosRuntime: EidosRuntimeAPI}).eidosRuntime = api as EidosRuntimeAPI;
   const onOpenSource = vi.fn();
-  render(<MemorySettings sessionId="session" onOpenSource={onOpenSource}/>);
-  return {memory, onOpenSource};
+  const view = render(<MemorySettings sessionId="session" onOpenSource={onOpenSource}/>);
+  return {memory, onOpenSource, ...view};
 }
 
-afterEach(() => {cleanup(); vi.restoreAllMocks();});
+afterEach(() => {cleanup(); vi.restoreAllMocks(); vi.useRealTimers();});
+
+async function flushRequests() {
+  await act(async () => {});
+}
+
+async function advanceTime(milliseconds: number) {
+  await act(async () => {await vi.advanceTimersByTimeAsync(milliseconds);});
+}
+
+describe("Memory settings refresh", () => {
+  beforeEach(() => {vi.useFakeTimers();});
+
+  it("does not poll an idle memory list", async () => {
+    const {memory} = mount({...state, jobs: []});
+    await flushRequests();
+    await advanceTime(60_000);
+    expect(memory).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["succeeded", "failed", "canceled", "superseded", "blocked_model"] as const)("does not poll a %s job", async (jobState) => {
+    const {memory} = mount({...state, jobs: [{...state.jobs[0]!, state: jobState}]});
+    await flushRequests();
+    await advanceTime(60_000);
+    expect(memory).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["queued", "running", "retry_wait"] as const)("refreshes a %s job and stops when it finishes", async (jobState) => {
+    const {memory} = mount({...state, jobs: [{...state.jobs[0]!, state: jobState}]});
+    await flushRequests();
+    memory.mockResolvedValue({...state, jobs: [{...state.jobs[0]!, state: "succeeded"}]});
+    await advanceTime(4_999);
+    expect(memory).toHaveBeenCalledTimes(1);
+    await advanceTime(1);
+    expect(memory).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    await advanceTime(60_000);
+    expect(memory).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for the budget resume time instead of polling a paused job", async () => {
+    const {memory} = mount({...state, jobs: [{...state.jobs[0]!, state: "paused_budget", notBefore: Date.now() + 60_000}]});
+    await flushRequests();
+    memory.mockResolvedValue({...state, jobs: []});
+    await advanceTime(59_999);
+    expect(memory).toHaveBeenCalledTimes(1);
+    await advanceTime(1);
+    expect(memory).toHaveBeenCalledTimes(2);
+  });
+
+  it("combines rapid search edits into one request for the latest query", async () => {
+    const {memory} = mount();
+    await flushRequests();
+    const search = screen.getByRole("textbox", {name: "搜索记忆"});
+    fireEvent.change(search, {target: {value: "中"}});
+    await advanceTime(200);
+    fireEvent.change(search, {target: {value: "中文"}});
+    await advanceTime(249);
+    expect(memory).toHaveBeenCalledTimes(1);
+    await advanceTime(1);
+    expect(memory).toHaveBeenCalledTimes(2);
+    expect(memory).toHaveBeenLastCalledWith("memory/list", expect.objectContaining({query: "中文", cursor: 0}));
+  });
+
+  it("refreshes after filter changes and a successful memory action", async () => {
+    const {memory} = mount();
+    await flushRequests();
+    fireEvent.change(screen.getByRole("combobox", {name: "记忆作用域"}), {target: {value: "global"}});
+    await flushRequests();
+    expect(memory).toHaveBeenLastCalledWith("memory/list", expect.objectContaining({scope: "global"}));
+    fireEvent.click(screen.getByRole("checkbox", {name: "显示归档和历史状态"}));
+    await flushRequests();
+    expect(memory).toHaveBeenLastCalledWith("memory/list", expect.objectContaining({includeHistory: true}));
+    fireEvent.click(screen.getByRole("button", {name: "固定"}));
+    await flushRequests();
+    expect(memory).toHaveBeenCalledWith("memory/manage", expect.objectContaining({action: "pin"}));
+    expect(memory.mock.calls.filter(([method]) => method === "memory/list")).toHaveLength(4);
+  });
+
+  it("pauses refreshes while hidden and resumes when visible", async () => {
+    let visibility: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    const {memory, unmount} = mount({...state, jobs: [{...state.jobs[0]!, state: "running"}]});
+    await flushRequests();
+    visibility = "hidden";
+    fireEvent(document, new Event("visibilitychange"));
+    await advanceTime(30_000);
+    expect(memory).toHaveBeenCalledTimes(1);
+    visibility = "visible";
+    fireEvent(document, new Event("visibilitychange"));
+    await flushRequests();
+    expect(memory).toHaveBeenCalledTimes(2);
+    unmount();
+    await advanceTime(30_000);
+    fireEvent(window, new Event("focus"));
+    await flushRequests();
+    expect(memory).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes an idle list on focus and manual refresh", async () => {
+    const {memory} = mount();
+    await flushRequests();
+    fireEvent(window, new Event("focus"));
+    await flushRequests();
+    expect(memory).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", {name: "刷新记忆"}));
+    await flushRequests();
+    expect(memory).toHaveBeenCalledTimes(3);
+  });
+
+  it("allows manual retry after an initial read failure", async () => {
+    let failed = true;
+    const {memory} = mount(state, async () => {
+      if (failed) throw new Error("Runtime unavailable");
+      return state;
+    });
+    await flushRequests();
+    expect(screen.getByRole("alert")).toHaveTextContent("无法读取记忆");
+    await advanceTime(60_000);
+    expect(memory).toHaveBeenCalledTimes(1);
+    failed = false;
+    fireEvent.click(screen.getByRole("button", {name: "刷新记忆"}));
+    await flushRequests();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("默认使用中文")).toBeInTheDocument();
+  });
+
+  it("waits for a slow refresh before scheduling the next one", async () => {
+    const {memory} = mount({...state, jobs: [{...state.jobs[0]!, state: "running"}]});
+    await flushRequests();
+    let resolve!: (value: MemoryState) => void;
+    memory.mockImplementation(() => new Promise<MemoryState>((done) => {resolve = done;}));
+    await advanceTime(5_000);
+    await advanceTime(30_000);
+    fireEvent(window, new Event("focus"));
+    await flushRequests();
+    expect(memory).toHaveBeenCalledTimes(2);
+    await act(async () => {resolve({...state, jobs: []});});
+    await advanceTime(30_000);
+    expect(memory).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards a previous session's late response and job refresh", async () => {
+    let resolve!: (value: MemoryState) => void;
+    const first = new Promise<MemoryState>((done) => {resolve = done;});
+    let calls = 0;
+    const current = {...state, entries: [{...state.entries[0]!, content: "当前会话记忆"}], jobs: []};
+    const {memory, rerender} = mount(state, () => ++calls === 1 ? first : Promise.resolve(current));
+    rerender(<MemorySettings sessionId="other-session"/>);
+    await flushRequests();
+    await act(async () => {resolve({...state, jobs: [{...state.jobs[0]!, state: "running"}]});});
+    expect(screen.getByText("当前会话记忆")).toBeInTheDocument();
+    expect(screen.queryByText("默认使用中文")).not.toBeInTheDocument();
+    await advanceTime(30_000);
+    expect(memory).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("Memory settings", () => {
   it("shows provenance, model blocking and explicit learning consent", async () => {
