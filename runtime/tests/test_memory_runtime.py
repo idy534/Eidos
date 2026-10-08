@@ -7,6 +7,7 @@ import zipfile
 
 import pytest
 
+from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.memory.backup import backup, restore
 from eidos_runtime.memory.contracts import (
@@ -19,32 +20,12 @@ from eidos_runtime.memory.contracts import (
     MemoryWriteRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected
-from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel as BaseScriptedModel
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelUsage, ScriptedModel
+from eidos_runtime.protocol.methods import ContextUsageRequestDto
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.tools.memory import memory_entries
 
 pytestmark = pytest.mark.integration
-
-
-class ScriptedModel(BaseScriptedModel):
-    """Default fact-review responses for existing deterministic Runtime checks."""
-
-    def complete(self, context, cancel, on_text, **kwargs):
-        definitions = kwargs.get("tool_definitions", ())
-        if len(definitions) == 1 and definitions[0].name == "submit_memory_fact_assessment":
-            if self._index < len(self.responses) and any(call.name == definitions[0].name for call in self.responses[self._index].tool_calls):
-                return super().complete(context, cancel, on_text, **kwargs)
-            evidence = json.loads(context[0]["content"])
-            request = evidence["proposal"]
-            target = next((e for e in evidence["related_entries"] if e["id"] == request["target_entry_id"]), None)
-            duplicate = next((e for e in evidence["related_entries"] if e["content"] == request["content"]), None)
-            match = target or duplicate
-            action = "revise" if target else "reuse" if duplicate else "create"
-            return ModelResponse(tool_calls=(ModelToolCall("assessment", definitions[0].name, {
-                "supported": True, "atomic": True, "action": action, "reason": "Fixture-supported atomic fact",
-                **({"targetEntryId": match["id"], "expectedRevision": match["revision"]} if match else {}),
-            }),))
-        return super().complete(context, cancel, on_text, **kwargs)
 
 
 @pytest.fixture
@@ -70,6 +51,54 @@ def memory_state(instructions):
     match = re.search(r"<memory_state>\s*(.*?)\s*</memory_state>", instructions, re.S)
     assert match is not None
     return json.loads(match[1])
+
+
+@pytest.mark.parametrize("input_tokens", [1850, 0, None])
+def test_context_usage_survives_forgotten_memory_and_snapshot_cleanup(
+    setup, monkeypatch, input_tokens
+):
+    store, session = setup
+    entry = saved(store, session)
+    run, _ = store.create_run(session["id"], "Answer briefly")
+    model = ScriptedModel([ModelResponse(
+        text="Done",
+        usage=ModelUsage(input_tokens=input_tokens, output_tokens=10),
+    )])
+    runtime = RuntimeEngine(store, model, lambda _message: None)
+    runtime.run(run["id"], threading.Event())
+    snapshot = store.read_latest_context_snapshot(run["id"])
+    assert snapshot is not None
+    application = RunApplication(store=store, runtime=runtime)
+    request = ContextUsageRequestDto(runId=run["id"])
+    before = application.context_usage(request).context_usage
+    assert before is not None
+
+    service = store.database.memory
+    service.manage(MemoryManageRequest(
+        session_id=session["id"], operation_id="forget-usage",
+        entry_id=entry.entry_id, expected_revision=1, action="forget",
+    ))
+    service.cleanup()
+    row = store.connection.execute(
+        "SELECT memory_revoked, snapshot_json FROM context_snapshots WHERE id=?",
+        (snapshot.snapshot_id,),
+    ).fetchone()
+    assert row["memory_revoked"] == 1
+    assert row["snapshot_json"] == "{}"
+    with pytest.raises(MemoryRejected, match="memory_snapshot_revoked"):
+        store.read_latest_context_snapshot(run["id"])
+
+    def reject_blob_read(*args, **kwargs):
+        raise AssertionError("context usage must not read request blobs")
+
+    monkeypatch.setattr(store.database.json_blobs, "read", reject_blob_read)
+    after = application.context_usage(request).context_usage
+    assert after is not None
+    assert after.active_tokens == before.active_tokens
+    assert after.source == ("provider" if input_tokens else "estimated")
+    assert after.active_tokens == (
+        input_tokens if input_tokens else snapshot.plan.token_budget.projected_input_tokens
+    )
 
 
 @pytest.mark.parametrize(
@@ -569,22 +598,75 @@ def execute_memory_record(store, session, text, arguments):
     ("用户名字是 Eddy", "以后都用中文回答", "用户名字是 Eddy，今后全部用中文回答"),
     ("本项目使用 PostgreSQL", "我习惯先写文档再写代码", "本项目使用 PostgreSQL，用户习惯先写文档再写代码"),
 ])
-def test_copied_existing_fact_is_rejected_before_intent(setup, old_fact, new_fact, compound):
+def test_record_publishes_sourced_model_proposal_without_secondary_review(setup, old_fact, new_fact, compound):
     store, session = setup
     saved(store, session, old_fact)
     store.database.memory.settings(MemorySettingsRequest(session_id=session["id"], scope="current", settings=MemorySettings(generate_enabled=True)))
     run, _ = store.create_run(session["id"], new_fact)
     model = ScriptedModel([
         ModelResponse(tool_calls=(ModelToolCall("save", "memory_record", {"mode": "automatic", "content": compound, "sourceQuote": new_fact}),)),
-        ModelResponse(tool_calls=(ModelToolCall("review", "submit_memory_fact_assessment", {
-            "supported": False, "atomic": False, "action": "reject", "reason": "Only the new claim has original evidence"}),)),
-        ModelResponse(text="No unsupported memory was saved"),
+        ModelResponse(text="Saved"),
     ])
     RuntimeEngine(store, model, lambda message: None).run(run["id"], threading.Event())
     result = next(json.loads(item["toolCall"]["resultJson"]) for item in store.read_session_snapshot(session["id"])["items"] if item["kind"] == "tool_call")
-    assert result["code"] == "memory_claim_unsupported"
-    assert store.connection.execute("SELECT count(*) FROM durable_intents").fetchone()[0] == 0
-    assert [e.content for e in store.database.memory.read(MemoryReadRequest(session_id=session["id"])).entries] == [old_fact]
+    assert result["code"] == "memory_saved"
+    assert len(model.contexts) == 2
+    assert store.connection.execute("SELECT count(*) FROM durable_intents").fetchone()[0] == 1
+    assert {e.content for e in store.database.memory.read(MemoryReadRequest(session_id=session["id"])).entries} == {old_fact, compound}
+
+
+@pytest.mark.parametrize("mode", ["automatic", "candidate", "remember"])
+def test_projectless_language_preference_saves_without_review_model(setup, mode):
+    store, _ = setup
+    root = store.data_directory / f".{store.data_directory.name}-projectless" / "language"
+    root.mkdir(parents=True)
+    session = store.typed_runtime_repository().create_session(str(root), projectless=True).value
+    service = store.database.memory
+    service.settings(MemorySettingsRequest(session_id=session.id, scope="global",
+        settings=MemorySettings(generate_enabled=mode != "remember")))
+    run, source = store.create_run(session.id, "以后都用中文回答", approval_mode="full_access")
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("save", "memory_record", {
+            "mode": mode, "scope": "current", "kind": "preference", "title": "回答语言：中文",
+            "content": "用户（Eddy）要求此后一律用中文回答。", "sourceQuote": "以后都用中文回答",
+        }),)),
+        ModelResponse(text="已保存"),
+    ])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    entry = service.read(MemoryReadRequest(session_id=session.id)).entries[0]
+    assert entry.scope_id == "00000000-0000-4000-8000-000000000001"
+    assert entry.status == ("candidate" if mode == "candidate" else "active")
+    assert entry.evidence[0].item_id == source["id"]
+    assert len(model.contexts) == 2
+    assert store.connection.execute("SELECT count(*) FROM approvals").fetchone()[0] == (1 if mode == "remember" else 0)
+
+
+@pytest.mark.parametrize("tool", ["memory_record", "memory_manage"])
+def test_memory_write_keeps_source_revision_from_before_authorization(setup, monkeypatch, tool):
+    from eidos_runtime.runtime.tool_execution import ToolExecutionController
+
+    store, session = setup
+    old = saved(store, session)
+    text = "以后都用中文回答"
+    run, source = store.create_run(session["id"], text, approval_mode="full_access")
+    original = ToolExecutionController.authorize_side_effect
+
+    def change_source_after_authorization(controller, **kwargs):
+        result = original(controller, **kwargs)
+        with store.database.transaction() as connection:
+            connection.execute("UPDATE items SET content=? WHERE id=?", (text + "，只适用于当前项目", source["id"]))
+        return result
+
+    monkeypatch.setattr(ToolExecutionController, "authorize_side_effect", change_source_after_authorization)
+    arguments = {"mode": "remember", "content": "用户要求以后都用中文回答", "sourceQuote": text} if tool == "memory_record" else {
+        "action": "correct", "entryId": old.entry_id, "expectedRevision": 1, "content": "用户要求以后都用中文回答",
+    }
+    model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("save", tool, arguments),)), ModelResponse(text="未保存")])
+    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
+    result = next(json.loads(i["toolCall"]["resultJson"]) for i in store.read_session_snapshot(session["id"])["items"] if i["kind"] == "tool_call")
+    assert result["code"] == "memory_source_conflict"
+    assert store.database.memory.get(MemoryGetRequest(session_id=session["id"], entry_id=old.entry_id)).entry.content == "Prefer concise Chinese responses"
+    assert store.connection.execute("SELECT count(*) FROM memory_actions").fetchone()[0] == 1
 
 
 @pytest.mark.parametrize("action", ["reuse", "revise"])
@@ -596,11 +678,10 @@ def test_semantic_match_across_wording_and_kind_uses_same_identity(setup, action
     old = service.record(MemoryWriteRequest(session_id=session["id"], operation_id="old-workflow", mode="automatic", kind="continuity", content="用户编码前先写文档", source_item_ids=[original["id"]]))
     store.fail_run(original_run["id"], "fixture_finished")
     text = "我还是先写说明再动手实现" if action == "reuse" else "我改变了编码顺序，以后先实现再写说明"
-    content = "用户编码前先整理说明" if action == "reuse" else "用户编码先实现后写说明"
+    content = "用户编码前先写文档" if action == "reuse" else "用户编码先实现后写说明"
     run, source = store.create_run(session["id"], text)
     model = ScriptedModel([
-        ModelResponse(tool_calls=(ModelToolCall("save", "memory_record", {"mode": "automatic", "kind": "preference", "content": content, "sourceQuote": text}),)),
-        ModelResponse(tool_calls=(ModelToolCall("match", "submit_memory_fact_assessment", {"supported": True, "atomic": True, "action": action, "targetEntryId": old.entry_id, "expectedRevision": 1, "reason": "Same workflow meaning or its explicit correction"}),)),
+        ModelResponse(tool_calls=(ModelToolCall("save", "memory_record", {"mode": "automatic", "kind": "preference", "content": content, "sourceQuote": text, "targetEntryId": old.entry_id, "expectedRevision": 1}),)),
         ModelResponse(text="Done"),
     ])
     RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
@@ -613,63 +694,57 @@ def test_semantic_match_across_wording_and_kind_uses_same_identity(setup, action
         assert entries[0].content == content and entries[0].evidence[0].item_id == source["id"]
 
 
-def test_privacy_revocation_during_fact_review_discards_late_result_before_intent(setup):
+def test_memory_write_discards_revoked_access_during_preparation(setup, monkeypatch):
+    from contextlib import contextmanager
+
     store, session = setup
     service = store.database.memory
     service.settings(MemorySettingsRequest(session_id=session["id"], scope="current", settings=MemorySettings(generate_enabled=True)))
-    run, _ = store.create_run(session["id"], "我偏好简短回答")
+    _, source = store.create_run(session["id"], "我偏好简短回答")
+    with service.database.transaction() as connection:
+        scope = service.repository.scopes(connection, session["id"], "current")[0]
+        epochs = service.use_epochs(connection, session["id"], {scope.id: scope.privacy_epoch})
+    original = service.prepared
 
-    class RevokingModel(ScriptedModel):
-        def complete(self, context, cancel, on_text, **kwargs):
-            definitions = kwargs.get("tool_definitions", ())
-            if len(definitions) == 1 and definitions[0].name == "submit_memory_fact_assessment":
-                service.settings(MemorySettingsRequest(session_id=session["id"], scope="current", settings=MemorySettings(use_enabled=False, generate_enabled=True)))
-                assert cancel.is_set()
-                return ModelResponse(text=json.dumps({"supported": True, "atomic": True, "action": "create", "reason": "Revoked private matching context"}))
-            return super().complete(context, cancel, on_text, **kwargs)
+    @contextmanager
+    def revoke_during_prepare(*args):
+        with original(*args) as reference:
+            service.set_temporary(MemoryTemporaryRequest(session_id=session["id"], temporary=True))
+            service.set_temporary(MemoryTemporaryRequest(session_id=session["id"], temporary=False))
+            yield reference
 
-    model = RevokingModel([ModelResponse(tool_calls=(ModelToolCall("save", "memory_record", {"mode": "automatic", "content": "用户偏好简短回答", "sourceQuote": "我偏好简短回答"}),)), ModelResponse(text="Done")])
-    RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
-    result = next(json.loads(i["toolCall"]["resultJson"]) for i in store.read_session_snapshot(session["id"])["items"] if i["kind"] == "tool_call")
-    assert result["code"] == "memory_snapshot_revoked"
-    assert "Revoked private" not in str(result)
-    assert store.connection.execute("SELECT count(*) FROM durable_intents").fetchone()[0] == 0
-    assert service.read(MemoryReadRequest(session_id=session["id"])).entries == []
+    monkeypatch.setattr(service, "prepared", revoke_during_prepare)
+    with pytest.raises(MemoryRejected, match="memory_snapshot_revoked"):
+        service.record(MemoryWriteRequest(session_id=session["id"], operation_id="revoked-save", mode="automatic",
+            content="用户偏好简短回答", source_item_ids=[source["id"]]), access_epochs=epochs)
+    assert store.connection.execute("SELECT count(*) FROM memory_entries").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("supported", [True, False])
-def test_model_correction_requires_supported_replacement_before_intent(setup, supported):
+def test_model_correction_uses_source_and_target_without_secondary_review(setup):
     store, session = setup
     old = saved(store, session, "用户偏好简短回答")
     run, _ = store.create_run(session["id"], "我现在希望回答给出详细解释", approval_mode="full_access")
     model = ScriptedModel([
         ModelResponse(tool_calls=(ModelToolCall("correct", "memory_manage", {"action": "correct", "entryId": old.entry_id, "expectedRevision": 1, "content": "用户希望回答给出详细解释"}),)),
-        ModelResponse(tool_calls=(ModelToolCall("review", "submit_memory_fact_assessment", {"supported": supported, "atomic": True, "action": "revise", "targetEntryId": old.entry_id, "expectedRevision": 1, "reason": "Replacement grounded in latest original"}),)),
         ModelResponse(text="Done"),
     ])
     RuntimeEngine(store, model, lambda _message: None).run(run["id"], threading.Event())
     result = next(json.loads(i["toolCall"]["resultJson"]) for i in store.read_session_snapshot(session["id"])["items"] if i["kind"] == "tool_call")
-    assert result["code"] == ("memory_correct_applied" if supported else "memory_claim_unsupported")
+    assert result["code"] == "memory_correct_applied"
+    assert len(model.contexts) == 2
     entries = store.database.memory.read(MemoryReadRequest(session_id=session["id"])).entries
-    assert len(entries) == 1 and entries[0].id == old.entry_id and entries[0].revision == (2 if supported else 1)
-    if not supported:
-        assert store.connection.execute("SELECT count(*) FROM durable_intents").fetchone()[0] == 0
+    assert len(entries) == 1 and entries[0].id == old.entry_id and entries[0].revision == 2
 
 
-def test_fact_review_cannot_publish_against_changed_matching_snapshot(setup):
-    from eidos_runtime.memory.fact_review import MemoryFactAssessment
-
+def test_record_deduplicates_again_after_concurrent_publication(setup):
     store, session = setup
     service = store.database.memory
     service.settings(MemorySettingsRequest(session_id=session["id"], scope="current", settings=MemorySettings(generate_enabled=True)))
     _, source = store.create_run(session["id"], "用户习惯先写文档")
     request = MemoryWriteRequest(session_id=session["id"], operation_id="first-proposal", mode="automatic", content="用户习惯先写文档", source_item_ids=[source["id"]])
-    payload, epochs, _ = service.fact_review_input(request)
-    snapshot = json.loads(payload)
-    assessment = MemoryFactAssessment(supported=True, atomic=True, action="create", reason="No existing fact in the captured snapshot", scope_id=snapshot["scope_id"], base_generation=snapshot["base_generation"])
     other = service.record(request.model_copy(update={"operation_id": "concurrent-publication"}))
-    with pytest.raises(MemoryRejected, match="memory_revision_conflict"):
-        service.record(request, assessment=assessment, review_epochs=epochs)
+    result = service.record(request)
+    assert result.code == "memory_unchanged" and result.entry_id == other.entry_id
     entries = service.read(MemoryReadRequest(session_id=session["id"])).entries
     assert len(entries) == 1 and entries[0].id == other.entry_id
 
@@ -699,8 +774,6 @@ def test_reusable_workflow_memory_depends_on_claim_state_not_run_mode(setup, wor
     ("candidate", "automatic", "memory_candidate_target_invalid"),
 ])
 def test_memory_reuse_cannot_cross_mode_statuses(setup, mode, target_mode, code):
-    from eidos_runtime.memory.fact_review import MemoryFactAssessment
-
     store, session = setup
     service = store.database.memory
     service.settings(MemorySettingsRequest(
@@ -712,12 +785,9 @@ def test_memory_reuse_cannot_cross_mode_statuses(setup, mode, target_mode, code)
         content="我偏好短回答", source_item_ids=[source["id"]],
     )
     target = service.record(target_request)
-    assessment = MemoryFactAssessment(
-        supported=True, atomic=True, action="reuse", target_entry_id=target.entry_id,
-        expected_revision=target.revision, reason="Same claim",
-    )
     with pytest.raises(MemoryRejected, match=code):
-        service.record(target_request.model_copy(update={"mode": mode, "operation_id": "cross-mode-reuse"}), assessment=assessment)
+        service.record(target_request.model_copy(update={"mode": mode, "operation_id": "cross-mode-reuse",
+            "target_entry_id": target.entry_id, "expected_revision": target.revision}))
     assert store.connection.execute("SELECT count(*) FROM memory_actions").fetchone()[0] == 1
 
 

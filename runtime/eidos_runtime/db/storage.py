@@ -83,6 +83,7 @@ from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
 from eidos_runtime.persistence.worktree_snapshots import WorktreeSnapshotRepository
 from eidos_runtime.persistence.worktree_settings import WorktreeSettingsRepository
 from eidos_runtime.context.plan import ContextSnapshot
+from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.runtime.long_task import LongTaskRepository
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.runtime.contracts import ProgressSignature
@@ -274,6 +275,11 @@ class SessionStore:
 
     def read_latest_context_snapshot(self, run_id: str) -> ContextSnapshot | None:
         return self.context_snapshot_repository().read_latest_for_run(run_id)
+
+    def read_latest_context_budget(
+        self, run_id: str
+    ) -> tuple[str, ContextBudget] | None:
+        return self.context_snapshot_repository().read_latest_budget_for_run(run_id)
 
     def runtime_dependency_repository(self) -> RuntimeDependencyRepository:
         self._repository(self._sessions)

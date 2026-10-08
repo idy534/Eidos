@@ -6,7 +6,8 @@ from pydantic import ValidationError
 
 from eidos_runtime.memory.context import context_epochs
 from eidos_runtime.memory.repository import MemoryRejected
-from eidos_runtime.context.plan import ContextSnapshot
+from eidos_runtime.context.budget import ContextBudget
+from eidos_runtime.context.plan import ContextPlan, ContextSnapshot
 from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.db.json_blobs import (
@@ -238,6 +239,34 @@ class ContextSnapshotRepository(Repository):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
+
+    def read_latest_budget_for_run(
+        self, run_id: str
+    ) -> tuple[str, ContextBudget] | None:
+        """Read persisted usage metadata without loading revocable request content."""
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT snapshots.id, snapshots.plan_id, plans.plan_json
+                FROM context_snapshots AS snapshots
+                LEFT JOIN context_plans AS plans ON plans.id = snapshots.plan_id
+                WHERE snapshots.run_id = ?
+                ORDER BY snapshots.created_at DESC, snapshots.id DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            plan = ContextPlan.model_validate_json(row["plan_json"])
+            if plan.plan_id != row["plan_id"]:
+                raise ValueError("context plan lineage mismatch")
+        except (TypeError, ValidationError, ValueError):
+            raise PersistenceCorruptionError(
+                "persistence_record_invalid", record="context_plan"
+            ) from None
+        return row["id"], plan.token_budget
 
     def read_latest_for_run(self, run_id: str) -> ContextSnapshot | None:
         """Return the latest exact model-request projection for a Run."""

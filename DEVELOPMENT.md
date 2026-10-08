@@ -408,11 +408,13 @@ pnpm test:desktop
 5. 显式选择历史整理，确认只处理选择时已经存在的资料；自动记忆关闭时仍可选择，临时会话不能选择。删除或重配置整理任务模型，检查 blocked_model 与显式重试；调整历史预算并检查 paused_budget、重启恢复。
 6. 导出当前页 Markdown，保存完整 ZIP；退出 Runtime 后导入新目录，核对正文、版本、隐私状态，并确认自动学习关闭。
 
-真实模型记忆验收使用合成对话和临时数据目录，不读取实际聊天或写入实际记忆。模型配置只读，API Key 不进入报告。脚本只向前台模型提供记忆工具，并保留内部事实核查的结果出口。每次最多 36 个模型调用（包含事实核查），每个 Run 最多等待 90 秒，产生实际模型费用：
+真实模型记忆验收使用合成对话和临时数据目录，不读取实际聊天或写入实际记忆。模型配置只读，API Key 不进入报告。脚本只向前台模型提供记忆工具和完成检查出口，前台保存不会另发事实审核请求。合成 Run 使用 `full_access`，避免显式保存等待人工审批；脚本包含 Projectless 的语言偏好保存用例。每次最多 36 个模型调用（包含完成检查），每个 Run 最多等待 90 秒，产生实际模型费用：
 
 ```bash
 PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-learning.py --model deepseek-v4.1-flash --output /absolute/path/memory-evaluation.json
 ```
+
+关闭自动学习时的明确长期设置可用 `--case projectless_language_preference --disable-automatic-learning` 单独验收。
 
 可以通过重复的 `--case self_identity --case enduring_workflow` 参数选择样本，减少模型费用。报告包含已有身份与新增偏好分离、同一习惯换种说法后的复用、长期信息、单次要求、假设、已确认决定、未采纳提议、记忆使用、当前指令覆盖和更正样本。状态检查只验证保存路径；人工还应核对正文是否忠实、范围是否扩大、模型是否附加未声明的要求。准确描述“提议尚未采纳”的 continuity 可以是可用事实，不能仅因条目 active 就认定提议已成为项目规则。结果不能代表所有模型或所有表达。此脚本不运行连接测试或能力探测。
 

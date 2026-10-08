@@ -1,7 +1,5 @@
-from types import SimpleNamespace
-
 from eidos_runtime.application.runs import RunApplication
-from eidos_runtime.context.budget import estimate_context_budget
+from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
 from eidos_runtime.protocol.methods import (
     ContextUsageRequestDto,
@@ -58,6 +56,11 @@ class _Store:
         return ModelUsage(input_tokens=self.input_tokens, output_tokens=1_000)
 
     def read_latest_context_snapshot(self, run_id: str):
+        raise AssertionError("context usage must not load snapshot content")
+
+    def read_latest_context_budget(
+        self, run_id: str
+    ) -> tuple[str, ContextBudget] | None:
         budget = estimate_context_budget(
             {"messages": [{"content": "persisted estimate"}]},
             context_window_tokens=258_000,
@@ -66,10 +69,7 @@ class _Store:
             tool_call_count=0,
             tool_result_count=0,
         )
-        return SimpleNamespace(
-            snapshot_id=self.snapshot_id,
-            plan=SimpleNamespace(token_budget=budget),
-        )
+        return self.snapshot_id, budget
 
 
 def test_context_usage_response_uses_provider_input_for_latest_snapshot() -> None:
@@ -122,7 +122,7 @@ def test_context_usage_response_ignores_provider_usage_from_older_snapshot() -> 
 
 def test_context_usage_response_has_no_value_without_context_snapshot() -> None:
     class _StoreWithoutSnapshot(_Store):
-        def read_latest_context_snapshot(self, run_id: str):
+        def read_latest_context_budget(self, run_id: str):
             return None
 
     application = RunApplication(
@@ -137,3 +137,4 @@ def test_context_usage_response_has_no_value_without_context_snapshot() -> None:
     )
 
     assert result.context_usage is None
+    assert result.to_json_value() == {}

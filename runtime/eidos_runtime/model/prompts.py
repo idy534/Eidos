@@ -75,6 +75,7 @@ MEMORY_AUTOMATIC_INSTRUCTIONS = (
 
 MEMORY_EXPLICIT_WRITE_INSTRUCTIONS = (
     "Use memory_record(mode=remember) or memory_manage only for an explicit user request. "
+    "An explicit instruction about future behavior is a save request; the user need not separately ask you to remember it. "
     "Cite the original evidence, preserve its scope, and report the returned status. Never store secrets or unverified outcomes."
 )
 

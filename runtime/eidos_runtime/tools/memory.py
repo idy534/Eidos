@@ -19,7 +19,7 @@ from eidos_runtime.memory.contracts import (
     MemoryWriteRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected
-from eidos_runtime.memory.fact_review import MemoryFactAssessment, require_supported_fact, review_fact
+from eidos_runtime.memory.fact_review import MemoryFactAssessment
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.runtime.errors import tool_result
 from eidos_runtime.tools.contracts import StrictToolModel, result_model
@@ -78,6 +78,7 @@ class MemoryResultData(StrictToolModel):
     epochs: dict[str, int] = Field(default_factory=dict)
     truncated: bool = False
     next_cursor: int | None = None
+    # Decode historical results; new foreground writes do not emit assessments.
     fact_assessment: MemoryFactAssessment | None = None
 
 
@@ -107,8 +108,7 @@ class MemoryToolRuntime(AdapterToolRuntime):
         service = context.store.database.memory
         session_id = str(context.store.read_run(run_id)["sessionId"])
         operation = "memory-tool:" + str(item["id"])
-        assessment = None
-        review_epochs = {}
+        access_epochs = {}
         source_revisions = None
         try:
             if call.name == "memory_search":
@@ -229,25 +229,13 @@ class MemoryToolRuntime(AdapterToolRuntime):
                                 revisions[identifier] = original["item_revision"]
                         return revisions
 
-                    service.validate_record(write_request, verify_quotes())
-                    if context.memory_model is None:
-                        raise MemoryRejected("memory_assessment_unavailable")
-                    evidence, review_epochs, related = service.fact_review_input(write_request)
-                    with service.admit(review_epochs, cancel) as review_cancel:
-                        assessment = review_fact(context.memory_model, evidence, review_cancel)
-                    require_supported_fact(assessment.supported, assessment.atomic)
-                    if assessment.action == "reject":
-                        raise MemoryRejected("memory_claim_rejected")
-                    matches = {entry.id: entry for entry in related}
-                    if assessment.target_entry_id:
-                        match = matches.get(assessment.target_entry_id)
-                        if match is None or match.revision != assessment.expected_revision:
-                            raise MemoryRejected("memory_assessment_target_invalid")
-                    if request.target_entry_id and assessment.target_entry_id != request.target_entry_id:
-                        raise MemoryRejected("memory_assessment_target_invalid")
-                    service.validate_record(write_request, verify_quotes(), assessment)
+                    source_revisions = verify_quotes()
+                    service.validate_record(write_request, source_revisions)
+                    with service.database.transaction() as connection:
+                        scope = service.repository.scopes(connection, session_id, request.scope)[0]
+                        access_epochs = service.use_epochs(connection, session_id, {scope.id: scope.privacy_epoch})
                 elif request.action == "correct":
-                    # Model-controlled corrections must ground their replacement too.
+                    # Bind corrections to their original source and target before authorization.
                     with service.database.transaction() as connection:
                         target = service.repository.get(connection, session_id, request.entry_id)
                         if target.revision != request.expected_revision:
@@ -259,16 +247,9 @@ class MemoryToolRuntime(AdapterToolRuntime):
                         scope="global" if scope.kind == "global" else "current", content=request.content,
                         title=request.content[:80], kind=target.kind, source_item_ids=[user[0]],
                         target_entry_id=target.id, expected_revision=target.revision)
-                    if context.memory_model is None:
-                        raise MemoryRejected("memory_assessment_unavailable")
-                    evidence, review_epochs, _ = service.fact_review_input(correction)
-                    with service.admit(review_epochs, cancel) as review_cancel:
-                        assessment = review_fact(context.memory_model, evidence, review_cancel)
-                    require_supported_fact(assessment.supported, assessment.atomic)
-                    if assessment.action not in {"reuse", "revise"} or assessment.target_entry_id != target.id or assessment.expected_revision != target.revision:
-                        raise MemoryRejected("memory_assessment_target_invalid")
+                    service.validate_record(correction, source_revisions)
                     with service.database.transaction() as connection:
-                        service.validate_fact_snapshot(service.repository.scope(connection, target.scope_id), assessment)
+                        access_epochs = service.use_epochs(connection, session_id, {scope.id: scope.privacy_epoch})
                 if cancel.is_set():
                     raise MemoryRejected("memory_canceled")
                 prepared = PreparedToolExecution(
@@ -293,13 +274,11 @@ class MemoryToolRuntime(AdapterToolRuntime):
                     if approval.decision != "approve":
                         raise MemoryRejected("memory_approval_rejected")
                 if isinstance(request, MemoryToolRecord):
-                    source_revisions = verify_quotes()
                     action = service.record(
                         write_request,
                         source_revisions=source_revisions,
                         cancel=cancel,
-                        assessment=assessment,
-                        review_epochs=review_epochs,
+                        access_epochs=access_epochs,
                     )
                 else:
                     action = service.manage(
@@ -309,17 +288,16 @@ class MemoryToolRuntime(AdapterToolRuntime):
                             **request.model_dump(),
                         ),
                         source_item_ids=[user[0]],
-                        review_epochs=review_epochs if assessment else None,
+                        access_epochs=access_epochs or None,
                         source_revisions=source_revisions,
                         cancel=cancel,
-                        assessment=assessment,
                     )
                 with service.database.lock:
                     scopes = service.repository.scopes(
                         service.database.connection(), session_id
                     )
                     data = MemoryResultData(
-                        action=action, fact_assessment=assessment, epochs=service.use_epochs(service.database.connection(), session_id,
+                        action=action, epochs=service.use_epochs(service.database.connection(), session_id,
                                                                {s.id: s.privacy_epoch for s in scopes})
                     )
                 context.events.deliver_pending()
@@ -346,8 +324,8 @@ class MemoryToolRuntime(AdapterToolRuntime):
         except MemoryRejected as error:
             code = str(error)
             with service.database.transaction() as connection:
-                if review_epochs and not service.valid_epochs(connection, review_epochs):
-                    code, assessment, review_epochs = "memory_snapshot_revoked", None, {}
+                if access_epochs and not service.valid_epochs(connection, access_epochs):
+                    code, access_epochs = "memory_snapshot_revoked", {}
             logger.info(
                 "Memory tool rejected run_id=%s item_id=%s tool=%s code=%s",
                 run_id, item["id"], call.name, code,
@@ -362,18 +340,15 @@ class MemoryToolRuntime(AdapterToolRuntime):
                         "memory_evidence_ambiguous": "Several originals match sourceQuote. Supply the intended sourceItemIds and sourceQuotes; do not guess an ID.",
                         "memory_generation_disabled": "Automatic and candidate writes are disabled for this scope. Use remember only for an explicit user save request.",
                         "memory_candidate_scope_invalid": "Automatic and candidate writes are authorized only for currentScope. Use scope=current; do not promote project information to global memory.",
-                        "memory_claim_unsupported": "Do not save this draft. Every part of a memory must be supported by the cited original sources; existing memories are matching context only. Submit only the supported new fact.",
-                        "memory_claim_not_atomic": "Do not save this compound draft. Submit independently maintainable facts separately, each with its own original evidence.",
-                        "memory_assessment_failed": "Fact review did not complete. No memory was saved; do not claim success or substitute an unreviewed write.",
                     }.get(code, "Memory request was not applied; use current IDs and revisions or ask the user to resolve the restriction."),
-                    MemoryResultData(fact_assessment=assessment, epochs=review_epochs).model_dump(mode="json"),
+                    MemoryResultData(epochs=access_epochs).model_dump(mode="json"),
                     data_model=MemoryResultData,
                 )
-            if review_epochs:
+            if access_epochs:
                 try:
-                    service.track_tool(run_id, str(item["id"]), review_epochs, result, retrieval=False)
+                    service.track_tool(run_id, str(item["id"]), access_epochs, result, retrieval=False)
                 except MemoryRejected:
-                    result = tool_result(call.name, "error", "memory_snapshot_revoked", "Memory review context was revoked. Rebuild from current authorized sources.", MemoryResultData().model_dump(mode="json"), data_model=MemoryResultData)
+                    result = tool_result(call.name, "error", "memory_snapshot_revoked", "Memory access was revoked. Rebuild from current authorized sources.", MemoryResultData().model_dump(mode="json"), data_model=MemoryResultData)
             return HandlerOutcome(result, "failed", "failed")
 
 
@@ -396,7 +371,7 @@ def memory_entries(
         ),
         (
             "memory_record",
-            "Save source-grounded information that can improve future related work, with its scope and conditions preserved. Reuse existing entries; revise a target only for a clear correction.",
+            "Save source-grounded information that can improve future related work, with its scope and conditions preserved. For an unchanged existing fact, preserve its content and dates and supply its ID/revision to reuse it. Revise a target only for a clear correction.",
             MemoryToolRecord,
             "eidos_state",
         ),

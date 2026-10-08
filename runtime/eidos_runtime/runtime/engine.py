@@ -420,7 +420,6 @@ class RuntimeEngine:
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
                 collaboration=self.collaboration,
-                memory_model=self.model,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None
@@ -658,7 +657,6 @@ class RuntimeEngine:
                 runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
                 collaboration=self.collaboration,
-                memory_model=self.model,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None

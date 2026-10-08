@@ -65,9 +65,7 @@ export function useContextUsageController({
     setLoading(true);
     void window.eidosRuntime.readContextUsage(runId).then((next) => {
       if (sequence !== requestSequence.current) return;
-      if (next) {
-        setUsage(next);
-      }
+      setUsage(next ?? undefined);
     }).catch(() => {
       // preserve current usage on error
     }).finally(() => {
@@ -95,9 +93,7 @@ export function useContextUsageController({
       ) {
         return;
       }
-      if (next) {
-        setUsage(next);
-      }
+      setUsage(next ?? undefined);
     }).catch(() => {
       // preserve current usage
     }).finally(() => {

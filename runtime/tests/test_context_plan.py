@@ -219,6 +219,12 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
     reopened.initialize()
     try:
         repository = ContextSnapshotRepository(reopened)
+        assert repository.read_latest_budget_for_run("missing") is None
+        latest_id = reopened.connection().execute(
+            "SELECT id FROM context_snapshots WHERE run_id='run' "
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+        ).fetchone()[0]
+        assert repository.read_latest_budget_for_run("run") == (latest_id, budget)
         assert repository.read(snapshot.snapshot_id) == snapshot
         assert repository.read(second.snapshot_id) == second
         shared = next(
@@ -227,6 +233,7 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
         shared.unlink()
         with pytest.raises(PersistenceCorruptionError, match="persistence_record_invalid"):
             repository.read(second.snapshot_id)
+        assert repository.read_latest_budget_for_run("run") == (latest_id, budget)
         stored = (
             reopened.connection()
             .execute(
@@ -242,5 +249,11 @@ def test_context_snapshot_without_repository_lineage_round_trips_sqlite(
             match="persistence_record_invalid",
         ):
             repository.read(snapshot.snapshot_id)
+        with reopened.transaction() as connection:
+            connection.execute(
+                "UPDATE context_plans SET plan_json='{}' WHERE id=?", (plan.plan_id,)
+            )
+        with pytest.raises(PersistenceCorruptionError, match="persistence_record_invalid"):
+            repository.read_latest_budget_for_run("run")
     finally:
         reopened.close()

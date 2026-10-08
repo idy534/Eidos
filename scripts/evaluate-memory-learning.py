@@ -18,6 +18,7 @@ parser.add_argument('--model', default='deepseek-v4.1-flash')
 parser.add_argument('--data-dir', type=Path, default=Path.home() / '.eidos')
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--case', action='append', help='Run only the named cases; may be repeated.')
+parser.add_argument('--disable-automatic-learning', action='store_true', help='Verify explicit saves while automatic learning is disabled.')
 args = parser.parse_args()
 logging.basicConfig(level=logging.ERROR)
 configs = ModelConfigStore(args.data_dir)
@@ -45,7 +46,7 @@ class EvalModel:
         if self.requests >= 36:
             raise RuntimeError('eval_request_limit')
         self.requests += 1
-        output_ports = {'submit_memory_fact_assessment', '_eidos_assess_completion'}
+        output_ports = {'_eidos_assess_completion'}
         kwargs['tool_definitions'] = tuple(t for t in kwargs['tool_definitions'] if t.name.startswith('memory_') or t.name in output_ports)
         response = lease.client.complete(context, cancel, on_text_delta, **kwargs)
         if any(not call.name.startswith('memory_') and call.name not in output_ports for call in response.tool_calls):
@@ -57,6 +58,7 @@ class EvalModel:
 
 model = EvalModel()
 cases = [
+    ('projectless_language_preference', '以后都用中文回答', 'execute', True),
     ('self_identity', '我的名字是 Maple，你可以这样称呼我。请简单回应。', 'execute', True),
     ('enduring_workflow', '我写代码时通常先整理相关设计文档，然后再动手实现。这是我长期采用的习惯。请简单回应。', 'execute', True),
     ('workflow_paraphrase', '在开发里，我一直先把文字设计写清楚，再动手实现；以后也照这个默认顺序就好。请简单回应。', 'execute', True),
@@ -72,7 +74,7 @@ results = []
 
 def run_case(store, session, name, text, work_mode, expected):
     run, _ = store.create_run(session['id'], text, model_id=config.id,
-        model_profile=model.profile_snapshot, work_mode=work_mode)
+        model_profile=model.profile_snapshot, work_mode=work_mode, approval_mode='full_access')
     cancel = threading.Event()
     timer = threading.Timer(90, cancel.set)
     timer.start()
@@ -108,8 +110,13 @@ try:
             store = SessionStore(root / 'data')
             store.initialize()
             try:
-                session = store.create_session(str(root / 'workspace'))
-                store.database.memory.settings(MemorySettingsRequest(session_id=session['id'], scope='current', settings=MemorySettings(generate_enabled=True)))
+                if name == 'projectless_language_preference':
+                    workspace = store.data_directory / f'.{store.data_directory.name}-projectless' / 'language'
+                    workspace.mkdir(parents=True)
+                    session = store.typed_runtime_repository().create_session(str(workspace), projectless=True).value.model_dump(by_alias=True)
+                else:
+                    session = store.create_session(str(root / 'workspace'))
+                store.database.memory.settings(MemorySettingsRequest(session_id=session['id'], scope='current', settings=MemorySettings(generate_enabled=not args.disable_automatic_learning)))
                 run_case(store, session, name, text, work_mode, expected)
                 if name == 'self_identity':
                     run_case(store, session, 'new_preference_preserves_old_identity', '我希望今后所有回答都用中文。请简单回应。', 'execute', True)
