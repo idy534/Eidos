@@ -27,6 +27,7 @@ from eidos_runtime.protocol.server import (  # noqa: E402
     clean_session_title,
     valid_request_id,
 )
+from eidos_runtime import __version__  # noqa: E402
 from eidos_runtime.db.storage import SessionStore, WorkspaceBoundaryError  # noqa: E402
 from eidos_runtime.runtime.runtime_dependencies import (  # noqa: E402
     RuntimeDependencyCatalogError,
@@ -536,7 +537,7 @@ class RuntimeProtocolTests(unittest.TestCase):
         self.assertEqual(stdout_messages[0]["jsonrpc"], "2.0")
         self.assertEqual(stdout_messages[0]["id"], "client-1")
         self.assertEqual(stdout_messages[0]["result"]["protocolVersion"], 1)
-        self.assertEqual(stdout_messages[0]["result"]["runtimeVersion"], "0.3.0")
+        self.assertEqual(stdout_messages[0]["result"]["runtimeVersion"], __version__)
         self.assertIsInstance(
             stdout_messages[0]["result"]["capabilities"]["runShell"], bool
         )

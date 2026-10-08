@@ -232,7 +232,7 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
 
     const initialized = await client.initialize();
     assert.equal(initialized.protocolVersion, 1);
-    assert.equal(initialized.runtimeVersion, "0.3.0");
+    assert.equal(initialized.runtimeVersion, "0.5.0");
     assert.equal(typeof initialized.capabilities.runShell, "boolean");
     assert.equal(initialized.capabilities.modelConfigured, false);
     assert.deepEqual(await client.health(), { state: "ready" });

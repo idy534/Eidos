@@ -300,7 +300,7 @@ async function verifyRuntimeProtocol({ appRoot, pythonExecutable }) {
       protocolVersion: 1,
     });
     assert.equal(initialized.result.protocolVersion, 1);
-    assert.equal(initialized.result.runtimeVersion, "0.3.0");
+    assert.equal(initialized.result.runtimeVersion, "0.5.0");
     const health = await request("runtime/health", {});
     assert.deepEqual(health.result, { state: "ready" });
     const shutdown = await request("runtime/shutdown", {});
