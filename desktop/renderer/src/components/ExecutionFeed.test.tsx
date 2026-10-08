@@ -879,15 +879,15 @@ test("distinguishes expanded and unsandboxed command approvals", () => {
     attemptOrdinal: 1,
   });
 
-  assert.match(expanded, /Execution mode: Expanded sandbox/);
-  assert.match(expanded, /additional read: \/sdk/);
-  assert.match(expanded, /additional write: \/output/);
-  assert.match(expanded, /additional execute: \/toolchain/);
-  assert.match(expanded, /network: enabled/);
+  assert.match(expanded, /沙盒内执行（已扩展权限）/);
+  assert.match(expanded, /读取 \/sdk（子目录范围未记录）/);
+  assert.match(expanded, /写入 \/output（子目录范围未记录）/);
+  assert.match(expanded, /执行 \/toolchain（子目录范围未记录）/);
+  assert.match(expanded, /允许访问网络，不限域名/);
   assert.match(unsandboxed, /approval-card--unsandboxed/);
-  assert.match(unsandboxed, /Execution mode: Unsandboxed/);
-  assert.match(unsandboxed, /WARNING: This command runs with the current macOS user/);
-  assert.match(unsandboxed, /escalation reason: Seatbelt denied executable mapping/);
+  assert.match(unsandboxed, /沙盒外执行/);
+  assert.match(unsandboxed, /命令将使用当前 macOS 用户的权限/);
+  assert.match(unsandboxed, /Seatbelt denied executable mapping/);
 });
 
 test("renders minimalist SVG icons for file operations, skills, and shell calls", () => {

@@ -1402,7 +1402,12 @@ test("uses the shared v1 vectors for requests, approvals, and notifications", as
     client = new RuntimeClient({
       pythonExecutable: pythonExecutable,
       runtimeRoot,
-      onApprovalRequest: async () => {
+      onApprovalRequest: async (request) => {
+        assert.equal(request.kind, "file_change");
+        if (request.kind === "file_change") {
+          assert.equal(request.sandboxPermissions, "with_additional_permissions");
+          assert.deepEqual(request.additionalFileSystemAccess, [{ path: "/tmp/README.md", access: "write", recursive: false }]);
+        }
         approvalSeen?.();
         return { decision: "approve" };
       },
@@ -1556,6 +1561,12 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
       "sys.stdin.readline()",
       "send({'jsonrpc':'2.0','id':'server-permission-1','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i5','toolCallId':'tc5','summary':'permissions','kind':'permission_request','grantScope':'run','permissions':{'network':{'enabled':True,'secret':'omit'},'fileSystem':[]},'command':'npm install','completedResult':{'secret':'omit'}}})",
       "sys.stdin.readline()",
+      "send({'jsonrpc':'2.0','id':'server-invalid-path','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i6','toolCallId':'tc6','summary':'invalid','kind':'command_execution','command':'ls','cwd':'.','networkEnabled':False,'timeoutSeconds':30,'additionalFileSystemAccess':[{'path':'relative','access':'read','recursive':True}]}})",
+      "assert 'error' in json.loads(sys.stdin.readline())",
+      "send({'jsonrpc':'2.0','id':'server-invalid-scope','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i6','toolCallId':'tc6','summary':'invalid','kind':'command_execution','command':'ls','cwd':'.','networkEnabled':False,'timeoutSeconds':30,'additionalFileSystemAccess':[{'path':'/tmp/output','access':'write','recursive':'false'}]}})",
+      "assert 'error' in json.loads(sys.stdin.readline())",
+      "send({'jsonrpc':'2.0','id':'server-cmd-scopes','method':'item/requestApproval','params':{'sessionId':'s1','runId':'r1','itemId':'i6','toolCallId':'tc6','summary':'scopes','kind':'command_execution','command':'ls','cwd':'.','networkEnabled':False,'timeoutSeconds':30,'additionalFileSystemAccess':[{'path':'/tmp/output','access':'write','recursive':False,'internal':'omit'}]}})",
+      "sys.stdin.readline()",
       "json.loads(sys.stdin.readline())",
       "send({'jsonrpc':'2.0','id':'client-2','result':None})",
     ].join("\n"),
@@ -1575,11 +1586,11 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     });
 
     await client.initialize();
-    for (let i = 0; i < 50 && receivedRequests.length < 5; i += 1) {
+    for (let i = 0; i < 50 && receivedRequests.length < 6; i += 1) {
       await new Promise((r) => setTimeout(r, 50));
     }
 
-    assert.equal(receivedRequests.length, 5);
+    assert.equal(receivedRequests.length, 6);
 
     // 1. file_change
     const req1 = receivedRequests[0]!;
@@ -1592,7 +1603,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req1.diffBytes, undefined);
     assert.equal(req1.diffHash, undefined);
     assert.deepEqual(Object.keys(req1).sort(), [
-      "diff", "diffBytes", "diffHash", "id", "itemId", "kind", "reviewFallback", "runId", "sessionId", "summary", "toolCallId",
+      "additionalFileSystemAccess", "diff", "diffBytes", "diffHash", "id", "itemId", "kind", "reviewFallback", "runId", "sandboxPermissions", "sessionId", "summary", "toolCallId",
     ]);
 
     // 2. command_execution
@@ -1603,7 +1614,7 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req2.networkEnabled, false);
     assert.equal(req2.token, undefined);
     assert.deepEqual(Object.keys(req2).sort(), [
-      "additionalExecutableAccess", "additionalReadAccess", "additionalWriteAccess",
+      "additionalExecutableAccess", "additionalFileSystemAccess", "additionalReadAccess", "additionalWriteAccess",
       "attemptOrdinal", "command", "cwd", "escalationReason", "executionMode",
       "id", "itemId", "kind", "networkEnabled", "reason", "reviewFallback", "runId",
       "sandboxPermissions", "sessionId", "summary", "timeoutSeconds", "toolCallId",
@@ -1638,6 +1649,8 @@ test("projects Approval requests strictly, strips unknown fields, and respects m
     assert.equal(req5.grantScope, "run");
     assert.deepEqual(req5.permissions, { network: { enabled: true }, fileSystem: [] });
     assert.equal(req5.completedResult, undefined);
+    assert.equal(req2.additionalFileSystemAccess, undefined);
+    assert.deepEqual(receivedRequests[5]!.additionalFileSystemAccess, [{ path: "/tmp/output", access: "write", recursive: false }]);
 
     await client.shutdown();
     await client.waitForExit();

@@ -4672,6 +4672,20 @@ span.tool-file-link:hover {
   margin: 0 auto 1rem;
 }
 .approval-composer .diff-view { max-height: min(30vh, 22rem); }
+.approval-body { max-height: min(38vh, 26rem); overflow: auto; padding: 1rem; color: #303630; background: #f7f8f5; border-top: 1px solid #cbd6cd; border-bottom: 1px solid var(--line); }
+.approval-details { display: grid; gap: 0.5rem; margin: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }
+.approval-detail-row { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 0.75rem; }
+.approval-detail-row dt { color: var(--muted); }
+.approval-detail-row dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-command { margin: 0 0 0.875rem; padding: 0.75rem; border: 1px solid var(--line); border-radius: 0.5rem; background: white; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-size-code)/var(--line-height-code) var(--font-code); }
+.approval-permissions { margin: 0; padding: 0; list-style: none; }
+.approval-permissions li + li { margin-top: 0.25rem; }
+.approval-warning { margin: 0 0 0.875rem; color: var(--danger); font-size: var(--font-size-body); line-height: var(--line-height-body); }
+.approval-execution-details { margin-top: 0.875rem; font-size: var(--font-size-xs); line-height: var(--line-height-body); color: var(--muted); }
+.approval-execution-details summary { cursor: pointer; width: fit-content; }
+.approval-execution-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 0.25rem; }
+.approval-execution-details p { margin: 0.5rem 0 0; }
+.approval-composer .approval-body .diff-view { max-height: none; margin-top: 0.875rem; }
 
 /* Composer Input Capsule */
 .composer {

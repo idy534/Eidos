@@ -71,7 +71,11 @@
         "toolCallId": "55555555-5555-4555-8555-555555555555",
         "kind": "file_change",
         "summary": "Modify README.md",
-        "diff": "--- a/README.md\n+++ b/README.md\n"
+        "diff": "--- a/README.md\n+++ b/README.md\n",
+        "sandboxPermissions": "with_additional_permissions",
+        "additionalPermissions": {
+          "fileSystem": [{ "path": "/tmp/README.md", "access": "write", "recursive": false }]
+        }
       }
     },
     "approveResponse": {
