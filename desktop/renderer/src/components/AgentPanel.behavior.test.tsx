@@ -102,4 +102,94 @@ describe("AgentWorkspacePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "批准" }));
     expect(onApprove).toHaveBeenCalledWith(expect.objectContaining({ id: "approval-1" }));
   });
+
+  it("renders subagent mission, execution feed, and handles back navigation", async () => {
+    const child = {
+      id: "agent-exec",
+      taskName: "write-docs",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-exec",
+      runId: "child-run-exec",
+      status: "succeeded" as const,
+      task: "Write API documentation for auth module",
+      result: "Successfully generated auth.md",
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 1000,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "child-msg-1",
+            sessionId: child.sessionId,
+            runId: child.runId,
+            kind: "assistant_message",
+            ordinal: 1,
+            status: "completed",
+            content: "I have updated the auth documentation.",
+            createdAt: 1005,
+          },
+        ],
+        runs: [
+          {
+            id: child.runId,
+            sessionId: child.sessionId,
+            status: "succeeded",
+            allowedActions: [],
+            modelId: "test-model",
+            modelStepCount: 1,
+            createdAt: 1000,
+            updatedAt: 1010,
+          },
+        ],
+      }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    const onBackToList = vi.fn();
+    render(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+        onBackToList={onBackToList}
+      />,
+    );
+
+    expect(screen.getByText("write-docs")).toBeInTheDocument();
+    expect((await screen.findAllByText("Write API documentation for auth module")).length).toBeGreaterThanOrEqual(1);
+    expect(await screen.findByText("I have updated the auth documentation.")).toBeInTheDocument();
+
+    const backButton = screen.getByRole("button", { name: "返回子 Agent 列表" });
+    fireEvent.click(backButton);
+    expect(onBackToList).toHaveBeenCalled();
+  });
+
+  it("renders overview with empty state when no agents exist", () => {
+    render(
+      <AgentWorkspacePanel
+        agents={[]}
+        agentId={undefined}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("暂无子 Agent 任务")).toBeInTheDocument();
+    expect(screen.getByText("0 个任务")).toBeInTheDocument();
+  });
 });

@@ -945,7 +945,7 @@ export function AppShell({ runtime }: AppShellProps) {
     setEnvironmentPopoverOpen(false);
     const existing = tool === "terminal" || tool === "browser"
       ? undefined
-      : openTabs.find((tab) => tab.kind === tool);
+      : openTabs.find((tab) => tab.id === tool || (tab.kind === tool && !tab.id.startsWith("agent-")));
     let tab = existing;
     if (!tab && tool === "terminal") {
       const index = ++terminalSequenceRef.current;
@@ -960,6 +960,16 @@ export function AppShell({ runtime }: AppShellProps) {
     setActiveTabId(tab.id);
     setDockOpen(true);
     return tab.id;
+  }
+
+  function openAgentList(): void {
+    if (!currentSnapshot || !availableTools.includes("agent")) return;
+    const existing = openTabs.find((tab) => tab.id === "agent");
+    if (!existing) {
+      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "子 Agent" }]);
+    }
+    setActiveTabId("agent");
+    setDockOpen(true);
   }
 
   function openAgent(agent: AgentSummary): void {
@@ -1504,6 +1514,10 @@ export function AppShell({ runtime }: AppShellProps) {
                     errorsByApprovalId={errorsByApprovalId}
                     onApprove={(request) => void approvalActions.approve(request)}
                     onReject={(request) => void approvalActions.reject(request)}
+                    onOpenFile={handleOpenFileInDock}
+                    onOpenPlan={handleOpenPlan}
+                    workspaceRoot={currentSnapshot.session.workspaceRoot}
+                    onBackToList={openAgentList}
                   />;
                   if (tab.kind === "text-review" && reviewRequest) return <TextReviewPanel
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}
