@@ -14,42 +14,87 @@ export interface ApprovalComposerProps {
   onReject: (approval: ApprovalRequest) => void;
 }
 
-export function ApprovalComposer({run, approval, respondingApprovalIds,
-  respondingKindByApprovalId, expiredApprovalIds, errorsByApprovalId,
-  onApprove, onReject}: ApprovalComposerProps) {
-    const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
-    const localError = errorsByApprovalId?.[approval.id];
-    const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
-    const isApproving = isResponding && respondingKindByApprovalId?.[approval.id] === "approve";
-    const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
-    const canApprove = !isExpired && (run.allowedActions?.includes("approve") || Boolean(approval.reviewFallback)) && !isResponding;
-    const canReject = !isExpired && (run.allowedActions?.includes("reject") || Boolean(approval.reviewFallback)) && !isResponding;
-    const isUnsandboxed = (approval.kind === "command_execution" && approval.executionMode === "unsandboxed")
-      || (approval.kind === "file_change" && approval.sandboxPermissions === "require_escalated");
+function ShieldIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
 
-    return (
-      <article
-        className={[
-          "approval-card approval-composer",
-          isExpired ? "approval-card--expired" : "",
-          isUnsandboxed ? "approval-card--unsandboxed" : "",
-        ].filter(Boolean).join(" ")}
-        aria-labelledby={`approval-${approval.id}`}
-      >
-        <div className="approval-heading">
-          <div>
-            <p className="feed-label">{isExpired ? "审批已失效" : "需要你的批准"}</p>
-            <h3 id={`approval-${approval.id}`}>{approvalTitle(approval)}</h3>
+function AlertTriangleIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+export function ApprovalComposer({
+  run, approval, respondingApprovalIds,
+  respondingKindByApprovalId, expiredApprovalIds, errorsByApprovalId,
+  onApprove, onReject,
+}: ApprovalComposerProps) {
+  const isExpired = Boolean(expiredApprovalIds?.has(approval.id));
+  const localError = errorsByApprovalId?.[approval.id];
+  const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
+  const isApproving = isResponding && respondingKindByApprovalId?.[approval.id] === "approve";
+  const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
+  const canApprove = !isExpired && (run.allowedActions?.includes("approve") || Boolean(approval.reviewFallback)) && !isResponding;
+  const canReject = !isExpired && (run.allowedActions?.includes("reject") || Boolean(approval.reviewFallback)) && !isResponding;
+  const isUnsandboxed = (approval.kind === "command_execution" && approval.executionMode === "unsandboxed")
+    || (approval.kind === "file_change" && approval.sandboxPermissions === "require_escalated");
+
+  return (
+    <article
+      className={[
+        "approval-card approval-composer",
+        isExpired ? "approval-card--expired" : "",
+        isUnsandboxed ? "approval-card--unsandboxed" : "",
+      ].filter(Boolean).join(" ")}
+      aria-labelledby={`approval-${approval.id}`}
+    >
+      <div className="approval-heading">
+        <div className="approval-heading-left">
+          <div className="approval-heading-icon" aria-hidden="true">
+            {isUnsandboxed ? <AlertTriangleIcon /> : <ShieldIcon />}
           </div>
-          <span>{isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}</span>
+          <div className="approval-heading-text">
+            <h3 id={`approval-${approval.id}`}>{approvalTitle(approval)}</h3>
+            <span className="approval-heading-divider" aria-hidden="true">·</span>
+            <span className="approval-heading-tag">
+              <span className="approval-status-pulse" />
+              <p className="feed-label">{isExpired ? "审批已失效" : "需要你的批准"}</p>
+            </span>
+          </div>
         </div>
-        <div className="approval-body"><ApprovalContent approval={approval} /></div>
-        {localError && <p className="approval-error" role="alert">{localError}</p>}
-        {approval.reviewFallback && <p role="status">{approval.reviewFallback} 可在此手动决定。</p>}
-        <div className="approval-actions">
+        <span className="approval-heading-badge">
+          {isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}
+        </span>
+      </div>
+      <div className="approval-body"><ApprovalContent approval={approval} /></div>
+      {localError && <p className="approval-error" role="alert">{localError}</p>}
+      {approval.reviewFallback && <p className="approval-fallback-note" role="status">{approval.reviewFallback} 可在此手动决定。</p>}
+      <div className="approval-actions">
+        <div className="approval-actions-hint" aria-hidden="true">
+          <ShieldIcon className="approval-actions-hint-icon" />
+          <span>核对命令及授权范围后再行决定</span>
+        </div>
+        <div className="approval-actions-buttons">
           <Button
             variant="ghost"
             size="medium"
+            className="btn-approval-reject"
             disabled={!canReject}
             loading={isRejecting}
             onClick={() => onReject(approval)}
@@ -59,6 +104,7 @@ export function ApprovalComposer({run, approval, respondingApprovalIds,
           <Button
             variant="primary"
             size="medium"
+            className="btn-approval-approve"
             disabled={!canApprove}
             loading={isApproving}
             onClick={() => onApprove(approval)}
@@ -66,8 +112,9 @@ export function ApprovalComposer({run, approval, respondingApprovalIds,
             批准
           </Button>
         </div>
-      </article>
-    );
+      </div>
+    </article>
+  );
 }
 
 function approvalTitle(approval: ApprovalRequest): string {
@@ -120,7 +167,12 @@ function commandFilePermissions(approval: CommandApprovalRequest) {
 
 function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
   if (approval.kind === "file_change") return <>
-    {approval.sandboxPermissions === "require_escalated" && <p className="approval-warning" role="note">文件操作将在沙盒外执行。系统仍会核验目标文件的权限和版本。</p>}
+    {approval.sandboxPermissions === "require_escalated" && (
+      <div className="approval-warning" role="note">
+        <AlertTriangleIcon className="approval-warning-icon" />
+        <span>文件操作将在沙盒外执行。系统仍会核验目标文件的权限和版本。</span>
+      </div>
+    )}
     <dl className="approval-details">
       <DetailRow label="批准范围">仅本次文件操作</DetailRow>
       <FilePermissions entries={approval.additionalFileSystemAccess ?? []} />
@@ -131,7 +183,12 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
   </>;
 
   if (approval.kind === "command_execution") return <>
-    {approval.executionMode === "unsandboxed" && <p className="approval-warning" role="note">命令将使用当前 macOS 用户的权限，可能访问或修改工作区外的文件和网络。</p>}
+    {approval.executionMode === "unsandboxed" && (
+      <div className="approval-warning" role="note">
+        <AlertTriangleIcon className="approval-warning-icon" />
+        <span>命令将使用当前 macOS 用户的权限，可能访问或修改工作区外的文件和网络。</span>
+      </div>
+    )}
     <pre className="approval-command" aria-label="完整命令">{approval.command}</pre>
     <dl className="approval-details">
       <Directory cwd={approval.cwd} />
@@ -142,9 +199,15 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
       {approval.reason && <DetailRow label="申请原因">{approval.reason}</DetailRow>}
       {approval.escalationReason && <DetailRow label="升级原因">{approval.escalationReason}</DetailRow>}
     </dl>
-    <details className="approval-execution-details"><summary>执行详情</summary>
-      <p>单次工具调用观察上限：{approval.timeoutSeconds} 秒。命令没有默认总运行期限。</p>
-      {!approval.networkEnabled && approval.executionMode !== "unsandboxed" && <p>网络：不允许访问网络。</p>}
+    <details className="approval-execution-details">
+      <summary>
+        <ChevronIcon className="approval-details-chevron" />
+        <span>执行详情</span>
+      </summary>
+      <div className="approval-execution-details-body">
+        <p>单次工具调用观察上限：{approval.timeoutSeconds} 秒。命令没有默认总运行期限。</p>
+        {!approval.networkEnabled && approval.executionMode !== "unsandboxed" && <p>网络：不允许访问网络。</p>}
+      </div>
     </details>
   </>;
 
@@ -175,9 +238,15 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
       <DetailRow label="批准范围">仅本次工具调用</DetailRow>
     </dl>
     <pre className="approval-command" aria-label="工具参数">{JSON.stringify(approval.arguments, null, 2)}</pre>
-    <details className="approval-execution-details"><summary>执行详情</summary>
-      <p>工具超时：{approval.timeoutSeconds} 秒。</p>
-      {approval.envNames.length > 0 && <p>环境变量名称：{approval.envNames.join("、")}</p>}
+    <details className="approval-execution-details">
+      <summary>
+        <ChevronIcon className="approval-details-chevron" />
+        <span>执行详情</span>
+      </summary>
+      <div className="approval-execution-details-body">
+        <p>工具超时：{approval.timeoutSeconds} 秒。</p>
+        {approval.envNames.length > 0 && <p>环境变量名称：{approval.envNames.join("、")}</p>}
+      </div>
     </details>
   </>;
 }

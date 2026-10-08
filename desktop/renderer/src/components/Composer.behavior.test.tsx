@@ -331,7 +331,7 @@ describe("Composer DOM interaction & state behavior", () => {
         {...defaultProps}
         composerMode="running"
         activeRun={activeRunAllowed}
-        input="Task text"
+        input=""
       />,
     );
 
@@ -348,7 +348,7 @@ describe("Composer DOM interaction & state behavior", () => {
         {...defaultProps}
         composerMode="running"
         activeRun={activeRunDisallowed}
-        input="Task text"
+        input=""
       />,
     );
 
