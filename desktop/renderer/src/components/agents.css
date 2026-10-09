@@ -534,28 +534,38 @@
 }
 
 .agent-detail-header {
-  padding: 10px 14px 12px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-raised);
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
   flex-shrink: 0;
+}
+
+.agent-detail-header__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .agent-detail-back-btn {
   appearance: none;
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 7px;
+  padding: 2.5px 7px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   cursor: pointer;
+  flex-shrink: 0;
   transition: all 0.14s var(--apple-spring);
 }
 
@@ -581,6 +591,7 @@
   flex: 1 1 auto;
 }
 
+.agent-detail-header strong,
 .agent-heading strong {
   font-size: var(--font-size-title);
   font-weight: 600;

@@ -574,21 +574,21 @@ export function AgentWorkspacePanel({
       {agent && (
         <article className="agent-detail-view">
           <header className="agent-detail-header">
-            {onBackToList && (
-              <button
-                type="button"
-                className="agent-detail-back-btn"
-                aria-label="返回子 Agent 列表"
-                onClick={onBackToList}
-              >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M10 3.5L5.5 8l4.5 4.5" />
-                </svg>
-                <span>全部 Agent</span>
-              </button>
-            )}
+            <div className="agent-detail-header__main">
+              {onBackToList && (
+                <button
+                  type="button"
+                  className="agent-detail-back-btn"
+                  aria-label="返回子 Agent 列表"
+                  onClick={onBackToList}
+                >
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M10 3.5L5.5 8l4.5 4.5" />
+                  </svg>
+                  <span>全部 Agent</span>
+                </button>
+              )}
 
-            <div className="agent-heading">
               <div className="agent-heading__name-wrap">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <strong>{agent.taskName}</strong>
@@ -596,23 +596,23 @@ export function AgentWorkspacePanel({
                   {roleDescriptions[agent.role]}
                 </span>
               </div>
+            </div>
 
-              <div className="agent-heading__actions">
-                <span className={`agent-status-pill agent-status-pill--${statusBadgeTone(agent.status)}`}>
-                  {labels[agent.status]}
-                </span>
+            <div className="agent-heading__actions">
+              <span className={`agent-status-pill agent-status-pill--${statusBadgeTone(agent.status)}`}>
+                {labels[agent.status]}
+              </span>
 
-                {active.has(agent.status) && (
-                  <button
-                    type="button"
-                    className="agent-stop-button"
-                    disabled={stopping === agent.id}
-                    onClick={() => onStop(agent)}
-                  >
-                    {stopping === agent.id ? "停止中…" : "停止"}
-                  </button>
-                )}
-              </div>
+              {active.has(agent.status) && (
+                <button
+                  type="button"
+                  className="agent-stop-button"
+                  disabled={stopping === agent.id}
+                  onClick={() => onStop(agent)}
+                >
+                  {stopping === agent.id ? "停止中…" : "停止"}
+                </button>
+              )}
             </div>
           </header>
 
