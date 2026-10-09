@@ -148,6 +148,65 @@
   flex: 1 1 auto;
 }
 
+/* Compact Agent List for Environment Popover */
+.agent-list--compact {
+  padding: 0;
+  gap: 2px;
+  overflow: visible;
+  flex: 0 0 auto;
+}
+
+.agent-list__row--compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.35rem 0.55rem;
+  min-height: 2.1rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background 0.14s var(--apple-spring);
+}
+
+.agent-list__row--compact:hover {
+  background: var(--surface-hover);
+}
+
+.agent-list__row--compact .agent-list__row-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.agent-list__row--compact .agent-list__row-name {
+  font-size: var(--font-size-sidebar);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-list__row--compact .agent-list__row-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.agent-list__row--compact .agent-list__row-status-text {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
 .agent-card {
   appearance: none;
   width: 100%;
@@ -215,6 +274,13 @@
   border-radius: var(--radius-pill);
   flex-shrink: 0;
   line-height: 1.3;
+}
+
+.agent-role-pill--default,
+.agent-role-badge--default {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  border: 1px solid var(--line);
 }
 
 .agent-role-pill--explorer,

@@ -29,6 +29,18 @@ const labels: Record<AgentSummary["status"], string> = {
   interrupted: "已中断",
 };
 
+const roleLabels: Record<AgentSummary["role"], string> = {
+  default: "通用",
+  explorer: "探索",
+  worker: "执行",
+};
+
+const roleDescriptions: Record<AgentSummary["role"], string> = {
+  default: "通用任务 (default)",
+  explorer: "代码调查 (explorer)",
+  worker: "实现与验证 (worker)",
+};
+
 export function useAgentState(sessionId: string | undefined, ready: boolean) {
   const [state, setState] = useState<CollaborationState>();
   const [error, setError] = useState("");
@@ -86,23 +98,71 @@ export function useAgentState(sessionId: string | undefined, ready: boolean) {
   return { state, error, stopping, stop };
 }
 
+export function formatAgentTooltip(agent: AgentSummary): string {
+  const roleName = roleLabels[agent.role] ?? agent.role;
+  const parts: string[] = [
+    `${agent.taskName} (${roleName} · ${labels[agent.status]})`,
+  ];
+  if (agent.task?.trim()) {
+    parts.push(`任务描述：${agent.task.trim()}`);
+  }
+  if (agent.result?.trim()) {
+    parts.push(`交付成果：${agent.result.trim()}`);
+  }
+  if (agent.errorCode?.trim()) {
+    parts.push(`错误代码：${agent.errorCode.trim()}`);
+  }
+  return parts.join("\n");
+}
+
 export function AgentList({
   agents,
   onOpen,
   approvalCounts = {},
   selectedAgentId,
+  compact = false,
 }: {
   agents: AgentSummary[];
   onOpen: (agent: AgentSummary) => void;
   approvalCounts?: Readonly<Record<string, number>>;
   selectedAgentId?: string | undefined;
+  compact?: boolean;
 }) {
   return (
-    <div className="agent-list" role="list">
+    <div className={`agent-list${compact ? " agent-list--compact" : ""}`} role="list">
       {agents.map((agent) => {
         const pendingApprovals = approvalCounts[agent.sessionId] ?? 0;
         const isRunning = active.has(agent.status);
         const isSelected = selectedAgentId === agent.id;
+        const tooltip = formatAgentTooltip(agent);
+
+        if (compact) {
+          return (
+            <button
+              key={agent.id}
+              type="button"
+              className={`environment-popover__row agent-list__row agent-list__row--compact${isSelected ? " agent-list__row--selected" : ""}${isRunning ? " agent-list__row--running" : ""}`}
+              onClick={() => onOpen(agent)}
+              title={tooltip}
+              aria-label={`${agent.taskName} · ${labels[agent.status]}${pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}`}
+            >
+              <div className="agent-list__row-main">
+                <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
+                <span className="agent-list__row-name">{agent.taskName}</span>
+              </div>
+              <div className="agent-list__row-status">
+                <span className="agent-list__row-status-text">
+                  {labels[agent.status]}{pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}
+                </span>
+                {pendingApprovals > 0 && (
+                  <span className="agent-approval-badge" aria-label={`待审批 ${pendingApprovals}`}>
+                    {pendingApprovals}
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        }
 
         return (
           <button
@@ -110,13 +170,14 @@ export function AgentList({
             type="button"
             className={`environment-popover__row agent-list__row agent-card${isSelected ? " agent-card--selected" : ""}${isRunning ? " agent-card--running" : ""}`}
             onClick={() => onOpen(agent)}
+            title={tooltip}
           >
             <div className="agent-card__header">
               <div className="agent-card__identity">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <span className="agent-card__name">{agent.taskName}</span>
                 <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
-                  {agent.role === "explorer" ? "探索" : "执行"}
+                  {roleLabels[agent.role]}
                 </span>
               </div>
               <div className="agent-card__status-wrap">
@@ -456,7 +517,7 @@ export function AgentWorkspacePanel({
                 </svg>
               </div>
               <h3>暂无子 Agent 任务</h3>
-              <p>主 Agent 执行过程中派生的并行委托任务（只读探索 Explorer / 编码执行 Worker）将自动汇总在此处。</p>
+              <p>主 Agent 派生的通用任务 Default、代码调查 Explorer 和实现与验证 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。</p>
             </div>
           ) : (
             <AgentList
@@ -492,7 +553,7 @@ export function AgentWorkspacePanel({
                 <strong>{agent.taskName}</strong>
               </div>
 
-              <span>{agent.role === "explorer" ? "探索" : "执行"} · {labels[agent.status]}</span>
+              <span>{roleLabels[agent.role]} · {labels[agent.status]}</span>
 
               {active.has(agent.status) && (
                 <button
@@ -511,7 +572,7 @@ export function AgentWorkspacePanel({
             <div className="agent-mission-box__meta">
               <span className="agent-mission-box__badge">委托任务</span>
               <span className="agent-mission-box__role-hint">
-                {agent.role === "explorer" ? "只读探索 (explorer)" : "工作执行 (worker)"}
+                {roleDescriptions[agent.role]}
               </span>
             </div>
             <p className="agent-text agent-mission-box__text">{agent.task}</p>

@@ -1124,7 +1124,7 @@ export function AppShell({ runtime }: AppShellProps) {
             {agents.state?.agents && agents.state.agents.length > 0 && (
               <div className="environment-popover__section">
                 <div className="environment-popover__section-title">子 Agent · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
-                <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} />
+                <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
               </div>
             )}
             {agents.error && <p role="alert">{agents.error}</p>}

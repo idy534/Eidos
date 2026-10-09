@@ -27,6 +27,33 @@ describe("AgentWorkspacePanel", () => {
     expect(onOpen).toHaveBeenCalledWith(child);
   });
 
+  it.each([['default', '通用', '通用任务 (default)'], ['explorer', '探索', '代码调查 (explorer)'], ['worker', '执行', '实现与验证 (worker)']] as const)(
+    "shows the %s role in the agent list and mission without claiming read-only permissions",
+    async (role, label, description) => {
+      const child = {
+        id: 'agent-role', taskName: 'assigned-task', role,
+        parentRunId: 'parent-run', sessionId: 'child-session', runId: 'child-run',
+        status: 'running' as const, task: 'Investigate with inherited permissions', createdAt: 1,
+      };
+      const api: Partial<EidosRuntimeAPI> = {
+        readSession: vi.fn().mockResolvedValue({ items: [], runs: [] }),
+        onNotification: vi.fn().mockReturnValue(vi.fn()),
+      };
+      (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+      render(<>
+        <AgentList agents={[child]} onOpen={() => undefined} />
+        <AgentWorkspacePanel agents={[child]} agentId={child.id} error="" stopping={undefined}
+          onOpen={() => undefined} onStop={() => undefined} approvals={[]}
+          respondingApprovalIds={new Set()} respondingKindByApprovalId={{}} expiredApprovalIds={new Set()}
+          errorsByApprovalId={{}} onApprove={() => undefined} onReject={() => undefined} />
+      </>);
+      expect(screen.getByText(label)).toBeInTheDocument();
+      expect(screen.getByText(`${label} · 执行中`)).toBeInTheDocument();
+      expect(await screen.findByText(description)).toBeInTheDocument();
+      expect(screen.queryByText(/只读探索/)).not.toBeInTheDocument();
+    },
+  );
+
   it("loads agents and stops an active child through the runtime API", async () => {
     const state: CollaborationState = {
       parentRunId: "parent-run",
@@ -191,5 +218,46 @@ describe("AgentWorkspacePanel", () => {
 
     expect(screen.getByText("暂无子 Agent 任务")).toBeInTheDocument();
     expect(screen.getByText("0 个任务")).toBeInTheDocument();
+  });
+
+  it("renders compact mode with name, status, and task description in hover tooltip", () => {
+    const child = {
+      id: "agent-popover",
+      taskName: "analyze-repo",
+      role: "explorer" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-popover",
+      runId: "child-run-popover",
+      status: "running" as const,
+      task: "Analyze repository dependencies and report circular references",
+      result: null,
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 2000,
+    };
+    const onOpen = vi.fn();
+    render(
+      <AgentList
+        agents={[child]}
+        onOpen={onOpen}
+        compact
+      />,
+    );
+
+    // Visible elements: task name and status
+    expect(screen.getByText("analyze-repo")).toBeInTheDocument();
+    expect(screen.getByText("执行中")).toBeInTheDocument();
+
+    // Task description is not rendered in layout (preventing visual clutter)
+    expect(screen.queryByText("Analyze repository dependencies and report circular references")).not.toBeInTheDocument();
+
+    // Hover tooltip (title attribute) contains task description and role
+    const button = screen.getByRole("button", { name: /analyze-repo.*执行中/ });
+    expect(button).toHaveAttribute("title");
+    expect(button.getAttribute("title")).toContain("任务描述：Analyze repository dependencies and report circular references");
+    expect(button.getAttribute("title")).toContain("analyze-repo (探索 · 执行中)");
+
+    fireEvent.click(button);
+    expect(onOpen).toHaveBeenCalledWith(child);
   });
 });
