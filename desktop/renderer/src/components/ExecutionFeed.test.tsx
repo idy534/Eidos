@@ -461,6 +461,8 @@ test("hides shell_exit_nonzero error lines and shows exit code pill next to 失�
   assert.doesNotMatch(html, /shell-error-summary/);
   assert.match(html, /<span class="shell-exit-code-pill">退出码 1<\/span>/);
   assert.match(html, /<span>失败<\/span>/);
+  assert.match(html, /shell-copy-button/);
+  assert.match(html, /title="复制命令"/);
 });
 
 test("uses the accumulated stream content once and preserves its stdout/stderr order", () => {

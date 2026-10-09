@@ -4941,7 +4941,52 @@ span.tool-file-link:hover {
   color: #5f6560;
   background: #f5f5f4;
 }
+.shell-command-zone {
+  position: relative;
+}
+.shell-command-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 0.6rem;
+  min-height: 1.5rem;
+}
+.shell-command-header .shell-label { margin: 0; }
 .shell-label { margin: 0 0 0.6rem; font-size: var(--font-size-body); line-height: var(--line-height-body); }
+.shell-copy-button {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.shell-command-zone:hover .shell-copy-button,
+.shell-command-zone:focus-within .shell-copy-button,
+.shell-copy-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.shell-copy-button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.055);
+  color: var(--text);
+}
+.shell-copy-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.shell-copy-button.is-copied {
+  color: var(--accent);
+}
 .shell-command, .shell-output {
   margin: 0 0 0.65rem;
   overflow: auto;
@@ -4987,8 +5032,8 @@ span.tool-file-link:hover {
   font-weight: 550;
   border-radius: var(--radius-pill);
   color: var(--danger);
-  background: var(--danger-soft);
-  border: 1px solid rgba(145, 61, 52, 0.22);
+  background: transparent;
+  border: 1px solid rgba(145, 61, 52, 0.28);
   user-select: none;
   white-space: nowrap;
 }

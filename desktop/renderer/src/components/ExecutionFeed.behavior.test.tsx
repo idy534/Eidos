@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Item, Run } from "../contracts.js";
@@ -139,6 +139,35 @@ describe("ExecutionFeed shell output", () => {
     expect(pill).toBeInTheDocument();
     expect(pill?.textContent).toBe("退出码 1");
     expect(screen.getByText("失败")).toBeInTheDocument();
+  });
+
+  it("copies only the raw shell command when the copy button is clicked", async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: writeTextMock,
+      },
+    });
+
+    const item = shellItem({
+      status: "completed",
+      toolCall: {
+        ...shellItem().toolCall!,
+        argumentsJson: JSON.stringify({ command: 'grep -rn "TODO" .' }),
+      },
+    });
+
+    const { container } = renderFeed(item);
+    const copyButton = container.querySelector(".shell-copy-button") as HTMLButtonElement | null;
+    expect(copyButton).toBeInTheDocument();
+    expect(copyButton?.title).toBe("复制命令");
+
+    fireEvent.click(copyButton!);
+
+    expect(writeTextMock).toHaveBeenCalledWith('grep -rn "TODO" .');
+    await waitFor(() => {
+      expect(copyButton?.title).toBe("已复制命令");
+    });
   });
 
   it("starts a shell details group collapsed and preserves manual expansion", () => {
@@ -849,5 +878,130 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(toolRow).not.toBeNull();
     expect(toolRow?.getAttribute("title")).toBe("Resource quota exceeded");
     expect(container.querySelector(".tool-summary--error")).toBeNull();
+  });
+});
+
+describe("ExecutionFeed regenerate confirmation", () => {
+  const terminalRun: Run = {
+    id: "run-terminal",
+    sessionId: "session-terminal",
+    status: "succeeded",
+    modelId: "deepseek-v4-flash",
+    modelStepCount: 1,
+    createdAt: 1_000,
+    startedAt: 1_000,
+    updatedAt: 2_000,
+    completedAt: 2_000,
+  };
+
+  const userItem: Item = {
+    id: "user-msg",
+    sessionId: terminalRun.sessionId,
+    runId: terminalRun.id,
+    ordinal: 1,
+    kind: "user_message",
+    status: "completed",
+    createdAt: 1_000,
+    content: "请帮我写代码",
+  };
+
+  const assistantItem: Item = {
+    id: "assistant-msg",
+    sessionId: terminalRun.sessionId,
+    runId: terminalRun.id,
+    ordinal: 2,
+    kind: "assistant_message",
+    status: "completed",
+    createdAt: 1_500,
+    completedAt: 2_000,
+    content: "这是回答内容",
+  };
+
+  it("requires secondary confirmation before calling onRegenerate", async () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ExecutionFeed
+        items={[userItem, assistantItem]}
+        runs={[terminalRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onRegenerate={onRegenerate}
+      />,
+    );
+
+    const retryBtn = screen.getByRole("button", { name: "重新回答" });
+    expect(retryBtn).toBeInTheDocument();
+
+    // 1. Click retry button -> dialog appears, onRegenerate not yet called
+    fireEvent.click(retryBtn);
+    expect(onRegenerate).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText("重新回答？")).toBeInTheDocument();
+    expect(screen.getByText("重新回答将放弃当前的回答并重新生成。确定要继续吗？")).toBeInTheDocument();
+
+    // 2. Click cancel button -> dialog closes, onRegenerate still not called
+    const cancelBtn = screen.getByRole("button", { name: "取消" });
+    fireEvent.click(cancelBtn);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onRegenerate).not.toHaveBeenCalled();
+
+    // 3. Open dialog again, click confirm button -> dialog closes, onRegenerate called with run
+    fireEvent.click(retryBtn);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    const dialogConfirmBtn = within(screen.getByRole("alertdialog")).getByRole("button", { name: "重新回答" });
+    fireEvent.click(dialogConfirmBtn);
+    expect(onRegenerate).toHaveBeenCalledTimes(1);
+    expect(onRegenerate).toHaveBeenCalledWith(terminalRun);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("cancels confirmation on Escape key without triggering onRegenerate", () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ExecutionFeed
+        items={[userItem, assistantItem]}
+        runs={[terminalRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onRegenerate={onRegenerate}
+      />,
+    );
+
+    const retryBtn = screen.getByRole("button", { name: "重新回答" });
+    fireEvent.click(retryBtn);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onRegenerate).not.toHaveBeenCalled();
+  });
+
+  it("cancels confirmation on backdrop click without triggering onRegenerate", () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(
+      <ExecutionFeed
+        items={[userItem, assistantItem]}
+        runs={[terminalRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onRegenerate={onRegenerate}
+      />,
+    );
+
+    const retryBtn = screen.getByRole("button", { name: "重新回答" });
+    fireEvent.click(retryBtn);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    const backdrop = container.querySelector(".modal-backdrop");
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onRegenerate).not.toHaveBeenCalled();
   });
 });

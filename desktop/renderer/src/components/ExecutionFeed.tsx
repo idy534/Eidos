@@ -22,6 +22,7 @@ import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
 import { TurnResults } from "./TurnResults.js";
+import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 
 
 type FeedbackHandler = (
@@ -406,6 +407,7 @@ function RunSegment({
               && segment.response.every((responseItem) => responseItem.status !== "in_progress")}
             resultItems={resultItems}
             showTextChanges={true}
+            revisionSubmitting={revisionSubmitting}
             onFeedback={onFeedback}
             onRegenerate={onRegenerate}
           />
@@ -477,6 +479,55 @@ function CopyButton({ content }: { content: string }) {
       <svg
         width="15"
         height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {copied ? (
+          <polyline points="20 6 9 17 4 12" />
+        ) : (
+          <>
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </>
+        )}
+      </svg>
+    </button>
+  );
+}
+
+function ShellCopyButton({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!command) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(command);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy command:", err);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={`shell-copy-button${copied ? " is-copied" : ""}`}
+      onClick={handleCopy}
+      title={copied ? "已复制命令" : "复制命令"}
+      aria-label={copied ? "已复制命令" : "复制命令"}
+    >
+      <svg
+        width="14"
+        height="14"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -598,6 +649,7 @@ function AssistantMessage({
   showTurnResults,
   resultItems,
   showTextChanges,
+  revisionSubmitting = false,
   onFeedback,
   onRegenerate,
 }: {
@@ -614,14 +666,22 @@ function AssistantMessage({
   showTurnResults: boolean;
   resultItems: Item[];
   showTextChanges: boolean;
+  revisionSubmitting?: boolean | undefined;
   onFeedback: FeedbackHandler;
   onRegenerate: RegenerateHandler;
 }) {
+  const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const isStreaming = item.status === "in_progress";
 
   const canFeedback = allowFeedback && item.status === "completed" && Boolean(item.content);
+
+  useEffect(() => {
+    if (!canRegenerate) {
+      setConfirmRegenerateOpen(false);
+    }
+  }, [canRegenerate]);
 
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
@@ -653,9 +713,29 @@ function AssistantMessage({
               </>
             )}
             {canRegenerate && (
-              <ActionButton label="重新回答" onClick={() => void onRegenerate(run)}>
-                <RegenerateIcon />
-              </ActionButton>
+              <>
+                <ActionButton
+                  label="重新回答"
+                  disabled={revisionSubmitting}
+                  onClick={() => setConfirmRegenerateOpen(true)}
+                >
+                  <RegenerateIcon />
+                </ActionButton>
+                <ConfirmDialog
+                  open={confirmRegenerateOpen}
+                  title="重新回答？"
+                  description="重新回答将放弃当前的回答并重新生成。确定要继续吗？"
+                  confirmLabel="重新回答"
+                  cancelLabel="取消"
+                  isDestructive={false}
+                  busy={revisionSubmitting}
+                  onConfirm={() => {
+                    setConfirmRegenerateOpen(false);
+                    void onRegenerate(run);
+                  }}
+                  onCancel={() => setConfirmRegenerateOpen(false)}
+                />
+              </>
             )}
             <MoreActionsDropdown
               session={run.sessionId}
@@ -979,8 +1059,13 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         <span>{shellSummary(running ? "in_progress" : item.status, command)}</span>
       </summary>
       <div className="shell-result">
-        <p className="shell-label">Shell</p>
-        <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
+        <div className="shell-command-zone">
+          <div className="shell-command-header">
+            <p className="shell-label">Shell</p>
+            {command && <ShellCopyButton command={command} />}
+          </div>
+          <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
+        </div>
         {outputSegments.map((segment, index) => (
           <pre
             className={`shell-output${segment.source === "stderr" ? " shell-output--error" : ""}`}
