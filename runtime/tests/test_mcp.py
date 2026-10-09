@@ -25,6 +25,7 @@ from eidos_runtime.extensions.mcp import (  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.async_kernel import AsyncTaskState  # noqa: E402
+from eidos_runtime.runtime.async_kernel import AsyncKernelClosedError  # noqa: E402
 from eidos_runtime.runtime.resource_registry import (  # noqa: E402
     ResourceRegistry,
     RuntimeResourceKind,
@@ -476,6 +477,50 @@ class McpManagerTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "success")
         self.assertEqual(result["data"]["structuredContent"], {"answer": 42})
+
+    def test_output_schema_failure_does_not_erase_known_request_result(self) -> None:
+        from eidos_runtime.tools.json_schema import JsonSchemaValidationError
+
+        entries = self.manager.start()
+        tool = next(value for value in entries if value.spec.name.endswith("__structured"))
+        with patch.object(tool.adapter.output_validator, "validate", side_effect=JsonSchemaValidationError("invalid output")):
+            result = tool.adapter.execute({}, threading.Event())
+        self.assertEqual(result["code"], "TOOL_RESULT_CONTRACT_VIOLATION")
+        self.assertFalse(result["reconciliationRequired"])
+
+    def test_output_schema_does_not_replace_a_known_tool_rejection(self) -> None:
+        entries = self.manager.start()
+        tool = next(value for value in entries if value.spec.name.endswith("__structured"))
+        with patch.object(tool.adapter.connection, "call", return_value={
+            "outcome": "error", "code": "tool_unavailable", "data": {},
+            "sideEffectsMayExist": False, "reconciliationRequired": False,
+        }), patch.object(tool.adapter.output_validator, "validate") as validator:
+            result = tool.adapter.execute({}, threading.Event())
+        self.assertEqual(result["code"], "tool_unavailable")
+        self.assertFalse(result["reconciliationRequired"])
+        validator.assert_not_called()
+
+    def test_kernel_rejection_before_submission_is_a_known_unavailable_tool(self) -> None:
+        self.manager.start()
+        connection = self.manager.connections[0]
+        with patch.object(connection.async_kernel, "call", side_effect=AsyncKernelClosedError("closed before submission")):
+            result = connection.call("echo", {}, threading.Event())
+        self.assertEqual(result["code"], "tool_unavailable")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+
+    def test_connection_rejection_before_sdk_call_does_not_submit_a_request(self) -> None:
+        self.manager.start()
+        connection = self.manager.connections[0]
+        original = connection.async_kernel.call
+
+        def reject_before_call(function, command):
+            connection.error_code = "mcp_connection_lost"
+            return original(function, command)
+
+        with patch.object(connection.async_kernel, "call", side_effect=reject_before_call):
+            result = connection.call("echo", {}, threading.Event())
+        self.assertFalse(result["reconciliationRequired"])
 
     def test_rejects_unsupported_content_and_cancel_never_sends(self) -> None:
         entries = self.manager.start()

@@ -139,6 +139,8 @@ Runtime 不再发送 `_eidos_assess_completion` 模型审查。完成审查的�
 
 ToolExecutionController 区分 Durable Intent 授权和实际执行开始。文件与外部操作在执行回调开始时记录执行事实；Shell 在 Popen 成功后记录启动，stdin 在实际写入后记录输入事实。准备异常、进程未启动和未送出的输入返回普通工具错误。Controller 保留可信 Handler 的已知结果，结果格式校验、输出屏蔽和投影失败不再仅凭工具类型或授权记录建立 reconciliation。取消继续控制 Run 生命周期，已取得的结果确定性不被迟到取消或后置扫描超时覆盖。
 
+MCP 另外记录 SDK tool call 是否已经进入调用。进入调用前的连接或内核拒绝返回普通不可用结果；调用之后失去结果继续标记为未知。输出 Schema 校验只处理成功响应，不覆盖服务器拒绝或传输错误。成功响应的 Schema 校验失败保留已知请求结果，不能单独建立副作用屏障。
+
 已知 Workspace 文件操作的恢复使用 WorkspaceReader 对实际目标执行有界读取、缺失确认和版本复核，随后在 SQLite 中核对 reconciliation epoch 和目标集合。Runtime 不要求无关目录的 manifest 完整。Shell、MCP、外部操作与未知范围不能通过文件观察清除；健康的受管 Shell 不作为未知操作来源。恢复只确认当前文件状态，不重放原操作，也不把原失败结果改为成功。
 
 RunFinalizer 为 context pressure、loop guard 等需要提前停止的路径生成有界、无 Tool 的回答。它不改变普通 Agent Loop 的 `needs_follow_up` 判定。Finalization Attempt 仍然记录自己的 timeout、model failure 和 output item 状态。

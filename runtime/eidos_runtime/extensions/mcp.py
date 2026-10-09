@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
@@ -75,6 +75,7 @@ class _Command:
     arguments: dict[str, object]
     timeout_seconds: int
     cancel: threading.Event
+    submitted: threading.Event = field(default_factory=threading.Event)
 
 
 class McpConnection:
@@ -171,9 +172,9 @@ class McpConnection:
             try:
                 result = self.async_kernel.call(self._call, command)
             except (AsyncKernelClosedError, RuntimeError):
-                return _uncertain(self.error_code or "mcp_connection_lost")
+                return _uncertain(self.error_code or "mcp_connection_lost") if command.submitted.is_set() else _unavailable()
             if self.error_code == "mcp_stdout_pollution":
-                return _uncertain("mcp_stdout_pollution")
+                return _uncertain("mcp_stdout_pollution") if command.submitted.is_set() else _unavailable()
             if result.get("code") in {"mcp_tool_canceled", "mcp_tool_timeout"}:
                 try:
                     self.close()
@@ -404,16 +405,16 @@ class McpConnection:
         session = self._session
         lock = self._session_lock
         if session is None or lock is None or self.closed.is_set():
-            return _uncertain(self.error_code or "mcp_connection_lost")
+            return _unavailable()
         async with lock:
             if self.error_code is not None:
-                return _uncertain(self.error_code)
+                return _unavailable()
             try:
                 return await _call_tool(session, command)
             except TimeoutError:
-                return _uncertain("mcp_tool_timeout")
+                return _uncertain("mcp_tool_timeout") if command.submitted.is_set() else _unavailable()
             except BaseException:
-                return _uncertain(self.error_code or "mcp_connection_lost")
+                return _uncertain(self.error_code or "mcp_connection_lost") if command.submitted.is_set() else _unavailable()
 
     async def _refresh_tools(self) -> tuple[mcp_types.Tool, ...]:
         session = self._session
@@ -517,7 +518,7 @@ class McpToolAdapter:
     ) -> dict[str, object]:
         result = dict(self.connection.call(self.remote_name, arguments, cancel))
         result["toolName"] = self.local_name
-        if self.output_validator is None:
+        if self.output_validator is None or result.get("outcome") != "success":
             return result
         data = result.get("data")
         structured = (
@@ -535,7 +536,7 @@ class McpToolAdapter:
                 "summary": "MCP structured content violated its output schema",
                 "data": {},
                 "sideEffectsMayExist": True,
-                "reconciliationRequired": True,
+                "reconciliationRequired": result.get("reconciliationRequired") is True,
             }
         return result
 
@@ -722,6 +723,8 @@ async def _call_tool(
     canceled = False
 
     async def invoke() -> None:
+        # No SDK tool call can have started while this marker is unset.
+        command.submitted.set()
         result_holder["result"] = await session.call_tool(
             command.name,
             command.arguments,
