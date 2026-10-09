@@ -419,9 +419,48 @@ test("shows shell termination and bounded-output diagnostics", () => {
     />,
   );
 
-  assert.doesNotMatch(html, /退出码/);
+  assert.match(html, /shell-exit-code-pill/);
+  assert.match(html, /退出码 2/);
+  assert.doesNotMatch(html, /退出码 ·/);
+  assert.doesNotMatch(html, /失败 · nonzero_exit/);
+  assert.doesNotMatch(html, /Command failed/);
   assert.doesNotMatch(html, /结束方式/);
   assert.match(html, /输出已截断 · output_limit/);
+});
+
+test("hides shell_exit_nonzero error lines and shows exit code pill next to 失败", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[item({
+        id: "nonzero-shell", ordinal: 1, kind: "command_execution", status: "failed",
+        toolCall: {
+          id: "tool-nonzero-shell", itemId: "nonzero-shell", modelStepIndex: 1, batchOrder: 0,
+          providerCallId: "provider-nonzero-shell", toolName: "run_shell",
+          status: "completed", startedAt: 1_000, completedAt: 2_000,
+          argumentsJson: JSON.stringify({ command: "grep -rn something ." }),
+          resultJson: JSON.stringify({
+            outcome: "error",
+            code: "shell_exit_nonzero",
+            summary: "Command did not succeed (termination=exit)",
+            data: { exitCode: 1, stdout: "", stderr: "zsh:1: no matches found" },
+          }),
+        },
+      })]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.doesNotMatch(html, /shell_exit_nonzero/);
+  assert.doesNotMatch(html, /Command did not succeed/);
+  assert.doesNotMatch(html, /shell-error-code/);
+  assert.doesNotMatch(html, /shell-error-summary/);
+  assert.match(html, /<span class="shell-exit-code-pill">退出码 1<\/span>/);
+  assert.match(html, /<span>失败<\/span>/);
 });
 
 test("uses the accumulated stream content once and preserves its stdout/stderr order", () => {

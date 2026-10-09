@@ -100,6 +100,47 @@ describe("ExecutionFeed shell output", () => {
     expect(screen.getByText("✓ 成功")).toBeInTheDocument();
   });
 
+  it("renders capsule exit code badge next to 失败 and hides shell_exit_nonzero on command failure", () => {
+    const failedItem = shellItem({
+      status: "failed",
+      completedAt: 2_000,
+      content: "zsh:1: no matches found: --include=*.py\n",
+      toolCall: {
+        ...shellItem().toolCall!,
+        status: "completed",
+        completedAt: 2_000,
+        resultJson: JSON.stringify({
+          outcome: "error",
+          code: "shell_exit_nonzero",
+          summary: "Command did not succeed (termination=exit)",
+          data: {
+            stdout: "",
+            stderr: "zsh:1: no matches found: --include=*.py\n",
+            exitCode: 1,
+          },
+        }),
+      },
+    });
+    const { container } = render(
+      <ExecutionFeed
+        items={[failedItem]}
+        runs={[{ ...baseRun, status: "failed", completedAt: 2_000, updatedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText(/shell_exit_nonzero/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Command did not succeed/)).not.toBeInTheDocument();
+    const pill = container.querySelector(".shell-exit-code-pill");
+    expect(pill).toBeInTheDocument();
+    expect(pill?.textContent).toBe("退出码 1");
+    expect(screen.getByText("失败")).toBeInTheDocument();
+  });
+
   it("starts a shell details group collapsed and preserves manual expansion", () => {
     const { container, rerender } = renderFeed(shellItem());
     const detailsBefore = container.querySelector("details.tool-item--shell");

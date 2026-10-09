@@ -42,7 +42,7 @@ function RuntimeGate({
       <div className="runtime-gate-card">
         <EidosMark className="runtime-logo" variant="hero" />
         <p className="eyebrow">Eidos · Local Agent Runtime</p>
-        <h1>{status.state === "error" ? "启动失败" : "正在启动 Engine"}</h1>
+        <h1>{status.state === "error" ? "启动失败" : "正在启动"}</h1>
         <p className="runtime-gate-desc">{pres.description ?? "正在建立沙箱，与Runtime协议握手…"}</p>
         {status.state !== "error" && (
           <div className="runtime-progress-bar">

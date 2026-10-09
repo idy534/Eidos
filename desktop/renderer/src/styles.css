@@ -117,12 +117,12 @@ button {
 
 button:hover:not(:disabled) {
   color: var(--text);
-  background: var(--surface-selected);
+  background: var(--surface-hover);
   box-shadow: var(--apple-shadow-sm);
 }
 
 button:active:not(:disabled) {
-  background: var(--surface-selected);
+  background: var(--surface-muted);
   box-shadow: none;
 }
 
@@ -680,7 +680,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.session-list > .session-item > button:hover:not(:disabled) {
+.session-list > .session-item > button:not(.selected):hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.65);
 }
 
@@ -690,6 +690,13 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   color: var(--text);
   font-weight: 550;
+}
+
+.session-list > .session-item > button.selected:hover,
+.session-list > .session-item > button.selected:active {
+  background: var(--surface-selected);
+  border-color: rgba(49, 95, 74, 0.22);
+  color: var(--text);
 }
 
 .session-title {
@@ -4954,11 +4961,37 @@ span.tool-file-link:hover {
 .shell-diagnostic--facts > span { white-space: nowrap; }
 .shell-diagnostic--warning { color: var(--status-warning); }
 .shell-empty { margin: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }
-.shell-status { position: absolute; right: 0.75rem; bottom: 0.5rem; margin: 0; font-size: var(--font-size-body); line-height: var(--line-height-body); }
+.shell-status {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.5rem;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+}
 .shell-status--success { color: #737873; }
 .shell-status--error { color: var(--danger); }
 .shell-status--neutral { color: var(--status-neutral); }
 .shell-status--warning { color: var(--status-warning); }
+
+.shell-exit-code-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.1rem 0.45rem;
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1.25;
+  font-weight: 550;
+  border-radius: var(--radius-pill);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid rgba(145, 61, 52, 0.22);
+  user-select: none;
+  white-space: nowrap;
+}
 
 .approval-card {
   max-width: 48rem;
@@ -7062,7 +7095,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
   color: var(--text);
 }
 
-.input-picker__category-pill.is-active {
+.input-picker__category-pill.is-active,
+.input-picker__category-pill.is-active:hover {
   background: var(--surface-raised, #ffffff);
   color: var(--text);
   font-weight: 600;

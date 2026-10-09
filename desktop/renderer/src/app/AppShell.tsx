@@ -1162,9 +1162,9 @@ export function AppShell({ runtime }: AppShellProps) {
                 </span>
               </button>
             )}
-            <div className="environment-popover__row">
-              <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
-              {sessionHasGit && (
+            {sessionHasGit && (
+              <div className="environment-popover__row">
+                <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
                 <Button
                   variant="ghost"
                   size="small"
@@ -1174,8 +1174,8 @@ export function AppShell({ runtime }: AppShellProps) {
                 >
                   更改工作环境
                 </Button>
-              )}
-            </div>
+              </div>
+            )}
             {sessionHasGit && (
               <div className="environment-popover__row environment-popover__branch">
                 <span>{sessionBranch ?? `分离状态 @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>

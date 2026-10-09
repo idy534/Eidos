@@ -123,7 +123,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     const gate = container.querySelector(".runtime-gate");
     expect(gate).toBeInTheDocument();
     expect(gate).toHaveAttribute("role", "status");
-    expect(gate).toHaveTextContent("正在启动 Engine");
+    expect(gate).toHaveTextContent("正在启动");
   });
 
   it("error state renders alert role in RuntimeGate", async () => {
@@ -233,6 +233,7 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(container.querySelector(".workspace-main .agent-workspace")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
     const environment = await screen.findByRole("region", { name: "环境信息预览" });
+    expect(within(environment).queryByText("本地")).not.toBeInTheDocument();
     fireEvent.click(await within(environment).findByRole("button", { name: /inspect-runtime/ }));
 
     expect(await screen.findByRole("complementary", { name: "工作区工具" })).toBeInTheDocument();
@@ -446,6 +447,48 @@ describe("App & Runtime Lifecycle behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭提交和推送" }));
     expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
     unmount();
+  });
+
+  it("does not show local environment row for non-git projects in environment information", async () => {
+    const nonGitProject: Project = {
+      id: "project-non-git",
+      name: "non-git-test",
+      workspaceRoot: "/workspace/non-git-test",
+      gitAvailable: false,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const session: Session = {
+      ...startupSession,
+      id: "non-git-session",
+      title: "Non-git session",
+      taskStatus: "in_progress",
+      workspaceRoot: nonGitProject.workspaceRoot,
+      executionMode: "local",
+      project: nonGitProject,
+    };
+    const snapshot: SessionSnapshot = {
+      session,
+      runs: [],
+      items: [],
+      stepResolutions: [],
+      throughEventId: 0,
+    };
+    setupMockRuntime({
+      listProjects: vi.fn().mockResolvedValue({ items: [nonGitProject] }),
+      listSessions: vi.fn().mockResolvedValue({ items: [session] }),
+      readSession: vi.fn().mockResolvedValue(snapshot),
+      listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(session.title!) }));
+
+    expect(await screen.findByRole("button", { name: "环境信息" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "环境信息" }));
+    const environment = await screen.findByRole("region", { name: "环境信息预览" });
+    expect(within(environment).queryByText("本地")).not.toBeInTheDocument();
+    expect(within(environment).queryByRole("button", { name: "更改工作环境" })).not.toBeInTheDocument();
   });
 
   it("health-only state remains in ready application and presents read-only warning", async () => {

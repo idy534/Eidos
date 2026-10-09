@@ -948,6 +948,28 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
             : statusLabel(item.status);
   const [open, setOpen] = useState(false);
 
+  const isExitNonzero = code === "shell_exit_nonzero" || code === "nonzero_exit";
+  const showErrorCode = !running
+    && !gateRejected
+    && !pendingVerification
+    && !success
+    && Boolean(code)
+    && !isExitNonzero;
+  const showErrorSummary = !running
+    && !success
+    && !pendingVerification
+    && Boolean(summary)
+    && !isExitNonzero
+    && !summary?.startsWith("Command did not succeed");
+  const showExitCode = !running
+    && !gateRejected
+    && !pendingVerification
+    && failed
+    && statusText === "失败"
+    && exitCode !== undefined
+    && exitCode !== null
+    && exitCode !== 0;
+
   return (
     <details className="tool-item tool-item--shell" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
@@ -968,8 +990,8 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           </pre>
         ))}
         {gateRejected && <p className="shell-error-code">未执行：与尚未确认的操作冲突</p>}
-        {!running && !gateRejected && !pendingVerification && !success && code && <p className="shell-error-code">失败 · {code}</p>}
-        {!running && !success && !pendingVerification && summary && <p className="shell-error-summary">{summary}</p>}
+        {showErrorCode && <p className="shell-error-code">失败 · {code}</p>}
+        {showErrorSummary && <p className="shell-error-summary">{summary}</p>}
         {truncated && (
           <p className="shell-diagnostic">
             输出已截断{truncationReason ? ` · ${truncationReason}` : ""}
@@ -979,8 +1001,15 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           <p className="shell-diagnostic shell-diagnostic--warning">执行结果尚未确认</p>
         )}
         {!hasOutput && running && <p className="shell-empty">尚未输出</p>}
-        {!hasOutput && !running && !pendingVerification && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
-        <p className={`shell-status shell-status--${statusTone}`}>{statusText}</p>
+        {!hasOutput && !running && !pendingVerification && (success || (!showErrorCode && !showErrorSummary)) && <p className="shell-empty">无输出</p>}
+        <p className={`shell-status shell-status--${statusTone}`}>
+          {showExitCode && (
+            <span className="shell-exit-code-pill">
+              退出码 {exitCode}
+            </span>
+          )}
+          <span>{statusText}</span>
+        </p>
       </div>
     </details>
   );
