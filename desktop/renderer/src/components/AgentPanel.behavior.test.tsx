@@ -27,9 +27,9 @@ describe("AgentWorkspacePanel", () => {
     expect(onOpen).toHaveBeenCalledWith(child);
   });
 
-  it.each([['default', '通用', '通用任务 (default)'], ['explorer', '探索', '代码调查 (explorer)'], ['worker', '执行', '实现与验证 (worker)']] as const)(
-    "shows the %s role in the agent list and mission without claiming read-only permissions",
-    async (role, label, description) => {
+  it.each([['default', 'default'], ['explorer', 'explorer'], ['worker', 'worker']] as const)(
+    "shows the %s role in the agent list without claiming read-only permissions",
+    async (role, label) => {
       const child = {
         id: 'agent-role', taskName: 'assigned-task', role,
         parentRunId: 'parent-run', sessionId: 'child-session', runId: 'child-run',
@@ -47,9 +47,8 @@ describe("AgentWorkspacePanel", () => {
           respondingApprovalIds={new Set()} respondingKindByApprovalId={{}} expiredApprovalIds={new Set()}
           errorsByApprovalId={{}} onApprove={() => undefined} onReject={() => undefined} />
       </>);
-      expect(screen.getByText(label)).toBeInTheDocument();
-      expect(screen.getByText(`${label} · 执行中`)).toBeInTheDocument();
-      expect(await screen.findByText(description)).toBeInTheDocument();
+      expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('执行中').length).toBeGreaterThanOrEqual(1);
       expect(screen.queryByText(/只读探索/)).not.toBeInTheDocument();
     },
   );
@@ -96,7 +95,8 @@ describe("AgentWorkspacePanel", () => {
     render(<Fixture />);
 
     expect((await screen.findAllByText("inspect-files")).length).toBe(2);
-    expect(screen.getByText("探索 · 执行中")).toBeInTheDocument();
+    expect(screen.getAllByText("explorer").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("执行中").length).toBeGreaterThanOrEqual(1);
     screen.getByRole("button", { name: "停止" }).click();
 
     await waitFor(() => expect(api.stopAgent).toHaveBeenCalledWith("parent-run", "agent-1"));
@@ -255,7 +255,7 @@ describe("AgentWorkspacePanel", () => {
     const button = screen.getByRole("button", { name: /analyze-repo.*执行中/ });
     expect(button).toHaveAttribute("title");
     expect(button.getAttribute("title")).toContain("任务描述：Analyze repository dependencies and report circular references");
-    expect(button.getAttribute("title")).toContain("analyze-repo (探索 · 执行中)");
+    expect(button.getAttribute("title")).toContain("analyze-repo (explorer · 执行中)");
 
     fireEvent.click(button);
     expect(onOpen).toHaveBeenCalledWith(child);

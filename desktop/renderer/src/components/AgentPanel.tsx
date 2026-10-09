@@ -30,15 +30,15 @@ const labels: Record<AgentSummary["status"], string> = {
 };
 
 const roleLabels: Record<AgentSummary["role"], string> = {
-  default: "通用",
-  explorer: "探索",
-  worker: "执行",
+  default: "default",
+  explorer: "explorer",
+  worker: "worker",
 };
 
 const roleDescriptions: Record<AgentSummary["role"], string> = {
-  default: "通用任务 (default)",
-  explorer: "代码调查 (explorer)",
-  worker: "实现与验证 (worker)",
+  default: "default",
+  explorer: "explorer",
+  worker: "worker",
 };
 
 export function useAgentState(sessionId: string | undefined, ready: boolean) {
@@ -240,26 +240,22 @@ export function AgentList({
             )}
 
             <div className="agent-card__footer">
-              <div className="agent-card__footer-left">
-                <span className="agent-card__timestamp">
-                  {formatItemTime(agent.createdAt)}
+              <span className="agent-card__timestamp">
+                {formatItemTime(agent.createdAt)}
+              </span>
+              {agent.result && (
+                <span className="agent-card__pill agent-card__pill--success">
+                  <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="2.5 6 4.5 8 9.5 3" />
+                  </svg>
+                  成果已交付
                 </span>
-              </div>
-              <div className="agent-card__footer-right">
-                {agent.result && (
-                  <span className="agent-card__pill agent-card__pill--success">
-                    <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <polyline points="2.5 6 4.5 8 9.5 3" />
-                    </svg>
-                    成果已交付
-                  </span>
-                )}
-                {agent.errorCode && (
-                  <span className="agent-card__pill agent-card__pill--danger" title={agent.errorCode}>
-                    {formatErrorCode(agent.errorCode)}
-                  </span>
-                )}
-              </div>
+              )}
+              {agent.errorCode && (
+                <span className="agent-card__pill agent-card__pill--danger" title={agent.errorCode}>
+                  {formatErrorCode(agent.errorCode)}
+                </span>
+              )}
             </div>
           </button>
         );
@@ -608,7 +604,7 @@ export function AgentWorkspacePanel({
 
               <div className="agent-heading__actions">
                 <span className={`agent-status-pill agent-status-pill--${statusBadgeTone(agent.status)}`}>
-                  {roleLabels[agent.role]} · {labels[agent.status]}
+                  {labels[agent.status]}
                 </span>
 
                 {active.has(agent.status) && (

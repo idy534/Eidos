@@ -402,43 +402,21 @@
   font-size: var(--font-size-caption);
   color: var(--text-secondary);
   line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .agent-card__footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   margin-top: 2px;
   padding-top: 6px;
   border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
   min-width: 0;
-}
-
-.agent-card__footer-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-shrink: 0;
-}
-
-.agent-card__footer-right {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  flex-shrink: 0;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .agent-card__timestamp {
