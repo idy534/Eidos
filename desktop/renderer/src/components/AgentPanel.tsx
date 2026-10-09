@@ -98,6 +98,47 @@ export function useAgentState(sessionId: string | undefined, ready: boolean) {
   return { state, error, stopping, stop };
 }
 
+const errorCodeLabels: Record<string, string> = {
+  RUNTIME_INTERRUPTED: "运行时中断",
+  completion_unconfirmed: "未确认完成",
+  agent_failed: "执行失败",
+  agent_task_limit: "任务超限",
+  agent_task_name_exists: "任务名冲突",
+  agent_operation_conflict: "操作冲突",
+  nested_delegation_not_supported: "不支持嵌套委派",
+  timeout: "超时",
+  canceled: "已取消",
+  interrupted: "已中断",
+  stopped: "已停止",
+};
+
+export function formatErrorCode(code: string | null | undefined): string {
+  if (!code) return "";
+  return errorCodeLabels[code] ?? code.replace(/_/g, " ");
+}
+
+export function statusBadgeTone(status: AgentSummary["status"]): "success" | "warning" | "danger" | "neutral" | "active" {
+  switch (status) {
+    case "running":
+    case "finalizing":
+    case "queued":
+      return "active";
+    case "waiting_approval":
+    case "waiting_input":
+    case "waiting_agents":
+      return "warning";
+    case "succeeded":
+      return "success";
+    case "failed":
+    case "interrupted":
+      return "danger";
+    case "stopped":
+    case "canceled":
+    default:
+      return "neutral";
+  }
+}
+
 export function formatAgentTooltip(agent: AgentSummary): string {
   const roleName = roleLabels[agent.role] ?? agent.role;
   const parts: string[] = [
@@ -110,7 +151,7 @@ export function formatAgentTooltip(agent: AgentSummary): string {
     parts.push(`交付成果：${agent.result.trim()}`);
   }
   if (agent.errorCode?.trim()) {
-    parts.push(`错误代码：${agent.errorCode.trim()}`);
+    parts.push(`错误代码：${formatErrorCode(agent.errorCode)}`);
   }
   return parts.join("\n");
 }
@@ -168,7 +209,7 @@ export function AgentList({
           <button
             key={agent.id}
             type="button"
-            className={`environment-popover__row agent-list__row agent-card${isSelected ? " agent-card--selected" : ""}${isRunning ? " agent-card--running" : ""}`}
+            className={`agent-list__row agent-card${isSelected ? " agent-card--selected" : ""}${isRunning ? " agent-card--running" : ""}`}
             onClick={() => onOpen(agent)}
             title={tooltip}
           >
@@ -181,7 +222,7 @@ export function AgentList({
                 </span>
               </div>
               <div className="agent-card__status-wrap">
-                <span className="agent-card__status-label">
+                <span className={`agent-status-pill agent-status-pill--${statusBadgeTone(agent.status)}`}>
                   {labels[agent.status]}{pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}
                 </span>
                 {pendingApprovals > 0 && (
@@ -193,19 +234,32 @@ export function AgentList({
             </div>
 
             {agent.task && (
-              <p className="agent-card__snippet">{agent.task}</p>
+              <div className="agent-card__body">
+                <p className="agent-card__snippet">{agent.task}</p>
+              </div>
             )}
 
             <div className="agent-card__footer">
-              <span className="agent-card__timestamp">
-                {formatItemTime(agent.createdAt)}
-              </span>
-              {agent.result && (
-                <span className="agent-card__result-tag">已交付成果</span>
-              )}
-              {agent.errorCode && (
-                <span className="agent-card__error-tag">{agent.errorCode}</span>
-              )}
+              <div className="agent-card__footer-left">
+                <span className="agent-card__timestamp">
+                  {formatItemTime(agent.createdAt)}
+                </span>
+              </div>
+              <div className="agent-card__footer-right">
+                {agent.result && (
+                  <span className="agent-card__pill agent-card__pill--success">
+                    <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <polyline points="2.5 6 4.5 8 9.5 3" />
+                    </svg>
+                    成果已交付
+                  </span>
+                )}
+                {agent.errorCode && (
+                  <span className="agent-card__pill agent-card__pill--danger" title={agent.errorCode}>
+                    {formatErrorCode(agent.errorCode)}
+                  </span>
+                )}
+              </div>
             </div>
           </button>
         );
@@ -455,6 +509,7 @@ export function AgentWorkspacePanel({
 
   const runningCount = useMemo(() => agents.filter((a) => active.has(a.status)).length, [agents]);
   const pendingApprovalCount = useMemo(() => agents.filter((a) => (approvalCounts[a.sessionId] ?? 0) > 0).length, [agents, approvalCounts]);
+  const completedCount = useMemo(() => agents.filter((a) => a.status === "succeeded").length, [agents]);
 
   return (
     <section className="agent-workspace" aria-label="子 Agent 工作区">
@@ -500,7 +555,7 @@ export function AgentWorkspacePanel({
                   className={`agent-filter-pill${filter === "completed" ? " agent-filter-pill--active" : ""}`}
                   onClick={() => setFilter("completed")}
                 >
-                  已完成
+                  已完成{completedCount > 0 ? ` (${completedCount})` : ""}
                 </button>
               </div>
             )}
