@@ -66,6 +66,8 @@
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
 - Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，异常才建立未知副作用屏障。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
+- MCP 的有效响应表示调用已经返回，不证明外部业务目标已经达成。Runtime 在收到响应后做有界内容和固定输出 Schema 校验；校验失败仍报告工具错误，并保留可能已经发生的副作用。SDK 调用已进入但没有有效响应时，Runtime 仍按未知结果处理。当前提交标记是 SDK 调用边界，不是远端业务执行的确认。
+- 本轮执行确定性整改尚未完成最终回归。最新 MCP 响应校验顺序、调用前取消、收到结果后的取消与超时、协议异常竞态仍待验证。用户要求当前阶段只完成生产代码和文档，测试阶段等待用户确认。
 - Shell post-execution observation 在超时或不完整 Workspace manifest 时可能是 `unknown`。这类 observation 不能替代 Runtime 明确报告的执行 uncertainty，也不会单独限制已明确退出的 Shell。对于仍由 Runtime 管理、结果带有有效 `sessionId` 且明确报告 `reconciliationRequired=false` 的 `executionStatus=running` Shell，Workspace observation 不完整不会单独建立 reconciliation。Runtime 仍会保留 `workspaceChangeState=unknown`、`workspaceDiffIncomplete=true` 和 `sideEffectsMayExist=true`。完整的 Workspace 状态与安全事实仍需要后置核验。
 - `gitWriteAccess=request` 授权的是一条获批 Shell 命令对当前 repository Git metadata 的写入。Runtime 不解析或重写 Shell 命令。原生 Git 仍可能读取用户 Git 配置，并可能执行 repository hooks、credential helper 或命令中显式启动的程序。需要禁用这些机制的产品 Git 操作继续使用独立的 `HardenedGitRunner` typed API。首次 `gh` 登录和凭据配置不由 `run_shell` 自动完成。
 

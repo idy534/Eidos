@@ -99,8 +99,8 @@ export function useAgentState(sessionId: string | undefined, ready: boolean) {
 }
 
 const errorCodeLabels: Record<string, string> = {
-  RUNTIME_INTERRUPTED: "运行时中断",
-  completion_unconfirmed: "未确认完成",
+  RUNTIME_INTERRUPTED: "执行已中断",
+  completion_unconfirmed: "答复已生成，旧版完成检查未确认",
   agent_failed: "执行失败",
   agent_task_limit: "任务超限",
   agent_task_name_exists: "任务名冲突",
