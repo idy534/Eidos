@@ -260,4 +260,77 @@ describe("AgentWorkspacePanel", () => {
     fireEvent.click(button);
     expect(onOpen).toHaveBeenCalledWith(child);
   });
+
+  it("does not render redundant mission/result boxes or refresh button, and suppresses feedback and retry buttons in feed", async () => {
+    const child = {
+      id: "agent-clean-detail",
+      taskName: "write-docs",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-clean",
+      runId: "child-run-clean",
+      status: "succeeded" as const,
+      task: "Write API documentation for auth module",
+      result: "Successfully generated auth.md",
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 1000,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "child-msg-1",
+            sessionId: child.sessionId,
+            runId: child.runId,
+            kind: "assistant_message",
+            ordinal: 1,
+            status: "completed",
+            content: "I have updated the auth documentation.",
+            createdAt: 1005,
+          },
+        ],
+        runs: [
+          {
+            id: child.runId,
+            sessionId: child.sessionId,
+            status: "succeeded",
+            allowedActions: [],
+            modelId: "test-model",
+            modelStepCount: 1,
+            createdAt: 1000,
+            updatedAt: 1010,
+          },
+        ],
+      }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    render(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByText("I have updated the auth documentation.")).toBeInTheDocument();
+
+    // 1. Redundant boxes and manual refresh button are removed
+    expect(screen.queryByText("委托任务")).not.toBeInTheDocument();
+    expect(screen.queryByText("交付成果摘要")).not.toBeInTheDocument();
+    expect(screen.queryByText("刷新记录")).not.toBeInTheDocument();
+
+    // 2. Feedback and retry buttons are removed from subagent feed
+    expect(screen.queryByRole("button", { name: "点赞" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "差评" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新回答" })).not.toBeInTheDocument();
+  });
 });

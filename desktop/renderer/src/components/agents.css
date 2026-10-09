@@ -588,6 +588,7 @@
   align-items: center;
   gap: 7px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .agent-heading strong {
@@ -597,11 +598,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
-.agent-heading span {
-  font-size: var(--font-size-caption);
-  color: var(--muted);
+.agent-heading__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 

@@ -408,16 +408,8 @@ function AgentTranscript({
         </div>
       )}
 
-      <div className="agent-transcript__toolbar">
-        <button
-          type="button"
-          className="agent-transcript__action-btn"
-          disabled={loading}
-          onClick={() => void load()}
-        >
-          {loading ? "刷新中…" : "刷新记录"}
-        </button>
-        {snapshot?.previousItemId && (
+      {snapshot?.previousItemId && (
+        <div className="agent-transcript__toolbar">
           <button
             type="button"
             className="agent-transcript__action-btn"
@@ -426,8 +418,8 @@ function AgentTranscript({
           >
             加载更早记录
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {error && <p className="agent-error-alert" role="alert">{error}</p>}
 
@@ -446,6 +438,9 @@ function AgentTranscript({
           onOpenFile={onOpenFile}
           onOpenPlan={onOpenPlan}
           workspaceRoot={workspaceRoot ?? ""}
+          allowFeedback={false}
+          allowRegenerate={false}
+          allowEditResend={false}
         />
       </div>
     </section>
@@ -606,44 +601,34 @@ export function AgentWorkspacePanel({
               <div className="agent-heading__name-wrap">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <strong>{agent.taskName}</strong>
+                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
+                  {roleDescriptions[agent.role]}
+                </span>
               </div>
 
-              <span>{roleLabels[agent.role]} · {labels[agent.status]}</span>
+              <div className="agent-heading__actions">
+                <span className={`agent-status-pill agent-status-pill--${statusBadgeTone(agent.status)}`}>
+                  {roleLabels[agent.role]} · {labels[agent.status]}
+                </span>
 
-              {active.has(agent.status) && (
-                <button
-                  type="button"
-                  className="agent-stop-button"
-                  disabled={stopping === agent.id}
-                  onClick={() => onStop(agent)}
-                >
-                  {stopping === agent.id ? "停止中…" : "停止"}
-                </button>
-              )}
+                {active.has(agent.status) && (
+                  <button
+                    type="button"
+                    className="agent-stop-button"
+                    disabled={stopping === agent.id}
+                    onClick={() => onStop(agent)}
+                  >
+                    {stopping === agent.id ? "停止中…" : "停止"}
+                  </button>
+                )}
+              </div>
             </div>
           </header>
-
-          <div className="agent-mission-box">
-            <div className="agent-mission-box__meta">
-              <span className="agent-mission-box__badge">委托任务</span>
-              <span className="agent-mission-box__role-hint">
-                {roleDescriptions[agent.role]}
-              </span>
-            </div>
-            <p className="agent-text agent-mission-box__text">{agent.task}</p>
-          </div>
-
-          {agent.result && (
-            <div className="agent-result-box">
-              <span className="agent-result-box__label">交付成果摘要</span>
-              <p className="agent-text agent-result-box__text">{agent.result}</p>
-            </div>
-          )}
 
           {agent.errorCode && (
             <div className="agent-error-tag-box" role="status">
               <span className="agent-error-tag-box__icon">⚠️</span>
-              <span>{agent.errorCode}</span>
+              <span>{formatErrorCode(agent.errorCode)}</span>
             </div>
           )}
 

@@ -56,6 +56,9 @@ interface Props {
   onEditResend?: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
+  allowFeedback?: boolean | undefined;
+  allowRegenerate?: boolean | undefined;
+  allowEditResend?: boolean | undefined;
 }
 
 interface Segment {
@@ -108,6 +111,9 @@ export function ExecutionFeed({
   onEditResend = NOOP_EDIT_RESEND,
   onOpenFile,
   onOpenPlan,
+  allowFeedback = true,
+  allowRegenerate = true,
+  allowEditResend = true,
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const isAtBottomRef = useRef(true);
@@ -224,6 +230,9 @@ export function ExecutionFeed({
                   onEditResend={onEditResend}
                   onOpenFile={onOpenFile}
                   onOpenPlan={onOpenPlan}
+                  allowFeedback={allowFeedback}
+                  allowRegenerate={allowRegenerate}
+                  allowEditResend={allowEditResend}
                 />
               ))}
               <RunNotice run={run} />
@@ -279,6 +288,9 @@ function RunSegment({
   onEditResend,
   onOpenFile,
   onOpenPlan,
+  allowFeedback = true,
+  allowRegenerate = true,
+  allowEditResend = true,
 }: {
   segment: Segment;
   run: Run;
@@ -304,6 +316,9 @@ function RunSegment({
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
+  allowFeedback?: boolean | undefined;
+  allowRegenerate?: boolean | undefined;
+  allowEditResend?: boolean | undefined;
 }) {
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((item) => {
@@ -322,7 +337,7 @@ function RunSegment({
         <UserMessage
           item={segment.user}
           run={run}
-          canEdit={isLast && canReviseRun}
+          canEdit={isLast && canReviseRun && allowEditResend}
           revisionSubmitting={revisionSubmitting}
           onEditResend={onEditResend}
         />
@@ -369,7 +384,8 @@ function RunSegment({
             atBottom={atBottom}
             feedback={feedbackByItemId.get(item.id)}
             feedbackPending={pendingFeedbackItemIds.has(item.id)}
-            canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
+            canRegenerate={allowRegenerate && isLast && index === segment.response.length - 1 && canReviseRun}
+            allowFeedback={allowFeedback}
             isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
             showTurnResults={isLast
               && index === segment.response.length - 1
@@ -564,6 +580,7 @@ function AssistantMessage({
   feedback,
   feedbackPending,
   canRegenerate,
+  allowFeedback = true,
   isFinal,
   showTurnResults,
   resultItems,
@@ -579,6 +596,7 @@ function AssistantMessage({
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
+  allowFeedback?: boolean | undefined;
   isFinal: boolean;
   showTurnResults: boolean;
   resultItems: Item[];
@@ -590,7 +608,7 @@ function AssistantMessage({
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const isStreaming = item.status === "in_progress";
 
-  const canFeedback = item.status === "completed" && Boolean(item.content);
+  const canFeedback = allowFeedback && item.status === "completed" && Boolean(item.content);
 
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
@@ -601,22 +619,26 @@ function AssistantMessage({
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
             <CopyButton content={item.content} />
-            <ActionButton
-              label={feedback === "up" ? "取消点赞" : "点赞"}
-              active={feedback === "up"}
-              disabled={!canFeedback || feedbackPending}
-              onClick={() => void onFeedback(item.id, feedback === "up" ? null : "up")}
-            >
-              <ThumbUpIcon />
-            </ActionButton>
-            <ActionButton
-              label={feedback === "down" ? "取消差评" : "差评"}
-              active={feedback === "down"}
-              disabled={!canFeedback || feedbackPending}
-              onClick={() => void onFeedback(item.id, feedback === "down" ? null : "down")}
-            >
-              <ThumbDownIcon />
-            </ActionButton>
+            {allowFeedback && (
+              <>
+                <ActionButton
+                  label={feedback === "up" ? "取消点赞" : "点赞"}
+                  active={feedback === "up"}
+                  disabled={!canFeedback || feedbackPending}
+                  onClick={() => void onFeedback(item.id, feedback === "up" ? null : "up")}
+                >
+                  <ThumbUpIcon />
+                </ActionButton>
+                <ActionButton
+                  label={feedback === "down" ? "取消差评" : "差评"}
+                  active={feedback === "down"}
+                  disabled={!canFeedback || feedbackPending}
+                  onClick={() => void onFeedback(item.id, feedback === "down" ? null : "down")}
+                >
+                  <ThumbDownIcon />
+                </ActionButton>
+              </>
+            )}
             {canRegenerate && (
               <ActionButton label="重新回答" onClick={() => void onRegenerate(run)}>
                 <RegenerateIcon />
