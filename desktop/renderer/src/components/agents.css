@@ -698,19 +698,6 @@
   overflow-y: auto;
 }
 
-.agent-error-tag-box {
-  margin: 6px 14px;
-  padding: 8px 12px;
-  background: var(--status-danger-bg);
-  border: 1px solid rgba(158, 53, 43, 0.2);
-  border-radius: var(--radius);
-  color: var(--status-danger);
-  font-size: var(--font-size-caption);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
 
 /* ========================================================================= */
 /* 3. Transcript & Unified Execution Feed                                    */

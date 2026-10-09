@@ -355,4 +355,47 @@ describe("AgentWorkspacePanel", () => {
     expect(snippet).toBeInTheDocument();
     expect(snippet).toHaveClass("agent-card__snippet");
   });
+
+  it("does not render errorCode pills in card footer or error banner in detail view", async () => {
+    const child = {
+      id: "agent-interrupted",
+      taskName: "count-internal-app",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-interrupted",
+      runId: "child-run-interrupted",
+      status: "interrupted" as const,
+      task: "Count Go lines",
+      result: "Done",
+      resultItemId: null,
+      errorCode: "RUNTIME_INTERRUPTED",
+      createdAt: 1000,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({ items: [], runs: [] }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    render(<>
+      <AgentList agents={[child]} onOpen={() => undefined} />
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />
+    </>);
+
+    // Status pill in header/card top is present
+    expect(screen.getAllByText("已中断").length).toBeGreaterThanOrEqual(1);
+
+    // Error code label (such as 运行时中断 or 未确认完成) is NOT rendered in card footer or detail banner
+    expect(screen.queryByText("运行时中断")).not.toBeInTheDocument();
+  });
 });

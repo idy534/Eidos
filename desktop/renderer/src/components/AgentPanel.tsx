@@ -251,11 +251,6 @@ export function AgentList({
                   成果已交付
                 </span>
               )}
-              {agent.errorCode && (
-                <span className="agent-card__pill agent-card__pill--danger" title={agent.errorCode}>
-                  {formatErrorCode(agent.errorCode)}
-                </span>
-              )}
             </div>
           </button>
         );
@@ -620,13 +615,6 @@ export function AgentWorkspacePanel({
               </div>
             </div>
           </header>
-
-          {agent.errorCode && (
-            <div className="agent-error-tag-box" role="status">
-              <span className="agent-error-tag-box__icon">⚠️</span>
-              <span>{formatErrorCode(agent.errorCode)}</span>
-            </div>
-          )}
 
           <AgentTranscript
             key={agent.runId}
