@@ -3488,49 +3488,354 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
   gap: 0.8rem;
 }
 
+/* ---------------------------------------------------------------------------
+ * Handoff Dialog (更改工作环境)
+ * --------------------------------------------------------------------------- */
+.handoff-dialog {
+  width: min(100%, 35.5rem);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--apple-shadow-lg);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.handoff-modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 1.15rem 1.35rem 0.9rem;
+  border-bottom: 1px solid var(--surface-muted);
+}
+
+.handoff-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-sm);
+  background: rgba(49, 95, 74, 0.08);
+  border: 1px solid rgba(49, 95, 74, 0.14);
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.handoff-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.handoff-header-text h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.handoff-header-text p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .handoff-dialog-body {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.05rem;
+  padding: 1.15rem 1.35rem;
 }
 
-.handoff-dialog .create-session-mode-card {
+.handoff-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.handoff-legend {
+  margin-bottom: 0.55rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.handoff-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.handoff-mode-card {
   position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.65rem;
+  min-height: 4.6rem;
+  padding: 0.85rem 0.95rem;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  cursor: pointer;
+  user-select: none;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease, transform 100ms var(--apple-spring);
 }
 
-.handoff-dialog .create-session-mode-card em {
+.handoff-mode-card:hover:not(.is-disabled) {
+  border-color: rgba(49, 95, 74, 0.45);
+  background: var(--surface-hover);
+  box-shadow: var(--apple-shadow-sm);
+}
+
+.handoff-mode-card.is-selected {
+  border-color: var(--accent);
+  background: rgba(49, 95, 74, 0.04);
+  box-shadow: 0 0 0 1px var(--accent), var(--apple-shadow-sm);
+}
+
+.handoff-mode-card.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.handoff-mode-card:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.handoff-radio-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.handoff-radio-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: var(--surface-raised);
+  flex-shrink: 0;
+  margin-top: 0.12rem;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.handoff-mode-card:hover:not(.is-disabled) .handoff-radio-indicator {
+  border-color: rgba(49, 95, 74, 0.5);
+}
+
+.handoff-mode-card.is-selected .handoff-radio-indicator {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.handoff-radio-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: white;
+  transform: scale(0);
+  transition: transform 140ms var(--apple-spring);
+}
+
+.handoff-mode-card.is-selected .handoff-radio-dot {
+  transform: scale(1);
+}
+
+.handoff-card-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.handoff-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.handoff-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: color 140ms ease;
+}
+
+.handoff-mode-card.is-selected .handoff-card-icon {
+  color: var(--accent);
+}
+
+.handoff-card-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.handoff-current-badge {
   margin-left: auto;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
   padding: 0.12rem 0.45rem;
   color: var(--accent);
-  background: var(--surface-selected);
-  font-size: 0.7rem;
-  font-style: normal;
-  font-weight: 650;
+  background: rgba(49, 95, 74, 0.08);
+  border: 1px solid rgba(49, 95, 74, 0.16);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
+.handoff-current-badge em {
+  font-style: normal;
+  font-weight: inherit;
+}
+
+.handoff-card-desc {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
 .handoff-selection-details {
-  display: flex;
-  min-height: 4.6rem;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.3rem;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(49, 95, 74, 0.16);
   border-radius: var(--radius);
-  padding: 0.85rem 1rem;
-  background: var(--surface-muted);
+  padding: 0.75rem 1rem;
+  background: rgba(49, 95, 74, 0.035);
+  box-sizing: border-box;
+  min-height: 3.8rem;
+  display: flex;
+  align-items: center;
+}
+
+.handoff-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.handoff-branch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.handoff-branch-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.handoff-branch-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.handoff-branch-select-wrap select {
+  width: 100%;
+  height: 2.25rem;
+  padding: 0 1.85rem 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: white;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-family: var(--font-code);
+  box-sizing: border-box;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.handoff-branch-select-wrap select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.handoff-select-chevron {
+  position: absolute;
+  right: 0.65rem;
+  pointer-events: none;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.handoff-detail-info-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.handoff-details-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.handoff-details-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .handoff-selection-details p {
   margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 550;
+  line-height: 1.35;
 }
 
 .handoff-selection-details p + p {
   color: var(--muted);
   font-size: 0.74rem;
+  font-weight: 400;
+}
+
+.handoff-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding: 0.85rem 1.35rem;
+  border-top: 1px solid var(--surface-muted);
+  background: rgba(251, 250, 247, 0.7);
 }
 
 .create-session-fieldset {
