@@ -196,10 +196,10 @@
   width: min(21rem, calc(100vw - 2rem));
   flex-direction: column;
   gap: 0.2rem;
-  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 92%, transparent);
   border-radius: 1.25rem;
   padding: 0.8rem;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  background: color-mix(in srgb, var(--surface) 98%, transparent);
   box-shadow: 0 18px 55px rgba(35, 35, 32, 0.15);
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
