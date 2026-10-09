@@ -207,6 +207,7 @@
   gap: 7px;
   min-width: 0;
   overflow: hidden;
+  flex: 1 1 auto;
 }
 
 .agent-list__row--compact .agent-list__row-name {
@@ -216,6 +217,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .agent-list__row--compact .agent-list__row-status {

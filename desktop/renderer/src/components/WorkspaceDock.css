@@ -193,7 +193,8 @@
   right: 0;
   z-index: 30;
   display: flex;
-  width: min(21rem, calc(100vw - 2rem));
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: min(28rem, calc(100vh - 5rem));
   flex-direction: column;
   gap: 0.2rem;
   border: 1px solid color-mix(in srgb, var(--line) 92%, transparent);
@@ -203,10 +204,34 @@
   box-shadow: 0 18px 55px rgba(35, 35, 32, 0.15);
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-color: rgba(106, 111, 103, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.environment-popover__panel::-webkit-scrollbar {
+  width: 5px;
+  background: transparent;
+}
+
+.environment-popover__panel::-webkit-scrollbar-track,
+.environment-popover__panel::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.environment-popover__panel::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(106, 111, 103, 0.28);
+}
+
+.environment-popover__panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.45);
 }
 
 .environment-popover__panel header {
   padding: 0.25rem 0.4rem 0.45rem;
+  flex-shrink: 0;
 }
 
 .environment-popover__panel h2 {

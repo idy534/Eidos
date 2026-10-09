@@ -258,9 +258,12 @@ describe("AgentWorkspacePanel", () => {
       />,
     );
 
-    // Visible elements: task name and status
+    // Visible elements: task name, role pill, and status
     expect(screen.getByText("analyze-repo")).toBeInTheDocument();
     expect(screen.getByText("执行中")).toBeInTheDocument();
+    const rolePill = screen.getByText("explorer");
+    expect(rolePill).toBeInTheDocument();
+    expect(rolePill).toHaveClass("agent-role-pill", "agent-role-pill--explorer");
 
     // Task description is not rendered in layout (preventing visual clutter)
     expect(screen.queryByText("Analyze repository dependencies and report circular references")).not.toBeInTheDocument();
@@ -429,5 +432,15 @@ describe("AgentWorkspacePanel", () => {
     expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-y:\s*auto;/s);
     expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-x:\s*hidden;/s);
     expect(agentsCss).toMatch(/\.agent-list::-webkit-scrollbar\s*\{[^}]*width:\s*6px;/s);
+
+    // .environment-popover__panel has max-height and overflow-y: auto with custom scrollbar
+    const dockCss = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/components/WorkspaceDock.css"),
+      "utf8",
+    );
+    expect(dockCss).toMatch(/\.environment-popover__panel\s*\{[^}]*max-height:\s*min\(28rem,\s*calc\(100vh\s*-\s*5rem\)\);/s);
+    expect(dockCss).toMatch(/\.environment-popover__panel\s*\{[^}]*overflow-y:\s*auto;/s);
+    expect(dockCss).toMatch(/\.environment-popover__panel\s*\{[^}]*overflow-x:\s*hidden;/s);
+    expect(dockCss).toMatch(/\.environment-popover__panel::-webkit-scrollbar\s*\{[^}]*width:\s*5px;/s);
   });
 });

@@ -185,11 +185,14 @@ export function AgentList({
               className={`environment-popover__row agent-list__row agent-list__row--compact${isSelected ? " agent-list__row--selected" : ""}${isRunning ? " agent-list__row--running" : ""}`}
               onClick={() => onOpen(agent)}
               title={tooltip}
-              aria-label={`${agent.taskName} · ${labels[agent.status]}${pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}`}
+              aria-label={`${agent.taskName} · ${roleLabels[agent.role]} · ${labels[agent.status]}${pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}`}
             >
               <div className="agent-list__row-main">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <span className="agent-list__row-name">{agent.taskName}</span>
+                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
+                  {roleLabels[agent.role]}
+                </span>
               </div>
               <div className="agent-list__row-status">
                 <span className="agent-list__row-status-text">
