@@ -659,6 +659,14 @@
 .agent-stop-btn:hover:not(:disabled) {
   background: #f0cfcb;
   border-color: rgba(145, 61, 52, 0.4);
+  color: var(--danger);
+}
+
+.agent-stop-button:active:not(:disabled),
+.agent-stop-btn:active:not(:disabled) {
+  background: #eac5c0;
+  border-color: rgba(145, 61, 52, 0.5);
+  color: var(--danger);
 }
 
 .agent-stop-button:disabled,

@@ -289,11 +289,20 @@
 .clarification-footer .btn--primary {
   background: #46735a;
   border-color: #3d664f;
+  color: #ffffff;
 }
 
 .clarification-footer .btn--primary:hover:not(:disabled) {
   background: #3a634c;
   border-color: #325642;
+  color: #ffffff;
+}
+
+.clarification-footer .btn--primary:active:not(:disabled) {
+  background: #2e503d;
+  border-color: #264333;
+  color: #ffffff;
+  transform: translateY(0.5px);
 }
 
 .clarification-footer .btn--primary:disabled {
@@ -608,6 +617,7 @@
 .plan-dock-execute-row .btn--primary {
   background: #46735a;
   border-color: #3d664f;
+  color: #ffffff;
   width: 100%;
   justify-content: center;
 }
@@ -615,6 +625,14 @@
 .plan-dock-execute-row .btn--primary:hover:not(:disabled) {
   background: #3a634c;
   border-color: #325642;
+  color: #ffffff;
+}
+
+.plan-dock-execute-row .btn--primary:active:not(:disabled) {
+  background: #2e503d;
+  border-color: #264333;
+  color: #ffffff;
+  transform: translateY(0.5px);
 }
 
 .plan-dock-revise-label {

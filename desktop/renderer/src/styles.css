@@ -2434,6 +2434,12 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 
 .session-menu-popover .danger-action:hover:not(:disabled), .task-context-menu .danger-action:hover:not(:disabled) {
   background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.session-menu-popover .danger-action:active:not(:disabled), .task-context-menu .danger-action:active:not(:disabled) {
+  background: rgba(145, 61, 52, 0.18);
+  color: var(--danger);
 }
 
 .session-menu-popover .danger-action, .task-context-menu .danger-action {
@@ -3179,6 +3185,12 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 
 .dropdown-menu button.danger-action:hover:not(:disabled) {
   background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.dropdown-menu button.danger-action:active:not(:disabled) {
+  background: rgba(145, 61, 52, 0.18);
+  color: var(--danger);
 }
 
 /* MCP Grid Details */
@@ -4051,20 +4063,40 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 }
 
 .btn--primary:hover:not(:disabled) {
-  color: var(--primary-action-text);
-  background: var(--primary-action-bg-hover);
-  border-color: var(--primary-action-border-hover);
+  color: #ffffff;
+  background: #274e3c;
+  border-color: #274e3c;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(49, 95, 74, 0.2);
+}
+
+.btn--primary:active:not(:disabled) {
+  color: #ffffff;
+  background: #1e3d2f;
+  border-color: #1e3d2f;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transform: translateY(0.5px);
 }
 
 .btn--secondary {
-  background: var(--surface, #ffffff);
+  background: var(--surface-raised, #ffffff);
   color: var(--text);
   border: 1px solid var(--border, var(--line));
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .btn--secondary:hover:not(:disabled) {
-  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+  color: var(--text);
+  background: var(--surface-hover, #f3f2eb);
+  border-color: #c5c4bc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.btn--secondary:active:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted, #f0efe9);
+  border-color: var(--line);
+  box-shadow: none;
+  transform: translateY(0.5px);
 }
 
 .btn--ghost {
@@ -4074,19 +4106,38 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
 }
 
 .btn--ghost:hover:not(:disabled) {
-  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
   color: var(--text);
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+  border-color: transparent;
+}
+
+.btn--ghost:active:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted, rgba(0, 0, 0, 0.06));
+  border-color: transparent;
+  transform: translateY(0.5px);
 }
 
 .btn--danger {
-  background: var(--danger, #9b3d33);
+  background: var(--danger, #913d34);
   color: #ffffff;
-  border: 1px solid var(--danger, #9b3d33);
+  border: 1px solid var(--danger, #913d34);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .btn--danger:hover:not(:disabled) {
-  background: #7e322a;
-  border-color: #7e322a;
+  color: #ffffff;
+  background: #7a3028;
+  border-color: #7a3028;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(145, 61, 52, 0.2);
+}
+
+.btn--danger:active:not(:disabled) {
+  color: #ffffff;
+  background: #65251e;
+  border-color: #65251e;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transform: translateY(0.5px);
 }
 
 /* Loading & Spinner */
@@ -5475,6 +5526,13 @@ span.tool-file-link:hover {
   color: var(--danger, #913d34) !important;
 }
 
+.btn-approval-reject:active:not(:disabled) {
+  background: #eaece8 !important;
+  border-color: rgba(145, 61, 52, 0.36) !important;
+  color: var(--danger, #913d34) !important;
+  transform: translateY(0.5px);
+}
+
 .btn-approval-approve {
   min-width: 4.75rem;
   font-weight: 600 !important;
@@ -5483,8 +5541,19 @@ span.tool-file-link:hover {
 }
 
 .btn-approval-approve:hover:not(:disabled) {
+  background: #274e3c !important;
+  border-color: #274e3c !important;
+  color: #ffffff !important;
   box-shadow: 0 2px 6px rgba(49, 95, 74, 0.25), 0 4px 12px rgba(49, 95, 74, 0.2) !important;
   transform: translateY(-0.5px);
+}
+
+.btn-approval-approve:active:not(:disabled) {
+  background: #1e3d2f !important;
+  border-color: #1e3d2f !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(49, 95, 74, 0.2) !important;
+  transform: translateY(0.5px);
 }
 
 /* Composer Input Capsule */
