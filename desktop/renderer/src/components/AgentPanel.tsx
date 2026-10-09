@@ -376,10 +376,10 @@ function AgentTranscript({
   }, [snapshot?.items, agent.id, agent.sessionId, agent.runId, agent.task, agent.createdAt]);
 
   return (
-    <section className="agent-transcript" aria-label="子 Agent 执行记录">
+    <section className="agent-transcript" aria-label="子智能体执行记录">
       {childApprovals.length > 0 && (
         <div className="agent-transcript__approvals">
-          <h3>来自子 Agent：{agent.taskName} 的审批</h3>
+          <h3>来自子智能体：{agent.taskName} 的审批</h3>
           {childApprovals.map((request) => {
             const run = runs.find((entry) => entry.id === request.runId) ?? fallbackRun;
             return run ? (
@@ -498,14 +498,14 @@ export function AgentWorkspacePanel({
   const completedCount = useMemo(() => agents.filter((a) => a.status === "succeeded").length, [agents]);
 
   return (
-    <section className="agent-workspace" aria-label="子 Agent 工作区">
+    <section className="agent-workspace" aria-label="子智能体工作区">
       {error && <p className="agent-error-banner" role="alert">{error}</p>}
 
       {!agent && (
         <div className="agent-workspace__overview">
           <header className="agent-overview-header">
             <div className="agent-overview-header__title-row">
-              <h2>子 Agent</h2>
+              <h2>子智能体</h2>
               <span className="agent-overview-count">{agents.length} 个任务</span>
             </div>
 
@@ -557,7 +557,7 @@ export function AgentWorkspacePanel({
                   <path d="M8 15h8" />
                 </svg>
               </div>
-              <h3>暂无子 Agent 任务</h3>
+              <h3>暂无子智能体任务</h3>
               <p>主 Agent 派生的通用任务 Default、代码调查 Explorer 和实现与验证 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。</p>
             </div>
           ) : (
@@ -579,13 +579,13 @@ export function AgentWorkspacePanel({
                 <button
                   type="button"
                   className="agent-detail-back-btn"
-                  aria-label="返回子 Agent 列表"
+                  aria-label="返回子智能体列表"
                   onClick={onBackToList}
                 >
                   <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M10 3.5L5.5 8l4.5 4.5" />
                   </svg>
-                  <span>全部 Agent</span>
+                  <span>全部子智能体</span>
                 </button>
               )}
 

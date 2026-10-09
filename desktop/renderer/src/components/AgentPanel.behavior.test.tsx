@@ -196,7 +196,7 @@ describe("AgentWorkspacePanel", () => {
     expect((await screen.findAllByText("Write API documentation for auth module")).length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("I have updated the auth documentation.")).toBeInTheDocument();
 
-    const backButton = screen.getByRole("button", { name: "返回子 Agent 列表" });
+    const backButton = screen.getByRole("button", { name: "返回子智能体列表" });
     fireEvent.click(backButton);
     expect(onBackToList).toHaveBeenCalled();
   });
@@ -216,7 +216,7 @@ describe("AgentWorkspacePanel", () => {
       />,
     );
 
-    expect(screen.getByText("暂无子 Agent 任务")).toBeInTheDocument();
+    expect(screen.getByText("暂无子智能体任务")).toBeInTheDocument();
     expect(screen.getByText("0 个任务")).toBeInTheDocument();
   });
 

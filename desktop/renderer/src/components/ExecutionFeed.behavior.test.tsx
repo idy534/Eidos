@@ -718,4 +718,51 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(planWrapper?.contains(planCard!)).toBe(true);
     expect(planCard?.textContent).toContain("从结果中读取的计划标题");
   });
+
+  it("renders subagent tool as direct button and calls onOpenSubagent on click", () => {
+    const onOpenSubagent = vi.fn();
+    const spawnItem: Item = {
+      id: "spawn-item",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1_000,
+      toolCall: {
+        id: "tc-spawn",
+        itemId: "spawn-item",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-spawn",
+        toolName: "spawn_agent",
+        status: "completed",
+        startedAt: 1_000,
+        completedAt: 1_200,
+        argumentsJson: JSON.stringify({ task_name: "reviewer", role: "worker" }),
+        resultJson: JSON.stringify({ outcome: "success", data: { agent: { id: "child-42", taskName: "reviewer" } } }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed
+        items={[spawnItem]}
+        runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onOpenSubagent={onOpenSubagent}
+      />,
+    );
+
+    const btn = container.querySelector("button.tool-subagent-btn");
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toContain("创建子智能体 · reviewer");
+    expect(container.querySelector("details.tool-item")).toBeNull();
+
+    fireEvent.click(btn!);
+    expect(onOpenSubagent).toHaveBeenCalledWith({ id: "child-42", taskName: "reviewer" });
+  });
 });

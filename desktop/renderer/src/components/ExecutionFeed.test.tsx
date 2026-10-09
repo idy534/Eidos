@@ -925,7 +925,7 @@ test("renders minimalist SVG icons for file operations, skills, and shell calls"
   assert.match(html, /已运行 skill_read/);
 });
 
-test("renders subagent collaboration tools with custom label and icon", () => {
+test("renders subagent collaboration tools with custom label, subagent name, and direct jump button", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[
@@ -938,7 +938,7 @@ test("renders subagent collaboration tools with custom label and icon", () => {
             id: "call-spawn", itemId: "spawn", modelStepIndex: 1, batchOrder: 0,
             providerCallId: "p-spawn", toolName: "spawn_agent", status: "completed",
             startedAt: 1000, completedAt: 1100, argumentsJson: JSON.stringify({ task_name: "explore", role: "explorer" }),
-            resultJson: "{}",
+            resultJson: JSON.stringify({ outcome: "success", data: { agent: { id: "agent-123", taskName: "explore" } } }),
           },
         }),
         item({
@@ -961,8 +961,9 @@ test("renders subagent collaboration tools with custom label and icon", () => {
     />,
   );
 
-  assert.match(html, /创建子智能体/);
+  assert.match(html, /创建子智能体 · explore/);
   assert.match(html, /等待子智能体/);
+  assert.match(html, /class="tool-subagent-btn"/);
   assert.doesNotMatch(html, /已运行 spawn_agent/);
   assert.doesNotMatch(html, /已运行 wait_agents/);
 });

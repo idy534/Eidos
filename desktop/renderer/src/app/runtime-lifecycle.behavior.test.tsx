@@ -237,7 +237,7 @@ describe("App & Runtime Lifecycle behavior", () => {
 
     expect(await screen.findByRole("complementary", { name: "工作区工具" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "inspect-runtime" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("region", { name: "子 Agent 工作区" })).toHaveTextContent("Inspect runtime");
+    expect(screen.getByRole("region", { name: "子智能体工作区" })).toHaveTextContent("Inspect runtime");
     expect(screen.getByRole("textbox", { name: "告诉 Eidos 要做什么" })).toBeInTheDocument();
   });
 

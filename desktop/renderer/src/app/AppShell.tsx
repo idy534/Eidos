@@ -963,10 +963,10 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function openAgentList(): void {
-    if (!currentSnapshot || !availableTools.includes("agent")) return;
+    if (!currentSnapshot) return;
     const existing = openTabs.find((tab) => tab.id === "agent");
     if (!existing) {
-      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "子 Agent" }]);
+      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "子智能体" }]);
     }
     setActiveTabId("agent");
     setDockOpen(true);
@@ -980,6 +980,31 @@ export function AppShell({ runtime }: AppShellProps) {
     setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title: agent.taskName }]);
     setActiveTabId(id);
     setDockOpen(true);
+  }
+
+  function handleOpenSubagent(target?: { id?: string | undefined; taskName?: string | undefined }): void {
+    if (!currentSnapshot) return;
+    if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
+    setEnvironmentPopoverOpen(false);
+
+    const allAgents = agents.state?.agents ?? [];
+    const matched = target?.id
+      ? allAgents.find((entry) => entry.id === target.id)
+      : target?.taskName
+        ? allAgents.find((entry) => entry.taskName === target.taskName)
+        : undefined;
+
+    if (matched) {
+      openAgent(matched);
+    } else if (target?.id) {
+      const id = `agent-${target.id}`;
+      const title = target.taskName || "子智能体";
+      setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title }]);
+      setActiveTabId(id);
+      setDockOpen(true);
+    } else {
+      openAgentList();
+    }
   }
 
   function handleOpenBrowser(url: string): void {
@@ -1123,7 +1148,7 @@ export function AppShell({ runtime }: AppShellProps) {
             )}
             {agents.state?.agents && agents.state.agents.length > 0 && (
               <div className="environment-popover__section">
-                <div className="environment-popover__section-title">子 Agent · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
+                <div className="environment-popover__section-title">子智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
                 <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
               </div>
             )}
@@ -1392,6 +1417,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   onEditResend={(run, editedInput, references) => reviseLatestRun(run, editedInput, references)}
                   onOpenFile={handleOpenFileInDock}
                   onOpenPlan={handleOpenPlan}
+                  agents={agents.state?.agents ?? []}
+                  onOpenSubagent={handleOpenSubagent}
                 />
 
                 <ComposerSlot
