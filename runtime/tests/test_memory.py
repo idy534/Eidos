@@ -240,7 +240,7 @@ def test_memory_migration_preserves_existing_v16_data(tmp_path):
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 20
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 21
         remember(store)
     finally:
         store.close()
@@ -259,7 +259,7 @@ def test_memory_migration_preserves_existing_v17_data(tmp_path):
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 20
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 21
         remember(store)
     finally:
         store.close()
@@ -477,7 +477,7 @@ def test_premerge_v18_database_upgrades_with_gate_refinements(tmp_path):
     db.initialize()
     assert db.health_state == "ready"
     conn = db.connection()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 21
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_message_receipts'").fetchone() is not None
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_skill_leases'").fetchone() is not None
     db.close()

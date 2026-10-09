@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 
 from eidos_runtime.db.layout import collect_unreferenced_blobs
-from eidos_runtime.db.schema import SCHEMA_VERSION, V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION
+from eidos_runtime.db.schema import SCHEMA_VERSION, V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION, V20_SCHEMA_VERSION
 from eidos_runtime.memory.contracts import MemorySettings
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
@@ -119,7 +119,7 @@ def restore(archive_path: Path, destination: Path) -> None:
             manifest = json.loads(archive.read("manifest.json"))
             if (
                 manifest.get("format") != "eidos-memory-backup-v1"
-                or manifest.get("schemaVersion") not in {V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION, SCHEMA_VERSION}
+                or manifest.get("schemaVersion") not in {V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION, V20_SCHEMA_VERSION, SCHEMA_VERSION}
             ):
                 raise MemoryRejected("memory_backup_incompatible")
             seen: set[str] = set()
@@ -196,6 +196,11 @@ def restore(archive_path: Path, destination: Path) -> None:
 
                 connection.commit()
                 migrate_memory_history(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V20_SCHEMA_VERSION:
+                from eidos_runtime.db.agent_roles_migration import migrate_agent_roles
+
+                connection.commit()
+                migrate_agent_roles(connection)
             # An old backup cannot know subsequent privacy revocations. Preserve
             # its tombstones, but require fresh user consent before any learning.
             for scope_id, settings_json in connection.execute(

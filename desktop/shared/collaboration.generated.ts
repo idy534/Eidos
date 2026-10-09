@@ -3,7 +3,7 @@
 export type Parentrunid = string | null;
 export type Id = string;
 export type Taskname = string;
-export type Role = "explorer" | "worker";
+export type Role = "default" | "explorer" | "worker";
 export type Requiredforcompletion = boolean;
 export type Parentrunid1 = string;
 export type Sessionid = string;

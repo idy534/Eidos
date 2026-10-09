@@ -8,6 +8,7 @@ import pytest
 # boundaries are explicitly promoted to Integration, Platform, and/or Slow.
 INTEGRATION_FILES = frozenset(
     {
+        "test_agent_roles_migration.py",
         "test_application_boundary.py",
         "test_application_protocol_routing.py",
         "test_approval_application.py",

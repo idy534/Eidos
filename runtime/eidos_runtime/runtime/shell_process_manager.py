@@ -17,12 +17,14 @@ from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
     RuntimeResourceKind,
+    ResourceRegistryError,
 )
 from eidos_runtime.sandbox.shell import (
     MAX_OUTPUT_BYTES,
     MAX_OUTPUT_METADATA_BYTES,
     POST_TERMINATION_DRAIN_SECONDS,
     ShellLaunchSpec,
+    ShellProcessStartError,
     _process_group_exists,
     _terminate_group,
 )
@@ -107,6 +109,7 @@ class ShellProcessManager:
         on_output: Callable[[str], None] | None = None,
         cancel: threading.Event | None = None,
         sensitive: SensitiveScanner | None = None,
+        on_started: Callable[[], None] | None = None,
     ) -> dict[str, object]:
         with self._lock:
             if self._closed:
@@ -121,8 +124,8 @@ class ShellProcessManager:
                 stderr=subprocess.PIPE,
                 start_new_session=True,
             )
-        except OSError as error:
-            raise RuntimeError("shell_process_start_failed") from error
+        except (OSError, ValueError) as error:
+            raise ShellProcessStartError("shell_process_start_failed") from error
         session_id = f"shell-{uuid.uuid4()}"
         session = ShellProcessSession(
             session_id=session_id,
@@ -132,35 +135,55 @@ class ShellProcessManager:
             launch=launch,
             started_at=time.monotonic(),
         )
-        session.on_output = on_output
-        if sensitive is not None:
-            for name in ("stdout", "stderr"):
-                session.scanners[name] = StreamingSensitiveScanner(
-                    sensitive,
-                    on_safe_text=lambda text, stream=name: self._append_safe(session, stream, text),
-                )
-        resource = self.resources.register(
-            RuntimeResourceKind.SHELL_PROCESS,
-            owner_id=self.owner_run_id,
-            resource_id=session_id,
-            cancel=lambda: self._terminate(session),
-            close=lambda: session.stop.set(),
-            wait=lambda timeout: session.done.wait(timeout),
-            is_quiescent=lambda: session.execution_status == "exited"
-            and not _process_group_exists(session.process_group_id),
-        )
-        session.resource = resource
-        with self._lock:
-            self._sessions[session_id] = session
-        resource.start()
-        thread = threading.Thread(
-            target=self._drain,
-            args=(session,),
-            name=f"eidos-shell-{session_id}",
-            daemon=False,
-        )
-        session.thread = thread
-        thread.start()
+        try:
+            if on_started is not None:
+                on_started()
+            session.on_output = on_output
+            if sensitive is not None:
+                for name in ("stdout", "stderr"):
+                    session.scanners[name] = StreamingSensitiveScanner(
+                        sensitive,
+                        on_safe_text=lambda text, stream=name: self._append_safe(session, stream, text),
+                    )
+            resource = self.resources.register(
+                RuntimeResourceKind.SHELL_PROCESS,
+                owner_id=self.owner_run_id,
+                resource_id=session_id,
+                cancel=lambda: self._terminate(session),
+                close=lambda: session.stop.set(),
+                wait=lambda timeout: session.done.wait(timeout),
+                is_quiescent=lambda: session.execution_status == "exited"
+                and not _process_group_exists(session.process_group_id),
+            )
+            session.resource = resource
+            with self._lock:
+                self._sessions[session_id] = session
+            resource.start()
+            thread = threading.Thread(
+                target=self._drain,
+                args=(session,),
+                name=f"eidos-shell-{session_id}",
+                daemon=False,
+            )
+            session.thread = thread
+            thread.start()
+        except Exception:
+            self._terminate(session)
+            try:
+                process.wait(timeout=2)
+            except (subprocess.SubprocessError, OSError):
+                with self._lock:
+                    self._sessions[session_id] = session
+            else:
+                self._close_pipes(session)
+                session.execution_status = "exited"
+                session.exit_code = process.returncode
+                session.done.set()
+                if session.resource is not None:
+                    session.resource.close()
+                with self._lock:
+                    self._sessions.pop(session_id, None)
+            raise
         snapshot = self._wait_and_snapshot(
             session,
             yield_time_ms,
@@ -199,17 +222,20 @@ class ShellProcessManager:
         *,
         yield_time_ms: int = 10_000,
         cancel: threading.Event | None = None,
+        on_input: Callable[[], None] | None = None,
     ) -> dict[str, object]:
         session = self._session(session_id)
         if chars == "\x03":
             with session.lock:
                 if session.execution_status == "running":
+                    if on_input is not None:
+                        on_input()
                     try:
                         os.killpg(session.process_group_id, signal.SIGINT)
                     except (ProcessLookupError, PermissionError):
                         pass
         elif chars:
-            self._write(session, chars, cancel=cancel)
+            self._write(session, chars, cancel=cancel, on_input=on_input)
         if chars == "\x03":
             if not session.done.wait(min(yield_time_ms / 1000, 1.0)):
                 self._terminate(session)
@@ -379,12 +405,7 @@ class ShellProcessManager:
                 "data": data,
                 "sideEffectsMayExist": True,
                 "reconciliationRequired": (
-                    session.drain_error is not None
-                    and not (
-                        session.drain_error == "output_read_failed"
-                        and not running and session.exit_code is not None
-                        and session.termination == "exit"
-                    )
+                    session.drain_error in {"output_persistence_failed", "process_termination_failed"}
                 ) or (not running and session.exit_code is None),
             }
 
@@ -432,6 +453,7 @@ class ShellProcessManager:
     def _write(
         self, session: ShellProcessSession, chars: str,
         *, cancel: threading.Event | None = None,
+        on_input: Callable[[], None] | None = None,
     ) -> None:
         payload = chars.encode("utf-8")
         if not payload:
@@ -439,6 +461,8 @@ class ShellProcessManager:
         process_stdin = session.process.stdin
         if process_stdin is None:
             raise RuntimeError("shell_stdin_unavailable")
+        if session.execution_status != "running" or session.process.poll() is not None:
+            raise RuntimeError("shell_stdin_closed")
         descriptor = process_stdin.fileno()
         with session.write_lock:
             offset = 0
@@ -461,6 +485,10 @@ class ShellProcessManager:
                 except (BrokenPipeError, OSError) as error:
                     raise RuntimeError("shell_stdin_write_failed") from error
                 else:
+                    if written <= 0:
+                        raise RuntimeError("shell_stdin_write_failed")
+                    if offset == 0 and on_input is not None:
+                        on_input()
                     offset += written
 
     def _terminate(self, session: ShellProcessSession) -> bool:
@@ -565,6 +593,9 @@ class ShellProcessManager:
             if resource is not None:
                 try:
                     resource.close()
+                except ResourceRegistryError as error:
+                    if str(error) == "RUNTIME_RESOURCE_NOT_QUIESCENT":
+                        session.drain_error = "process_termination_failed"
                 except Exception:
                     pass
             session.done.set()

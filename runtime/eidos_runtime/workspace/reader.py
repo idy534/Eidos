@@ -22,6 +22,8 @@ DEFAULT_DIRECTORY_LIMIT = 500
 MAX_DIRECTORY_LIMIT = 2_000
 MAX_PREVIEW_BYTES = 512 * 1024
 DIRECTORY_READ_TIMEOUT_SECONDS = 5.0
+MAX_RECONCILIATION_TARGETS = 512
+MAX_RECONCILIATION_BYTES = 64 * 1024 * 1024
 
 
 class WorkspacePathError(ValueError):
@@ -57,6 +59,13 @@ class WorkspaceFilePreview:
     version: str | None = None
     mime_type: str | None = None
     reason: Literal["binary", "unsupported"] | None = None
+
+
+@dataclass(frozen=True)
+class WorkspaceFileObservation:
+    path: str
+    version: str | None
+    sha256: str | None
 
 
 _MARKDOWN_SUFFIXES = frozenset({".md", ".markdown", ".mdx"})
@@ -254,6 +263,54 @@ class WorkspaceReader:
         ):
             raise WorkspacePathError("workspace_identity_changed")
         return metadata
+
+    def observe_files(
+        self, paths: frozenset[str], *, cancel: threading.Event,
+    ) -> tuple[WorkspaceFileObservation, ...]:
+        """Read current affected files without scanning unrelated directories."""
+        if not paths or len(paths) > MAX_RECONCILIATION_TARGETS:
+            raise WorkspacePathError("reconciliation_target_limit")
+        deadline = time.monotonic() + DIRECTORY_READ_TIMEOUT_SECONDS
+        remaining = MAX_RECONCILIATION_BYTES
+        observations: list[WorkspaceFileObservation] = []
+        for path in sorted(paths):
+            if cancel.is_set():
+                raise WorkspacePathError("canceled")
+            if time.monotonic() >= deadline:
+                raise WorkspacePathError("workspace_read_timeout")
+            try:
+                content, metadata, normalized, _ = self.read_file_bytes(
+                    path, limit=remaining, cancel=cancel,
+                )
+            except WorkspacePathError as error:
+                if error.code != "file_unavailable":
+                    raise
+                observations.append(WorkspaceFileObservation(path, None, None))
+                continue
+            if metadata.st_uid != self.workspace.owner:
+                raise WorkspacePathError("workspace_boundary_violation")
+            remaining -= len(content)
+            observations.append(WorkspaceFileObservation(
+                normalized, file_version(metadata), hashlib.sha256(content).hexdigest(),
+            ))
+        for observed in observations:
+            if time.monotonic() >= deadline:
+                raise WorkspacePathError("workspace_read_timeout")
+            try:
+                version = file_version(self.stat_file(observed.path, cancel=cancel))
+            except WorkspacePathError as error:
+                if error.code != "file_unavailable":
+                    raise
+                version = None
+            if version != observed.version:
+                raise WorkspacePathError("workspace_changed")
+        self._verify_root()
+        named = os.stat(self.workspace.path, follow_symlinks=False)
+        if (named.st_dev, named.st_ino, named.st_uid) != (
+            self.workspace.device, self.workspace.inode, self.workspace.owner,
+        ):
+            raise WorkspacePathError("workspace_identity_changed")
+        return tuple(observations)
 
     def read_preview(self, path: str) -> WorkspaceFilePreview:
         content_bytes, metadata, normalized, truncated = self.read_file_bytes(

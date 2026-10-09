@@ -708,7 +708,7 @@ class RunRepository(Repository):
         return CommittedMutation(run, (event,))
 
     def begin_finalization_attempt_committed(
-        self, run_id: str, *, model_id: str
+        self, run_id: str, *, model_id: str, stop_reason: str = "loop_guard",
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         attempt_id = str(uuid.uuid4())
         with self.lock, self._connection() as connection:
@@ -736,6 +736,7 @@ class RunRepository(Repository):
                     "entity_id": attempt_id,
                     "previous": "created",
                     "current": "running",
+                    "reason": stop_reason,
                 },
                 session_id=run_row["session_id"],
                 run_id=run_id,
@@ -745,7 +746,7 @@ class RunRepository(Repository):
                 run_id,
                 frozenset({RunStatus.RUNNING}),
                 RunStatus.FINALIZING,
-                "run_limit",
+                stop_reason,
             )
             attempt = _finalization_attempt(connection.execute(
                 "SELECT * FROM finalization_attempts WHERE id = ?",

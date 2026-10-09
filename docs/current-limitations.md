@@ -29,6 +29,7 @@
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
 - 回答流式输出的代码修订尚未编写或执行测试。敏感扫描仍按完整行释放文本，无换行的长段落会等到响应结束。尚未闭合的尖括号文本会等待闭合或完整响应校验，以避免跨片段的 Provider 控制标记进入 Feed。当前实现不是逐 token 输出。
 - Assistant 文本在完整响应校验前可以作为 `in_progress` Item 显示。Runtime 只有在校验成功后才确认它；失败草稿不会进入后续模型上下文。Runtime 不会额外调用模型来提前判断最终回答。如果响应随后包含 ToolCall，现有 Feed 会把前面的文本归入过程区。
+- Runtime 已移除响应结束后的额外模型完成审查。旧 profile 的 `completion_check_version=1` 不会重新启用它。Chat Completions 缺少原生结束信号时，Runtime 使用正常采样与 Tool follow-up 语义；Runtime 不用另一模型判断任务目标是否完成。
 - 已发布文本会参与 transport retry 的安全判断。normalization 的 `protocol_error` 和 `length` 仍走现有有界 protocol repair；失败草稿先结束，新的 Attempt 使用新 Item。`content_filter`、cancel 和 authentication failure 不进入该 repair。旧 Event 缺少 offset 时不能获得新的偏移去重保证。增量缺口会等待现有 Run 结束快照刷新来修复。
 - 本次未修改 SQLite 表结构，但新 delta Event 会保存 offset。旧 Runtime 的严格 Event 校验不接受这个字段，所以产生新 Event 后不能直接把同一数据目录交给旧 Runtime；回退需要恢复升级前备份。协议 Fixture 和回归测试按用户要求留到确认后的测试阶段。
 - Context Usage 的 estimated 值是有界 fallback，不是 tokenizer 精确值。它不能单独证明 Provider 已拒绝请求。
@@ -64,6 +65,7 @@
 - Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。`.git`、`.agents` 和 `.eidos` 等 hard discovery 目录默认隐藏，但显式只读路径仍可读取。Ignore 规则不是权限。
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
+- Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，异常才建立未知副作用屏障。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
 - Shell post-execution observation 在超时或不完整 Workspace manifest 时可能是 `unknown`。这类 observation 不能替代 Runtime 明确报告的执行 uncertainty，也不会单独限制已明确退出的 Shell。对于仍由 Runtime 管理、结果带有有效 `sessionId` 且明确报告 `reconciliationRequired=false` 的 `executionStatus=running` Shell，Workspace observation 不完整不会单独建立 reconciliation。Runtime 仍会保留 `workspaceChangeState=unknown`、`workspaceDiffIncomplete=true` 和 `sideEffectsMayExist=true`。完整的 Workspace 状态与安全事实仍需要后置核验。
 - `gitWriteAccess=request` 授权的是一条获批 Shell 命令对当前 repository Git metadata 的写入。Runtime 不解析或重写 Shell 命令。原生 Git 仍可能读取用户 Git 配置，并可能执行 repository hooks、credential helper 或命令中显式启动的程序。需要禁用这些机制的产品 Git 操作继续使用独立的 `HardenedGitRunner` typed API。首次 `gh` 登录和凭据配置不由 `run_shell` 自动完成。
 
@@ -169,6 +171,8 @@
 ## Run 收尾与 Shell 执行期限
 
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
+- Workspace 文件 Intent 的自动恢复只核验实际目标和必要父目录。Runtime 最多观察 512 个目标，读取总量最多 64 MiB，并检查读取期限、取消、文件类型、链接、owner 和当前版本。SQLite 提交再次匹配 epoch 与目标集合；未知 Shell、MCP、外部操作和 Eidos-state 不通过该路径恢复。历史完整 Workspace refresh 入口继续兼容，但不再是自动恢复的前置条件。
+- `interrupted` 保持稳定错误码 `RUNTIME_INTERRUPTED`，并在既有 `stopReason` 与 Event 中保留真实触发原因。界面区分执行中断、活动命令清理和真实未确认操作。旧 `completion_unconfirmed` 显示为旧版完成检查未确认，新 Run 不再产生该原因。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
 - 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
 - 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验和输出限额；展示片段使用 best-effort 凭据脱敏，聚合 stdout/stderr 保留原始内容。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
@@ -243,9 +247,9 @@ Plan 没有另建只读权限系统。模型通过模式指令遵守“先规划
 
 ## 子 Agent 的阶段边界
 
-本阶段交付父任务管理的单层委派。`explorer` 只读；`worker` 可在父 Run 固定审批模式下使用文件、Shell、Skill 和已授权扩展工具。子任务共享当前工作目录。多个执行者可能修改同一文件，父任务需要分配不相交的修改范围并复核结果。子任务读取的是实时文件，不是固定提交或文件系统快照。
+本阶段交付父任务管理的单层委派，只支持 `default`、`explorer`、`worker`。三个角色继承父 Run 的普通工具、审批模式、权限和已启用扩展；角色指令表达通用任务、代码调查、实现与验证的分工。`explorer` 能执行 Shell，也能在已有权限允许时修改文件，因此它不提供强制只读保证。子任务共享当前工作目录。多个执行者可能修改同一文件，父任务需要分配不相交的修改范围并复核结果。子任务读取的是实时文件，不是固定提交或文件系统快照。
 
-本阶段没有自动分配独立 Worktree、补丁交付与合并、多层委派、不同子任务选择不同模型、整组费用预算或自动重试中断任务。父任务沿用已有 Loop Guard；子 Session 数量上限不是费用上限。消息不打断正在执行的模型调用；消息在下一次上下文构建时生效。`followup_task` 复用子 Session 的已有上下文。已结束的父 Run 不能继续管理新委派，新用户回合需要创建新的委派关系。
+本阶段没有自定义角色、自动分配独立 Worktree、补丁交付与合并、多层委派、不同子任务选择不同模型、整组费用预算或自动重试中断任务。父任务沿用已有 Loop Guard；子 Session 数量上限不是费用上限。消息不打断正在执行的模型调用；消息在下一次上下文构建时生效。`followup_task` 复用子 Session 的已有上下文。已结束的父 Run 不能继续管理新委派，新用户回合需要创建新的委派关系。
 
 Agent 消息持久保存，每条最多 2,000 字符，上下文展示最近 16 条。消息不提供逐条消费确认，超过窗口的旧消息仍在数据库中，但不会自动重新注入；重要任务约束应写入任务正文。子任务摘要会截断任务和结果，Desktop 可以分页查看完整会话记录。环境信息展示该会话最近一组委派，当前没有跨组历史浏览器。
 

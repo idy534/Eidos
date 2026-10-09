@@ -53,8 +53,8 @@ class ShellOutputDiagnosticsTests(unittest.TestCase):
         self.assertFalse(data.outputComplete)
         self.assertFalse(result["reconciliationRequired"])
 
-    def test_security_and_persistence_failures_still_require_reconciliation(self) -> None:
-        for error in ("sensitive_content_rejected", "output_persistence_failed"):
+    def test_output_filtering_keeps_known_execution_results(self) -> None:
+        for error in ("sensitive_content_rejected", "process_drain_failed"):
             with self.subTest(error=error):
                 result = self._snapshot(error=error)
                 data = RunShellResultData.model_validate(result["data"])
@@ -62,7 +62,10 @@ class ShellOutputDiagnosticsTests(unittest.TestCase):
                 self.assertEqual(result["code"], "output_capture_failed")
                 self.assertEqual(data.outputCaptureError, error)
                 self.assertFalse(data.outputComplete)
-                self.assertTrue(result["reconciliationRequired"])
+                self.assertFalse(result["reconciliationRequired"])
+
+    def test_uncommitted_output_still_requires_reconciliation(self) -> None:
+        self.assertTrue(self._snapshot(error="output_persistence_failed")["reconciliationRequired"])
 
     def test_output_is_complete_only_after_an_error_free_exit(self) -> None:
         for running in (True, False):

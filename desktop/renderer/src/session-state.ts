@@ -371,12 +371,13 @@ const STOP_REASON_MESSAGES: Record<string, string> = {
   segment_step_limit: "已达到单段任务执行预算",
   segment_time_limit: "已达到单段执行时间",
   context_still_over_budget: "上下文容量已达到上限",
-  repeated_tool_call: "检测到重复工具调用，任务已停止",
+  repeated_tool_call: "检测到重复工具调用，任务已结束",
   // Legacy persisted stop reason; convergence no longer emits error counts.
-  repeated_tool_error: "工具持续失败，任务已停止",
-  no_progress: "恢复后仍返回相同执行状态，任务已停止",
-  repeated_empty_response: "模型连续返回空响应，任务已停止",
-  repeated_sensitive_tool_input: "连续工具输入被安全策略拒绝，任务已停止",
+  repeated_tool_error: "工具持续失败，任务已结束",
+  no_progress: "恢复后仍返回相同执行状态，任务已结束",
+  repeated_empty_response: "模型连续返回空响应，任务已结束",
+  repeated_sensitive_tool_input: "连续工具输入被安全策略拒绝，任务已结束",
+  completion_unconfirmed: "答复已生成，旧版完成检查未确认",
 };
 
 export function runtimeBusinessCode(cause: unknown): string | undefined {
@@ -411,12 +412,19 @@ export function terminalRunPresentation(
     case "canceled":
       return { label: "已取消", tone: "neutral" };
     case "interrupted":
-      return { label: "已中断，未自动恢复", tone: "warning" };
+      return {
+        label: run.stopReason === "side_effect_reconciliation_required"
+          ? "任务已结束"
+          : run.stopReason === "active_shell_stopped"
+            ? "任务已结束，运行中的命令已停止"
+            : "任务执行已中断",
+        tone: "warning",
+      };
     case "stopped":
       return {
         label: run.stopReason
-          ? STOP_REASON_MESSAGES[run.stopReason] ?? "任务已停止"
-          : "任务已停止",
+          ? STOP_REASON_MESSAGES[run.stopReason] ?? "任务已结束"
+          : "任务已结束",
         tone: "warning",
       };
     case "queued":

@@ -131,7 +131,7 @@ class RunFinalizer:
         self.state_machine.track(RuntimeState.FINALIZING, stop_reason)
         current_run = self.store.read_run(run_id)
         started = self.store.begin_finalization_attempt_committed(
-            run_id, model_id=str(current_run["modelId"])
+            run_id, model_id=str(current_run["modelId"]), stop_reason=stop_reason,
         )
         attempt, finalizing_run = started.value
         self.events.publish(started, run=finalizing_run)

@@ -1,0 +1,14 @@
+{
+  "method": "agent/read",
+  "params": { "sessionId": "parent-session" },
+  "spawnArguments": { "taskName": "general", "message": "Inspect the assigned task and report evidence." },
+  "result": {
+    "parentRunId": "parent-run",
+    "agents": [
+      { "id": "agent-default", "taskName": "general", "role": "default", "requiredForCompletion": true, "parentRunId": "parent-run", "sessionId": "default-session", "runId": "default-run", "status": "running", "task": "Handle the assigned task.", "createdAt": 1 },
+      { "id": "agent-explorer", "taskName": "inspect", "role": "explorer", "requiredForCompletion": true, "parentRunId": "parent-run", "sessionId": "explorer-session", "runId": "explorer-run", "status": "succeeded", "task": "Inspect the code and command output.", "result": "The files were counted with Shell.", "createdAt": 2 },
+      { "id": "agent-worker", "taskName": "implement", "role": "worker", "requiredForCompletion": true, "parentRunId": "parent-run", "sessionId": "worker-session", "runId": "worker-run", "status": "waiting_approval", "task": "Implement the assigned change.", "createdAt": 3 }
+    ],
+    "messages": []
+  }
+}

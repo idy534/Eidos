@@ -263,13 +263,13 @@ test("every terminal run state has a user-facing presentation", () => {
     tone: "neutral",
   });
   assert.deepEqual(terminalRunPresentation(run("interrupted")), {
-    label: "已中断，未自动恢复",
+    label: "任务执行已中断",
     tone: "warning",
   });
   assert.deepEqual(
     terminalRunPresentation({ ...run("stopped"), stopReason: "repeated_tool_call" }),
     {
-      label: "检测到重复工具调用，任务已停止",
+      label: "检测到重复工具调用，任务已结束",
       tone: "warning",
     },
   );
@@ -294,6 +294,15 @@ test("does not present a succeeded run with an unresolved reconciliation barrier
     tone: "warning",
   });
   assert.equal(taskStatusFromRun(unresolved), "failed");
+});
+
+test("distinguishes legacy completion reviews from interrupted execution", () => {
+  assert.deepEqual(terminalRunPresentation({ ...run("stopped"), stopReason: "completion_unconfirmed" }), {
+    label: "答复已生成，旧版完成检查未确认", tone: "warning",
+  });
+  assert.deepEqual(terminalRunPresentation({ ...run("interrupted"), stopReason: "side_effect_reconciliation_required" }), {
+    label: "任务已结束", tone: "warning",
+  });
 });
 
 test("maps a completed run notification with a reconciliation barrier to a failed session", () => {

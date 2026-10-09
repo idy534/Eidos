@@ -145,8 +145,7 @@ def _uses_local_reconciliation_policy(plan: ToolDispatchPlan, call: ModelToolCal
         return descriptor.spec.name == "write_plan"
     return (
         descriptor.provenance.source_id == "eidos.collaboration"
-        and (descriptor.spec.name in {"send_message", "stop_agent", "followup_task"}
-             or descriptor.spec.name == "spawn_agent" and call.arguments.get("role") == "explorer")
+        and descriptor.spec.name in {"send_message", "stop_agent", "followup_task"}
     )
 
 
@@ -301,6 +300,27 @@ class ToolExecutionController:
     def current_phase(self) -> ToolExecutionPhase | None:
         return getattr(self._execution_state, "phase", None)
 
+    @property
+    def execution_started(self) -> bool:
+        return getattr(self._execution_state, "effects_started", False)
+
+    def mark_execution_started(self) -> None:
+        self._execution_state.effects_started = True
+        self._execution_state.result_known = False
+        self._execution_state.phase = ToolExecutionPhase.EXECUTING
+
+    def observe_execution_result(self, result: dict[str, object]) -> None:
+        if result.get("sideEffectsMayExist") is True:
+            self._execution_state.effects_started = True
+        required = _explicit_reconciliation_required(result)
+        if required is not None:
+            self._execution_state.result_known = not required
+            if required:
+                self._execution_state.effects_started = True
+
+    def _execution_uncertain(self) -> bool:
+        return self.execution_started and not getattr(self._execution_state, "result_known", False)
+
     def begin_durable_intent(
         self,
         item_id: str,
@@ -348,14 +368,17 @@ class ToolExecutionController:
         execute: Callable[[], dict[str, object]],
         verify: Callable[[dict[str, object]], VerifiedToolExecutionResult] | None,
     ) -> VerifiedToolExecutionResult:
-        self._execution_state.phase = ToolExecutionPhase.EXECUTING
+        self.mark_execution_started()
         raw = execute()
         self._execution_state.phase = ToolExecutionPhase.VERIFYING
-        return (
+        verified = (
             verify(raw)
             if verify is not None
             else VerifiedToolExecutionResult(result=raw)
         )
+        self._execution_state.result_known = _explicit_reconciliation_required(verified.result) is not True
+        self.observe_execution_result(verified.result)
+        return verified
 
     def authorize_workspace_side_effect(
         self,
@@ -486,6 +509,10 @@ class ToolExecutionController:
         )
         self._execution_state.intent_started = self.store.side_effect_authorized(str(item["id"]))
         self._execution_state.authorized_effects = int(self._execution_state.intent_started)
+        # A resumed authorized call may have crossed its execution boundary.
+        # A newly committed Intent alone never marks execution as started.
+        self._execution_state.effects_started = self._execution_state.intent_started
+        self._execution_state.result_known = False
         self._execution_state.cleanup_attempted = False
         self._execution_state.phase = ToolExecutionPhase.VALIDATING
         resource = self.resources.register(
@@ -570,6 +597,7 @@ class ToolExecutionController:
                         )
                         if not isinstance(outcome, HandlerOutcome):
                             raise RuntimeError("invalid tool runtime outcome")
+                        self.observe_execution_result(outcome.result)
                         hit_fault("tool_late_result")
                         if (
                             plan.side_effect != "none"
@@ -581,11 +609,15 @@ class ToolExecutionController:
                                 ) is True
                             )
                         ):
+                            self.mark_execution_started()
                             outcome = HandlerOutcome(
-                                tool_error(
+                                tool_result(
                                     call.name,
+                                    "error",
                                     "TOOL_EXECUTION_CONTRACT_VIOLATION",
                                     "Tool execution contract was violated",
+                                    side_effects_may_exist=True,
+                                    reconciliation_required=True,
                                 ),
                                 "failed",
                                 "failed",
@@ -596,9 +628,7 @@ class ToolExecutionController:
                             call,
                             plan,
                             controlled_cancel.reason or "cancel",
-                            uncertain=bool(
-                                self._execution_state.intent_started
-                            ),
+                            uncertain=self._execution_uncertain(),
                         )
                     except (PlanningSuspended, AgentSuspended):
                         raise
@@ -610,7 +640,8 @@ class ToolExecutionController:
                         ) from error
                     except Exception as error:
                         record_current_exception(error)
-                        logger.exception("Tool execution failed")
+                        logger.exception("Tool execution failed phase=%s execution_started=%s",
+                                         self.current_phase, self.execution_started)
                         contract_violation = (
                             "tool execution contract violation" in str(error)
                         )
@@ -626,14 +657,10 @@ class ToolExecutionController:
                                 (
                                     "Tool execution contract was violated"
                                     if contract_violation
-                                    else "Tool execution failed"
+                                    else f"Tool execution failed (phase={self.current_phase}, error={type(error).__name__})"
                                 ),
-                                side_effects_may_exist=(
-                                    plan.side_effect != "none" or self._execution_state.intent_started
-                                ),
-                                reconciliation_required=(
-                                    plan.side_effect != "none" or self._execution_state.intent_started
-                                ),
+                                side_effects_may_exist=self.execution_started,
+                                reconciliation_required=self._execution_uncertain(),
                             ),
                             "failed",
                             "failed",
@@ -643,28 +670,19 @@ class ToolExecutionController:
                         reason is not None
                         and not _already_interrupted(outcome.result, reason)
                     ):
-                        known_file_result = (
-                            plan.side_effect == "workspace"
-                            and _explicit_reconciliation_required(outcome.result) is False
-                        )
                         interrupted = self._interrupted(
                             call,
                             plan,
                             reason,
-                            uncertain=not known_file_result and (
-                                plan.side_effect != "none"
-                                or bool(self._execution_state.intent_started)
-                                or outcome.result.get(
-                                    "sideEffectsMayExist"
-                                ) is True
-                            ),
+                            uncertain=self._execution_uncertain(),
                         )
                         if call.name == "run_shell" or plan.side_effect == "workspace":
                             # Normal validation and bounds still apply; shell output
                             # remains raw in the aggregate result.
                             interrupted.result["data"] = outcome.result.get("data", {})
-                        if known_file_result:
-                            interrupted.result["sideEffectsMayExist"] = outcome.workspace_changed
+                        interrupted.result["sideEffectsMayExist"] = (
+                            self.execution_started or outcome.workspace_changed
+                        )
                         outcome = replace(
                             outcome,
                             result=interrupted.result,
@@ -701,7 +719,7 @@ class ToolExecutionController:
                 )
             except (TypeError, ValueError):
                 effects_possible = (
-                    self._execution_state.authorized_effects > 0
+                    self.execution_started
                     or outcome.result.get("sideEffectsMayExist") is True
                 )
                 outcome = replace(
@@ -712,7 +730,7 @@ class ToolExecutionController:
                         "TOOL_RESULT_CONTRACT_VIOLATION",
                         "Tool returned data that violated its contract",
                         side_effects_may_exist=effects_possible,
-                        reconciliation_required=effects_possible,
+                        reconciliation_required=self._execution_uncertain(),
                     ),
                     item_status="failed",
                     tool_status="failed",
@@ -750,7 +768,7 @@ class ToolExecutionController:
             )
             if result.get("code") == "sensitive_content_rejected":
                 effects_possible = (
-                    self._execution_state.authorized_effects > 0
+                    self.execution_started
                     or outcome.result.get("sideEffectsMayExist") is True
                 )
                 if plan.side_effect != "none" or effects_possible:
@@ -770,7 +788,7 @@ class ToolExecutionController:
                 )
             if result.get("code") == "tool_result_too_large":
                 effects_possible = (
-                    self._execution_state.authorized_effects > 0
+                    self.execution_started
                     or outcome.result.get("sideEffectsMayExist") is True
                 )
                 result = tool_result(
@@ -794,7 +812,7 @@ class ToolExecutionController:
                 projection = self._project_result(plan, outcome.result)
             except (TypeError, ValueError):
                 effects_possible = (
-                    self._execution_state.authorized_effects > 0
+                    self.execution_started
                     or outcome.result.get("sideEffectsMayExist") is True
                 )
                 outcome = replace(
@@ -805,7 +823,7 @@ class ToolExecutionController:
                         "TOOL_RESULT_PROJECTION_FAILED",
                         "Tool result could not be projected safely",
                         side_effects_may_exist=effects_possible,
-                        reconciliation_required=effects_possible,
+                        reconciliation_required=self._execution_uncertain(),
                     ),
                     item_status="failed",
                     tool_status="failed",
@@ -889,12 +907,8 @@ class ToolExecutionController:
                     "error",
                     "TOOL_INFRASTRUCTURE_FAILURE",
                     "Tool infrastructure failed",
-                    side_effects_may_exist=(
-                        plan.side_effect != "none"
-                    ),
-                    reconciliation_required=(
-                        plan.side_effect != "none"
-                    ),
+                    side_effects_may_exist=self.execution_started,
+                    reconciliation_required=self._execution_uncertain(),
                 )
                 infrastructure_projection = self._project_result(
                     plan, infrastructure_result

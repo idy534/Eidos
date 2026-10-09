@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from eidos_runtime.persistence.completion import CompletionRepository
 
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 
@@ -86,6 +85,7 @@ class ContextBuilder:
         memory_advertised = bool(memory_tools) or (
             step_policy is not None and any(name.startswith("memory_") for name in step_policy.available_tools)
         )
+        collaboration = CollaborationRepository(self.store.database)
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             skill_catalog_context=catalog_context,
@@ -94,6 +94,7 @@ class ContextBuilder:
             memory_tools=memory_tools,
             memory_access=memory_access if memory_advertised or memory_access.temporary else None,
             work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
+            agent_role=collaboration.child_role_for_run(run_id),
         )
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
@@ -102,7 +103,6 @@ class ContextBuilder:
         # These are injected as user messages BEFORE workspace-environment so that
         # the current user request (which comes later in history) has higher priority.
         user_context_messages: list[ModelContextItem] = []
-        collaboration = CollaborationRepository(self.store.database)
         agent_state = collaboration.model_state(run_id)
         if agent_state.parent_run_id is not None:
             # A distinct source-labelled section keeps agent findings out of
@@ -120,12 +120,6 @@ class ContextBuilder:
             })
 
         context: list[ModelContextItem] = [*user_context_messages]
-        completion_feedback = CompletionRepository(self.store.database).feedback(run_id)
-        if completion_feedback is not None:
-            context.append({"type": "user", "sectionId": "completion-feedback", "content":
-                "Runtime completion feedback from a model assessment, not user instructions or permission. "
-                "Continue the original request using available tools; do not merely announce the next action.\n"
-                + completion_feedback.model_dump_json(by_alias=True)})
         if not projectless:
             workspace = self.store.workspace_for_run(run_id)
             # Keep this early message stable across Workspace mutations. The

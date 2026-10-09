@@ -85,7 +85,8 @@ def run_shell(
     try:
         workspace_fd = _open_verified_directory(workspace)
         cwd_fd = _open_verified_directory(cwd)
-        if cwd.path != workspace.path and workspace.path not in cwd.path.parents:
+        full_access = attempt is not None and attempt.permissions.full_access
+        if not full_access and cwd.path != workspace.path and workspace.path not in cwd.path.parents:
             raise ValueError("shell cwd is outside workspace")
         return _run_verified_shell(
             workspace,
@@ -321,7 +322,8 @@ def prepare_shell_launch_for_execution(
     try:
         workspace_fd = _open_verified_directory(workspace)
         cwd_fd = _open_verified_directory(cwd)
-        if cwd.path != workspace.path and workspace.path not in cwd.path.parents:
+        full_access = attempt is not None and attempt.permissions.full_access
+        if not full_access and cwd.path != workspace.path and workspace.path not in cwd.path.parents:
             raise ValueError("shell cwd is outside workspace")
         return _prepare_verified_shell_launch(
             workspace,

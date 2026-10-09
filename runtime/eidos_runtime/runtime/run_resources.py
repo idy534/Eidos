@@ -128,7 +128,7 @@ class RunResources:
                 sandbox=self.mcp_sandbox and not self.tool_executor.full_access,
                 resource_registry=self.resources,
             )
-            self._external_entries = () if self.child_role == "explorer" else self.mcp.start()
+            self._external_entries = self.mcp.start()
             self.skill_catalog_snapshot = self.skills.catalog_snapshot(
                 self.extension_snapshot
             )
@@ -173,7 +173,7 @@ class RunResources:
         if self.mcp is None:
             raise RuntimeError("run resources are not started")
         try:
-            entries = None if self.child_role == "explorer" else self.mcp.refresh_if_changed()
+            entries = self.mcp.refresh_if_changed()
             if entries is not None:
                 self._external_entries = entries
             if new_inputs:
@@ -254,15 +254,8 @@ class RunResources:
             ),
             external_entries=self._external_entries,
         )
-        if self.child_role == "explorer":
-            base = ToolRegistry(tuple(
-                entry for entry in base.entries
-                if (entry.spec.side_effect == "none" and entry.provenance.kind == "builtin"
-                    and entry.spec.name not in {"request_permissions", "request_user_input", "declare_outputs"})
-                or (entry.spec.name == "send_message" and entry.provenance.source_id == "eidos.collaboration")
-            ))
-        elif self.child_role == "worker":
-            # The worker inherits the parent's normal tools and per-run policy.
+        if self.is_child:
+            # Built-in roles specialize the assignment, not the Run's authority.
             # Coordination and direct permission expansion stay with the parent.
             base = ToolRegistry(tuple(
                 entry for entry in base.entries
