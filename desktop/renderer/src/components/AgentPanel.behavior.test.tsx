@@ -333,4 +333,26 @@ describe("AgentWorkspacePanel", () => {
     expect(screen.queryByRole("button", { name: "差评" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重新回答" })).not.toBeInTheDocument();
   });
+
+  it("normalizes and renders single-line task snippet starting from the first character", () => {
+    const child = {
+      id: "agent-multiline",
+      taskName: "count-lines",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-multiline",
+      runId: "child-run-multiline",
+      status: "running" as const,
+      task: "\n  1. 负责统计模块代码行数\n  2. 排除纯空白行与纯注释行\n",
+      result: null,
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 1000,
+    };
+    render(<AgentList agents={[child]} onOpen={() => undefined} />);
+
+    const snippet = screen.getByText("1. 负责统计模块代码行数 2. 排除纯空白行与纯注释行");
+    expect(snippet).toBeInTheDocument();
+    expect(snippet).toHaveClass("agent-card__snippet");
+  });
 });

@@ -235,7 +235,7 @@ export function AgentList({
 
             {agent.task && (
               <div className="agent-card__body">
-                <p className="agent-card__snippet">{agent.task}</p>
+                <p className="agent-card__snippet">{agent.task.replace(/\s+/g, " ").trim()}</p>
               </div>
             )}
 

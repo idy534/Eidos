@@ -218,6 +218,8 @@
   cursor: pointer;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: 7px;
   box-shadow: 0 1px 2px rgba(32, 36, 31, 0.04);
   transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s var(--apple-spring);
@@ -225,6 +227,7 @@
   font-family: inherit;
   color: var(--text);
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .agent-card:hover {
@@ -393,18 +396,25 @@
 }
 
 .agent-card__body {
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   padding: 1px 0;
+  overflow: hidden;
 }
 
 .agent-card__snippet {
   margin: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-size: var(--font-size-caption);
   color: var(--text-secondary);
   line-height: 1.45;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
 }
 
 .agent-card__footer {
@@ -415,7 +425,9 @@
   margin-top: 2px;
   padding-top: 6px;
   border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   flex-wrap: wrap;
 }
 
