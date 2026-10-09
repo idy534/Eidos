@@ -73,6 +73,17 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "structured_invalid",
+        "description": "Return structured content that violates its output schema",
+        "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        "outputSchema": {
+            "type": "object",
+            "properties": {"answer": {"type": "integer"}},
+            "required": ["answer"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 listed_once = False
@@ -139,7 +150,7 @@ for line in sys.stdin:
         elif name == "fail":
             content = [{"type": "text", "text": "safe failure"}]
             is_error = True
-        elif name == "structured":
+        elif name in {"structured", "structured_invalid"}:
             content = [{"type": "text", "text": "structured"}]
             is_error = False
         else:
@@ -147,8 +158,10 @@ for line in sys.stdin:
             content = [{"type": "text", "text": text}]
             is_error = False
         result_payload = {"content": content, "isError": is_error}
-        if name == "structured":
-            result_payload["structuredContent"] = {"answer": 42}
+        if name in {"structured", "structured_invalid"}:
+            result_payload["structuredContent"] = {
+                "answer": 42 if name == "structured" else "invalid",
+            }
         response = {
             "jsonrpc": "2.0",
             "id": message["id"],

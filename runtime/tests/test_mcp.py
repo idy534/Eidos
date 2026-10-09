@@ -462,7 +462,8 @@ class McpManagerTests(unittest.TestCase):
         timeout_result = slow.adapter.execute({}, threading.Event())
 
         self.assertEqual(failed_result["code"], "mcp_tool_error")
-        self.assertFalse(failed_result["sideEffectsMayExist"])
+        self.assertTrue(failed_result["sideEffectsMayExist"])
+        self.assertFalse(failed_result["reconciliationRequired"])
         self.assertEqual(timeout_result["code"], "mcp_tool_timeout")
         self.assertTrue(timeout_result["sideEffectsMayExist"])
         self.assertTrue(timeout_result["reconciliationRequired"])
@@ -486,6 +487,20 @@ class McpManagerTests(unittest.TestCase):
         with patch.object(tool.adapter.output_validator, "validate", side_effect=JsonSchemaValidationError("invalid output")):
             result = tool.adapter.execute({}, threading.Event())
         self.assertEqual(result["code"], "TOOL_RESULT_CONTRACT_VIOLATION")
+        self.assertTrue(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+
+    def test_sdk_output_validation_failure_keeps_received_result_certain(self) -> None:
+        entries = self.manager.start()
+        tool = next(
+            value for value in entries
+            if value.spec.name.endswith("__structured_invalid")
+        )
+
+        result = tool.adapter.execute({}, threading.Event())
+
+        self.assertEqual(result["code"], "TOOL_RESULT_CONTRACT_VIOLATION")
+        self.assertTrue(result["sideEffectsMayExist"])
         self.assertFalse(result["reconciliationRequired"])
 
     def test_output_schema_does_not_replace_a_known_tool_rejection(self) -> None:
@@ -533,17 +548,23 @@ class McpManagerTests(unittest.TestCase):
         canceled = echo.adapter.execute({"message": "no"}, cancel)
 
         self.assertEqual(image_result["code"], "mcp_content_unsupported")
+        self.assertTrue(image_result["sideEffectsMayExist"])
+        self.assertFalse(image_result["reconciliationRequired"])
         self.assertEqual(canceled["code"], "mcp_tool_canceled")
-        self.assertTrue(canceled["sideEffectsMayExist"])
+        self.assertFalse(canceled["sideEffectsMayExist"])
+        self.assertFalse(canceled["reconciliationRequired"])
 
-    def test_stdout_pollution_is_a_closed_uncertain_result(self) -> None:
+    def test_stdout_pollution_keeps_a_received_result_but_closes_connection(self) -> None:
         entries = self.manager.start()
         tool = next(value for value in entries if value.spec.name.endswith("__pollute"))
 
         result = tool.adapter.execute({}, threading.Event())
+        unavailable = tool.adapter.execute({}, threading.Event())
 
-        self.assertEqual(result["code"], "mcp_stdout_pollution")
+        self.assertEqual(result["code"], "ok")
         self.assertTrue(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(unavailable["code"], "tool_unavailable")
 
     def test_server_crash_is_not_retried(self) -> None:
         entries = self.manager.start()
