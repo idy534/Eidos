@@ -12,7 +12,7 @@ function optionalText(value: unknown, max = 128): boolean {
 function agent(value: unknown): value is AgentSummary {
   return record(value)
     && [value.id, value.taskName, value.parentRunId, value.sessionId, value.runId].every((v) => text(v) && v.length > 0)
-    && (value.role === "explorer" || value.role === "worker")
+    && (value.role === "default" || value.role === "explorer" || value.role === "worker")
     && (value.requiredForCompletion === undefined || typeof value.requiredForCompletion === "boolean")
     && ["queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing", "succeeded", "failed", "stopped", "canceled", "interrupted"].includes(String(value.status))
     && text(value.task, 512) && optionalText(value.result, 2000)

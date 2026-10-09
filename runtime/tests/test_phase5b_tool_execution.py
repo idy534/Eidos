@@ -512,6 +512,116 @@ class ToolExecutionControllerTests(unittest.TestCase):
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertTrue(outcome.result["reconciliationRequired"])
 
+    def test_preparation_exception_does_not_block_following_tools(self) -> None:
+        handler = _Handler()
+
+        def prepare_failed(*_args):
+            raise ValueError("launch preparation rejected")
+
+        handler.execute = prepare_failed
+        controller = self._controller({"shell": handler, "read": _Handler()})
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item(), call=self.call,
+            plan=_plan("shell", 5, "shell", False),
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_FAILED")
+        self.assertFalse(outcome.result["sideEffectsMayExist"])
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        following = controller.execute(
+            run_id=self.run["id"], item=self._item(1), call=self.call,
+            plan=_plan("read", 5, "none", False),
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(following.result["code"], "ok")
+
+    def test_authorization_without_execution_is_a_known_failure(self) -> None:
+        handler = _Handler()
+        controller = self._controller({"file": handler})
+
+        def reject_before_execution(_run, item, _call, _cancel):
+            controller.authorize_workspace_side_effect(
+                item=item, prepared=PreparedToolExecution(
+                    approval_description={}, intent_preconditions={"path": "a.txt"},
+                    transition_reason="test",
+                ),
+            )
+            raise ValueError("prepared operation cannot start")
+
+        handler.execute = reject_before_execution
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item(), call=self.call,
+            plan=_plan("file", 5, "workspace", False),
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        intent = self.store.connection.execute(
+            "SELECT status FROM durable_intents WHERE run_id=?", (self.run["id"],),
+        ).fetchone()
+        self.assertEqual(intent["status"], "completed")
+
+    def test_failure_after_execution_started_remains_uncertain(self) -> None:
+        handler = _Handler()
+        controller = self._controller({"file": handler})
+
+        def fail_after_execution(_run, item, _call, _cancel):
+            controller.authorize_workspace_side_effect(
+                item=item, prepared=PreparedToolExecution(
+                    approval_description={}, intent_preconditions={"path": "a.txt"},
+                    transition_reason="test",
+                ),
+            )
+            controller.mark_execution_started()
+            raise OSError("result unavailable after execution")
+
+        handler.execute = fail_after_execution
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item(), call=self.call,
+            plan=_plan("file", 5, "workspace", False),
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertTrue(outcome.result["reconciliationRequired"])
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+
+    def test_projection_failure_preserves_known_execution_result(self) -> None:
+        handler = _Handler()
+        controller = self._controller({"shell": handler})
+        item = self._item()
+        self.store.begin_durable_intent(item["id"], preconditions={}, approval_required=False)
+
+        def projection_failed(_plan, _result):
+            raise ValueError("projection failed")
+
+        controller._project_result = projection_failed
+        outcome = controller.execute(
+            run_id=self.run["id"], item=item, call=self.call,
+            plan=_plan("shell", 5, "shell", False),
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "TOOL_RESULT_PROJECTION_FAILED")
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+
+    def test_cancel_after_known_shell_result_preserves_certainty(self) -> None:
+        handler = _Handler()
+        controller = self._controller({"shell": handler})
+        item = self._item()
+        self.store.begin_durable_intent(item["id"], preconditions={}, approval_required=False)
+        cancel = threading.Event()
+
+        def finish_then_cancel(*_args):
+            cancel.set()
+            return HandlerOutcome(handler.result, "completed")
+
+        handler.execute = finish_then_cancel
+        outcome = controller.execute(
+            run_id=self.run["id"], item=item, call=self.call,
+            plan=_plan("shell", 5, "shell", False), cancel=cancel, deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "TOOL_CANCELED")
+        self.assertFalse(outcome.result["reconciliationRequired"])
+
     def test_read_output_preserves_explicit_clear_reconciliation_fact(self) -> None:
         result = {
             "schemaVersion": 1,

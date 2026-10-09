@@ -13,11 +13,11 @@ const commands: Candidate[] = [
 ];
 const CATEGORIES = [
   { id: "all", label: "全部" },
-  { id: "file", label: "文件与目录" },
+  { id: "file", label: "文件" },
   { id: "skill", label: "Skill" },
   { id: "mcp", label: "MCP" },
-  { id: "plugin", label: "Plugin" },
-  { id: "history", label: "历史对话" },
+  { id: "plugin", label: "插件" },
+  { id: "history", label: "历史" },
 ] as const;
 export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode }: {
   mode: InputPickerMode; query: string; inline: boolean;
@@ -33,6 +33,18 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
   const [index, setIndex] = useState(0);
   const [category, setCategory] = useState("all");
   const [history, setHistory] = useState<Candidate[] | null>(null);
+  const [searchExpanded, setSearchExpanded] = useState(Boolean(query));
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (query) setSearchExpanded(true);
+  }, [query]);
+
+  useEffect(() => {
+    if (searchExpanded) {
+      searchInputRef.current?.focus();
+    }
+  }, [searchExpanded]);
   const listId = useId();
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -110,17 +122,48 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
     function key(event: KeyboardEvent) {
       if (event.isComposing) return;
       if (inline && !(event.target instanceof HTMLTextAreaElement)) return;
-      if (!inline && (!root.current?.contains(event.target as Node) || (!(event.target instanceof HTMLInputElement) && (event.target as HTMLElement).getAttribute("role") !== "option"))) return;
-      if (["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
-        event.preventDefault(); event.stopPropagation();
-        if (event.key === "Escape") onClose();
-        else if (event.key === "Enter") choices.current.choose(choices.current.candidates[index]);
+      if (!inline && (!root.current?.contains(event.target as Node) || (!(event.target instanceof HTMLInputElement) && (event.target as HTMLElement).getAttribute("role") !== "option" && !(event.target instanceof HTMLButtonElement)))) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (searchExpanded && !inline) {
+          if (query) {
+            onQuery("");
+            searchInputRef.current?.focus();
+          } else {
+            setSearchExpanded(false);
+          }
+        } else {
+          onClose();
+        }
+        return;
+      }
+      if (["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Enter") choices.current.choose(choices.current.candidates[index]);
         else setIndex((current) => Math.max(0, Math.min(choices.current.candidates.length - 1, current + (event.key === "ArrowDown" ? 1 : -1))));
       }
     }
     document.addEventListener("keydown", key, true);
     return () => document.removeEventListener("keydown", key, true);
-  }, [inline, index, onClose]);
+  }, [inline, index, onClose, searchExpanded, query, onQuery]);
+
+  function handleSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (query) {
+        onQuery("");
+      } else {
+        setSearchExpanded(false);
+      }
+    } else if (event.key === "Backspace" && !query) {
+      event.preventDefault();
+      setSearchExpanded(false);
+    }
+  }
+
   useEffect(() => {
     function outside(event: PointerEvent) {
       const target = event.target as HTMLElement;
@@ -129,94 +172,145 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [onClose]);
+
   return (
     <div className="input-picker" ref={root}>
-      <div className="input-picker__header">
-        {!inline ? (
-          <div className="input-picker__search">
-            <SearchIcon />
-            <input
-              autoFocus
-              aria-label="搜索引用"
-              placeholder="搜索名称…"
-              value={query}
-              onChange={(event) => onQuery(event.target.value)}
-            />
-            {query && (
-              <button
-                type="button"
-                className="input-picker__clear-btn"
-                onClick={() => onQuery("")}
-                aria-label="清空搜索"
-                tabIndex={-1}
-              >
-                <ClearIcon />
-              </button>
-            )}
-          </div>
-        ) : (
+      {inline ? (
+        <div className="input-picker__header">
           <div className="input-picker__inline-header">
             <span className="input-picker__inline-title">
               {mode === "skill" ? "选择 Skill" : mode === "commands" ? "快捷指令" : "选择引用"}
             </span>
           </div>
-        )}
-      </div>
-
-      {mode === "all" && !inline && (
-        <>
-          <div className="input-picker__quick-actions">
+        </div>
+      ) : searchExpanded ? (
+        <div className="input-picker__header input-picker__header--search">
+          <div className="input-picker__search">
+            <SearchIcon />
+            <input
+              ref={searchInputRef}
+              autoFocus
+              aria-label="搜索引用"
+              placeholder="搜索名称、Skill、扩展…"
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+              onKeyDown={handleSearchKeyDown}
+            />
+            {query ? (
+              <button
+                type="button"
+                className="input-picker__clear-btn"
+                onClick={() => {
+                  onQuery("");
+                  searchInputRef.current?.focus();
+                }}
+                aria-label="清空搜索"
+                title="清空搜索"
+                tabIndex={-1}
+              >
+                <ClearIcon />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="input-picker__collapse-btn"
+                onClick={() => {
+                  setSearchExpanded(false);
+                  onQuery("");
+                }}
+                aria-label="收起搜索"
+                title="收起搜索"
+              >
+                收起
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="input-picker__header input-picker__header--actions">
+          <div className="input-picker__actions">
             <button
               type="button"
-              className="input-picker__quick-btn"
+              className="input-picker__action-btn"
+              aria-label="添加文件"
+              title="添加文件"
               onClick={() => {
                 void window.eidosRuntime.pickInputPaths().then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
               }}
             >
               <UploadFileIcon />
-              <span>添加文件</span>
+              <span>文件</span>
             </button>
             <button
               type="button"
-              className="input-picker__quick-btn"
+              className="input-picker__action-btn"
+              aria-label="添加文件夹"
+              title="添加文件夹"
               onClick={() => {
                 void window.eidosRuntime.pickInputPaths(true).then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
               }}
             >
               <FolderPlusIcon />
-              <span>添加文件夹</span>
+              <span>文件夹</span>
             </button>
+
+            <span className="input-picker__actions-divider" aria-hidden="true" />
+
             <button
               type="button"
-              className="input-picker__quick-btn"
+              className="input-picker__action-btn input-picker__action-btn--plan"
+              aria-label="Plan 模式"
+              title="开始 Plan 模式"
               onClick={() => {
                 onSelectPlanMode?.();
                 onClose();
               }}
             >
               <LightbulbIcon />
-              <span>Plan 模式</span>
+              <span>Plan</span>
+            </button>
+            <button
+              type="button"
+              className="input-picker__action-btn input-picker__action-btn--goal"
+              aria-label="目标模式"
+              title="目标模式 (即将推出)"
+              disabled
+            >
+              <TargetGoalIcon />
+              <span>目标</span>
             </button>
           </div>
 
-          <div className="input-picker__categories" role="tablist" aria-label="引用分类">
-            {CATEGORIES.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={category === tab.id}
-                className={`input-picker__category-pill${category === tab.id ? " is-active" : ""}`}
-                onClick={() => {
-                  setCategory(tab.id);
-                  setHistory(null);
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </>
+          <button
+            type="button"
+            className="input-picker__search-trigger"
+            aria-label="搜索引用"
+            title="搜索引用"
+            onClick={() => setSearchExpanded(true)}
+          >
+            <SearchIcon />
+          </button>
+        </div>
+      )}
+
+      {mode === "all" && !inline && (
+        <div className="input-picker__categories" role="tablist" aria-label="引用分类">
+          {CATEGORIES.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={category === tab.id}
+              className={`input-picker__category-pill${category === tab.id ? " is-active" : ""}`}
+              onClick={() => {
+                setCategory(tab.id);
+                setHistory(null);
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       )}
 
       {history && (
@@ -392,6 +486,16 @@ export function LightbulbIcon({ className }: { className?: string } = {}) {
       />
       <path d="M6 14.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       <path d="M6.75 12.5h2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TargetGoalIcon({ className }: { className?: string } = {}) {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true" className={className}>
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="8" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="8" cy="8" r="1.2" fill="currentColor" />
     </svg>
   );
 }

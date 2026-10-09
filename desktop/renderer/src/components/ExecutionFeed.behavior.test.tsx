@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Item, Run } from "../contracts.js";
@@ -98,6 +98,76 @@ describe("ExecutionFeed shell output", () => {
     expect(output?.textContent).toBe("first line\nsecond line\n");
     expect(container.querySelectorAll(".shell-output")).toHaveLength(1);
     expect(screen.getByText("✓ 成功")).toBeInTheDocument();
+  });
+
+  it("renders capsule exit code badge next to 失败 and hides shell_exit_nonzero on command failure", () => {
+    const failedItem = shellItem({
+      status: "failed",
+      completedAt: 2_000,
+      content: "zsh:1: no matches found: --include=*.py\n",
+      toolCall: {
+        ...shellItem().toolCall!,
+        status: "completed",
+        completedAt: 2_000,
+        resultJson: JSON.stringify({
+          outcome: "error",
+          code: "shell_exit_nonzero",
+          summary: "Command did not succeed (termination=exit)",
+          data: {
+            stdout: "",
+            stderr: "zsh:1: no matches found: --include=*.py\n",
+            exitCode: 1,
+          },
+        }),
+      },
+    });
+    const { container } = render(
+      <ExecutionFeed
+        items={[failedItem]}
+        runs={[{ ...baseRun, status: "failed", completedAt: 2_000, updatedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText(/shell_exit_nonzero/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Command did not succeed/)).not.toBeInTheDocument();
+    const pill = container.querySelector(".shell-exit-code-pill");
+    expect(pill).toBeInTheDocument();
+    expect(pill?.textContent).toBe("退出码 1");
+    expect(screen.getByText("失败")).toBeInTheDocument();
+  });
+
+  it("copies only the raw shell command when the copy button is clicked", async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: writeTextMock,
+      },
+    });
+
+    const item = shellItem({
+      status: "completed",
+      toolCall: {
+        ...shellItem().toolCall!,
+        argumentsJson: JSON.stringify({ command: 'grep -rn "TODO" .' }),
+      },
+    });
+
+    const { container } = renderFeed(item);
+    const copyButton = container.querySelector(".shell-copy-button") as HTMLButtonElement | null;
+    expect(copyButton).toBeInTheDocument();
+    expect(copyButton?.title).toBe("复制命令");
+
+    fireEvent.click(copyButton!);
+
+    expect(writeTextMock).toHaveBeenCalledWith('grep -rn "TODO" .');
+    await waitFor(() => {
+      expect(copyButton?.title).toBe("已复制命令");
+    });
   });
 
   it("starts a shell details group collapsed and preserves manual expansion", () => {
@@ -717,5 +787,221 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     expect(planCard).not.toBeNull();
     expect(planWrapper?.contains(planCard!)).toBe(true);
     expect(planCard?.textContent).toContain("从结果中读取的计划标题");
+  });
+
+  it("renders subagent tool as direct button and calls onOpenSubagent on click", () => {
+    const onOpenSubagent = vi.fn();
+    const spawnItem: Item = {
+      id: "spawn-item",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1_000,
+      toolCall: {
+        id: "tc-spawn",
+        itemId: "spawn-item",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-spawn",
+        toolName: "spawn_agent",
+        status: "completed",
+        startedAt: 1_000,
+        completedAt: 1_200,
+        argumentsJson: JSON.stringify({ task_name: "reviewer", role: "worker" }),
+        resultJson: JSON.stringify({ outcome: "success", data: { agent: { id: "child-42", taskName: "reviewer" } } }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed
+        items={[spawnItem]}
+        runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onOpenSubagent={onOpenSubagent}
+      />,
+    );
+
+    const btn = container.querySelector("button.tool-file-link");
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toBe("reviewer");
+    expect(container.textContent).toContain("创建子智能体 · reviewer");
+    expect(container.querySelector("details.tool-item")).toBeNull();
+
+    fireEvent.click(btn!);
+    expect(onOpenSubagent).toHaveBeenCalledWith({ id: "child-42", taskName: "reviewer" });
+  });
+
+  it("shows error summary in title attribute on hover when subagent tool fails", () => {
+    const errorItem: Item = {
+      id: "spawn-err",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "failed",
+      createdAt: 1_000,
+      toolCall: {
+        id: "tc-err",
+        itemId: "spawn-err",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-err",
+        toolName: "spawn_agent",
+        status: "failed",
+        startedAt: 1_000,
+        completedAt: 1_200,
+        argumentsJson: JSON.stringify({ task_name: "failing-worker" }),
+        resultJson: JSON.stringify({ outcome: "error", summary: "Resource quota exceeded" }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed
+        items={[errorItem]}
+        runs={[{ ...baseRun, status: "failed", completedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onOpenSubagent={() => {}}
+      />,
+    );
+
+    const toolRow = container.querySelector(".tool-item--read-done");
+    expect(toolRow).not.toBeNull();
+    expect(toolRow?.getAttribute("title")).toBe("Resource quota exceeded");
+    expect(container.querySelector(".tool-summary--error")).toBeNull();
+  });
+});
+
+describe("ExecutionFeed regenerate confirmation", () => {
+  const terminalRun: Run = {
+    id: "run-terminal",
+    sessionId: "session-terminal",
+    status: "succeeded",
+    modelId: "deepseek-v4-flash",
+    modelStepCount: 1,
+    createdAt: 1_000,
+    startedAt: 1_000,
+    updatedAt: 2_000,
+    completedAt: 2_000,
+  };
+
+  const userItem: Item = {
+    id: "user-msg",
+    sessionId: terminalRun.sessionId,
+    runId: terminalRun.id,
+    ordinal: 1,
+    kind: "user_message",
+    status: "completed",
+    createdAt: 1_000,
+    content: "请帮我写代码",
+  };
+
+  const assistantItem: Item = {
+    id: "assistant-msg",
+    sessionId: terminalRun.sessionId,
+    runId: terminalRun.id,
+    ordinal: 2,
+    kind: "assistant_message",
+    status: "completed",
+    createdAt: 1_500,
+    completedAt: 2_000,
+    content: "这是回答内容",
+  };
+
+  it("requires secondary confirmation before calling onRegenerate", async () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ExecutionFeed
+        items={[userItem, assistantItem]}
+        runs={[terminalRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onRegenerate={onRegenerate}
+      />,
+    );
+
+    const retryBtn = screen.getByRole("button", { name: "重新回答" });
+    expect(retryBtn).toBeInTheDocument();
+
+    // 1. Click retry button -> dialog appears, onRegenerate not yet called
+    fireEvent.click(retryBtn);
+    expect(onRegenerate).not.toHaveBeenCalled();
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText("重新回答？")).toBeInTheDocument();
+    expect(screen.getByText("重新回答将放弃当前的回答并重新生成。确定要继续吗？")).toBeInTheDocument();
+
+    // 2. Click cancel button -> dialog closes, onRegenerate still not called
+    const cancelBtn = screen.getByRole("button", { name: "取消" });
+    fireEvent.click(cancelBtn);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onRegenerate).not.toHaveBeenCalled();
+
+    // 3. Open dialog again, click confirm button -> dialog closes, onRegenerate called with run
+    fireEvent.click(retryBtn);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    const dialogConfirmBtn = within(screen.getByRole("alertdialog")).getByRole("button", { name: "重新回答" });
+    fireEvent.click(dialogConfirmBtn);
+    expect(onRegenerate).toHaveBeenCalledTimes(1);
+    expect(onRegenerate).toHaveBeenCalledWith(terminalRun);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("cancels confirmation on Escape key without triggering onRegenerate", () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ExecutionFeed
+        items={[userItem, assistantItem]}
+        runs={[terminalRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onRegenerate={onRegenerate}
+      />,
+    );
+
+    const retryBtn = screen.getByRole("button", { name: "重新回答" });
+    fireEvent.click(retryBtn);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onRegenerate).not.toHaveBeenCalled();
+  });
+
+  it("cancels confirmation on backdrop click without triggering onRegenerate", () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(
+      <ExecutionFeed
+        items={[userItem, assistantItem]}
+        runs={[terminalRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onRegenerate={onRegenerate}
+      />,
+    );
+
+    const retryBtn = screen.getByRole("button", { name: "重新回答" });
+    fireEvent.click(retryBtn);
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    const backdrop = container.querySelector(".modal-backdrop");
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onRegenerate).not.toHaveBeenCalled();
   });
 });

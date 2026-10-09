@@ -3,18 +3,21 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from pydantic import TypeAdapter
 
 from eidos_runtime.db.database import Database, now_ms
 from eidos_runtime.db.events import append_event
 from eidos_runtime.db.repositories.runs import RunRepository
 from eidos_runtime.db.transitions import transition_run
 from eidos_runtime.domain.collaboration import (
-    ACTIVE_STATUSES, MAX_AGENTS, AgentMessage, AgentSummary, AgentWait,
+    ACTIVE_STATUSES, MAX_AGENTS, AgentMessage, AgentRole, AgentSummary, AgentWait,
     CollaborationRejected, CollaborationState, SpawnAgent, WaitAgents,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.domain.run import RunStatus as DomainRunStatus
 from eidos_runtime.runtime.state_machine import EventType, RunStatus
+
+_AGENT_ROLE = TypeAdapter(AgentRole)
 
 
 class CollaborationRepository:
@@ -33,13 +36,13 @@ class CollaborationRepository:
                 'SELECT 1 FROM agent_delegations d JOIN runs r ON r.session_id=d.child_session_id WHERE r.id=?', (run_id,),
             ).fetchone() is not None
 
-    def child_role_for_run(self, run_id: str) -> str | None:
+    def child_role_for_run(self, run_id: str) -> AgentRole | None:
         with self.database.lock:
             row = self.database.connection().execute(
                 'SELECT d.role FROM agent_delegations d JOIN runs r ON r.session_id=d.child_session_id WHERE r.id=?',
                 (run_id,),
             ).fetchone()
-            return str(row['role']) if row else None
+            return _AGENT_ROLE.validate_python(row['role']) if row else None
 
     @staticmethod
     def _active(connection: sqlite3.Connection, run_id: str) -> sqlite3.Row:
@@ -155,6 +158,8 @@ class CollaborationRepository:
             parent = self._active(connection, run_id)
             if self.is_child(parent['session_id']):
                 raise CollaborationRejected('nested_delegation_not_supported')
+            if parent['reconciliation_required']:
+                raise CollaborationRejected('reconciliation_required')
             if connection.execute('SELECT COUNT(*) FROM agent_delegations WHERE parent_run_id=?', (run_id,)).fetchone()[0] >= MAX_AGENTS:
                 raise CollaborationRejected('agent_task_limit')
             if connection.execute('SELECT 1 FROM agent_delegations WHERE parent_run_id=? AND task_name=?', (run_id, request.task_name)).fetchone():
@@ -226,7 +231,7 @@ class CollaborationRepository:
                 if current['status'] in ACTIVE_STATUSES:
                     self._send(connection, run_id, item_id, agent_id, message)
                     return self._summary(connection, target)
-                if target['role'] == 'worker' and parent['reconciliation_required']:
+                if parent['reconciliation_required']:
                     raise CollaborationRejected('reconciliation_required')
                 self._create_run(connection, parent, target['child_session_id'], child_id, message)
                 connection.execute('UPDATE agent_delegations SET child_run_id=?,task=? WHERE id=?', (child_id, message, agent_id))

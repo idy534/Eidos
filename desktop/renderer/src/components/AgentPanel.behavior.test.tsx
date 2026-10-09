@@ -1,11 +1,25 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CollaborationState } from "../../../shared/collaboration.generated.js";
 import type { EidosRuntimeAPI } from "../contracts.js";
-import { AgentList, AgentWorkspacePanel, useAgentState } from "./AgentPanel.js";
+import {
+  AgentList,
+  AgentWorkspacePanel,
+  formatErrorCode,
+  useAgentState,
+} from "./AgentPanel.js";
 
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+
+describe("agent error labels", () => {
+  it("describes interruption and legacy completion checks", () => {
+    expect(formatErrorCode("RUNTIME_INTERRUPTED")).toBe("执行已中断");
+    expect(formatErrorCode("completion_unconfirmed")).toBe("答复已生成，旧版完成检查未确认");
+  });
+});
 
 describe("AgentWorkspacePanel", () => {
   afterEach(() => {
@@ -26,6 +40,32 @@ describe("AgentWorkspacePanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /fix-tests.*待审批 1/ }));
     expect(onOpen).toHaveBeenCalledWith(child);
   });
+
+  it.each([['default', 'default'], ['explorer', 'explorer'], ['worker', 'worker']] as const)(
+    "shows the %s role in the agent list without claiming read-only permissions",
+    async (role, label) => {
+      const child = {
+        id: 'agent-role', taskName: 'assigned-task', role,
+        parentRunId: 'parent-run', sessionId: 'child-session', runId: 'child-run',
+        status: 'running' as const, task: 'Investigate with inherited permissions', createdAt: 1,
+      };
+      const api: Partial<EidosRuntimeAPI> = {
+        readSession: vi.fn().mockResolvedValue({ items: [], runs: [] }),
+        onNotification: vi.fn().mockReturnValue(vi.fn()),
+      };
+      (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+      render(<>
+        <AgentList agents={[child]} onOpen={() => undefined} />
+        <AgentWorkspacePanel agents={[child]} agentId={child.id} error="" stopping={undefined}
+          onOpen={() => undefined} onStop={() => undefined} approvals={[]}
+          respondingApprovalIds={new Set()} respondingKindByApprovalId={{}} expiredApprovalIds={new Set()}
+          errorsByApprovalId={{}} onApprove={() => undefined} onReject={() => undefined} />
+      </>);
+      expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('执行中').length).toBeGreaterThanOrEqual(1);
+      expect(screen.queryByText(/只读探索/)).not.toBeInTheDocument();
+    },
+  );
 
   it("loads agents and stops an active child through the runtime API", async () => {
     const state: CollaborationState = {
@@ -69,7 +109,8 @@ describe("AgentWorkspacePanel", () => {
     render(<Fixture />);
 
     expect((await screen.findAllByText("inspect-files")).length).toBe(2);
-    expect(screen.getByText("探索 · 执行中")).toBeInTheDocument();
+    expect(screen.getAllByText("explorer").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("执行中").length).toBeGreaterThanOrEqual(1);
     screen.getByRole("button", { name: "停止" }).click();
 
     await waitFor(() => expect(api.stopAgent).toHaveBeenCalledWith("parent-run", "agent-1"));
@@ -101,5 +142,305 @@ describe("AgentWorkspacePanel", () => {
     expect(screen.getByText("fix-tests")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "批准" }));
     expect(onApprove).toHaveBeenCalledWith(expect.objectContaining({ id: "approval-1" }));
+  });
+
+  it("renders subagent mission, execution feed, and handles back navigation", async () => {
+    const child = {
+      id: "agent-exec",
+      taskName: "write-docs",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-exec",
+      runId: "child-run-exec",
+      status: "succeeded" as const,
+      task: "Write API documentation for auth module",
+      result: "Successfully generated auth.md",
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 1000,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "child-msg-1",
+            sessionId: child.sessionId,
+            runId: child.runId,
+            kind: "assistant_message",
+            ordinal: 1,
+            status: "completed",
+            content: "I have updated the auth documentation.",
+            createdAt: 1005,
+          },
+        ],
+        runs: [
+          {
+            id: child.runId,
+            sessionId: child.sessionId,
+            status: "succeeded",
+            allowedActions: [],
+            modelId: "test-model",
+            modelStepCount: 1,
+            createdAt: 1000,
+            updatedAt: 1010,
+          },
+        ],
+      }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    const onBackToList = vi.fn();
+    render(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+        onBackToList={onBackToList}
+      />,
+    );
+
+    expect(screen.getByText("write-docs")).toBeInTheDocument();
+    expect((await screen.findAllByText("Write API documentation for auth module")).length).toBeGreaterThanOrEqual(1);
+    expect(await screen.findByText("I have updated the auth documentation.")).toBeInTheDocument();
+
+    const backButton = screen.getByRole("button", { name: "返回子智能体列表" });
+    fireEvent.click(backButton);
+    expect(onBackToList).toHaveBeenCalled();
+  });
+
+  it("renders overview with empty state when no agents exist", () => {
+    render(
+      <AgentWorkspacePanel
+        agents={[]}
+        agentId={undefined}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText("暂无子智能体任务")).toBeInTheDocument();
+    expect(screen.getByText("0 个任务")).toBeInTheDocument();
+  });
+
+  it("renders compact mode with name, status, and task description in hover tooltip", () => {
+    const child = {
+      id: "agent-popover",
+      taskName: "analyze-repo",
+      role: "explorer" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-popover",
+      runId: "child-run-popover",
+      status: "running" as const,
+      task: "Analyze repository dependencies and report circular references",
+      result: null,
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 2000,
+    };
+    const onOpen = vi.fn();
+    render(
+      <AgentList
+        agents={[child]}
+        onOpen={onOpen}
+        compact
+      />,
+    );
+
+    // Visible elements: task name, role pill, and status
+    expect(screen.getByText("analyze-repo")).toBeInTheDocument();
+    expect(screen.getByText("执行中")).toBeInTheDocument();
+    const rolePill = screen.getByText("explorer");
+    expect(rolePill).toBeInTheDocument();
+    expect(rolePill).toHaveClass("agent-role-pill", "agent-role-pill--explorer");
+
+    // Task description is not rendered in layout (preventing visual clutter)
+    expect(screen.queryByText("Analyze repository dependencies and report circular references")).not.toBeInTheDocument();
+
+    // Hover tooltip (title attribute) contains task description and role
+    const button = screen.getByRole("button", { name: /analyze-repo.*执行中/ });
+    expect(button).toHaveAttribute("title");
+    expect(button.getAttribute("title")).toContain("任务描述：Analyze repository dependencies and report circular references");
+    expect(button.getAttribute("title")).toContain("analyze-repo (explorer · 执行中)");
+
+    fireEvent.click(button);
+    expect(onOpen).toHaveBeenCalledWith(child);
+  });
+
+  it("does not render redundant mission/result boxes or refresh button, and suppresses feedback and retry buttons in feed", async () => {
+    const child = {
+      id: "agent-clean-detail",
+      taskName: "write-docs",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-clean",
+      runId: "child-run-clean",
+      status: "succeeded" as const,
+      task: "Write API documentation for auth module",
+      result: "Successfully generated auth.md",
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 1000,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "child-msg-1",
+            sessionId: child.sessionId,
+            runId: child.runId,
+            kind: "assistant_message",
+            ordinal: 1,
+            status: "completed",
+            content: "I have updated the auth documentation.",
+            createdAt: 1005,
+          },
+        ],
+        runs: [
+          {
+            id: child.runId,
+            sessionId: child.sessionId,
+            status: "succeeded",
+            allowedActions: [],
+            modelId: "test-model",
+            modelStepCount: 1,
+            createdAt: 1000,
+            updatedAt: 1010,
+          },
+        ],
+      }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    render(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByText("I have updated the auth documentation.")).toBeInTheDocument();
+
+    // 1. Redundant boxes and manual refresh button are removed
+    expect(screen.queryByText("委托任务")).not.toBeInTheDocument();
+    expect(screen.queryByText("交付成果摘要")).not.toBeInTheDocument();
+    expect(screen.queryByText("刷新记录")).not.toBeInTheDocument();
+
+    // 2. Feedback and retry buttons are removed from subagent feed
+    expect(screen.queryByRole("button", { name: "点赞" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "差评" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新回答" })).not.toBeInTheDocument();
+  });
+
+  it("normalizes and renders single-line task snippet starting from the first character", () => {
+    const child = {
+      id: "agent-multiline",
+      taskName: "count-lines",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-multiline",
+      runId: "child-run-multiline",
+      status: "running" as const,
+      task: "\n  1. 负责统计模块代码行数\n  2. 排除纯空白行与纯注释行\n",
+      result: null,
+      resultItemId: null,
+      errorCode: null,
+      createdAt: 1000,
+    };
+    render(<AgentList agents={[child]} onOpen={() => undefined} />);
+
+    const snippet = screen.getByText("1. 负责统计模块代码行数 2. 排除纯空白行与纯注释行");
+    expect(snippet).toBeInTheDocument();
+    expect(snippet).toHaveClass("agent-card__snippet");
+  });
+
+  it("does not render errorCode pills in card footer or error banner in detail view", async () => {
+    const child = {
+      id: "agent-interrupted",
+      taskName: "count-internal-app",
+      role: "worker" as const,
+      parentRunId: "parent-run",
+      sessionId: "child-session-interrupted",
+      runId: "child-run-interrupted",
+      status: "interrupted" as const,
+      task: "Count Go lines",
+      result: "Done",
+      resultItemId: null,
+      errorCode: "RUNTIME_INTERRUPTED",
+      createdAt: 1000,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({ items: [], runs: [] }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    render(<>
+      <AgentList agents={[child]} onOpen={() => undefined} />
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />
+    </>);
+
+    // Status pill in header/card top is present
+    expect(screen.getAllByText("已中断").length).toBeGreaterThanOrEqual(1);
+
+    // Error code label (such as 运行时中断 or 未确认完成) is NOT rendered in card footer or detail banner
+    expect(screen.queryByText("运行时中断")).not.toBeInTheDocument();
+  });
+
+  it("enforces fixed height, flex-shrink 0, and scrollbar styles on agent cards to prevent compression", () => {
+    const agentsCss = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/components/agents.css"),
+      "utf8",
+    );
+
+    // .agent-card has fixed height, min-height, and flex-shrink 0
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*height:\s*86px;/s);
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*min-height:\s*86px;/s);
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*flex:\s*0 0 86px;/s);
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*flex-shrink:\s*0;/s);
+
+    // .agent-list has vertical scroll and custom scrollbar
+    expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-y:\s*auto;/s);
+    expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-x:\s*hidden;/s);
+    expect(agentsCss).toMatch(/\.agent-list::-webkit-scrollbar\s*\{[^}]*width:\s*6px;/s);
+
+    // .environment-popover__panel has max-height and overflow-y: auto with custom scrollbar
+    const dockCss = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/components/WorkspaceDock.css"),
+      "utf8",
+    );
+    expect(dockCss).toMatch(/\.environment-popover__panel\s*\{[^}]*max-height:\s*min\(28rem,\s*calc\(100vh\s*-\s*5rem\)\);/s);
+    expect(dockCss).toMatch(/\.environment-popover__panel\s*\{[^}]*overflow-y:\s*auto;/s);
+    expect(dockCss).toMatch(/\.environment-popover__panel\s*\{[^}]*overflow-x:\s*hidden;/s);
+    expect(dockCss).toMatch(/\.environment-popover__panel::-webkit-scrollbar\s*\{[^}]*width:\s*5px;/s);
   });
 });

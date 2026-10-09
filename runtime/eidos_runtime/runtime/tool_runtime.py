@@ -148,6 +148,7 @@ from eidos_runtime.runtime.shell_process_manager import (
     ShellProcessSessionNotFound,
     ShellSessionFinalizationError,
 )
+from eidos_runtime.workspace.reader import WorkspaceReader
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -227,6 +228,9 @@ class _HandlerDependencies:
     execute_workspace_side_effect: Callable[..., VerifiedToolExecutionResult]
     authorize_workspace_side_effect: Callable[..., None]
     run_exclusive_side_effect: Callable[..., object]
+    mark_execution_started: Callable[[], None] = lambda: None
+    execution_started: Callable[[], bool] = lambda: False
+    observe_execution_result: Callable[[dict[str, object]], None] = lambda _result: None
     resources: ResourceRegistry = field(default_factory=ResourceRegistry)
     shell_process_manager: ShellProcessManager | None = None
     base_permissions: BasePermissionProfile | None = None
@@ -653,11 +657,15 @@ class ShellToolHandler:
                 ),
             )
         try:
-            result = manager.write_stdin(arguments.sessionId, arguments.chars, yield_time_ms=arguments.yieldTimeMs, cancel=cancel)
+            result = manager.write_stdin(arguments.sessionId, arguments.chars,
+                yield_time_ms=arguments.yieldTimeMs, cancel=cancel,
+                on_input=self.dependencies.mark_execution_started)
+            self.dependencies.observe_execution_result(result)
         except ShellSessionFinalizationError:
             result = tool_result(call.name, "error", "shell_result_commit_failed", "Command exit could not be persisted", side_effects_may_exist=True, reconciliation_required=True)
         except RuntimeError as error:
-            result = tool_result(call.name, "error", "shell_stdin_failed", "Shell input or observation failed", side_effects_may_exist=bool(arguments.chars), reconciliation_required=bool(arguments.chars))
+            started = self.dependencies.execution_started()
+            result = tool_result(call.name, "error", "shell_stdin_failed", "Shell input or observation failed", side_effects_may_exist=started, reconciliation_required=started)
             logger.warning("Shell session operation failed: %s", type(error).__name__)
         result = safe_tool_result(
             self.dependencies.sensitive,
@@ -918,9 +926,9 @@ class ShellToolHandler:
                     runtime.implementation.executor.workspace_index.manifest(),  # type: ignore[attr-defined]
                     complete=False,
                 )
-                if error.code not in {
-                    "WORKSPACE_INDEX_INCOMPLETE", "sensitive_workspace_content",
-                    "unsupported_workspace_hardlink", "unsupported_workspace_entry",
+                if error.code in {
+                    "workspace_identity_changed", "workspace_identity_unavailable",
+                    "workspace_unavailable", "workspace_boundary_violation",
                 }:
                     result["reconciliationRequired"] = True
                 logger.warning("shell_workspace_observation_incomplete", extra={
@@ -1010,7 +1018,9 @@ class ShellToolHandler:
                     wait_for_exit=False,
                     on_output=stream_safe_output,
                     cancel=cancel,
+                    on_started=self.dependencies.mark_execution_started,
                 )
+                self.dependencies.observe_execution_result(raw_result)
                 if dependency_provenance is not None:
                     raw_result = _attach_dependency_provenance(
                         raw_result,
@@ -1289,6 +1299,7 @@ class ShellToolHandler:
                 cancel=cancel,
                 base_permissions=base_permissions,
                 granted_permissions=grants,
+                execution_started=self.dependencies.execution_started,
             ),
             approve=approve,
             authorize_without_approval=lambda: (
@@ -1310,6 +1321,7 @@ class ShellToolHandler:
 
             def complete_command(terminal: dict[str, object]) -> dict[str, object]:
                 terminal = {**initial_result, **terminal, "data": {**initial_result["data"], **terminal["data"]}}
+                reconciliation_required = terminal.get("reconciliationRequired") is True
                 diff = observe_workspace(terminal, threading.Event())
                 terminal = attach_workspace_diff(terminal, diff)
                 changed, diff_hash = diff.changed, diff.diff_hash
@@ -1329,7 +1341,7 @@ class ShellToolHandler:
                          "outputCallId": call.provider_call_id, "outputComplete": False,
                          "outputCaptureError": "output_projection_failed",
                          "stdout": "", "stderr": "", "truncated": True, "workspaceChanged": changed},
-                        side_effects_may_exist=True, reconciliation_required=True,
+                        side_effects_may_exist=True, reconciliation_required=reconciliation_required,
                     )
                 terminal = self.dependencies.dispatcher.validate_result("run_shell", terminal)
                 projection = self.dependencies.dispatcher.project_result("run_shell", terminal)
@@ -1639,6 +1651,9 @@ class ToolCallRuntime:
             self.controller.execute_workspace_side_effect,
             self.controller.authorize_workspace_side_effect,
             run_exclusive_side_effect=self.controller.run_exclusive_side_effect,
+            mark_execution_started=self.controller.mark_execution_started,
+            execution_started=lambda: self.controller.execution_started,
+            observe_execution_result=self.controller.observe_execution_result,
             resources=self.controller.resources,
             shell_process_manager=shell_process_manager,
             base_permissions=base_permissions,
@@ -1652,7 +1667,7 @@ class ToolCallRuntime:
         self.shell_runtime = ShellToolHandler(dependencies)
         self.external_runtime = ExternalToolHandler(dependencies)
         self.eidos_state_runtime = EidosStateToolHandler(dependencies)
-        self._reconciliation_refresh_state: tuple[int, int] | None = None
+        self._reconciliation_refresh_state: tuple[int, int, int] | None = None
 
     def _refresh_reconciliation(
         self,
@@ -1661,7 +1676,7 @@ class ToolCallRuntime:
         cancel: threading.Event,
     ) -> None:
         """Runtime-owned recovery; no model-selected read is a prerequisite."""
-        if self.workspace_refresh is None or not self.store.side_effects_blocked(run_id):
+        if not self.store.side_effects_blocked(run_id):
             return
         try:
             intent_scopes = self.store.reconciliation_intent_scopes(run_id)
@@ -1679,33 +1694,35 @@ class ToolCallRuntime:
             return
         facts = self.store.context_projection_facts(run_id)
         expected_epoch = facts.reconciliation_epoch
-        refresh_state = (expected_epoch, facts.workspace_version)
+        paths = self.store.reconciliation_file_paths(run_id)
+        if not paths:
+            return
+        refresh_state = (expected_epoch, facts.workspace_version, int(self.store.read_run(run_id)["modelStepCount"]))
         if getattr(self, "_reconciliation_refresh_state", None) == refresh_state:
             return
-        # An unchanged incomplete observation must not trigger a full rescan
-        # after every tool in the same Step. A new epoch/version can retry.
+        # Retry at a new model boundary, without repeatedly reading the same
+        # failed target set inside one batch.
         self._reconciliation_refresh_state = refresh_state
         if cancel.is_set():
             raise RuntimeCancelled
         try:
-            manifest = self.workspace_refresh(cancel)
+            with WorkspaceReader(self.store.workspace_for_run(run_id)) as reader:
+                reader.observe_files(paths, cancel=cancel)
         except (RuntimeCancelled, ToolCancelled):
             raise
         except Exception:
             if cancel.is_set():
                 raise RuntimeCancelled
             logger.warning(
-                "reconciliation_workspace_refresh_failed",
+                "reconciliation_target_observation_failed",
                 extra={"run_id": run_id},
                 exc_info=logger.isEnabledFor(logging.DEBUG),
             )
             return
-        if getattr(manifest, "complete", False) is not True:
-            return
         if cancel.is_set():
             raise RuntimeCancelled
         mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
-            run_id, expected_epoch
+            run_id, expected_epoch, observed_paths=paths
         )
         if mutation is not None:
             self.events.publish(mutation, run=mutation.value)

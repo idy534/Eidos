@@ -18,6 +18,7 @@ from eidos_runtime.sandbox.denial import (
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
     BasePermissionProfile,
+    FileSystemAccessMode,
     FileSystemPermissionEntry,
     NetworkPermissions,
     SandboxPermissions,
@@ -81,8 +82,8 @@ class ToolOrchestratorTests(unittest.TestCase):
         output.mkdir()
         sdk = self.root / "sdk"
         sdk.mkdir()
-        requested = FileSystemPermissionEntry(path=str(output), access="write", recursive=True)
-        granted = FileSystemPermissionEntry(path=str(sdk), access="read", recursive=False)
+        requested = FileSystemPermissionEntry(path=str(output), access=FileSystemAccessMode.WRITE, recursive=True)
+        granted = FileSystemPermissionEntry(path=str(sdk), access=FileSystemAccessMode.READ, recursive=False)
         context = replace(self.context, granted_permissions=AdditionalPermissionProfile(fileSystem=(granted,)))
         approvals = []
         result = ToolOrchestrator().run(

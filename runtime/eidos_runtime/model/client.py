@@ -161,7 +161,7 @@ class ModelRequestError(RuntimeError):
 
 class ModelProfileSnapshot(_FrozenModel):
     schema_version: int = 1
-    completion_check_version: Literal[0, 1] = 0
+    completion_check_version: Literal[0, 1] = 0  # Legacy persisted snapshots; no runtime assessment.
     provider_id: str
     model_id: str
     wire_api: Literal[

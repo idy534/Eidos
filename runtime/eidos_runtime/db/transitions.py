@@ -53,6 +53,8 @@ def transition_run(
         updates.update({"error_code": reason, "completed_at": now})
     elif target_status is RunStatus.STOPPED:
         updates.update({"stop_reason": reason, "completed_at": now})
+    elif target_status is RunStatus.FINALIZING:
+        updates["stop_reason"] = reason
     elif target_status is RunStatus.CANCELED:
         updates.update({
             "completed_at": now,
@@ -60,7 +62,7 @@ def transition_run(
             "cancel_failure_code": None,
         })
     elif target_status is RunStatus.INTERRUPTED:
-        updates.update({"error_code": "RUNTIME_INTERRUPTED", "completed_at": now})
+        updates.update({"error_code": "RUNTIME_INTERRUPTED", "stop_reason": reason, "completed_at": now})
         if row["cancel_requested_at"] is not None:
             updates.update({"cancel_completed_at": now, "cancel_failure_code": None})
     elif target_status is RunStatus.SUCCEEDED:

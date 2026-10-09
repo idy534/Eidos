@@ -617,7 +617,7 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
         self.assertIn("maximum=30000", summary)
         self.assertNotIn("secret-command", summary)
 
-    def test_projection_failure_after_authorized_change_preserves_uncertainty(self) -> None:
+    def test_projection_failure_after_verified_change_preserves_certainty(self) -> None:
         class Handler:
             execute_side_effect = None
 
@@ -696,7 +696,8 @@ class Phase4ASideEffectContractTests(unittest.TestCase):
             outcome.result["code"], "TOOL_RESULT_PROJECTION_FAILED"
         )
         self.assertTrue(outcome.result["sideEffectsMayExist"])
-        self.assertTrue(outcome.result["reconciliationRequired"])
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_cancel_after_verified_file_write_preserves_changes_without_reconciliation(self) -> None:
         data = {"path": "a.txt", "changes": [{"path": "a.txt", "kind": "update"}]}

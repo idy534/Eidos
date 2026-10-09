@@ -147,7 +147,6 @@ class ModelProfileSpec(EidosFrozenStrictModel):
             ) is True
         )
         return ModelProfileSnapshot(
-            completion_check_version=1,
             provider_id=self.provider_id,
             model_id=self.model_id,
             wire_api=self.wire_api,

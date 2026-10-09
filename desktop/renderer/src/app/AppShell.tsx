@@ -945,7 +945,7 @@ export function AppShell({ runtime }: AppShellProps) {
     setEnvironmentPopoverOpen(false);
     const existing = tool === "terminal" || tool === "browser"
       ? undefined
-      : openTabs.find((tab) => tab.kind === tool);
+      : openTabs.find((tab) => tab.id === tool || (tab.kind === tool && !tab.id.startsWith("agent-")));
     let tab = existing;
     if (!tab && tool === "terminal") {
       const index = ++terminalSequenceRef.current;
@@ -962,6 +962,16 @@ export function AppShell({ runtime }: AppShellProps) {
     return tab.id;
   }
 
+  function openAgentList(): void {
+    if (!currentSnapshot) return;
+    const existing = openTabs.find((tab) => tab.id === "agent");
+    if (!existing) {
+      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "子智能体" }]);
+    }
+    setActiveTabId("agent");
+    setDockOpen(true);
+  }
+
   function openAgent(agent: AgentSummary): void {
     if (!currentSnapshot || !agents.state?.agents?.some((entry) => entry.id === agent.id)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
@@ -970,6 +980,31 @@ export function AppShell({ runtime }: AppShellProps) {
     setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title: agent.taskName }]);
     setActiveTabId(id);
     setDockOpen(true);
+  }
+
+  function handleOpenSubagent(target?: { id?: string | undefined; taskName?: string | undefined }): void {
+    if (!currentSnapshot) return;
+    if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
+    setEnvironmentPopoverOpen(false);
+
+    const allAgents = agents.state?.agents ?? [];
+    const matched = target?.id
+      ? allAgents.find((entry) => entry.id === target.id)
+      : target?.taskName
+        ? allAgents.find((entry) => entry.taskName === target.taskName)
+        : undefined;
+
+    if (matched) {
+      openAgent(matched);
+    } else if (target?.id) {
+      const id = `agent-${target.id}`;
+      const title = target.taskName || "子智能体";
+      setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title }]);
+      setActiveTabId(id);
+      setDockOpen(true);
+    } else {
+      openAgentList();
+    }
   }
 
   function handleOpenBrowser(url: string): void {
@@ -1113,8 +1148,8 @@ export function AppShell({ runtime }: AppShellProps) {
             )}
             {agents.state?.agents && agents.state.agents.length > 0 && (
               <div className="environment-popover__section">
-                <div className="environment-popover__section-title">子 Agent · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
-                <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} />
+                <div className="environment-popover__section-title">子智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
+                <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
               </div>
             )}
             {agents.error && <p role="alert">{agents.error}</p>}
@@ -1127,9 +1162,9 @@ export function AppShell({ runtime }: AppShellProps) {
                 </span>
               </button>
             )}
-            <div className="environment-popover__row">
-              <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
-              {sessionHasGit && (
+            {sessionHasGit && (
+              <div className="environment-popover__row">
+                <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
                 <Button
                   variant="ghost"
                   size="small"
@@ -1139,8 +1174,8 @@ export function AppShell({ runtime }: AppShellProps) {
                 >
                   更改工作环境
                 </Button>
-              )}
-            </div>
+              </div>
+            )}
             {sessionHasGit && (
               <div className="environment-popover__row environment-popover__branch">
                 <span>{sessionBranch ?? `分离状态 @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>
@@ -1382,6 +1417,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   onEditResend={(run, editedInput, references) => reviseLatestRun(run, editedInput, references)}
                   onOpenFile={handleOpenFileInDock}
                   onOpenPlan={handleOpenPlan}
+                  agents={agents.state?.agents ?? []}
+                  onOpenSubagent={handleOpenSubagent}
                 />
 
                 <ComposerSlot
@@ -1504,6 +1541,10 @@ export function AppShell({ runtime }: AppShellProps) {
                     errorsByApprovalId={errorsByApprovalId}
                     onApprove={(request) => void approvalActions.approve(request)}
                     onReject={(request) => void approvalActions.reject(request)}
+                    onOpenFile={handleOpenFileInDock}
+                    onOpenPlan={handleOpenPlan}
+                    workspaceRoot={currentSnapshot.session.workspaceRoot}
+                    onBackToList={openAgentList}
                   />;
                   if (tab.kind === "text-review" && reviewRequest) return <TextReviewPanel
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}

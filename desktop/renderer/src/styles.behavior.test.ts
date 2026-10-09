@@ -12,7 +12,16 @@ describe("interactive color tokens", () => {
   it("does not use the dark green hover token", () => {
     expect(styles).not.toContain("--accent-hover");
     expect(styles).not.toContain("#244b39");
-    expect(styles).toMatch(/button:hover:not\(:disabled\)\s*\{[^}]*background: var\(--surface-selected\);/);
+    expect(styles).toMatch(/button:hover:not\(:disabled\)\s*\{[^}]*background: var\(--surface-hover\);/);
+  });
+
+  it("does not wash out the selected session item on hover", () => {
+    expect(styles).toMatch(
+      /\.session-list\s*>\s*\.session-item\s*>\s*button:not\(\.selected\):hover:not\(:disabled\)\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.65\);/s,
+    );
+    expect(styles).toMatch(
+      /\.session-list\s*>\s*\.session-item\s*>\s*button\.selected:hover[^{]*\{[^}]*background:\s*var\(--surface-selected\);/s,
+    );
   });
 
   it("keeps session content centered and reserves one shared action rail", () => {

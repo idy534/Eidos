@@ -1319,29 +1319,25 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 self.assertFalse(refresh_called)
                 self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
 
-    def test_workspace_intent_scope_allows_successful_workspace_read_refresh(self) -> None:
-        connection = self.store.connection
-        connection.execute(
-            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
-            "WHERE id = ?",
-            (self.run["id"],),
+    def test_persisted_workspace_targets_allow_recovery_without_full_scan(self) -> None:
+        item = self.store.create_tool_item(
+            self.run["id"], 0, 0, "target-recovery", "apply_patch", "{}",
+            provenance={"kind": "builtin", "sourceId": "eidos", "sourceVersion": "1", "contentHash": "a" * 64},
         )
-        connection.commit()
+        self.store.begin_durable_intent(
+            item["id"], preconditions={"paths": ["recovered.txt"]}, approval_required=False,
+        )
+        self.store.complete_tool_item(item["id"], json.dumps({
+            "outcome": "error", "code": "outcome_unknown", "data": {},
+            "sideEffectsMayExist": True, "reconciliationRequired": True,
+        }), item_status="failed", tool_status="failed")
         runtime = ToolCallRuntime.__new__(ToolCallRuntime)
         runtime.store = self.store
         runtime.events = SimpleNamespace(
             publish=lambda *_args, **_kwargs: None,
         )
-        runtime.workspace_refresh = lambda _cancel: SimpleNamespace(complete=True)
-        with patch.object(
-            self.store,
-            "reconciliation_intent_scopes",
-            return_value=frozenset({"workspace"}),
-        ):
-            runtime._refresh_reconciliation(
-                run_id=self.run["id"],
-                cancel=threading.Event(),
-            )
+        runtime.workspace_refresh = lambda _cancel: self.fail("Recovery must not scan the whole workspace")
+        runtime._refresh_reconciliation(run_id=self.run["id"], cancel=threading.Event())
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_new_successful_read_clears_barrier_before_success_completion(self) -> None:

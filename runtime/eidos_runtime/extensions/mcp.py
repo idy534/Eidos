@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
@@ -16,7 +16,7 @@ import uuid
 from typing import Callable, cast
 
 import anyio
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession as SdkClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp import types as mcp_types
 
@@ -69,12 +69,25 @@ class McpShutdownTimeout(RuntimeError):
     pass
 
 
+class ClientSession(SdkClientSession):
+    """SDK transport with output validation after Eidos records receipt."""
+
+    async def validate_tool_result(
+        self, name: str, result: mcp_types.CallToolResult
+    ) -> None:
+        # McpToolAdapter validates the frozen, bounded schema after receipt.
+        # Validation must not hide a received result as a transport failure.
+        return None
+
+
 @dataclass
 class _Command:
     name: str
     arguments: dict[str, object]
     timeout_seconds: int
     cancel: threading.Event
+    submitted: threading.Event = field(default_factory=threading.Event)
+    received: threading.Event = field(default_factory=threading.Event)
 
 
 class McpConnection:
@@ -171,10 +184,15 @@ class McpConnection:
             try:
                 result = self.async_kernel.call(self._call, command)
             except (AsyncKernelClosedError, RuntimeError):
-                return _uncertain(self.error_code or "mcp_connection_lost")
-            if self.error_code == "mcp_stdout_pollution":
-                return _uncertain("mcp_stdout_pollution")
-            if result.get("code") in {"mcp_tool_canceled", "mcp_tool_timeout"}:
+                return _call_failure(command, self.error_code or "mcp_connection_lost")
+            if (
+                self.error_code == "mcp_stdout_pollution"
+                and result.get("reconciliationRequired") is not False
+            ):
+                return _call_failure(command, "mcp_stdout_pollution")
+            if command.submitted.is_set() and result.get("code") in {
+                "mcp_tool_canceled", "mcp_tool_timeout"
+            }:
                 try:
                     self.close()
                 except McpShutdownTimeout:
@@ -404,16 +422,16 @@ class McpConnection:
         session = self._session
         lock = self._session_lock
         if session is None or lock is None or self.closed.is_set():
-            return _uncertain(self.error_code or "mcp_connection_lost")
+            return _unavailable()
         async with lock:
             if self.error_code is not None:
-                return _uncertain(self.error_code)
+                return _unavailable()
             try:
                 return await _call_tool(session, command)
             except TimeoutError:
-                return _uncertain("mcp_tool_timeout")
+                return _call_failure(command, "mcp_tool_timeout")
             except BaseException:
-                return _uncertain(self.error_code or "mcp_connection_lost")
+                return _call_failure(command, self.error_code or "mcp_connection_lost")
 
     async def _refresh_tools(self) -> tuple[mcp_types.Tool, ...]:
         session = self._session
@@ -517,7 +535,7 @@ class McpToolAdapter:
     ) -> dict[str, object]:
         result = dict(self.connection.call(self.remote_name, arguments, cancel))
         result["toolName"] = self.local_name
-        if self.output_validator is None:
+        if self.output_validator is None or result.get("outcome") != "success":
             return result
         data = result.get("data")
         structured = (
@@ -535,7 +553,7 @@ class McpToolAdapter:
                 "summary": "MCP structured content violated its output schema",
                 "data": {},
                 "sideEffectsMayExist": True,
-                "reconciliationRequired": True,
+                "reconciliationRequired": result.get("reconciliationRequired") is True,
             }
         return result
 
@@ -717,16 +735,24 @@ async def _call_tool(
     session: ClientSession, command: _Command
 ) -> dict[str, object]:
     if command.cancel.is_set():
-        return _uncertain("mcp_tool_canceled")
+        return _result("error", "mcp_tool_canceled", {})
     result_holder: dict[str, object] = {}
     canceled = False
 
     async def invoke() -> None:
-        result_holder["result"] = await session.call_tool(
+        if command.cancel.is_set():
+            group.cancel_scope.cancel()
+            return
+        # No SDK tool call can have started while this marker is unset.
+        command.submitted.set()
+        result = await session.call_tool(
             command.name,
             command.arguments,
             read_timeout_seconds=float(command.timeout_seconds),
         )
+        if isinstance(result, mcp_types.CallToolResult):
+            command.received.set()
+        result_holder["result"] = result
         group.cancel_scope.cancel()
 
     async def watch_cancel() -> None:
@@ -741,15 +767,21 @@ async def _call_tool(
         async with anyio.create_task_group() as group:
             group.start_soon(invoke)
             group.start_soon(watch_cancel)
-    if canceled or command.cancel.is_set():
-        return _uncertain("mcp_tool_canceled")
     result = result_holder.get("result")
     if not isinstance(result, mcp_types.CallToolResult):
-        return _uncertain("mcp_connection_lost")
+        if canceled or command.cancel.is_set():
+            return (
+                _uncertain("mcp_tool_canceled")
+                if command.submitted.is_set()
+                else _result("error", "mcp_tool_canceled", {})
+            )
+        return _call_failure(command, "mcp_connection_lost")
     texts: list[str] = []
     for content in result.content:
         if not isinstance(content, mcp_types.TextContent):
-            return _result("error", "mcp_content_unsupported", {})
+            return _result(
+                "error", "mcp_content_unsupported", {}, side_effects_may_exist=True
+            )
         texts.append(content.text)
     text = "\n".join(texts)
     structured = result.structured_content
@@ -757,7 +789,9 @@ async def _call_tool(
         try:
             validate_bounded_json_value(structured)
         except JsonSchemaValidationError:
-            return _result("error", "mcp_result_too_large", {})
+            return _result(
+                "error", "mcp_result_too_large", {}, side_effects_may_exist=True
+            )
     data: dict[str, object] = {}
     if text:
         data["text"] = text
@@ -765,11 +799,14 @@ async def _call_tool(
         data["structuredContent"] = structured
     data["isError"] = bool(result.is_error)
     if len(json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_RESULT_BYTES:
-        return _result("error", "mcp_result_too_large", {})
+        return _result(
+            "error", "mcp_result_too_large", {}, side_effects_may_exist=True
+        )
     return _result(
         "error" if result.is_error else "success",
         "mcp_tool_error" if result.is_error else "ok",
         data,
+        side_effects_may_exist=True,
     )
 
 
@@ -922,7 +959,10 @@ def _exception_contains(error: BaseException, kind: type[BaseException]) -> bool
     return False
 
 
-def _result(outcome: str, code: str, data: dict[str, object]) -> dict[str, object]:
+def _result(
+    outcome: str, code: str, data: dict[str, object],
+    *, side_effects_may_exist: bool = False,
+) -> dict[str, object]:
     return {
         "toolContractVersion": 1,
         "schemaVersion": 1,
@@ -931,7 +971,7 @@ def _result(outcome: str, code: str, data: dict[str, object]) -> dict[str, objec
         "code": code,
         "summary": "MCP tool completed" if outcome == "success" else "MCP tool failed",
         "data": data,
-        "sideEffectsMayExist": False,
+        "sideEffectsMayExist": side_effects_may_exist,
         "reconciliationRequired": False,
     }
 
@@ -941,6 +981,14 @@ def _uncertain(code: str) -> dict[str, object]:
     value["sideEffectsMayExist"] = True
     value["reconciliationRequired"] = True
     return value
+
+
+def _call_failure(command: _Command, code: str) -> dict[str, object]:
+    if command.received.is_set():
+        return _result("error", code, {}, side_effects_may_exist=True)
+    if command.submitted.is_set():
+        return _uncertain(code)
+    return _unavailable()
 
 
 def _unavailable() -> dict[str, object]:

@@ -15,12 +15,14 @@ import type {
   StepResolutionReview,
   ToolCall,
 } from "../contracts.js";
+import type { AgentSummary } from "../../../shared/collaboration.generated.js";
 import { terminalRunPresentation } from "../session-state.js";
 import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
 import { TurnResults } from "./TurnResults.js";
+import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 
 
 type FeedbackHandler = (
@@ -56,6 +58,11 @@ interface Props {
   onEditResend?: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
+  agents?: AgentSummary[] | undefined;
+  onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
+  allowFeedback?: boolean | undefined;
+  allowRegenerate?: boolean | undefined;
+  allowEditResend?: boolean | undefined;
 }
 
 interface Segment {
@@ -108,6 +115,11 @@ export function ExecutionFeed({
   onEditResend = NOOP_EDIT_RESEND,
   onOpenFile,
   onOpenPlan,
+  agents,
+  onOpenSubagent,
+  allowFeedback = true,
+  allowRegenerate = true,
+  allowEditResend = true,
 }: Props) {
   const feedRef = useRef<HTMLElement>(null);
   const isAtBottomRef = useRef(true);
@@ -224,6 +236,11 @@ export function ExecutionFeed({
                   onEditResend={onEditResend}
                   onOpenFile={onOpenFile}
                   onOpenPlan={onOpenPlan}
+                  agents={agents}
+                  onOpenSubagent={onOpenSubagent}
+                  allowFeedback={allowFeedback}
+                  allowRegenerate={allowRegenerate}
+                  allowEditResend={allowEditResend}
                 />
               ))}
               <RunNotice run={run} />
@@ -279,6 +296,11 @@ function RunSegment({
   onEditResend,
   onOpenFile,
   onOpenPlan,
+  agents,
+  onOpenSubagent,
+  allowFeedback = true,
+  allowRegenerate = true,
+  allowEditResend = true,
 }: {
   segment: Segment;
   run: Run;
@@ -304,6 +326,11 @@ function RunSegment({
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
   onOpenPlan?: (() => void) | undefined;
+  agents?: AgentSummary[] | undefined;
+  onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
+  allowFeedback?: boolean | undefined;
+  allowRegenerate?: boolean | undefined;
+  allowEditResend?: boolean | undefined;
 }) {
   // Hidden observations still determine which assistant messages are progress.
   const visibleProcess = segment.process.filter((item) => {
@@ -322,7 +349,7 @@ function RunSegment({
         <UserMessage
           item={segment.user}
           run={run}
-          canEdit={isLast && canReviseRun}
+          canEdit={isLast && canReviseRun && allowEditResend}
           revisionSubmitting={revisionSubmitting}
           onEditResend={onEditResend}
         />
@@ -344,6 +371,8 @@ function RunSegment({
               onApprove={onApprove}
               onReject={onReject}
               onOpenFile={onOpenFile}
+              agents={agents}
+              onOpenSubagent={onOpenSubagent}
             />
           ))}
         </ProcessGroup>
@@ -369,7 +398,8 @@ function RunSegment({
             atBottom={atBottom}
             feedback={feedbackByItemId.get(item.id)}
             feedbackPending={pendingFeedbackItemIds.has(item.id)}
-            canRegenerate={isLast && index === segment.response.length - 1 && canReviseRun}
+            canRegenerate={allowRegenerate && isLast && index === segment.response.length - 1 && canReviseRun}
+            allowFeedback={allowFeedback}
             isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
             showTurnResults={isLast
               && index === segment.response.length - 1
@@ -377,6 +407,7 @@ function RunSegment({
               && segment.response.every((responseItem) => responseItem.status !== "in_progress")}
             resultItems={resultItems}
             showTextChanges={true}
+            revisionSubmitting={revisionSubmitting}
             onFeedback={onFeedback}
             onRegenerate={onRegenerate}
           />
@@ -448,6 +479,55 @@ function CopyButton({ content }: { content: string }) {
       <svg
         width="15"
         height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {copied ? (
+          <polyline points="20 6 9 17 4 12" />
+        ) : (
+          <>
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </>
+        )}
+      </svg>
+    </button>
+  );
+}
+
+function ShellCopyButton({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!command) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(command);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy command:", err);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={`shell-copy-button${copied ? " is-copied" : ""}`}
+      onClick={handleCopy}
+      title={copied ? "已复制命令" : "复制命令"}
+      aria-label={copied ? "已复制命令" : "复制命令"}
+    >
+      <svg
+        width="14"
+        height="14"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -564,10 +644,12 @@ function AssistantMessage({
   feedback,
   feedbackPending,
   canRegenerate,
+  allowFeedback = true,
   isFinal,
   showTurnResults,
   resultItems,
   showTextChanges,
+  revisionSubmitting = false,
   onFeedback,
   onRegenerate,
 }: {
@@ -579,18 +661,27 @@ function AssistantMessage({
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
+  allowFeedback?: boolean | undefined;
   isFinal: boolean;
   showTurnResults: boolean;
   resultItems: Item[];
   showTextChanges: boolean;
+  revisionSubmitting?: boolean | undefined;
   onFeedback: FeedbackHandler;
   onRegenerate: RegenerateHandler;
 }) {
+  const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const formattedTime = formatItemTime(item.completedAt ?? item.createdAt);
   const isStreaming = item.status === "in_progress";
 
-  const canFeedback = item.status === "completed" && Boolean(item.content);
+  const canFeedback = allowFeedback && item.status === "completed" && Boolean(item.content);
+
+  useEffect(() => {
+    if (!canRegenerate) {
+      setConfirmRegenerateOpen(false);
+    }
+  }, [canRegenerate]);
 
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
@@ -601,26 +692,50 @@ function AssistantMessage({
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
             <CopyButton content={item.content} />
-            <ActionButton
-              label={feedback === "up" ? "取消点赞" : "点赞"}
-              active={feedback === "up"}
-              disabled={!canFeedback || feedbackPending}
-              onClick={() => void onFeedback(item.id, feedback === "up" ? null : "up")}
-            >
-              <ThumbUpIcon />
-            </ActionButton>
-            <ActionButton
-              label={feedback === "down" ? "取消差评" : "差评"}
-              active={feedback === "down"}
-              disabled={!canFeedback || feedbackPending}
-              onClick={() => void onFeedback(item.id, feedback === "down" ? null : "down")}
-            >
-              <ThumbDownIcon />
-            </ActionButton>
+            {allowFeedback && (
+              <>
+                <ActionButton
+                  label={feedback === "up" ? "取消点赞" : "点赞"}
+                  active={feedback === "up"}
+                  disabled={!canFeedback || feedbackPending}
+                  onClick={() => void onFeedback(item.id, feedback === "up" ? null : "up")}
+                >
+                  <ThumbUpIcon />
+                </ActionButton>
+                <ActionButton
+                  label={feedback === "down" ? "取消差评" : "差评"}
+                  active={feedback === "down"}
+                  disabled={!canFeedback || feedbackPending}
+                  onClick={() => void onFeedback(item.id, feedback === "down" ? null : "down")}
+                >
+                  <ThumbDownIcon />
+                </ActionButton>
+              </>
+            )}
             {canRegenerate && (
-              <ActionButton label="重新回答" onClick={() => void onRegenerate(run)}>
-                <RegenerateIcon />
-              </ActionButton>
+              <>
+                <ActionButton
+                  label="重新回答"
+                  disabled={revisionSubmitting}
+                  onClick={() => setConfirmRegenerateOpen(true)}
+                >
+                  <RegenerateIcon />
+                </ActionButton>
+                <ConfirmDialog
+                  open={confirmRegenerateOpen}
+                  title="重新回答？"
+                  description="重新回答将放弃当前的回答并重新生成。确定要继续吗？"
+                  confirmLabel="重新回答"
+                  cancelLabel="取消"
+                  isDestructive={false}
+                  busy={revisionSubmitting}
+                  onConfirm={() => {
+                    setConfirmRegenerateOpen(false);
+                    void onRegenerate(run);
+                  }}
+                  onCancel={() => setConfirmRegenerateOpen(false)}
+                />
+              </>
             )}
             <MoreActionsDropdown
               session={run.sessionId}
@@ -793,6 +908,8 @@ function ProcessItem({
   onApprove,
   onReject,
   onOpenFile,
+  agents,
+  onOpenSubagent,
 }: {
   item: Item;
   run: Run;
@@ -804,6 +921,8 @@ function ProcessItem({
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
   onOpenFile?: ((path: string) => void) | undefined;
+  agents?: AgentSummary[] | undefined;
+  onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
@@ -817,7 +936,7 @@ function ProcessItem({
 
   const toolItem = item.toolCall.toolName === "run_shell"
     ? <ShellItem item={item} toolCall={item.toolCall} />
-    : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} />;
+    : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} agents={agents} onOpenSubagent={onOpenSubagent} />;
 
   if (approval) {
     return <><p className="feed-label">需要批准 · {{ file_change: "文件变更", command_execution: "Shell 命令", network_access: "网络访问", external_tool: "MCP 工具", permission_request: "权限申请" }[approval.kind]} · <span>{approval.summary}</span></p>{toolItem}</>;
@@ -909,6 +1028,28 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
             : statusLabel(item.status);
   const [open, setOpen] = useState(false);
 
+  const isExitNonzero = code === "shell_exit_nonzero" || code === "nonzero_exit";
+  const showErrorCode = !running
+    && !gateRejected
+    && !pendingVerification
+    && !success
+    && Boolean(code)
+    && !isExitNonzero;
+  const showErrorSummary = !running
+    && !success
+    && !pendingVerification
+    && Boolean(summary)
+    && !isExitNonzero
+    && !summary?.startsWith("Command did not succeed");
+  const showExitCode = !running
+    && !gateRejected
+    && !pendingVerification
+    && failed
+    && statusText === "失败"
+    && exitCode !== undefined
+    && exitCode !== null
+    && exitCode !== 0;
+
   return (
     <details className="tool-item tool-item--shell" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
@@ -918,8 +1059,13 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
         <span>{shellSummary(running ? "in_progress" : item.status, command)}</span>
       </summary>
       <div className="shell-result">
-        <p className="shell-label">Shell</p>
-        <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
+        <div className="shell-command-zone">
+          <div className="shell-command-header">
+            <p className="shell-label">Shell</p>
+            {command && <ShellCopyButton command={command} />}
+          </div>
+          <pre className="shell-command"><span aria-hidden="true">$ </span>{command}</pre>
+        </div>
         {outputSegments.map((segment, index) => (
           <pre
             className={`shell-output${segment.source === "stderr" ? " shell-output--error" : ""}`}
@@ -929,8 +1075,8 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           </pre>
         ))}
         {gateRejected && <p className="shell-error-code">未执行：与尚未确认的操作冲突</p>}
-        {!running && !gateRejected && !pendingVerification && !success && code && <p className="shell-error-code">失败 · {code}</p>}
-        {!running && !success && !pendingVerification && summary && <p className="shell-error-summary">{summary}</p>}
+        {showErrorCode && <p className="shell-error-code">失败 · {code}</p>}
+        {showErrorSummary && <p className="shell-error-summary">{summary}</p>}
         {truncated && (
           <p className="shell-diagnostic">
             输出已截断{truncationReason ? ` · ${truncationReason}` : ""}
@@ -940,8 +1086,15 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
           <p className="shell-diagnostic shell-diagnostic--warning">执行结果尚未确认</p>
         )}
         {!hasOutput && running && <p className="shell-empty">尚未输出</p>}
-        {!hasOutput && !running && !pendingVerification && (success || (!code && !summary)) && <p className="shell-empty">无输出</p>}
-        <p className={`shell-status shell-status--${statusTone}`}>{statusText}</p>
+        {!hasOutput && !running && !pendingVerification && (success || (!showErrorCode && !showErrorSummary)) && <p className="shell-empty">无输出</p>}
+        <p className={`shell-status shell-status--${statusTone}`}>
+          {showExitCode && (
+            <span className="shell-exit-code-pill">
+              退出码 {exitCode}
+            </span>
+          )}
+          <span>{statusText}</span>
+        </p>
       </div>
     </details>
   );
@@ -1002,15 +1155,80 @@ function PlanResponseItem({
   );
 }
 
-function ToolItem({ item, toolCall, onOpenFile }: {
+function ToolItem({
+  item,
+  toolCall,
+  onOpenFile,
+  agents,
+  onOpenSubagent,
+}: {
   item: Item;
   toolCall: ToolCall;
   onOpenFile?: ((path: string) => void) | undefined;
+  agents?: AgentSummary[] | undefined;
+  onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
   const [open, setOpen] = useState(item.status === "in_progress");
   useEffect(() => {
     if (item.status !== "in_progress") setOpen(false);
   }, [item.status]);
+
+  if (isSubagentTool(toolCall.toolName)) {
+    const { id: agentId, name: agentName } = extractSubagentInfo(toolCall, agents);
+    const resultObj = parseObject(toolCall.resultJson);
+    const isError = Boolean(
+      resultObj.outcome === "error"
+      || (typeof resultObj.code === "string" && resultObj.code && resultObj.code !== "ok")
+      || item.status === "failed"
+      || item.status === "declined"
+      || item.status === "canceled"
+      || toolCall.status === "failed"
+      || toolCall.status === "canceled"
+      || isReconciliationGate(resultObj),
+    );
+    const errSummary = safeToolSummary(toolCall.resultJson, item.status);
+    const actionLabel = subagentActionLabel(toolCall.toolName, item.status, isError, resultObj);
+    const titleText = isError && errSummary ? errSummary : undefined;
+
+    return (
+      <div className="tool-item tool-item--read-done" title={titleText}>
+        <span className="tool-icon" aria-hidden="true">
+          <SubagentToolIcon />
+        </span>
+        <span>
+          {agentName ? (
+            <>
+              {actionLabel}
+              {" · "}
+              {onOpenSubagent ? (
+                <button
+                  type="button"
+                  className="tool-file-link"
+                  onClick={() => onOpenSubagent({ id: agentId, taskName: agentName })}
+                >
+                  {agentName}
+                </button>
+              ) : (
+                agentName
+              )}
+            </>
+          ) : (
+            onOpenSubagent ? (
+              <button
+                type="button"
+                className="tool-file-link"
+                onClick={() => onOpenSubagent()}
+              >
+                {actionLabel}
+              </button>
+            ) : (
+              actionLabel
+            )
+          )}
+        </span>
+      </div>
+    );
+  }
 
   const toolResult = parseObject(toolCall.resultJson);
   if (toolCall.toolName === "request_user_input"
@@ -1134,7 +1352,7 @@ function ToolItem({ item, toolCall, onOpenFile }: {
     <details className="tool-item" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
         <span className="tool-icon" aria-hidden="true">{toolIcon(toolCall.toolName)}</span>
-        <span>{toolSummary(toolCall, item.status)}</span>
+        <span>{toolSummary(toolCall, item.status, agents)}</span>
       </summary>
       <div className="tool-body">
         {showSummary && summary && (
@@ -1198,7 +1416,7 @@ function RunNotice({ run }: { run: Run }) {
     <p className={`run-notice run-notice--${active.tone}`} role={active.tone === "error" ? "alert" : "status"}>
       {active.label}
       {run.reconciliationRequired === true
-        && "。部分操作的结果尚未确认"}
+        && "；有操作结果未确认，详情见对应操作记录"}
     </p>
   );
 }
@@ -1276,17 +1494,119 @@ function shellSummary(status: Item["status"], command: string): string {
   return `${statusLabel(status)} ${visible}`;
 }
 
-function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
+function isSubagentTool(name: string): boolean {
+  return [
+    "spawn_agent",
+    "wait_agents",
+    "list_agents",
+    "stop_agent",
+    "send_message",
+    "followup_task",
+  ].includes(name);
+}
+
+function extractSubagentInfo(
+  toolCall: ToolCall,
+  agents?: AgentSummary[],
+): { id?: string; name?: string } {
+  const args = parseObject(toolCall.argumentsJson);
+  const result = parseObject(toolCall.resultJson);
+  const data = objectField(result, "data");
+  const agentObj = objectField(data, "agent") || objectField(result, "agent");
+
+  let id = stringField(agentObj, "id")
+    || stringField(args, "agentId")
+    || stringField(args, "agent_id");
+
+  let name = stringField(args, "taskName")
+    || stringField(args, "task_name")
+    || stringField(args, "name")
+    || stringField(args, "agentName")
+    || stringField(args, "agent_name")
+    || stringField(agentObj, "taskName")
+    || stringField(agentObj, "task_name");
+
+  if (!id) {
+    const agentIds = Array.isArray(args.agentIds)
+      ? args.agentIds
+      : Array.isArray(args.agent_ids)
+        ? args.agent_ids
+        : undefined;
+    if (agentIds && agentIds.length === 1 && typeof agentIds[0] === "string") {
+      id = agentIds[0];
+    }
+  }
+
+  if (agents && agents.length > 0) {
+    if (id && !name) {
+      const match = agents.find((a) => a.id === id);
+      if (match) name = match.taskName;
+    } else if (name && !id) {
+      const match = agents.find((a) => a.taskName === name);
+      if (match) id = match.id;
+    }
+  }
+
+  return { id, name };
+}
+
+function subagentActionLabel(
+  toolName: string,
+  status: Item["status"],
+  isError: boolean,
+  resultObj: Record<string, unknown>,
+): string {
+  const baseLabels: Record<string, string> = {
+    spawn_agent: "创建子智能体",
+    wait_agents: "等待子智能体",
+    list_agents: "查询子智能体",
+    stop_agent: "停止子智能体",
+    send_message: "发送智能体消息",
+    followup_task: "追加智能体任务",
+  };
+  const base = baseLabels[toolName] ?? toolName;
+  if (isReconciliationGate(resultObj)) {
+    return `未执行：与尚未确认的操作冲突 ${base}`;
+  }
+  if (isError && status !== "completed" && status !== "in_progress") {
+    return `${statusLabel(status)} ${base}`;
+  }
+  const runningLabels: Record<string, string> = {
+    spawn_agent: "正在创建子智能体",
+    wait_agents: "正在等待子智能体",
+    list_agents: "正在查询子智能体",
+    stop_agent: "正在停止子智能体",
+    send_message: "正在发送智能体消息",
+    followup_task: "正在追加智能体任务",
+  };
+  return status === "in_progress" ? (runningLabels[toolName] ?? `正在运行 ${toolName}`) : base;
+}
+
+function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[]): string {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
   const path = stringField(args, "path") || stringField(args, "filePath");
   const query = stringField(args, "query") || stringField(args, "pattern");
   const running = status === "in_progress";
+  const subagentInfo = isSubagentTool(toolCall.toolName)
+    ? extractSubagentInfo(toolCall, agents)
+    : undefined;
+  const subagentName = subagentInfo?.name;
+
+  const baseLabels: Record<string, string> = {
+    spawn_agent: subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体",
+    wait_agents: subagentName ? `等待子智能体 · ${subagentName}` : "等待子智能体",
+    list_agents: subagentName ? `查询子智能体 · ${subagentName}` : "查询子智能体",
+    stop_agent: subagentName ? `停止子智能体 · ${subagentName}` : "停止子智能体",
+    send_message: subagentName ? `发送智能体消息 · ${subagentName}` : "发送智能体消息",
+    followup_task: subagentName ? `追加智能体任务 · ${subagentName}` : "追加智能体任务",
+  };
+  const targetLabel = path || query || baseLabels[toolCall.toolName] || toolCall.toolName;
   if (isReconciliationGate(result)) {
-    return `未执行：与尚未确认的操作冲突 ${path || query || toolCall.toolName}`;
+    return `未执行：与尚未确认的操作冲突 ${targetLabel}`;
   }
   if (!running && status !== "completed") {
-    return `${statusLabel(status)} ${path || query || toolCall.toolName}`;
+    return `${statusLabel(status)} ${targetLabel}`;
   }
   const labels: Record<string, string> = {
     list_files: running ? "正在列出文件" : "已列出文件",
@@ -1297,6 +1617,24 @@ function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
     declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
+    spawn_agent: running
+      ? (subagentName ? `正在创建子智能体 · ${subagentName}` : "正在创建子智能体")
+      : (subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体"),
+    wait_agents: running
+      ? (subagentName ? `正在等待子智能体 · ${subagentName}` : "正在等待子智能体")
+      : (subagentName ? `等待子智能体 · ${subagentName}` : "等待子智能体"),
+    list_agents: running
+      ? (subagentName ? `正在查询子智能体 · ${subagentName}` : "正在查询子智能体")
+      : (subagentName ? `查询子智能体 · ${subagentName}` : "查询子智能体"),
+    stop_agent: running
+      ? (subagentName ? `正在停止子智能体 · ${subagentName}` : "正在停止子智能体")
+      : (subagentName ? `停止子智能体 · ${subagentName}` : "停止子智能体"),
+    send_message: running
+      ? (subagentName ? `正在发送智能体消息 · ${subagentName}` : "正在发送智能体消息")
+      : (subagentName ? `发送智能体消息 · ${subagentName}` : "发送智能体消息"),
+    followup_task: running
+      ? (subagentName ? `正在追加智能体任务 · ${subagentName}` : "正在追加智能体任务")
+      : (subagentName ? `追加智能体任务 · ${subagentName}` : "追加智能体任务"),
   };
   return labels[toolCall.toolName] ?? `${running ? "正在运行" : "已运行"} ${toolCall.toolName}`;
 }
@@ -1378,6 +1716,19 @@ function McpIcon() {
   );
 }
 
+function SubagentToolIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="3.5" r="1.5" />
+      <circle cx="3.5" cy="11.5" r="1.5" />
+      <circle cx="12.5" cy="11.5" r="1.5" />
+      <path d="M2.6 9.8C1.8 6.2 4.6 3.2 6.5 2.5" />
+      <path d="M9.5 2.5C11.4 3.2 14.2 6.2 13.4 9.8" />
+      <path d="M5.2 13C7 14.2 9 14.2 10.8 13" />
+    </svg>
+  );
+}
+
 function DefaultToolIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -1392,6 +1743,9 @@ function toolIcon(name: string): ReactNode {
   if (["search_text", "tool_search"].includes(name)) return <SearchIcon />;
   if (["write_file", "apply_patch"].includes(name)) return <FileWriteIcon />;
   if (name === "delete_file") return <FileDeleteIcon />;
+  if (["spawn_agent", "wait_agents", "list_agents", "stop_agent", "send_message", "followup_task"].includes(name)) {
+    return <SubagentToolIcon />;
+  }
   if (name.startsWith("skill_")) return <SkillIcon />;
   if (name.startsWith("mcp") || name.includes("__")) return <McpIcon />;
   return <DefaultToolIcon />;

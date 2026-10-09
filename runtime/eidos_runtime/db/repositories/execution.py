@@ -10,7 +10,6 @@ import uuid
 from pydantic import Field
 
 from eidos_runtime.domain.approval_policy import ApprovalReview
-from eidos_runtime.domain.completion import CompletionCheckRecord
 from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
@@ -765,7 +764,8 @@ class ExecutionRepository(Repository):
             )
 
     def clear_reconciliation_after_workspace_refresh_committed(
-        self, run_id: str, expected_epoch: int
+        self, run_id: str, expected_epoch: int, *,
+        observed_paths: frozenset[str] | None = None,
     ) -> CommittedMutation[dict[str, object]] | None:
         """Clear a matching reconciliation barrier after verified refresh."""
         if isinstance(expected_epoch, bool) or expected_epoch < 0:
@@ -785,11 +785,15 @@ class ExecutionRepository(Repository):
             unresolved = connection.execute(
                 """
                 SELECT tool_calls.tool_name, tool_calls.provenance_json,
-                       durable_intents.preconditions_json
+                       durable_intents.preconditions_json, durable_intents.status AS intent_status
                 FROM durable_intents
                 JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
                 WHERE durable_intents.run_id = ?
                   AND durable_intents.status IN (?, ?, ?)
+                  AND NOT (durable_intents.status='running' AND tool_calls.tool_name='run_shell'
+                    AND tool_calls.status='completed'
+                    AND COALESCE(json_extract(tool_calls.result_json,'$.data.executionStatus'),'')='running'
+                    AND COALESCE(json_extract(tool_calls.result_json,'$.reconciliationRequired'),1)=0)
                 """,
                 (run_id, *_RECONCILIATION_INTENT_STATUSES),
             ).fetchall()
@@ -797,6 +801,11 @@ class ExecutionRepository(Repository):
                 _reconciliation_intent_scope(
                     row["tool_name"], row["provenance_json"], row["preconditions_json"],
                 ) != "workspace" for row in unresolved
+            ):
+                return None
+            if observed_paths is not None and (
+                not observed_paths or self.reconciliation_file_paths(run_id) != observed_paths
+                or any(row["intent_status"] == "running" for row in unresolved)
             ):
                 return None
             changed = connection.execute(
@@ -835,7 +844,7 @@ class ExecutionRepository(Repository):
                 now,
                 {
                     "epoch": updated["reconciliation_epoch"],
-                    "reason": "workspace_refresh",
+                    "reason": "workspace_target_observation" if observed_paths is not None else "workspace_refresh",
                 },
                 session_id=current["session_id"],
                 run_id=run_id,
@@ -858,6 +867,10 @@ class ExecutionRepository(Repository):
                 JOIN tool_calls ON tool_calls.id = durable_intents.tool_call_id
                 WHERE durable_intents.run_id = ?
                   AND durable_intents.status IN (?, ?, ?)
+                  AND NOT (durable_intents.status='running' AND tool_calls.tool_name='run_shell'
+                    AND tool_calls.status='completed'
+                    AND COALESCE(json_extract(tool_calls.result_json,'$.data.executionStatus'),'')='running'
+                    AND COALESCE(json_extract(tool_calls.result_json,'$.reconciliationRequired'),1)=0)
                 """,
                 (run_id, *_RECONCILIATION_INTENT_STATUSES),
             ).fetchall()
@@ -916,7 +929,8 @@ class ExecutionRepository(Repository):
             if not isinstance(targets, list) or not targets:
                 return None
             for target in targets:
-                if not isinstance(target, str) or not target or "\x00" in target or ".." in Path(target).parts:
+                if (not isinstance(target, str) or not target or "\x00" in target
+                        or Path(target).is_absolute() or ".." in Path(target).parts):
                     return None
                 paths.add(target)
         return frozenset(paths)
@@ -961,7 +975,6 @@ class ExecutionRepository(Repository):
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
-        completion_check: CompletionCheckRecord | None = None,
     ) -> bool:
         if status not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid model attempt status")
@@ -1017,13 +1030,6 @@ class ExecutionRepository(Repository):
                     attempt["id"],
                 ),
             )
-            if changed.rowcount == 1 and completion_check is not None:
-                if completion_check.model_attempt_id != attempt["id"]:
-                    raise InvalidRunStateError("completion attempt mismatch")
-                session = connection.execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
-                append_event(connection, EventType.RUN_UPDATED, now, {
-                    "reason": "completion_check", "completionCheck": completion_check.model_dump(mode="python", by_alias=True),
-                }, session_id=session["session_id"], run_id=run_id)
         return changed.rowcount == 1
 
     def start_retry_model_attempt(
@@ -1280,7 +1286,6 @@ class ExecutionRepository(Repository):
     def complete_assistant_and_run_committed(
         self, item_id: str, run_id: str, *, shell_stopped: bool = False,
         expected_collaboration: CollaborationState | None = None,
-        stop_reason: Literal["completion_unconfirmed"] | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
             if not connection.in_transaction:
@@ -1319,7 +1324,7 @@ class ExecutionRepository(Repository):
                 if current != expected_collaboration:
                     raise RunCompletionDeferred("collaboration_changed")
             interrupted = bool(run_state["reconciliation_required"]) or shell_stopped
-            reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else stop_reason
+            reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else None
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -1347,20 +1352,16 @@ class ExecutionRepository(Repository):
                 ).fetchone()["session_id"],
                 run_id=run_id,
             )
-            finalizing_events = ()
-            if stop_reason and not interrupted:
-                _, finalizing_event = transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.FINALIZING, stop_reason)
-                finalizing_events = (finalizing_event,)
             run, run_event = transition_run(
                 connection,
                 run_id,
-                frozenset({RunStatus.FINALIZING}) if finalizing_events else frozenset({RunStatus.RUNNING}),
-                RunStatus.INTERRUPTED if interrupted else RunStatus.STOPPED if stop_reason else RunStatus.SUCCEEDED,
+                frozenset({RunStatus.RUNNING}),
+                RunStatus.INTERRUPTED if interrupted else RunStatus.SUCCEEDED,
                 reason,
             )
         item = self.read_item(item_id)
         return CommittedMutation(
-            (item, run), (*segment_events, item_event, *finalizing_events, run_event)
+            (item, run), (*segment_events, item_event, run_event)
         )
 
     def create_tool_item(

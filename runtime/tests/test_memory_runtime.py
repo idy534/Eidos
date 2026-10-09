@@ -1103,6 +1103,7 @@ def test_backup_excludes_revoked_source_action_body(setup, tmp_path):
 
 def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
     import sqlite3
+    from eidos_runtime.db.collaboration_migration import COLLABORATION_SCHEMA_SQL
 
     store, session = setup
     entry = saved(store, session)
@@ -1113,6 +1114,10 @@ def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
     state = tmp_path / "v18.sqlite"
     state.write_bytes(members["state.sqlite"])
     with sqlite3.connect(state) as connection:
+        # Reconstruct the old role CHECK as well as the old memory columns.
+        assert connection.execute('SELECT COUNT(*) FROM agent_delegations').fetchone()[0] == 0
+        connection.executescript('DROP TABLE agent_delegations;\n' + COLLABORATION_SCHEMA_SQL.split('CREATE TABLE agent_messages', 1)[0])
+        connection.execute('ALTER TABLE agent_delegations ADD COLUMN required_for_completion INTEGER NOT NULL DEFAULT 1 CHECK(required_for_completion IN (0,1))')
         connection.execute("DROP TRIGGER memory_session_use_revoke")
         connection.execute("ALTER TABLE memory_sources DROP COLUMN use_epoch")
         connection.execute("ALTER TABLE memory_sources DROP COLUMN backfill_until")
@@ -1132,7 +1137,7 @@ def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
     reopened = SessionStore(destination)
     reopened.initialize()
     try:
-        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 20
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 21
         assert reopened.database.memory.get(MemoryGetRequest(session_id=session["id"], entry_id=entry.entry_id)).entry.content == "Prefer concise Chinese responses"
     finally:
         reopened.close()

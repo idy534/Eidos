@@ -110,6 +110,7 @@ class PlanningToolRuntime(AdapterToolRuntime):
                 approval_description={}, intent_preconditions={'planId': request.plan_id, 'expectedRevision': request.expected_revision},
                 transition_reason='plan_document_write',
             ))
+            context.controller.mark_execution_started()
             document = repository.write(run_id, request)
         except PlanWriteRejected as error:
             return HandlerOutcome(tool_result(call.name, 'error', str(error),

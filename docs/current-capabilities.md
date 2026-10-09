@@ -4,6 +4,10 @@
 
 本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
+Runtime 已移除额外模型完成审查。普通工具任务的最终答复不会再因为内部评估失败或答复去重被停止；原生继续信号、输入、协作和最终事务检查继续生效。旧审查 Event 与 ModelProfile 仍可读取。
+
+执行屏障使用实际执行事实。准备失败和未启动命令不会产生未知副作用；已知结果后的输出过滤、格式校验和投影失败不会单独建立屏障。完全访问 Shell 可以使用已核验的 Workspace 外 cwd。已知文件操作的恢复只观察受影响目标，并在 SQLite 中核对 epoch 和目标集合，避免无关目录扫描阻断恢复。
+
 ## Desktop
 
 - Eidos 提供 macOS Electron Desktop。
@@ -112,7 +116,7 @@
 - Workspace discovery 使用根目录 `.gitignore` 与 `.eidosignore`，并把发现规则和安全权限分开处理。
 - Desktop 提供按 Session execution root 浏览的 Workspace Explorer。Files 只对有 Project 的会话显示。已选择 Project 的 draft 在 Session 物化前也可以浏览 Files。Projectless 会话不显示 Files。Files 可以显示在右侧 Dock，也可以展开到整个工作区。文件树通过 `workspace/listDirectory` 延迟读取一层目录，并使用 `react-arborist` 虚拟化。文件树按常见扩展名显示类型图标，未知类型使用通用文件图标。侧栏布局默认给预览区更多空间，文件树与预览区之间的分隔条仍可以拖动。预览区保留打开文件的 Tab，不额外显示当前路径、文件大小或手动刷新入口。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。用户单击文件后，UTF-8 text/code 和 Markdown 使用有界 `workspace/readFilePreview`。Markdown 复用现有 Renderer，代码由 Shiki 高亮。图片和 PDF 使用有界资源预览，HTML 可以在隔离网页面板中运行或查看源码；其他二进制、Office、archive 和 database 文件返回 typed unavailable preview。Session execution binding 变化后，Explorer 会清空旧预览，并丢弃旧请求的迟到结果。Conversation 中的历史文件打开请求会先核对当前 execution root 的目录项；目录项明确缺失的历史路径不会调用预览接口，目录列表截断时仍由 Runtime 做最终验证。
 - Workspace Explorer 与 Agent 文件工具共用 `WorkspaceReader` 的路径边界。外部文件变化复用 `RepositoryWatchController`，只刷新已加载的受影响目录。
-- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口展示当前执行方式、分支、对比分支、增删行数和当前会话的输出产物。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。产物卡只展示成功的内置交付声明，标题使用声明标题或真实文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，关闭最后一个 Tab 时会自动折叠右侧工作区，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
+- Desktop 的 Conversation 会保持挂载。Session header 右侧的环境信息入口在 Git 项目下展示当前执行方式（“本地”或“本地工作树”及更改工作环境）、分支、对比分支和增删行数；无项目或非 Git 项目不展示“本地”执行环境项及 Git 选项。环境信息同时展示当前会话的输出产物、计划与子智能体。每个 Run 的产物卡和文本修改卡位于最终回答文本之后、复制和反馈操作之前。产物卡只展示成功的内置交付声明，标题使用声明标题或真实文件名。支持内置预览的产物卡会直接进入对应预览：图片使用全屏预览，HTML 直接打开隔离网页面板，PDF 进入 Files 的内置预览；系统应用打开入口保持可用。点击其他位置会关闭环境信息浮层。右侧 Workspace Dock 只保留一个固定在右上角的开关按钮。Dock 提供 Review、Terminal、Files 和 Browser Tab；Browser Tab 顶部不显示环境信息按钮，Dock 打开时环境信息入口仍保留在 Session header，Dock 展开后入口显示在 Dock header。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab，Files 可以同时预览多个文件。用户可以通过“＋”或空状态列表打开窗口，可以切换或关闭窗口，关闭最后一个 Tab 时会自动折叠右侧工作区，也可以把 Dock 展开到整个工作区，并拖动分隔条调整宽度。
 - Desktop Review 提供三个范围：未提交使用 `session/gitStatus` 和 `session/gitDiff(scope=head)` 建立文件手风琴，反映当前分支相对 HEAD 的待提交改动，同一 execution root 下各 Session 看到一致；最近一轮展示最近一次 Run 的持久化文件补丁；整个任务展示本 Session 全部 Run 的持久化补丁历史，后两者不依赖 Git baseline。三者共用同一套文件手风琴：文件名 + 增删行数，点开展开绿增红删的统一 Diff，大补丁经 `ToolTextView` 分页读取。Renderer 在文件展开时才请求 `session/gitDiff(path)`，并用 `react-diff-view` 显示 native Git patch。Review 支持展开全部差异和折叠全部差异。文件列表为只读审查；Stage 只在提交弹层中用于“包含未暂存的更改”后再提交。Open in Editor 只把相对路径交给 Main，Main 会按当前 Session execution root 重新验证真实路径。
 - Review 支持在 Diff gutter 上创建行级 Review Comment。Comment 绑定 Session、path、scope、old/new side、line、观察到的 HEAD 和 Diff hash。Diff 变化后，Runtime 会把无法精确证明仍有效的 Comment 标成 stale。用户点击 Send Review Feedback 后，Desktop 只把 active Comment 格式化成普通用户输入，并复用现有 Run 启动链路。创建 Comment 本身不会启动 Agent。
 - Review 的提交弹层经 Portal 浮于整个窗口之上，不属于右侧 Dock，不需要打开 Dock。环境信息中的“提交或推送”直开该全窗口弹层。弹层展示 branch、upstream 和 ahead/behind。它可以先 Stage 未暂存文件，再执行 Commit，也可以顺序执行 Commit 和 Push。弹层继续提供 Fetch、fast-forward-only Pull、Push、Merge、Rebase 和对应 abort/continue。每个操作复用现有 typed Runtime API 和 `operationId` 语义。Detached managed Worktree 可以继续使用 Create Branch Here。Advanced Git target 只来自 typed local branch observation。
@@ -425,9 +429,9 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ## 子 Agent 委派
 
-- 父任务可以创建探索或执行型子任务、发送消息、继续已结束的子任务、等待和停止子任务。
+- 父任务可以创建 `default` 通用任务、`explorer` 代码调查或 `worker` 实现与验证任务、发送消息、继续已结束的子任务、等待和停止子任务。省略角色时使用 `default`；本期不支持自定义角色。
 - Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
-- 每个父 Run 最多有 16 个子 Session，其中最多 8 个子 Run 同时执行。探索角色仅可读取；执行角色可使用现有文件、Shell、Skill 和已授权扩展工具。子 Run 继承父 Run 的审批模式和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代或直接申请新 Grant。
+- 每个父 Run 最多有 16 个子 Session，其中最多 8 个子 Run 同时执行。三个角色使用普通文件、Shell、Skill、图片、只读记忆、产物声明和已启用扩展工具，角色通过持久记录生成的独立指令表达分工。`explorer` 不提供强制只读保证。子 Run 继承父 Run 的模型、审批模式、权限和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代、直接向用户提问或直接申请新 Grant。
 - 父任务等待在没有活动 Shell 且没有剩余批次时使用持久 `waiting_agents` 状态。混合批次或活动 Shell 下保留 Worker，满足条件后顺序继续。忙碌子任务的 `followup_task` 作为消息送达；空闲子任务才创建新 Run。消息持久保存，模型优先逐页读取最早 16 条未送达消息，成功接受响应后才保存投递回执；失败、取消和预览不消费消息。无未读消息时展示最近 16 条。可选子任务通过 `required_for_completion=false` 声明，收尾时停止并清理；必需任务仍需完成。
 - Desktop 在环境信息中展示子 Agent 列表和待审批数量；右侧工作区关闭时，环境信息入口仍提示待审批数。点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消；父任务异常结束后，正常调度也会取消其孤立子任务。
 - 本阶段没有新增依赖。生产 DTO 从 Python Schema 生成。完整验证结果以当前 PR 记录为准。
@@ -435,7 +439,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 ### Loop 校验与协作放行（PR #102）
 
 - 移除“先只读核验”的模型硬要求，Runtime 自动尝试恢复可核验的 Workspace 副作用；明确文件范围只阻止冲突路径，未知范围继续保守处理。
-- 所有控制工具允许与其他工具同批顺序执行；有剩余批次时原 Worker 保持等待，避免剩余调用丢失或重放。消息、停止子任务和只读探索不受已有不确定副作用屏障阻断；未知副作用下不创建新的执行型子任务。
+- 所有控制工具允许与其他工具同批顺序执行；有剩余批次时原 Worker 保持等待，避免剩余调用丢失或重放。消息、停止子任务和忙碌子任务的续派消息不受已有不确定副作用屏障阻断；未知副作用下不创建任何角色的新子 Run。
 
 ### 执行门控整体整改
 

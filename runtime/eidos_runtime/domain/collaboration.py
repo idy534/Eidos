@@ -12,7 +12,7 @@ from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 MAX_AGENTS = 16
 # The scheduler counts executing children per parent Run, never across Runs.
 MAX_ACTIVE_AGENTS = 8
-AgentRole = Literal["explorer", "worker"]
+AgentRole = Literal["default", "explorer", "worker"]
 AGENT_TOOLS = frozenset({
     "spawn_agent", "send_message", "followup_task", "wait_agents", "list_agents", "stop_agent",
 })
@@ -22,7 +22,7 @@ ACTIVE_STATUSES = ("queued", "running", "waiting_approval", "waiting_input", "wa
 class SpawnAgent(EidosFrozenStrictModel):
     task_name: str = Field(min_length=1, max_length=60, pattern=r"^[a-z][a-z0-9_-]*$")
     message: str = Field(min_length=1, max_length=8000, description="A self-contained assignment with scope and acceptance criteria. The child receives this task, not the whole parent conversation.")
-    role: AgentRole = "worker"
+    role: AgentRole = Field(default="default", description="Built-in task role: default for general work, explorer for focused investigation, worker for implementation and verification. All roles inherit the parent Run's permissions and ordinary tools; explorer is not a read-only permission mode. Custom roles are not supported.")
     required_for_completion: bool = Field(default=True, description="Set false only for supplementary work whose result is not needed to finish the task. Runtime cancels optional tasks and awaits their resource cleanup at parent completion.")
 
 

@@ -44,6 +44,7 @@ class OrchestratorContext:
     base_permissions: BasePermissionProfile
     environment_identity: str = "local"
     granted_permissions: AdditionalPermissionProfile | None = None
+    execution_started: Callable[[], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -212,7 +213,8 @@ class ToolOrchestrator:
             rejected = _error_result(
                 "user_rejected_escalation",
                 "User rejected unsandboxed retry",
-                side_effects_may_exist=True,
+                side_effects_may_exist=result.get("sideEffectsMayExist") is True,
+                reconciliation_required=result.get("reconciliationRequired") is True,
             )
             return OrchestratorResult(
                 _attach_metadata(
@@ -349,7 +351,8 @@ class ToolOrchestrator:
             result, denial = runtime.run(request, attempt, context)
         except Exception:
             if record_attempt is not None:
-                record_attempt(attempt, "uncertain", None)
+                started = context.execution_started
+                record_attempt(attempt, "failed" if started is not None and not started() else "uncertain", None)
             raise
         if record_attempt is not None:
             record_attempt(
@@ -410,8 +413,6 @@ def _attach_metadata(
         }
     )
     attached["data"] = data
-    if attempt.sandbox is SandboxType.NONE:
-        attached["sideEffectsMayExist"] = True
     return attached
 
 
@@ -420,6 +421,7 @@ def _error_result(
     summary: str,
     *,
     side_effects_may_exist: bool = False,
+    reconciliation_required: bool | None = None,
 ) -> dict[str, object]:
     return {
         "schemaVersion": 1,
@@ -429,5 +431,5 @@ def _error_result(
         "summary": summary,
         "data": {},
         "sideEffectsMayExist": side_effects_may_exist,
-        "reconciliationRequired": side_effects_may_exist,
+        "reconciliationRequired": side_effects_may_exist if reconciliation_required is None else reconciliation_required,
     }

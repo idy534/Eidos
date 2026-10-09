@@ -115,17 +115,27 @@ export function HandoffDialog({
         aria-describedby="handoff-dialog-description"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="modal-header">
-          <h3 id="handoff-dialog-title">更改工作环境</h3>
-          <p className="modal-subtitle" id="handoff-dialog-description">
-            当前会话、历史对话和检查点都会保留。后续任务会在所选工作环境中执行。
-          </p>
+        <div className="modal-header handoff-modal-header">
+          <div className="handoff-header-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M7 16V4M7 4L3 8M7 4L11 8" />
+              <path d="M17 8V20M17 20L21 16M17 20L13 16" />
+            </svg>
+          </div>
+          <div className="handoff-header-text">
+            <h3 id="handoff-dialog-title">更改工作环境</h3>
+            <p className="modal-subtitle" id="handoff-dialog-description">
+              当前会话、历史对话和检查点都会保留。后续任务会在所选工作环境中执行。
+            </p>
+          </div>
         </div>
         <div className="modal-body handoff-dialog-body">
-          <fieldset className="create-session-fieldset">
-            <legend>执行方式</legend>
-            <div className="create-session-mode-grid">
-              <label className={`create-session-mode-card${selectedTarget === "local" ? " selected" : ""}`}>
+          <fieldset className="create-session-fieldset handoff-fieldset">
+            <legend className="handoff-legend">执行方式</legend>
+            <div className="create-session-mode-grid handoff-mode-grid">
+              <label
+                className={`create-session-mode-card handoff-mode-card${selectedTarget === "local" ? " selected is-selected" : ""}${busy ? " is-disabled" : ""}`}
+              >
                 <input
                   type="radio"
                   name="handoff-target"
@@ -133,14 +143,34 @@ export function HandoffDialog({
                   checked={selectedTarget === "local"}
                   disabled={busy}
                   onChange={() => setSelectedTarget("local")}
+                  className="handoff-radio-input"
+                  aria-label="本地"
                 />
-                <span>
-                  <strong>本地</strong>
-                  <small>直接在项目目录和本地分支中执行</small>
+                <span className="handoff-radio-indicator" aria-hidden="true">
+                  <span className="handoff-radio-dot" />
                 </span>
-                {currentMode === "local" && <em>当前</em>}
+                <div className="handoff-card-content">
+                  <div className="handoff-card-header">
+                    <span className="handoff-card-icon" aria-hidden="true">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" />
+                        <path d="M8 21h8" />
+                        <path d="M12 17v4" />
+                      </svg>
+                    </span>
+                    <strong className="handoff-card-title">本地</strong>
+                    {currentMode === "local" && (
+                      <span className="handoff-current-badge">
+                        <em>当前</em>
+                      </span>
+                    )}
+                  </div>
+                  <small className="handoff-card-desc">直接在项目目录和本地分支中执行</small>
+                </div>
               </label>
-              <label className={`create-session-mode-card${selectedTarget === "worktree" ? " selected" : ""}`}>
+              <label
+                className={`create-session-mode-card handoff-mode-card${selectedTarget === "worktree" ? " selected" : ""}${busy ? " is-disabled" : ""}`}
+              >
                 <input
                   type="radio"
                   name="handoff-target"
@@ -148,48 +178,117 @@ export function HandoffDialog({
                   checked={selectedTarget === "worktree"}
                   disabled={busy}
                   onChange={() => setSelectedTarget("worktree")}
+                  className="handoff-radio-input"
+                  aria-label={worktreeTitle}
                 />
-                <span>
-                  <strong>{worktreeTitle}</strong>
-                  <small>{associatedWorktreeId
-                    ? "使用这个会话原有的独立工作树"
-                    : "从当前本地分支创建独立工作树"}</small>
+                <span className="handoff-radio-indicator" aria-hidden="true">
+                  <span className="handoff-radio-dot" />
                 </span>
-                {currentMode === "worktree" && <em>当前</em>}
+                <div className="handoff-card-content">
+                  <div className="handoff-card-header">
+                    <span className="handoff-card-icon" aria-hidden="true">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="6" y1="3" x2="6" y2="15" />
+                        <circle cx="18" cy="6" r="3" />
+                        <circle cx="6" cy="18" r="3" />
+                        <path d="M18 9a9 9 0 0 1-9 9" />
+                      </svg>
+                    </span>
+                    <strong className="handoff-card-title">{worktreeTitle}</strong>
+                    {currentMode === "worktree" && (
+                      <span className="handoff-current-badge">
+                        <em>当前</em>
+                      </span>
+                    )}
+                  </div>
+                  <small className="handoff-card-desc">
+                    {associatedWorktreeId
+                      ? "使用这个会话原有的独立工作树"
+                      : "从当前本地分支创建独立工作树"}
+                  </small>
+                </div>
               </label>
             </div>
           </fieldset>
           <section className="handoff-selection-details" aria-live="polite">
-            {selectedTarget === "local" && currentMode === "local" && branches.length > 0 && (
-              <label className="create-session-ref-field" htmlFor="handoff-local-branch">
-                <span>本地分支</span>
-                <select
-                  id="handoff-local-branch"
-                  aria-label="本地分支"
-                  value={selectedBranch}
-                  disabled={busy}
-                  onChange={(event) => setSelectedBranch(event.target.value)}
-                >
-                  {branches.map((branch) => <option value={branch} key={branch}>{branch}</option>)}
-                </select>
-              </label>
-            )}
-            {selectedTarget === "local" && currentMode === "worktree" && (
-              <p>当前工作树的 Git 状态会安全同步到本地</p>
-            )}
-            {selectedTarget === "worktree" && associatedWorktreeId && (
-              <p>返回这个会话原有的独立工作树</p>
-            )}
-            {selectedTarget === "worktree" && !associatedWorktreeId && (
-              <>
-                <p>从本地分支 {currentBranch ?? "当前提交"} 创建独立工作树</p>
-                {changedFileCount > 0 && <p>{changedFileCount} 个文件的当前修改会一起迁移</p>}
-              </>
+            {selectedTarget === "local" && currentMode === "local" && branches.length > 0 ? (
+              <div className="handoff-branch-row">
+                <span className="handoff-branch-icon" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="6" y1="3" x2="6" y2="15" />
+                    <circle cx="18" cy="6" r="3" />
+                    <circle cx="6" cy="18" r="3" />
+                    <path d="M18 9a9 9 0 0 1-9 9" />
+                  </svg>
+                </span>
+                <label className="handoff-branch-label" htmlFor="handoff-local-branch">
+                  本地分支
+                </label>
+                <div className="handoff-branch-select-wrap">
+                  <select
+                    id="handoff-local-branch"
+                    aria-label="本地分支"
+                    value={selectedBranch}
+                    disabled={busy}
+                    onChange={(event) => setSelectedBranch(event.target.value)}
+                  >
+                    {branches.map((branch) => <option value={branch} key={branch}>{branch}</option>)}
+                  </select>
+                  <span className="handoff-select-chevron" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="handoff-detail-info-row">
+                <div className="handoff-details-icon" aria-hidden="true">
+                  {selectedTarget === "local" && currentMode === "local" ? (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="6" y1="3" x2="6" y2="15" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="6" cy="18" r="3" />
+                      <path d="M18 9a9 9 0 0 1-9 9" />
+                    </svg>
+                  ) : selectedTarget === "local" && currentMode === "worktree" ? (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                      <path d="M3 3v5h5" />
+                      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                      <path d="M16 21h5v-5" />
+                    </svg>
+                  ) : (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                      <polyline points="2 17 12 22 22 17" />
+                      <polyline points="2 12 12 17 22 12" />
+                    </svg>
+                  )}
+                </div>
+                <div className="handoff-details-content">
+                  {selectedTarget === "local" && currentMode === "local" && branches.length === 0 && (
+                    <p>当前已处于本地环境</p>
+                  )}
+                  {selectedTarget === "local" && currentMode === "worktree" && (
+                    <p>当前工作树的 Git 状态会安全同步到本地</p>
+                  )}
+                  {selectedTarget === "worktree" && associatedWorktreeId && (
+                    <p>返回这个会话原有的独立工作树</p>
+                  )}
+                  {selectedTarget === "worktree" && !associatedWorktreeId && (
+                    <>
+                      <p>从本地分支 {currentBranch ?? "当前提交"} 创建独立工作树</p>
+                      {changedFileCount > 0 && <p>{changedFileCount} 个文件的当前修改会一起迁移</p>}
+                    </>
+                  )}
+                </div>
+              </div>
             )}
           </section>
           {error && <p className="setting-field-error" role="alert">{error}</p>}
         </div>
-        <div className="modal-footer">
+        <div className="modal-footer handoff-modal-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>
           <Button
             ref={confirmRef}

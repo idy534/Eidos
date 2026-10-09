@@ -23,6 +23,7 @@ from eidos_runtime.runtime.tool_runtime import FileChangeToolHandler, ToolCallRu
 from eidos_runtime.sandbox.permissions import BasePermissionProfile
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.sandbox.shell import ShellLaunchSpec
+from eidos_runtime.workspace.reader import WorkspaceReader
 
 
 @pytest.fixture
@@ -168,16 +169,17 @@ def test_mixed_wait_continues_after_timeout_without_replaying_prior_calls(execut
     assert e.app.repository.wait_record(e.run['id']) is None
 
 
-def test_unknown_shell_allows_readonly_exploration_but_blocks_new_worker(execution):
+@pytest.mark.parametrize("role", ["default", "explorer", "worker", None])
+def test_unknown_shell_blocks_new_child_with_inherited_execution_tools(execution, role):
     e = execution
     _uncertain(e, 'run_shell')
-    result = _execute(e, (
-        ModelToolCall('readonly-child', 'spawn_agent', {'taskName': 'explore', 'message': 'Inspect evidence', 'role': 'explorer'}),
-        ModelToolCall('worker-child', 'spawn_agent', {'taskName': 'execute', 'message': 'Modify files', 'role': 'worker'}),
-    ), threading.Event())
+    arguments = {'taskName': 'inspect', 'message': 'Inspect evidence'}
+    if role is not None:
+        arguments['role'] = role
+    result = _execute(e, (ModelToolCall('child', 'spawn_agent', arguments),), threading.Event())
     assert result.error_fingerprints
     children = e.app.repository.state(e.run['id']).agents
-    assert len(children) == 1 and children[0].role == 'explorer'
+    assert children == []
     assert e.store.side_effects_blocked(e.run['id'])
 
 
@@ -364,16 +366,26 @@ def test_file_barrier_is_rechecked_inside_commit_window(execution):
     assert calls == []
 
 
-@pytest.mark.parametrize('origin,complete,status,scans', [
+@pytest.mark.parametrize('origin,target_safe,status,observations', [
     ('apply_patch', True, 'succeeded', 1),
     ('apply_patch', False, 'interrupted', 1),
     ('run_shell', True, 'interrupted', 0),
 ])
-def test_completion_recovers_only_verifiable_workspace_effects(execution, origin, complete, status, scans):
+def test_completion_recovers_only_verifiable_workspace_effects(execution, monkeypatch, origin, target_safe, status, observations):
     e = execution
     _uncertain(e, origin)
     observed = []
-    e.runtime.workspace_refresh = lambda _cancel: observed.append('scan') or SimpleNamespace(complete=complete)
+    scans = []
+    e.runtime.workspace_refresh = lambda _cancel: scans.append(True) or SimpleNamespace(complete=False)
+    if not target_safe:
+        (e.workspace / 'changed.txt').symlink_to(e.workspace / 'unrelated.txt')
+    original = WorkspaceReader.observe_files
+
+    def observe(reader, paths, *, cancel):
+        observed.append(paths)
+        return original(reader, paths, cancel=cancel)
+
+    monkeypatch.setattr(WorkspaceReader, 'observe_files', observe)
     step = _step(e)
     item = e.store.create_assistant_item(e.run['id'], step.step_index)
     engine = RuntimeEngine(e.store, None, lambda _event: None)
@@ -382,4 +394,21 @@ def test_completion_recovers_only_verifiable_workspace_effects(execution, origin
         threading.Event(), completion_recovery=e.runtime._refresh_reconciliation)
     assert action is SampleBoundaryAction.RETURN
     assert e.store.read_run(e.run['id'])['status'] == status
-    assert len(observed) == scans
+    assert len(observed) == observations
+    assert scans == []
+
+
+def test_target_recovery_commit_rechecks_epoch_and_affected_paths(execution):
+    e = execution
+    _uncertain(e)
+    epoch = e.store.context_projection_facts(e.run['id']).reconciliation_epoch
+    assert e.store.clear_reconciliation_after_workspace_refresh_committed(
+        e.run['id'], epoch + 1, observed_paths=frozenset({'changed.txt'})) is None
+    assert e.store.clear_reconciliation_after_workspace_refresh_committed(
+        e.run['id'], epoch, observed_paths=frozenset({'other.txt'})) is None
+    assert e.store.side_effects_blocked(e.run['id'])
+    mutation = e.store.clear_reconciliation_after_workspace_refresh_committed(
+        e.run['id'], epoch, observed_paths=frozenset({'changed.txt'}))
+    assert mutation is not None
+    assert mutation.events[-1]['payload']['reason'] == 'workspace_target_observation'
+    assert not e.store.side_effects_blocked(e.run['id'])
