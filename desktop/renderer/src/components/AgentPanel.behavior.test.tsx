@@ -3,9 +3,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CollaborationState } from "../../../shared/collaboration.generated.js";
 import type { EidosRuntimeAPI } from "../contracts.js";
-import { AgentList, AgentWorkspacePanel, useAgentState } from "./AgentPanel.js";
+import {
+  AgentList,
+  AgentWorkspacePanel,
+  formatErrorCode,
+  useAgentState,
+} from "./AgentPanel.js";
 
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+
+describe("agent error labels", () => {
+  it("describes interruption and legacy completion checks", () => {
+    expect(formatErrorCode("RUNTIME_INTERRUPTED")).toBe("执行已中断");
+    expect(formatErrorCode("completion_unconfirmed")).toBe("答复已生成，旧版完成检查未确认");
+  });
+});
 
 describe("AgentWorkspacePanel", () => {
   afterEach(() => {

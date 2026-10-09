@@ -116,4 +116,94 @@ describe("InputPicker behavior", () => {
     fireEvent.click(option);
     expect(onChoose).not.toHaveBeenCalled();
   });
+
+  it("renders action buttons in correct order with disabled goal mode and triggers Plan mode", async () => {
+    setupRuntime();
+    const onSelectPlanMode = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <InputPicker
+        {...pickerProps}
+        mode="all"
+        onSelectPlanMode={onSelectPlanMode}
+        onClose={onClose}
+      />,
+    );
+
+    const fileBtn = await screen.findByRole("button", { name: "添加文件" });
+    const folderBtn = screen.getByRole("button", { name: "添加文件夹" });
+    const planBtn = screen.getByRole("button", { name: "Plan 模式" });
+    const goalBtn = screen.getByRole("button", { name: "目标模式" });
+
+    expect(fileBtn).toBeInTheDocument();
+    expect(folderBtn).toBeInTheDocument();
+    expect(planBtn).toBeInTheDocument();
+    expect(goalBtn).toBeDisabled();
+
+    fireEvent.click(planBtn);
+    expect(onSelectPlanMode).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles collapsible search bar when clicking search trigger and collapses on 收起", async () => {
+    setupRuntime();
+    const onQuery = vi.fn();
+
+    render(<InputPicker {...pickerProps} mode="all" onQuery={onQuery} />);
+
+    const searchTrigger = await screen.findByRole("button", { name: "搜索引用" });
+    expect(screen.queryByPlaceholderText("搜索名称、Skill、扩展…")).not.toBeInTheDocument();
+
+    fireEvent.click(searchTrigger);
+
+    const searchInput = screen.getByPlaceholderText("搜索名称、Skill、扩展…");
+    expect(searchInput).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "添加文件" })).not.toBeInTheDocument();
+
+    const collapseBtn = screen.getByRole("button", { name: "收起搜索" });
+    fireEvent.click(collapseBtn);
+
+    expect(screen.queryByPlaceholderText("搜索名称、Skill、扩展…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加文件" })).toBeInTheDocument();
+  });
+
+  it("handles Escape key to clear query then collapse search", async () => {
+    setupRuntime();
+    const onQuery = vi.fn();
+
+    const { rerender } = render(
+      <InputPicker {...pickerProps} query="test" mode="all" onQuery={onQuery} />,
+    );
+
+    const searchInput = await screen.findByPlaceholderText("搜索名称、Skill、扩展…");
+    expect(searchInput).toBeInTheDocument();
+
+    fireEvent.keyDown(searchInput, { key: "Escape" });
+    expect(onQuery).toHaveBeenCalledWith("");
+
+    rerender(<InputPicker {...pickerProps} query="" mode="all" onQuery={onQuery} />);
+    const emptyInput = screen.getByPlaceholderText("搜索名称、Skill、扩展…");
+    fireEvent.keyDown(emptyInput, { key: "Escape" });
+
+    expect(screen.queryByPlaceholderText("搜索名称、Skill、扩展…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加文件" })).toBeInTheDocument();
+  });
+
+  it("renders redesigned category tabs and toggles active selection", async () => {
+    setupRuntime();
+
+    render(<InputPicker {...pickerProps} mode="all" />);
+
+    const tabs = ["全部", "文件", "Skill", "MCP", "插件", "历史"];
+    for (const label of tabs) {
+      expect(await screen.findByRole("tab", { name: label })).toBeInTheDocument();
+    }
+
+    const skillTab = screen.getByRole("tab", { name: "Skill" });
+    expect(skillTab).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.click(skillTab);
+    expect(skillTab).toHaveAttribute("aria-selected", "true");
+  });
 });
