@@ -585,7 +585,7 @@ export function AgentWorkspacePanel({
                   <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M10 3.5L5.5 8l4.5 4.5" />
                   </svg>
-                  <span>全部子智能体</span>
+                  <span>全部</span>
                 </button>
               )}
 

@@ -757,12 +757,56 @@ describe("ExecutionFeed plan and clarification rendering", () => {
       />,
     );
 
-    const btn = container.querySelector("button.tool-subagent-btn");
+    const btn = container.querySelector("button.tool-file-link");
     expect(btn).not.toBeNull();
-    expect(btn?.textContent).toContain("创建子智能体 · reviewer");
+    expect(btn?.textContent).toBe("reviewer");
+    expect(container.textContent).toContain("创建子智能体 · reviewer");
     expect(container.querySelector("details.tool-item")).toBeNull();
 
     fireEvent.click(btn!);
     expect(onOpenSubagent).toHaveBeenCalledWith({ id: "child-42", taskName: "reviewer" });
+  });
+
+  it("shows error summary in title attribute on hover when subagent tool fails", () => {
+    const errorItem: Item = {
+      id: "spawn-err",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "failed",
+      createdAt: 1_000,
+      toolCall: {
+        id: "tc-err",
+        itemId: "spawn-err",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-err",
+        toolName: "spawn_agent",
+        status: "failed",
+        startedAt: 1_000,
+        completedAt: 1_200,
+        argumentsJson: JSON.stringify({ task_name: "failing-worker" }),
+        resultJson: JSON.stringify({ outcome: "error", summary: "Resource quota exceeded" }),
+      },
+    };
+
+    const { container } = render(
+      <ExecutionFeed
+        items={[errorItem]}
+        runs={[{ ...baseRun, status: "failed", completedAt: 2_000 }]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+        onOpenSubagent={() => {}}
+      />,
+    );
+
+    const toolRow = container.querySelector(".tool-item--read-done");
+    expect(toolRow).not.toBeNull();
+    expect(toolRow?.getAttribute("title")).toBe("Resource quota exceeded");
+    expect(container.querySelector(".tool-summary--error")).toBeNull();
   });
 });

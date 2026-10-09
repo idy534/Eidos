@@ -1061,7 +1061,6 @@ function ToolItem({
 
   if (isSubagentTool(toolCall.toolName)) {
     const { id: agentId, name: agentName } = extractSubagentInfo(toolCall, agents);
-    const summaryLabel = toolSummary(toolCall, item.status, agents);
     const resultObj = parseObject(toolCall.resultJson);
     const isError = Boolean(
       resultObj.outcome === "error"
@@ -1074,27 +1073,45 @@ function ToolItem({
       || isReconciliationGate(resultObj),
     );
     const errSummary = safeToolSummary(toolCall.resultJson, item.status);
+    const actionLabel = subagentActionLabel(toolCall.toolName, item.status, isError, resultObj);
+    const titleText = isError && errSummary ? errSummary : undefined;
+
     return (
-      <div className="tool-item tool-item--subagent-wrap">
-        <button
-          type="button"
-          className="tool-subagent-btn"
-          title={agentName ? `查看子智能体详情：${agentName}` : "查看子智能体详情"}
-          onClick={() => onOpenSubagent?.({ id: agentId, taskName: agentName })}
-        >
-          <span className="tool-icon" aria-hidden="true">
-            <SubagentToolIcon />
-          </span>
-          <span className="tool-subagent-label">{summaryLabel}</span>
-          <span className="tool-subagent-arrow" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 3.5L10.5 8 6 12.5" />
-            </svg>
-          </span>
-        </button>
-        {isError && errSummary && (
-          <p className="tool-summary--error">{errSummary}</p>
-        )}
+      <div className="tool-item tool-item--read-done" title={titleText}>
+        <span className="tool-icon" aria-hidden="true">
+          <SubagentToolIcon />
+        </span>
+        <span>
+          {agentName ? (
+            <>
+              {actionLabel}
+              {" · "}
+              {onOpenSubagent ? (
+                <button
+                  type="button"
+                  className="tool-file-link"
+                  onClick={() => onOpenSubagent({ id: agentId, taskName: agentName })}
+                >
+                  {agentName}
+                </button>
+              ) : (
+                agentName
+              )}
+            </>
+          ) : (
+            onOpenSubagent ? (
+              <button
+                type="button"
+                className="tool-file-link"
+                onClick={() => onOpenSubagent()}
+              >
+                {actionLabel}
+              </button>
+            ) : (
+              actionLabel
+            )
+          )}
+        </span>
       </div>
     );
   }
@@ -1417,6 +1434,38 @@ function extractSubagentInfo(
   }
 
   return { id, name };
+}
+
+function subagentActionLabel(
+  toolName: string,
+  status: Item["status"],
+  isError: boolean,
+  resultObj: Record<string, unknown>,
+): string {
+  const baseLabels: Record<string, string> = {
+    spawn_agent: "创建子智能体",
+    wait_agents: "等待子智能体",
+    list_agents: "查询子智能体",
+    stop_agent: "停止子智能体",
+    send_message: "发送智能体消息",
+    followup_task: "追加智能体任务",
+  };
+  const base = baseLabels[toolName] ?? toolName;
+  if (isReconciliationGate(resultObj)) {
+    return `未执行：与尚未确认的操作冲突 ${base}`;
+  }
+  if (isError && status !== "completed" && status !== "in_progress") {
+    return `${statusLabel(status)} ${base}`;
+  }
+  const runningLabels: Record<string, string> = {
+    spawn_agent: "正在创建子智能体",
+    wait_agents: "正在等待子智能体",
+    list_agents: "正在查询子智能体",
+    stop_agent: "正在停止子智能体",
+    send_message: "正在发送智能体消息",
+    followup_task: "正在追加智能体任务",
+  };
+  return status === "in_progress" ? (runningLabels[toolName] ?? `正在运行 ${toolName}`) : base;
 }
 
 function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[]): string {
