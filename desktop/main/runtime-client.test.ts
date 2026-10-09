@@ -231,8 +231,9 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
     });
 
     const initialized = await client.initialize();
+    const packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")) as { version: string };
     assert.equal(initialized.protocolVersion, 1);
-    assert.equal(initialized.runtimeVersion, "0.5.0");
+    assert.equal(initialized.runtimeVersion, packageJson.version);
     assert.equal(typeof initialized.capabilities.runShell, "boolean");
     assert.equal(initialized.capabilities.modelConfigured, false);
     assert.deepEqual(await client.health(), { state: "ready" });

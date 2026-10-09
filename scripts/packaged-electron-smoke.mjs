@@ -299,8 +299,9 @@ async function verifyRuntimeProtocol({ appRoot, pythonExecutable }) {
       client: { name: "packaged-electron-smoke", version: "1" },
       protocolVersion: 1,
     });
+    const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
     assert.equal(initialized.result.protocolVersion, 1);
-    assert.equal(initialized.result.runtimeVersion, "0.5.0");
+    assert.equal(initialized.result.runtimeVersion, packageJson.version);
     const health = await request("runtime/health", {});
     assert.deepEqual(health.result, { state: "ready" });
     const shutdown = await request("runtime/shutdown", {});

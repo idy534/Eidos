@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import os from "node:os";
@@ -355,8 +355,9 @@ async function verifyRuntimeProtocol() {
       client: { name: "bundled-runtime-smoke", version: "1" },
       protocolVersion: 1,
     });
+    const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
     assert.equal(initialized.result.protocolVersion, 1);
-    assert.equal(initialized.result.runtimeVersion, "0.5.0");
+    assert.equal(initialized.result.runtimeVersion, packageJson.version);
 
     const health = await request("runtime/health", {});
     assert.deepEqual(health.result, { state: "ready" });
