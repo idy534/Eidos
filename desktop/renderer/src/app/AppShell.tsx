@@ -1126,68 +1126,70 @@ export function AppShell({ runtime }: AppShellProps) {
             <header>
               <h2>环境信息</h2>
             </header>
-            <OutputContent
-              artifacts={outputArtifacts}
-              loading={completeSessionItems.loading}
-              error={completeSessionItems.error}
-            />
-            {planning.state?.plans && planning.state.plans.length > 0 && (
-              <div className="environment-popover__section">
-                <div className="environment-popover__section-title">计划</div>
-                <button
-                  type="button"
-                  className="environment-popover__row environment-popover__row--plan"
-                  onClick={handleOpenPlan}
-                >
-                  <span className="plan-icon" aria-hidden="true">
-                    <PlanLightbulbIcon />
+            <div className="environment-popover__body">
+              <OutputContent
+                artifacts={outputArtifacts}
+                loading={completeSessionItems.loading}
+                error={completeSessionItems.error}
+              />
+              {planning.state?.plans && planning.state.plans.length > 0 && (
+                <div className="environment-popover__section">
+                  <div className="environment-popover__section-title">计划</div>
+                  <button
+                    type="button"
+                    className="environment-popover__row environment-popover__row--plan"
+                    onClick={handleOpenPlan}
+                  >
+                    <span className="plan-icon" aria-hidden="true">
+                      <PlanLightbulbIcon />
+                    </span>
+                    <span className="plan-title">{planning.state.plans[0]?.title ?? "计划"}</span>
+                  </button>
+                </div>
+              )}
+              {agents.state?.agents && agents.state.agents.length > 0 && (
+                <div className="environment-popover__section">
+                  <div className="environment-popover__section-title">子智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
+                  <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
+                </div>
+              )}
+              {agents.error && <p role="alert">{agents.error}</p>}
+              {sessionHasGit && (
+                <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
+                  <span>变更</span>
+                  <span className="git-line-summary" aria-label="修改行数">
+                    <ins>+{gitReviewState.summary?.additions ?? 0}</ins>
+                    <del>-{gitReviewState.summary?.deletions ?? 0}</del>
                   </span>
-                  <span className="plan-title">{planning.state.plans[0]?.title ?? "计划"}</span>
                 </button>
-              </div>
-            )}
-            {agents.state?.agents && agents.state.agents.length > 0 && (
-              <div className="environment-popover__section">
-                <div className="environment-popover__section-title">子智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
-                <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
-              </div>
-            )}
-            {agents.error && <p role="alert">{agents.error}</p>}
-            {sessionHasGit && (
-              <button type="button" className="environment-popover__row" onClick={() => openTool("review")}>
-                <span>变更</span>
-                <span className="git-line-summary" aria-label="修改行数">
-                  <ins>+{gitReviewState.summary?.additions ?? 0}</ins>
-                  <del>-{gitReviewState.summary?.deletions ?? 0}</del>
-                </span>
-              </button>
-            )}
-            {sessionHasGit && (
-              <div className="environment-popover__row">
-                <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
-                <Button
-                  variant="ghost"
-                  size="small"
-                  disabled={Boolean(activeRun) || handoffBusy}
-                  loading={handoffBusy}
-                  onClick={() => setHandoffSessionId(snapshot!.session.id)}
-                >
-                  更改工作环境
-                </Button>
-              </div>
-            )}
-            {sessionHasGit && (
-              <div className="environment-popover__row environment-popover__branch">
-                <span>{sessionBranch ?? `分离状态 @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>
-                <span aria-hidden="true">→</span>
-                <span>{gitReviewState.summary?.compareRef ?? gitReviewState.status?.baseRef ?? "HEAD"}</span>
-              </div>
-            )}
-            {sessionHasGit && (
-              <button type="button" className="environment-popover__row" onClick={openGitWorkflow}>
-                <span>提交或推送</span>
-              </button>
-            )}
+              )}
+              {sessionHasGit && (
+                <div className="environment-popover__row">
+                  <span>{sessionIsLocal ? "本地" : "本地工作树"}</span>
+                  <Button
+                    variant="ghost"
+                    size="small"
+                    disabled={Boolean(activeRun) || handoffBusy}
+                    loading={handoffBusy}
+                    onClick={() => setHandoffSessionId(snapshot!.session.id)}
+                  >
+                    更改工作环境
+                  </Button>
+                </div>
+              )}
+              {sessionHasGit && (
+                <div className="environment-popover__row environment-popover__branch">
+                  <span>{sessionBranch ?? `分离状态 @ ${(gitReviewState.status?.head ?? "").slice(0, 7)}`}</span>
+                  <span aria-hidden="true">→</span>
+                  <span>{gitReviewState.summary?.compareRef ?? gitReviewState.status?.baseRef ?? "HEAD"}</span>
+                </div>
+              )}
+              {sessionHasGit && (
+                <button type="button" className="environment-popover__row" onClick={openGitWorkflow}>
+                  <span>提交或推送</span>
+                </button>
+              )}
+            </div>
           </section>
         </details>
     </div>

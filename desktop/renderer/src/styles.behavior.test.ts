@@ -15,6 +15,17 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/button:hover:not\(:disabled\)\s*\{[^}]*background: var\(--surface-hover\);/);
   });
 
+  it("maintains high contrast and dark hover background on unified primary and danger buttons", () => {
+    // Primary button should not wash out to pale sage on hover, and should keep pure white text
+    expect(styles).not.toMatch(/\.btn--primary:hover[^{]*\{[^}]*background:\s*var\(--primary-action-bg-hover\);/s);
+    expect(styles).toMatch(/\.btn--primary:hover:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#274e3c;/s);
+    expect(styles).toMatch(/\.btn--primary:active:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#1e3d2f;/s);
+
+    // Danger button must keep pure white text on hover and active so labels like "遗忘" remain crisp and visible
+    expect(styles).toMatch(/\.btn--danger:hover:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#7a3028;/s);
+    expect(styles).toMatch(/\.btn--danger:active:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#65251e;/s);
+  });
+
   it("does not wash out the selected session item on hover", () => {
     expect(styles).toMatch(
       /\.session-list\s*>\s*\.session-item\s*>\s*button:not\(\.selected\):hover:not\(:disabled\)\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.65\);/s,
