@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -409,5 +411,23 @@ describe("AgentWorkspacePanel", () => {
 
     // Error code label (such as 运行时中断 or 未确认完成) is NOT rendered in card footer or detail banner
     expect(screen.queryByText("运行时中断")).not.toBeInTheDocument();
+  });
+
+  it("enforces fixed height, flex-shrink 0, and scrollbar styles on agent cards to prevent compression", () => {
+    const agentsCss = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/components/agents.css"),
+      "utf8",
+    );
+
+    // .agent-card has fixed height, min-height, and flex-shrink 0
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*height:\s*86px;/s);
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*min-height:\s*86px;/s);
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*flex:\s*0 0 86px;/s);
+    expect(agentsCss).toMatch(/\.agent-card\s*\{[^}]*flex-shrink:\s*0;/s);
+
+    // .agent-list has vertical scroll and custom scrollbar
+    expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-y:\s*auto;/s);
+    expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-x:\s*hidden;/s);
+    expect(agentsCss).toMatch(/\.agent-list::-webkit-scrollbar\s*\{[^}]*width:\s*6px;/s);
   });
 });

@@ -50,6 +50,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .agent-overview-header__title-row {
@@ -144,8 +145,30 @@
   gap: 8px;
   padding: 12px 14px 20px;
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
   flex: 1 1 auto;
+  scrollbar-color: rgba(106, 111, 103, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.agent-list::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+
+.agent-list::-webkit-scrollbar-track,
+.agent-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.agent-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(106, 111, 103, 0.28);
+}
+
+.agent-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.45);
 }
 
 /* Compact Agent List for Environment Popover */
@@ -210,17 +233,20 @@
 .agent-card {
   appearance: none;
   width: 100%;
+  height: 86px;
+  min-height: 86px;
+  flex: 0 0 86px;
+  flex-shrink: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-raised);
-  padding: 10px 12px;
+  padding: 9px 12px 8px;
   text-align: left;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: flex-start;
-  gap: 7px;
+  justify-content: space-between;
   box-shadow: 0 1px 2px rgba(32, 36, 31, 0.04);
   transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s var(--apple-spring);
   position: relative;
@@ -268,6 +294,7 @@
   gap: 8px;
   width: 100%;
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .agent-card__identity {
@@ -399,8 +426,9 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  padding: 1px 0;
+  padding: 0;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .agent-card__snippet {
@@ -422,13 +450,14 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 2px;
-  padding-top: 6px;
+  margin-top: 0;
+  padding-top: 5px;
   border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
 }
 
 .agent-card__timestamp {
