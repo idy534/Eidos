@@ -55,6 +55,18 @@ function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
   if (tool === "files") {
     return <WorkspaceFolderIcon />;
   }
+  if (tool === "agent") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="10" cy="4.5" r="1.8" />
+        <circle cx="4.5" cy="14.5" r="1.8" />
+        <circle cx="15.5" cy="14.5" r="1.8" />
+        <path d="M3.2 12.2C2.2 8 5.8 4.2 8.2 3.2" />
+        <path d="M11.8 3.2C14.2 4.2 17.8 8 16.8 12.2" />
+        <path d="M6.5 16.2C8.8 17.8 11.2 17.8 13.5 16.2" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
       <path d="M5 2.5h7l3 3v12H5zM12 2.5v3h3M7.5 10h4M9.5 8v4M7.5 14h4" />

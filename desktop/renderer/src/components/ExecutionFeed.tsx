@@ -1304,11 +1304,20 @@ function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
   const path = stringField(args, "path") || stringField(args, "filePath");
   const query = stringField(args, "query") || stringField(args, "pattern");
   const running = status === "in_progress";
+  const baseLabels: Record<string, string> = {
+    spawn_agent: "创建子智能体",
+    wait_agents: "等待子智能体",
+    list_agents: "查询子智能体",
+    stop_agent: "停止子智能体",
+    send_message: "发送智能体消息",
+    followup_task: "追加智能体任务",
+  };
+  const targetLabel = path || query || baseLabels[toolCall.toolName] || toolCall.toolName;
   if (isReconciliationGate(result)) {
-    return `未执行：与尚未确认的操作冲突 ${path || query || toolCall.toolName}`;
+    return `未执行：与尚未确认的操作冲突 ${targetLabel}`;
   }
   if (!running && status !== "completed") {
-    return `${statusLabel(status)} ${path || query || toolCall.toolName}`;
+    return `${statusLabel(status)} ${targetLabel}`;
   }
   const labels: Record<string, string> = {
     list_files: running ? "正在列出文件" : "已列出文件",
@@ -1319,6 +1328,12 @@ function toolSummary(toolCall: ToolCall, status: Item["status"]): string {
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
     declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
+    spawn_agent: running ? "正在创建子智能体" : "创建子智能体",
+    wait_agents: running ? "正在等待子智能体" : "等待子智能体",
+    list_agents: running ? "正在查询子智能体" : "查询子智能体",
+    stop_agent: running ? "正在停止子智能体" : "停止子智能体",
+    send_message: running ? "正在发送智能体消息" : "发送智能体消息",
+    followup_task: running ? "正在追加智能体任务" : "追加智能体任务",
   };
   return labels[toolCall.toolName] ?? `${running ? "正在运行" : "已运行"} ${toolCall.toolName}`;
 }
@@ -1400,6 +1415,19 @@ function McpIcon() {
   );
 }
 
+function SubagentToolIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="3.5" r="1.5" />
+      <circle cx="3.5" cy="11.5" r="1.5" />
+      <circle cx="12.5" cy="11.5" r="1.5" />
+      <path d="M2.6 9.8C1.8 6.2 4.6 3.2 6.5 2.5" />
+      <path d="M9.5 2.5C11.4 3.2 14.2 6.2 13.4 9.8" />
+      <path d="M5.2 13C7 14.2 9 14.2 10.8 13" />
+    </svg>
+  );
+}
+
 function DefaultToolIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -1414,6 +1442,9 @@ function toolIcon(name: string): ReactNode {
   if (["search_text", "tool_search"].includes(name)) return <SearchIcon />;
   if (["write_file", "apply_patch"].includes(name)) return <FileWriteIcon />;
   if (name === "delete_file") return <FileDeleteIcon />;
+  if (["spawn_agent", "wait_agents", "list_agents", "stop_agent", "send_message", "followup_task"].includes(name)) {
+    return <SubagentToolIcon />;
+  }
   if (name.startsWith("skill_")) return <SkillIcon />;
   if (name.startsWith("mcp") || name.includes("__")) return <McpIcon />;
   return <DefaultToolIcon />;

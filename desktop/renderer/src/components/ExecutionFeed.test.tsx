@@ -925,6 +925,48 @@ test("renders minimalist SVG icons for file operations, skills, and shell calls"
   assert.match(html, /已运行 skill_read/);
 });
 
+test("renders subagent collaboration tools with custom label and icon", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({ id: "user", ordinal: 1, kind: "user_message", content: "请派生子任务" }),
+        item({
+          id: "spawn",
+          ordinal: 2,
+          kind: "tool_call",
+          toolCall: {
+            id: "call-spawn", itemId: "spawn", modelStepIndex: 1, batchOrder: 0,
+            providerCallId: "p-spawn", toolName: "spawn_agent", status: "completed",
+            startedAt: 1000, completedAt: 1100, argumentsJson: JSON.stringify({ task_name: "explore", role: "explorer" }),
+            resultJson: "{}",
+          },
+        }),
+        item({
+          id: "wait",
+          ordinal: 3,
+          kind: "tool_call",
+          toolCall: {
+            id: "call-wait", itemId: "wait", modelStepIndex: 1, batchOrder: 1,
+            providerCallId: "p-wait", toolName: "wait_agents", status: "completed",
+            startedAt: 1100, completedAt: 1200, argumentsJson: "{}", resultJson: "{}",
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /创建子智能体/);
+  assert.match(html, /等待子智能体/);
+  assert.doesNotMatch(html, /已运行 spawn_agent/);
+  assert.doesNotMatch(html, /已运行 wait_agents/);
+});
+
 test("renders more actions dropdown on assistant messages", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
