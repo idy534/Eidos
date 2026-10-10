@@ -368,7 +368,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // Runtime notifications
   // -----------------------------------------------------------------------
   useEffect(() => {
-    const unsubNotifications = window.eidosRuntime.onNotification((notification) => {
+    const unsubNotifications = window.eidosRuntime?.onNotification?.((notification) => {
       handleContextUsageNotification(notification);
       gitReviewActions.handleNotification(notification);
       if (notification.method === "session/titleUpdated") {
@@ -393,13 +393,13 @@ export function AppShell({ runtime }: AppShellProps) {
       sessionActions.setSnapshot((prev) => applyNotification(prev, notification));
     });
 
-    const unsubApprovals = window.eidosRuntime.onApprovalRequest((request) => {
+    const unsubApprovals = window.eidosRuntime?.onApprovalRequest?.((request) => {
       approvalActions.addApproval(request);
     });
 
     return () => {
-      unsubNotifications();
-      unsubApprovals();
+      unsubNotifications?.();
+      unsubApprovals?.();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleContextUsageNotification, gitReviewActions.handleNotification]);
@@ -422,17 +422,17 @@ export function AppShell({ runtime }: AppShellProps) {
     sessionState.pending.creatingSession === true;
 
   useEffect(() => {
-    const unsubNewTask = window.eidosRuntime.onShortcut(IPC.APP_NEW_TASK, () => {
+    const unsubNewTask = window.eidosRuntime?.onShortcut?.(IPC.APP_NEW_TASK, () => {
       if (hasBlockingModal || settingsOpen) return;
       handleCreateSession();
     });
-    const unsubOpenWorkspace = window.eidosRuntime.onShortcut(IPC.APP_OPEN_WORKSPACE, () => {
+    const unsubOpenWorkspace = window.eidosRuntime?.onShortcut?.(IPC.APP_OPEN_WORKSPACE, () => {
       if (hasBlockingModal || settingsOpen) return;
       setProjectPickerOpen(true);
     });
     return () => {
-      unsubNewTask();
-      unsubOpenWorkspace();
+      unsubNewTask?.();
+      unsubOpenWorkspace?.();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasBlockingModal, settingsOpen]);

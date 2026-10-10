@@ -29,6 +29,7 @@
   --surface-muted: #f6f6f8;
   --sidebar: rgba(238, 240, 244, 0.72);
   --sidebar-border: rgba(0, 0, 0, 0.08);
+  --sidebar-width: 17.5rem;
   --text: #1d1d1f;
   --muted: #6e6e73;
   --line: rgba(0, 0, 0, 0.07);
@@ -149,7 +150,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 .workbench {
   position: relative;
   display: grid;
-  grid-template-columns: 16rem minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
   overflow: hidden;
@@ -177,7 +178,7 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .sidebar {
-  width: 16rem;
+  width: var(--sidebar-width);
   min-width: 0;
   overflow: hidden;
   transition: transform 280ms var(--apple-spring), visibility 280ms;
@@ -6532,7 +6533,7 @@ button.composer-context-project--empty:hover:not(:disabled) {
 }
 
 @media (max-width: 760px) {
-  .workbench { grid-template-columns: 16rem minmax(0, 1fr); }
+  .workbench { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
   .workbench--sidebar-collapsed { grid-template-columns: 0rem minmax(0, 1fr); }
   .primary-action-btn--compact { width: auto; margin: 0; }
   .workspace { height: 100vh; min-height: 0; }
