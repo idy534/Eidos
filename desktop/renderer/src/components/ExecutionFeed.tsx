@@ -582,7 +582,15 @@ function UserMessage({
   return (
     <div className="feed-item feed-item--user">
       <div className="user-message-bubble">
-        {(editing ? draftReferences : item.references)?.length ? <InputReferenceCards references={editing ? draftReferences : item.references ?? []} {...(editing ? { onRemove: (id: string) => setDraftReferences((previous) => previous.filter((reference) => reference.id !== id)) } : {})} /> : null}
+        {(editing ? draftReferences : item.references)?.length ? (
+          <InputReferenceCards
+            references={editing ? draftReferences : item.references ?? []}
+            variant={editing ? "composer" : "bubble"}
+            {...(editing
+              ? { onRemove: (id: string) => setDraftReferences((previous) => previous.filter((reference) => reference.id !== id)) }
+              : {})}
+          />
+        ) : null}
         {editing ? (
           <div className="user-message-editor">
             <textarea
@@ -611,9 +619,9 @@ function UserMessage({
               </button>
             </div>
           </div>
-        ) : (
+        ) : item.content ? (
           <p>{item.content}</p>
-        )}
+        ) : null}
       </div>
       {!editing && (
         <div className="feed-item-footer response-footer">

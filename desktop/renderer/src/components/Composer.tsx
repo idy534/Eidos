@@ -293,7 +293,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           )}
         </div>
       )}
-      {references.length > 0 && <InputReferenceCards references={references} {...(onRemoveReference ? { onRemove: onRemoveReference } : {})} />}
+      {references.length > 0 && (
+        <InputReferenceCards
+          references={references}
+          variant="composer"
+          {...(onRemoveReference ? { onRemove: onRemoveReference } : {})}
+        />
+      )}
       {unsupportedImage && <p className="input-reference-error" role="alert">当前模型不支持图片。请选择支持图片的模型，或移除图片引用。</p>}
       {showBusyHint && <p className="input-reference-hint" role="status">正在准备引用…</p>}
       {context?.error && <p className="input-reference-error" role="alert">{context.error}</p>}

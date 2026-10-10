@@ -142,4 +142,66 @@ describe("InputContext behavior", () => {
     fireEvent.click(screen.getByTitle("跳转到该对话"));
     expect(navigate).toHaveBeenCalledWith("session-history");
   });
+
+  it("renders bubble variant with semantic categorization and handles remove action", () => {
+    const onRemove = vi.fn();
+    setupRuntime();
+    const codeRef: InputReference = {
+      ...fileReference,
+      id: "code-1",
+      label: "agentic-kit.html",
+      source: "/workspace/agentic-kit.html",
+    };
+    const skillRef: InputReference = {
+      ...fileReference,
+      id: "skill-1",
+      kind: "skill",
+      label: "docx",
+      source: "skills/docx",
+    };
+
+    const { container, rerender } = render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <InputReferenceCards references={[codeRef, skillRef]} variant="bubble" />
+      </InputContextProvider>,
+    );
+
+    const list = container.querySelector(".input-reference-list");
+    expect(list).toHaveClass("input-reference-list--bubble");
+    expect(list?.getAttribute("data-variant")).toBe("bubble");
+
+    const codePill = container.querySelector(".input-reference--kind-file");
+    expect(codePill).toHaveClass("input-reference--bubble");
+    expect(codePill?.querySelector(".input-reference__icon--cat-code")).toBeInTheDocument();
+
+    const skillPill = container.querySelector(".input-reference--kind-skill");
+    expect(skillPill).toHaveClass("input-reference--bubble");
+    expect(skillPill?.querySelector(".input-reference__icon--skill")).toBeInTheDocument();
+
+    // In read-only bubble mode, remove buttons are not rendered
+    expect(container.querySelector(".input-reference-remove")).toBeNull();
+
+    // When onRemove is passed (e.g. composer or editing mode)
+    rerender(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <InputReferenceCards references={[codeRef]} variant="composer" onRemove={onRemove} />
+      </InputContextProvider>,
+    );
+
+    const removeBtn = screen.getByLabelText("移除 agentic-kit.html");
+    fireEvent.click(removeBtn);
+    expect(onRemove).toHaveBeenCalledWith("code-1");
+  });
 });

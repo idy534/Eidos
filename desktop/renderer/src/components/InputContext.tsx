@@ -97,7 +97,15 @@ export function InputDropZone({ children }: { children: ReactNode }) {
   </div>;
 }
 
-export function InputReferenceCards({ references, onRemove }: { references: InputReference[]; onRemove?: (id: string) => void }) {
+export function InputReferenceCards({
+  references,
+  onRemove,
+  variant = "composer",
+}: {
+  references: InputReference[];
+  onRemove?: (id: string) => void;
+  variant?: "composer" | "bubble";
+}) {
   const context = useInputContext();
   const [preview, setPreview] = useState<InputPreview>();
   const [error, setError] = useState<string>();
@@ -105,62 +113,76 @@ export function InputReferenceCards({ references, onRemove }: { references: Inpu
 
   return (
     <>
-      <div className="input-reference-list" aria-label="输入引用">
-        {references.map((reference) => (
-          <div className="input-reference" key={reference.id}>
-            <button
-              type="button"
-              className="input-reference__btn"
-              title={
-                reference.kind === "history"
-                  ? "跳转到该对话"
-                  : reference.kind === "file" || reference.kind === "directory"
-                    ? `在 Finder 中显示：${reference.source}`
-                    : reference.source
-              }
-              onClick={async () => {
-                if (reference.kind === "history") {
-                  context?.navigateToSession?.(reference.source);
-                  return;
-                }
-                if (reference.kind === "file" || reference.kind === "directory") {
-                  try {
-                    await window.eidosRuntime.showItemInFolder(reference.source);
-                  } catch (cause) {
-                    setError(userFacingError(cause));
-                  }
-                  return;
-                }
-                const token = ++request.current;
-                setError(undefined);
-                void window.eidosRuntime.readInput(reference.id).then((value) => {
-                  if (token === request.current) setPreview(value);
-                }, (cause) => {
-                  if (token === request.current) setError(userFacingError(cause));
-                });
-              }}
+      <div
+        className={`input-reference-list input-reference-list--${variant}`}
+        data-variant={variant}
+        aria-label="输入引用"
+      >
+        {references.map((reference) => {
+          const cat = getReferenceCategory(reference);
+          return (
+            <div
+              className={`input-reference input-reference--${variant} input-reference--kind-${reference.kind}`}
+              key={reference.id}
             >
-              <span className={`input-reference__icon input-reference__icon--${reference.kind}`}>
-                {renderReferenceIcon(reference)}
-              </span>
-              <span className="input-reference__label">{reference.label}</span>
-            </button>
-            {onRemove && (
               <button
                 type="button"
-                className="input-reference-remove"
-                aria-label={`移除 ${reference.label}`}
-                title={`移除 ${reference.label}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemove(reference.id);
+                className="input-reference__btn"
+                title={
+                  reference.kind === "history"
+                    ? "跳转到该对话"
+                    : reference.kind === "file" || reference.kind === "directory"
+                      ? `在 Finder 中显示：${reference.source}`
+                      : reference.kind === "skill"
+                        ? `查看技能详情：${reference.label}`
+                        : reference.source
+                }
+                onClick={async () => {
+                  if (reference.kind === "history") {
+                    context?.navigateToSession?.(reference.source);
+                    return;
+                  }
+                  if (reference.kind === "file" || reference.kind === "directory") {
+                    try {
+                      await window.eidosRuntime.showItemInFolder(reference.source);
+                    } catch (cause) {
+                      setError(userFacingError(cause));
+                    }
+                    return;
+                  }
+                  const token = ++request.current;
+                  setError(undefined);
+                  void window.eidosRuntime.readInput(reference.id).then((value) => {
+                    if (token === request.current) setPreview(value);
+                  }, (cause) => {
+                    if (token === request.current) setError(userFacingError(cause));
+                  });
                 }}
               >
-                <CloseIcon />
+                <span
+                  className={`input-reference__icon input-reference__icon--${reference.kind} input-reference__icon--cat-${cat}`}
+                >
+                  {renderReferenceIcon(reference, cat)}
+                </span>
+                <span className="input-reference__label">{reference.label}</span>
               </button>
-            )}
-          </div>
-        ))}
+              {onRemove && (
+                <button
+                  type="button"
+                  className="input-reference-remove"
+                  aria-label={`移除 ${reference.label}`}
+                  title={`移除 ${reference.label}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(reference.id);
+                  }}
+                >
+                  <CloseIcon />
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
       {error && <p role="alert" className="input-reference-error">{error}</p>}
       {preview && (
@@ -265,11 +287,32 @@ function ImageLightboxModal({
   );
 }
 
-function renderReferenceIcon(reference: InputReference) {
+function getReferenceCategory(reference: InputReference): string {
+  if (reference.kind !== "file") return reference.kind;
+  const label = reference.label.toLowerCase();
+  const dotIndex = label.lastIndexOf(".");
+  if (dotIndex === -1) return "file";
+  const ext = label.slice(dotIndex + 1);
+  if (ext === "pdf") return "pdf";
+  if (ext === "doc" || ext === "docx") return "doc";
+  if (["ts", "tsx", "js", "jsx", "py", "rs", "go", "java", "c", "cpp", "h", "hpp", "html", "css", "scss", "json", "yaml", "yml", "sql", "sh", "toml"].includes(ext)) return "code";
+  if (["csv", "tsv", "xlsx", "xls", "numbers"].includes(ext)) return "sheet";
+  if (["md", "markdown", "txt", "rtf"].includes(ext)) return "text";
+  if (["zip", "tar", "gz", "tgz", "7z", "rar"].includes(ext)) return "archive";
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)) return "image";
+  return "file";
+}
+
+function renderReferenceIcon(reference: InputReference, cat: string) {
   switch (reference.kind) {
-    case "file":
-    case "excerpt":
+    case "file": {
+      if (cat === "code") return <CodeFileIcon />;
+      if (cat === "sheet") return <SheetFileIcon />;
+      if (cat === "doc" || cat === "text" || cat === "pdf") return <DocFileIcon />;
       return <FileIcon />;
+    }
+    case "excerpt":
+      return <ExcerptIcon />;
     case "directory":
       return <FolderIcon />;
     case "skill":
@@ -287,6 +330,45 @@ function renderReferenceIcon(reference: InputReference) {
   }
 }
 
+function CodeFileIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <path d="M3.5 2.5h5.5l3.5 3.5v7.5a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M9 2.5V6h3.5" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="m6 9.5-1.25 1.5L6 12.5m4-3 1.25 1.5L10 12.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function DocFileIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <path d="M3.5 2.5h5.5l3.5 3.5v7.5a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M9 2.5V6h3.5" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M5.5 9h5M5.5 11.5h3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SheetFileIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <path d="M3.5 2.5h5.5l3.5 3.5v7.5a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M9 2.5V6h3.5" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M5.5 9h5M5.5 11.5h5M7.5 7.5v5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ExcerptIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5.5 6.5h5M5.5 9.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function ImageIcon() {
   return (
     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
@@ -299,7 +381,7 @@ function ImageIcon() {
 
 function CloseIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="10" height="10" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="9" height="9" fill="none" aria-hidden="true">
       <path d="m4 4 8 8m0-8-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
