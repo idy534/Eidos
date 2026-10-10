@@ -67,3 +67,41 @@ test("does not wrap pre or code blocks in streaming spans during streaming", () 
   assert.doesNotMatch(html, /streaming-token-fade/);
   assert.match(html, /<pre><code class="language-ts">const x = 1;\n<\/code><\/pre>/);
 });
+
+test("renders inline math formula via KaTeX", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"质能方程是 $E = mc^2$。"} />,
+  );
+
+  assert.match(html, /<span class="katex">/);
+  assert.match(html, /<annotation encoding="application\/x-tex">E = mc\^2<\/annotation>/);
+});
+
+test("renders multiline display math formula via KaTeX block layout", () => {
+  const formula = "$$\n\\int_{-\\infty}^{+\\infty} e^{-x^2} \\, dx = \\sqrt{\\pi}\n$$";
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={`高斯积分：\n\n${formula}`} />,
+  );
+
+  assert.match(html, /<span class="katex-display">/);
+  assert.match(html, /<span class="katex">/);
+  assert.match(html, /<annotation encoding="application\/x-tex">\\int_\{-\\infty\}\^\{\+\\infty\} e\^\{-x\^2\} \\, dx = \\sqrt\{\\pi\}<\/annotation>/);
+});
+
+test("protects KaTeX math nodes from streaming-token-fade wrapping during streaming", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"公式：\n\n$$\nE = mc^2\n$$"} isStreaming={true} />,
+  );
+
+  assert.match(html, /<span class="katex-display">/);
+  assert.doesNotMatch(html, /class="katex[^"]*streaming-token-fade/);
+  assert.doesNotMatch(html, /<span class="streaming-token-fade">E<\/span>/);
+});
+
+test("handles malformed LaTeX formula gracefully without throwing", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"错误公式：$\\invalidcommand{foo$"} />,
+  );
+
+  assert.match(html, /katex-error/);
+});

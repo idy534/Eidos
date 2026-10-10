@@ -5159,6 +5159,8 @@ input:focus, textarea:focus {
 .markdown-body th { background: var(--surface-muted); font-weight: 600; }
 .markdown-link { color: var(--accent); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 0.15em; cursor: help; }
 .markdown-image-alt { color: var(--muted); font-size: var(--font-size-caption); }
+.markdown-body .katex-display { margin: 0.75rem 0; overflow-x: auto; overflow-y: hidden; padding: 0.25rem 0; text-align: center; }
+.markdown-body .katex { font-size: 1.05em; text-rendering: auto; }
 
 @keyframes tokenFadeIn {
   0% {

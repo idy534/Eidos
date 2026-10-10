@@ -1,6 +1,8 @@
 import { useMemo, type ComponentProps } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { ArtifactImage, ArtifactLink, artifactPath, useArtifacts } from "./ArtifactContext.js";
 
 interface HastTextNode {
@@ -16,6 +18,18 @@ interface HastElementNode {
 }
 
 type HastNode = HastTextNode | HastElementNode | { type: string; [key: string]: unknown };
+
+function isMathElement(node: HastElementNode): boolean {
+  if (node.tagName === "math" || node.tagName === "annotation") return true;
+  const className = node.properties?.className;
+  if (Array.isArray(className)) {
+    return className.some((name) => typeof name === "string" && name.startsWith("katex"));
+  }
+  if (typeof className === "string") {
+    return className.includes("katex");
+  }
+  return false;
+}
 
 const TOKEN_SPLIT_REGEX = /(\s+|[a-zA-Z0-9_-]+|[^\s\w])/gu;
 
@@ -58,7 +72,13 @@ function rehypeStreamingFade() {
           return;
         }
         if (child && child.type === "element" && "tagName" in child) {
-          if (child.tagName !== "pre" && child.tagName !== "code" && child.tagName !== "svg") {
+          const element = child as HastElementNode;
+          if (
+            element.tagName !== "pre"
+            && element.tagName !== "code"
+            && element.tagName !== "svg"
+            && !isMathElement(element)
+          ) {
             findLastText(child);
             if (lastTextNode) return;
           }
@@ -80,9 +100,15 @@ function rehypeStreamingFade() {
 
 type MarkdownRehypePlugins = NonNullable<ComponentProps<typeof Markdown>["rehypePlugins"]>;
 type MarkdownRemarkPlugins = NonNullable<ComponentProps<typeof Markdown>["remarkPlugins"]>;
-const EMPTY_REHYPE_PLUGINS: MarkdownRehypePlugins = [];
-const STREAMING_REHYPE_PLUGINS: MarkdownRehypePlugins = [rehypeStreamingFade as unknown as MarkdownRehypePlugins[number]];
-const REMARK_GFM_PLUGINS: MarkdownRemarkPlugins = [remarkGfm];
+const KATEX_REHYPE_OPTIONS = { throwOnError: false, strict: false };
+const BASE_REHYPE_PLUGINS: MarkdownRehypePlugins = [
+  [rehypeKatex, KATEX_REHYPE_OPTIONS] as unknown as MarkdownRehypePlugins[number],
+];
+const STREAMING_REHYPE_PLUGINS: MarkdownRehypePlugins = [
+  [rehypeKatex, KATEX_REHYPE_OPTIONS] as unknown as MarkdownRehypePlugins[number],
+  rehypeStreamingFade as unknown as MarkdownRehypePlugins[number],
+];
+const REMARK_PLUGINS: MarkdownRemarkPlugins = [remarkGfm, remarkMath];
 
 export function MarkdownContent({
   content,
@@ -94,9 +120,9 @@ export function MarkdownContent({
   isStreaming?: boolean;
 }) {
   const actions = useArtifacts();
-  const remarkPlugins = useMemo(() => REMARK_GFM_PLUGINS, []);
+  const remarkPlugins = useMemo(() => REMARK_PLUGINS, []);
   const rehypePlugins = useMemo(
-    () => (isStreaming ? STREAMING_REHYPE_PLUGINS : EMPTY_REHYPE_PLUGINS),
+    () => (isStreaming ? STREAMING_REHYPE_PLUGINS : BASE_REHYPE_PLUGINS),
     [isStreaming],
   );
 
