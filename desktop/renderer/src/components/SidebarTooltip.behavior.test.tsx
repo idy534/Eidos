@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import type { Session } from "../contracts.js";
 import {
@@ -124,6 +124,7 @@ describe("SidebarTooltip rendering", () => {
     expect(screen.getByText("所属项目")).toBeInTheDocument();
     expect(screen.getByText("Eidos")).toBeInTheDocument();
     expect(screen.getByText("最近会话")).toBeInTheDocument();
+    expect(screen.getByText(/^\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)$/)).toBeInTheDocument();
     expect(screen.getByText("5 分钟前")).toBeInTheDocument();
     expect(screen.getByText("关联分支")).toBeInTheDocument();
     expect(screen.getByText("feat/hover-tooltips")).toBeInTheDocument();
@@ -157,6 +158,33 @@ describe("SidebarTooltip rendering", () => {
     expect(screen.getByText("临时快速任务")).toBeInTheDocument();
     expect(screen.getByText("最近会话")).toBeInTheDocument();
     expect(screen.queryByText("所属项目")).not.toBeInTheDocument();
+  });
+
+  it("fires onMouseEnter and onMouseLeave on the tooltip card", () => {
+    const onMouseEnter = vi.fn();
+    const onMouseLeave = vi.fn();
+    const projectState: ProjectTooltipData = {
+      kind: "project",
+      projectName: "Eidos",
+      workspaceRoot: "/workspace/eidos",
+      projectless: false,
+      rect: dummyRect,
+    };
+
+    render(
+      <SidebarTooltip
+        state={projectState}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      />,
+    );
+
+    const tooltip = screen.getByRole("tooltip");
+    fireEvent.mouseEnter(tooltip);
+    expect(onMouseEnter).toHaveBeenCalledTimes(1);
+
+    fireEvent.mouseLeave(tooltip);
+    expect(onMouseLeave).toHaveBeenCalledTimes(1);
   });
 
   it("returns null when state is null", () => {

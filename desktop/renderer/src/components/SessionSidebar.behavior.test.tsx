@@ -730,8 +730,11 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(within(tooltip).getByText("文件夹路径")).toBeInTheDocument();
     expect(within(tooltip).getByText("/repository")).toBeInTheDocument();
 
-    await act(async () => {
+    act(() => {
       fireEvent.mouseLeave(projectToggle);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
     });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
@@ -774,8 +777,11 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(within(tooltip).getByText("repository")).toBeInTheDocument();
     expect(within(tooltip).getByText("最近会话")).toBeInTheDocument();
 
-    await act(async () => {
+    act(() => {
       fireEvent.mouseLeave(sessionButton);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
     });
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
@@ -825,9 +831,71 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(within(tooltip).getByText("最近会话")).toBeInTheDocument();
     expect(within(tooltip).queryByText("所属项目")).not.toBeInTheDocument();
 
-    await act(async () => {
+    act(() => {
       fireEvent.mouseLeave(sessionButton);
     });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("keeps tooltip open when cursor moves from trigger to tooltip card for text selection", async () => {
+    vi.useFakeTimers();
+    render(
+      <SessionSidebar
+        sessions={[managedSession]}
+        projects={[]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const sessionButton = screen.getByRole("button", { name: /Managed Thread/ });
+    fireEvent.mouseEnter(sessionButton);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toBeInTheDocument();
+
+    // Mouse leaves trigger and enters tooltip card within grace period
+    act(() => {
+      fireEvent.mouseLeave(sessionButton);
+      fireEvent.mouseEnter(tooltip);
+    });
+
+    // Advance past grace period
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    // Tooltip stays open so user can select text
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    expect(within(tooltip).getByText("Managed Thread")).toBeInTheDocument();
+
+    // Mouse leaves tooltip
+    act(() => {
+      fireEvent.mouseLeave(tooltip);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     vi.useRealTimers();

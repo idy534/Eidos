@@ -90,13 +90,47 @@ export function formatSessionTime(timestamp: number): { friendly: string; exact:
   return { friendly: `${year}年${date.getMonth() + 1}月${date.getDate()}日`, exact };
 }
 
-interface SidebarTooltipProps {
-  state: SidebarTooltipState | null;
+function FolderIconSvg() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" fillOpacity="0.85" aria-hidden="true">
+      <path d="M1.75 2.5A1.75 1.75 0 0 0 0 4.25v7.5C0 12.72.78 13.5 1.75 13.5h12.5A1.75 1.75 0 0 0 16 11.75v-6A1.75 1.75 0 0 0 14.25 4H7.88L6.44 2.56A1.75 1.75 0 0 0 5.2 2.05H1.75Z" />
+    </svg>
+  );
 }
 
-export function SidebarTooltip({ state }: SidebarTooltipProps) {
+function SessionIconSvg() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6.5l-3 2.5v-2.5h-1.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />
+    </svg>
+  );
+}
+
+function BranchIconSvg() {
+  return (
+    <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="3.5" cy="3.5" r="1.5" />
+      <circle cx="3.5" cy="10.5" r="1.5" />
+      <circle cx="10.5" cy="5.5" r="1.5" />
+      <path d="M3.5 5v4M10.5 7v-.5a3 3 0 0 0-3-3h-4" />
+    </svg>
+  );
+}
+
+export interface SidebarTooltipProps {
+  state: SidebarTooltipState | null;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+}
+
+export function SidebarTooltip({ state, onMouseEnter, onMouseLeave }: SidebarTooltipProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const [coords, setCoords] = useState<{ left: number; top: number; arrowY: number } | null>(null);
+  const [coords, setCoords] = useState<{
+    left: number;
+    top: number;
+    arrowY: number;
+    placement: "right" | "left";
+  } | null>(null);
 
   useLayoutEffect(() => {
     if (!state || !cardRef.current) {
@@ -113,10 +147,12 @@ export function SidebarTooltip({ state }: SidebarTooltipProps) {
     const MARGIN = 10;
     const padding = 12;
 
-    // Place horizontally to the right of trigger
+    // Place horizontally to the right of trigger by default
     let left = targetRect.right + MARGIN;
+    let placement: "right" | "left" = "right";
     if (left + cardWidth > window.innerWidth - padding) {
       left = Math.max(padding, targetRect.left - cardWidth - MARGIN);
+      placement = "left";
     }
 
     // Align vertically with center of trigger
@@ -132,7 +168,7 @@ export function SidebarTooltip({ state }: SidebarTooltipProps) {
 
     const arrowY = Math.max(14, Math.min(cardHeight - 14, triggerCenterY - top));
 
-    setCoords({ left, top, arrowY });
+    setCoords({ left, top, arrowY, placement });
   }, [state]);
 
   if (typeof document === "undefined" || !state) {
@@ -153,7 +189,11 @@ export function SidebarTooltip({ state }: SidebarTooltipProps) {
       className={`sidebar-hover-card sidebar-hover-card--${state.kind}`}
       role="tooltip"
       id="sidebar-hover-tooltip"
+      data-placement={coords?.placement ?? "right"}
       style={tooltipStyle}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onClick={(e) => e.stopPropagation()}
     >
       <div className="sidebar-hover-card__arrow" aria-hidden="true" />
 
@@ -212,9 +252,15 @@ export function SidebarTooltip({ state }: SidebarTooltipProps) {
                   const time = formatSessionTime(state.session.updatedAt || state.session.createdAt);
                   return (
                     <>
-                      <span className="sidebar-hover-card__time-friendly">{time.friendly}</span>
-                      {time.exact && (
-                        <span className="sidebar-hover-card__time-exact">（{time.exact}）</span>
+                      {time.exact ? (
+                        <>
+                          <span className="sidebar-hover-card__time-exact">({time.exact})</span>
+                          <span className="sidebar-hover-card__time-friendly">{time.friendly}</span>
+                        </>
+                      ) : (
+                        <span className="sidebar-hover-card__time-friendly">
+                          {time.friendly}
+                        </span>
                       )}
                     </>
                   );
@@ -248,31 +294,4 @@ export function SidebarTooltip({ state }: SidebarTooltipProps) {
   );
 
   return createPortal(content, document.body);
-}
-
-function FolderIconSvg() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" fillOpacity="0.85" aria-hidden="true">
-      <path d="M1.75 2.5A1.75 1.75 0 0 0 0 4.25v7.5C0 12.72.78 13.5 1.75 13.5h12.5A1.75 1.75 0 0 0 16 11.75v-6A1.75 1.75 0 0 0 14.25 4H7.88L6.44 2.56A1.75 1.75 0 0 0 5.2 2.05H1.75Z" />
-    </svg>
-  );
-}
-
-function SessionIconSvg() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6.5l-3 2.5v-2.5h-1.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />
-    </svg>
-  );
-}
-
-function BranchIconSvg() {
-  return (
-    <svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="3.5" cy="3.5" r="1.5" />
-      <circle cx="3.5" cy="10.5" r="1.5" />
-      <circle cx="10.5" cy="5.5" r="1.5" />
-      <path d="M3.5 5v4M10.5 7v-.5a3 3 0 0 0-3-3h-4" />
-    </svg>
-  );
 }

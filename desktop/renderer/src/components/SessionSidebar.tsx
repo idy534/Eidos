@@ -87,18 +87,60 @@ export function SessionSidebar({
   const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
   const [activeTooltip, setActiveTooltip] = useState<SidebarTooltipState | null>(null);
-  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enterTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isHoveringTriggerRef = useRef(false);
+  const isHoveringTooltipRef = useRef(false);
   const navRef = useRef<HTMLElement | null>(null);
+
+  const dismissTooltipImmediately = useCallback(() => {
+    if (enterTimeoutRef.current) {
+      clearTimeout(enterTimeoutRef.current);
+      enterTimeoutRef.current = null;
+    }
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+      leaveTimeoutRef.current = null;
+    }
+    isHoveringTriggerRef.current = false;
+    isHoveringTooltipRef.current = false;
+    setActiveTooltip(null);
+  }, []);
 
   const handleTriggerEnter = useCallback(
     (tooltip: SidebarTooltipTarget, element: HTMLElement) => {
       if (contextMenu) return;
+      isHoveringTriggerRef.current = true;
+      if (leaveTimeoutRef.current) {
+        clearTimeout(leaveTimeoutRef.current);
+        leaveTimeoutRef.current = null;
+      }
+
+      if (activeTooltip) {
+        const isSame =
+          activeTooltip.kind === tooltip.kind &&
+          ((activeTooltip.kind === "session" &&
+            tooltip.kind === "session" &&
+            activeTooltip.session.id === tooltip.session.id) ||
+            (activeTooltip.kind === "project" &&
+              tooltip.kind === "project" &&
+              activeTooltip.projectName === tooltip.projectName &&
+              activeTooltip.workspaceRoot === tooltip.workspaceRoot));
+        if (isSame) {
+          if (enterTimeoutRef.current) {
+            clearTimeout(enterTimeoutRef.current);
+            enterTimeoutRef.current = null;
+          }
+          return;
+        }
+      }
+
       const rect = element.getBoundingClientRect();
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
+      if (enterTimeoutRef.current) {
+        clearTimeout(enterTimeoutRef.current);
       }
       const delay = activeTooltip ? 60 : 200;
-      hoverTimeoutRef.current = setTimeout(() => {
+      enterTimeoutRef.current = setTimeout(() => {
         setActiveTooltip({ ...tooltip, rect } as SidebarTooltipState);
       }, delay);
     },
@@ -106,11 +148,39 @@ export function SessionSidebar({
   );
 
   const handleTriggerLeave = useCallback(() => {
-    if (hoverTimeoutRef.current) {
-      clearTimeout(hoverTimeoutRef.current);
-      hoverTimeoutRef.current = null;
+    isHoveringTriggerRef.current = false;
+    if (enterTimeoutRef.current) {
+      clearTimeout(enterTimeoutRef.current);
+      enterTimeoutRef.current = null;
     }
-    setActiveTooltip(null);
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+    }
+    leaveTimeoutRef.current = setTimeout(() => {
+      if (!isHoveringTooltipRef.current && !isHoveringTriggerRef.current) {
+        setActiveTooltip(null);
+      }
+    }, 240);
+  }, []);
+
+  const handleTooltipEnter = useCallback(() => {
+    isHoveringTooltipRef.current = true;
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+      leaveTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleTooltipLeave = useCallback(() => {
+    isHoveringTooltipRef.current = false;
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+    }
+    leaveTimeoutRef.current = setTimeout(() => {
+      if (!isHoveringTooltipRef.current && !isHoveringTriggerRef.current) {
+        setActiveTooltip(null);
+      }
+    }, 240);
   }, []);
 
   const toggleProject = (projectKey: string) => {
@@ -191,36 +261,54 @@ export function SessionSidebar({
 
   useEffect(() => {
     if (contextMenu) {
-      handleTriggerLeave();
+      dismissTooltipImmediately();
     }
-  }, [contextMenu, handleTriggerLeave]);
+  }, [contextMenu, dismissTooltipImmediately]);
 
   useEffect(() => {
     if (!activeTooltip) return;
-    const dismiss = () => handleTriggerLeave();
-    window.addEventListener("scroll", dismiss, true);
-    window.addEventListener("resize", dismiss);
-    return () => {
-      window.removeEventListener("scroll", dismiss, true);
-      window.removeEventListener("resize", dismiss);
+
+    const handlePointerDown = (event: PointerEvent | MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      const tooltipEl = document.getElementById("sidebar-hover-tooltip");
+      if (tooltipEl && tooltipEl.contains(target)) {
+        return;
+      }
+      dismissTooltipImmediately();
     };
-  }, [activeTooltip, handleTriggerLeave]);
+
+    const dismissOnScrollOrResize = () => dismissTooltipImmediately();
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("scroll", dismissOnScrollOrResize, true);
+    window.addEventListener("resize", dismissOnScrollOrResize);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("scroll", dismissOnScrollOrResize, true);
+      window.removeEventListener("resize", dismissOnScrollOrResize);
+    };
+  }, [activeTooltip, dismissTooltipImmediately]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (contextMenu) setContextMenu(undefined);
-        handleTriggerLeave();
+        dismissTooltipImmediately();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [contextMenu, handleTriggerLeave]);
+  }, [contextMenu, dismissTooltipImmediately]);
 
   useEffect(() => {
     return () => {
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
+      if (enterTimeoutRef.current) {
+        clearTimeout(enterTimeoutRef.current);
+      }
+      if (leaveTimeoutRef.current) {
+        clearTimeout(leaveTimeoutRef.current);
       }
     };
   }, []);
@@ -246,11 +334,11 @@ export function SessionSidebar({
         shortcut="⌘N"
         disabled={disabled}
         onClick={() => {
-          handleTriggerLeave();
+          dismissTooltipImmediately();
           onCreate();
         }}
       />
-      <nav ref={navRef} aria-label="项目与最近" onScroll={handleTriggerLeave}>
+      <nav ref={navRef} aria-label="项目与最近" onScroll={dismissTooltipImmediately}>
         <p className="nav-label">项目</p>
         {projects.length === 0 ? (
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
@@ -267,7 +355,7 @@ export function SessionSidebar({
                           className="workspace-toggle workspace-toggle--recent"
                           aria-expanded={isExpanded}
                           onClick={() => {
-                            handleTriggerLeave();
+                            dismissTooltipImmediately();
                             toggleProject(project.key);
                           }}
                           onMouseEnter={(e) =>
@@ -304,7 +392,7 @@ export function SessionSidebar({
                           aria-expanded={isExpanded}
                           aria-haspopup={project.project ? "menu" : undefined}
                           onClick={() => {
-                            handleTriggerLeave();
+                            dismissTooltipImmediately();
                             toggleProject(project.key);
                           }}
                           onMouseEnter={(e) =>
@@ -332,7 +420,7 @@ export function SessionSidebar({
                           }
                           onBlur={handleTriggerLeave}
                           onContextMenu={(event) => {
-                            handleTriggerLeave();
+                            dismissTooltipImmediately();
                             if (!project.project) return;
                             event.preventDefault();
                             const hasSessions = project.sessions.length > 0
@@ -350,7 +438,7 @@ export function SessionSidebar({
                             if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
                               return;
                             }
-                            handleTriggerLeave();
+                            dismissTooltipImmediately();
                             event.preventDefault();
                             const bounds = event.currentTarget.getBoundingClientRect();
                             const hasSessions = project.sessions.length > 0
@@ -375,7 +463,7 @@ export function SessionSidebar({
                           aria-label={`在 ${project.displayName} 中新建会话`}
                           disabled={disabled}
                           onClick={() => {
-                            handleTriggerLeave();
+                            dismissTooltipImmediately();
                             setCollapsedProjects((current) => {
                               const next = new Set(current);
                               next.delete(project.key);
@@ -402,7 +490,7 @@ export function SessionSidebar({
                           isSelectingSessionId={isSelectingSessionId}
                           gitStatusBySessionId={gitStatusBySessionId}
                           onSelect={(session) => {
-                            handleTriggerLeave();
+                            dismissTooltipImmediately();
                             onSelect(session);
                           }}
                           onHoverSession={(session, projectDisplayName, element, statusLabel, statusTone) => {
@@ -422,7 +510,7 @@ export function SessionSidebar({
                           onLeaveSession={handleTriggerLeave}
                           onDismissContextMenu={() => setContextMenu(undefined)}
                           onOpenSessionContextMenu={(session, coords, element) => {
-                            handleTriggerLeave();
+                            dismissTooltipImmediately();
                             setContextMenu({
                               kind: "session",
                               session,
@@ -512,7 +600,11 @@ export function SessionSidebar({
           ]}
         />
       )}
-      <SidebarTooltip state={activeTooltip} />
+      <SidebarTooltip
+        state={activeTooltip}
+        onMouseEnter={handleTooltipEnter}
+        onMouseLeave={handleTooltipLeave}
+      />
     </aside>
   );
 }
