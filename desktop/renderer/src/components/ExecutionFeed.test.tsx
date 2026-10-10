@@ -322,7 +322,8 @@ test("shows the completed diff for an automatic workspace file change", () => {
     />,
   );
 
-  assert.match(html, /已完成的变更/);
+  assert.doesNotMatch(html, /已完成的变更/);
+  assert.match(html, /summary\.txt/);
   assert.match(html, /\+\+\+ b\/summary\.txt/);
   assert.doesNotMatch(html, /批准并写入/);
 });

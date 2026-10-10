@@ -56,6 +56,7 @@
     "@xterm/xterm": "6.0.0",
     "ajv": "8.20.0",
     "katex": "^0.16.47",
+    "mermaid": "^11.17.2",
     "node-pty": "1.1.0",
     "react": "^19.2.0",
     "react-arborist": "3.16.0",

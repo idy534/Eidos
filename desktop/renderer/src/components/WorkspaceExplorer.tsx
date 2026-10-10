@@ -510,37 +510,45 @@ export function WorkspaceExplorer({
         {openPreviewPaths.length > 0 && (
           <div className="workspace-preview-bar">
             <div className="workspace-preview-tabs" role="tablist" aria-label="打开的文件">
-              {openPreviewPaths.map((path) => (
-                <div className="workspace-preview-tab" key={path}>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-label={path}
-                    aria-selected={activePreviewPath === path}
-                    title={path}
-                    onClick={() => setActivePreviewPath(path)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      setPreviewTabMenu({
-                        path,
-                        x: event.clientX,
-                        y: event.clientY,
-                        element: event.currentTarget,
-                      });
-                    }}
-                  >
-                    {path.split("/").pop() ?? path}
-                  </button>
-                  <button
-                    type="button"
-                    className="workspace-preview-tab-close"
-                    aria-label={`关闭 ${path.split("/").pop() ?? path}`}
-                    onClick={() => closePreview(path)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+              {openPreviewPaths.map((path) => {
+                const fileName = path.split("/").pop() ?? path;
+                return (
+                  <div className="workspace-preview-tab" key={path}>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-label={path}
+                      aria-selected={activePreviewPath === path}
+                      title={path}
+                      onClick={() => setActivePreviewPath(path)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setPreviewTabMenu({
+                          path,
+                          x: event.clientX,
+                          y: event.clientY,
+                          element: event.currentTarget,
+                        });
+                      }}
+                    >
+                      <WorkspaceFileIcon
+                        name={fileName}
+                        size={14}
+                        className="workspace-preview-tab-icon file-icon-svg"
+                      />
+                      <span className="workspace-preview-tab-name">{fileName}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="workspace-preview-tab-close"
+                      aria-label={`关闭 ${fileName}`}
+                      onClick={() => closePreview(path)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -707,7 +715,7 @@ function WorkspaceTreeRow({
       </button>
       <span className="workspace-tree-icon" aria-hidden="true">
         {node.data.kind === "directory" ? (
-          <svg viewBox="0 0 20 20">
+          <svg viewBox="0 0 20 20" className="workspace-tree-folder-icon">
             <path d="M2.5 5h5l1.5 2h8.5v9.5h-15zM2.5 7h15" />
           </svg>
         ) : (

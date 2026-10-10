@@ -4,6 +4,8 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MarkdownContent } from "./MarkdownContent.js";
+import { ArtifactProvider } from "./ArtifactContext.js";
+import { FileIcon, resolveIconPath } from "./FileIcons.js";
 
 
 test("renders assistant markdown as semantic content", () => {
@@ -14,7 +16,8 @@ test("renders assistant markdown as semantic content", () => {
   assert.match(html, /<h1>结论<\/h1>/);
   assert.match(html, /<ul>/);
   assert.match(html, /<li>第一项<\/li>/);
-  assert.match(html, /<pre><code class="language-ts">const ready = true;/);
+  assert.match(html, /<pre><code class="language-ts">/);
+  assert.match(html, /const ready = true;/);
 });
 
 test("renders GFM tables as semantic table content", () => {
@@ -65,7 +68,8 @@ test("does not wrap pre or code blocks in streaming spans during streaming", () 
   );
 
   assert.doesNotMatch(html, /streaming-token-fade/);
-  assert.match(html, /<pre><code class="language-ts">const x = 1;\n<\/code><\/pre>/);
+  assert.match(html, /<pre><code class="language-ts">/);
+  assert.match(html, /const x = 1;/);
 });
 
 test("renders inline math formula via KaTeX", () => {
@@ -104,4 +108,135 @@ test("handles malformed LaTeX formula gracefully without throwing", () => {
   );
 
   assert.match(html, /katex-error/);
+});
+
+test("renders code block with Chrome header (language label and icon copy button)", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"```typescript\nconst x = 1;\n```"} />,
+  );
+
+  assert.match(html, /class="code-block-card"/);
+  assert.match(html, /class="code-block-language">TypeScript<\/span>/);
+  assert.match(html, /class="code-copy-btn"[^>]*aria-label="复制代码"/);
+  assert.match(html, /class="copy-icon-svg"/);
+});
+
+test("renders diff code block via DiffViewer with colored line annotations and file stats", () => {
+  const diff = "```diff\n--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new\n```";
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={diff} />,
+  );
+
+  assert.match(html, /class="diff-viewer-card/);
+  assert.match(html, /class="diff-file-name">file\.ts<\/span>/);
+  assert.match(html, /class="diff-stat-add">\+1<\/span>/);
+  assert.match(html, /class="diff-stat-del">-1<\/span>/);
+  assert.match(html, /class="diff-line diff-line--add\b/);
+  assert.match(html, /class="diff-line diff-line--del\b/);
+  assert.match(html, /class="diff-line diff-line--hunk\b/);
+});
+
+test("renders multi-file diff correctly with multiple cards", () => {
+  const multiDiff = `\`\`\`diff
+diff --git a/mcp_fixture.py b/mcp_fixture.py
+--- a/mcp_fixture.py
++++ b/mcp_fixture.py
+@@ -75,2 +75,3 @@
+ context
++added
+-deleted
+diff --git a/test_mcp.py b/test_mcp.py
+--- a/test_mcp.py
++++ b/test_mcp.py
+@@ -10,1 +10,2 @@
++test_added
+\`\`\``;
+  const html = renderToStaticMarkup(<MarkdownContent content={multiDiff} />);
+
+  assert.match(html, /class="diff-file-name">mcp_fixture\.py<\/span>/);
+  assert.match(html, /class="diff-file-name">test_mcp\.py<\/span>/);
+  assert.match(html, /class="code-copy-btn"/);
+});
+
+test("renders mermaid diagram block via MermaidBlock container with icon copy button", () => {
+  const mermaid = "```mermaid\ngraph TD\nA --> B\n```";
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={mermaid} />,
+  );
+
+  assert.match(html, /class="mermaid-container"/);
+  assert.match(html, /<span class="mermaid-badge">Mermaid<\/span>/);
+  assert.match(html, /class="language-mermaid"/);
+  assert.match(html, /class="code-copy-btn"[^>]*aria-label="复制代码"/);
+});
+
+test("renders workspace file path in inline code as clickable file link with official extension icon and line number", () => {
+  const mockActions = {
+    sessionId: "s-1",
+    executionRoot: "/workspace",
+    openFile: () => {},
+    openBrowser: () => {},
+  };
+  const html = renderToStaticMarkup(
+    <ArtifactProvider value={mockActions}>
+      <MarkdownContent content={"测试改动位于 `test_mcp.py (line 456)` 和 `src/app/App.tsx:42` 文件。"} />
+    </ArtifactProvider>,
+  );
+
+  assert.match(html, /class="markdown-file-link"/);
+  assert.match(html, /class="file-icon-svg"/);
+  assert.match(html, /fill="#0288d1"/);
+  assert.match(html, /class="markdown-file-text">test_mcp\.py \(line 456\)<\/span>/);
+  assert.match(html, /fill="#5bcbdc"/);
+  assert.match(html, /class="markdown-file-text">src\/app\/App\.tsx \(line 42\)<\/span>/);
+});
+
+test("renders unknown workspace files with unknown.svg silhouette icon", () => {
+  assert.equal(resolveIconPath("unknown_config.xyz"), "icons/system/unknown.svg");
+  assert.equal(resolveIconPath("some_file_without_extension"), "icons/system/unknown.svg");
+
+  const html = renderToStaticMarkup(<FileIcon name="unknown_config.xyz" />);
+  assert.match(html, /class="file-icon-svg"/);
+  assert.match(html, /fill="#8b96a7"/);
+  assert.match(html, /viewBox="0 0 384 512"/);
+});
+
+test("resolves special filenames and compound extensions from manifest", () => {
+  assert.equal(resolveIconPath("Dockerfile"), "icons/code/docker.svg");
+  assert.equal(resolveIconPath("package.json"), "icons/code/npm.svg");
+  assert.equal(resolveIconPath("go.mod"), "icons/code/go.svg");
+  assert.equal(resolveIconPath("App.test.tsx"), "icons/code/react.svg");
+  assert.equal(resolveIconPath("types.d.ts"), "icons/code/typescript.svg");
+  assert.equal(resolveIconPath("archive.tar.gz"), "icons/archive/archive.svg");
+  assert.equal(resolveIconPath("src/main.rs"), "icons/code/rust.svg");
+});
+
+test("renders apply_patch multi-file diff with individual stats and metadata line filtering", () => {
+  const patchDiff = `\`\`\`diff
+--- a/hello.txt
++++ b/hello.txt
+@@ -1 +1 @@
+-hello
++hello world
+\\ Eidos EOF newline: before=absent, after=present
+\\ Eidos line endings: before=none, after=LF:2
+--- a/notes.md
++++ b/notes.md
+@@ -1 +1,2 @@
+ # Notes
++Added note
+\`\`\``;
+  const html = renderToStaticMarkup(<MarkdownContent content={patchDiff} />);
+  assert.match(html, /class="diff-file-name">hello\.txt<\/span>/);
+  assert.match(html, /class="diff-file-name">notes\.md<\/span>/);
+  assert.match(html, /class="diff-stat-add">\+1<\/span>/);
+  assert.doesNotMatch(html, /Eidos EOF newline/);
+  assert.doesNotMatch(html, /Eidos line endings/);
+});
+
+test("formats language names in Title case matching UI specification", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"```go\npackage main\n```"} />,
+  );
+  assert.match(html, /class="code-block-language">Go<\/span>/);
 });

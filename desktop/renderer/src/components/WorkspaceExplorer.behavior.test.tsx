@@ -152,6 +152,8 @@ describe("WorkspaceExplorer", () => {
     expect(await screen.findByRole("heading", { name: "two.md" })).toBeInTheDocument();
 
     expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getByRole("tab", { name: "one.md" }).querySelector('[data-file-icon="markdown"]')).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "two.md" }).querySelector('[data-file-icon="markdown"]')).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "one.md" }));
     expect(await screen.findByRole("heading", { name: "one.md" })).toBeInTheDocument();
   });

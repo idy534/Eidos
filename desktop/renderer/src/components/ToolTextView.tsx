@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ToolTextPage } from "../../../shared/domain-contracts.js";
 import { userFacingError } from "../session-state.js";
+import { DiffViewer } from "./DiffViewer.js";
 
 export function ToolTextView({ sessionId, toolCallId, field, sha256, totalBytes }: {
   sessionId: string; toolCallId: string; field: "diff" | "result"; sha256: string; totalBytes: number;
@@ -27,7 +28,7 @@ export function ToolTextView({ sessionId, toolCallId, field, sha256, totalBytes 
       : <>
         <button type="button" disabled={loading || offsets.length < 2} onClick={() => setOffsets((values) => values.slice(0, -1))}>上一页</button>
         <button type="button" disabled={loading || !page || page.nextOffset >= page.totalCharacters} onClick={() => { if (page) setOffsets((values) => [...values, page.nextOffset]); }}>下一页</button>
-        {page && <><p>字符 {offset + 1}–{page.nextOffset} / {page.totalCharacters}</p><pre className="diff-view">{page.content}</pre></>}
+        {page && <><p>字符 {offset + 1}–{page.nextOffset} / {page.totalCharacters}</p>{field === "diff" ? <DiffViewer diff={page.content} title="完整补丁" /> : <pre className="diff-view">{page.content}</pre>}</>}
       </>}
     {loading && <p role="status">正在读取…</p>}
     {error && <p role="alert">{error} <button type="button" onClick={() => setOffsets([])}>重新读取</button></p>}

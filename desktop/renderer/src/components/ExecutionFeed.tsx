@@ -1,7 +1,7 @@
 import { InputReferenceCards } from "./InputContext.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import stripAnsi from "strip-ansi";
 
@@ -24,6 +24,7 @@ import { DropdownMenu } from "./DropdownMenu.js";
 import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
+import { DiffViewer } from "./DiffViewer.js";
 
 
 type FeedbackHandler = (
@@ -221,7 +222,6 @@ export function ExecutionFeed({
                   workspaceRoot={workspaceRoot}
                   isLast={index === segments.length - 1}
                   canReviseRun={canReviseRun}
-                  atBottom={atBottom}
                   feedbackByItemId={feedbackByItemId}
                   pendingFeedbackItemIds={pendingFeedbackItemIds}
                   revisionSubmitting={revisionSubmitting}
@@ -272,7 +272,7 @@ export function isFeedAtBottom(
   return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 16;
 }
 
-function RunSegment({
+const RunSegment = memo(function RunSegment({
   segment,
   run,
   resultItems,
@@ -281,7 +281,6 @@ function RunSegment({
   workspaceRoot,
   isLast,
   canReviseRun,
-  atBottom = true,
   feedbackByItemId,
   pendingFeedbackItemIds,
   revisionSubmitting,
@@ -311,7 +310,6 @@ function RunSegment({
   workspaceRoot?: string | undefined;
   isLast: boolean;
   canReviseRun: boolean;
-  atBottom?: boolean | undefined;
   feedbackByItemId: ReadonlyMap<string, ResponseFeedbackValue>;
   pendingFeedbackItemIds: ReadonlySet<string>;
   revisionSubmitting: boolean;
@@ -396,7 +394,6 @@ function RunSegment({
             run={run}
             modelName={modelName}
             workspaceRoot={workspaceRoot}
-            atBottom={atBottom}
             feedback={feedbackByItemId.get(item.id)}
             feedbackPending={pendingFeedbackItemIds.has(item.id)}
             canRegenerate={allowRegenerate && isLast && index === segment.response.length - 1 && canReviseRun}
@@ -420,7 +417,7 @@ function RunSegment({
         && <TurnResults run={run} items={resultItems} showTextChanges={true} />}
     </>
   );
-}
+});
 
 function ProcessGroup({ run, children }: { run: Run; children: ReactNode }) {
   const terminal = TERMINAL_RUN_STATUSES.has(run.status);
@@ -649,7 +646,6 @@ function AssistantMessage({
   run,
   modelName,
   workspaceRoot = "",
-  atBottom = true,
   feedback,
   feedbackPending,
   canRegenerate,
@@ -666,7 +662,6 @@ function AssistantMessage({
   run: Run;
   modelName: string;
   workspaceRoot?: string | undefined;
-  atBottom?: boolean | undefined;
   feedback: ResponseFeedbackValue | undefined;
   feedbackPending: boolean;
   canRegenerate: boolean;
@@ -1354,8 +1349,14 @@ function ToolItem({
     || toolCall.status === "canceled"
     || isReconciliationGate(result),
   );
-  const showSummary = !isDeclareOutputs || isError;
   const summary = safeToolSummary(toolCall.resultJson, item.status);
+  const isRedundantFileSummary = Boolean(
+    summary && (
+      /^Success\.\s*Updated the following files:/i.test(summary)
+      || summary === "File change committed"
+    ),
+  );
+  const showSummary = (!isDeclareOutputs || isError) && !isRedundantFileSummary;
   const filePaths = toolFilePaths(toolCall);
 
   return (
@@ -1390,10 +1391,14 @@ function ToolItem({
         )}
         {item.kind === "file_change" && (toolCall.changeDiff || toolCall.changeDiffHash) && (
           <>
-            <p className="feed-label">{toolCall.status === "completed" ? "已完成的变更" : toolCall.status === "running" ? "准备或执行中的变更" : "计划变更（可能只完成部分写入）"}</p>
+            {toolCall.status !== "completed" && (
+              <p className="feed-label">
+                {toolCall.status === "running" ? "准备或执行中的变更" : "计划变更（可能只完成部分写入）"}
+              </p>
+            )}
             {toolCall.changeDiffHash
               ? <ToolTextView key={toolCall.changeDiffHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="diff" sha256={toolCall.changeDiffHash} totalBytes={toolCall.changeDiffBytes!} />
-              : <pre className="diff-view">{toolCall.changeDiff}</pre>}
+              : <DiffViewer diff={toolCall.changeDiff} title="代码变更" />}
           </>
         )}
         {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
