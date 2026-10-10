@@ -7039,10 +7039,9 @@ button.composer-context-project--empty:hover:not(:disabled) {
   overflow: hidden;
   user-select: none;
   animation: inputRefFadeIn 160ms var(--apple-spring, ease-out);
-  transition: transform 140ms var(--apple-spring, ease),
-              box-shadow 140ms ease,
-              border-color 140ms ease,
-              background-color 140ms ease;
+  transition: border-color 120ms ease,
+              background-color 120ms ease,
+              box-shadow 120ms ease;
 }
 
 /* Fallback default card style if no variant specified (clean capsule pill) */
@@ -7055,10 +7054,9 @@ button.composer-context-project--empty:hover:not(:disabled) {
 }
 
 .input-reference:not(.input-reference--bubble):hover {
-  border-color: rgba(0, 0, 0, 0.18);
+  border-color: rgba(0, 0, 0, 0.22);
   background: var(--surface-raised, #ffffff);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
-  transform: translateY(-0.5px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .input-reference:not(.input-reference--bubble):focus-within {
@@ -7079,9 +7077,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
 
 .input-reference--bubble:hover {
   background: rgba(255, 255, 255, 0.95);
-  border-color: rgba(0, 0, 0, 0.14);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-  transform: translateY(-0.5px);
+  border-color: rgba(0, 0, 0, 0.16);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .input-reference--bubble:focus-within {
@@ -7134,11 +7131,6 @@ button.composer-context-project--empty:hover:not(:disabled) {
   border: 0 !important;
   box-shadow: none !important;
   color: var(--muted);
-  transition: transform 120ms ease;
-}
-
-.input-reference:hover .input-reference__icon {
-  transform: scale(1.05);
 }
 
 .input-reference__icon svg {
@@ -7224,7 +7216,9 @@ button.composer-context-project--empty:hover:not(:disabled) {
   color: var(--text-tertiary);
   cursor: pointer;
   opacity: 0.65;
-  transition: all 130ms var(--apple-spring, ease);
+  transition: opacity 120ms ease,
+              color 120ms ease,
+              background-color 120ms ease;
 }
 
 .input-reference:hover .input-reference-remove {
@@ -7236,12 +7230,10 @@ button.composer-context-project--empty:hover:not(:disabled) {
   opacity: 1 !important;
   color: var(--text) !important;
   background: rgba(0, 0, 0, 0.08) !important;
-  transform: scale(1.08);
 }
 
 .input-reference-remove:active {
   background: rgba(0, 0, 0, 0.14) !important;
-  transform: scale(0.95);
 }
 
 .input-reference-remove svg {
