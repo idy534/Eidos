@@ -19,6 +19,7 @@ import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
+import { FileDiffIcon, HistoryIcon, TaskScopeIcon, GitBranchIcon, SendIcon } from "./MenuIcons.js";
 import { LastTurnChanges, type ItemReviewStats } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
 
@@ -422,6 +423,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     {
       key: "head",
       label: "未提交",
+      icon: <FileDiffIcon />,
+      checked: reviewTab === "uncommitted",
       disabled: reviewTab === "uncommitted",
       onClick: () => {
         setReviewTab("uncommitted");
@@ -431,12 +434,16 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     {
       key: "lastRun",
       label: "最近一轮",
+      icon: <HistoryIcon />,
+      checked: reviewTab === "lastRun",
       disabled: reviewTab === "lastRun",
       onClick: () => setReviewTab("lastRun"),
     },
     {
       key: "entireTask",
       label: "整个任务",
+      icon: <TaskScopeIcon />,
+      checked: reviewTab === "entireTask",
       disabled: reviewTab === "entireTask",
       onClick: () => setReviewTab("entireTask"),
     },
@@ -448,6 +455,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           {
             key: "create-branch",
             label: "创建分支...",
+            icon: <GitBranchIcon />,
             disabled: workflowDisabled || workspaceMutationDisabled || (status?.worktreeId === null && status?.dirty === true),
             onClick: () => onCreateBranch(),
           },
@@ -458,6 +466,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           {
             key: "send-review-feedback",
             label: "发送审阅意见",
+            icon: <SendIcon />,
             disabled: commentLoading || reviewFeedbackDisabled,
             onClick: () => void sendReviewFeedback(),
           },

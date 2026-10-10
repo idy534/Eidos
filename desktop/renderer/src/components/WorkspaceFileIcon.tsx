@@ -1,3 +1,5 @@
+import type { SVGProps } from "react";
+
 interface WorkspaceFileIconSpec {
   kind: string;
   label: string;
@@ -43,9 +45,18 @@ export function WorkspaceFileIcon({ name }: { name: string }) {
   );
 }
 
-export function WorkspaceFolderIcon() {
+export function WorkspaceFolderIcon(props?: SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
+    <svg
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
       <path d="M3 8V6.5A1.5 1.5 0 0 1 4.5 5h4l1.5 2h5.5A1.5 1.5 0 0 1 17 8.5V14.5A1.5 1.5 0 0 1 15.5 16h-11A1.5 1.5 0 0 1 3 14.5Z" />
     </svg>
   );

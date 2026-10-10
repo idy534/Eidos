@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
-import { DropdownMenu } from "./DropdownMenu.js";
+import { useState, type ReactNode } from "react";
+import { DropdownMenu, ContextMenu } from "./DropdownMenu.js";
+import { CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import "./WorkspaceDock.css";
 
@@ -45,13 +46,21 @@ function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
   }
   if (tool === "terminal") {
     return (
-      <svg viewBox="0 0 20 20" aria-hidden="true">
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
         <rect x="2.5" y="3.5" width="15" height="13" rx="3" />
         <path d="m6 8 2 2-2 2M10.5 12h3" />
       </svg>
     );
   }
-  if (tool === "browser") return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><ellipse cx="10" cy="10" rx="3" ry="7.5" /><path d="M2.5 10h15" /></svg>;
+  if (tool === "browser") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="10" cy="10" r="7.5" />
+        <ellipse cx="10" cy="10" rx="3" ry="7.5" />
+        <path d="M2.5 10h15" />
+      </svg>
+    );
+  }
   if (tool === "files") {
     return <WorkspaceFolderIcon />;
   }
@@ -68,7 +77,7 @@ function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
     );
   }
   return (
-    <svg viewBox="0 0 20 20" aria-hidden="true">
+    <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <path d="M5 2.5h7l3 3v12H5zM12 2.5v3h3M7.5 10h4M9.5 8v4M7.5 14h4" />
     </svg>
   );
@@ -114,6 +123,13 @@ export function WorkspaceDock({
   onToggleExpanded,
   renderTab,
 }: WorkspaceDockProps) {
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    tab: WorkspaceTab;
+    x: number;
+    y: number;
+    element: HTMLElement;
+  } | undefined>(undefined);
+
   const addableTools = availableTools.filter((tool) => (
     tool === "terminal" || tool === "browser" || !openTabs.some((tab) => tab.kind === tool)
   ));
@@ -135,6 +151,15 @@ export function WorkspaceDock({
                 aria-controls={`workspace-tool-panel-${tab.id}`}
                 aria-selected={activeTabId === tab.id}
                 onClick={() => onSelectTab(tab.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setTabContextMenu({
+                    tab,
+                    x: event.clientX,
+                    y: event.clientY,
+                    element: event.currentTarget,
+                  });
+                }}
               >
                 <span className="workspace-dock__tool-icon"><ToolIcon tool={tab.kind} /></span>
                 <span>{tabLabel(tab)}</span>
@@ -153,6 +178,7 @@ export function WorkspaceDock({
 
         <DropdownMenu
           className="workspace-dock__add"
+          menuClassName="workspace-dock__add-menu"
           trigger={(
             <>
               <span aria-hidden="true">
@@ -168,6 +194,7 @@ export function WorkspaceDock({
             ? addableTools.map((tool) => ({
                 key: tool,
                 label: TOOL_LABELS[tool],
+                icon: <ToolIcon tool={tool} />,
                 onClick: () => onAddTool(tool),
               }))
             : [{ key: "none", label: "全部窗口已打开", disabled: true, onClick: () => undefined }]}
@@ -222,6 +249,43 @@ export function WorkspaceDock({
           </div>
         )}
       </div>
+
+      {tabContextMenu && (
+        <ContextMenu
+          x={tabContextMenu.x}
+          y={tabContextMenu.y}
+          label={`标签操作：${tabLabel(tabContextMenu.tab)}`}
+          restoreFocusElement={tabContextMenu.element}
+          onClose={() => setTabContextMenu(undefined)}
+          items={[
+            {
+              key: "close",
+              label: "关闭标签页",
+              icon: <CloseIcon />,
+              onClick: () => {
+                setTabContextMenu(undefined);
+                onCloseTab(tabContextMenu.tab.id);
+              },
+            },
+            ...(openTabs.length > 1
+              ? [
+                  {
+                    key: "close-others",
+                    label: "关闭其他标签页",
+                    icon: <CloseOthersIcon />,
+                    onClick: () => {
+                      const keepId = tabContextMenu.tab.id;
+                      setTabContextMenu(undefined);
+                      openTabs.forEach((t) => {
+                        if (t.id !== keepId) onCloseTab(t.id);
+                      });
+                    },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
     </aside>
   );
 }

@@ -10,6 +10,8 @@ import type {
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
+import { ContextMenu } from "./DropdownMenu.js";
+import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 import "./ArtifactPreview.css";
 import { MarkdownContent } from "./MarkdownContent.js";
@@ -147,6 +149,21 @@ export function WorkspaceExplorer({
   readPreview = defaultReadPreview,
   subscribeChanges = defaultSubscribeChanges,
 }: WorkspaceExplorerProps) {
+  const actions = useArtifacts();
+  const [treeContextMenu, setTreeContextMenu] = useState<{
+    path: string;
+    name: string;
+    kind: "file" | "directory";
+    x: number;
+    y: number;
+    element: HTMLElement;
+  } | undefined>(undefined);
+  const [previewTabMenu, setPreviewTabMenu] = useState<{
+    path: string;
+    x: number;
+    y: number;
+    element: HTMLElement;
+  } | undefined>(undefined);
   const [nodes, setNodes] = useState<WorkspaceTreeNode[]>([]);
   const [rootTruncated, setRootTruncated] = useState(false);
   const [loadingRoot, setLoadingRoot] = useState(true);
@@ -404,14 +421,30 @@ export function WorkspaceExplorer({
     }
   }), [executionKey, sessionId, subscribeChanges]);
 
+  const handleTreeContextMenu = useCallback((
+    entry: WorkspaceDirectoryEntry,
+    event: React.MouseEvent<HTMLDivElement>,
+  ) => {
+    event.preventDefault();
+    setTreeContextMenu({
+      path: entry.relativePath,
+      name: entry.name,
+      kind: entry.kind,
+      x: event.clientX,
+      y: event.clientY,
+      element: event.currentTarget,
+    });
+  }, []);
+
   const renderNode = useCallback((props: NodeRendererProps<WorkspaceTreeNode>) => (
     <WorkspaceTreeRow
       {...props}
       loading={loadingPath === props.node.id}
       onOpenDirectory={loadDirectory}
       onOpenFile={openFile}
+      onContextMenu={handleTreeContextMenu}
     />
-  ), [loadDirectory, loadingPath, openFile]);
+  ), [handleTreeContextMenu, loadDirectory, loadingPath, openFile]);
 
   const splitSize = splitSizes[layout];
   const splitBounds = getSplitBounds(layout);
@@ -486,6 +519,15 @@ export function WorkspaceExplorer({
                     aria-selected={activePreviewPath === path}
                     title={path}
                     onClick={() => setActivePreviewPath(path)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setPreviewTabMenu({
+                        path,
+                        x: event.clientX,
+                        y: event.clientY,
+                        element: event.currentTarget,
+                      });
+                    }}
                   >
                     {path.split("/").pop() ?? path}
                   </button>
@@ -510,6 +552,101 @@ export function WorkspaceExplorer({
           <div className="workspace-preview-placeholder">{activePreviewPath ? "文件预览不可用" : "选择文件以查看预览"}</div>
         )}
       </div>
+
+      {treeContextMenu && (
+        <ContextMenu
+          x={treeContextMenu.x}
+          y={treeContextMenu.y}
+          label={`文件操作：${treeContextMenu.name}`}
+          restoreFocusElement={treeContextMenu.element}
+          onClose={() => setTreeContextMenu(undefined)}
+          items={[
+            ...(actions?.showInFinder
+              ? [
+                  {
+                    key: "finder",
+                    label: "在 Finder 中显示",
+                    icon: <FinderIcon />,
+                    onClick: () => {
+                      setTreeContextMenu(undefined);
+                      void actions.showInFinder?.(treeContextMenu.path);
+                    },
+                  },
+                ]
+              : []),
+            {
+              key: "copy-relative",
+              label: "复制相对路径",
+              icon: <CopyIcon />,
+              onClick: () => {
+                setTreeContextMenu(undefined);
+                void navigator?.clipboard?.writeText(treeContextMenu.path);
+              },
+            },
+            {
+              key: "copy-absolute",
+              label: "复制绝对路径",
+              icon: <CopyIcon />,
+              onClick: () => {
+                setTreeContextMenu(undefined);
+                const fullPath = actions?.executionRoot
+                  ? `${actions.executionRoot.replace(/\/$/, "")}/${treeContextMenu.path}`
+                  : treeContextMenu.path;
+                void navigator?.clipboard?.writeText(fullPath);
+              },
+            },
+            ...(treeContextMenu.kind === "file" && actions?.openExternal
+              ? [
+                  {
+                    key: "external",
+                    label: "系统应用打开",
+                    icon: <ExternalLinkIcon />,
+                    onClick: () => {
+                      setTreeContextMenu(undefined);
+                      void actions.openExternal?.(treeContextMenu.path);
+                    },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
+
+      {previewTabMenu && (
+        <ContextMenu
+          x={previewTabMenu.x}
+          y={previewTabMenu.y}
+          label={`标签操作：${previewTabMenu.path.split("/").pop() ?? previewTabMenu.path}`}
+          restoreFocusElement={previewTabMenu.element}
+          onClose={() => setPreviewTabMenu(undefined)}
+          items={[
+            {
+              key: "close",
+              label: "关闭标签页",
+              icon: <CloseIcon />,
+              onClick: () => {
+                setPreviewTabMenu(undefined);
+                closePreview(previewTabMenu.path);
+              },
+            },
+            ...(openPreviewPaths.length > 1
+              ? [
+                  {
+                    key: "close-others",
+                    label: "关闭其他标签页",
+                    icon: <CloseOthersIcon />,
+                    onClick: () => {
+                      const keep = previewTabMenu.path;
+                      setPreviewTabMenu(undefined);
+                      setOpenPreviewPaths([keep]);
+                      setActivePreviewPath(keep);
+                    },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
     </section>
   );
 }
@@ -521,10 +658,12 @@ function WorkspaceTreeRow({
   loading,
   onOpenDirectory,
   onOpenFile,
+  onContextMenu,
 }: NodeRendererProps<WorkspaceTreeNode> & {
   loading: boolean;
   onOpenDirectory(path: string): void;
   onOpenFile(path: string): void;
+  onContextMenu?(entry: WorkspaceDirectoryEntry, event: React.MouseEvent<HTMLDivElement>): void;
 }) {
   const inputContext = useInputContext();
   return (
@@ -535,6 +674,9 @@ function WorkspaceTreeRow({
       onClick={() => {
         node.select();
         if (node.data.kind === "file") onOpenFile(node.id);
+      }}
+      onContextMenu={(event) => {
+        onContextMenu?.(node.data, event);
       }}
       onDoubleClick={() => {
         if (node.data.kind === "directory") {

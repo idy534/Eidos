@@ -18,6 +18,7 @@ import { EidosMark } from "../components/EidosMark.js";
 import { SessionSidebar } from "../components/SessionSidebar.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
+import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
@@ -1362,11 +1363,13 @@ export function AppShell({ runtime }: AppShellProps) {
                         {
                           key: "rename",
                           label: "编辑标题",
+                          icon: <EditIcon />,
                           onClick: () => void beginRename(currentSnapshot.session),
                         },
                         {
                           key: "delete",
                           label: "删除任务",
+                          icon: <TrashIcon />,
                           danger: true,
                           disabled: Boolean(activeRun) || handoffBusy,
                           onClick: () => requestDeleteSession(currentSnapshot.session),

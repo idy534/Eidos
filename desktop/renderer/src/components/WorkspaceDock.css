@@ -509,6 +509,11 @@ button.environment-popover__row:hover:not(:disabled) {
   background: var(--surface-selected);
 }
 
+.workspace-dock__add-menu {
+  min-width: 6.5rem;
+  width: max-content;
+}
+
 .workspace-dock__actions {
   flex: none;
   gap: 0.35rem;

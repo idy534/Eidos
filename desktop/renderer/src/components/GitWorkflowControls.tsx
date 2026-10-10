@@ -16,6 +16,7 @@ import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 import { DropdownMenu } from "./DropdownMenu.js";
+import { GitBranchIcon, PlusIcon } from "./MenuIcons.js";
 
 
 interface GitWorkflowControlsProps {
@@ -289,7 +290,9 @@ export function GitWorkflowControls({
   const branchMenuItems = [
     ...branches.map((branch) => ({
       key: `branch-${branch}`,
-      label: branch === status.branch ? `✓ ${branch}` : branch,
+      label: branch,
+      icon: <GitBranchIcon />,
+      checked: branch === status.branch,
       disabled: treeChangesDisabled || status.dirty || branch === status.branch,
       onClick: () => {
         void run(
@@ -304,6 +307,8 @@ export function GitWorkflowControls({
           {
             key: "create-branch",
             label: localSession ? "创建分支..." : "在此创建分支...",
+            icon: <PlusIcon />,
+            separator: branches.length > 0,
             disabled: treeChangesDisabled || (localSession && status.dirty),
             onClick: () => onCreateBranch?.(),
           },

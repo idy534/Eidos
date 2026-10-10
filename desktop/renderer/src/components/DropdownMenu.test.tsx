@@ -31,3 +31,17 @@ void test("ContextMenu renders portal menu at position (x, y)", () => {
   assert.match(html, /Delete Task/);
   assert.match(html, /danger-action/);
 });
+
+void test("DropdownMenu renders items with icon, checked indicator and separator", () => {
+  const items = [
+    { key: "item1", label: "Item 1", icon: <span data-testid="test-icon">icon</span>, checked: true, onClick: () => {} },
+    { key: "item2", label: "Item 2", separator: true, onClick: () => {} },
+  ];
+  const html = renderToStaticMarkup(
+    <ContextMenu items={items} x={100} y={100} onClose={() => {}} />
+  );
+
+  assert.match(html, /data-testid="test-icon"/);
+  assert.match(html, /dropdown-menu-item__check/);
+  assert.match(html, /dropdown-menu-separator/);
+});

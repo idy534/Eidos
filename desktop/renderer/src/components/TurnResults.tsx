@@ -5,6 +5,7 @@ import type { Item, Run } from "../contracts.js";
 import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
+import { PreviewIcon, ExternalLinkIcon, FinderIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 
 type ChangeState = "committed" | "partial" | "planned";
@@ -360,6 +361,7 @@ function artifactOpenItems(
     items.push({
       key: "preview",
       label: artifact.kind === "file" ? "打开文件" : artifact.kind === "spreadsheet" ? "文本预览" : "内置预览",
+      icon: <PreviewIcon />,
       onClick: openBuiltInPreview,
     });
   }
@@ -367,6 +369,7 @@ function artifactOpenItems(
     items.push({
       key: "external",
       label: "系统应用打开",
+      icon: <ExternalLinkIcon />,
       onClick: openExternal,
     });
   }
@@ -374,6 +377,7 @@ function artifactOpenItems(
     items.push({
       key: "finder",
       label: "在 Finder 中显示",
+      icon: <FinderIcon />,
       onClick: showInFinder,
     });
   }

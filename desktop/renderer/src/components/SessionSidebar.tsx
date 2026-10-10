@@ -4,6 +4,7 @@ import type { Project, Session, SessionGitStatus } from "../contracts.js";
 import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
 import { groupSessionsByProject, taskStatusPresentation } from "../session-state.js";
 import { ContextMenu } from "./DropdownMenu.js";
+import { FinderIcon, EditIcon, TrashIcon } from "./MenuIcons.js";
 import { EidosMark } from "./EidosMark.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
 import { SidebarTooltip, type SidebarTooltipState, type SidebarTooltipTarget } from "./SidebarTooltip.js";
@@ -553,6 +554,7 @@ export function SessionSidebar({
             {
               key: "rename",
               label: "编辑标题",
+              icon: <EditIcon />,
               onClick: () => {
                 setContextMenu(undefined);
                 onRename(contextMenu.session);
@@ -561,6 +563,7 @@ export function SessionSidebar({
             {
               key: "delete",
               label: "删除任务",
+              icon: <TrashIcon />,
               danger: true,
               disabled: contextMenu.session.taskStatus === "in_progress",
               onClick: () => {
@@ -582,6 +585,7 @@ export function SessionSidebar({
             {
               key: "show-in-finder",
               label: "在 Finder 中显示",
+              icon: <FinderIcon />,
               onClick: () => {
                 setContextMenu(undefined);
                 onShowInFinder?.(contextMenu.project);
@@ -590,6 +594,7 @@ export function SessionSidebar({
             {
               key: "delete-project",
               label: "删除项目",
+              icon: <TrashIcon />,
               danger: true,
               disabled: contextMenu.hasSessions,
               onClick: () => {

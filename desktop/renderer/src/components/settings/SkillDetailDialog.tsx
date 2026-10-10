@@ -4,6 +4,7 @@ import { userFacingError } from "../../session-state.js";
 import { ArtifactProvider } from "../ArtifactContext.js";
 import { Button } from "../Button.js";
 import { DropdownMenu } from "../DropdownMenu.js";
+import { FinderIcon, CopyIcon } from "../MenuIcons.js";
 import { MarkdownContent } from "../MarkdownContent.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -196,8 +197,8 @@ export function SkillDetailDialog({
                   triggerAriaLabel="技能选项"
                   className="skill-detail-menu"
                   items={[
-                    { key: "finder", label: "在 Finder 中显示", disabled: !currentDetail || busy, onClick: () => void moreAction("finder") },
-                    { key: "copy", label: "复制 Markdown", disabled: !currentDetail || busy, onClick: () => void moreAction("copy") },
+                    { key: "finder", label: "在 Finder 中显示", icon: <FinderIcon />, disabled: !currentDetail || busy, onClick: () => void moreAction("finder") },
+                    { key: "copy", label: "复制 Markdown", icon: <CopyIcon />, disabled: !currentDetail || busy, onClick: () => void moreAction("copy") },
                   ]}
                 />
                 <button

@@ -3,6 +3,7 @@ import type { PluginRecord } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { Button } from "../Button.js";
 import { DropdownMenu } from "../DropdownMenu.js";
+import { TrashIcon } from "../MenuIcons.js";
 import { SettingSection } from "./SettingSection";
 import { SettingRow } from "./SettingRow";
 import { Toggle } from "./Toggle";
@@ -166,6 +167,7 @@ export function PluginSettings({
                         {
                           key: "remove",
                           label: "移除 Plugin",
+                          icon: <TrashIcon />,
                           danger: true,
                           disabled: isRowPending,
                           onClick: () => setPluginToRemove(plugin),

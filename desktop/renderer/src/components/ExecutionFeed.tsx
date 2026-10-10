@@ -21,6 +21,7 @@ import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
+import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 
@@ -824,6 +825,7 @@ function MoreActionsDropdown({
         {
           key: "copy-request-id",
           label: copied ? "已复制" : "复制请求ID",
+          icon: copied ? <CheckmarkIcon /> : <CopyIcon />,
           onClick: () => {
             void handleCopyRequestId();
           },

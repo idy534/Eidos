@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -10,6 +11,8 @@ import {
 import { createPortal } from "react-dom";
 
 
+import { CheckmarkIcon } from "./MenuIcons.js";
+
 function renderPortal(children: ReactNode): ReactNode {
   if (typeof document === "undefined") {
     return children;
@@ -20,6 +23,12 @@ function renderPortal(children: ReactNode): ReactNode {
 export interface DropdownMenuItem {
   key: string;
   label: string;
+  /** Optional icon displayed at the left of the item */
+  icon?: ReactNode;
+  /** Whether the item is checked (e.g. for single-select or branch options) */
+  checked?: boolean;
+  /** Whether to render a visual divider before this item */
+  separator?: boolean;
   /** If true, renders with danger styling */
   danger?: boolean;
   disabled?: boolean;
@@ -228,23 +237,31 @@ export function DropdownMenu({
           onKeyDown={handleMenuKeyDown}
         >
           {items.map((item, index) => (
-            <button
-              key={item.key}
-              role="menuitem"
-              type="button"
-              className={item.danger ? "danger-action" : ""}
-              disabled={item.disabled}
-              tabIndex={focusedIndex === index ? 0 : -1}
-              onClick={() => {
-                setOpen(false);
-                if (triggerRef.current && triggerRef.current.isConnected) {
-                  triggerRef.current.focus();
-                }
-                item.onClick();
-              }}
-            >
-              {item.label}
-            </button>
+            <Fragment key={item.key}>
+              {item.separator && <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />}
+              <button
+                role="menuitem"
+                type="button"
+                className={`dropdown-menu-item ${item.danger ? "danger-action" : ""}${item.checked ? " is-checked" : ""}`.trim()}
+                disabled={item.disabled}
+                tabIndex={focusedIndex === index ? 0 : -1}
+                onClick={() => {
+                  setOpen(false);
+                  if (triggerRef.current && triggerRef.current.isConnected) {
+                    triggerRef.current.focus();
+                  }
+                  item.onClick();
+                }}
+              >
+                {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
+                <span className="dropdown-menu-item__label">{item.label}</span>
+                {item.checked && (
+                  <span className="dropdown-menu-item__check" aria-hidden="true">
+                    <CheckmarkIcon />
+                  </span>
+                )}
+              </button>
+            </Fragment>
           ))}
         </div>,
       )}
@@ -392,23 +409,31 @@ export function ContextMenu({
       onKeyDown={handleKeyDown}
     >
       {items.map((item, index) => (
-        <button
-          key={item.key}
-          role="menuitem"
-          type="button"
-          className={item.danger ? "danger-action" : ""}
-          disabled={item.disabled}
-          tabIndex={focusedIndex === index ? 0 : -1}
-          onClick={() => {
-            onClose();
-            if (restoreFocusElement && restoreFocusElement.isConnected) {
-              restoreFocusElement.focus();
-            }
-            item.onClick();
-          }}
-        >
-          {item.label}
-        </button>
+        <Fragment key={item.key}>
+          {item.separator && <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />}
+          <button
+            role="menuitem"
+            type="button"
+            className={`dropdown-menu-item ${item.danger ? "danger-action" : ""}${item.checked ? " is-checked" : ""}`.trim()}
+            disabled={item.disabled}
+            tabIndex={focusedIndex === index ? 0 : -1}
+            onClick={() => {
+              onClose();
+              if (restoreFocusElement && restoreFocusElement.isConnected) {
+                restoreFocusElement.focus();
+              }
+              item.onClick();
+            }}
+          >
+            {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
+            <span className="dropdown-menu-item__label">{item.label}</span>
+            {item.checked && (
+              <span className="dropdown-menu-item__check" aria-hidden="true">
+                <CheckmarkIcon />
+              </span>
+            )}
+          </button>
+        </Fragment>
       ))}
     </div>,
   );
