@@ -804,6 +804,237 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   border-radius: var(--radius-sm);
 }
 
+/* Sidebar Hover Tooltip / Detail Card */
+.sidebar-hover-card {
+  position: fixed;
+  left: var(--tooltip-x, 0);
+  top: var(--tooltip-y, 0);
+  z-index: 1000;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 200px;
+  max-width: 330px;
+  padding: 0.65rem 0.85rem;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(49, 95, 74, 0.16);
+  border-radius: var(--radius, 10px);
+  box-shadow: 0 8px 24px -4px rgba(32, 36, 31, 0.12), 0 2px 6px rgba(32, 36, 31, 0.04);
+  pointer-events: none;
+  animation: sidebar-tooltip-pop 140ms var(--apple-spring);
+  transform-origin: left center;
+}
+
+@keyframes sidebar-tooltip-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateX(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-hover-card {
+    animation: none !important;
+  }
+}
+
+.sidebar-hover-card__arrow {
+  position: absolute;
+  left: -5px;
+  top: var(--arrow-y, 50%);
+  width: 9px;
+  height: 9px;
+  transform: translateY(-50%) rotate(45deg);
+  background: rgba(255, 255, 255, 0.95);
+  border-left: 1px solid rgba(49, 95, 74, 0.16);
+  border-bottom: 1px solid rgba(49, 95, 74, 0.16);
+}
+
+.sidebar-hover-card__header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.sidebar-hover-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--accent);
+}
+
+.sidebar-hover-card__icon--project {
+  color: var(--accent);
+}
+
+.sidebar-hover-card__icon--session {
+  color: var(--accent);
+}
+
+.sidebar-hover-card__title {
+  min-width: 0;
+  font-size: var(--font-size-sidebar, 13px);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.sidebar-hover-card__badge {
+  flex: none;
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.sidebar-hover-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.sidebar-hover-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sidebar-hover-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.sidebar-hover-card__label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
+}
+
+.sidebar-hover-card__value {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-hover-card__value--project {
+  max-width: 180px;
+}
+
+.sidebar-hover-card__time-wrapper {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sidebar-hover-card__time-friendly {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.sidebar-hover-card__time-exact {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sidebar-hover-card__branch-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  font-family: var(--font-code);
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-hover-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sidebar-hover-card__status--success {
+  color: #266e4a;
+}
+
+.sidebar-hover-card__status--progress {
+  color: var(--accent);
+}
+
+.sidebar-hover-card__status--error {
+  color: #9e352b;
+}
+
+.sidebar-hover-card__status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sidebar-hover-card__path-box {
+  margin-top: 0.15rem;
+  padding: 0.35rem 0.55rem;
+  background: var(--surface-muted);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-sm);
+  max-height: 4.5rem;
+  overflow-y: auto;
+}
+
+.sidebar-hover-card__path-text {
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.sidebar-hover-card__path-empty {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* Sidebar Footer & Settings Entry */
 .sidebar-footer {
   margin-top: auto;

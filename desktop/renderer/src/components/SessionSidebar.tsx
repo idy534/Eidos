@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
 import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
@@ -6,6 +6,7 @@ import { groupSessionsByProject, taskStatusPresentation } from "../session-state
 import { ContextMenu } from "./DropdownMenu.js";
 import { EidosMark } from "./EidosMark.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
+import { SidebarTooltip, type SidebarTooltipState, type SidebarTooltipTarget } from "./SidebarTooltip.js";
 import settingsIcon from "./settings.svg";
 
 export const COLLAPSED_PROJECTS_KEY = "eidos.sidebarCollapsedProjects";
@@ -85,7 +86,32 @@ export function SessionSidebar({
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(loadCollapsedProjects);
   const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
+  const [activeTooltip, setActiveTooltip] = useState<SidebarTooltipState | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navRef = useRef<HTMLElement | null>(null);
+
+  const handleTriggerEnter = useCallback(
+    (tooltip: SidebarTooltipTarget, element: HTMLElement) => {
+      if (contextMenu) return;
+      const rect = element.getBoundingClientRect();
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+      const delay = activeTooltip ? 60 : 200;
+      hoverTimeoutRef.current = setTimeout(() => {
+        setActiveTooltip({ ...tooltip, rect } as SidebarTooltipState);
+      }, delay);
+    },
+    [activeTooltip, contextMenu],
+  );
+
+  const handleTriggerLeave = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setActiveTooltip(null);
+  }, []);
 
   const toggleProject = (projectKey: string) => {
     setCollapsedProjects((current) => {
@@ -164,13 +190,40 @@ export function SessionSidebar({
   }, [selectedId, collapsedProjects]);
 
   useEffect(() => {
-    if (!contextMenu) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setContextMenu(undefined);
+    if (contextMenu) {
+      handleTriggerLeave();
+    }
+  }, [contextMenu, handleTriggerLeave]);
+
+  useEffect(() => {
+    if (!activeTooltip) return;
+    const dismiss = () => handleTriggerLeave();
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [contextMenu]);
+  }, [activeTooltip, handleTriggerLeave]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (contextMenu) setContextMenu(undefined);
+        handleTriggerLeave();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [contextMenu, handleTriggerLeave]);
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Dot CSS class derived from real RuntimePresentation tone
   const dotClass = `runtime-pulse-dot runtime-pulse-dot--${runtimePresentation.tone}${runtimePresentation.animated ? " runtime-pulse-dot--animated" : ""}`;
@@ -192,9 +245,12 @@ export function SessionSidebar({
         label="新建会话"
         shortcut="⌘N"
         disabled={disabled}
-        onClick={onCreate}
+        onClick={() => {
+          handleTriggerLeave();
+          onCreate();
+        }}
       />
-      <nav ref={navRef} aria-label="项目与最近">
+      <nav ref={navRef} aria-label="项目与最近" onScroll={handleTriggerLeave}>
         <p className="nav-label">项目</p>
         {projects.length === 0 ? (
           <p className="nav-empty">还没有任务，点击上方按键创建</p>
@@ -205,12 +261,39 @@ export function SessionSidebar({
               return (
                 <li key={project.key}>
                   <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
-                    <div className="workspace-title-row" title={project.workspaceRoot}>
+                    <div className="workspace-title-row">
                       {project.projectless ? (
                         <button
                           className="workspace-toggle workspace-toggle--recent"
                           aria-expanded={isExpanded}
-                          onClick={() => toggleProject(project.key)}
+                          onClick={() => {
+                            handleTriggerLeave();
+                            toggleProject(project.key);
+                          }}
+                          onMouseEnter={(e) =>
+                            handleTriggerEnter(
+                              {
+                                kind: "project",
+                                projectName: project.displayName,
+                                workspaceRoot: project.workspaceRoot,
+                                projectless: true,
+                              },
+                              e.currentTarget,
+                            )
+                          }
+                          onMouseLeave={handleTriggerLeave}
+                          onFocus={(e) =>
+                            handleTriggerEnter(
+                              {
+                                kind: "project",
+                                projectName: project.displayName,
+                                workspaceRoot: project.workspaceRoot,
+                                projectless: true,
+                              },
+                              e.currentTarget,
+                            )
+                          }
+                          onBlur={handleTriggerLeave}
                         >
                           <span className="workspace-name">{project.displayName}</span>
                           <ChevronIcon open={isExpanded} />
@@ -220,8 +303,36 @@ export function SessionSidebar({
                           className="workspace-toggle"
                           aria-expanded={isExpanded}
                           aria-haspopup={project.project ? "menu" : undefined}
-                          onClick={() => toggleProject(project.key)}
+                          onClick={() => {
+                            handleTriggerLeave();
+                            toggleProject(project.key);
+                          }}
+                          onMouseEnter={(e) =>
+                            handleTriggerEnter(
+                              {
+                                kind: "project",
+                                projectName: project.displayName,
+                                workspaceRoot: project.workspaceRoot,
+                                projectless: false,
+                              },
+                              e.currentTarget,
+                            )
+                          }
+                          onMouseLeave={handleTriggerLeave}
+                          onFocus={(e) =>
+                            handleTriggerEnter(
+                              {
+                                kind: "project",
+                                projectName: project.displayName,
+                                workspaceRoot: project.workspaceRoot,
+                                projectless: false,
+                              },
+                              e.currentTarget,
+                            )
+                          }
+                          onBlur={handleTriggerLeave}
                           onContextMenu={(event) => {
+                            handleTriggerLeave();
                             if (!project.project) return;
                             event.preventDefault();
                             const hasSessions = project.sessions.length > 0
@@ -239,6 +350,7 @@ export function SessionSidebar({
                             if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
                               return;
                             }
+                            handleTriggerLeave();
                             event.preventDefault();
                             const bounds = event.currentTarget.getBoundingClientRect();
                             const hasSessions = project.sessions.length > 0
@@ -263,6 +375,7 @@ export function SessionSidebar({
                           aria-label={`在 ${project.displayName} 中新建会话`}
                           disabled={disabled}
                           onClick={() => {
+                            handleTriggerLeave();
                             setCollapsedProjects((current) => {
                               const next = new Set(current);
                               next.delete(project.key);
@@ -288,9 +401,28 @@ export function SessionSidebar({
                           readCompletedSessions={readCompletedSessions}
                           isSelectingSessionId={isSelectingSessionId}
                           gitStatusBySessionId={gitStatusBySessionId}
-                          onSelect={onSelect}
+                          onSelect={(session) => {
+                            handleTriggerLeave();
+                            onSelect(session);
+                          }}
+                          onHoverSession={(session, projectDisplayName, element, statusLabel, statusTone) => {
+                            const isProjectless = project.projectless || session.projectless === true;
+                            handleTriggerEnter(
+                              {
+                                kind: "session",
+                                session,
+                                projectDisplayName: isProjectless ? undefined : projectDisplayName,
+                                projectless: isProjectless,
+                                statusLabel,
+                                statusTone,
+                              },
+                              element,
+                            );
+                          }}
+                          onLeaveSession={handleTriggerLeave}
                           onDismissContextMenu={() => setContextMenu(undefined)}
                           onOpenSessionContextMenu={(session, coords, element) => {
+                            handleTriggerLeave();
                             setContextMenu({
                               kind: "session",
                               session,
@@ -380,6 +512,7 @@ export function SessionSidebar({
           ]}
         />
       )}
+      <SidebarTooltip state={activeTooltip} />
     </aside>
   );
 }
@@ -395,6 +528,14 @@ interface ProjectSessionListProps {
   isSelectingSessionId?: string | undefined;
   gitStatusBySessionId: ReadonlyMap<string, SessionGitStatus>;
   onSelect: (session: Session) => void;
+  onHoverSession?: (
+    session: Session,
+    projectDisplayName: string,
+    element: HTMLElement,
+    statusLabel?: string,
+    statusTone?: "success" | "progress" | "error",
+  ) => void;
+  onLeaveSession?: () => void;
   onDismissContextMenu: () => void;
   onOpenSessionContextMenu: (
     session: Session,
@@ -412,6 +553,8 @@ function ProjectSessionList({
   isSelectingSessionId,
   gitStatusBySessionId,
   onSelect,
+  onHoverSession,
+  onLeaveSession,
   onDismissContextMenu,
   onOpenSessionContextMenu,
 }: ProjectSessionListProps) {
@@ -455,10 +598,32 @@ function ProjectSessionList({
                 aria-haspopup="menu"
                 disabled={disabled}
                 onClick={() => {
+                  onLeaveSession?.();
                   onDismissContextMenu();
                   onSelect(session);
                 }}
+                onMouseEnter={(event) => {
+                  onHoverSession?.(
+                    session,
+                    project.displayName,
+                    event.currentTarget,
+                    status?.label,
+                    status?.tone,
+                  );
+                }}
+                onMouseLeave={onLeaveSession}
+                onFocus={(event) => {
+                  onHoverSession?.(
+                    session,
+                    project.displayName,
+                    event.currentTarget,
+                    status?.label,
+                    status?.tone,
+                  );
+                }}
+                onBlur={onLeaveSession}
                 onContextMenu={(event) => {
+                  onLeaveSession?.();
                   event.preventDefault();
                   onOpenSessionContextMenu(
                     session,
@@ -468,6 +633,7 @@ function ProjectSessionList({
                 }}
                 onKeyDown={(event) => {
                   if ((event.shiftKey && event.key === "F10") || event.key === "ContextMenu") {
+                    onLeaveSession?.();
                     event.preventDefault();
                     const bounds = event.currentTarget.getBoundingClientRect();
                     onOpenSessionContextMenu(

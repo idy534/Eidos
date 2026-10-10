@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Session, SessionGitStatus } from "../contracts.js";
@@ -693,5 +693,143 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
         expect.objectContaining({ behavior: "smooth", block: "center" }),
       );
     });
+  });
+
+  it("shows project hover tooltip with project name and folder path on hover", async () => {
+    vi.useFakeTimers();
+    render(
+      <SessionSidebar
+        sessions={[managedSession]}
+        projects={[]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const projectToggle = screen.getByRole("button", { name: "repository" });
+    fireEvent.mouseEnter(projectToggle);
+
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toBeInTheDocument();
+    expect(within(tooltip).getByText("repository")).toBeInTheDocument();
+    expect(within(tooltip).getByText("文件夹路径")).toBeInTheDocument();
+    expect(within(tooltip).getByText("/repository")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.mouseLeave(projectToggle);
+    });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("shows session hover tooltip with full title, parent project, and session time on hover", async () => {
+    vi.useFakeTimers();
+    render(
+      <SessionSidebar
+        sessions={[managedSession]}
+        projects={[]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const sessionButton = screen.getByRole("button", { name: /Managed Thread/ });
+    fireEvent.mouseEnter(sessionButton);
+
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toBeInTheDocument();
+    expect(within(tooltip).getByText("Managed Thread")).toBeInTheDocument();
+    expect(within(tooltip).getByText("所属项目")).toBeInTheDocument();
+    expect(within(tooltip).getByText("repository")).toBeInTheDocument();
+    expect(within(tooltip).getByText("最近会话")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.mouseLeave(sessionButton);
+    });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("does not show 所属项目 on hover for projectless (最近) session", async () => {
+    vi.useFakeTimers();
+    const projectlessSession: Session = {
+      ...managedSession,
+      id: "projectless-session",
+      projectless: true,
+      project: undefined,
+      worktree: undefined,
+      workspaceRoot: "/private/chat-workspaces/session",
+      title: "闲聊任务",
+    };
+
+    render(
+      <SessionSidebar
+        sessions={[projectlessSession]}
+        projects={[]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const sessionButton = screen.getByRole("button", { name: /闲聊任务/ });
+    fireEvent.mouseEnter(sessionButton);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toBeInTheDocument();
+    expect(within(tooltip).getByText("闲聊任务")).toBeInTheDocument();
+    expect(within(tooltip).getByText("最近会话")).toBeInTheDocument();
+    expect(within(tooltip).queryByText("所属项目")).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.mouseLeave(sessionButton);
+    });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
   });
 });
