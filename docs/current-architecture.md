@@ -219,6 +219,10 @@ Schema v22 为 ModelAttempt 增加内部 `response_replay_json`。Runtime 在完
 
 ContextBuilder 从 SQLite 的已完成 Attempt 读取回放记录。Model Adapter 将同一响应的思考、正文和全部保留的 ToolCall 合并，再交给 SDK 转换；工具结果跟在完整的调用声明之后。回放元数据进入现有 Context/Step Resolution 快照与预算。快照保存 Eidos 模型请求表示，不等同于 SDK 最终 HTTP payload。上下文只保留部分响应、切换不兼容 wire API，或旧记录缺少思考且当前模型启用了思考时，Adapter 将这组历史正文、调用和结果转换成明确标注的低权限历史资料。Adapter 不伪造丢失的思考，不重新执行工具。Schema v21→v22 只新增 nullable 列；旧数据保留 NULL。
 
+Chat Completions Adapter 将同一次 assistant 响应的全部 native `ToolReturnPart` 放入一个 Pydantic AI `ModelRequest`。SDK 先输出该批次的全部 `tool` 回复，再追加图片对应的 `user` 消息。Adapter 在发送前核对调用 ID 和工具名，并拒绝缺失、重复或没有对应调用的结果；一个批次未完成时，Adapter 不接受新的普通用户消息或模型响应。缺少思考或不兼容的历史响应继续使用已有的低权限历史资料表示。Adapter 只调整请求编码，不改变工具执行、权限、结果提交或恢复流程。
+
+Model Adapter 为本地工具批次编码失败记录固定原因。Provider 的 HTTP 400、404、422 拒绝会进入本地日志，记录状态码、异常类型、固定原因和有界 request ID。Adapter 只识别有界错误文本中的已知原因，不保存 Provider 错误正文，以免正文回显私有输入。公开错误码、重试规则和数据库结构保持原有契约。
+
 ## 8. Tool Execution
 
 Tool Registry 保存 ToolSpec、输入和结果 Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。MCP 输入 Schema 接受常见 draft-07/2020-12 `$schema` 元数据，但不解析远程 `$ref`；省略 `additionalProperties` 的对象在 Eidos 内按有界闭对象处理。每个 Step 固化可见 Tool Set、Contract Hash 和 Extension Snapshot。

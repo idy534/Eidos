@@ -557,6 +557,75 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(incomplete.code, "protocol_error")
         self.assertNotIn("raw-secret", incomplete.model_dump_json())
 
+    def test_provider_rejection_logs_only_fixed_diagnostics(self) -> None:
+        cases = (
+            (
+                "insufficient tool messages following tool_calls message; "
+                "private-body-marker",
+                "incomplete_tool_results",
+                "invalid_request",
+            ),
+            (
+                "tool_call_id was not found; private-body-marker",
+                "unexpected_tool_result",
+                "invalid_request",
+            ),
+            (
+                "reasoning_content is required; private-body-marker",
+                "missing_reasoning_content",
+                "invalid_request",
+            ),
+            (
+                "invalid schema for function tool; private-body-marker",
+                "invalid_tool_schema",
+                "invalid_request",
+            ),
+            (
+                "maximum context length exceeded; private-body-marker",
+                "context_exceeded",
+                "context_exceeded",
+            ),
+            (
+                "opaque rejection details; private-body-marker",
+                "provider_request_rejected",
+                "invalid_request",
+            ),
+        )
+        for message, expected_reason, expected_code in cases:
+            with self.subTest(reason=expected_reason):
+                error = ModelHTTPError(
+                    400,
+                    "deepseek-flash",
+                    {"error": {"message": message}},
+                    headers={"X-Request-Id": "request_123"},
+                )
+                with self.assertLogs(
+                    "eidos_runtime.model.pydantic_ai_client",
+                    level="WARNING",
+                ) as captured:
+                    failure = map_model_error(error)
+
+                output = "\n".join(captured.output)
+                self.assertEqual(failure.code, expected_code)
+                self.assertIn(f"reason={expected_reason}", output)
+                self.assertIn("request_id=request_123", output)
+                self.assertNotIn("private-body-marker", output)
+
+        unsafe_id = "request-id with private marker"
+        with self.assertLogs(
+            "eidos_runtime.model.pydantic_ai_client",
+            level="WARNING",
+        ) as captured:
+            map_model_error(ModelHTTPError(
+                400,
+                "deepseek-flash",
+                {"error": {"message": "opaque rejection"}},
+                headers={"X-Request-Id": unsafe_id},
+            ))
+        output = "\n".join(captured.output)
+        self.assertIn("request_id=None", output)
+        self.assertNotIn(unsafe_id, output)
+
     def test_connection_closed_stream_maps_to_stable_retryable_failure(self) -> None:
         try:
             raise httpx.RemoteProtocolError("opaque transport detail")

@@ -46,7 +46,8 @@
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - Schema v22 以前已经丢弃的思考正文无法从 token 数恢复。思考模式下，这些历史模型响应会作为标注来源的历史资料回传；新响应使用原始思考记录。各 Provider 的生产端点仍需分别联调，mock wire 验证不代表真实端点已通过。轨迹界面尚未实现。
 - 思考强度选项和默认值按模型配置。火山引擎 `deepseek-v4.1-flash` 已在 Runtime 映射关闭、低、中、高、最高五档到顶层 `reasoning_effort`，默认高。Coding Plan `/api/coding/v3` 对该模型是否接受这些值尚未通过受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
-- 用户要求分阶段验收：生产代码修改完成后先等待用户确认；确认后再编写测试并集中验证。等待期间不新增测试，也不把尚未做的 Provider endpoint 验证写成通过。
+- Chat Completions 的多工具图片结果编码已调整为同批次共享一个 `ModelRequest`，并增加调用 ID、工具名和回复完整性检查。定向测试覆盖图片结果位置、多图批次、MockTransport 请求顺序、完整性错误、思考回放和日志脱敏。MockTransport 不代表真实 Provider endpoint 已通过。
+- Provider 请求拒绝诊断只记录固定原因和有界 request ID。未知错误继续显示通用拒绝原因；日志不保留原始错误正文。原始失败 Run 的缺失正文不会因本次代码修改而补齐。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
 - 回答流式输出的代码修订尚未编写或执行测试。敏感扫描仍按完整行释放文本，无换行的长段落会等到响应结束。尚未闭合的尖括号文本会等待闭合或完整响应校验，以避免跨片段的 Provider 控制标记进入 Feed。当前实现不是逐 token 输出。
 - Assistant 文本在完整响应校验前可以作为 `in_progress` Item 显示。Runtime 只有在校验成功后才确认它；失败草稿不会进入后续模型上下文。Runtime 不会额外调用模型来提前判断最终回答。如果响应随后包含 ToolCall，现有 Feed 会把前面的文本归入过程区。

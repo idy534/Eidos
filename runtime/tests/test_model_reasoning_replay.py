@@ -12,6 +12,7 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 
 from eidos_runtime.context.builder import ContextBuilder
@@ -87,7 +88,7 @@ def test_replay_groups_text_reasoning_and_all_calls_before_returns():
         },
     )
     messages = encode_context(context)
-    assert len(messages) == 3
+    assert len(messages) == 2
     assert isinstance(messages[0], PAIResponse)
     assert [p.part_kind for p in messages[0].parts] == [
         "thinking",
@@ -96,6 +97,67 @@ def test_replay_groups_text_reasoning_and_all_calls_before_returns():
         "tool-call",
     ]
     assert [c.tool_call_id for c in messages[0].tool_calls] == ["call-1", "call-2"]
+    assert len(messages[1].parts) == 2
+    assert all(isinstance(part, ToolReturnPart) for part in messages[1].parts)
+
+
+def _native_tool_batch(
+    calls: tuple[tuple[str, str], ...],
+    results: tuple[tuple[str, str, str], ...],
+) -> tuple[dict[str, object], ...]:
+    context: list[dict[str, object]] = [{
+        "type": "assistant",
+        "content": "",
+        "responseId": "response-1",
+    }]
+    context.extend({
+        "type": "tool_call",
+        "callId": call_id,
+        "name": name,
+        "arguments": "{}",
+        "responseId": "response-1",
+    } for call_id, name in calls)
+    context.extend({
+        "type": "tool_result",
+        "callId": call_id,
+        "name": name,
+        "result": result,
+    } for call_id, name, result in results)
+    return tuple(context)
+
+
+@pytest.mark.parametrize(
+    ("calls", "results", "reason"),
+    [
+        (
+            (("one", "read_file"), ("two", "run_shell")),
+            (("one", "read_file", "one result"),),
+            "incomplete_tool_results",
+        ),
+        (
+            (("one", "read_file"),),
+            (("one", "read_file", "first"), ("one", "read_file", "repeat")),
+            "unexpected_tool_result",
+        ),
+        (
+            (("one", "read_file"),),
+            (("one", "run_shell", "wrong tool"),),
+            "tool_result_name_mismatch",
+        ),
+        (
+            (("one", "read_file"), ("one", "run_shell")),
+            (("one", "read_file", "result"),),
+            "duplicate_tool_call_id",
+        ),
+    ],
+)
+def test_chat_completion_rejects_incomplete_or_mismatched_tool_batches(
+    calls: tuple[tuple[str, str], ...],
+    results: tuple[tuple[str, str, str], ...],
+    reason: str,
+) -> None:
+    with pytest.raises(ValueError, match=reason):
+        encode_context(_native_tool_batch(calls, results))
 
 
 def test_legacy_missing_reasoning_becomes_labelled_history_when_required():

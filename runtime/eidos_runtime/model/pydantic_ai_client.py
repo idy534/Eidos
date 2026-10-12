@@ -8,6 +8,8 @@ from dataclasses import replace
 import hashlib
 import inspect
 import json
+import logging
+import re
 import threading
 from typing import Any, Callable
 
@@ -94,6 +96,8 @@ from eidos_runtime.tools.view_image import (
 
 
 _MAX_HISTORICAL_TOOL_TEXT_CHARS = 8 * 1024
+_MAX_PROVIDER_ERROR_MESSAGE_CHARS = 4096
+_LOGGER = logging.getLogger(__name__)
 
 
 MAX_TOOL_CALL_ID_BYTES = MODEL_TOOL_CALL_ID_BYTES
@@ -105,6 +109,10 @@ USAGE_DETAIL_KEYS = frozenset({
     "reasoning_tokens",
     "rejected_prediction_tokens",
 })
+
+
+class _ToolResultBatchError(ValueError):
+    """A native tool exchange cannot be sent as a complete request."""
 
 
 def _model_instrumentation() -> InstrumentationSettings | bool:
@@ -315,7 +323,11 @@ class PydanticAIModelClient:
             raise ModelRequestError(
                 _with_retry_diagnostics(failure, retry_tracker)
             ) from None
-        except (ValueError, AssertionError):
+        except (ValueError, AssertionError) as error:
+            if isinstance(error, _ToolResultBatchError):
+                _LOGGER.warning(
+                    "Model tool-result batch rejected reason=%s", error
+                )
             raise ModelRequestError(ModelRequestFailure(
                 code="protocol_error",
                 retryable=False,
@@ -672,7 +684,57 @@ def encode_context(
         else:
             raise ValueError(f"unsupported model context item type: {item_type!r}")
 
-    return messages
+    return _group_tool_return_messages(messages)
+
+
+def _group_tool_return_messages(
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    """Keep each native call batch in one request before SDK file projection."""
+
+    grouped: list[ModelMessage] = []
+    pending_calls: dict[str, str] = {}
+    tool_returns: list[ToolReturnPart] = []
+    first_request: PAIModelRequest | None = None
+    for message in messages:
+        if (
+            isinstance(message, PAIModelRequest)
+            and message.parts
+            and all(isinstance(part, ToolReturnPart) for part in message.parts)
+        ):
+            if first_request is None:
+                first_request = message
+            for part in message.parts:
+                assert isinstance(part, ToolReturnPart)
+                if part.tool_call_id not in pending_calls:
+                    raise _ToolResultBatchError("unexpected_tool_result")
+                if pending_calls[part.tool_call_id] != part.tool_name:
+                    raise _ToolResultBatchError("tool_result_name_mismatch")
+                del pending_calls[part.tool_call_id]
+                tool_returns.append(part)
+            if not pending_calls:
+                # The SDK emits all tool returns before this request's images.
+                grouped.append(replace(first_request, parts=list(tool_returns)))
+                first_request = None
+                tool_returns.clear()
+            continue
+
+        if pending_calls:
+            raise _ToolResultBatchError("incomplete_tool_results")
+        if isinstance(message, PAIModelResponse):
+            for part in message.parts:
+                if not isinstance(part, ToolCallPart):
+                    continue
+                if not part.tool_call_id:
+                    raise _ToolResultBatchError("missing_tool_call_id")
+                if part.tool_call_id in pending_calls:
+                    raise _ToolResultBatchError("duplicate_tool_call_id")
+                pending_calls[part.tool_call_id] = part.tool_name
+        grouped.append(message)
+
+    if pending_calls:
+        raise _ToolResultBatchError("incomplete_tool_results")
+    return grouped
 
 
 def _historical_custom_tool_call(
@@ -889,10 +951,13 @@ def map_model_error(error: BaseException) -> ModelRequestFailure:
     if isinstance(error, APIConnectionError | httpx.NetworkError):
         return ModelRequestFailure(code="provider_unavailable", retryable=True)
     if isinstance(error, httpx.HTTPStatusError):
+        _log_provider_request_rejection(error, error.response.status_code)
         return _http_failure(error.response.status_code)
     if isinstance(error, APIStatusError):
+        _log_provider_request_rejection(error, error.status_code)
         return _http_failure(error.status_code)
     if isinstance(error, ModelHTTPError):
+        _log_provider_request_rejection(error, error.status_code)
         context_exceeded = error.status_code == 413 or (
             error.status_code == 400 and _looks_like_context_error(error.body)
         )
@@ -914,6 +979,75 @@ def map_model_error(error: BaseException) -> ModelRequestFailure:
     if isinstance(error, IncompleteToolCall):
         return ModelRequestFailure(code="protocol_error", retryable=False)
     return ModelRequestFailure(code="protocol_error", retryable=False)
+
+
+def _log_provider_request_rejection(
+    error: ModelHTTPError | APIStatusError | httpx.HTTPStatusError,
+    status_code: int,
+) -> None:
+    if status_code not in {400, 404, 422}:
+        return
+    body = (
+        error.body if isinstance(error, ModelHTTPError | APIStatusError) else None
+    )
+    if isinstance(body, dict):
+        nested = body.get("error")
+        fields = nested if isinstance(nested, dict) else body
+        message = fields.get("message")
+    else:
+        message = body
+    message = (
+        message[:_MAX_PROVIDER_ERROR_MESSAGE_CHARS]
+        if isinstance(message, str) else ""
+    )
+    lowered = message.lower()
+    # Only fixed explanations enter logs; provider text can echo private input.
+    reason = "provider_request_rejected"
+    if (
+        "insufficient tool messages" in lowered
+        or "must be followed by tool messages" in lowered
+    ):
+        reason = "incomplete_tool_results"
+    elif "tool_call_id" in lowered and (
+        "not found" in lowered or "must be a response" in lowered
+    ):
+        reason = "unexpected_tool_result"
+    elif "reasoning_content" in lowered and (
+        "missing" in lowered or "required" in lowered
+    ):
+        reason = "missing_reasoning_content"
+    elif "invalid schema" in lowered and (
+        "function" in lowered or "tool" in lowered
+    ):
+        reason = "invalid_tool_schema"
+    elif _looks_like_context_error(message):
+        reason = "context_exceeded"
+
+    candidate: object = None
+    if isinstance(error, ModelHTTPError):
+        candidate = (error.headers or {}).get("x-request-id")
+    elif isinstance(error, APIStatusError):
+        candidate = error.request_id
+    else:
+        candidate = error.response.headers.get("x-request-id")
+    if not isinstance(candidate, str) or re.fullmatch(
+        r"[A-Za-z0-9_-]{1,128}", candidate
+    ) is None:
+        candidate = None
+    if candidate is None:
+        match = re.search(
+            r"\brequest_id:\s*("
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?=[\s)]|$)",
+            message,
+        )
+        if match is not None:
+            candidate = match.group(1)
+    _LOGGER.warning(
+        "Provider request rejected status_code=%s exception_type=%s "
+        "reason=%s request_id=%s",
+        status_code, type(error).__name__, reason, candidate,
+    )
 
 
 def _with_retry_diagnostics(

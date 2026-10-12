@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -7,12 +8,18 @@ from pathlib import Path
 import threading
 import zlib
 
+import httpx2 as httpx
 import pytest
+from openai import AsyncOpenAI
 from pydantic_ai.messages import BinaryContent, ModelRequest, ToolReturnPart
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig, ModelProfileSpec
-from eidos_runtime.model.pydantic_ai_client import encode_context
+from eidos_runtime.model.pydantic_ai_client import PydanticAIModelClient, encode_context
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.tools.contracts import project_tool_result
 from eidos_runtime.tools.registry import ToolRegistry
 from eidos_runtime.tools.view_image import (
@@ -309,18 +316,27 @@ def test_encode_context_projects_an_actual_binary_content_for_view_image(
     canonical = _canonical_view_image_result(path, data)
 
     messages = encode_context(
-        ({
-            "type": "tool_result",
-            "callId": "call-image",
-            "name": "view_image",
-            "result": json.dumps(canonical),
-        },),
+        (
+            {
+                "type": "tool_call",
+                "callId": "call-image",
+                "name": "view_image",
+                "arguments": "{}",
+                "responseId": "response-1",
+            },
+            {
+                "type": "tool_result",
+                "callId": "call-image",
+                "name": "view_image",
+                "result": json.dumps(canonical),
+            },
+        ),
         supports_images=True,
         image_authority=_authority(tmp_path),
     )
 
-    assert isinstance(messages[0], ModelRequest)
-    part = messages[0].parts[0]
+    assert isinstance(messages[-1], ModelRequest)
+    part = messages[-1].parts[0]
     assert isinstance(part, ToolReturnPart)
     assert isinstance(part.content, list)
     assert any(isinstance(value, str) and '"toolName":"view_image"' in value for value in part.content)
@@ -348,22 +364,29 @@ def test_encode_context_resolves_dynamic_image_authority_at_projection_time(
             (skill,) if active else (),
         )
 
-    with pytest.raises(ValueError, match="view_image_projection_failed"):
-        encode_context(({
+    context = (
+        {
+            "type": "tool_call",
+            "callId": "image-1",
+            "name": "view_image",
+            "arguments": "{}",
+            "responseId": "response-1",
+        },
+        {
             "type": "tool_result",
             "callId": "image-1",
             "name": "view_image",
             "result": json.dumps(canonical),
-        },), supports_images=True, image_authority=authority)
+        },
+    )
+    with pytest.raises(ValueError, match="view_image_projection_failed"):
+        encode_context(context, supports_images=True, image_authority=authority)
 
     active = True
-    messages = encode_context(({
-        "type": "tool_result",
-        "callId": "image-1",
-        "name": "view_image",
-        "result": json.dumps(canonical),
-    },), supports_images=True, image_authority=authority)
-    part = messages[0].parts[0]
+    messages = encode_context(
+        context, supports_images=True, image_authority=authority
+    )
+    part = messages[-1].parts[0]
     assert isinstance(part, ToolReturnPart)
     assert any(isinstance(value, BinaryContent) for value in part.content)
 
@@ -377,12 +400,21 @@ def test_encode_context_fails_closed_when_view_image_hash_changes(tmp_path: Path
 
     with pytest.raises(ValueError, match="view_image_result_changed"):
         encode_context(
-            ({
-                "type": "tool_result",
-                "callId": "call-image",
-                "name": "view_image",
-                "result": json.dumps(canonical),
-            },),
+            (
+                {
+                    "type": "tool_call",
+                    "callId": "call-image",
+                    "name": "view_image",
+                    "arguments": "{}",
+                    "responseId": "response-1",
+                },
+                {
+                    "type": "tool_result",
+                    "callId": "call-image",
+                    "name": "view_image",
+                    "result": json.dumps(canonical),
+                },
+            ),
             supports_images=True,
             image_authority=_authority(tmp_path),
         )
@@ -396,13 +428,215 @@ def test_encode_context_keeps_image_result_text_only_without_image_capability(
     path.write_bytes(data)
     canonical = _canonical_view_image_result(path, data)
 
-    messages = encode_context(({
-        "type": "tool_result",
-        "callId": "call-image",
-        "name": "view_image",
-        "result": json.dumps(canonical),
-    },), image_authority=_authority(tmp_path))
+    messages = encode_context((
+        {
+            "type": "tool_call",
+            "callId": "call-image",
+            "name": "view_image",
+            "arguments": "{}",
+            "responseId": "response-1",
+        },
+        {
+            "type": "tool_result",
+            "callId": "call-image",
+            "name": "view_image",
+            "result": json.dumps(canonical),
+        },
+    ), image_authority=_authority(tmp_path))
 
-    part = messages[0].parts[0]
+    part = messages[-1].parts[0]
     assert isinstance(part, ToolReturnPart)
     assert isinstance(part.content, str)
+
+
+@pytest.mark.parametrize("image_positions", [(0,), (1,), (2,), (0, 2)])
+def test_chat_completion_maps_every_tool_reply_before_batch_images(
+    tmp_path: Path,
+    image_positions: tuple[int, ...],
+) -> None:
+    data = _png_bytes()
+    path = tmp_path / "image.png"
+    path.write_bytes(data)
+    canonical = _canonical_view_image_result(path, data)
+    context: list[dict[str, object]] = [{"type": "user", "content": "Inspect."}]
+    for index in range(3):
+        call_id = f"call-{index}"
+        name = "view_image" if index in image_positions else "read_file"
+        context.extend((
+            {
+                "type": "tool_call",
+                "callId": call_id,
+                "name": name,
+                "arguments": "{}",
+                "responseId": "response-1",
+            },
+            {
+                "type": "tool_result",
+                "callId": call_id,
+                "name": name,
+                "result": (
+                    json.dumps(canonical)
+                    if index in image_positions
+                    else f"text result {index}"
+                ),
+            },
+        ))
+
+    messages = encode_context(
+        tuple(context),
+        supports_images=True,
+        image_authority=_authority(tmp_path),
+    )
+    tool_request = messages[-1]
+    assert isinstance(tool_request, ModelRequest)
+    tool_returns = [part for part in tool_request.parts if isinstance(part, ToolReturnPart)]
+    assert [part.tool_call_id for part in tool_returns] == [
+        "call-0", "call-1", "call-2",
+    ]
+
+    model = OpenAIChatModel(
+        "deepseek-flash",
+        provider=DeepSeekProvider(api_key="offline-fixture"),
+    )
+    wire_messages = asyncio.run(
+        model._map_messages(messages, ModelRequestParameters())
+    )
+    assert [message["role"] for message in wire_messages] == [
+        "user", "assistant", "tool", "tool", "tool", "user",
+    ]
+    assert [
+        message["tool_call_id"]
+        for message in wire_messages
+        if message["role"] == "tool"
+    ] == ["call-0", "call-1", "call-2"]
+    image_content = wire_messages[-1]["content"]
+    assert isinstance(image_content, list)
+    assert sum(part["type"] == "image_url" for part in image_content) == len(
+        image_positions
+    )
+
+
+def test_chat_completion_wire_payload_keeps_image_after_all_batch_tool_replies(
+    tmp_path: Path,
+) -> None:
+    data = _png_bytes()
+    path = tmp_path / "image.png"
+    path.write_bytes(data)
+    canonical = _canonical_view_image_result(path, data)
+    context = (
+        {"type": "user", "content": "Inspect these results."},
+        {
+            "type": "assistant",
+            "content": "Progress.",
+            "responseId": "response-1",
+        },
+        {
+            "type": "tool_call",
+            "callId": "call-image",
+            "name": "view_image",
+            "arguments": "{}",
+            "responseId": "response-1",
+        },
+        {
+            "type": "tool_call",
+            "callId": "call-text",
+            "name": "read_file",
+            "arguments": "{}",
+            "responseId": "response-1",
+        },
+        {
+            "type": "tool_result",
+            "callId": "call-image",
+            "name": "view_image",
+            "result": json.dumps(canonical),
+        },
+        {
+            "type": "tool_result",
+            "callId": "call-text",
+            "name": "read_file",
+            "result": "text result",
+        },
+    )
+    payloads: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"id":"response-1","object":"chat.completion.chunk",'
+                b'"created":0,"model":"deepseek-flash",'
+                b'"choices":[{"index":0,"delta":{"content":"OK"},'
+                b'"finish_reason":null}]}\n\n'
+                b'data: {"id":"response-1","object":"chat.completion.chunk",'
+                b'"created":0,"model":"deepseek-flash",'
+                b'"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}'
+                b'\n\ndata: [DONE]\n\n'
+            ),
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    openai_client = AsyncOpenAI(
+        api_key="offline-fixture",
+        base_url="https://api.deepseek.com",
+        max_retries=0,
+        http_client=http_client,
+    )
+    kernel = RuntimeAsyncKernel()
+    kernel.start()
+    client = PydanticAIModelClient(
+        OpenAIChatModel(
+            "deepseek-flash",
+            provider=DeepSeekProvider(openai_client=openai_client),
+        ),
+        ModelProfileSpec(
+            provider_id="deepseek",
+            model_id="deepseek-flash",
+            context_window_tokens=4096,
+            max_output_tokens=512,
+            request_timeout_seconds=5.0,
+            supports_images=True,
+        ),
+        openai_client=openai_client,
+        image_authority=_authority(tmp_path),
+        async_kernel=kernel,
+    )
+    try:
+        response = client.complete(
+            context,
+            threading.Event(),
+            lambda _delta: None,
+            instructions="fixture instructions",
+            allow_tools=False,
+        )
+        assert response.text == "OK"
+    finally:
+        client.close()
+        kernel.close()
+        asyncio.run(http_client.aclose())
+
+    assert len(payloads) == 1
+    wire_messages = payloads[0]["messages"]
+    assert isinstance(wire_messages, list)
+    assert [message["role"] for message in wire_messages][-5:] == [
+        "user", "assistant", "tool", "tool", "user",
+    ]
+    tool_messages = [message for message in wire_messages if message["role"] == "tool"]
+    assert [message["tool_call_id"] for message in tool_messages] == [
+        "call-image", "call-text",
+    ]
+    image_messages = [
+        message
+        for message in wire_messages
+        if message["role"] == "user"
+        and isinstance(message.get("content"), list)
+        and any(part.get("type") == "image_url" for part in message["content"])
+    ]
+    assert len(image_messages) == 1
+    last_tool_index = max(
+        index for index, message in enumerate(wire_messages)
+        if message["role"] == "tool"
+    )
+    image_index = wire_messages.index(image_messages[0])
+    assert last_tool_index < image_index
