@@ -86,6 +86,7 @@ class ContextBuilder:
             step_policy is not None and any(name.startswith("memory_") for name in step_policy.available_tools)
         )
         collaboration = CollaborationRepository(self.store.database)
+        has_project = not self.store.run_is_projectless(run_id)
         instructions = InstructionResolver().resolve(
             rule_snapshot=rule_resolution_snapshot,
             skill_catalog_context=catalog_context,
@@ -95,6 +96,7 @@ class ContextBuilder:
             memory_access=memory_access if memory_advertised or memory_access.temporary else None,
             work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
             agent_role=collaboration.child_role_for_run(run_id),
+            has_project=has_project,
         )
         source_ids = set(
             facts.compact_summary.source_item_ids if facts.compact_summary else ()
@@ -356,6 +358,7 @@ class ContextBuilder:
                     selected_skill_context=selected_skill_context, step_policy=step_policy,
                     work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
                     memory_tools=memory_tools, memory_access=memory_access,
+                    has_project=has_project,
                 )
             context.insert(0, {"type": "user", "sectionId": "memory-evidence",
                                "content": projection.rendered_payload,

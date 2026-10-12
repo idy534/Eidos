@@ -138,6 +138,34 @@ describe("artifact previews and feedback", () => {
     expect(screen.queryByRole("link", { name: "outside" })).not.toBeInTheDocument();
   });
 
+  it("opens explicit conversation file links at their parsed position", () => {
+    const value = artifactValue();
+    render(
+      <ArtifactProvider value={value}>
+        <MarkdownContent content={[
+          "[app.ts (line 42, column 5)](</workspace/My%20Project/src/app.ts:42:5>)",
+          "[legacy.ts](</workspace/src/legacy.ts#L19C3>)",
+          "[relative](src/relative.ts)",
+          "`bare.ts`",
+        ].join("\n\n")} />
+      </ArtifactProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "app.ts (line 42, column 5)" }));
+    expect(value.openFile).toHaveBeenNthCalledWith(1, "My Project/src/app.ts", {
+      line: 42,
+      column: 5,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "legacy.ts" }));
+    expect(value.openFile).toHaveBeenNthCalledWith(2, "src/legacy.ts", {
+      line: 19,
+      column: 3,
+    });
+    expect(screen.queryByRole("link", { name: "relative" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "bare.ts" })).not.toBeInTheDocument();
+    expect(screen.getByText("bare.ts").closest("code")).toBeInTheDocument();
+  });
+
   it("collects persisted result files while retaining the incomplete warning", () => {
     const item = changeItem({
       toolCall: {

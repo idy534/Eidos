@@ -311,15 +311,15 @@ function createWindow(): BrowserWindow {
   window.webContents.on("context-menu", (_event, params) => {
     if (!params.isEditable && !params.selectionText) return;
     const template: Electron.MenuItemConstructorOptions[] = params.isEditable ? [
-      { role: "undo", enabled: params.editFlags.canUndo },
-      { role: "redo", enabled: params.editFlags.canRedo },
+      { role: "undo", label: "撤销", enabled: params.editFlags.canUndo },
+      { role: "redo", label: "重做", enabled: params.editFlags.canRedo },
       { type: "separator" },
-      { role: "cut", enabled: params.editFlags.canCut },
-      { role: "copy", enabled: params.editFlags.canCopy },
-      { role: "paste", enabled: params.editFlags.canPaste },
-      { role: "pasteAndMatchStyle", enabled: params.editFlags.canPaste },
-      { role: "selectAll" },
-    ] : [{ role: "copy", enabled: params.editFlags.canCopy }];
+      { role: "cut", label: "剪切", enabled: params.editFlags.canCut },
+      { role: "copy", label: "复制", enabled: params.editFlags.canCopy },
+      { role: "paste", label: "粘贴", enabled: params.editFlags.canPaste },
+      { role: "pasteAndMatchStyle", label: "粘贴并匹配样式", enabled: params.editFlags.canPaste },
+      { role: "selectAll", label: "全选" },
+    ] : [{ role: "copy", label: "复制", enabled: params.editFlags.canCopy }];
     if (params.selectionText && !params.isEditable) template.push(
       { type: "separator" },
       { label: "引用到输入框", enabled: params.selectionText.length <= 65536,

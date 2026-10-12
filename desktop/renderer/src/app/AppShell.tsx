@@ -34,7 +34,7 @@ import {
   WorkspaceExplorer,
   type WorkspaceFileOpenRequest,
 } from "../components/WorkspaceExplorer.js";
-import { ArtifactProvider, artifactPath } from "../components/ArtifactContext.js";
+import { ArtifactProvider, artifactPath, type WorkspaceFilePosition } from "../components/ArtifactContext.js";
 import { BrowserPanel } from "../components/BrowserPanel.js";
 import {
   WorkspaceDock,
@@ -1047,13 +1047,18 @@ export function AppShell({ runtime }: AppShellProps) {
     await window.eidosRuntime.showItemInFolder(`${root.replace(/\/$/, "")}/${resolved}`);
   }
 
-  function handleOpenFileInDock(path: string): void {
+  function handleOpenFileInDock(path: string, position?: WorkspaceFilePosition): void {
     if (!currentSnapshot) return;
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
     if (!resolved) return;
     openTool("files");
-    setExplorerOpenRequest({ path: resolved, requestId: ++fileOpenSequenceRef.current });
+    setExplorerOpenRequest({
+      path: resolved,
+      requestId: ++fileOpenSequenceRef.current,
+      ...(position?.line === undefined ? {} : { line: position.line }),
+      ...(position?.column === undefined ? {} : { column: position.column }),
+    });
   }
 
   function toggleDock(): void {

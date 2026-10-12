@@ -1,10 +1,20 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { getOfficialFileIcon } from "./FileIcons.js";
+
+export interface WorkspaceFilePosition {
+  line?: number;
+  column?: number;
+}
+
+export interface WorkspaceFileLink extends WorkspaceFilePosition {
+  path: string;
+}
 
 export interface ArtifactActions {
   sessionId: string;
   executionRoot: string;
   projectId?: string;
-  openFile(path: string): void;
+  openFile(path: string, position?: WorkspaceFilePosition): void;
   openBrowser(url: string): void;
   openExternal?: ((path: string) => void | Promise<void>) | undefined;
   openReview?: ((request: { runId: string; path?: string; itemId?: string }) => void) | undefined;
@@ -36,6 +46,42 @@ export function artifactPath(href: string, root: string, documentPath?: string, 
       else if (part && part !== ".") parts.push(part);
     }
     return parts.length && !value.includes("\0") ? parts.join("/") : undefined;
+  } catch { return undefined; }
+}
+
+/** Conversation links require an absolute target; document links retain their local base. */
+export function workspaceFileLink(href: string, root: string, documentPath?: string): WorkspaceFileLink | undefined {
+  try {
+    if (!href || href.startsWith("#")) return undefined;
+    let value = href;
+    if (value.startsWith("file://")) {
+      if (!documentPath) return undefined;
+      const url = new URL(value);
+      if (url.hostname) return undefined;
+      value = url.pathname + url.hash;
+    }
+    const hashIndex = value.indexOf("#");
+    const fragment = hashIndex < 0 ? undefined : value.slice(hashIndex + 1);
+    if (hashIndex >= 0) value = value.slice(0, hashIndex);
+    const fragmentPosition = fragment?.match(/^L(\d+)(?:C(\d+))?$/);
+    if (fragment !== undefined && !fragmentPosition && !documentPath) return undefined;
+    const suffixPosition = value.match(/:(\d+)(?::(\d+))?$/);
+    if (suffixPosition && fragmentPosition) return undefined;
+    if (suffixPosition) value = value.slice(0, -suffixPosition[0].length);
+    const position = suffixPosition ?? fragmentPosition;
+    const line = position ? Number(position[1]) : undefined;
+    const column = position?.[2] === undefined ? undefined : Number(position[2]);
+    if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) return undefined;
+    if (column !== undefined && (!Number.isSafeInteger(column) || column < 1)) return undefined;
+    value = decodeURIComponent(value);
+    if (/^[a-z][a-z\d+.-]*:/i.test(value) || value.startsWith("//")) return undefined;
+    if (!documentPath && !value.startsWith("/")) return undefined;
+    const path = artifactPath(value, root, documentPath, true);
+    return path && path.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(path) ? {
+      path,
+      ...(line === undefined ? {} : { line }),
+      ...(column === undefined ? {} : { column }),
+    } : undefined;
   } catch { return undefined; }
 }
 
@@ -86,8 +132,23 @@ export function ArtifactImage({ path, alt, version }: { path: string; alt: strin
 export function ArtifactLink({ href, documentPath, children }: { href?: string; documentPath?: string; children: ReactNode }) {
   const actions = useArtifacts();
   if (!href || !actions) return <span>{children}</span>;
-  const path = artifactPath(href, actions.executionRoot, documentPath);
   const web = /^https?:\/\//i.test(href);
-  if (!path && !web) return <span title={href}>{children}</span>;
-  return <a href={href} onClick={(event) => { event.preventDefault(); if (web) actions.openBrowser(href); else if (path) actions.openFile(path); }}>{children}</a>;
+  if (web) return <a href={href} onClick={(event) => { event.preventDefault(); actions.openBrowser(href); }}>{children}</a>;
+  const target = workspaceFileLink(href, actions.executionRoot, documentPath);
+  if (!target) return <span title={href}>{children}</span>;
+  const title = `在工作区中打开 ${target.path}${target.line ? ` (第 ${target.line} 行${target.column ? `，第 ${target.column} 列` : ""})` : ""}`;
+  return (
+    <a href={href} className={documentPath ? undefined : "markdown-file-link"} title={title}
+      onClick={(event) => {
+        event.preventDefault();
+        const { path, ...position } = target;
+        if (position.line === undefined && position.column === undefined) actions.openFile(path);
+        else actions.openFile(path, position);
+      }}>
+      {documentPath ? children : <>
+        <span className="markdown-file-icon" aria-hidden="true">{getOfficialFileIcon(target.path)}</span>
+        <span className="markdown-file-text">{children}</span>
+      </>}
+    </a>
+  );
 }

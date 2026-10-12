@@ -8,23 +8,16 @@
 
 优先顺序：
 
-1. 先运行直接相关的测试文件或 `pnpm test:affected`。
+1. 执行者先运行直接相关的测试文件。执行者只有在确认 `pnpm test:affected` 会选择定向测试时才使用该入口；该入口若会运行 Runtime Fast 或完整其他层，执行者应改用更窄的测试。
 2. 测试失败后，只重跑失败测试或对应领域，不要立刻重跑 Full Suite。
-3. 任务收尾至少运行 `pnpm test:runtime:fast`。
-4. 涉及多组件边界时补充 `pnpm test:integration` 或对应 focused integration tests。
+3. 执行者在收尾时运行覆盖本次改动的定向测试。若没有合适的定向入口，执行者再考虑 Runtime Fast；Runtime Fast 不是默认要求。
+4. 涉及多组件边界时，执行者运行对应的定向集成测试。只有没有合适的定向入口时，执行者才考虑更广的集成层。
 
-## 什么时候必须 Full
+## Full Suite 的运行条件
 
-以下修改必须在最终验证阶段补充 `pnpm test:runtime:full`；涉及 Desktop 边界时同时运行对应 Desktop 验证：
+用户明确要求完整回归或要求执行完整套件命令时，执行者才运行 Full Suite。Runtime Full 命令包括 `pnpm test:runtime:full`、它的兼容入口 `pnpm test:runtime` 和包含 Runtime Full 的 `pnpm check:python:full`。项目级入口包括 `pnpm test` 和 `pnpm test:full`。完整 Desktop/Main 套件包括 `pnpm test:desktop` 和 `pnpm test:main`。
 
-- RuntimeEngine、RunSupervisor、Runtime Loop 或最终化生命周期；
-- SQLite Schema、Migration、Persistence Contract、Recovery 或 Outbox；
-- Protocol、共享 DTO、事件契约；
-- Tool Runtime、Tool Orchestrator、Approval 或副作用提交；
-- Sandbox、Seatbelt、Shell 权限模型；
-- Git Backend、Worktree、Checkpoint/Fork 执行身份；
-- 全局 Python/Test/Build 配置；
-- 用户明确要求完整回归。
+核心生命周期、持久化、协议、Tool、Sandbox、Git/Worktree 或全局配置变化时，按影响范围选择定向测试和必要的集成测试。这些变化本身不要求 Full Suite。
 
 `large_repository` 不属于普通 Full。只有 Repository Map/Index/Retrieval 的规模行为、large-repository fixture 本身变化，或用户明确要求规模验收时，额外运行：
 

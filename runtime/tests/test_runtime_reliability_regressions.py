@@ -12,6 +12,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.model.client import ModelResponse, ScriptedModel  # noqa: E402
+from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository  # noqa: E402
 from eidos_runtime.runtime.events import RuntimeEvents  # noqa: E402
 from eidos_runtime.runtime.finalizer import RunFinalizer  # noqa: E402
 from eidos_runtime.runtime.provider_control import (  # noqa: E402
@@ -118,6 +119,48 @@ class RuntimeReliabilityRegressionTests(unittest.TestCase):
             if item["kind"] == "assistant_message"
         ]
         self.assertFalse(any("DSML" in str(value) for value in assistant_text))
+
+    def test_finalizer_fallback_adds_file_reference_rules_only_for_project_runs(self) -> None:
+        project_root = self.workspace / "project"
+        project_root.mkdir()
+        project = ProjectWorktreeRepository(self.store.database).get_or_create_project(
+            project_root
+        )
+        project_session = self.store.typed_runtime_repository().create_session(
+            str(project_root), project_id=project.id
+        ).value
+        projectless_root = self.data / f".{self.data.name}-projectless" / "finalizer"
+        projectless_root.mkdir(parents=True)
+        projectless_session = self.store.typed_runtime_repository().create_session(
+            str(projectless_root), projectless=True
+        ).value
+
+        cases = (
+            (projectless_session.id, False),
+            (project_session.id, True),
+        )
+        for session_id, has_project in cases:
+            with self.subTest(has_project=has_project):
+                run, _ = self.store.create_run(session_id, "Finalize response")
+                model = ScriptedModel([ModelResponse(text="Done")])
+                outcome = RunFinalizer(
+                    self.store,
+                    model,
+                    RuntimeEvents(lambda _message: None),
+                    SensitiveScanner(),
+                    RuntimePhaseTracker(),
+                ).finalize(
+                    run["id"],
+                    (),
+                    "context_still_over_budget",
+                    threading.Event(),
+                )
+
+                self.assertIsNone(outcome.failure_reason)
+                self.assertEqual(
+                    "Project file references" in model.instructions_history[0],
+                    has_project,
+                )
 
     @unittest.skipUnless(sys.platform == "darwin", "shell preflight uses macOS fd identity")
     def test_shell_preflight_accepts_codex_style_rust_token_sources(self) -> None:

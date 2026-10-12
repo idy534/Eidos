@@ -150,7 +150,9 @@ class RunFinalizer:
             check_cancel=lambda: _raise_finalization_cancel(request_cancel),
         )
         resolved = InstructionResolver().for_finalization(
-            instructions or InstructionResolver().resolve()
+            instructions or InstructionResolver().resolve(
+                has_project=not self.store.run_is_projectless(run_id),
+            )
         )
 
         try:

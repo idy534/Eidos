@@ -4,6 +4,8 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
@@ -19,10 +21,12 @@ from eidos_runtime.extensions.skills import RetainedContextSection  # noqa: E402
 from eidos_runtime.model.instructions import InstructionResolver  # noqa: E402
 from eidos_runtime.model.prompts import (  # noqa: E402
     BASE_AGENT_INSTRUCTIONS,
+    PROJECT_FILE_REFERENCE_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     ResolvedInstructions,
 )
+from eidos_runtime.persistence.worktrees import ProjectWorktreeRepository  # noqa: E402
 from eidos_runtime.runtime.resolution import (  # noqa: E402
     RuleResolutionSnapshot,
     RuleSourceSnapshot,
@@ -163,6 +167,31 @@ class InstructionResolverTests(unittest.TestCase):
         self.assertNotIn("project-rule:", resolved.text)
         self.assertNotIn("selected-skill:", resolved.text)
 
+    def test_project_file_reference_layer_is_added_only_for_project_sessions(self) -> None:
+        resolver = InstructionResolver()
+
+        projectless = resolver.resolve()
+        project = resolver.resolve(has_project=True)
+
+        self.assertNotIn(
+            "project-file-references",
+            {layer.id for layer in projectless.layers},
+        )
+        layer = next(
+            layer for layer in project.layers
+            if layer.id == "project-file-references"
+        )
+        self.assertEqual(layer.role, "developer")
+        self.assertEqual(layer.content, PROJECT_FILE_REFERENCE_INSTRUCTIONS)
+        for example in (
+            "[filename](</absolute/path/to/filename>)",
+            "[filename (line N)](</absolute/path/to/filename:N>)",
+            "[filename (line N, column M)](</absolute/path/to/filename:N:M>)",
+            "[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)",
+            "A Worktree Session uses its Worktree root.",
+        ):
+            self.assertIn(example, layer.content)
+
     def test_lower_authority_text_is_preserved_without_changing_base_layers(self) -> None:
         resolver = InstructionResolver()
         baseline = resolver.resolve(
@@ -275,6 +304,56 @@ class ContextBuilderInstructionTests(unittest.TestCase):
         self.assertGreater(
             expanded.budget.estimated_input_tokens,
             baseline.budget.estimated_input_tokens,
+        )
+
+    def test_project_file_reference_prompt_uses_persisted_binding_after_memory_rebuild(self) -> None:
+        project_root = self.workspace / "project"
+        project_root.mkdir()
+        project = ProjectWorktreeRepository(self.store.database).get_or_create_project(
+            project_root
+        )
+        project_session = self.store.typed_runtime_repository().create_session(
+            str(project_root), project_id=project.id
+        ).value
+        project_run, _ = self.store.create_run(project_session.id, "Project request")
+
+        projectless_root = self.data / f".{self.data.name}-projectless" / "chat-root"
+        projectless_root.mkdir(parents=True)
+        projectless_session = self.store.typed_runtime_repository().create_session(
+            str(projectless_root), projectless=True
+        ).value
+        projectless_run, _ = self.store.create_run(
+            projectless_session.id, "Projectless request"
+        )
+
+        projection = SimpleNamespace(
+            epochs={},
+            generations={},
+            entries=[],
+            rendered_payload="Historical memory evidence:\nconfirmed fact\n",
+            token_estimate=8,
+        )
+        with patch.object(
+            self.store.database.memory, "project", return_value=projection
+        ):
+            project_context = ContextBuilder(self.store).build(project_run["id"])
+            projectless_context = ContextBuilder(self.store).build(
+                projectless_run["id"], projectless=True
+            )
+
+        project_layer_ids = {layer.id for layer in project_context.instructions.layers}
+        projectless_layer_ids = {
+            layer.id for layer in projectless_context.instructions.layers
+        }
+        self.assertIn("project-file-references", project_layer_ids)
+        self.assertNotIn("project-file-references", projectless_layer_ids)
+        self.assertIn(
+            PROJECT_FILE_REFERENCE_INSTRUCTIONS,
+            project_context.instructions.system_text,
+        )
+        self.assertNotIn(
+            PROJECT_FILE_REFERENCE_INSTRUCTIONS,
+            projectless_context.instructions.system_text,
         )
 
 

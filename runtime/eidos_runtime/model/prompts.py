@@ -47,6 +47,22 @@ Declare only standalone files the user expects to receive. Project source, confi
 Call declare_outputs after the final file exists and before the final answer; declare it again after revision. If declaration fails, report the failure rather than claiming delivery. Links do not replace declaration."""
 
 
+PROJECT_FILE_REFERENCE_INSTRUCTIONS = """Project file references
+Use explicit Markdown links when referencing confirmed files in this project's current execution workspace.
+
+Standard formats:
+- File: [filename](</absolute/path/to/filename>)
+- Line: [filename (line N)](</absolute/path/to/filename:N>)
+- Line and column: [filename (line N, column M)](</absolute/path/to/filename:N:M>)
+
+Examples (illustrative paths only; replace them with confirmed paths):
+[app.ts](</workspace/My Project/src/app.ts>)
+[app.ts (line 42)](</workspace/My Project/src/app.ts:42>)
+[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)
+
+Use the actual execution workspace from the runtime context. A Worktree Session uses its Worktree root. Keep angle brackets around the link destination so paths containing spaces remain valid Markdown. The destination determines the file and position; the label is display text only. Line and column numbers are 1-based. Omit positions you have not verified, and do not provide line ranges. Do not wrap the Markdown link in backticks. Bare filenames and relative paths in the conversation are not clickable file references. If you cannot confirm a target, use ordinary text rather than inventing a path or position."""
+
+
 
 MEMORY_POLICY_INSTRUCTIONS = (
     "Use relevant memory as defaults within its stated scope and conditions. "

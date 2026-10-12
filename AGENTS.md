@@ -319,6 +319,7 @@ OpenTelemetry 和 Sentry 必须作为后续独立 PR，不得混入核心重构�
 删除旧代码前必须有行为等价测试。
 不得以“重构”为名改变未声明的产品行为。
 ## 25. Execution workflow
+执行者在编码前、编码后和提交前都不默认运行 Full Suite。用户明确要求完整回归或要求执行某个完整套件命令时，执行者才运行 Full Suite。
 开始编码前：
 1. 读取任务、本文件和相关 `docs/current-*`
 2. 定位当前代码、测试、协议和数据影响
@@ -328,24 +329,25 @@ OpenTelemetry 和 Sentry 必须作为后续独立 PR，不得混入核心重构�
 6. 确定最小 PR 边界和验收条件
 7. 再开始修改
 实现中：
-1. 先添加或调整测试
+1. 按行为变化添加或调整测试
 2. 保持旧行为可验证
 3. 引入薄 Adapter
 4. 迁移一个调用路径
 5. 删除被替代实现
 6. 更新当前架构文档
-7. 运行定向和完整验证
+7. 运行覆盖改动行为的定向验证；跨层影响时补充对应的定向集成验证
 完成后必须报告修改范围、Diff 规模、保留语义、采用依赖、删除机制、兼容性、数据影响、未完成事项和测试结果。
 ## 26. Test gates
-按实际变更边界选择验证，具体分层遵循 `runtime/AGENTS.md`、`desktop/AGENTS.md` 和 `DEVELOPMENT.md`。
-- Python 变化执行 Ruff、Deptry 和相关 Runtime 测试；核心执行、持久化、恢复、权限或全局配置变化执行 Runtime Full。
-- 协议变化同步 Fixture 并执行双端协议验证。
-- Desktop 变化执行相关 Renderer/Main 测试和构建；共享协议或生命周期变化补充 Desktop Full。
+执行者默认先运行与改动行为直接相关的定向测试。执行者只有在确认 `pnpm test:affected` 会选择定向测试时才使用该入口；若映射会启动完整测试层或无关的 Fast 套件，执行者应直接选择更窄的测试。没有合适的定向入口时，执行者再考虑受影响层的 Fast。Fast 不是每项任务的收尾要求。
+- Python 变化执行 Ruff、Deptry 和相关 Runtime 定向测试；核心执行、持久化、恢复、权限或全局配置变化也按具体影响选择定向和集成测试，不自动要求 Runtime Full。
+- 协议变化同步 Fixture 并执行覆盖两端契约的定向验证。
+- Desktop 变化执行相关 Renderer/Main 测试和必要构建；共享协议或生命周期变化补充对应的跨层定向测试，不自动要求 Desktop Full。
 - Sandbox 或原生 Shell 边界变化执行真实 Seatbelt 验证。
 - 启动、退出、preload 和进程生命周期变化执行 Electron smoke。
 - Bundle、依赖、Packaging 或 Release 边界变化执行对应打包验证。
 - 提交前执行 `git diff --check`，检查锁文件和实际依赖审计结果。
-不因创建 PR 自动要求与变更无关的 Full、原生或 DMG 验证，也不因前置检查失败掩盖独立测试结果。
+`pnpm test`、`pnpm test:full`、`pnpm test:runtime:full`、`pnpm test:runtime`、`pnpm check:python:full`、`pnpm test:main` 和 `pnpm test:desktop` 都会运行完整套件或完整层级。用户明确要求 Full Suite 或明确要求执行其中一个完整套件命令时，执行者才运行这些命令。核心或高风险改动本身不构成运行 Full Suite 的理由。
+不因创建 PR 自动要求与变更无关的原生或 DMG 验证，也不因前置检查失败掩盖独立测试结果。
 测试无法执行时必须说明具体原因，不得把跳过写成“通过”。
 ## 27. Reliability cases
 涉及对应模块时必须覆盖：

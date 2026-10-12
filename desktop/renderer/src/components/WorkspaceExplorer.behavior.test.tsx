@@ -1,7 +1,23 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceExplorer } from "./WorkspaceExplorer.js";
+
+const shikiMock = vi.hoisted(() => ({ codeToHtml: vi.fn() }));
+vi.mock("shiki/bundle/web", () => shikiMock);
+
+function highlightedCode(code: string): string {
+  const lines = code.split("\n");
+  if (lines.length > 1 && lines.at(-1) === "") lines.pop();
+  return `<pre class="shiki"><code>${lines.map((line, index) => (
+    `<span class="line" data-source-line="${index + 1}"><span>${line}</span></span>`
+  )).join("\n")}</code></pre>`;
+}
+
+beforeEach(() => {
+  shikiMock.codeToHtml.mockReset();
+  shikiMock.codeToHtml.mockImplementation(async (code: string) => highlightedCode(code));
+});
 
 
 describe("WorkspaceExplorer", () => {
@@ -420,6 +436,150 @@ describe("WorkspaceExplorer", () => {
     await waitFor(() => expect(readPreview2).toHaveBeenCalledWith("session-a", "other.js"));
     await waitFor(() => expect(container.querySelector(".workspace-code-preview"))
       .toHaveTextContent("console.log('other');"));
+  });
+
+  it("repositions and selects the requested column when the same file is opened again", async () => {
+    const listDirectory = vi.fn(async () => ({ path: ".", entries: [], truncated: false }));
+    const readPreview = vi.fn(async () => ({
+      path: "src/target.txt",
+      kind: "text" as const,
+      sizeBytes: 16,
+      truncated: false,
+      content: "alpha\nbeta\ngamma",
+    }));
+    const scrolled: HTMLElement[] = [];
+    const originalRangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, right: 0 }),
+    });
+    const scrollIntoView = vi.fn(function (this: HTMLElement) {
+      scrolled.push(this);
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      const { rerender } = render(
+        <WorkspaceExplorer
+          sessionId="session-a"
+          listDirectory={listDirectory}
+          readPreview={readPreview}
+          openRequest={{ path: "src/target.txt", requestId: 1, line: 2, column: 2 }}
+        />,
+      );
+
+      await waitFor(() => expect(window.getSelection()?.toString()).toBe("e"));
+      expect(scrolled.at(-1)).toHaveClass("preview-line");
+
+      rerender(
+        <WorkspaceExplorer
+          sessionId="session-a"
+          listDirectory={listDirectory}
+          readPreview={readPreview}
+          openRequest={{ path: "src/target.txt", requestId: 2, line: 3, column: 3 }}
+        />,
+      );
+
+      await waitFor(() => expect(window.getSelection()?.toString()).toBe("m"));
+      expect(scrolled).toHaveLength(2);
+      expect(readPreview).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalRangeRect) Object.defineProperty(Range.prototype, "getBoundingClientRect", originalRangeRect);
+      else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
+      if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+    }
+  });
+
+  it("reapplies line navigation after asynchronous code highlighting", async () => {
+    let finishHighlight: ((html: string) => void) | undefined;
+    shikiMock.codeToHtml.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      finishHighlight = resolve;
+    }));
+    const code = "alpha\nbeta\ngamma";
+    const readPreview = vi.fn(async () => ({
+      path: "src/target.ts",
+      kind: "code" as const,
+      sizeBytes: code.length,
+      truncated: false,
+      content: code,
+      language: "typescript",
+    }));
+    const { container } = render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={vi.fn(async () => ({ path: ".", entries: [], truncated: false }))}
+        readPreview={readPreview}
+        openRequest={{ path: "src/target.ts", requestId: 1, line: 2 }}
+      />,
+    );
+
+    await waitFor(() => expect(finishHighlight).toBeTypeOf("function"));
+    await waitFor(() => expect(window.getSelection()?.toString()).toBe("beta"));
+    window.getSelection()?.removeAllRanges();
+
+    await act(async () => {
+      finishHighlight?.(highlightedCode(code));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(container.querySelector(".workspace-code-preview")).toBeInTheDocument());
+    await waitFor(() => expect(window.getSelection()?.toString()).toBe("beta"));
+    expect(container.querySelector('[data-source-line="2"]')).toBeInTheDocument();
+  });
+
+  it("maps a Markdown source line to its rendered block", async () => {
+    const scrollTargets: HTMLElement[] = [];
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(function (this: HTMLElement) {
+        scrollTargets.push(this);
+      }),
+    });
+    try {
+      render(
+        <WorkspaceExplorer
+          sessionId="session-a"
+          listDirectory={vi.fn(async () => ({ path: ".", entries: [], truncated: false }))}
+          readPreview={vi.fn(async () => ({
+            path: "docs/README.md",
+            kind: "markdown" as const,
+            sizeBytes: 30,
+            truncated: false,
+            content: "# Intro\n\ntext\n\n## Target\n",
+          }))}
+          openRequest={{ path: "docs/README.md", requestId: 1, line: 5 }}
+        />,
+      );
+
+      const target = await screen.findByRole("heading", { name: "Target" });
+      await waitFor(() => expect(scrollTargets.at(-1)).toBe(target));
+      expect(target).toHaveAttribute("data-source-line", "5");
+    } finally {
+      if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+    }
+  });
+
+  it("reports when a requested line is outside a truncated preview", async () => {
+    render(
+      <WorkspaceExplorer
+        sessionId="session-a"
+        listDirectory={vi.fn(async () => ({ path: ".", entries: [], truncated: false }))}
+        readPreview={vi.fn(async () => ({
+          path: "src/large.txt",
+          kind: "text" as const,
+          sizeBytes: 20,
+          truncated: true,
+          content: "first\nsecond",
+        }))}
+        openRequest={{ path: "src/large.txt", requestId: 1, line: 5 }}
+      />,
+    );
+
+    expect(await screen.findByText("目标行超出了当前截断预览。")).toBeInTheDocument();
   });
 
   it("previews a requested file even when its parent cannot be listed", async () => {

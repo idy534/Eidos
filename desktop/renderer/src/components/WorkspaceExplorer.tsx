@@ -9,7 +9,7 @@ import type {
   WorkspaceFilePreview,
 } from "../contracts.js";
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
-import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
+import { useArtifacts, usePreviewUrl, type WorkspaceFilePosition } from "./ArtifactContext.js";
 import { ContextMenu } from "./DropdownMenu.js";
 import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
@@ -23,7 +23,7 @@ interface WorkspaceTreeNode extends WorkspaceDirectoryEntry {
   loaded?: boolean;
 }
 
-export interface WorkspaceFileOpenRequest {
+export interface WorkspaceFileOpenRequest extends WorkspaceFilePosition {
   path: string;
   requestId: number;
 }
@@ -171,6 +171,7 @@ export function WorkspaceExplorer({
   const [previews, setPreviews] = useState<Record<string, WorkspaceFilePreview>>({});
   const [openPreviewPaths, setOpenPreviewPaths] = useState<string[]>([]);
   const [activePreviewPath, setActivePreviewPath] = useState<string>();
+  const [previewNavigation, setPreviewNavigation] = useState<WorkspaceFileOpenRequest>();
   const [previewLoadingPath, setPreviewLoadingPath] = useState<string>();
   const [error, setError] = useState<string>();
   const [treeHeight, setTreeHeight] = useState(320);
@@ -202,6 +203,7 @@ export function WorkspaceExplorer({
     setPreviews({});
     setOpenPreviewPaths([]);
     setActivePreviewPath(undefined);
+    setPreviewNavigation(undefined);
     setPreviewLoadingPath(undefined);
     setError(undefined);
     setLoadingRoot(true);
@@ -277,7 +279,8 @@ export function WorkspaceExplorer({
   }, [listDirectory, loadingPath, nodes, sessionId]);
 
   const previewSequences = useRef(new Map<string, number>());
-  const openFile = useCallback((path: string, refresh = false) => {
+  const openFile = useCallback((path: string, refresh = false, navigation?: WorkspaceFileOpenRequest) => {
+    if (!refresh) setPreviewNavigation(navigation);
     setOpenPreviewPaths((current) => current.includes(path) ? current : [...current, path]);
     setActivePreviewPath(path);
     if (!refresh && previewsRef.current[path]) return;
@@ -314,7 +317,7 @@ export function WorkspaceExplorer({
       setError(INVALID_FILE_PATH_ERROR);
       return;
     }
-    openFile(request.path);
+    openFile(request.path, false, request);
   }, [openFile]);
 
   // Respond to programmatic file open requests from parent
@@ -555,7 +558,8 @@ export function WorkspaceExplorer({
         {previewLoadingPath === activePreviewPath && !activePreview ? (
           <p className="workspace-preview-placeholder" role="status">正在读取文件…</p>
         ) : activePreview ? (
-          <WorkspacePreview key={`${executionKey}:${activePreview.path}:${activePreview.version ?? ""}`} preview={activePreview} />
+          <WorkspacePreview key={`${executionKey}:${activePreview.path}:${activePreview.version ?? ""}`} preview={activePreview}
+            navigation={previewNavigation?.path === activePreview.path ? previewNavigation : undefined} />
         ) : (
           <div className="workspace-preview-placeholder">{activePreviewPath ? "文件预览不可用" : "选择文件以查看预览"}</div>
         )}
@@ -747,14 +751,81 @@ function WorkspaceTreeRow({
 
 export { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 
-function WorkspacePreview({ preview }: { preview: WorkspaceFilePreview }) {
+function selectPreviewPosition(container: HTMLElement, position: WorkspaceFilePosition, markdown: boolean): void {
+  const line = position.line;
+  if (line === undefined) return;
+  const elements = Array.from(container.querySelectorAll<HTMLElement>("[data-source-line]"));
+  const target = markdown
+    ? elements.filter((element) => Number(element.dataset.sourceLine) <= line && Number(element.dataset.sourceEndLine) >= line)
+      .sort((left, right) => (Number(left.dataset.sourceEndLine) - Number(left.dataset.sourceLine)) - (Number(right.dataset.sourceEndLine) - Number(right.dataset.sourceLine)))[0]
+      ?? elements.sort((left, right) => Math.abs(Number(left.dataset.sourceLine) - line) - Math.abs(Number(right.dataset.sourceLine) - line))[0]
+    : elements.find((element) => Number(element.dataset.sourceLine) === line);
+  if (!target) return;
+  target.scrollIntoView({ block: "center", inline: "nearest" });
+  if (markdown) return;
+  const content = target.querySelector<HTMLElement>(".preview-line-code") ?? target;
+  const document = container.ownerDocument;
+  const range = document.createRange();
+  range.selectNodeContents(content);
+  if (position.column !== undefined) {
+    let remaining = position.column - 1;
+    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+    let found = false;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const length = node.textContent?.length ?? 0;
+      if (remaining < length) {
+        range.setStart(node, remaining);
+        range.setEnd(node, remaining + 1);
+        found = true;
+        break;
+      }
+      remaining -= length;
+    }
+    if (!found) range.collapse(false);
+  }
+  const selection = document.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  const pre = content.closest("pre");
+  if (pre && position.column !== undefined) {
+    const rect = range.getBoundingClientRect();
+    const viewport = pre.getBoundingClientRect();
+    if (rect.right > viewport.right) pre.scrollLeft += rect.right - viewport.right;
+    else if (rect.left < viewport.left) pre.scrollLeft -= viewport.left - rect.left;
+  }
+}
+
+function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePreview; navigation?: WorkspaceFileOpenRequest | undefined }) {
   const actions = useArtifacts();
   const { url, error } = usePreviewUrl(["image", "pdf", "html"].includes(preview.kind) ? preview.path : undefined, preview.version);
-  const [source, setSource] = useState(false);
+  const [source, setSource] = useState(preview.kind === "html" && navigation?.line !== undefined);
   const [loadError, setLoadError] = useState("");
+  const [navigationNotice, setNavigationNotice] = useState<string>();
+  const [codeRevision, setCodeRevision] = useState(0);
+  const previewRef = useRef<HTMLElement>(null);
+  const codeReady = useCallback(() => setCodeRevision((value) => value + 1), []);
+  useEffect(() => {
+    if (preview.kind === "html" && navigation?.line !== undefined) setSource(true);
+  }, [navigation?.requestId, navigation?.line, preview.kind]);
+  useEffect(() => {
+    setNavigationNotice(undefined);
+    const line = navigation?.line;
+    if (!previewRef.current || !navigation || line === undefined || !Number.isSafeInteger(line) || line < 1) return;
+    if (navigation.column !== undefined && (!Number.isSafeInteger(navigation.column) || navigation.column < 1)) return;
+    if (preview.kind === "html" && !source) return;
+    if (!["text", "code", "markdown", "html"].includes(preview.kind)) return;
+    const lines = (preview.content ?? "").split("\n");
+    if (lines.length > 1 && lines.at(-1) === "") lines.pop();
+    if (line > lines.length) {
+      setNavigationNotice(preview.truncated ? "目标行超出了当前截断预览。" : "目标行不在当前文件中。");
+      return;
+    }
+    selectPreviewPosition(previewRef.current, navigation, preview.kind === "markdown");
+  }, [navigation, preview.content, preview.kind, preview.truncated, source, codeRevision]);
   return (
-    <article className="workspace-preview">
+    <article className="workspace-preview" ref={previewRef}>
       {preview.truncated && <p className="workspace-preview-notice">预览已截断</p>}
+      {navigationNotice && <p className="workspace-preview-notice" role="status">{navigationNotice}</p>}
       {(error || loadError) && <p role="alert">{error || loadError}</p>}
       {preview.kind === "html" && <div className="artifact-toolbar"><button onClick={() => setSource(!source)}>{source ? "查看预览入口" : "查看源码"}</button><button disabled={!url || preview.truncated} onClick={() => { if (url) actions?.openBrowser(url); }}>打开交互预览</button></div>}
       {preview.kind === "image" ? (url ? <img className="artifact-preview-image" src={url} alt={preview.path} onError={() => setLoadError("图片无法加载，请刷新或检查文件格式。")} /> : <p role="status">正在加载图片…</p>)
@@ -772,6 +843,7 @@ function WorkspacePreview({ preview }: { preview: WorkspaceFilePreview }) {
       ) : preview.kind === "code" || preview.kind === "html" ? (
         <ShikiPreview
           code={preview.content ?? ""}
+          onReady={codeReady}
           {...(preview.language === undefined ? {} : { language: preview.language })}
         />
       ) : (
@@ -790,7 +862,7 @@ function NumberedText({ code }: { code: string }) {
   return (
     <pre className="workspace-text-preview workspace-text-preview--numbered">
       {lines.map((line, index) => (
-        <span className="preview-line" key={index}>
+        <span className="preview-line" data-source-line={index + 1} key={index}>
           <span className="preview-line-number" aria-hidden="true">{index + 1}</span>
           <span className="preview-line-code">{line}</span>
         </span>
@@ -799,8 +871,9 @@ function NumberedText({ code }: { code: string }) {
   );
 }
 
-function ShikiPreview({ code, language }: { code: string; language?: string }) {
+function ShikiPreview({ code, language, onReady }: { code: string; language?: string; onReady?: () => void }) {
   const [html, setHtml] = useState<string>();
+  useEffect(() => { if (html) onReady?.(); }, [html, onReady]);
   useEffect(() => {
     let active = true;
     setHtml(undefined);
@@ -808,6 +881,10 @@ function ShikiPreview({ code, language }: { code: string; language?: string }) {
       const rendered = await codeToHtml(code, {
         lang: language ?? "text",
         theme: "github-light-default",
+        transformers: [{
+          name: "eidos-preview-source-lines",
+          line(node, line) { node.properties["data-source-line"] = line; },
+        }],
       });
       if (active) setHtml(rendered);
     });

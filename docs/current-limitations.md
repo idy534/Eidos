@@ -1,5 +1,16 @@
 # Eidos 当前限制
 
+## 文件引用规则与验证状态（2026-10-12）
+
+- 本轮补齐了 Renderer 和 Runtime 自动化测试。测试覆盖显式绝对链接、路径边界、URL 编码、中文与空格、行列号校验、行片段格式、文档相对链接、裸文件名、同文件重复定位、Shiki 异步高亮、Markdown 块定位、截断预览、项目提示词条件、Memory 提示词重建和 Finalizer 回退。
+- 定向 Runtime 测试通过 15 项；Renderer 纯测试通过 153 项；Renderer 行为测试通过 448 项；Main 快速测试通过 50 项；Desktop 合约测试通过 4 项。`pnpm build`、Ruff、Deptry 和 Python 依赖审计通过。Node 生产依赖审计发现 1 个低危项，因门槛为 high，命令退出码为 0。
+- `pnpm test:runtime:full` 未通过：2,134 passed、91 failed、31 skipped、2 deselected。失败涉及 Patch、权限请求、Shell/Workspace Manifest、Reconciliation、Runtime Loop、依赖绑定、Server 和 Managed Worktree 等套件。两个本次修改的 Runtime 测试文件在定向测试和 Full 中均通过。`pnpm test:fast` 未通过：1,202 passed、42 failed、1 skipped、1,013 deselected；失败的 Runtime 阶段使该串行命令提前退出。合约、Renderer、Main 和 Renderer 行为套件随后分别运行并通过。
+- 本轮没有执行真实 Desktop 人工验收。当前自动测试结果不能替代人工 UI 验收，也不能把 Runtime Full 或 `pnpm test:fast` 描述为通过。
+- Conversation 中的历史裸文件名、行内代码和相对文件链接会显示为文字。系统不改写历史消息，也不通过同名搜索补造目标。显式绝对路径必须属于当前 Session 的 execution root。旧 Worktree 路径不会自动替换为新 Worktree 下的同名文件。
+- 文件链接读取当前文件内容，不提供历史字节快照。文件删除、路径移动、版本变化或预览不支持时，系统继续使用已有读取失败与预览限制提示。绝对路径解决寻址歧义，不保证文件长期存在。
+- 普通文本、代码和 HTML 源码支持行定位与选区。列号按浏览器文本的 UTF-16 偏移解释，超出行尾时选区落在行尾。渲染后的 Markdown 只能定位源文本块，不能精确对应源文本的某个字符列；空白源行会定位到最近块。图片、PDF 和其他非文本预览不应用源码行列位置。超出文件或截断预览的行会显示提示。
+- 后续测试需要覆盖：仅有项目的 Session 收到标准格式和示例；Memory 提示词重建与 Finalizer 保留项目条件；子目录和同名文件；空格、中文和 URL 编码路径；行列号及无效位置；重复打开同文件的不同位置；Shiki 异步高亮；文件删除、截断预览与 execution root 切换；Markdown 文档相对链接；现有工具卡和产物卡的文件打开兼容性。现有行内文件名自动转链接的测试预期仍待调整。
+
 旧版完整 ContextSnapshot 仍可读取，但新共享块格式只用于新快照。当前版本不会自动重写历史 Blob，所以升级后不会立刻释放既有快照占用的空间。
 
 - Runtime Loop 目前只有内部、非权威的生命周期观察点。它们不持久化为业务 Event，也不提供用户可配置或可阻断的 Hook；诊断观察者失败不会改变 Run 结果。

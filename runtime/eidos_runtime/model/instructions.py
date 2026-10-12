@@ -10,6 +10,7 @@ from eidos_runtime.model.prompts import (
     MEMORY_POLICY_INSTRUCTIONS,
     MEMORY_AUTOMATIC_INSTRUCTIONS,
     MEMORY_EXPLICIT_WRITE_INSTRUCTIONS,
+    PROJECT_FILE_REFERENCE_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
     SYSTEM_SAFETY_INSTRUCTIONS,
     InstructionLayer,
@@ -151,6 +152,7 @@ class InstructionResolver:
         memory_tools: tuple[str, ...] = (),
         memory_access: MemoryAccess | None = None,
         agent_role: AgentRole | None = None,
+        has_project: bool = False,
     ) -> ResolvedInstructions:
         layers: list[InstructionLayer] = [
             InstructionLayer.create(
@@ -175,6 +177,14 @@ class InstructionResolver:
                 content=RUNTIME_POLICY_INSTRUCTIONS,
             ),
         ]
+        if has_project:
+            layers.append(InstructionLayer.create(
+                id="project-file-references",
+                authority=RUNTIME_AUTHORITY,
+                role="developer",
+                source="eidos:project-file-references",
+                content=PROJECT_FILE_REFERENCE_INSTRUCTIONS,
+            ))
         available = set(memory_tools)
         if step_policy is not None:
             available.update(step_policy.available_tools)

@@ -67,15 +67,15 @@ uv 缓存写入失败时，Agent 应选择已有可写缓存或临时目录，�
 
 Agent Shell 的 zsh/bash 默认开启 `pipefail`。验证命令优先直接输出到工具的有界捕获，不要用 `head` 提前关闭管道。多个有依赖关系的阶段使用 `&&`；分号后最后一条命令的成功不能证明前面阶段通过。POSIX sh 保持原来的退出码行为。
 
-开发过程中优先运行受影响测试：
+开发过程中，执行者优先运行与改动行为直接相关的 focused tests。执行者只有在确认 `test:affected` 的映射范围合适时才运行该入口：
 
 ```bash
 pnpm test:affected
 ```
 
-`test:affected` 根据当前分支相对 `main` 的变化选择已有 focused tests。无法可靠映射时回退到 Fast，而不是直接运行完整项目测试。
+`test:affected` 根据当前分支相对 `main` 的变化运行配置好的测试命令。该入口不保证只运行定向测试。当前部分 Desktop 路径会映射到完整的 `pnpm test:main` 或 `pnpm test:desktop`；未映射的 Runtime 生产路径会回退到 `pnpm test:runtime:fast`；其他未映射路径可能会回退到 `pnpm test:fast`。执行者应先查看 `scripts/test-affected.mjs` 中适用于当前路径的映射。若映射会运行完整层级或超出改动范围的 Fast 套件，执行者应直接运行更窄的测试。执行者只有在没有合适的定向入口时才考虑 Fast。Fast 不是每项任务的默认要求。
 
-快速收尾测试：
+需要较宽反馈时可以运行 Fast：
 
 ```bash
 pnpm test:fast
@@ -90,7 +90,7 @@ Runtime 集成层：
 pnpm test:integration
 ```
 
-完整 Runtime 和完整项目回归：
+以下命令会运行完整 Runtime 或完整项目回归：
 
 ```bash
 pnpm test:runtime:full
@@ -98,7 +98,7 @@ pnpm test:full
 pnpm test
 ```
 
-`pnpm test` 保持为 `test:full` 的兼容入口。Runtime 核心生命周期、Persistence/Protocol、Tool Runtime、Sandbox、Git/Worktree 或全局测试配置变化时，最终验证应执行相关 Full。普通 Renderer 修改只需要 Desktop 验证，不因创建 PR 自动触发 Runtime Full。普通开发循环不要因为一个失败反复运行 Full。Full 不包含独立调度的 `large_repository` Scale 层。
+`pnpm test` 保持为 `test:full` 的兼容入口。`pnpm check:python:full` 会运行 Runtime Full 和静态检查。用户明确要求 Full Suite 或要求执行完整套件命令时，执行者才运行这些完整套件。核心生命周期、Persistence/Protocol、Tool Runtime、Sandbox、Git/Worktree 或全局测试配置变化本身不触发 Full；执行者按影响范围运行定向测试和必要的集成测试。普通 Renderer 修改只需要相关 Desktop 定向验证。执行者不要在普通开发循环中因为一个失败反复运行 Full。Full 不包含独立调度的 `large_repository` Scale 层。
 
 Repository Scale 单独运行：
 
@@ -114,18 +114,20 @@ Python 静态检查：
 pnpm check:python
 ```
 
-如果需要 Python 静态检查和完整 Runtime 测试的一次性入口：
+用户明确要求 Runtime Full，且需要同时运行 Python 静态检查时，可以使用以下入口：
 
 ```bash
 pnpm check:python:full
 ```
 
-完整 Desktop 测试和构建：
+完整 Desktop 测试和构建入口：
 
 ```bash
 pnpm test:desktop
 pnpm build
 ```
+
+`pnpm test:desktop` 和 `pnpm test:main` 会运行完整 Desktop 或 Main 测试层。用户明确要求 Full Suite 或要求执行完整套件命令时，执行者才运行完整层级。普通 Desktop 修改优先运行相关测试文件；没有合适的定向入口时，执行者再运行 Fast。
 
 修改 Terminal、Main 进程生命周期或原生 Desktop 依赖时，还需要运行：
 

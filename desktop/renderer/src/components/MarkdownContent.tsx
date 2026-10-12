@@ -5,15 +5,6 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { ArtifactImage, ArtifactLink, artifactPath, useArtifacts } from "./ArtifactContext.js";
 import { CodeBlock } from "./CodeBlock.js";
-import { getOfficialFileIcon } from "./FileIcons.js";
-
-export const COMMON_EXTENSIONS = new Set([
-  "py", "pyi", "pyx", "ts", "tsx", "js", "jsx", "mjs", "cjs", "rs", "go",
-  "c", "cpp", "cc", "cxx", "h", "hpp", "java", "kt", "swift", "html",
-  "htm", "css", "scss", "sass", "less", "vue", "svelte", "json", "jsonc",
-  "yaml", "yml", "toml", "xml", "sql", "sh", "bash", "zsh", "md", "mdx",
-  "txt", "diff", "patch", "svg",
-]);
 
 interface HastTextNode {
   type: "text";
@@ -25,9 +16,29 @@ interface HastElementNode {
   tagName: string;
   properties?: Record<string, unknown>;
   children: HastNode[];
+  position?: { start: { line: number }; end: { line: number } };
 }
 
 type HastNode = HastTextNode | HastElementNode | { type: string; [key: string]: unknown };
+
+function rehypeSourceLines() {
+  return (tree: { children?: HastNode[] }) => {
+    function visit(node: HastNode): void {
+      if (node.type === "element") {
+        const element = node as HastElementNode;
+        if (element.position) {
+          element.properties = {
+            ...element.properties,
+            "data-source-line": element.position.start.line,
+            "data-source-end-line": element.position.end.line,
+          };
+        }
+      }
+      if ("children" in node && Array.isArray(node.children)) node.children.forEach(visit);
+    }
+    tree.children?.forEach(visit);
+  };
+}
 
 function isMathElement(node: HastElementNode): boolean {
   if (node.tagName === "math" || node.tagName === "annotation") return true;
@@ -132,8 +143,11 @@ export const MarkdownContent = memo(function MarkdownContent({
   const actions = useArtifacts();
   const remarkPlugins = useMemo(() => REMARK_PLUGINS, []);
   const rehypePlugins = useMemo(
-    () => (isStreaming ? STREAMING_REHYPE_PLUGINS : BASE_REHYPE_PLUGINS),
-    [isStreaming],
+    () => {
+      const plugins = isStreaming ? STREAMING_REHYPE_PLUGINS : BASE_REHYPE_PLUGINS;
+      return documentPath ? [...plugins, rehypeSourceLines] : plugins;
+    },
+    [documentPath, isStreaming],
   );
 
   const components = useMemo<ComponentProps<typeof Markdown>["components"]>(() => ({
@@ -142,8 +156,10 @@ export const MarkdownContent = memo(function MarkdownContent({
       const path = actions && typeof src === "string" ? artifactPath(src, actions.executionRoot, documentPath) : undefined;
       return path ? <ArtifactImage path={path} alt={alt || "图片"} /> : <span className="markdown-image-alt">{alt || "图片"}</span>;
     },
-    pre: ({ children }) => <>{children}</>,
-    code: ({ className, children, node, ...props }) => {
+    pre: ({ children, node }) => documentPath
+      ? <div data-source-line={node?.position?.start.line} data-source-end-line={node?.position?.end.line}>{children}</div>
+      : <>{children}</>,
+    code: ({ className, children }) => {
       const isBlock = Boolean(className) || String(children ?? "").includes("\n");
       if (isBlock) {
         return (
@@ -151,38 +167,6 @@ export const MarkdownContent = memo(function MarkdownContent({
             {children}
           </CodeBlock>
         );
-      }
-      const text = String(children ?? "").trim();
-      const match = text.match(/^([a-zA-Z0-9_\-./]+\.([a-zA-Z0-9]+))(?:(?::(\d+)(?::\d+)?)|(?:\s*\((?:line\s*)?(\d+)\))|(?:\s*#L(\d+)))?$/i);
-      if (match && actions?.executionRoot) {
-        const fullPath = match[1]!;
-        const ext = match[2]!.toLowerCase();
-        const lineNumber = match[3] || match[4] || match[5];
-        if (COMMON_EXTENSIONS.has(ext)) {
-          const cleanPath = artifactPath(fullPath, actions.executionRoot, documentPath);
-          if (cleanPath) {
-            const icon = getOfficialFileIcon(cleanPath || fullPath || ext);
-            const displayText = lineNumber ? `${fullPath} (line ${lineNumber})` : fullPath;
-            return (
-              <span
-                role="button"
-                tabIndex={0}
-                className="markdown-file-link"
-                onClick={() => actions.openFile(cleanPath)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    actions.openFile(cleanPath);
-                  }
-                }}
-                title={`在工作区中打开 ${cleanPath}${lineNumber ? ` (第 ${lineNumber} 行)` : ""}`}
-              >
-                <span className="markdown-file-icon" aria-hidden="true">{icon}</span>
-                <span className="markdown-file-text">{displayText}</span>
-              </span>
-            );
-          }
-        }
       }
       return <code className={className}>{children}</code>;
     },

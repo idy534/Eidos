@@ -173,7 +173,7 @@ test("renders mermaid diagram block via MermaidBlock container with icon copy bu
   assert.match(html, /class="language-mermaid"/);
 });
 
-test("renders workspace file path in inline code as clickable file link with official extension icon and line number", () => {
+test("keeps bare filenames as code and renders explicit workspace links with file icons", () => {
   const mockActions = {
     sessionId: "s-1",
     executionRoot: "/workspace",
@@ -182,16 +182,17 @@ test("renders workspace file path in inline code as clickable file link with off
   };
   const html = renderToStaticMarkup(
     <ArtifactProvider value={mockActions}>
-      <MarkdownContent content={"测试改动位于 `test_mcp.py (line 456)` 和 `src/app/App.tsx:42` 文件。"} />
+      <MarkdownContent content={"测试改动位于 `test_mcp.py (line 456)`、[test_mcp.py (line 456)](</workspace/tests/test_mcp.py:456>) 和 [src/app/App.tsx](</workspace/src/app/App.tsx:42>)。"} />
     </ArtifactProvider>,
   );
 
   assert.match(html, /class="markdown-file-link"/);
+  assert.match(html, /<code>test_mcp\.py \(line 456\)<\/code>/);
   assert.match(html, /class="file-icon-svg"/);
   assert.match(html, /fill="#0288d1"/);
   assert.match(html, /class="markdown-file-text">test_mcp\.py \(line 456\)<\/span>/);
   assert.match(html, /fill="#5bcbdc"/);
-  assert.match(html, /class="markdown-file-text">src\/app\/App\.tsx \(line 42\)<\/span>/);
+  assert.match(html, /class="markdown-file-text">src\/app\/App\.tsx<\/span>/);
 });
 
 test("renders unknown workspace files with unknown.svg silhouette icon", () => {
