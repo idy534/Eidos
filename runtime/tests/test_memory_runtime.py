@@ -1114,13 +1114,14 @@ def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
     state = tmp_path / "v18.sqlite"
     state.write_bytes(members["state.sqlite"])
     with sqlite3.connect(state) as connection:
-        # Reconstruct the old role CHECK as well as the old memory columns.
+        # Reconstruct the v18 role CHECK, memory columns, and ModelAttempt shape.
         assert connection.execute('SELECT COUNT(*) FROM agent_delegations').fetchone()[0] == 0
         connection.executescript('DROP TABLE agent_delegations;\n' + COLLABORATION_SCHEMA_SQL.split('CREATE TABLE agent_messages', 1)[0])
         connection.execute('ALTER TABLE agent_delegations ADD COLUMN required_for_completion INTEGER NOT NULL DEFAULT 1 CHECK(required_for_completion IN (0,1))')
         connection.execute("DROP TRIGGER memory_session_use_revoke")
         connection.execute("ALTER TABLE memory_sources DROP COLUMN use_epoch")
         connection.execute("ALTER TABLE memory_sources DROP COLUMN backfill_until")
+        connection.execute("ALTER TABLE model_attempts DROP COLUMN response_replay_json")
         connection.execute("PRAGMA user_version=18")
     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     connection.close()
