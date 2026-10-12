@@ -1137,7 +1137,7 @@ def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
     reopened = SessionStore(destination)
     reopened.initialize()
     try:
-        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 21
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 22
         assert reopened.database.memory.get(MemoryGetRequest(session_id=session["id"], entry_id=entry.entry_id)).entry.content == "Prefer concise Chinese responses"
     finally:
         reopened.close()

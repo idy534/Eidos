@@ -1187,5 +1187,6 @@ def test_context_replay_preserves_custom_kind_call_id_and_raw_input() -> None:
         "name": "apply_patch",
         "payloadKind": "custom",
         "input": raw,
+        "responseId": call["responseId"],
     }
     assert result["payloadKind"] == "custom"

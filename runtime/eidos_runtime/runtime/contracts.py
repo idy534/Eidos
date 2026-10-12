@@ -16,6 +16,7 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.model.prompts import ResolvedInstructions
+from eidos_runtime.model.replay import ModelResponseReplay
 from eidos_runtime.runtime.resolution import (
     RunResolutionSnapshot,
     StepResolutionSnapshot,
@@ -70,6 +71,7 @@ class SamplingOutcome(_FrozenModel):
     text: str
     tool_calls: tuple[ModelToolCall, ...]
     needs_follow_up: bool
+    response_replay: ModelResponseReplay | None = None
     assistant_item: dict[str, object] | None = None
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
     phase_source: ResponsePhaseSource = "unknown"

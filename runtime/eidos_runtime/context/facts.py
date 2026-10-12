@@ -4,6 +4,7 @@ from typing import Literal
 
 from eidos_runtime.domain.input_reference import InputReference
 from eidos_runtime.model.response_phase import AssistantMessagePhase
+from eidos_runtime.model.replay import ModelResponseReplay
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,6 +21,9 @@ class ContextItemFact(_Fact):
     input_references: tuple[InputReference, ...] = ()
     content: str | None = None
     phase: AssistantMessagePhase | None = None
+    model_step_index: int | None = None
+    model_response_id: str | None = None
+    response_replay: ModelResponseReplay | None = None
     provider_call_id: str | None = None
     tool_name: str | None = None
     payload_kind: Literal["function", "custom"] | None = None

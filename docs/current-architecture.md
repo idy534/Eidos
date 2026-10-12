@@ -211,6 +211,10 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
+Schema v22 为 ModelAttempt 增加内部 `response_replay_json`。Runtime 在完成 Attempt 的同一次条件更新中保存有界的思考回放记录；该列引用现有 gzip Blob，并参与启动时的引用保留和清理。记录保存原始思考内容、Provider 字段身份、签名、元数据和该响应声明的 ToolCall IDs。Responses 路径还保存返回的原生 reasoning item，包括已返回的 encrypted content。记录不成为 Session Item，也不进入普通 Feed 或公共 ModelAttempt DTO。Eidos 不把“隐藏思考 UI”当作“不保存思考”。
+
+ContextBuilder 从 SQLite 的已完成 Attempt 读取回放记录。Model Adapter 将同一响应的思考、正文和全部保留的 ToolCall 合并，再交给 SDK 转换；工具结果跟在完整的调用声明之后。回放元数据进入现有 Context/Step Resolution 快照与预算。快照保存 Eidos 模型请求表示，不等同于 SDK 最终 HTTP payload。上下文只保留部分响应、切换不兼容 wire API，或旧记录缺少思考且当前模型启用了思考时，Adapter 将这组历史正文、调用和结果转换成明确标注的低权限历史资料。Adapter 不伪造丢失的思考，不重新执行工具。Schema v21→v22 只新增 nullable 列；旧数据保留 NULL。
+
 ## 8. Tool Execution
 
 Tool Registry 保存 ToolSpec、输入和结果 Schema、Execution Policy、Concurrency Policy、Projection Policy 和 provenance。MCP 输入 Schema 接受常见 draft-07/2020-12 `$schema` 元数据，但不解析远程 `$ref`；省略 `additionalProperties` 的对象在 Eidos 内按有界闭对象处理。每个 Step 固化可见 Tool Set、Contract Hash 和 Extension Snapshot。

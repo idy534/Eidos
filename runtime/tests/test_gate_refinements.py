@@ -118,6 +118,7 @@ def test_v16_migration_preserves_delegation_and_defaults_to_required(state):
         'ALTER TABLE context_snapshots DROP COLUMN memory_revoked; '
         'DROP TABLE agent_message_receipts; DROP TABLE run_skill_leases; '
         'ALTER TABLE agent_delegations DROP COLUMN required_for_completion; '
+        'ALTER TABLE model_attempts DROP COLUMN response_replay_json; '
         'PRAGMA user_version=16;'
     )
     migrate_gate_refinements(connection)

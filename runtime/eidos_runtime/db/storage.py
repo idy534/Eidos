@@ -18,6 +18,7 @@ from typing import Callable, Literal, TypeVar
 from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.models.skill_settings import SkillState
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
+from eidos_runtime.model.replay import ModelResponseReplay
 from eidos_runtime.db.database import (
     DATABASE_NAME,
     RESERVE_BYTES,
@@ -943,6 +944,7 @@ class SessionStore:
         response_state: str | None = None,
         phase: str | None = None,
         tool_call_count: int = 0,
+        response_replay: ModelResponseReplay | None = None,
         response_text_sha256: str | None = None,
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
@@ -964,6 +966,7 @@ class SessionStore:
             response_state=response_state,
             phase=phase,
             tool_call_count=tool_call_count,
+            response_replay=response_replay,
             response_text_sha256=response_text_sha256,
             response_text_bytes=response_text_bytes,
             protocol_diagnostic=protocol_diagnostic,

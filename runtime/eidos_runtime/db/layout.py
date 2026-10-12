@@ -14,6 +14,7 @@ from eidos_runtime.db.schema import (
     SCHEMA_VERSION,
     V19_SCHEMA_VERSION,
     V20_SCHEMA_VERSION,
+    V21_SCHEMA_VERSION,
     V18_SCHEMA_VERSION,
     V17_SCHEMA_VERSION,
     V16_SCHEMA_VERSION,
@@ -605,6 +606,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V18_SCHEMA_VERSION,
         V19_SCHEMA_VERSION,
         V20_SCHEMA_VERSION,
+        V21_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -660,6 +662,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V20_SCHEMA_VERSION:
                 from eidos_runtime.db.agent_roles_migration import migrate_agent_roles
                 migrate_agent_roles(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V21_SCHEMA_VERSION:
+                from eidos_runtime.db.model_replay_migration import migrate_model_replay
+                migrate_model_replay(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()
@@ -903,4 +908,10 @@ def collect_unreferenced_blobs(state: StateDatabase, blobs: JsonBlobStore) -> in
                     "SELECT env_blob_ref FROM manual_mcp_servers"
                 )
             )
+        if "model_attempts" in tables and "response_replay_json" in {
+            row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")
+        }:
+            references.extend(str(row[0]) for row in connection.execute(
+                "SELECT response_replay_json FROM model_attempts WHERE response_replay_json IS NOT NULL"
+            ))
         return blobs.garbage_collect(references)

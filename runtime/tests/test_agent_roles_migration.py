@@ -100,7 +100,7 @@ def test_database_startup_upgrades_v20_and_keeps_existing_agent_roles(tmp_path) 
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 21
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 22
         assert store.connection.execute("SELECT role FROM agent_delegations ORDER BY role").fetchall()[0][0] == "explorer"
         assert store.connection.execute("SELECT status FROM runs WHERE id='parent-run'").fetchone()[0] == "waiting_agents"
         assert store.connection.execute("SELECT status FROM agent_waits").fetchone()[0] == "pending"

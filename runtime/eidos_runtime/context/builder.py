@@ -176,6 +176,11 @@ class ContextBuilder:
                 and item.item_id != facts.current_user_goal_id
             ):
                 continue
+            response_metadata: dict[str, object] = {}
+            if item.model_step_index is not None:
+                response_metadata["responseId"] = item.model_response_id or f"{item.run_id}:step:{item.model_step_index}"
+                if item.response_replay is not None:
+                    response_metadata["responseReplay"] = item.response_replay.model_dump(mode="json")
             if item.kind == "user_message":
                 context.append({"type": "user", "content": item.content or ""})
                 for selected_reference in item.input_references:
@@ -203,6 +208,7 @@ class ContextBuilder:
                     })
             elif item.kind == "assistant_message":
                 context.append({"type": "assistant", "content": item.content or "",
+                                **response_metadata,
                                 **({"phase": item.phase.value} if item.phase is not None else {})})
             elif item.provider_call_id is not None:
                 result_json = item.model_result_json or item.result_json or "{}"
@@ -233,6 +239,7 @@ class ContextBuilder:
                             "callId": item.provider_call_id,
                             "name": item.tool_name or "",
                             "arguments": item.arguments_json or "{}",
+                            **response_metadata,
                         },
                         {
                             "type": "tool_result",
@@ -249,6 +256,7 @@ class ContextBuilder:
                             "name": item.tool_name or "",
                             "payloadKind": "custom",
                             "input": custom_input,
+                            **response_metadata,
                         },
                         {
                             "type": "tool_result",

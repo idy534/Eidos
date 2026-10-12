@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import threading
 import time
-from typing import Callable
+from typing import Callable, Literal
 
 from eidos_runtime.model.client import (
     AssistantMessagePhase,
@@ -21,12 +21,15 @@ from eidos_runtime.sandbox.sensitive import (
     StreamingSensitiveScanner,
     default_scanner,
 )
+from eidos_runtime.model.replay import ModelReasoningPart
 
 
 @dataclass(frozen=True)
 class ModelStepResult:
     text: str
     tool_calls: tuple[ModelToolCall, ...]
+    reasoning_parts: tuple[ModelReasoningPart, ...] = ()
+    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
     phase_source: ResponsePhaseSource = "unknown"
     end_turn: bool | None = None
@@ -130,6 +133,8 @@ class ModelRunner:
         return ModelStepResult(
             text=text,
             tool_calls=response.tool_calls,
+            reasoning_parts=response.reasoning_parts,
+            wire_api=response.wire_api,
             phase=response.phase,
             phase_source=response.phase_source,
             end_turn=response.end_turn,

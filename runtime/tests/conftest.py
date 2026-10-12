@@ -31,6 +31,7 @@ INTEGRATION_FILES = frozenset(
         "test_mcp.py",
         "test_mcp_sandbox.py",
         "test_model_persistence.py",
+        "test_model_reasoning_replay.py",
         "test_phase2_runtime.py",
         "test_phase3_runtime.py",
         "test_phase3a_thread_execution.py",

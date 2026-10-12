@@ -46,6 +46,7 @@ from eidos_runtime.db.schema import (
     V18_SCHEMA_VERSION,
     V19_SCHEMA_VERSION,
     V20_SCHEMA_VERSION,
+    V21_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -169,6 +170,7 @@ class Database:
                     V18_SCHEMA_VERSION,
                     V19_SCHEMA_VERSION,
                     V20_SCHEMA_VERSION,
+                    V21_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -325,6 +327,13 @@ class Database:
                 try:
                     migrate_agent_roles(connection)
                 except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V21_SCHEMA_VERSION:
+                from eidos_runtime.db.model_replay_migration import migrate_model_replay
+                try:
+                    migrate_model_replay(connection)
+                except sqlite3.Error as error:
+                    connection.rollback()
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
             self._connection = connection

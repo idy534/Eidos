@@ -10,10 +10,12 @@ from eidos_runtime.db.database import Repository
 from eidos_runtime.db.errors import (
     ContextLimitExceeded,
     ResourceNotFoundError,
+    StorageError,
 )
 from eidos_runtime.db.mappers import _compact_summary_from_row
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.model.response_phase import AssistantMessagePhase
+from eidos_runtime.model.replay import ModelResponseReplay
 
 # The soft limits bound unprotected history selected in one projection. Recent
 # facts are protected from compaction and may exceed the soft limit when the
@@ -28,7 +30,7 @@ COMPACTION_FACT_VALUE_MAX_CHARS = 8 * 1024
 CONTEXT_PROJECTION_HARD_MAX_BYTES = 8 * 1024 * 1024
 CONTEXT_PROJECTION_HARD_MAX_ITEMS = 2_000
 RECENT_CONTEXT_STEPS = 3
-CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES = 320
+CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES = 448
 
 
 class ContextRepository(Repository):
@@ -137,8 +139,16 @@ class ContextRepository(Repository):
                 placeholders = ",".join("?" for _ in excluded)
                 excluded_sql = f" AND items.id NOT IN ({placeholders})"
                 excluded_values = tuple(excluded)
+            replay_join = """
+                LEFT JOIN model_attempts replay_attempt ON replay_attempt.id = (
+                    SELECT a.id FROM model_attempts a JOIN steps s ON s.id = a.step_id
+                    WHERE s.run_id = items.run_id AND s.ordinal = items.model_step_index
+                      AND a.status = 'completed' ORDER BY a.ordinal LIMIT 1
+                )
+            """ if newest else ""
             base = f"""
                 FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                {replay_join}
                 WHERE items.session_id = ?
                   AND items.status IN ('completed', 'failed', 'declined')
                   AND NOT (items.kind = 'assistant_message' AND items.incomplete = 1)
@@ -155,6 +165,20 @@ class ContextRepository(Repository):
                     tool_calls.model_result_json, tool_calls.result_json, ''
                 ) AS BLOB)) + {CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES}
             """
+            if newest:
+                # Apportion a shared replay record across its Items. Counting
+                # the entire reasoning once per ToolCall would reject a valid
+                # multi-tool response at the internal hard limit.
+                size_expression += """ + COALESCE(
+                    json_extract(replay_attempt.response_replay_json, '$."$eidosBlob".uncompressedBytes'),
+                    length(replay_attempt.response_replay_json), 0) / MAX(1, (
+                        SELECT COUNT(*) FROM items sibling
+                        WHERE sibling.run_id = items.run_id
+                          AND sibling.model_step_index = items.model_step_index
+                          AND sibling.status IN ('completed', 'failed', 'declined')
+                          AND NOT (sibling.kind = 'assistant_message' AND sibling.incomplete = 1)
+                    ))
+                """
             aggregate = connection.execute(
                 f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
                 (run["session_id"], *excluded_values),
@@ -185,6 +209,7 @@ class ContextRepository(Repository):
                     f"""
                     SELECT COALESCE(SUM({size_expression}), 0)
                     FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                    {replay_join}
                     WHERE items.id IN ({placeholders})
                     """,
                     tuple(protected_ids),
@@ -241,6 +266,7 @@ class ContextRepository(Repository):
                     ).fetchall()
             item_rows.sort(key=lambda row: int(row["creation_seq"]))
             native_phases = {}
+            response_rows = {}
             if selected_ids:
                 placeholders = ",".join("?" for _ in selected_ids)
                 phase_rows = connection.execute(f"""
@@ -251,6 +277,13 @@ class ContextRepository(Repository):
                     FROM items i WHERE i.id IN ({placeholders}) AND i.kind='assistant_message'
                 """, selected_ids).fetchall()
                 native_phases = {row["id"]: AssistantMessagePhase(row["phase"]) for row in phase_rows if row["phase"] is not None}
+                if newest:
+                    replay_rows = connection.execute(f"""
+                        SELECT items.id AS item_id, replay_attempt.id AS response_id,
+                               replay_attempt.response_replay_json
+                        FROM items {replay_join} WHERE items.id IN ({placeholders})
+                    """, selected_ids).fetchall()
+                    response_rows = {row["item_id"]: row for row in replay_rows}
             tool_rows: list[sqlite3.Row] = []
             if selected_ids:
                 placeholders = ",".join("?" for _ in selected_ids)
@@ -322,6 +355,8 @@ class ContextRepository(Repository):
         )
         projected_candidate_bytes = 0
         projected_candidate_count = 0
+        replay_cache: dict[str, ModelResponseReplay] = {}
+        replay_attached: set[str] = set()
         for row in item_rows:
             tool = tools_by_item.get(row["id"])
             model_result_json = (
@@ -329,6 +364,18 @@ class ContextRepository(Repository):
                 if tool and tool["model_result_json"] is not None
                 else None
             )
+            response_row = response_rows.get(row["id"])
+            response_id = response_row["response_id"] if response_row is not None else None
+            replay = None
+            if response_id is not None and response_id not in replay_attached and response_row["response_replay_json"] is not None:
+                if response_id not in replay_cache:
+                    try:
+                        replay_cache[response_id] = ModelResponseReplay.model_validate_json(
+                            self.database.json_blobs.read_json(response_row["response_replay_json"], expected_kind="model-response-replay")
+                        )
+                    except ValueError:
+                        raise StorageError("model_response_replay_invalid") from None
+                replay = replay_cache[response_id]
             fact = ContextItemFact(
                 item_id=str(row["id"]),
                 run_id=str(row["run_id"]),
@@ -336,6 +383,9 @@ class ContextRepository(Repository):
                 status=str(row["status"]),
                 content=row["content"],
                 phase=native_phases.get(row["id"]),
+                model_step_index=row["model_step_index"],
+                model_response_id=response_id,
+                response_replay=replay,
                 input_references=tuple(InputReference.model_validate(value) for value in json.loads(row["input_references_json"])),
                 provider_call_id=str(tool["provider_call_id"]) if tool else None,
                 tool_name=str(tool["tool_name"]) if tool else None,
@@ -351,7 +401,7 @@ class ContextRepository(Repository):
                 model_result_json=model_result_json,
             )
             size = len(json.dumps(
-                fact.model_dump(),
+                fact.model_dump(exclude_none=True),
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode("utf-8")) + 1
@@ -363,6 +413,8 @@ class ContextRepository(Repository):
                     raise ContextLimitExceeded("internal_projection_limit")
                 continue
             items.append(fact)
+            if replay is not None:
+                replay_attached.add(response_id)
             serialized_bytes += size
             if str(row["id"]) not in protected_ids:
                 projected_candidate_bytes += size

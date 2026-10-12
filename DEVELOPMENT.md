@@ -231,6 +231,8 @@ Release 模式拒绝 `EIDOS_PACKAGE_SKIP_TESTS=1`。本地模式只有在维护�
 
 持久化布局包含 `state.sqlite`、`repository.sqlite`、`thread_history.sqlite`、`logs.sqlite`、`memories.sqlite`，以及 `blobs/`、`history/`、`logs/` 和 `memories/`。`state.sqlite` 是唯一业务状态权威。其他数据库保存 projection、可重建索引或文件 metadata。旧 `eidos.db` 会在启动时自动升级。迁移前应退出其他 Eidos Runtime，并保留整个数据目录的备份。
 
+Schema v22 在 ModelAttempt 上新增内部思考回放 Blob 引用。v21 数据库会通过事务新增 nullable 列；迁移不会改写历史 Item 或补造思考正文。启动清理保留这些 Blob。思考回放验证应覆盖多厂商 mocked wire、同一响应中的正文和多工具调用、重启、取消后的迟到结果、旧会话缺少思考、上下文部分保留、升级失败回滚和 Session Feed 隔离。
+
 Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录也位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
 
 ModelConfigStore 默认使用 `~/.eidos/models.json`。显式数据目录由 Runtime 传给 ModelConfigStore 时，模型配置会跟随该 Runtime-owned 数据位置。模型配置文件保持 owner-only 权限。

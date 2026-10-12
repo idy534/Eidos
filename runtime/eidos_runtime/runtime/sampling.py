@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 
+from eidos_runtime.model.replay import ModelResponseReplay
+
 from eidos_runtime.memory.context import context_epochs
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.db.storage import SessionStore
@@ -209,6 +211,12 @@ class SamplingRuntime:
             error.retry_decision = decision
             raise error
 
+        response_replay = ModelResponseReplay(
+            wire_api=result.wire_api, provider_name=result.provider_name,
+            reasoning_parts=result.reasoning_parts,
+            tool_call_ids=tuple(call.provider_call_id for call in result.tool_calls),
+            response_text_present=bool(result.text),
+        )
         invalid_completion = (
             result.response_state not in {None, "complete"}
             or result.finish_reason in {"length", "content_filter", "error"}
@@ -227,6 +235,7 @@ class SamplingRuntime:
                 finish_reason=result.finish_reason,
                 provider_response_id=result.provider_response_id,
                 error_code=result.finish_reason or result.response_state,
+                response_replay=response_replay,
                 ttft_ms=result.ttft_ms,
                 duration_ms=result.duration_ms,
                 had_progress=bool(result.text),
@@ -255,6 +264,7 @@ class SamplingRuntime:
         return SamplingOutcome(
             text=result.text,
             tool_calls=result.tool_calls,
+            response_replay=response_replay,
             needs_follow_up=bool(result.tool_calls) or result.end_turn is False,
             assistant_item=None,
             phase=result.phase,
@@ -303,6 +313,7 @@ class SamplingRuntime:
             response_state=sampled.response_state,
             phase=sampled.phase.value if sampled.phase is not None else None,
             tool_call_count=len(sampled.tool_calls),
+            response_replay=sampled.response_replay,
             response_text_bytes=response_text_bytes,
             response_text_sha256=response_text_sha256,
             protocol_diagnostic=protocol_diagnostic or ProtocolDiagnostic(

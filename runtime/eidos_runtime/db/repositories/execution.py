@@ -8,6 +8,7 @@ from typing import Callable, Literal
 import uuid
 
 from pydantic import Field
+from eidos_runtime.model.replay import ModelResponseReplay
 
 from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.db.database import (
@@ -971,6 +972,7 @@ class ExecutionRepository(Repository):
         response_state: str | None = None,
         phase: str | None = None,
         tool_call_count: int = 0,
+        response_replay: ModelResponseReplay | None = None,
         response_text_sha256: str | None = None,
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
@@ -1000,7 +1002,8 @@ class ExecutionRepository(Repository):
                     http_status = ?, ttft_ms = ?, duration_ms = ?, had_progress = ?,
                     response_state = ?, phase = ?, tool_call_count = ?,
                     response_text_sha256 = ?, response_text_bytes = ?,
-                    protocol_diagnostics_json = ?, retry_decision_json = ?
+                    protocol_diagnostics_json = ?, retry_decision_json = ?,
+                    response_replay_json = ?
                 WHERE id = ? AND status = 'running'
                 """,
                 (
@@ -1026,6 +1029,10 @@ class ExecutionRepository(Repository):
                             sort_keys=True,
                         )
                         if retry_decision is not None else None
+                    ),
+                    (
+                        self.database.json_blobs.put_json("model-response-replay", response_replay.model_dump_json())
+                        if response_replay is not None else None
                     ),
                     attempt["id"],
                 ),

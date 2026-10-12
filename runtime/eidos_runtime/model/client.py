@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from eidos_runtime.file_limits import MAX_PATCH_BYTES
 from eidos_runtime.model.response_phase import AssistantMessagePhase, ResponsePhaseSource
+from eidos_runtime.model.replay import ModelReasoningPart
 
 
 MAX_FUNCTION_ARGUMENT_BYTES = 64 * 1024
@@ -123,6 +124,8 @@ class ModelUsage(_FrozenModel):
 class ModelResponse(_FrozenModel):
     text: str = ""
     tool_calls: tuple[ModelToolCall, ...] = ()
+    reasoning_parts: tuple[ModelReasoningPart, ...] = ()
+    wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
     phase: AssistantMessagePhase | None = AssistantMessagePhase.UNKNOWN
     phase_source: ResponsePhaseSource = "unknown"
     end_turn: bool | None = None
