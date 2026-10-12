@@ -242,3 +242,41 @@ export function CodeIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Zoom In / Magnifying glass plus icon
+ */
+export function ZoomInIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <circle cx="6.5" cy="6.5" r="4.5" />
+      <path d="M10 10l4 4" />
+      <path d="M6.5 4.5v4M4.5 6.5h4" />
+    </svg>
+  );
+}
+
+/**
+ * Zoom Out / Magnifying glass minus icon
+ */
+export function ZoomOutIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <circle cx="6.5" cy="6.5" r="4.5" />
+      <path d="M10 10l4 4" />
+      <path d="M4.5 6.5h4" />
+    </svg>
+  );
+}
+
+/**
+ * Reset Zoom / Circular counter-clockwise reset icon
+ */
+export function ResetZoomIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="M3 2v4h4" />
+      <path d="M3 6a6 6 0 1 1-1 4" />
+    </svg>
+  );
+}

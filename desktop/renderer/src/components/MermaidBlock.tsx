@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useState } from "react";
+import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import mermaid from "mermaid";
 import { DropdownMenu } from "./DropdownMenu.js";
@@ -10,7 +10,11 @@ import {
   MoreHorizontalIcon,
   DownloadIcon,
   CodeIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+  ResetZoomIcon,
 } from "./MenuIcons.js";
+
 
 let mermaidInitialized = false;
 
@@ -46,7 +50,12 @@ function downloadSvg(svgString: string, filename = "diagram.svg") {
   }
 }
 
-function MermaidModal({
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 5.0;
+const ZOOM_DEFAULT = 1.0;
+const ZOOM_STEP = 0.25;
+
+export function MermaidModal({
   svg,
   code,
   onClose,
@@ -56,14 +65,106 @@ function MermaidModal({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [zoom, setZoom] = useState(ZOOM_DEFAULT);
+  const [isDragging, setIsDragging] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((prev) => {
+      const next = Math.min(ZOOM_MAX, (Math.floor(prev / ZOOM_STEP + 0.001) + 1) * ZOOM_STEP);
+      return Math.round(next * 100) / 100;
+    });
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((prev) => {
+      const next = Math.max(ZOOM_MIN, (Math.ceil(prev / ZOOM_STEP - 0.001) - 1) * ZOOM_STEP);
+      return Math.round(next * 100) / 100;
+    });
+  }, []);
+
+  const handleResetZoom = useCallback(() => {
+    setZoom(ZOOM_DEFAULT);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      const isMod = event.ctrlKey || event.metaKey;
+      const isZoomIn = (isMod && (event.key === "=" || event.key === "+")) || (!isMod && !event.altKey && (event.key === "+" || event.key === "="));
+      const isZoomOut = (isMod && (event.key === "-" || event.key === "_")) || (!isMod && !event.altKey && (event.key === "-" || event.key === "_"));
+      const isZoomReset = (isMod && event.key === "0") || (!isMod && !event.altKey && event.key === "0");
+
+      if (isZoomIn) {
+        event.preventDefault();
+        handleZoomIn();
+      } else if (isZoomOut) {
+        event.preventDefault();
+        handleZoomOut();
+      } else if (isZoomReset) {
+        event.preventDefault();
+        handleResetZoom();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, handleZoomIn, handleZoomOut, handleResetZoom]);
+
+  useEffect(() => {
+    const bodyEl = bodyRef.current;
+    if (!bodyEl) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        setZoom((prev) => {
+          const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, prev * factor));
+          return Math.round(next * 100) / 100;
+        });
+      }
+    };
+
+    bodyEl.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      bodyEl.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, a, input")) return;
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: bodyRef.current ? bodyRef.current.scrollLeft : 0,
+      scrollTop: bodyRef.current ? bodyRef.current.scrollTop : 0,
+    };
+    setIsDragging(true);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current || !bodyRef.current) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    bodyRef.current.scrollLeft = dragStartRef.current.scrollLeft - dx;
+    bodyRef.current.scrollTop = dragStartRef.current.scrollTop - dy;
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStartRef.current) {
+      dragStartRef.current = null;
+      setIsDragging(false);
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+  };
 
   const handleCopy = () => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -93,6 +194,47 @@ function MermaidModal({
       <div className="mermaid-modal-window">
         <div className="mermaid-modal-header">
           <span className="mermaid-badge">Mermaid 预览</span>
+          <div className="mermaid-modal-zoom-bar" role="toolbar" aria-label="缩放控制">
+            <button
+              type="button"
+              className="code-copy-btn mermaid-zoom-btn"
+              onClick={handleZoomOut}
+              disabled={zoom <= ZOOM_MIN}
+              aria-label="缩小"
+              title="缩小 (- / Cmd -)"
+            >
+              <ZoomOutIcon className="copy-icon-svg" />
+            </button>
+            <button
+              type="button"
+              className="mermaid-zoom-indicator"
+              onClick={handleResetZoom}
+              aria-label={`当前缩放 ${Math.round(zoom * 100)}%，点击重置为 100%`}
+              title="重置缩放为 100% (0 / Cmd 0)"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              className="code-copy-btn mermaid-zoom-btn"
+              onClick={handleZoomIn}
+              disabled={zoom >= ZOOM_MAX}
+              aria-label="放大"
+              title="放大 (+ / Cmd +)"
+            >
+              <ZoomInIcon className="copy-icon-svg" />
+            </button>
+            <button
+              type="button"
+              className="code-copy-btn mermaid-zoom-btn"
+              onClick={handleResetZoom}
+              disabled={zoom === ZOOM_DEFAULT}
+              aria-label="重置缩放"
+              title="重置为 100% (0 / Cmd 0)"
+            >
+              <ResetZoomIcon className="copy-icon-svg" />
+            </button>
+          </div>
           <div className="mermaid-actions">
             <button
               type="button"
@@ -127,9 +269,17 @@ function MermaidModal({
             </button>
           </div>
         </div>
-        <div className="mermaid-modal-body">
+        <div
+          ref={bodyRef}
+          className={`mermaid-modal-body ${isDragging ? "is-dragging" : ""}`}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+        >
           <div
             className="mermaid-modal-svg-wrapper"
+            style={{ zoom }}
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         </div>

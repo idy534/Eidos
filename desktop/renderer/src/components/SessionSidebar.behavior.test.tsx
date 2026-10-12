@@ -741,6 +741,48 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     vi.useRealTimers();
   });
 
+  it("shows project hover tooltip when hovering on the project add button inside the row", async () => {
+    vi.useFakeTimers();
+    render(
+      <SessionSidebar
+        sessions={[managedSession]}
+        projects={[]}
+        selectedId={undefined}
+        disabled={false}
+        readCompletedSessions={new Set()}
+        runtimePresentation={{ tone: "success", label: "Ready" }}
+        onCreate={vi.fn()}
+        onCreateInProject={vi.fn()}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteProject={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    const addButton = screen.getByRole("button", { name: "在 repository 中新建会话" });
+    fireEvent.mouseEnter(addButton);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toBeInTheDocument();
+    expect(within(tooltip).getByText("repository")).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.mouseLeave(addButton);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
   it("shows session hover tooltip with full title, parent project, and session time on hover", async () => {
     vi.useFakeTimers();
     render(

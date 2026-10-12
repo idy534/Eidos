@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import mermaid from "mermaid";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 if (typeof window !== "undefined" && window.SVGElement) {
   window.SVGElement.prototype.getBBox = function () {
@@ -64,5 +65,146 @@ describe("Mermaid SVG output inspection", () => {
     expect(flowSvgTag).toMatch(/width="\d+(\.\d+)?"/);
     expect(flowSvg).toContain("工作区（未提交）");
     expect(flowSvg).toContain("?? 20 个未跟踪样例文件");
+  });
+});
+
+describe("MermaidModal zoom and pan behavior", () => {
+  const dummySvg = '<svg id="diagram" width="300" height="200"><rect width="300" height="200" fill="blue"/></svg>';
+  const dummyCode = "graph TD\nA-->B";
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("defaults to 100% zoom and renders zoom controls", async () => {
+    const { MermaidModal } = await import("./MermaidBlock.js");
+    const onClose = vi.fn();
+
+    const { unmount } = render(<MermaidModal svg={dummySvg} code={dummyCode} onClose={onClose} />);
+
+    const indicator = screen.getByRole("button", { name: /当前缩放/ });
+    expect(indicator).toBeInTheDocument();
+    expect(indicator.textContent).toBe("100%");
+
+    const resetBtn = screen.getByRole("button", { name: "重置缩放" });
+    expect(resetBtn).toBeInTheDocument();
+    expect(resetBtn).toBeDisabled();
+
+    const svgWrapper = document.querySelector(".mermaid-modal-svg-wrapper");
+    expect(svgWrapper).toHaveStyle({ zoom: "1" });
+    unmount();
+  });
+
+  it("supports zooming in, zooming out, and resetting zoom", async () => {
+    const { MermaidModal } = await import("./MermaidBlock.js");
+    const onClose = vi.fn();
+
+    const { unmount } = render(<MermaidModal svg={dummySvg} code={dummyCode} onClose={onClose} />);
+
+    const zoomInBtn = screen.getByRole("button", { name: "放大" });
+    const zoomOutBtn = screen.getByRole("button", { name: "缩小" });
+    const resetBtn = screen.getByRole("button", { name: "重置缩放" });
+    const indicator = screen.getByRole("button", { name: /当前缩放/ });
+    const svgWrapper = document.querySelector(".mermaid-modal-svg-wrapper");
+
+    // Reset button is present by default and disabled at 100%
+    expect(resetBtn).toBeDisabled();
+
+    // Click Zoom In -> 125%
+    fireEvent.click(zoomInBtn);
+    expect(indicator.textContent).toBe("125%");
+    expect(svgWrapper).toHaveStyle({ zoom: "1.25" });
+    expect(resetBtn).not.toBeDisabled();
+
+    // Click Zoom In again -> 150%
+    fireEvent.click(zoomInBtn);
+    expect(indicator.textContent).toBe("150%");
+    expect(svgWrapper).toHaveStyle({ zoom: "1.5" });
+
+    // Click Zoom Out -> 125%
+    fireEvent.click(zoomOutBtn);
+    expect(indicator.textContent).toBe("125%");
+    expect(resetBtn).not.toBeDisabled();
+
+    // Click Reset -> 100%
+    fireEvent.click(resetBtn);
+    expect(indicator.textContent).toBe("100%");
+    expect(svgWrapper).toHaveStyle({ zoom: "1" });
+    expect(resetBtn).toBeDisabled();
+    unmount();
+  });
+
+  it("supports keyboard shortcuts (+, -, 0, Escape) for zoom and closing", async () => {
+    const { MermaidModal } = await import("./MermaidBlock.js");
+    const onClose = vi.fn();
+
+    const { unmount } = render(<MermaidModal svg={dummySvg} code={dummyCode} onClose={onClose} />);
+
+    const indicator = screen.getByRole("button", { name: /当前缩放/ });
+
+    // Zoom in with '+'
+    fireEvent.keyDown(window, { key: "+" });
+    expect(indicator.textContent).toBe("125%");
+
+    // Zoom out with '-'
+    fireEvent.keyDown(window, { key: "-" });
+    expect(indicator.textContent).toBe("100%");
+
+    // Zoom out again to 75%
+    fireEvent.keyDown(window, { key: "-" });
+    expect(indicator.textContent).toBe("75%");
+
+    // Reset with '0'
+    fireEvent.keyDown(window, { key: "0" });
+    expect(indicator.textContent).toBe("100%");
+
+    // Escape closes modal
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("supports wheel pinch zoom with ctrlKey", async () => {
+    const { MermaidModal } = await import("./MermaidBlock.js");
+    const onClose = vi.fn();
+
+    const { unmount } = render(<MermaidModal svg={dummySvg} code={dummyCode} onClose={onClose} />);
+
+    const modalBody = document.querySelector(".mermaid-modal-body")!;
+    const indicator = screen.getByRole("button", { name: /当前缩放/ });
+
+    // Wheel pinch-out (deltaY < 0, zooming in)
+    fireEvent.wheel(modalBody, { deltaY: -100, ctrlKey: true });
+
+    expect(indicator.textContent).toBe("110%");
+    unmount();
+  });
+
+  it("supports mouse dragging to pan when interacting with modal body", async () => {
+    const { MermaidModal } = await import("./MermaidBlock.js");
+    const onClose = vi.fn();
+
+    const { unmount } = render(<MermaidModal svg={dummySvg} code={dummyCode} onClose={onClose} />);
+
+    const modalBody = document.querySelector(".mermaid-modal-body") as HTMLDivElement;
+    modalBody.setPointerCapture = vi.fn();
+    modalBody.releasePointerCapture = vi.fn();
+
+    expect(modalBody.className).not.toContain("is-dragging");
+
+    // Pointer down
+    fireEvent.pointerDown(modalBody, { button: 0, clientX: 100, clientY: 100, pointerId: 1 });
+    expect(modalBody.className).toContain("is-dragging");
+    expect(modalBody.setPointerCapture).toHaveBeenCalledWith(1);
+
+    // Pointer move
+    fireEvent.pointerMove(modalBody, { clientX: 50, clientY: 40 });
+
+    // Pointer up
+    fireEvent.pointerUp(modalBody, { pointerId: 1 });
+    expect(modalBody.className).not.toContain("is-dragging");
+    expect(modalBody.releasePointerCapture).toHaveBeenCalledWith(1);
+
+    unmount();
   });
 });

@@ -350,7 +350,7 @@ export function SessionSidebar({
               return (
                 <li key={project.key}>
                   <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
-                    <div className="workspace-title-row">
+                    <div className={`workspace-title-row${project.projectless ? " workspace-title-row--recent" : ""}`}>
                       {project.projectless ? (
                         <button
                           className="workspace-toggle workspace-toggle--recent"
@@ -396,7 +396,8 @@ export function SessionSidebar({
                             dismissTooltipImmediately();
                             toggleProject(project.key);
                           }}
-                          onMouseEnter={(e) =>
+                          onMouseEnter={(e) => {
+                            const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
                             handleTriggerEnter(
                               {
                                 kind: "project",
@@ -404,11 +405,12 @@ export function SessionSidebar({
                                 workspaceRoot: project.workspaceRoot,
                                 projectless: false,
                               },
-                              e.currentTarget,
-                            )
-                          }
+                              rowElement,
+                            );
+                          }}
                           onMouseLeave={handleTriggerLeave}
-                          onFocus={(e) =>
+                          onFocus={(e) => {
+                            const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
                             handleTriggerEnter(
                               {
                                 kind: "project",
@@ -416,9 +418,9 @@ export function SessionSidebar({
                                 workspaceRoot: project.workspaceRoot,
                                 projectless: false,
                               },
-                              e.currentTarget,
-                            )
-                          }
+                              rowElement,
+                            );
+                          }}
                           onBlur={handleTriggerLeave}
                           onContextMenu={(event) => {
                             dismissTooltipImmediately();
@@ -473,6 +475,19 @@ export function SessionSidebar({
                             });
                             onCreateInProject(project.workspaceRoot);
                           }}
+                          onMouseEnter={(e) => {
+                            const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
+                            handleTriggerEnter(
+                              {
+                                kind: "project",
+                                projectName: project.displayName,
+                                workspaceRoot: project.workspaceRoot,
+                                projectless: false,
+                              },
+                              rowElement,
+                            );
+                          }}
+                          onMouseLeave={handleTriggerLeave}
                         >＋</button>
                       )}
                     </div>
