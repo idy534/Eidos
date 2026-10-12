@@ -1,5 +1,14 @@
 # Eidos 当前限制
 
+## 子 Agent 全量记录显示的验证状态（2026-10-12）
+
+- 生产代码已移除子 Agent 详情中的“加载更早记录”按钮，并自动读取全部历史页。Runtime 会补带历史页记录对应的更早 Run，Renderer 会保留历史并按顺序刷新。
+- `pnpm test` 通过：Runtime Full 2,298 项通过、2 项按配置跳过；Desktop 合约 4 项、Renderer 状态 153 项、Main 80 项、Renderer 行为 473 项通过。全量测试完成后新增的 AgentPanel 定向用例通过 18 项。Runtime Session Run 定向测试通过 16 项。
+- `pnpm test:composer-layout` 通过。隔离 Electron 窗口覆盖 1100px 和 420px 宽度，历史记录滚动偏移为 0。多行文本会随窄窗口变高。
+- `pnpm check:python` 和 `pnpm build` 通过。Python Ruff、Deptry 和 Python 依赖审计没有发现问题。Node 运行时依赖审计报告 1 项低危漏洞；审计门槛为 high，命令退出码为 0。构建报告 Renderer 主 Chunk 超过 500 kB 的大小警告。
+- Runtime 定向测试验证了第 101 个 Run 的分页 Item 会带上对应 Run。Renderer 定向测试覆盖两页记录顺序、页内 Run 信息、当前 Session 通知过滤、通知合并、读取期间的后续刷新、分页失败提示和取消订阅。
+- 真实产品窗口中的完整长历史显示和性能尚未人工验收。Renderer 测试使用两页记录；它没有测量大量历史记录的真实窗口性能。
+
 ## 文件引用规则与验证状态（2026-10-12）
 
 - 本轮补齐了 Renderer 和 Runtime 自动化测试。测试覆盖显式绝对链接、路径边界、URL 编码、中文与空格、行列号校验、行片段格式、文档相对链接、裸文件名、同文件重复定位、Shiki 异步高亮、Markdown 块定位、截断预览、项目提示词条件、Memory 提示词重建和 Finalizer 回退。

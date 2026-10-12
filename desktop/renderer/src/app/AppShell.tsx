@@ -5,13 +5,13 @@ import { PlanPanel } from "../components/PlanPanel.js";
 import type { PlanDocument } from "../../../shared/planning.generated.js";
 import type { SettingsCategory } from "../components/settings/settings-types.js";
 import { InputContextProvider, InputDropZone } from "../components/InputContext.js";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import type { ApprovalMode, Project, Run, Session } from "../contracts.js";
+import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedbackValue, Run, Session } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -87,6 +87,8 @@ const MAIN_MIN_WIDTH = 16 * 16;
 // Body width below which the side-by-side dock auto-collapses to protect the
 // session column (composer project/mode/branch row) from horizontal squeezing.
 const DOCK_AUTO_COLLAPSE_BODY_WIDTH = 40 * 16;
+const EMPTY_MODELS: ModelOption[] = [];
+const EMPTY_AGENTS: AgentSummary[] = [];
 
 const TerminalPanel = lazy(() => import("../components/TerminalPanel.js").then((module) => ({
   default: module.TerminalPanel,
@@ -241,11 +243,21 @@ export function AppShell({ runtime }: AppShellProps) {
     ];
 
     const enforceNoLayoutScroll = (event?: Event) => {
+      // If user is currently typing in any input or textarea or inside composer, never reset
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement ||
+        document.activeElement?.closest(".composer")
+      ) {
+        return;
+      }
+
       const target = event?.target;
-      // Never interfere with legitimate scrolling in content/input elements (textarea, feed, code preview, file tree, terminal)
+      // Never interfere with legitimate scrolling in content/input elements (textarea, input, composer, feed, code preview, file tree, terminal)
       if (target instanceof Element && (
         target.tagName === "TEXTAREA" ||
         target.tagName === "INPUT" ||
+        target.closest(".composer") ||
         target.closest(".feed") ||
         target.closest(".workspace-preview-pane") ||
         target.closest(".workspace-tree-scroll") ||
@@ -271,9 +283,9 @@ export function AppShell({ runtime }: AppShellProps) {
     };
 
     enforceNoLayoutScroll();
-    window.addEventListener("scroll", enforceNoLayoutScroll, { capture: true, passive: true });
+    window.addEventListener("scroll", enforceNoLayoutScroll, { passive: true });
     return () => {
-      window.removeEventListener("scroll", enforceNoLayoutScroll, { capture: true });
+      window.removeEventListener("scroll", enforceNoLayoutScroll);
     };
   }, []);
   const [environmentPopoverOpen, setEnvironmentPopoverOpen] = useState(false);
@@ -837,7 +849,7 @@ export function AppShell({ runtime }: AppShellProps) {
     });
   }
 
-  async function reviseLatestRun(run: Run, userInput?: string, references?: string[]): Promise<boolean> {
+  const reviseLatestRun = useCallback(async (run: Run, userInput?: string, references?: string[]): Promise<boolean> => {
     const snapshot = sessionState.snapshot;
     if (!snapshot || run.sessionId !== snapshot.session.id) return false;
     return runActions.reviseRun({
@@ -852,7 +864,7 @@ export function AppShell({ runtime }: AppShellProps) {
       },
       onRefreshSession: sessionActions.refreshCompletedSession,
     });
-  }
+  }, [isStorageReady, responseActionActions, runActions, sessionActions, sessionState.snapshot]);
 
   // -----------------------------------------------------------------------
   // Render
@@ -868,6 +880,40 @@ export function AppShell({ runtime }: AppShellProps) {
   );
   const outputArtifacts = collectOutputArtifacts(completeSessionItems.items);
   const { approvals, respondingApprovalIds, respondingKindByApprovalId, errorsByApprovalId } = approvalState;
+  const currentSessionId = currentSnapshot?.session.id;
+  const feedModels = modelState.list?.models ?? EMPTY_MODELS;
+  const feedAgents = agents.state?.agents ?? EMPTY_AGENTS;
+  const feedApprovals = useMemo(
+    () => (currentSessionId ? approvals.filter((a) => a.sessionId === currentSessionId) : []),
+    [approvals, currentSessionId],
+  );
+
+  const handleFeedRetryLoadPending = useCallback(() => {
+    void approvalActions.loadPending();
+  }, [approvalActions]);
+
+  const handleFeedApprove = useCallback((request: ApprovalRequest) => {
+    void approvalActions.approve(request);
+  }, [approvalActions]);
+
+  const handleFeedReject = useCallback((request: ApprovalRequest) => {
+    void approvalActions.reject(request);
+  }, [approvalActions]);
+
+  const handleFeedFeedback = useCallback(async (itemId: string, feedback: ResponseFeedbackValue | null) => {
+    if (currentSessionId) {
+      await responseActionActions.setFeedback(currentSessionId, itemId, feedback);
+    }
+  }, [currentSessionId, responseActionActions]);
+
+  const handleFeedRegenerate = useCallback(async (run: Run) => {
+    await reviseLatestRun(run);
+  }, [reviseLatestRun]);
+
+  const handleFeedEditResend = useCallback((run: Run, editedInput?: string, references?: string[]) => {
+    return reviseLatestRun(run, editedInput, references);
+  }, [reviseLatestRun]);
+
   const agentApprovalCounts = Object.fromEntries((agents.state?.agents ?? []).map((agent) => [
     agent.sessionId,
     approvals.filter((request) => request.sessionId === agent.sessionId).length,
@@ -1025,7 +1071,7 @@ export function AppShell({ runtime }: AppShellProps) {
     return tab.id;
   }
 
-  function openAgentList(): void {
+  const openAgentList = useCallback((): void => {
     if (!currentSnapshot) return;
     const existing = openTabs.find((tab) => tab.id === "agent");
     if (!existing) {
@@ -1033,9 +1079,9 @@ export function AppShell({ runtime }: AppShellProps) {
     }
     setActiveTabId("agent");
     setDockOpen(true);
-  }
+  }, [currentSnapshot, openTabs]);
 
-  function openAgent(agent: AgentSummary): void {
+  const openAgent = useCallback((agent: AgentSummary): void => {
     if (!currentSnapshot || !agents.state?.agents?.some((entry) => entry.id === agent.id)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
@@ -1043,9 +1089,9 @@ export function AppShell({ runtime }: AppShellProps) {
     setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title: agent.taskName }]);
     setActiveTabId(id);
     setDockOpen(true);
-  }
+  }, [agents.state?.agents, currentSnapshot]);
 
-  function handleOpenSubagent(target?: { id?: string | undefined; taskName?: string | undefined }): void {
+  const handleOpenSubagent = useCallback((target?: { id?: string | undefined; taskName?: string | undefined }): void => {
     if (!currentSnapshot) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
@@ -1068,7 +1114,7 @@ export function AppShell({ runtime }: AppShellProps) {
     } else {
       openAgentList();
     }
-  }
+  }, [agents.state?.agents, currentSnapshot, openAgent, openAgentList]);
 
   function handleOpenBrowser(url: string): void {
     const browserId = openTool("browser");
@@ -1084,14 +1130,14 @@ export function AppShell({ runtime }: AppShellProps) {
     setReviewRequest({ ...request, requestId: ++fileOpenSequenceRef.current });
   }
 
-  function handleOpenPlan(): void {
+  const handleOpenPlan = useCallback((): void => {
     if (!currentSnapshot) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
     setOpenTabs((tabs) => tabs.some((tab) => tab.kind === "plan") ? tabs : [...tabs, { id: "plan", kind: "plan", title: "计划" }]);
     setActiveTabId("plan");
     setDockOpen(true);
-  }
+  }, [currentSnapshot]);
 
   async function handleOpenExternal(path: string): Promise<void> {
     if (!currentSnapshot) return;
@@ -1109,7 +1155,7 @@ export function AppShell({ runtime }: AppShellProps) {
     await window.eidosRuntime.showItemInFolder(`${root.replace(/\/$/, "")}/${resolved}`);
   }
 
-  function handleOpenFileInDock(path: string, position?: WorkspaceFilePosition): void {
+  const handleOpenFileInDock = useCallback((path: string, position?: WorkspaceFilePosition): void => {
     if (!currentSnapshot) return;
     const root = currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot;
     const resolved = artifactPath(path, root, undefined, true);
@@ -1121,7 +1167,7 @@ export function AppShell({ runtime }: AppShellProps) {
       ...(position?.line === undefined ? {} : { line: position.line }),
       ...(position?.column === undefined ? {} : { column: position.column }),
     });
-  }
+  }, [currentSnapshot]);
 
   function toggleDock(): void {
     if (dockOpen) {
@@ -1468,29 +1514,28 @@ export function AppShell({ runtime }: AppShellProps) {
                   resultItems={completeSessionItems.items}
                   projectless={currentSnapshot.session.projectless === true}
                   runs={currentSnapshot.runs}
-                  models={modelState.list?.models ?? []}
+                  models={feedModels}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
                   responseActionState={responseActionState.responseState}
                   pendingFeedbackItemIds={responseActionState.pendingFeedbackItemIds}
                   revisionSubmitting={runState.isSubmitting}
                   stepResolutions={currentSnapshot.stepResolutions}
-                  approvals={approvals.filter((a) => a.sessionId === currentSnapshot.session.id)}
+                  approvals={feedApprovals}
                   respondingApprovalIds={respondingApprovalIds}
                   respondingKindByApprovalId={respondingKindByApprovalId}
                   expiredApprovalIds={approvalState.expiredApprovalIds}
                   errorsByApprovalId={errorsByApprovalId}
                   approvalLoadError={approvalState.pendingApprovalsLoadError}
                   loadingPendingApprovals={approvalState.loadingPendingApprovals}
-                  onRetryLoadPending={() => void approvalActions.loadPending()}
-                  onApprove={(request) => void approvalActions.approve(request)}
-                  onReject={(request) => void approvalActions.reject(request)}
-                  onFeedback={(itemId, feedback) =>
-                    responseActionActions.setFeedback(currentSnapshot.session.id, itemId, feedback)}
-                  onRegenerate={async (run) => { await reviseLatestRun(run); }}
-                  onEditResend={(run, editedInput, references) => reviseLatestRun(run, editedInput, references)}
+                  onRetryLoadPending={handleFeedRetryLoadPending}
+                  onApprove={handleFeedApprove}
+                  onReject={handleFeedReject}
+                  onFeedback={handleFeedFeedback}
+                  onRegenerate={handleFeedRegenerate}
+                  onEditResend={handleFeedEditResend}
                   onOpenFile={handleOpenFileInDock}
                   onOpenPlan={handleOpenPlan}
-                  agents={agents.state?.agents ?? []}
+                  agents={feedAgents}
                   onOpenSubagent={handleOpenSubagent}
                 />
 

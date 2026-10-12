@@ -1,7 +1,7 @@
 import type { InputReference } from "../../../shared/input-context.js";
 import { InputReferenceCards, useInputContext } from "./InputContext.js";
 import { InputPicker, type InputPickerMode, LightbulbIcon } from "./InputPicker.js";
-import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
@@ -113,26 +113,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     closePicker();
   }
   useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement);
-
-  const prevInputRef = useRef(input);
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const minHeight = 56;
-    const maxHeight = 168;
-    const prevInput = prevInputRef.current;
-    prevInputRef.current = input;
-
-    // Only collapse to auto to measure smaller content if input might have shrunk in lines
-    const mightShrink = input.length < prevInput.length || (!input.includes("\n") && prevInput.includes("\n"));
-    if (mightShrink && el.offsetHeight > minHeight) {
-      el.style.height = "auto";
-    }
-    const targetHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
-    if (el.offsetHeight !== targetHeight) {
-      el.style.height = `${targetHeight}px`;
-    }
-  }, [input, references.length]);
 
   const [showBusyHint, setShowBusyHint] = useState(false);
   useEffect(() => {
@@ -332,7 +312,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       <textarea
         ref={textareaRef}
         id="task-input"
-        rows={2}
+        rows={1}
         maxLength={65536}
         role={picker ? "combobox" : undefined}
         aria-autocomplete="list"

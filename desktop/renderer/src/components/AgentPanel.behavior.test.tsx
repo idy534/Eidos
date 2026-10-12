@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CollaborationState } from "../../../shared/collaboration.generated.js";
-import type { EidosRuntimeAPI } from "../contracts.js";
+import type { EidosRuntimeAPI, Item, Run, RuntimeNotification, SessionSnapshot } from "../contracts.js";
 import {
   AgentList,
   AgentWorkspacePanel,
@@ -13,6 +13,76 @@ import {
 } from "./AgentPanel.js";
 
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+
+function historyAgent(sessionId = "child-session-history") {
+  return {
+    id: "agent-history",
+    taskName: "inspect-history",
+    role: "worker" as const,
+    parentRunId: "parent-run",
+    sessionId,
+    runId: "child-run-latest",
+    status: "succeeded" as const,
+    task: "Read the full execution history",
+    result: null,
+    resultItemId: null,
+    errorCode: null,
+    createdAt: 1,
+  };
+}
+
+function historyItem(
+  id: string,
+  runId: string,
+  content: string,
+  ordinal: number,
+  kind: Item["kind"] = "assistant_message",
+): Item {
+  return {
+    id,
+    sessionId: "child-session-history",
+    runId,
+    kind,
+    status: "completed",
+    ordinal,
+    content,
+    createdAt: ordinal,
+  };
+}
+
+function historyRun(id: string, createdAt: number): Run {
+  return {
+    id,
+    sessionId: "child-session-history",
+    status: "succeeded",
+    allowedActions: [],
+    modelId: "test-model",
+    modelStepCount: 1,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+function historySnapshot(
+  sessionId: string,
+  items: Item[],
+  runs: Run[],
+  previousItemId?: string,
+): SessionSnapshot {
+  return {
+    session: {
+      id: sessionId,
+      workspaceRoot: "/workspace",
+      taskStatus: "completed",
+      createdAt: 1,
+      updatedAt: 10,
+    },
+    items,
+    runs,
+    stepResolutions: [],
+    ...(previousItemId ? { previousItemId } : {}),
+  };
+}
 
 describe("agent error labels", () => {
   it("describes interruption and legacy completion checks", () => {
@@ -213,6 +283,150 @@ describe("AgentWorkspacePanel", () => {
     const backButton = screen.getByRole("button", { name: "返回子智能体列表" });
     fireEvent.click(backButton);
     expect(onBackToList).toHaveBeenCalled();
+  });
+
+  it("loads every history page and keeps items in chronological order", async () => {
+    const child = historyAgent();
+    const latestPage = historySnapshot(child.sessionId, [
+      historyItem("new-user", "child-run-latest", "Latest task", 3, "user_message"),
+      historyItem("new-1", "child-run-latest", "Newest answer", 4),
+      historyItem("new-2", "child-run-latest", "Latest follow-up", 5),
+    ], [historyRun("child-run-latest", 4)], "cursor-before-newest");
+    const olderPage = historySnapshot(child.sessionId, [
+      historyItem("old-user", "child-run-old", "Earlier task", 0, "user_message"),
+      historyItem("old-1", "child-run-old", "Earlier answer", 1),
+      historyItem("old-2", "child-run-old", "Earlier follow-up", 2),
+    ], [historyRun("child-run-old", 1)]);
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValueOnce(latestPage).mockResolvedValueOnce(olderPage),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    const { container } = render(
+      <AgentWorkspacePanel agents={[child]} agentId={child.id} error="" stopping={undefined}
+        onOpen={() => undefined} onStop={() => undefined} approvals={[]}
+        onApprove={() => undefined} onReject={() => undefined} />,
+    );
+
+    expect(await screen.findByText("Earlier answer")).toBeInTheDocument();
+    expect(screen.getByText("Earlier follow-up")).toBeInTheDocument();
+    expect(screen.getByText("Newest answer")).toBeInTheDocument();
+    expect(screen.getByText("Latest follow-up")).toBeInTheDocument();
+    expect(api.readSession).toHaveBeenNthCalledWith(1, child.sessionId, { itemLimit: 500 });
+    expect(api.readSession).toHaveBeenNthCalledWith(2, child.sessionId, {
+      itemLimit: 500,
+      beforeItemId: "cursor-before-newest",
+    });
+
+    const feedText = container.querySelector(".feed")?.textContent ?? "";
+    expect(feedText.indexOf("Earlier answer")).toBeLessThan(feedText.indexOf("Earlier follow-up"));
+    expect(feedText.indexOf("Earlier follow-up")).toBeLessThan(feedText.indexOf("Newest answer"));
+    expect(feedText.indexOf("Newest answer")).toBeLessThan(feedText.indexOf("Latest follow-up"));
+  });
+
+  it("refreshes only for the current child session and coalesces notification bursts", async () => {
+    const child = historyAgent();
+    const initial = historySnapshot(child.sessionId, [
+      historyItem("initial", child.runId, "Before refresh", 1),
+    ], [historyRun(child.runId, 1)]);
+    const refreshed = historySnapshot(child.sessionId, [
+      historyItem("refreshed", child.runId, "After refresh", 2),
+    ], [historyRun(child.runId, 1)]);
+    let notify: ((notification: RuntimeNotification) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed),
+      onNotification: vi.fn((callback: Parameters<EidosRuntimeAPI["onNotification"]>[0]) => {
+        notify = callback;
+        return unsubscribe;
+      }),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    const view = render(
+      <AgentWorkspacePanel agents={[child]} agentId={child.id} error="" stopping={undefined}
+        onOpen={() => undefined} onStop={() => undefined} approvals={[]}
+        onApprove={() => undefined} onReject={() => undefined} />,
+    );
+    expect(await screen.findByText("Before refresh")).toBeInTheDocument();
+
+    notify?.({ method: "session/titleUpdated", params: { sessionId: "another-child", title: "Other" } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(api.readSession).toHaveBeenCalledTimes(1);
+
+    const currentSessionUpdate: RuntimeNotification = {
+      method: "session/titleUpdated",
+      params: { sessionId: child.sessionId, title: "Updated" },
+    };
+    notify?.(currentSessionUpdate);
+    notify?.(currentSessionUpdate);
+    expect(await screen.findByText("After refresh", {}, { timeout: 1_000 })).toBeInTheDocument();
+    expect(api.readSession).toHaveBeenCalledTimes(2);
+
+    view.unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs one queued refresh after a notification arrives during a page read", async () => {
+    const child = historyAgent();
+    const initial = historySnapshot(child.sessionId, [
+      historyItem("initial", child.runId, "Before queued refresh", 1),
+    ], [historyRun(child.runId, 1)]);
+    const refreshed = historySnapshot(child.sessionId, [
+      historyItem("refreshed", child.runId, "After queued refresh", 2),
+    ], [historyRun(child.runId, 1)]);
+    let resolveInitial!: (snapshot: SessionSnapshot) => void;
+    const initialRead = new Promise<SessionSnapshot>((resolve) => { resolveInitial = resolve; });
+    let notify: ((notification: RuntimeNotification) => void) | undefined;
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockReturnValueOnce(initialRead).mockResolvedValueOnce(refreshed),
+      onNotification: vi.fn((callback: Parameters<EidosRuntimeAPI["onNotification"]>[0]) => {
+        notify = callback;
+        return vi.fn();
+      }),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    render(
+      <AgentWorkspacePanel agents={[child]} agentId={child.id} error="" stopping={undefined}
+        onOpen={() => undefined} onStop={() => undefined} approvals={[]}
+        onApprove={() => undefined} onReject={() => undefined} />,
+    );
+    notify?.({ method: "session/titleUpdated", params: { sessionId: child.sessionId, title: "Updated" } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(api.readSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveInitial(initial);
+      await initialRead;
+    });
+    expect(await screen.findByText("After queued refresh", {}, { timeout: 1_500 })).toBeInTheDocument();
+    expect(api.readSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the latest page and reports when an older history page fails", async () => {
+    const child = historyAgent();
+    const latestPage = historySnapshot(child.sessionId, [
+      historyItem("latest-user", child.runId, "Current task", 1, "user_message"),
+      historyItem("latest-answer", child.runId, "Current answer", 2),
+    ], [historyRun(child.runId, 1)], "cursor-before-current");
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValueOnce(latestPage).mockRejectedValueOnce(new Error("page unavailable")),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    render(
+      <AgentWorkspacePanel agents={[child]} agentId={child.id} error="" stopping={undefined}
+        onOpen={() => undefined} onStop={() => undefined} approvals={[]}
+        onApprove={() => undefined} onReject={() => undefined} />,
+    );
+
+    expect(await screen.findByText("Current answer")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("子智能体执行记录未能全部加载。");
+    expect(screen.getByText("Current answer")).toBeInTheDocument();
+    expect(api.readSession).toHaveBeenCalledTimes(2);
   });
 
   it("renders overview with empty state when no agents exist", () => {

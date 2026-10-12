@@ -522,26 +522,20 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(cancelSpy).toHaveBeenCalledWith(456);
   });
 
-  it("auto-resizes textarea height bounded between min 56px and max 168px", () => {
-    const { rerender } = render(<Composer {...defaultProps} input="Short text" />);
+  it("keeps the same focused textarea while editing and clearing a multiline draft", () => {
+    const { rerender } = render(<Composer {...defaultProps} input={"Line 1\nLine 2\nLine 3"} />);
     const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    textarea.focus();
+    textarea.setSelectionRange(3, 3);
 
-    // Simulate scrollHeight properties
-    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 30 });
-    rerender(<Composer {...defaultProps} input="Text step 1" />);
-    expect(textarea.style.height).toBe("56px"); // clamped to minHeight 56px
+    rerender(<Composer {...defaultProps} input={"Line\nLine 2\nLine 3"} />);
+    expect(screen.getByRole("textbox")).toBe(textarea);
+    expect(textarea).toHaveFocus();
+    expect(textarea).toHaveValue("Line\nLine 2\nLine 3");
 
-    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 120 });
-    rerender(<Composer {...defaultProps} input="Text step 2" />);
-    expect(textarea.style.height).toBe("120px");
-
-    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 250 });
-    rerender(<Composer {...defaultProps} input="Very long multi line text" />);
-    expect(textarea.style.height).toBe("168px"); // clamped to maxHeight 168px
-
-    // Clearing input restores min height 56px
-    Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 20 });
     rerender(<Composer {...defaultProps} input="" />);
-    expect(textarea.style.height).toBe("56px");
+    expect(screen.getByRole("textbox")).toBe(textarea);
+    expect(textarea).toHaveFocus();
+    expect(textarea).toHaveValue("");
   });
 });

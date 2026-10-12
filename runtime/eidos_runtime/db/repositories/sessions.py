@@ -927,6 +927,18 @@ class SessionRepository(Repository):
             item_sql += " ORDER BY creation_seq DESC LIMIT ?"
             item_parameters.append(item_limit + 1)
             item_rows = connection.execute(item_sql, item_parameters).fetchall()
+            known_run_ids = {row["id"] for row in run_rows}
+            missing_run_ids = sorted(
+                {row["run_id"] for row in item_rows[:item_limit]} - known_run_ids
+            )
+            if missing_run_ids:
+                placeholders = ",".join("?" for _ in missing_run_ids)
+                run_rows.extend(
+                    connection.execute(
+                        f"SELECT * FROM runs WHERE session_id = ? AND id IN ({placeholders})",
+                        [session_id, *missing_run_ids],
+                    ).fetchall()
+                )
             tool_rows: list[sqlite3.Row] = []
             if item_rows:
                 placeholders = ",".join("?" for _ in item_rows)
@@ -942,20 +954,32 @@ class SessionRepository(Repository):
         selected_runs = [
             _run_from_row(row, include_user_input=False)
             for row in reversed(run_rows)
+            if row["id"] in known_run_ids
         ]
+        remaining_runs = {
+            row["id"]: _run_from_row(row, include_user_input=False)
+            for row in run_rows
+            if row["id"] not in known_run_ids
+        }
+        run_order = {row["id"]: row["creation_seq"] for row in run_rows}
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         has_more = len(item_rows) > item_limit
         selected_items: list[dict[str, object]] = []
         selected_bytes = _json_bytes(session) + _json_bytes(selected_runs) + 1024
         for row in item_rows[:item_limit]:
             item = _snapshot_item(row, tools_by_item.get(row["id"]))
-            item_bytes = _json_bytes(item)
+            run = remaining_runs.get(row["run_id"])
+            item_bytes = _json_bytes(item) + (_json_bytes(run) if run else 0)
             if selected_bytes + item_bytes > MAX_SNAPSHOT_BYTES:
                 has_more = True
                 break
+            if run:
+                selected_runs.append(run)
+                del remaining_runs[row["run_id"]]
             selected_items.append(item)
             selected_bytes += item_bytes
         selected_items.reverse()
+        selected_runs.sort(key=lambda run: run_order[run["id"]])
         snapshot: dict[str, object] = {
             "session": session,
             "runs": selected_runs,

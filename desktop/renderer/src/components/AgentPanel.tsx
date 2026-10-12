@@ -289,42 +289,77 @@ function AgentTranscript({
 }) {
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const load = async (older = false) => {
-    setLoading(true);
-    try {
-      const value = await window.eidosRuntime.readSession(
-        agent.sessionId,
-        older && snapshot?.previousItemId
-          ? { itemLimit: 50, beforeItemId: snapshot.previousItemId }
-          : { itemLimit: 50 },
-      );
-      setSnapshot((previous) => (older && previous ? { ...value, items: [...value.items, ...previous.items] } : value));
-      setError("");
-    } catch (cause) {
-      setError(userFacingError(cause));
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    void load();
+    setSnapshot(undefined);
+    setError("");
+    let disposed = false;
+    let reading = false;
+    let refreshPending = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsubscribe = window.eidosRuntime.onNotification(() => {
-      if (timer === undefined) {
-        timer = setTimeout(() => {
-          timer = undefined;
-          void load();
-        }, 250);
+
+    const scheduleLoad = () => {
+      if (disposed || timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void load();
+      }, 250);
+    };
+
+    const load = async () => {
+      if (disposed) return;
+      if (reading) {
+        refreshPending = true;
+        return;
       }
+      reading = true;
+      refreshPending = false;
+      try {
+        const latest = await window.eidosRuntime.readSession(agent.sessionId, { itemLimit: 500 });
+        if (disposed) return;
+        setSnapshot((previous) => previous ?? latest);
+        const pages: Item[][] = [latest.items];
+        const runs = new Map(latest.runs.map((run) => [run.id, run]));
+        const visited = new Set<string>();
+        let cursor = latest.previousItemId;
+        while (cursor && !disposed) {
+          if (visited.has(cursor)) throw new Error("更早的执行记录暂时无法读取。");
+          visited.add(cursor);
+          const page = await window.eidosRuntime.readSession(agent.sessionId, {
+            itemLimit: 500,
+            beforeItemId: cursor,
+          });
+          pages.push(page.items);
+          for (const run of page.runs) runs.set(run.id, run);
+          cursor = page.previousItemId;
+        }
+        if (disposed) return;
+        const items = new Map(pages.reverse().flat().map((item) => [item.id, item]));
+        const complete: SessionSnapshot = {
+          ...latest,
+          items: [...items.values()],
+          runs: [...runs.values()].sort((a, b) => a.createdAt - b.createdAt),
+        };
+        delete complete.previousItemId;
+        setSnapshot(complete);
+        setError("");
+      } catch (cause) {
+        if (!disposed) setError(`子智能体执行记录未能全部加载。${userFacingError(cause)}`);
+      } finally {
+        reading = false;
+        if (refreshPending) scheduleLoad();
+      }
+    };
+
+    void load();
+    const unsubscribe = window.eidosRuntime.onNotification((notification) => {
+      if (notification.params.sessionId === agent.sessionId) scheduleLoad();
     });
     return () => {
+      disposed = true;
       clearTimeout(timer);
       unsubscribe();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.sessionId, agent.runId]);
 
   const childApprovals = useMemo(
@@ -399,19 +434,6 @@ function AgentTranscript({
               />
             ) : null;
           })}
-        </div>
-      )}
-
-      {snapshot?.previousItemId && (
-        <div className="agent-transcript__toolbar">
-          <button
-            type="button"
-            className="agent-transcript__action-btn"
-            disabled={loading}
-            onClick={() => void load(true)}
-          >
-            加载更早记录
-          </button>
         </div>
       )}
 

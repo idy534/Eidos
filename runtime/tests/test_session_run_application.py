@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -109,6 +110,67 @@ def test_session_application_supports_projectless_conversations(
         assert application.read_snapshot(
             SessionReadRequestDto(sessionId=session_id)
         ).root["session"] == created.root
+    finally:
+        store.close()
+
+
+def test_session_snapshot_includes_older_run_for_a_paginated_item(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(str(workspace))
+        session_id = str(session["id"])
+        assert store.connection is not None
+        extension_snapshot_json = json.dumps({
+            "schemaVersion": 1,
+            "extensionContractVersion": 1,
+            "plugins": [],
+            "skillCatalogHash": "0" * 64,
+            "mcpConfigHash": "0" * 64,
+        })
+        with store.lock, store.connection:
+            for index in range(101):
+                run_id = f"run-{index:03}"
+                item_id = f"item-{index:03}"
+                created_at = index + 1
+                store.connection.execute(
+                    """
+                    INSERT INTO runs (
+                        id, session_id, user_input, model_id, model_profile_json,
+                        extension_snapshot_json, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'deepseek-flash', '{}', ?, 'succeeded', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        session_id,
+                        f"prompt {index}",
+                        extension_snapshot_json,
+                        created_at,
+                        created_at,
+                    ),
+                )
+                store.connection.execute(
+                    """
+                    INSERT INTO items (
+                        id, session_id, run_id, ordinal, kind, status, content,
+                        created_at, completed_at
+                    ) VALUES (?, ?, ?, 0, 'user_message', 'completed', ?, ?, ?)
+                    """,
+                    (item_id, session_id, run_id, f"prompt {index}", created_at, created_at),
+                )
+
+        snapshot = store.read_session_snapshot(
+            session_id,
+            item_limit=500,
+            before_item_id="item-001",
+        )
+
+        assert [item["id"] for item in snapshot["items"]] == ["item-000"]
+        assert [item["runId"] for item in snapshot["items"]] == ["run-000"]
+        assert snapshot["runs"][0]["id"] == "run-000"
     finally:
         store.close()
 

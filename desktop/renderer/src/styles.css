@@ -6769,6 +6769,7 @@ span.tool-file-link:hover {
 }
 
 .composer textarea {
+  field-sizing: content;
   min-height: 3.5rem;
   max-height: 10.5rem;
   resize: none;

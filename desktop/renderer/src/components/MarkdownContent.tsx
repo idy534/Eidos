@@ -131,6 +131,12 @@ const STREAMING_REHYPE_PLUGINS: MarkdownRehypePlugins = [
 ];
 const REMARK_PLUGINS: MarkdownRemarkPlugins = [remarkGfm, remarkMath];
 
+function MarkdownImage({ src, alt, documentPath }: ComponentProps<"img"> & { documentPath?: string }) {
+  const actions = useArtifacts();
+  const path = actions && typeof src === "string" ? artifactPath(src, actions.executionRoot, documentPath) : undefined;
+  return path ? <ArtifactImage path={path} alt={alt || "图片"} /> : <span className="markdown-image-alt">{alt || "图片"}</span>;
+}
+
 export const MarkdownContent = memo(function MarkdownContent({
   content,
   documentPath,
@@ -140,7 +146,6 @@ export const MarkdownContent = memo(function MarkdownContent({
   documentPath?: string;
   isStreaming?: boolean;
 }) {
-  const actions = useArtifacts();
   const remarkPlugins = useMemo(() => REMARK_PLUGINS, []);
   const rehypePlugins = useMemo(
     () => {
@@ -152,10 +157,7 @@ export const MarkdownContent = memo(function MarkdownContent({
 
   const components = useMemo<ComponentProps<typeof Markdown>["components"]>(() => ({
     a: ({ children, href }) => <ArtifactLink {...(href ? { href } : {})} {...(documentPath ? { documentPath } : {})}>{children}</ArtifactLink>,
-    img: ({ alt, src }) => {
-      const path = actions && typeof src === "string" ? artifactPath(src, actions.executionRoot, documentPath) : undefined;
-      return path ? <ArtifactImage path={path} alt={alt || "图片"} /> : <span className="markdown-image-alt">{alt || "图片"}</span>;
-    },
+    img: ({ alt, src }) => <MarkdownImage alt={alt} src={src} {...(documentPath ? { documentPath } : {})} />,
     pre: ({ children, node }) => documentPath
       ? <div data-source-line={node?.position?.start.line} data-source-end-line={node?.position?.end.line}>{children}</div>
       : <>{children}</>,
@@ -170,7 +172,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       }
       return <code className={className}>{children}</code>;
     },
-  }), [actions, documentPath, isStreaming]);
+  }), [documentPath, isStreaming]);
 
   return (
     <div className="markdown-body">

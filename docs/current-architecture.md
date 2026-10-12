@@ -674,11 +674,15 @@ Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 �
 
 ## 输入引用与草稿
 
-本节描述新增生产代码。用户要求先完成生产代码和文档，再确认测试阶段。因此，本节不代表测试或验收通过。
+本节描述输入引用、草稿和 Composer 布局。`pnpm test` 与 `pnpm test:composer-layout` 已通过。子 Agent 历史分页和通知刷新也有定向测试。自动化结果和未完成的人工验收范围见 `docs/current-limitations.md`。
 
 输入链路是 `Composer / WorkspaceExplorer → InputContext → preload typed IPC → Main → input/* RPC → InputContextApplication → InputContextRepository`。Main 提供系统文件选择、剪贴板图片、右键菜单和拖放文件路径转换。Renderer 不直接读取文件。Runtime 读取选中的内容，检查文件身份、大小和敏感内容，并生成带来源、摘要和类型的不可变引用。
 
 Schema v14 在 `items` 增加 `input_references_json`，并增加 `input_references` 与 `input_drafts`。v13 → v14 升级通过现有事务执行；此前受支持的版本沿原有升级链进入 v14。引用正文与图片使用现有 JSON Blob 存储。SQLite 保存引用元数据和 Blob 指针。Blob GC 保留这些指针。每个 Session 的草稿保存文字与引用 ID；尚未创建 Session 的输入使用 `new-conversation` 草稿。Renderer 的草稿状态只是编辑缓存，持久事实仍由 Runtime 管理。
+
+Composer 的原生 textarea 使用 Chromium 的 `field-sizing: content` 按当前内容和宽度计算高度。CSS 保留 56px 最小高度、168px 最大高度和超出后的内部滚动。Renderer 不再临时缩小正在编辑的输入框来读取 `scrollHeight`，因此等高编辑不会通过中间布局改变 Execution Feed 的滚动位置。
+
+Markdown 的组件映射不再依赖整个 ArtifactActions 上下文对象。链接和图片组件直接读取当前上下文，单行输入和全选删除引起的父组件更新不会重新挂载代码块或图片。实际 Session、执行目录或文件版本变化仍由原预览链路重新读取资源。真实 Electron 布局测试使用含代码块和图片的历史记录，并覆盖单行输入、全选删除、多行删除、组合输入事件、自动换行、宽度变化和高度上限。
 
 `input/prepare` 固定引用，`input/read` 返回预览，`input/draftRead` 与 `input/draftWrite` 读写草稿。`run/start` 接收引用 ID。Runtime 在接纳 Run 前解析这些 ID、检查总量和模型图片能力，并重新核对 Skill、MCP、Plugin 的可用状态和版本。Run 的用户消息与引用元数据在同一现有事务中提交，并经 Event/Outbox 投影。编辑重发、重新生成和 Fork 保留原引用；编辑重发可以显式移除引用。引用不会复制审批或权限授权。
 
@@ -735,7 +739,9 @@ SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当�
 
 用户取消父任务时，Runtime 先保存父任务的取消请求，再取消活跃子 Run。调度器不会启动父任务已取消或结束的子 Run。每次调度都会检查并取消父任务已结束或请求取消的子 Run，即使父任务没有创建等待记录。监督任务在等待期间也会做同样的检查。重启时，只有没有不确定副作用的持久等待可以恢复。普通执行中的子 Run 继续使用现有 Recovery 规则；Runtime 不承诺恢复任意中断采样，也不会重放未知副作用。
 
-Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表及待审批数量；工作区关闭时，环境信息入口仍会提示待审批数。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和分页记录。主 Session 不嵌入子任务面板。
+Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表及待审批数量；工作区关闭时，环境信息入口仍会提示待审批数。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和完整执行记录。主 Session 不嵌入子任务面板。
+
+子 Agent 详情不再提供“加载更早记录”按钮。Renderer 通过现有 `session/read` 自动读取全部历史页，每页请求最多 500 条 Item，并继续使用 Runtime 的响应大小限制。Renderer 合并各页的 Item 和 Run，按 Item ID 去重。`session/read` 保留最近 100 个 Run，并补带当前页 Item 对应的更早 Run；新增 Run 的内容也计入响应大小限制。刷新只响应当前子 Session 的通知，同一详情页的读取按顺序执行，通知在读取期间到来时会触发一次后续刷新。刷新完成前，界面保留已显示的记录。详情关闭或切换后，旧请求不再更新界面。读取失败时，界面提示记录未能全部加载。新增的 AgentPanel 定向测试覆盖多页顺序、旧 Run 信息、通知过滤、通知合并、读取期间补刷新和取消订阅。定向测试结果与未完成人工验收范围见 `docs/current-limitations.md`。
 
 v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。v16→v17 增加完成依赖标记、消息回执和实际 Skill 使用租约，采用事务和外键检查，失败回滚。旧版本不能直接打开 v17 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。
 
