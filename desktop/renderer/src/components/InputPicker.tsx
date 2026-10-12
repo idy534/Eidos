@@ -17,7 +17,7 @@ const CATEGORIES = [
   { id: "skill", label: "Skill" },
   { id: "mcp", label: "MCP" },
   { id: "plugin", label: "插件" },
-  { id: "history", label: "历史" },
+  { id: "history", label: "会话" },
 ] as const;
 export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode }: {
   mode: InputPickerMode; query: string; inline: boolean;

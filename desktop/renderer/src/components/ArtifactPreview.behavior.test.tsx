@@ -9,7 +9,7 @@ import { MarkdownContent } from "./MarkdownContent.js";
 import { ResultFiles, toolFilePaths } from "./ResultFiles.js";
 import { WorkspaceExplorer } from "./WorkspaceExplorer.js";
 
-vi.mock("shiki/bundle/web", () => ({
+const mockShikiImplementation = {
   codeToHtml: async (code: string) => {
     const parts = code.split("\n");
     if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
@@ -19,7 +19,9 @@ vi.mock("shiki/bundle/web", () => ({
       )).join("\n")}</code></pre>`
     );
   },
-}));
+};
+vi.mock("shiki", () => mockShikiImplementation);
+vi.mock("shiki/bundle/web", () => mockShikiImplementation);
 
 
 const runtimeDescriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");

@@ -6,6 +6,7 @@
   min-height: 0;
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
+  overflow: clip;
 }
 
 .workspace-body--with-dock {
@@ -27,6 +28,7 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+  overflow: clip;
 }
 
 .workspace-main-column--hidden {
@@ -351,6 +353,9 @@ button.environment-popover__row:hover:not(:disabled) {
   grid-row: 1;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  overflow: clip;
   flex-direction: column;
   border-left: 1px solid var(--line);
   background: var(--dock-bg, #f4f5f8);
@@ -529,6 +534,7 @@ button.environment-popover__row:hover:not(:disabled) {
 .workspace-dock__body {
   display: flex;
   overflow: hidden;
+  overflow: clip;
 }
 
 .workspace-dock__body > [role="tabpanel"]:not([hidden]) {
@@ -653,6 +659,7 @@ button.environment-popover__row:hover:not(:disabled) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  overflow: clip;
   transform: translateX(100%);
   transition: width 280ms var(--apple-spring), transform 280ms var(--apple-spring);
 }

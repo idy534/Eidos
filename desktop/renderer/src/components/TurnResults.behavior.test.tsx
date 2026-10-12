@@ -170,6 +170,52 @@ describe("TurnResults", () => {
     }
   });
 
+  it("shows top warning toast instead of session card note when artifact has changed after declaration", async () => {
+    const openFile = vi.fn();
+    const showToast = vi.fn();
+    const declaredVersion = "a".repeat(64);
+    const updatedVersion = "b".repeat(64);
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readWorkspaceFilePreview: vi.fn().mockResolvedValue({
+          path: "notes.txt",
+          kind: "text",
+          sizeBytes: 50,
+          truncated: false,
+          version: updatedVersion,
+        }),
+      },
+    });
+    const items = [declaredItem("item-1", [{ path: "notes.txt", version: declaredVersion }])];
+
+    try {
+      const { container } = render(
+        <ArtifactProvider
+          value={{
+            sessionId: run.sessionId,
+            executionRoot: "/workspace",
+            openFile,
+            openBrowser: vi.fn(),
+            showToast,
+          }}
+        >
+          <TurnResults run={run} items={items} />
+        </ArtifactProvider>,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "打开 notes.txt" }));
+      await waitFor(() => expect(openFile).toHaveBeenCalledWith("notes.txt"));
+      expect(showToast).toHaveBeenCalledWith("文件已在声明后变化，打开的是当前版本。", "warning");
+      expect(screen.queryByText("文件已在声明后变化，打开的是当前版本。")).not.toBeInTheDocument();
+      expect(container.querySelector(".turn-result-card__note")).toBeNull();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
   it("keeps repeated paths honest and exposes persisted artifacts", () => {
     const items = [
       changeItem("item-1", "src/index.ts"),

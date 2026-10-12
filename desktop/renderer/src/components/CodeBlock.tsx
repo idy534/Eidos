@@ -32,12 +32,54 @@ const LANGUAGE_LABELS: Record<string, string> = {
   mermaid: "Mermaid",
   c: "C",
   cpp: "C++",
+  "c++": "C++",
+  csharp: "C#",
+  "c#": "C#",
+  cs: "C#",
+  fsharp: "F#",
+  "f#": "F#",
   java: "Java",
   kt: "Kotlin",
+  kotlin: "Kotlin",
   swift: "Swift",
   php: "PHP",
   ruby: "Ruby",
+  rb: "Ruby",
   lua: "Lua",
+  golang: "Go",
+  docker: "Dockerfile",
+  dockerfile: "Dockerfile",
+  xml: "XML",
+  toml: "TOML",
+  ini: "INI",
+  graphql: "GraphQL",
+  proto: "Protobuf",
+  protobuf: "Protobuf",
+};
+
+const LANGUAGE_ALIASES: Record<string, string> = {
+  golang: "go",
+  rs: "rust",
+  py: "python",
+  js: "javascript",
+  ts: "typescript",
+  sh: "bash",
+  shell: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  "c++": "cpp",
+  "c#": "csharp",
+  cs: "csharp",
+  "f#": "fsharp",
+  fs: "fsharp",
+  docker: "dockerfile",
+  rb: "ruby",
+  kt: "kotlin",
+  kts: "kotlin",
+  md: "markdown",
+  text: "text",
+  txt: "text",
+  plaintext: "text",
 };
 
 function formatLanguage(lang: string): string {
@@ -58,7 +100,7 @@ export const CodeBlock = memo(function CodeBlock({
   children?: ReactNode;
   isStreaming?: boolean | undefined;
 }) {
-  const match = /language-([a-zA-Z0-9_-]+)/.exec(className || "");
+  const match = /language-([a-zA-Z0-9_+#.-]+)/.exec(className || "");
   const lang = match ? match[1]! : "";
   const rawCode = String(children ?? "").replace(/\n$/, "");
   const [shikiHtml, setShikiHtml] = useState<string>();
@@ -69,11 +111,13 @@ export const CodeBlock = memo(function CodeBlock({
     if (!rawCode || isStreaming || !lang || lang === "mermaid" || lang === "diff") {
       return;
     }
-    void import("shiki/bundle/web")
+    const normalizedLang = lang.toLowerCase();
+    const targetLang = LANGUAGE_ALIASES[normalizedLang] ?? normalizedLang;
+    void import("shiki")
       .then(async ({ codeToHtml }) => {
         try {
           const rendered = await codeToHtml(rawCode, {
-            lang,
+            lang: targetLang,
             theme: "github-light-default",
           });
           if (active) setShikiHtml(rendered);

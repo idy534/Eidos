@@ -145,4 +145,39 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.diff-file-body\s*\{[^}]*max-height:\s*calc\(var\(--diff-single-max-height,\s*16rem\)\s*-\s*2\.1rem\);[^}]*overflow:\s*auto;/s);
     expect(styles).toMatch(/\.diff-file-card\.diff-view\s*\{[^}]*max-height:\s*var\(--diff-single-max-height,\s*16rem\);[^}]*overflow:\s*hidden;/s);
   });
+
+  it("applies low-saturation links and distinct inline code pill background in markdown", () => {
+    expect(styles).toMatch(/--link-color:\s*#2b5da7;/);
+    expect(styles).toMatch(/--code-inline-bg:\s*#eef0f2;/);
+    expect(styles).toMatch(/\.markdown-body code\s*\{[^}]*background:\s*var\(--code-inline-bg/s);
+    expect(styles).toMatch(/\.markdown-body code\s*\{[^}]*border:\s*1px solid var\(--code-inline-border/s);
+    expect(styles).toMatch(/\.markdown-file-link\s*\{[^}]*color:\s*var\(--link-color/s);
+    expect(styles).not.toMatch(/\.markdown-file-link\s*\{[^}]*color:\s*#1d4ed8;/s);
+    expect(styles).toMatch(/\.markdown-file-link\s*\{[^}]*vertical-align:\s*-0\.15em;/s);
+    expect(styles).toMatch(/\.markdown-body a\s*\{[^}]*text-decoration:\s*none;/s);
+    expect(styles).toMatch(/\.markdown-body a:hover[^{]*\{[^}]*text-decoration:\s*underline;/s);
+    expect(styles).toMatch(/\.markdown-body a\.markdown-file-link[^{]*\{[^}]*text-decoration:\s*none !important;/s);
+  });
+
+  it("scales code block fonts appropriately to match body text proportions", () => {
+    expect(styles).toMatch(/--font-size-code:\s*12\.5px;/);
+    expect(styles).toMatch(/\.code-block-card pre\s*\{[^}]*font:\s*var\(--font-size-code/s);
+    expect(styles).toMatch(/\.shiki-code-body\s*\{[^}]*font:\s*var\(--font-size-code/s);
+    expect(styles).toMatch(/\.code-block-card pre \.line\s*\{[^}]*display:\s*inline;/s);
+    expect(styles).toMatch(/\.shiki-code-body pre \.line\s*\{[^}]*display:\s*inline;/s);
+  });
+
+  it("locks root viewport to prevent unexpected window scroll", () => {
+    expect(styles).toMatch(/html,\s*body,\s*#root\s*\{[^}]*overflow:\s*hidden;[^}]*overscroll-behavior:\s*none;/s);
+    expect(styles).toMatch(/body\s*\{[^}]*overflow:\s*hidden;[^}]*overscroll-behavior:\s*none;/s);
+    expect(styles).toMatch(/\.workbench\s*\{[^}]*overflow:\s*hidden;[^}]*overscroll-behavior:\s*none;/s);
+    expect(styles).toMatch(/\.workspace\s*\{[^}]*overflow:\s*hidden;[^}]*overscroll-behavior:\s*none;/s);
+    expect(dockStyles).toMatch(/\.workspace-dock\s*\{[^}]*overflow:\s*hidden;[^}]*overflow:\s*clip;/s);
+    expect(styles).toMatch(/\.workspace-explorer\s*\{[^}]*overflow:\s*hidden;[^}]*overflow:\s*clip;/s);
+  });
+
+  it("keeps toast notifications interactive and non-draggable over window header drag regions", () => {
+    expect(styles).toMatch(/\.app-toast\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
+    expect(styles).toMatch(/\.app-toast-close\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
+  });
 });

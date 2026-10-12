@@ -504,4 +504,19 @@ describe("App & Runtime Lifecycle behavior", () => {
       expect(container).toHaveTextContent("存储处于只读健康模式");
     });
   });
+
+  it("locks window scroll to (0, 0) upon any window scroll event", async () => {
+    const scrollToSpy = vi.fn();
+    window.scrollTo = scrollToSpy;
+    setupMockRuntime();
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Agent 工作区" })).toBeInTheDocument();
+    });
+
+    Object.defineProperty(window, "scrollY", { value: 16, configurable: true });
+    fireEvent.scroll(window);
+    expect(scrollToSpy).toHaveBeenCalledWith(0, 0);
+  });
 });

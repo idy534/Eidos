@@ -63,7 +63,7 @@ import {
   OutputContent,
   useCompleteSessionItems,
 } from "../components/TurnResults.js";
-import { ToastContainer, type ToastItem } from "../components/ToastContainer.js";
+import { ToastContainer, type ToastItem, type ToastType } from "../components/ToastContainer.js";
 
 interface AppShellProps {
   runtime: RuntimeLifecycleState;
@@ -227,6 +227,46 @@ export function AppShell({ runtime }: AppShellProps) {
       observer?.disconnect();
     };
   }, [dockOpen, dockExpanded]);
+
+  // Lock layout containers and window scroll so that no ancestor scrollIntoView or gesture can displace the desktop viewport.
+  useEffect(() => {
+    const layoutSelectors = [
+      "#root",
+      ".workbench",
+      ".workspace",
+      ".workspace-body",
+      ".workspace-main-column",
+      ".workspace-drawer",
+      ".workspace-dock",
+      ".workspace-dock__body",
+    ];
+
+    const enforceNoLayoutScroll = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (document.documentElement.scrollTop !== 0) document.documentElement.scrollTop = 0;
+      if (document.documentElement.scrollLeft !== 0) document.documentElement.scrollLeft = 0;
+      if (document.body && document.body.scrollTop !== 0) document.body.scrollTop = 0;
+      if (document.body && document.body.scrollLeft !== 0) document.body.scrollLeft = 0;
+
+      for (const selector of layoutSelectors) {
+        const elements = document.querySelectorAll<HTMLElement>(selector);
+        for (const el of elements) {
+          if (el.scrollTop !== 0) el.scrollTop = 0;
+          if (el.scrollLeft !== 0) el.scrollLeft = 0;
+        }
+      }
+    };
+
+    enforceNoLayoutScroll();
+    window.addEventListener("scroll", enforceNoLayoutScroll, { capture: true, passive: true });
+    document.addEventListener("scroll", enforceNoLayoutScroll, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("scroll", enforceNoLayoutScroll, { capture: true });
+      document.removeEventListener("scroll", enforceNoLayoutScroll, { capture: true });
+    };
+  }, []);
   const [environmentPopoverOpen, setEnvironmentPopoverOpen] = useState(false);
   const [openTabs, setOpenTabs] = useState<WorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | undefined>(undefined);
@@ -264,6 +304,19 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }, [sessionActions, runActions, activeSnapshot?.session.id]);
 
+  const showToast = useCallback((message: string, type: ToastType = "info", duration?: number) => {
+    const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts((prev) => [
+      ...prev.filter((t) => t.message !== message),
+      {
+        id,
+        message,
+        type,
+        ...(duration !== undefined ? { duration } : {}),
+      },
+    ]);
+  }, []);
+
   const previousTopErrorRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (topError && topError !== previousTopErrorRef.current) {
@@ -287,9 +340,9 @@ export function AppShell({ runtime }: AppShellProps) {
   useEffect(() => {
     const warningDesc = runtimePresentation.tone === "warning" ? runtimePresentation.description : undefined;
     if (warningDesc && warningDesc !== previousWarningRef.current) {
-      const id = `warning-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const id = `runtime-warning-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setToasts((prev) => [
-        ...prev.filter((t) => t.type !== "warning"),
+        ...prev.filter((t) => !t.id.startsWith("runtime-warning-")),
         {
           id,
           message: warningDesc,
@@ -298,7 +351,7 @@ export function AppShell({ runtime }: AppShellProps) {
         },
       ]);
     } else if (!warningDesc && previousWarningRef.current) {
-      setToasts((prev) => prev.filter((t) => t.type !== "warning"));
+      setToasts((prev) => prev.filter((t) => !t.id.startsWith("runtime-warning-")));
     }
     previousWarningRef.current = warningDesc;
   }, [runtimePresentation.tone, runtimePresentation.description]);
@@ -1218,6 +1271,7 @@ export function AppShell({ runtime }: AppShellProps) {
       openExternal: handleOpenExternal,
       openReview: handleOpenReview,
       showInFinder: handleShowInFinder,
+      showToast,
     } : undefined}>
     <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
       onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}

@@ -389,7 +389,6 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
   const displayName = artifact.title || fileName(artifact.path);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string>();
-  const [versionNote, setVersionNote] = useState<string>();
   const [previewVersion, setPreviewVersion] = useState<string>();
   const openSequence = useRef(0);
   const wrongWorkspace = Boolean(actions && artifact.executionRoot !== actions.executionRoot);
@@ -404,7 +403,6 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
   useEffect(() => {
     setOpening(false);
     setOpenError(undefined);
-    setVersionNote(undefined);
     setImageOpen(false);
     setHtmlOpenPending(false);
     return () => { openSequence.current += 1; };
@@ -439,8 +437,9 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
     try {
       const preview = await window.eidosRuntime.readWorkspaceFilePreview(actions.sessionId, artifact.path);
       if (sequence !== openSequence.current) return;
-      setVersionNote(preview.version && preview.version !== artifact.version
-        ? "文件已在声明后变化，打开的是当前版本。" : undefined);
+      if (preview.version && preview.version !== artifact.version) {
+        actions.showToast?.("文件已在声明后变化，打开的是当前版本。", "warning");
+      }
       setPreviewVersion(preview.version);
       if (external || isOfficeArtifact(artifact.path) || preview.kind === "unavailable") {
         if (!actions.openExternal) throw new Error("当前没有系统应用打开入口。");
@@ -503,8 +502,8 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
           />
         )}
       </article>
-      {(wrongWorkspace || openError || versionNote) && <p className="turn-result-card__note" role={openError ? "alert" : "status"}>
-        {wrongWorkspace ? "此产物属于其他执行目录，当前工作区无法打开。" : openError || versionNote}
+      {(wrongWorkspace || openError) && <p className="turn-result-card__note" role={openError ? "alert" : "status"}>
+        {wrongWorkspace ? "此产物属于其他执行目录，当前工作区无法打开。" : openError}
       </p>}
       {imageOpen && typeof document !== "undefined" && createPortal(
         <div

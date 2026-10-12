@@ -761,7 +761,44 @@ function selectPreviewPosition(container: HTMLElement, position: WorkspaceFilePo
       ?? elements.sort((left, right) => Math.abs(Number(left.dataset.sourceLine) - line) - Math.abs(Number(right.dataset.sourceLine) - line))[0]
     : elements.find((element) => Number(element.dataset.sourceLine) === line);
   if (!target) return;
+
+  const resetLayoutScroll = () => {
+    let ancestor = container.parentElement;
+    while (ancestor) {
+      if (!ancestor.classList.contains("workspace-preview-pane") && ancestor.tagName !== "PRE") {
+        if (ancestor.scrollTop !== 0) ancestor.scrollTop = 0;
+        if (ancestor.scrollLeft !== 0) ancestor.scrollLeft = 0;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    const doc = container.ownerDocument;
+    if (doc.documentElement.scrollTop !== 0) doc.documentElement.scrollTop = 0;
+    if (doc.documentElement.scrollLeft !== 0) doc.documentElement.scrollLeft = 0;
+    if (doc.body && doc.body.scrollTop !== 0) doc.body.scrollTop = 0;
+    if (doc.body && doc.body.scrollLeft !== 0) doc.body.scrollLeft = 0;
+    const win = doc.defaultView;
+    if (win && (win.scrollX !== 0 || win.scrollY !== 0)) {
+      win.scrollTo(0, 0);
+    }
+  };
+
+  const previewPane = container.closest<HTMLElement>(".workspace-preview-pane") ?? container;
+  const pre = target.closest<HTMLElement>("pre");
+  const scrollContainer = (pre && pre.scrollHeight > pre.clientHeight) ? pre : previewPane;
+  if (scrollContainer && typeof scrollContainer.scrollTo === "function") {
+    const cRect = scrollContainer.getBoundingClientRect();
+    const tRect = target.getBoundingClientRect();
+    if (cRect.height > 0) {
+      const offset = tRect.top - cRect.top;
+      const targetScrollTop = scrollContainer.scrollTop + offset - (cRect.height / 2) + (tRect.height / 2);
+      scrollContainer.scrollTop = Math.max(0, targetScrollTop);
+    }
+  }
+
   target.scrollIntoView({ block: "center", inline: "nearest" });
+  resetLayoutScroll();
+  requestAnimationFrame(resetLayoutScroll);
+
   if (markdown) return;
   const content = target.querySelector<HTMLElement>(".preview-line-code") ?? target;
   const document = container.ownerDocument;
@@ -786,13 +823,15 @@ function selectPreviewPosition(container: HTMLElement, position: WorkspaceFilePo
   const selection = document.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
-  const pre = content.closest("pre");
-  if (pre && position.column !== undefined) {
+  const targetPre = content.closest("pre");
+  if (targetPre && position.column !== undefined) {
     const rect = range.getBoundingClientRect();
-    const viewport = pre.getBoundingClientRect();
-    if (rect.right > viewport.right) pre.scrollLeft += rect.right - viewport.right;
-    else if (rect.left < viewport.left) pre.scrollLeft -= viewport.left - rect.left;
+    const viewport = targetPre.getBoundingClientRect();
+    if (rect.right > viewport.right) targetPre.scrollLeft += rect.right - viewport.right;
+    else if (rect.left < viewport.left) targetPre.scrollLeft -= viewport.left - rect.left;
   }
+  resetLayoutScroll();
+  requestAnimationFrame(resetLayoutScroll);
 }
 
 function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePreview; navigation?: WorkspaceFileOpenRequest | undefined }) {
@@ -877,17 +916,32 @@ function ShikiPreview({ code, language, onReady }: { code: string; language?: st
   useEffect(() => {
     let active = true;
     setHtml(undefined);
-    void import("shiki/bundle/web").then(async ({ codeToHtml }) => {
-      const rendered = await codeToHtml(code, {
-        lang: language ?? "text",
-        theme: "github-light-default",
-        transformers: [{
-          name: "eidos-preview-source-lines",
-          line(node, line) { node.properties["data-source-line"] = line; },
-        }],
-      });
-      if (active) setHtml(rendered);
-    });
+    const targetLang = (language ?? "text").toLowerCase();
+    void import("shiki").then(async ({ codeToHtml }) => {
+      try {
+        const rendered = await codeToHtml(code, {
+          lang: targetLang,
+          theme: "github-light-default",
+          transformers: [{
+            name: "eidos-preview-source-lines",
+            line(node, line) { node.properties["data-source-line"] = line; },
+          }],
+        });
+        if (active) setHtml(rendered);
+      } catch {
+        try {
+          const fallback = await codeToHtml(code, {
+            lang: "text",
+            theme: "github-light-default",
+            transformers: [{
+              name: "eidos-preview-source-lines",
+              line(node, line) { node.properties["data-source-line"] = line; },
+            }],
+          });
+          if (active) setHtml(fallback);
+        } catch {}
+      }
+    }).catch(() => {});
     return () => { active = false; };
   }, [code, language]);
   if (!html) return <NumberedText code={code} />;

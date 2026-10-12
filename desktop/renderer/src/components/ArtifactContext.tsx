@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { getOfficialFileIcon } from "./FileIcons.js";
+import type { ToastType } from "./ToastContainer.js";
 
 export interface WorkspaceFilePosition {
   line?: number;
@@ -19,6 +20,7 @@ export interface ArtifactActions {
   openExternal?: ((path: string) => void | Promise<void>) | undefined;
   openReview?: ((request: { runId: string; path?: string; itemId?: string }) => void) | undefined;
   showInFinder?: ((path: string) => void | Promise<void>) | undefined;
+  showToast?: ((message: string, type?: ToastType, duration?: number) => void) | undefined;
 }
 const Context = createContext<ArtifactActions | undefined>(undefined);
 export const ArtifactProvider = Context.Provider;

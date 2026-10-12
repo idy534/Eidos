@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceExplorer } from "./WorkspaceExplorer.js";
 
 const shikiMock = vi.hoisted(() => ({ codeToHtml: vi.fn() }));
+vi.mock("shiki", () => shikiMock);
 vi.mock("shiki/bundle/web", () => shikiMock);
 
 function highlightedCode(code: string): string {

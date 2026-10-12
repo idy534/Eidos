@@ -195,7 +195,7 @@ describe("InputPicker behavior", () => {
 
     render(<InputPicker {...pickerProps} mode="all" />);
 
-    const tabs = ["全部", "文件", "Skill", "MCP", "插件", "历史"];
+    const tabs = ["全部", "文件", "Skill", "MCP", "插件", "会话"];
     for (const label of tabs) {
       expect(await screen.findByRole("tab", { name: label })).toBeInTheDocument();
     }
