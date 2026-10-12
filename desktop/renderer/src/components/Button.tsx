@@ -9,7 +9,7 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   loading?: boolean;
   /** Icon to render before the label */
   icon?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
   className?: string;
 }
 
@@ -69,7 +69,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {!loading && icon && (
         <span className="btn-icon" aria-hidden="true">{icon}</span>
       )}
-      <span className="btn-label">{children}</span>
+      {children != null && children !== "" && (
+        <span className="btn-label">{children}</span>
+      )}
     </button>
   );
 });

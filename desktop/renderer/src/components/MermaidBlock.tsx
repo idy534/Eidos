@@ -1,7 +1,16 @@
 import { memo, useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
 import mermaid from "mermaid";
-import { CopyIcon, CheckmarkIcon, ExpandIcon, CloseIcon } from "./MenuIcons.js";
+import { DropdownMenu } from "./DropdownMenu.js";
+import {
+  CopyIcon,
+  CheckmarkIcon,
+  ExpandIcon,
+  CloseIcon,
+  MoreHorizontalIcon,
+  DownloadIcon,
+  CodeIcon,
+} from "./MenuIcons.js";
 
 let mermaidInitialized = false;
 
@@ -19,6 +28,23 @@ function cleanStrayMermaidElements(containerId: string) {
 }
 
 const mermaidSvgCache = new Map<string, string>();
+
+function downloadSvg(svgString: string, filename = "diagram.svg") {
+  if (typeof document === "undefined") return;
+  try {
+    const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error("Failed to download svg:", err);
+  }
+}
 
 function MermaidModal({
   svg,
@@ -48,6 +74,10 @@ function MermaidModal({
     }
   };
 
+  const handleDownload = () => {
+    downloadSvg(svg);
+  };
+
   if (typeof document === "undefined") return null;
 
   return createPortal(
@@ -67,9 +97,18 @@ function MermaidModal({
             <button
               type="button"
               className="code-copy-btn"
+              onClick={handleDownload}
+              aria-label="下载图像"
+              title="下载图像"
+            >
+              <DownloadIcon className="copy-icon-svg" />
+            </button>
+            <button
+              type="button"
+              className="code-copy-btn"
               onClick={handleCopy}
-              aria-label={copied ? "已复制代码" : "复制代码"}
-              title={copied ? "已复制代码" : "复制代码"}
+              aria-label={copied ? "已复制代码" : "复制为代码"}
+              title={copied ? "已复制代码" : "复制为代码"}
             >
               {copied ? (
                 <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
@@ -132,6 +171,7 @@ export const MermaidBlock = memo(function MermaidBlock({ code }: { code: string 
         },
         themeVariables: {
           fontSize: "13px",
+          edgeLabelBackground: "transparent",
         },
       });
       mermaidInitialized = true;
@@ -178,38 +218,49 @@ export const MermaidBlock = memo(function MermaidBlock({ code }: { code: string 
     }
   };
 
+  const handleDownload = () => {
+    if (svg) {
+      downloadSvg(svg);
+    }
+  };
+
   return (
     <>
-      <div className="mermaid-container" role="region" aria-label="Mermaid">
-        <div className="mermaid-header">
-          <span className="mermaid-badge">Mermaid</span>
-          <div className="mermaid-actions">
-            {svg && (
-              <button
-                type="button"
-                className="code-copy-btn"
-                onClick={() => setIsModalOpen(true)}
-                aria-label="全屏放大查看"
-                title="全屏放大查看"
-              >
-                <ExpandIcon className="copy-icon-svg" />
-              </button>
-            )}
+      <div className="mermaid-container" role="region" aria-label="Mermaid 图表">
+        {svg && (
+          <div className="mermaid-floating-actions" role="toolbar" aria-label="图表操作">
+            <DropdownMenu
+              className="mermaid-dropdown"
+              trigger={<MoreHorizontalIcon className="mermaid-action-icon" />}
+              triggerAriaLabel="图表选项"
+              title="图表选项"
+              label="图表选项"
+              items={[
+                {
+                  key: "copy-code",
+                  label: copied ? "已复制代码" : "复制为代码",
+                  icon: copied ? <CheckmarkIcon /> : <CodeIcon />,
+                  onClick: handleCopy,
+                },
+                {
+                  key: "download-svg",
+                  label: "下载图像",
+                  icon: <DownloadIcon />,
+                  onClick: handleDownload,
+                },
+              ]}
+            />
             <button
               type="button"
-              className="code-copy-btn"
-              onClick={handleCopy}
-              aria-label={copied ? "已复制代码" : "复制代码"}
-              title={copied ? "已复制代码" : "复制代码"}
+              className="mermaid-action-btn"
+              onClick={() => setIsModalOpen(true)}
+              aria-label="全屏放大查看"
+              title="全屏放大查看"
             >
-              {copied ? (
-                <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
-              ) : (
-                <CopyIcon className="copy-icon-svg" />
-              )}
+              <ExpandIcon className="mermaid-action-icon" />
             </button>
           </div>
-        </div>
+        )}
         {svg ? (
           <div className="mermaid-svg-wrapper" dangerouslySetInnerHTML={{ __html: svg }} />
         ) : (

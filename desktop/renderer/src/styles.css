@@ -1979,9 +1979,46 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   justify-content: flex-start;
 }
 
+.git-more-dropdown {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.git-more-dropdown .dropdown-trigger {
+  width: 1.85rem;
+  height: 1.85rem;
+  min-width: 1.85rem;
+  min-height: 1.85rem;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  border: 1px solid transparent;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.git-more-dropdown .dropdown-trigger:hover:not(:disabled),
+.git-more-dropdown .dropdown-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.git-more-dropdown .dropdown-trigger svg {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+}
+
 .git-more-trigger {
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 1.85rem;
   height: 1.85rem;
   border-radius: var(--radius-sm);
@@ -1994,6 +2031,22 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   background: var(--surface-hover);
 }
 
+.git-icon-button {
+  gap: 0;
+}
+
+.git-icon-button .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+}
+
+.git-icon-button .btn-label {
+  display: contents;
+}
+
 .git-changes-toolbar-right .git-icon-button {
   width: 1.85rem;
   height: 1.85rem;
@@ -2001,14 +2054,30 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
   min-height: 1.85rem;
   border-radius: var(--radius-sm);
   padding: 0;
+  gap: 0;
   color: var(--muted);
   background: transparent;
   box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .git-changes-toolbar-right .git-icon-button:hover:not(:disabled) {
   color: var(--text);
   background: var(--surface-hover);
+}
+
+.git-changes-toolbar-right .git-icon-button .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+}
+
+.git-changes-toolbar-right .git-icon-button .btn-label {
+  display: contents;
 }
 
 .git-changes-toolbar-right .git-icon-button svg {
@@ -4515,6 +4584,11 @@ h2 { margin-bottom: 0.375rem; font-size: 1.05rem; font-weight: 600; }
   display: inline-block;
 }
 
+.btn-label:empty,
+.btn-label:has(> .sr-only:only-child) {
+  display: contents;
+}
+
 @keyframes btn-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -5223,7 +5297,7 @@ input:focus, textarea:focus {
   justify-content: space-between;
   align-items: center;
   height: 2rem;
-  padding: 0 0.75rem;
+  padding: 0 0.5rem 0 0.75rem;
   background: var(--surface-muted);
   border-bottom: 1px solid var(--line);
   font-size: var(--font-size-caption);
@@ -5244,22 +5318,31 @@ input:focus, textarea:focus {
   justify-content: center;
   width: 1.5rem;
   height: 1.5rem;
+  margin: 0;
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  box-shadow: none !important;
   transition: all 120ms ease;
+  flex-shrink: 0;
 }
 .code-copy-btn:hover {
   color: var(--text);
   border-color: var(--line);
   background: var(--surface);
+  box-shadow: none !important;
+}
+.code-copy-btn:active {
+  background: var(--surface-muted);
+  box-shadow: none !important;
 }
 .code-copy-btn .copy-icon-svg {
   width: 0.875rem;
   height: 0.875rem;
+  display: block;
 }
 .code-copy-btn .copy-icon-svg--copied {
   color: #16a34a;
@@ -5278,26 +5361,71 @@ input:focus, textarea:focus {
 
 /* Diff Viewer Group & File Cards */
 .diff-viewer-group {
+  --diff-single-max-height: 16rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   margin: 0.75rem 0;
+  max-height: calc(var(--diff-single-max-height) * 1.5);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1px 4px 1px 1px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 160ms ease;
 }
+.diff-viewer-group::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+.diff-viewer-group::-webkit-scrollbar-track,
+.diff-viewer-group::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.diff-viewer-group::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 160ms ease;
+}
+.diff-viewer-group:hover {
+  scrollbar-color: rgba(106, 111, 103, 0.38) transparent;
+}
+.diff-viewer-group:hover::-webkit-scrollbar-thumb {
+  background: rgba(106, 111, 103, 0.38);
+}
+.diff-viewer-group:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.65);
+}
+.diff-viewer-group:hover::-webkit-scrollbar-thumb:active {
+  background: rgba(106, 111, 103, 0.85);
+}
+
 .diff-file-card {
   border: 1px solid var(--line);
   border-radius: var(--radius-md, 8px);
   background: var(--surface);
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  flex-shrink: 0;
+  max-height: var(--diff-single-max-height, 16rem);
+  display: flex;
+  flex-direction: column;
+}
+.diff-file-card.diff-view {
+  max-height: var(--diff-single-max-height, 16rem);
+  overflow: hidden;
+  padding: 0;
 }
 .diff-file-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   height: 2.1rem;
-  padding: 0 0.75rem;
+  padding: 0 0.5rem 0 0.75rem;
   background: var(--surface-raised);
   border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
 }
 .diff-file-meta {
   display: inline-flex;
@@ -5324,7 +5452,9 @@ input:focus, textarea:focus {
   border-radius: 0;
   padding: 0.35rem 0;
   background: var(--surface);
-  max-height: 28rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(var(--diff-single-max-height, 16rem) - 2.1rem);
   overflow: auto;
   font: var(--font-size-code)/var(--line-height-code) var(--font-code);
   tab-size: 2;
@@ -5425,23 +5555,80 @@ input:focus, textarea:focus {
   font-size: var(--font-size-caption);
 }
 
-/* Mermaid Container - stabilized against scroll jitter */
+/* Mermaid Frameless Seamless Presentation */
 .mermaid-container {
-  margin: 0.75rem 0;
-  border: 1px solid var(--line);
+  position: relative;
+  margin: 1.25rem 0;
+  border: none;
   border-radius: var(--radius-md, 8px);
-  background: var(--surface-raised);
-  overflow: hidden;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
   contain: layout;
   overflow-anchor: none;
+}
+.mermaid-floating-actions {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 10;
+}
+.mermaid-container:hover .mermaid-floating-actions,
+.mermaid-container:focus-within .mermaid-floating-actions,
+.mermaid-floating-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.mermaid-floating-actions .dropdown-trigger,
+.mermaid-floating-actions .mermaid-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  margin: 0;
+  border: 0 !important;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent !important;
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: color 120ms ease;
+}
+.mermaid-floating-actions .dropdown-trigger:hover,
+.mermaid-floating-actions .dropdown-trigger:focus-visible,
+.mermaid-floating-actions .dropdown-trigger[aria-expanded="true"],
+.mermaid-floating-actions .mermaid-action-btn:hover,
+.mermaid-floating-actions .mermaid-action-btn:focus-visible {
+  background: transparent !important;
+  color: var(--text);
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none;
+}
+.mermaid-floating-actions .mermaid-action-icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  display: block;
 }
 .mermaid-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   height: 2rem;
-  padding: 0 0.75rem;
+  padding: 0 0.5rem 0 0.75rem;
   background: var(--surface-muted);
   border-bottom: 1px solid var(--line);
   font-size: var(--font-size-caption);
@@ -5462,20 +5649,37 @@ input:focus, textarea:focus {
   gap: 0.35rem;
 }
 .mermaid-svg-wrapper {
-  padding: 1.25rem;
-  max-height: 420px;
-  overflow: auto;
+  padding: 0.5rem 0;
+  max-height: none !important;
+  overflow-y: visible !important;
+  overflow-x: auto;
   overflow-anchor: none;
   contain: layout style;
   text-align: center;
-  background: var(--surface);
+  background: transparent;
 }
 .mermaid-svg-wrapper svg {
   display: inline-block;
-  max-width: none !important;
+  max-width: 100% !important;
   height: auto !important;
   vertical-align: middle;
   overflow-anchor: none;
+}
+/* 仅针对连线上的文字标签（edgeLabel）清除白色贴片底色，绝不误伤普通流程节点（node）的边框与填充 */
+.mermaid-svg-wrapper svg .edgeLabel,
+.mermaid-svg-wrapper svg .edgeLabel *,
+.mermaid-modal-svg-wrapper svg .edgeLabel,
+.mermaid-modal-svg-wrapper svg .edgeLabel * {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.mermaid-svg-wrapper svg .edgeLabels rect,
+.mermaid-svg-wrapper svg .edgeLabel rect,
+.mermaid-modal-svg-wrapper svg .edgeLabels rect,
+.mermaid-modal-svg-wrapper svg .edgeLabel rect {
+  fill: transparent !important;
+  stroke: transparent !important;
 }
 .mermaid-fallback-box {
   background: var(--surface-muted);

@@ -130,4 +130,19 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.shell-result\s*\{[^}]*background:\s*var\(--surface-muted\);/s);
     expect(styles).toMatch(/\.shell-result\s*\{[^}]*border:\s*1px solid var\(--line\);/s);
   });
+
+  it("centers git review toolbar icon buttons and avoids dual hover backgrounds", () => {
+    expect(styles).toMatch(/\.git-more-dropdown \.dropdown-trigger\s*\{[^}]*width:\s*1\.85rem;[^}]*height:\s*1\.85rem;[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/s);
+    expect(styles).toMatch(/\.git-more-dropdown \.dropdown-trigger:hover:not\(:disabled\)[^}]*background:\s*var\(--surface-hover\);/s);
+    expect(styles).toMatch(/\.git-changes-toolbar-right \.git-icon-button\s*\{[^}]*width:\s*1\.85rem;[^}]*height:\s*1\.85rem;[^}]*gap:\s*0;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/s);
+    expect(styles).toMatch(/\.git-changes-toolbar-right \.git-icon-button \.btn-label\s*\{[^}]*display:\s*contents;/s);
+    expect(styles).toMatch(/\.btn-label:has\(>\s*\.sr-only:only-child\)\s*\{[^}]*display:\s*contents;/s);
+  });
+
+  it("isolates single diff scrolling and provides group scrolling for multi-file patches", () => {
+    expect(styles).toMatch(/\.diff-viewer-group\s*\{[^}]*--diff-single-max-height:\s*16rem;[^}]*max-height:\s*calc\(var\(--diff-single-max-height\)\s*\*\s*1\.5\);[^}]*overflow-y:\s*auto;/s);
+    expect(styles).toMatch(/\.diff-file-card\s*\{[^}]*overflow:\s*hidden;[^}]*flex-shrink:\s*0;[^}]*max-height:\s*var\(--diff-single-max-height,\s*16rem\);/s);
+    expect(styles).toMatch(/\.diff-file-body\s*\{[^}]*max-height:\s*calc\(var\(--diff-single-max-height,\s*16rem\)\s*-\s*2\.1rem\);[^}]*overflow:\s*auto;/s);
+    expect(styles).toMatch(/\.diff-file-card\.diff-view\s*\{[^}]*max-height:\s*var\(--diff-single-max-height,\s*16rem\);[^}]*overflow:\s*hidden;/s);
+  });
 });

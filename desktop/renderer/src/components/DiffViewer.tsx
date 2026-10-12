@@ -215,7 +215,7 @@ export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码�
 
   if (parsedFiles.length === 0) {
     return (
-      <div className="diff-viewer-empty diff-view" role="region" aria-label="无代码差异">
+      <div className="diff-viewer-empty" role="region" aria-label="无代码差异">
         <span className="diff-viewer-empty-hint">暂无代码差异</span>
       </div>
     );
@@ -228,14 +228,14 @@ export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码�
         return (
           <div
             key={`${file.filename}-${fileIdx}`}
-            className="diff-viewer-card diff-file-card diff-view"
+            className="diff-viewer-card diff-file-card"
             data-diff-header={`+++ b/${file.filename}`}
           >
             <div className="diff-file-header diff-viewer-header">
               <div className="diff-file-meta">
                 <span className="diff-file-name">{file.filename}</span>
-                {file.additions > 0 && <span className="diff-stat-add">+{file.additions}</span>}
-                {file.deletions > 0 && <span className="diff-stat-del">-{file.deletions}</span>}
+                <span className="diff-stat-add">+{file.additions}</span>
+                <span className="diff-stat-del">-{file.deletions}</span>
               </div>
               <button
                 type="button"

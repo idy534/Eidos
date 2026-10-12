@@ -155,8 +155,11 @@ diff --git a/test_mcp.py b/test_mcp.py
 \`\`\``;
   const html = renderToStaticMarkup(<MarkdownContent content={multiDiff} />);
 
+  assert.match(html, /class="diff-viewer-group"/);
   assert.match(html, /class="diff-file-name">mcp_fixture\.py<\/span>/);
   assert.match(html, /class="diff-file-name">test_mcp\.py<\/span>/);
+  assert.match(html, /class="diff-viewer-card diff-file-card"/);
+  assert.doesNotMatch(html, /diff-file-card[^"]*\bdiff-view\b/);
   assert.match(html, /class="code-copy-btn"/);
 });
 
@@ -167,9 +170,7 @@ test("renders mermaid diagram block via MermaidBlock container with icon copy bu
   );
 
   assert.match(html, /class="mermaid-container"/);
-  assert.match(html, /<span class="mermaid-badge">Mermaid<\/span>/);
   assert.match(html, /class="language-mermaid"/);
-  assert.match(html, /class="code-copy-btn"[^>]*aria-label="复制代码"/);
 });
 
 test("renders workspace file path in inline code as clickable file link with official extension icon and line number", () => {
@@ -227,11 +228,20 @@ test("renders apply_patch multi-file diff with individual stats and metadata lin
 @@ -1 +1,2 @@
  # Notes
 +Added note
+--- a/deleted.txt
++++ b/deleted.txt
+@@ -1,2 +0,0 @@
+-line1
+-line2
 \`\`\``;
   const html = renderToStaticMarkup(<MarkdownContent content={patchDiff} />);
   assert.match(html, /class="diff-file-name">hello\.txt<\/span>/);
   assert.match(html, /class="diff-file-name">notes\.md<\/span>/);
+  assert.match(html, /class="diff-file-name">deleted\.txt<\/span>/);
   assert.match(html, /class="diff-stat-add">\+1<\/span>/);
+  assert.match(html, /class="diff-stat-del">-0<\/span>/);
+  assert.match(html, /class="diff-stat-add">\+0<\/span>/);
+  assert.match(html, /class="diff-stat-del">-2<\/span>/);
   assert.doesNotMatch(html, /Eidos EOF newline/);
   assert.doesNotMatch(html, /Eidos line endings/);
 });

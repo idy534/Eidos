@@ -502,11 +502,8 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             className="git-more-dropdown"
             label="更多操作"
             triggerAriaLabel="更多操作"
-            trigger={(
-              <span className="git-icon-button git-more-trigger" title="更多操作">
-                <MoreHorizontalIcon />
-              </span>
-            )}
+            title="更多操作"
+            trigger={<MoreHorizontalIcon />}
             items={moreMenuItems}
           />
           <Button

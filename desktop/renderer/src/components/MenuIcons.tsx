@@ -55,8 +55,8 @@ export function TrashIcon(props: IconProps) {
 export function CopyIcon(props: IconProps) {
   return (
     <svg {...defaultIconProps} {...props}>
-      <rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.5" />
-      <path d="M3.5 10.5h-.5A1.5 1.5 0 0 1 1.5 9V3.5A1.5 1.5 0 0 1 3 2h5.5a1.5 1.5 0 0 1 1.5 1.5v.5" />
+      <rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1.5" />
+      <path d="M4 10.5H3.5A1.5 1.5 0 0 1 2 9V3.5A1.5 1.5 0 0 1 3.5 2H9a1.5 1.5 0 0 1 1.5 1.5V4" />
     </svg>
   );
 }
@@ -204,6 +204,41 @@ export function ExpandIcon(props: IconProps) {
   return (
     <svg {...defaultIconProps} {...props}>
       <path d="M10 2.5h3.5v3.5M6 13.5H2.5V10M13.5 2.5 9 7M2.5 13.5 7 9" />
+    </svg>
+  );
+}
+
+/**
+ * Three dots horizontal icon for dropdown triggers
+ */
+export function MoreHorizontalIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <circle cx="3" cy="8" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="8" r="1.25" fill="currentColor" stroke="none" />
+      <circle cx="13" cy="8" r="1.25" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/**
+ * Download arrow tray icon
+ */
+export function DownloadIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="M8 2.5v7.5M5 7.5l3 3 3-3M2.5 13.5h11" />
+    </svg>
+  );
+}
+
+/**
+ * Code </> icon for copy as code
+ */
+export function CodeIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="M5.5 5 2.5 8l3 3M10.5 5l3 3-3 3" />
     </svg>
   );
 }
