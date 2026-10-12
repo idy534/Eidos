@@ -196,3 +196,14 @@ export function PlusIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Expand / Maximize icon for fullscreen preview
+ */
+export function ExpandIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="M10 2.5h3.5v3.5M6 13.5H2.5V10M13.5 2.5 9 7M2.5 13.5 7 9" />
+    </svg>
+  );
+}

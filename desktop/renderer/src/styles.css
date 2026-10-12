@@ -5171,6 +5171,39 @@ input:focus, textarea:focus {
   overflow: hidden;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
+.code-block-content {
+  max-height: 28rem;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 160ms ease;
+}
+.code-block-content::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+.code-block-content::-webkit-scrollbar-track,
+.code-block-content::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.code-block-content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 160ms ease;
+}
+.code-block-card:hover .code-block-content {
+  scrollbar-color: rgba(106, 111, 103, 0.38) transparent;
+}
+.code-block-card:hover .code-block-content::-webkit-scrollbar-thumb {
+  background: rgba(106, 111, 103, 0.38);
+}
+.code-block-card:hover .code-block-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.65);
+}
+.code-block-card:hover .code-block-content::-webkit-scrollbar-thumb:active {
+  background: rgba(106, 111, 103, 0.85);
+}
 .code-block-card pre {
   margin: 0;
   border: 0;
@@ -5232,7 +5265,7 @@ input:focus, textarea:focus {
   color: #16a34a;
 }
 .shiki-code-body {
-  overflow-x: auto;
+  overflow: visible;
   font-size: var(--font-size-code);
   line-height: var(--line-height-code);
 }
@@ -5240,6 +5273,7 @@ input:focus, textarea:focus {
   margin: 0;
   padding: 0.75rem 1rem;
   background: transparent !important;
+  overflow: visible;
 }
 
 /* Diff Viewer Group & File Cards */
@@ -5290,9 +5324,39 @@ input:focus, textarea:focus {
   border-radius: 0;
   padding: 0.35rem 0;
   background: var(--surface);
-  overflow-x: auto;
+  max-height: 28rem;
+  overflow: auto;
   font: var(--font-size-code)/var(--line-height-code) var(--font-code);
   tab-size: 2;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 160ms ease;
+}
+.diff-file-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+.diff-file-body::-webkit-scrollbar-track,
+.diff-file-body::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.diff-file-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color 160ms ease;
+}
+.diff-file-card:hover .diff-file-body {
+  scrollbar-color: rgba(106, 111, 103, 0.38) transparent;
+}
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb {
+  background: rgba(106, 111, 103, 0.38);
+}
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.65);
+}
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:active {
+  background: rgba(106, 111, 103, 0.85);
 }
 .diff-row {
   display: flex;
@@ -5392,9 +5456,14 @@ input:focus, textarea:focus {
   text-transform: none;
   letter-spacing: normal;
 }
+.mermaid-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
 .mermaid-svg-wrapper {
-  padding: 1rem;
-  max-height: 380px;
+  padding: 1.25rem;
+  max-height: 420px;
   overflow: auto;
   overflow-anchor: none;
   contain: layout style;
@@ -5403,10 +5472,8 @@ input:focus, textarea:focus {
 }
 .mermaid-svg-wrapper svg {
   display: inline-block;
-  max-width: 85% !important;
-  max-height: 340px !important;
+  max-width: none !important;
   height: auto !important;
-  width: auto !important;
   vertical-align: middle;
   overflow-anchor: none;
 }
@@ -5426,6 +5493,71 @@ input:focus, textarea:focus {
   padding: 0.25rem 1rem 0.5rem;
   color: var(--muted);
   font-size: var(--font-size-xs);
+}
+
+/* Mermaid Fullscreen Lightbox Modal */
+.mermaid-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  animation: mermaidModalFadeIn 150ms ease-out;
+}
+
+@keyframes mermaidModalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.mermaid-modal-window {
+  display: flex;
+  flex-direction: column;
+  width: 92vw;
+  height: 88vh;
+  max-width: 1400px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.mermaid-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 2.5rem;
+  padding: 0 1rem;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+.mermaid-modal-body {
+  flex: 1;
+  overflow: auto;
+  padding: 2rem;
+  background: var(--surface);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.mermaid-modal-svg-wrapper {
+  margin: auto;
+  text-align: center;
+}
+
+.mermaid-modal-svg-wrapper svg {
+  display: inline-block;
+  max-width: 100%;
+  height: auto !important;
+  vertical-align: middle;
 }
 
 /* Inline File Link with Official SVG Icon (Figs 3 & 4) */

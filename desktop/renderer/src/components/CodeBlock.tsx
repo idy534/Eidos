@@ -129,13 +129,15 @@ export const CodeBlock = memo(function CodeBlock({
           )}
         </button>
       </div>
-      {shikiHtml ? (
-        <div className="shiki-code-body" dangerouslySetInnerHTML={{ __html: shikiHtml }} />
-      ) : (
-        <pre>
-          <code className={className}>{rawCode}</code>
-        </pre>
-      )}
+      <div className="code-block-content">
+        {shikiHtml ? (
+          <div className="shiki-code-body" dangerouslySetInnerHTML={{ __html: shikiHtml }} />
+        ) : (
+          <pre>
+            <code className={className}>{rawCode}</code>
+          </pre>
+        )}
+      </div>
     </div>
   );
 });

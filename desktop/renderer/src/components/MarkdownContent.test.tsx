@@ -116,9 +116,11 @@ test("renders code block with Chrome header (language label and icon copy button
   );
 
   assert.match(html, /class="code-block-card"/);
+  assert.match(html, /class="code-block-header"/);
   assert.match(html, /class="code-block-language">TypeScript<\/span>/);
   assert.match(html, /class="code-copy-btn"[^>]*aria-label="复制代码"/);
   assert.match(html, /class="copy-icon-svg"/);
+  assert.match(html, /class="code-block-content"/);
 });
 
 test("renders diff code block via DiffViewer with colored line annotations and file stats", () => {
