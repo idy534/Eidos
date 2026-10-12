@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import logging
+import sqlite3
 from pathlib import Path
 import threading
 from typing import Protocol
 
 from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.db.errors import StorageError
+from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.repo_intelligence.index import (
     RepositoryIndexSnapshot,
     RepositoryIndexer,
@@ -262,6 +265,7 @@ class ActiveRepositoryState:
         self._readiness = threading.Condition(self._lock)
         self._build_in_progress = False
         self._readiness_attempt = 0
+        self._cache_rebuild_required = False
 
     @property
     def snapshot(self) -> RepositoryAnalysisSnapshot | None:
@@ -295,6 +299,22 @@ class ActiveRepositoryState:
                 dirty_paths=tuple(sorted(self._dirty_paths, key=str.encode)),
                 invalidation_epoch=self._invalidation_epoch,
             )
+
+    def discard_cached_generation(self) -> None:
+        with self._lock:
+            self._snapshot = None
+            self._invalidation_epoch += 1
+            self._cache_rebuild_required = True
+            self._recovery_status = self._recovery_status.model_copy(update={
+                "snapshot_id": None, "complete": False, "reconciliation_required": True,
+                "inventory_generation": None, "index_generation": None,
+            })
+
+    def take_cache_rebuild_request(self) -> bool:
+        with self._lock:
+            requested = self._cache_rebuild_required
+            self._cache_rebuild_required = False
+            return requested
 
     def restore_snapshot(self, snapshot: RepositoryAnalysisSnapshot) -> None:
         if not snapshot.complete or snapshot.persisted_snapshot is None:
@@ -445,7 +465,14 @@ class RepositoryWorkspaceRuntime:
                 current.close(timeout=self._watcher_shutdown_timeout)
 
             application = self.application_factory.for_workspace(Path(identity.root))
-            recovery_status = application.read_recovery_status()
+            try:
+                recovery_status = application.read_recovery_status()
+            except (sqlite3.DatabaseError, StorageError, PersistenceCorruptionError) as error:
+                logger.warning("Repository cache unavailable during activation error_class=%s", type(error).__name__)
+                recovery_status = RepositoryIndexStatus(
+                    repository_id=identity.repository_id, workspace_identity=identity,
+                    complete=False, reconciliation_required=True,
+                )
             # Persisted inventory can detect changed or deleted known files, but it
             # cannot prove that no new path appeared while the Runtime was offline.
             # Activation therefore never publishes a false cold-start clean state.
@@ -636,6 +663,11 @@ class RepositoryWorkspaceRuntime:
             },
         )
 
+    def discard_cached_generations(self) -> None:
+        with self._lock:
+            for active in self._active_by_root.values():
+                active.discard_cached_generation()
+
     def shutdown_all(self) -> None:
         with self._lock:
             active_states = tuple(self._active_by_root.values())
@@ -659,7 +691,7 @@ class RepositoryWorkspaceRuntime:
                 nonlocal initial_build
                 if changes:
                     active.invalidate(changes)
-                if initial_build or changes:
+                if initial_build or changes or active.take_cache_rebuild_request():
                     initial_build = False
                     # Reuse the owned worker after watch registration. Failed
                     # builds retry on changes or an explicit refresh, not idle.

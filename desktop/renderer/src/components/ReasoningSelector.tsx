@@ -78,6 +78,10 @@ function getModelContextDisplay(model: ModelOption): string {
   return MODEL_CONTEXT_LIMITS[model.id] ?? "128K";
 }
 
+function easeOutQuart(x: number): number {
+  return 1 - Math.pow(1 - x, 4);
+}
+
 export function ReasoningSelector({
   models,
   selectedModelId,
@@ -109,8 +113,14 @@ export function ReasoningSelector({
   const maxSliderIndex = Math.max(0, selections.length - 1);
   const [sliderPosition, setSliderPosition] = useState(selectedIndex);
   const [isDragging, setIsDragging] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
   const sliderPositionRef = useRef(selectedIndex);
   const isDraggingRef = useRef(false);
+  const animatingTargetRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const lastMoveTimeRef = useRef(0);
+  const lastMovePositionRef = useRef(selectedIndex);
+  const velocityRef = useRef(0);
   const sliderPositionValue = Math.min(maxSliderIndex, Math.max(0, sliderPosition));
   const sliderRatio = maxSliderIndex > 0 ? sliderPositionValue / maxSliderIndex : 0;
   const sliderInset = (Math.abs(0.5 - sliderRatio) * 1.5).toFixed(3);
@@ -126,7 +136,23 @@ export function ReasoningSelector({
   const modelLabel = providerName ? `${modelName}，${providerName}` : modelName;
 
   useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (isDraggingRef.current) return;
+    if (animatingTargetRef.current === selectedIndex) return;
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      animatingTargetRef.current = null;
+      setIsAnimating(false);
+    }
     sliderPositionRef.current = selectedIndex;
     setSliderPosition(selectedIndex);
   }, [selectedIndex, selectedModelId]);
@@ -208,25 +234,101 @@ export function ReasoningSelector({
     setHoveredModel((current) => (current?.id === modelId ? null : current));
   };
 
-  const commitSliderPosition = (position: number) => {
-    const index = Math.min(maxSliderIndex, Math.max(0, Math.round(position)));
+  const stopAnimation = () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    animatingTargetRef.current = null;
+    setIsAnimating(false);
+  };
+
+  const commitSliderPosition = (
+    position: number,
+    animate = false,
+    releaseVelocity = 0,
+  ) => {
+    let projected = position;
+    if (Math.abs(releaseVelocity) > 0.4) {
+      projected = position + releaseVelocity * 0.12;
+    }
+    const index = Math.min(maxSliderIndex, Math.max(0, Math.round(projected)));
     const nextSelection = selections[index];
-    sliderPositionRef.current = index;
-    setSliderPosition(index);
-    setIsDragging(false);
-    isDraggingRef.current = false;
-    if (nextSelection && index !== selectedIndex) onChange(nextSelection);
+
+    if (nextSelection && index !== selectedIndex) {
+      onChange(nextSelection);
+    }
+
+    const startPos = sliderPositionRef.current;
+    const distance = Math.abs(index - startPos);
+
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+
+    if (!animate || distance < 0.001 || prefersReducedMotion) {
+      stopAnimation();
+      sliderPositionRef.current = index;
+      setSliderPosition(index);
+      return;
+    }
+
+    stopAnimation();
+    setIsAnimating(true);
+    animatingTargetRef.current = index;
+
+    const startTime = performance.now();
+    const duration = Math.min(240, Math.max(160, distance * 220));
+
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = easeOutQuart(progress);
+      const current = startPos + (index - startPos) * eased;
+
+      sliderPositionRef.current = current;
+      setSliderPosition(current);
+
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      } else {
+        sliderPositionRef.current = index;
+        setSliderPosition(index);
+        setIsAnimating(false);
+        animatingTargetRef.current = null;
+        rafRef.current = null;
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(step);
   };
 
   const updateSliderPosition = (value: number) => {
     const position = Math.min(maxSliderIndex, Math.max(0, value));
+    const now = performance.now();
+    const dt = (now - lastMoveTimeRef.current) / 1000;
+    if (dt > 0.005 && dt < 0.2) {
+      const instantVelocity = (position - lastMovePositionRef.current) / dt;
+      velocityRef.current = instantVelocity * 0.5 + velocityRef.current * 0.5;
+    }
+    lastMoveTimeRef.current = now;
+    lastMovePositionRef.current = position;
+
     sliderPositionRef.current = position;
     setSliderPosition(position);
-    if (!isDraggingRef.current) commitSliderPosition(position);
+    if (!isDraggingRef.current) {
+      commitSliderPosition(position, false);
+    }
   };
 
   const finishSliderDrag = () => {
-    if (isDraggingRef.current) commitSliderPosition(sliderPositionRef.current);
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+
+    const timeSinceLastMove = (performance.now() - lastMoveTimeRef.current) / 1000;
+    const releaseVelocity = timeSinceLastMove > 0.08 ? 0 : velocityRef.current;
+    commitSliderPosition(sliderPositionRef.current, true, releaseVelocity);
   };
 
   return (
@@ -357,10 +459,10 @@ export function ReasoningSelector({
                   <span className="reasoning-selector__model-button-name">{modelName}</span>
                   <ChevronRightIcon />
                 </button>
-                <span>{isDragging ? sliderLabel : currentLabel}</span>
+                <span>{isDragging || isAnimating ? sliderLabel : currentLabel}</span>
               </header>
               <label className="sr-only" htmlFor={`${panelId}-slider`}>思考强度</label>
-              <div className={`reasoning-selector__slider-wrap${isDragging ? " is-dragging" : ""}`}>
+              <div className={`reasoning-selector__slider-wrap${isDragging ? " is-dragging" : ""}${isAnimating ? " is-animating" : ""}`}>
                 <div className="reasoning-selector__rail" aria-hidden="true">
                   <span className="reasoning-selector__fill" style={{ width: sliderFillWidth }} />
                   <span className="reasoning-selector__dots">
@@ -378,14 +480,18 @@ export function ReasoningSelector({
                   type="range"
                   min={0}
                   max={maxSliderIndex}
-                  step={isDragging ? "any" : 1}
+                  step={isDragging || isAnimating ? "any" : 1}
                   value={sliderPositionValue}
                   disabled={disabled || !canAdjustReasoning}
-                  aria-valuetext={isDragging ? sliderLabel : currentLabel}
+                  aria-valuetext={isDragging || isAnimating ? sliderLabel : currentLabel}
                   aria-label={`${modelName} 思考强度`}
                   onPointerDown={(event) => {
+                    stopAnimation();
                     isDraggingRef.current = true;
                     setIsDragging(true);
+                    lastMoveTimeRef.current = performance.now();
+                    lastMovePositionRef.current = sliderPositionRef.current;
+                    velocityRef.current = 0;
                     event.currentTarget.setPointerCapture?.(event.pointerId);
                   }}
                   onPointerUp={finishSliderDrag}

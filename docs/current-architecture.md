@@ -215,7 +215,7 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
-Schema v22 为 ModelAttempt 增加内部 `response_replay_json`。Runtime 在完成 Attempt 的同一次条件更新中保存有界的思考回放记录；该列引用现有 gzip Blob，并参与启动时的引用保留和清理。记录保存原始思考内容、Provider 字段身份、签名、元数据和该响应声明的 ToolCall IDs。Responses 路径还保存返回的原生 reasoning item，包括已返回的 encrypted content。记录不成为 Session Item，也不进入普通 Feed 或公共 ModelAttempt DTO。Eidos 不把“隐藏思考 UI”当作“不保存思考”。
+Schema v22 为 ModelAttempt 增加内部 `response_replay_json`。Runtime 在完成 Attempt 的同一次条件更新中保存有界的思考回放记录；该列引用现有 gzip Blob，并参与 Blob 清理时的引用保留。记录保存原始思考内容、Provider 字段身份、签名、元数据和该响应声明的 ToolCall IDs。Responses 路径还保存返回的原生 reasoning item，包括已返回的 encrypted content。记录不成为 Session Item，也不进入普通 Feed 或公共 ModelAttempt DTO。Eidos 不把“隐藏思考 UI”当作“不保存思考”。
 
 ContextBuilder 从 SQLite 的已完成 Attempt 读取回放记录。Model Adapter 将同一响应的思考、正文和全部保留的 ToolCall 合并，再交给 SDK 转换；工具结果跟在完整的调用声明之后。回放元数据进入现有 Context/Step Resolution 快照与预算。快照保存 Eidos 模型请求表示，不等同于 SDK 最终 HTTP payload。上下文只保留部分响应、切换不兼容 wire API，或旧记录缺少思考且当前模型启用了思考时，Adapter 将这组历史正文、调用和结果转换成明确标注的低权限历史资料。Adapter 不伪造丢失的思考，不重新执行工具。Schema v21→v22 只新增 nullable 列；旧数据保留 NULL。
 
@@ -256,7 +256,7 @@ Shell 每次 ToolCall 只等待一个窗口。Shell 输出会持续追加到原�
 
 Runtime 内部维护经过校验的 Python、ripgrep、Python import roots 和受支持包版本的 Catalog。内置依赖发现工具已移除。`run_shell` 对识别到的 Skill 脚本自动选择该 Skill 声明的 binding，并复用现有校验、权限和启动前复检。普通项目命令保留原环境，激活 Skill 本身不会切换环境。`dependencyBindingId` 输入保留兼容，显式值仍校验 Run 和 Skill 归属。
 
-Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKILL.md`、`agents/eidos.yaml`、脚本和其他 Skill 资源。产品依赖层保存 `resources/runtime-dependencies/` 中的 Python 与 Node 锁定输入，并把构建结果放入 Bundle 的 `dependencies/` 目录。Runtime manifest 层在 Bundle 根目录生成并校验 `runtime.json`，文件记录固定版本、相对路径和 SHA-256 inventory。Catalog 层在 Runtime 初始化时读取并完整校验这个 manifest 一次，并把同一个已校验 Catalog 传给每个 Run。Shell 启动前仍会重新校验绑定，防止 Bundle 在启动后发生变化。Activation 层在 Run 中固定 manifest hash、Bundle snapshot hash 和 Skill requirements，并为每个 active Skill 生成 `dependencyBindingId`。Resource 层把已验证 binding 投影到现有 Shell environment 和 permission profile。它把 Bundle root 和依赖 root 设为受保护的只读路径。它把 Workspace 保持为唯一的工作目录。
+Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKILL.md`、`agents/eidos.yaml`、脚本和其他 Skill 资源。产品依赖层保存 `resources/runtime-dependencies/` 中的 Python 与 Node 锁定输入，并把构建结果放入 Bundle 的 `dependencies/` 目录。Runtime manifest 层在 Bundle 根目录生成并校验 `runtime.json`，文件记录固定版本、相对路径和 SHA-256 inventory。构建和发布通过 `scripts/generate-runtime-manifest.mjs` 执行逐文件 Hash 和完整 inventory 覆盖校验。Python Runtime 已删除对应的文件 Hash、递归扫描和严格模式分支，不保留第二套全量校验。Catalog 层在日常 Runtime 初始化时读取清单，并检查版本、包 metadata、必要文件类型、owner、执行位和路径范围；它不检查依赖文件内容 Hash，也不递归遍历目录。Runtime 按目录复用路径规范化结果，一次建立 canonical path 查找表，再直接查找包文件，避免重复遍历。Shell 启动前重新检查清单与必要路径，拒绝清单变化、缺失文件、路径越界或执行位丢失。Activation 层在 Run 中固定 manifest hash、Catalog snapshot hash 和 Skill requirements，并为每个 active Skill 生成 `dependencyBindingId`。Resource 层把已验证 binding 投影到现有 Shell environment 和 permission profile。它把 Bundle root 和依赖 root 设为受保护的只读路径。它把 Workspace 保持为唯一的工作目录。
 
 `runtime.json` 只描述随 App 发布的系统依赖。Python 依赖位于 Bundle 的 `dependencies/python`，Node 依赖位于 Bundle 的 `dependencies/node`。Skill 的 `agents/eidos.yaml` 只保存 typed declaration。Skill 目录不承载依赖包。Node loader 使用 Bundle 的 Node 和 `node_modules`，并为 CJS 与 ESM 保留各自的相对导入语义。普通没有 binding 的 Shell 仍走既有 `run_shell`、Host shell snapshot、Approval 和 Seatbelt 链路。
 
@@ -343,6 +343,14 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
 ## 11. Persistence & Events
+
+Runtime 启动仍执行主库及历史、日志、旧记忆辅助库完整性检查、Schema 迁移、历史投影和业务恢复。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表；Runtime 仍验证已有 Blob 引用，并保留逐记录提交和中断后重试。
+
+启动不再执行 Blob 全量 GC。Runtime 复用现有受管 Memory 后台任务：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 从 SQLite 流式读取引用，持有原有 State/Blob 锁，在删除前完整解析 Context 清单并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和隐私撤销仍执行原有即时清理。
+
+Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶段、依赖校验、Worktree 恢复与保留、Skill、模型配置、异步内核、重启核验、Handoff、Seatbelt 和待投递事件的 `phase`、`duration_ms` 与完成状态。计时不写业务 Event，也不修改协议或 SQLite Schema；初始化前的记录写 stderr，日志存储接入后的记录同时写本地 JSONL。
+
+仓库库报告 SQLite 损坏、缺少必要表或外键不一致时，Runtime 停止使用缓存。Runtime 核验私有文件身份后，把原数据库和现存 WAL/SHM 移至同目录的 `.invalid-<id>` 文件，再创建空缓存；用户可以保留这些文件排查问题。既有 Workspace watcher 会丢弃旧 Snapshot，并在下一次空闲回调构建新 generation。未知缓存版本、Busy 或不可信路径不会授权删除文件；它们只使索引不可用。重建失败保留错误日志与不可用状态，模型继续使用普通文件和搜索工具。主库事实、业务 Event、Outbox 和恢复语义保持原样。
 
 Session 展示快照与执行快照使用不同的读取入口。`session/read` 的首屏和历史分页不查询 Step/Rule Resolution 表，也不读取或校验 Step Resolution Blob。响应保留 `stepResolutions: []`，以兼容现有 DTO 和 Main 校验。Runtime 执行与审批恢复仍通过完整快照入口读取数据，并保留原有完整性校验。这项读取路径调整已修订代码，测试与性能验收待执行。
 

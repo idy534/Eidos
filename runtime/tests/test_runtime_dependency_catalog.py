@@ -149,6 +149,81 @@ def test_from_manifest_returns_verified_snapshot_with_loader_and_roots(
     assert len(snapshot.snapshot_sha256) == 64
 
 
+def test_runtime_catalog_skips_file_hash_and_full_inventory_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from eidos_runtime.runtime import runtime_dependencies as runtime
+
+    root = _make_bundle(tmp_path)
+    unused = _write_file(root, "dependencies/python/docx/unused.py", b"unused")
+    payload = _manifest_payload(root)
+    payload["files"].append({"path": "dependencies/python/docx/unused.py", "sha256": _sha256(unused)})
+    manifest = _write_manifest(root, payload)
+    expected = RuntimeDependencyCatalog.from_manifest(manifest).snapshot()
+    unused.unlink()
+    (root / "bin/python3").write_bytes(b"#!/bin/sh\n# changed bytes\n")
+
+    original_open = Path.open
+
+    def metadata_only(path, *args, **kwargs):
+        if path.name not in {manifest.name, "METADATA", "package.json"}:
+            raise AssertionError("ordinary Runtime must not read dependency contents")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", metadata_only)
+    catalog = runtime.discover_runtime_dependency_catalog(manifest_path=manifest)
+    assert catalog is not None
+    assert catalog.snapshot() == expected
+    catalog.verify_binding(catalog.resolve(None))
+
+
+@pytest.mark.parametrize("damage", ["missing", "not_executable", "escape", "package_version"])
+def test_runtime_catalog_still_rejects_invalid_launch_paths_and_packages(
+    tmp_path: Path, damage: str,
+) -> None:
+    root = _make_bundle(tmp_path)
+    manifest = _write_manifest(root, _manifest_payload(root))
+    catalog = RuntimeDependencyCatalog.from_manifest(manifest)
+    binding = catalog.resolve(None)
+    python = root / "bin/python3"
+    if damage == "missing":
+        python.unlink()
+    elif damage == "not_executable":
+        python.chmod(0o600)
+    elif damage == "escape":
+        outside = tmp_path / "outside"
+        outside.write_bytes(b"#!/bin/sh\n")
+        outside.chmod(0o755)
+        python.unlink()
+        python.symlink_to(outside)
+    else:
+        (root / "dependencies/node/node_modules/tool/package.json").write_text('{"name":"tool","version":"9.0.0"}')
+    with pytest.raises(RuntimeDependencyVerificationError):
+        catalog.verify_binding(binding)
+
+
+def test_runtime_catalog_rejects_changed_manifest_without_hashing_dependencies(tmp_path: Path) -> None:
+    root = _make_bundle(tmp_path)
+    manifest = _write_manifest(root, _manifest_payload(root))
+    catalog = RuntimeDependencyCatalog.from_manifest(manifest)
+    binding = catalog.resolve(None)
+    manifest.write_text(manifest.read_text() + "\n")
+    with pytest.raises(RuntimeDependencyVerificationError, match="manifest"):
+        catalog.verify_binding(binding)
+
+
+def test_runtime_catalog_normalizes_internal_file_aliases_in_snapshot(tmp_path: Path) -> None:
+    root = _make_bundle(tmp_path)
+    alias = root / "bin/python3"
+    alias.rename(root / "bin/python3.12")
+    alias.symlink_to("python3.12")
+    manifest = _write_manifest(root, _manifest_payload(root))
+    snapshot = RuntimeDependencyCatalog.from_manifest(manifest).snapshot()
+    paths = {entry.path for entry in snapshot.files}
+    assert str((root / "bin/python3.12").resolve()) in paths
+    assert str(root / "bin/python3") not in paths
+
+
 def test_manifest_rejects_path_traversal_and_missing_loader_inventory(tmp_path: Path) -> None:
     root = _make_bundle(tmp_path)
     payload = _manifest_payload(root)
@@ -178,7 +253,7 @@ def test_manifest_rejects_path_traversal_and_missing_loader_inventory(tmp_path: 
             RuntimeDependencyCatalog.from_manifest(_write_manifest(root, payload))
 
 
-def test_manifest_rejects_tampered_hash_and_escaping_symlink(tmp_path: Path) -> None:
+def test_manifest_rejects_inconsistent_digest_declarations_and_escaping_symlink(tmp_path: Path) -> None:
     root = _make_bundle(tmp_path)
     payload = _manifest_payload(root)
     inventory = payload["files"]
@@ -209,7 +284,7 @@ def test_manifest_rejects_tampered_hash_and_escaping_symlink(tmp_path: Path) -> 
         RuntimeDependencyCatalog.from_manifest(_write_manifest(root, payload))
 
 
-def test_manifest_rejects_unlisted_file_inside_declared_package_root(tmp_path: Path) -> None:
+def test_runtime_does_not_scan_unlisted_files_inside_declared_package_root(tmp_path: Path) -> None:
     root = _make_bundle(tmp_path)
     _write_file(
         root,
@@ -217,8 +292,8 @@ def test_manifest_rejects_unlisted_file_inside_declared_package_root(tmp_path: P
         b"print('extra')\n",
         executable=True,
     )
-    with pytest.raises(RuntimeDependencyCatalogError, match="inventory|unlisted"):
-        RuntimeDependencyCatalog.from_manifest(_write_manifest(root, _manifest_payload(root)))
+    catalog = RuntimeDependencyCatalog.from_manifest(_write_manifest(root, _manifest_payload(root)))
+    assert catalog.resolve(None).ready
 
 
 def test_manifest_requires_python_metadata_and_node_package_versions_to_match(
@@ -398,8 +473,8 @@ def test_empty_requirements_returns_base_binding_and_verify_rechecks_files(
     catalog.verify_binding(binding)
 
     loader = root / "dependencies/node/runtime-loader.mjs"
-    loader.write_text("export const changed = true;\n", encoding="utf-8")
-    with pytest.raises(RuntimeDependencyVerificationError, match="hash|changed"):
+    loader.unlink()
+    with pytest.raises(RuntimeDependencyVerificationError, match="missing|not exist"):
         catalog.verify_binding(binding)
 
 

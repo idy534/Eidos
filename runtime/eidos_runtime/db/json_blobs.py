@@ -221,13 +221,21 @@ class JsonBlobStore:
             raise JsonBlobCorruptionError("blob json is invalid") from error
         return value
 
-    def garbage_collect(self, retained_references: Iterable[str]) -> int:
+    def garbage_collect(
+        self, retained_references: Iterable[str], *, cancel: threading.Event | None = None,
+    ) -> int:
         with self.lock:
-            return self._garbage_collect(retained_references)
+            return self._garbage_collect(retained_references, cancel=cancel)
 
-    def _garbage_collect(self, retained_references: Iterable[str]) -> int:
+    def _garbage_collect(
+        self, retained_references: Iterable[str], *, cancel: threading.Event | None = None,
+    ) -> int:
+        if cancel is not None and cancel.is_set():
+            return 0
         retained: set[str] = set()
         for stored in retained_references:
+            if cancel is not None and cancel.is_set():
+                return 0
             reference = JsonBlobReference.from_json(stored)
             if reference is not None:
                 retained.add(reference.relative_path)
@@ -255,6 +263,8 @@ class JsonBlobStore:
                         (manifest["toolDefinitionsRef"], "context-tools")
                     )
                     for value, kind in block_references:
+                        if cancel is not None and cancel.is_set():
+                            return 0
                         if not isinstance(value, str):
                             raise JsonBlobCorruptionError(
                                 "context block reference is invalid"
@@ -269,6 +279,8 @@ class JsonBlobStore:
         for directory, directory_names, file_names in os.walk(
             self.root, topdown=True, followlinks=False
         ):
+            if cancel is not None and cancel.is_set():
+                return deleted
             base = Path(directory)
             safe_directories: list[str] = []
             for name in directory_names:
@@ -279,7 +291,12 @@ class JsonBlobStore:
                     )
                 safe_directories.append(name)
             directory_names[:] = safe_directories
+            directory_deleted = False
             for name in file_names:
+                if cancel is not None and cancel.is_set():
+                    if directory_deleted:
+                        _fsync_directory(base)
+                    return deleted
                 path = base / name
                 if path.is_symlink():
                     raise JsonBlobCorruptionError("blob file is invalid")
@@ -291,7 +308,8 @@ class JsonBlobStore:
                     raise JsonBlobCorruptionError("blob file is invalid")
                 path.unlink()
                 deleted += 1
-            if deleted:
+                directory_deleted = True
+            if directory_deleted:
                 _fsync_directory(base)
         return deleted
 

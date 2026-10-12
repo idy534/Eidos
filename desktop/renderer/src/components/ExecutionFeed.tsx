@@ -91,7 +91,7 @@ const NOOP_REGENERATE: RegenerateHandler = async () => {};
 const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
 
 
-export function ExecutionFeed({
+export const ExecutionFeed = memo(function ExecutionFeed({
   items,
   resultItems = items,
   projectless = false,
@@ -264,7 +264,7 @@ export function ExecutionFeed({
       </button>
     </div>
   );
-}
+});
 
 export function isFeedAtBottom(
   feed: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,

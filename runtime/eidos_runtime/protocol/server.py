@@ -70,6 +70,7 @@ from eidos_runtime.model.pydantic_ai_client import (
 )
 from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
 from eidos_runtime.memory.jobs import MemoryJobs
+from eidos_runtime.telemetry.tracing import startup_phase
 from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.git.manager import WorktreeManager
@@ -1543,47 +1544,61 @@ class RuntimeServer:
             self.send(business_error(request_id, "PROTOCOL_VERSION_UNSUPPORTED"))
             return
 
+        startup_started = time.perf_counter()
         try:
-            self.store.initialize()
+            with startup_phase("storage"):
+                self.store.initialize()
             if self.store.health_state == "ready":
-                self.runtime_dependency_catalog = (
-                    discover_runtime_dependency_catalog()
-                )
-                self.supervisor.bind_runtime_dependency_catalog(
-                    self.runtime_dependency_catalog
-                )
+                with startup_phase("runtime_dependencies"):
+                    self.runtime_dependency_catalog = discover_runtime_dependency_catalog()
+                    self.supervisor.bind_runtime_dependency_catalog(self.runtime_dependency_catalog)
                 self._attach_storage_logging()
                 self.worktree_manager = WorktreeManager(self.store.database)
-                self.worktree_manager.recover()
+                with startup_phase("worktree_recovery"):
+                    self.worktree_manager.recover()
                 self.worktree_retention = WorktreeRetentionService(
                     self.store.database, self.worktree_manager
                 )
                 try:
-                    self.worktree_retention.reconcile()
+                    with startup_phase("worktree_retention"):
+                        self.worktree_retention.reconcile()
                 except Exception:
                     logger.exception("Worktree retention recovery is incomplete")
-                self.sensitive = SensitiveScanner()
+                with startup_phase("sensitive_scanner"):
+                    self.sensitive = SensitiveScanner()
                 assert self.store.data_directory is not None
-                deploy_system_skills(self.store.data_directory)
-                self.plugins = PluginCatalog(self.store)
-                SkillManagement(SkillCatalog(self.plugins)).cleanup()
-                self.model_config.initialize()
+                with startup_phase("skills"):
+                    deploy_system_skills(self.store.data_directory)
+                    self.plugins = PluginCatalog(self.store)
+                    SkillManagement(SkillCatalog(self.plugins)).cleanup()
+                with startup_phase("model_config"):
+                    self.model_config.initialize()
                 self.async_kernel = RuntimeAsyncKernel(
                     resource_registry=self.supervisor.resources,
                 )
-                self.async_kernel.start()
+                with startup_phase("async_kernel"):
+                    self.async_kernel.start()
                 self.model_gateway = ModelGateway(
                     self.model_config,
                     async_kernel=self.async_kernel,
                     resource_registry=self.supervisor.resources,
                 )
                 self.supervisor.bind_async_kernel(self.async_kernel)
-                self.supervisor.verify_restart_state()
-                self._applications = self._build_applications()
-                self._applications.sessions.recover_handoffs()
+                with startup_phase("restart_verification"):
+                    self.supervisor.verify_restart_state()
+                with startup_phase("applications_and_handoffs"):
+                    self._applications = self._build_applications()
+                    self._applications.sessions.recover_handoffs()
                 self.store.database.memory.on_cleanup = self.store.collect_unreferenced_blobs
-                self.memory_jobs = MemoryJobs(self.store.database.memory, self.model_config, self.model_gateway,
-                                              lambda: self.supervisor.has_active_workers() or self.supervisor.control_state is not RuntimeControlState.RUNNING)
+                self.memory_jobs = MemoryJobs(
+                    self.store.database.memory, self.model_config, self.model_gateway,
+                    lambda: (
+                        not self.initialized
+                        or self.supervisor.has_active_workers()
+                        or self.supervisor.control_state is not RuntimeControlState.RUNNING
+                    ),
+                    idle_maintenance=self._idle_maintenance,
+                )
                 self.supervisor.start_managed_task("memory", self.memory_jobs.run, persistent=True)
         except (
             StorageError,
@@ -1601,7 +1616,8 @@ class RuntimeServer:
             return
 
         if self.store.health_state == "ready":
-            seatbelt = run_seatbelt_self_test()
+            with startup_phase("seatbelt_self_test"):
+                seatbelt = run_seatbelt_self_test()
             if seatbelt.available:
                 logger.info("Seatbelt self-test passed")
                 self.shell_available = True
@@ -1629,9 +1645,16 @@ class RuntimeServer:
             )
         )
         if self.store.health_state == "ready":
-            self.supervisor.events.deliver_pending()
-        logger.info("Runtime initialized")
+            with startup_phase("pending_events"):
+                self.supervisor.events.deliver_pending()
+        logger.info("Runtime initialized duration_ms=%.3f", (time.perf_counter() - startup_started) * 1000)
         self.supervisor.schedule_next()
+
+    def _idle_maintenance(self, cancel: threading.Event) -> None:
+        if self.store.maintain_repository_cache(cancel):
+            self.repository_runtime.discard_cached_generations()
+        if not cancel.is_set():
+            self.store.collect_unreferenced_blobs(cancel)
 
     def shutdown(self, request_id: str, params: object) -> None:
         if not isinstance(params, dict) or params:

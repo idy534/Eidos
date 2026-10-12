@@ -32,6 +32,8 @@ from eidos_runtime.sandbox.sensitive import default_scanner
 
 logger = logging.getLogger("eidos.runtime.memory")
 LIVE_STATES = "('queued','running','waiting_approval','waiting_input','waiting_agents','finalizing')"
+_IDLE_MAINTENANCE_START_DELAY = 60.0
+_IDLE_MAINTENANCE_INTERVAL = 3600.0
 
 
 class MemoryJobs:
@@ -43,12 +45,16 @@ class MemoryJobs:
         configs: ModelConfigStore,
         gateway: ModelGateway,
         foreground_busy: Callable[[], bool],
+        *,
+        idle_maintenance: Callable[[threading.Event], None] | None = None,
     ) -> None:
         self.service = service
         self.database = service.database
         self.configs = configs
         self.executor = MemoryModelExecutor(service, gateway)
         self.foreground_busy = foreground_busy
+        self.idle_maintenance = idle_maintenance
+        self._next_idle_maintenance = time.monotonic() + _IDLE_MAINTENANCE_START_DELAY
 
     def run(self, cancel: threading.Event) -> None:
         # Single process-owned service. The supervisor owns cancellation and
@@ -73,6 +79,9 @@ class MemoryJobs:
                     next_collection = time.monotonic() + 3600
                 self.enqueue_ready()
                 if not self.foreground_busy():
+                    self._run_idle_maintenance(cancel)
+                    if cancel.is_set():
+                        break
                     job = self.claim()
                     if job is not None:
                         self.process(job, cancel)
@@ -82,6 +91,19 @@ class MemoryJobs:
                     type(error).__name__,
                 )
             cancel.wait(1.0)
+
+    def _run_idle_maintenance(self, cancel: threading.Event) -> None:
+        if (
+            self.idle_maintenance is None
+            or cancel.is_set()
+            or time.monotonic() < self._next_idle_maintenance
+            or self.foreground_busy()
+        ):
+            return
+        # Keep a failed collection on the normal interval, rather than retrying
+        # a large scan every second. The managed owner cancels it on shutdown.
+        self._next_idle_maintenance = time.monotonic() + _IDLE_MAINTENANCE_INTERVAL
+        self.idle_maintenance(cancel)
 
     def recover(self) -> None:
         with self.database.transaction() as connection:

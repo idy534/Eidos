@@ -20,7 +20,7 @@ from eidos_runtime.db.layout import (
     STATE_DATABASE_NAME,
     THREAD_HISTORY_DATABASE_NAME,
 )
-from eidos_runtime.db.json_blobs import JsonBlobReference
+from eidos_runtime.db.json_blobs import JsonBlobCorruptionError, JsonBlobReference, JsonBlobStore
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
 from eidos_runtime.db.database import Database
 from eidos_runtime.db.schema import SCHEMA_SQL, SCHEMA_VERSION
@@ -828,6 +828,182 @@ def test_invalid_blob_reference_enters_health_only_on_restart(
         assert reopened.health_state == "health_only"
     finally:
         reopened.close()
+
+
+def test_restart_defers_orphan_blob_collection_until_maintenance(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    store = SessionStore(data)
+    store.initialize()
+    reference = JsonBlobReference.from_json(
+        store.database.json_blobs.put_json("orphan", '{"unused":true}')
+    )
+    assert reference is not None
+    orphan = data / "blobs" / reference.relative_path
+    store.close()
+
+    reopened = SessionStore(data)
+    try:
+        reopened.initialize()
+        assert reopened.health_state == "ready"
+        assert orphan.is_file()
+        reopened.collect_unreferenced_blobs()
+        assert not orphan.exists()
+    finally:
+        reopened.close()
+
+
+def test_snapshot_externalization_batches_queries_and_resumes_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from eidos_runtime.db.layout import _externalize_state_snapshots
+
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(_workspace(tmp_path)))
+        run, _ = store.create_run(session["id"], "inspect")
+        RuntimeEngine(
+            store, ScriptedModel([ModelResponse(text="done")]), lambda _message: None,
+        ).run(run["id"], threading.Event())
+        seed = store.database.connection().execute("SELECT * FROM context_snapshots LIMIT 1").fetchone()
+        assert seed is not None
+        plain = store.context_snapshot_repository().read(seed["id"]).model_dump_json()
+        with store.database.transaction() as connection:
+            for index in range(513):
+                values = dict(seed)
+                values.update(id=f"legacy-{index}", model_attempt_id=f"legacy-attempt-{index}", snapshot_json=plain)
+                connection.execute(
+                    f"INSERT INTO context_snapshots ({','.join(values)}) VALUES ({','.join('?' for _ in values)})",
+                    tuple(values.values()),
+                )
+
+        blobs = store.database.json_blobs
+        original_put = blobs.put_json
+        puts = 0
+
+        def fail_second_put(kind: str, value: str) -> str:
+            nonlocal puts
+            puts += 1
+            if puts == 2:
+                raise OSError("interrupted migration")
+            return original_put(kind, value)
+
+        with monkeypatch.context() as context:
+            context.setattr(blobs, "put_json", fail_second_put)
+            with pytest.raises(OSError, match="interrupted migration"):
+                _externalize_state_snapshots(store.database, blobs)
+        migrated = store.database.connection().execute(
+            "SELECT snapshot_json FROM context_snapshots WHERE id = 'legacy-0'"
+        ).fetchone()[0]
+        assert JsonBlobReference.from_json(migrated) is not None
+
+        statements: list[str] = []
+        store.database.connection().set_trace_callback(statements.append)
+        try:
+            _externalize_state_snapshots(store.database, blobs)
+        finally:
+            store.database.connection().set_trace_callback(None)
+        assert sum(statement.startswith("SELECT id, snapshot_json FROM") for statement in statements) == 2
+        assert not any("WHERE id =" in statement and statement.startswith("SELECT") for statement in statements)
+        rows = store.database.connection().execute(
+            "SELECT snapshot_json FROM context_snapshots WHERE id LIKE 'legacy-%'"
+        ).fetchall()
+        assert len(rows) == 513
+        for row in rows:
+            reference = JsonBlobReference.from_json(row[0])
+            assert reference is not None
+            assert blobs.read(reference) == plain
+    finally:
+        store.close()
+
+
+def test_cancelled_blob_reference_scan_never_deletes_with_partial_references(tmp_path: Path) -> None:
+    blobs = JsonBlobStore(tmp_path / "data")
+    stored = blobs.put_json("context-item", '{"live":true}')
+    orphan = blobs.put_json("orphan", '{"unused":true}')
+    cancel = threading.Event()
+
+    def references():
+        yield stored
+        cancel.set()
+        yield stored
+
+    assert blobs.garbage_collect(references(), cancel=cancel) == 0
+    assert blobs.read_json(stored, expected_kind="context-item") == '{"live":true}'
+    assert blobs.read_json(orphan, expected_kind="orphan") == '{"unused":true}'
+    cancel.clear()
+    assert blobs.garbage_collect([stored], cancel=cancel) == 1
+    assert blobs.read_json(stored, expected_kind="context-item") == '{"live":true}'
+
+
+def test_cancelled_blob_deletion_stops_and_keeps_remaining_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blobs = JsonBlobStore(tmp_path / "data")
+    for index in range(3):
+        blobs.put_json("orphan", json.dumps({"index": index}))
+    cancel = threading.Event()
+    original_unlink = Path.unlink
+
+    def stop_after_delete(path: Path, *args, **kwargs) -> None:
+        original_unlink(path, *args, **kwargs)
+        cancel.set()
+
+    monkeypatch.setattr(Path, "unlink", stop_after_delete)
+    assert blobs.garbage_collect([], cancel=cancel) == 1
+    assert len(tuple(blobs.root.rglob("*.json.gz"))) == 2
+
+
+def test_blob_maintenance_preserves_all_persisted_reference_sources(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(_workspace(tmp_path)))
+        run, _ = store.create_run(session["id"], "inspect")
+        RuntimeEngine(
+            store, ScriptedModel([ModelResponse(text="done")]), lambda _message: None,
+        ).run(run["id"], threading.Event())
+        blobs = store.database.json_blobs
+        environment = blobs.put_json("mcp-env", '{"FIXTURE":"local"}')
+        input_reference = blobs.put_json("input-reference", '{"input":"local"}')
+        replay = blobs.put_json("model-response-replay", '{"reasoning":"local"}')
+        orphan = JsonBlobReference.from_json(blobs.put_json("orphan", '{"unused":true}'))
+        assert orphan is not None
+        with store.database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO manual_mcp_servers VALUES ('fixture','/usr/bin/true','[]',?,'[]',?,'connector',10,10,?,1,1)",
+                (environment, str(tmp_path), "0" * 64),
+            )
+            connection.execute(
+                "INSERT INTO input_references VALUES ('input',?,'{}',1,1)", (input_reference,),
+            )
+            updated = connection.execute(
+                "UPDATE model_attempts SET response_replay_json = ? "
+                "WHERE id IN (SELECT model_attempt_id FROM context_snapshots WHERE run_id = ?)",
+                (replay, run["id"]),
+            )
+            assert updated.rowcount == 1
+        snapshot_id = store.database.connection().execute(
+            "SELECT id FROM context_snapshots WHERE run_id = ?", (run["id"],),
+        ).fetchone()[0]
+        expected = store.context_snapshot_repository().read(snapshot_id)
+        store.collect_unreferenced_blobs()
+        assert not (blobs.root / orphan.relative_path).exists()
+        assert blobs.read_json(environment, expected_kind="mcp-env") == '{"FIXTURE":"local"}'
+        assert blobs.read_json(input_reference, expected_kind="input-reference") == '{"input":"local"}'
+        assert blobs.read_json(replay, expected_kind="model-response-replay") == '{"reasoning":"local"}'
+        assert store.context_snapshot_repository().read(snapshot_id) == expected
+    finally:
+        store.close()
+
+
+def test_invalid_context_manifest_aborts_collection_before_deletion(tmp_path: Path) -> None:
+    blobs = JsonBlobStore(tmp_path / "data")
+    invalid = blobs.put_json("context-snapshot-v2", '{"invalid":true}')
+    orphan = blobs.put_json("orphan", '{"unused":true}')
+    with pytest.raises(JsonBlobCorruptionError, match="context manifest is invalid"):
+        blobs.garbage_collect([invalid])
+    assert blobs.read_json(orphan, expected_kind="orphan") == '{"unused":true}'
 
 
 def test_restart_removes_history_left_after_state_session_delete(

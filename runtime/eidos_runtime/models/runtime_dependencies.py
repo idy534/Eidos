@@ -200,6 +200,10 @@ class RuntimeDependencyPackageRoot(EidosFrozenStrictModel):
 
 
 class RuntimeDependencyVerifiedFile(EidosFrozenStrictModel):
+    """Build-verified declaration, retaining the historical serialized shape.
+
+    sha256 identifies build content; Runtime does not rehash those file bytes.
+    """
     path: str = Field(max_length=MAX_RUNTIME_PATH_CHARS)
     sha256: str = Field(pattern=_SHA256_PATTERN)
 

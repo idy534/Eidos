@@ -180,4 +180,10 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.app-toast\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
     expect(styles).toMatch(/\.app-toast-close\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
   });
+
+  it("isolates Mermaid nodes from markdown prose styles and preserves natural fixed dimensions", () => {
+    expect(styles).toMatch(/\.mermaid-svg-wrapper foreignObject p,\s*\.mermaid-modal-svg-wrapper foreignObject p\s*\{[^}]*margin:\s*0\s*!important;[^}]*line-height:\s*1\.5\s*!important;/s);
+    expect(styles).toMatch(/\.mermaid-svg-wrapper svg\s*\{[^}]*max-width:\s*none;/s);
+    expect(styles).not.toMatch(/\.mermaid-svg-wrapper svg\s*\{[^}]*max-width:\s*100%\s*!important;/s);
+  });
 });

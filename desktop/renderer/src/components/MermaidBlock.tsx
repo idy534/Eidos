@@ -169,6 +169,11 @@ export const MermaidBlock = memo(function MermaidBlock({ code }: { code: string 
           curve: "basis",
           useMaxWidth: false,
         },
+        sequence: { useMaxWidth: false },
+        gitGraph: { useMaxWidth: false },
+        state: { useMaxWidth: false },
+        class: { useMaxWidth: false },
+        er: { useMaxWidth: false },
         themeVariables: {
           fontSize: "13px",
           edgeLabelBackground: "transparent",

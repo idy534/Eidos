@@ -114,14 +114,24 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   }
   useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement);
 
+  const prevInputRef = useRef(input);
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
     const minHeight = 56;
     const maxHeight = 168;
+    const prevInput = prevInputRef.current;
+    prevInputRef.current = input;
+
+    // Only collapse to auto to measure smaller content if input might have shrunk in lines
+    const mightShrink = input.length < prevInput.length || (!input.includes("\n") && prevInput.includes("\n"));
+    if (mightShrink && el.offsetHeight > minHeight) {
+      el.style.height = "auto";
+    }
     const targetHeight = Math.min(Math.max(el.scrollHeight, minHeight), maxHeight);
-    el.style.height = `${targetHeight}px`;
+    if (el.offsetHeight !== targetHeight) {
+      el.style.height = `${targetHeight}px`;
+    }
   }, [input, references.length]);
 
   const [showBusyHint, setShowBusyHint] = useState(false);

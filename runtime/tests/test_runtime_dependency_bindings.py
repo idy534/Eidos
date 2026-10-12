@@ -287,6 +287,35 @@ def _shell_arguments(binding_id: str, **overrides: object) -> dict[str, object]:
     return arguments
 
 
+def test_runtime_bound_shell_does_not_hash_dependency_contents(tmp_path: Path) -> None:
+    bundle, manifest = _make_bundle(tmp_path)
+    catalog = RuntimeDependencyCatalog.from_manifest(manifest)
+    store, run_id, executor, manager, controller, dispatcher, binding = _make_shell_controller(tmp_path, catalog)
+    (bundle / "bin/python3").write_text("#!/bin/sh\n# changed dependency content\n")
+    launches = []
+
+    def fake_shell(launch, **_kwargs):
+        launches.append(launch)
+        return {
+            "outcome": "success", "code": "ok", "summary": "Completed",
+            "data": {"exitCode": 0, "stdout": "", "stderr": "", "truncated": False,
+                     "termination": "exit", "executionStatus": "exited"},
+            "sideEffectsMayExist": True,
+        }
+
+    try:
+        with (
+            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+        ):
+            outcome = _execute_shell(store, run_id, controller, dispatcher, _shell_arguments(binding.binding_id), fake_shell)
+        assert outcome.result["code"] == "ok", outcome.result
+        assert len(launches) == 1
+    finally:
+        manager.close()
+        executor.close()
+        store.close()
+
+
 def _execute_shell(
     store: SessionStore,
     run_id: str,
@@ -509,7 +538,7 @@ def test_skill_script_selects_its_runtime_without_a_model_binding_id(
     if scenario == "project":
         arguments["command"] = "python3 tests.py"
     elif scenario == "invalid":
-        (bundle / "bin/python3").write_text("changed\n")
+            (bundle / "bin/python3").chmod(0o600)
     elif scenario == "unsandboxed":
         arguments.update(sandboxPermissions="require_escalated", justification="probe")
     launches = []
@@ -637,7 +666,7 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path, auto
     loader = tmp_path / "runtime-bundle" / "dependencies/node/runtime-loader.mjs"
 
     def approve(_request: dict[str, object], _cancel: threading.Event) -> ApprovalDecision:
-        loader.write_text("export const changed = true;\n", encoding="utf-8")
+        loader.unlink()
         return ApprovalDecision("approve")
 
     store, run_id, executor, shell_process_manager, controller, dispatcher, binding = _make_shell_controller(

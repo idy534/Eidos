@@ -100,6 +100,71 @@ def jobs(setup, responses):
     return value, gateway
 
 
+def test_idle_maintenance_waits_for_startup_grace_idle_and_cancellation(
+    setup, monkeypatch: pytest.MonkeyPatch,
+):
+    now = 100.0
+    monkeypatch.setattr("eidos_runtime.memory.jobs.time.monotonic", lambda: now)
+    worker, _ = jobs(setup, [])
+    calls: list[threading.Event] = []
+    worker.idle_maintenance = calls.append
+    cancel = threading.Event()
+    worker._run_idle_maintenance(cancel)
+    assert calls == []
+    now = 160.0
+    worker.foreground_busy = lambda: True
+    worker._run_idle_maintenance(cancel)
+    assert calls == []
+    worker.foreground_busy = lambda: False
+    worker._run_idle_maintenance(cancel)
+    assert calls == [cancel]
+    worker._run_idle_maintenance(cancel)
+    assert calls == [cancel]
+    now = 3760.0
+    cancel.set()
+    worker._run_idle_maintenance(cancel)
+    assert calls == [cancel]
+    cancel.clear()
+    worker._run_idle_maintenance(cancel)
+    assert calls == [cancel, cancel]
+
+
+def test_idle_maintenance_failure_does_not_repeat_large_scan_each_second(
+    setup, monkeypatch: pytest.MonkeyPatch,
+):
+    now = 100.0
+    monkeypatch.setattr("eidos_runtime.memory.jobs.time.monotonic", lambda: now)
+    worker, _ = jobs(setup, [])
+    calls = 0
+
+    def fail(_cancel: threading.Event) -> None:
+        nonlocal calls
+        calls += 1
+        raise OSError("collection failed")
+
+    worker.idle_maintenance = fail
+    now = 160.0
+    with pytest.raises(OSError, match="collection failed"):
+        worker._run_idle_maintenance(threading.Event())
+    now += 1
+    worker._run_idle_maintenance(threading.Event())
+    assert calls == 1
+
+
+def test_managed_memory_loop_exits_if_maintenance_is_cancelled(setup):
+    worker, _ = jobs(setup, [])
+    worker._next_idle_maintenance = 0
+    worker.idle_maintenance = lambda cancellation: cancellation.set()
+
+    def reject_claim():
+        raise AssertionError("a canceled owner must not claim another job")
+
+    worker.claim = reject_claim
+    cancel = threading.Event()
+    worker.run(cancel)
+    assert cancel.is_set()
+
+
 def test_two_stage_learning_publishes_once_and_closes_leases(setup):
     store, session, _ = setup
     _run, item = final_run(store, session)

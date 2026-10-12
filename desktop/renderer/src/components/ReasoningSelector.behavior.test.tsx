@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import deepseekLogo from "../assets/providers/deepseek.svg";
 import minimaxLogo from "../assets/providers/minimax.svg";
 import type { ModelOption } from "../contracts.js";
@@ -31,6 +31,13 @@ const models: ModelOption[] = [
 ];
 
 describe("ReasoningSelector", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("shows provider logos and names in the current model and model list", () => {
     const onModelChange = vi.fn();
     const { container } = render(
@@ -102,5 +109,126 @@ describe("ReasoningSelector", () => {
 
     fireEvent.pointerUp(slider, { pointerId: 1 });
     expect(onChange).toHaveBeenCalledWith("low");
+  });
+
+  it("smoothly transitions slider position to the target when released between steps", () => {
+    let rafCallback: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallback = cb;
+      return 101;
+    });
+
+    const onChange = vi.fn();
+    render(
+      <ReasoningSelector
+        models={models}
+        selectedModelId="deepseek-flash"
+        selection="high"
+        disabled={false}
+        onModelChange={vi.fn()}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek Flash，深度求索/ }));
+    const slider = screen.getByRole("slider", { name: "DeepSeek Flash 思考强度" });
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "1.4" } });
+
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+    expect(onChange).toHaveBeenCalledWith("low");
+    expect(rafCallback).toBeDefined();
+
+    // Advance animation partially
+    const stepCb1 = rafCallback;
+    act(() => {
+      stepCb1!(performance.now() + 100);
+    });
+    const midVal = Number((slider as HTMLInputElement).value);
+    expect(midVal).toBeLessThan(1.4);
+    expect(midVal).toBeGreaterThan(1.0);
+
+    // Complete animation on next frame
+    const stepCb2 = rafCallback;
+    act(() => {
+      stepCb2!(performance.now() + 400);
+    });
+    expect(slider).toHaveValue("1");
+  });
+
+  it("cancels transition animation immediately when interrupted by pointerDown", () => {
+    let rafCallback: FrameRequestCallback | undefined;
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallback = cb;
+      return 202;
+    });
+
+    render(
+      <ReasoningSelector
+        models={models}
+        selectedModelId="deepseek-flash"
+        selection="high"
+        disabled={false}
+        onModelChange={vi.fn()}
+        onChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek Flash，深度求索/ }));
+    const slider = screen.getByRole("slider", { name: "DeepSeek Flash 思考强度" });
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "1.4" } });
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    // Step partially
+    act(() => {
+      rafCallback!(performance.now() + 100);
+    });
+    const midVal = Number((slider as HTMLInputElement).value);
+    expect(midVal).toBeLessThan(1.4);
+    expect(midVal).toBeGreaterThan(1.0);
+
+    // User interrupts by pressing pointer down again
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    expect(cancelSpy).toHaveBeenCalledWith(202);
+    expect(Number((slider as HTMLInputElement).value)).toBeCloseTo(midVal, 2);
+  });
+
+  it("snaps immediately without animating when prefers-reduced-motion is true", () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query) => ({
+      matches: query === "(prefers-reduced-motion: reduce)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame");
+    render(
+      <ReasoningSelector
+        models={models}
+        selectedModelId="deepseek-flash"
+        selection="high"
+        disabled={false}
+        onModelChange={vi.fn()}
+        onChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek Flash，深度求索/ }));
+    const slider = screen.getByRole("slider", { name: "DeepSeek Flash 思考强度" });
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "1.4" } });
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+
+    expect(slider).toHaveValue("1");
+    expect(rafSpy).not.toHaveBeenCalled();
+
+    window.matchMedia = originalMatchMedia;
   });
 });

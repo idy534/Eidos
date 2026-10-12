@@ -5703,14 +5703,37 @@ input:focus, textarea:focus {
   contain: layout style;
   text-align: center;
   background: transparent;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
 }
 .mermaid-svg-wrapper svg {
   display: inline-block;
-  max-width: 100% !important;
-  height: auto !important;
+  max-width: none;
+  height: auto;
   vertical-align: middle;
   overflow-anchor: none;
 }
+/* 隔离 Markdown 外部排版样式对 Mermaid 内部节点标签（foreignObject）的污染，消除节点文字遮挡与底边溢出 */
+.mermaid-svg-wrapper foreignObject p,
+.mermaid-modal-svg-wrapper foreignObject p {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.5 !important;
+  white-space: inherit;
+}
+
+.mermaid-svg-wrapper foreignObject,
+.mermaid-svg-wrapper foreignObject div,
+.mermaid-svg-wrapper foreignObject span,
+.mermaid-modal-svg-wrapper foreignObject,
+.mermaid-modal-svg-wrapper foreignObject div,
+.mermaid-modal-svg-wrapper foreignObject span {
+  margin: 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
 /* 仅针对连线上的文字标签（edgeLabel）清除白色贴片底色，绝不误伤普通流程节点（node）的边框与填充 */
 .mermaid-svg-wrapper svg .edgeLabel,
 .mermaid-svg-wrapper svg .edgeLabel *,
@@ -5801,12 +5824,15 @@ input:focus, textarea:focus {
 .mermaid-modal-svg-wrapper {
   margin: auto;
   text-align: center;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .mermaid-modal-svg-wrapper svg {
   display: inline-block;
-  max-width: 100%;
-  height: auto !important;
+  max-width: none;
+  height: auto;
   vertical-align: middle;
 }
 
@@ -6917,6 +6943,8 @@ button.composer-context-project--empty:hover:not(:disabled) {
   border-radius: 50%;
   background: white;
   box-shadow: 0 0.1rem 0.4rem rgb(25 30 26 / 20%);
+  cursor: grab;
+  transition: transform 120ms ease, box-shadow 120ms ease;
 }
 .reasoning-selector__range::-moz-range-thumb {
   width: 1.5rem;
@@ -6927,6 +6955,19 @@ button.composer-context-project--empty:hover:not(:disabled) {
   border-radius: 50%;
   background: white;
   box-shadow: 0 0.1rem 0.4rem rgb(25 30 26 / 20%);
+  cursor: grab;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.reasoning-selector__slider-wrap.is-dragging .reasoning-selector__range,
+.reasoning-selector__range:active {
+  cursor: grabbing;
+}
+.reasoning-selector__slider-wrap.is-dragging .reasoning-selector__range::-webkit-slider-thumb,
+.reasoning-selector__range:active::-webkit-slider-thumb,
+.reasoning-selector__slider-wrap.is-dragging .reasoning-selector__range::-moz-range-thumb,
+.reasoning-selector__range:active::-moz-range-thumb {
+  cursor: grabbing;
+  box-shadow: 0 0.15rem 0.5rem rgb(25 30 26 / 28%);
 }
 .reasoning-selector__range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 0.25rem var(--accent-soft); }
 .reasoning-selector__range:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 0.25rem var(--accent-soft); }

@@ -59,6 +59,8 @@ Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使�
 
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
+Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=...`，以及 `Runtime initialized duration_ms=...`。存储阶段是 `storage` 的子阶段，开发者不能把父阶段与子阶段耗时相加。初始化总计时不包含 Python 模块导入、Desktop 构建和 Renderer 首屏请求。启动不执行 Blob 全量清理和仓库库全库扫描；现有受管后台任务会在任务创建至少 60 秒后且 Runtime 空闲时执行仓库库完整性检查、有界空闲页回收和 Blob 清理，之后每小时检查一次。Session 删除和隐私撤销仍保留即时清理。
+
 ## 4. Test
 
 Agent 在 Eidos Shell 内执行本仓库测试时，应先核对实际执行权限。部分集成测试需要启动原生 Seatbelt，外层沙箱可能阻止嵌套启动。测试者不能仅凭 `sandbox_unavailable` 排除代码回归。需要原生执行时，Agent 应使用系统提供的明确审批入口；文件路径授权不等于 unsandboxed 授权。
@@ -169,7 +171,7 @@ pnpm test:runtime:bundled-seatbelt
 
 `pnpm test:runtime:bundled` 会在 Bundle 内导入 `lark`，检查 grammar 文件来自 Bundle，并同时验证结构化 `ApplyPatchInput → CodexPatchEncoder → Lark parser` compatibility 链路和 raw Custom `Codex Patch → parse_patch → verified Workspace action` 链路。这个 smoke 不执行真实 Provider 请求，也不代表 Provider capability 或 wire schema 已经验证。Responses native wire contract 由 Runtime mocked provider tests 验证。
 
-Runtime dependency contract 使用 Bundle 根目录下的 `runtime.json`。文件固定使用 `schemaVersion: 1` 和 `target: darwin-arm64`。文件记录 Bundle ID、固定版本、可执行文件、Python 包、Node 包和相对路径。文件和可执行文件记录 SHA-256。Runtime 初始化时会读取并完整校验一次 Bundle，之后把已校验的 Catalog 传给每个 Run。Runtime 仍会在 Shell 启动前重新校验绑定。Runtime 读取后会固定 manifest hash 和 Bundle snapshot hash。Run binding 还会固定 requirement hash 和 `dependencyBindingId`。
+Runtime dependency contract 使用 Bundle 根目录下的 `runtime.json`。文件固定使用 `schemaVersion: 1` 和 `target: darwin-arm64`。文件记录 Bundle ID、固定版本、可执行文件、Python 包、Node 包和相对路径。文件和可执行文件记录 SHA-256。构建和发布流程通过 `scripts/generate-runtime-manifest.mjs` 执行完整文件 Hash 与 inventory 覆盖校验。Python Runtime 不保留这套全量检查及其模式开关。日常 Runtime 初始化读取清单，检查格式、版本、包 metadata 和必要路径；它不计算依赖文件 Hash，也不递归扫描 Bundle。Runtime 将 Catalog 传给每个 Run，并在 Shell 启动前复查清单与必要执行路径。Runtime 读取后会固定 manifest hash 和 Catalog snapshot hash；后者标识构建声明及路径，不证明当前文件内容与发布时一致。Run binding 还会固定 requirement hash 和 `dependencyBindingId`。
 
 资源分为三层。Skill 内容位于 `runtime/eidos_runtime/resources/skills/`，包括 `SKILL.md`、`agents/eidos.yaml`、脚本和其他资源。产品依赖位于 `resources/runtime-dependencies/`，构建后进入 Bundle 的 `dependencies/` 目录。Bundle 根目录的 `runtime.json` 是由构建脚本生成并校验的依赖清单。系统 Python、Node 和包文件不放进 Skill 目录。`agents/eidos.yaml` 只声明 typed requirements。Skill 不能安装包，也不能写入受保护的 Bundle 或 Skill root。默认 Agent Shell 仍然使用 Workspace cwd、默认禁网和现有 Approval/Sandbox 流程。没有 dependency binding 的普通 Shell 行为不变。
 
@@ -233,7 +235,7 @@ Release 模式拒绝 `EIDOS_PACKAGE_SKIP_TESTS=1`。本地模式只有在维护�
 
 持久化布局包含 `state.sqlite`、`repository.sqlite`、`thread_history.sqlite`、`logs.sqlite`、`memories.sqlite`，以及 `blobs/`、`history/`、`logs/` 和 `memories/`。`state.sqlite` 是唯一业务状态权威。其他数据库保存 projection、可重建索引或文件 metadata。旧 `eidos.db` 会在启动时自动升级。迁移前应退出其他 Eidos Runtime，并保留整个数据目录的备份。
 
-Schema v22 在 ModelAttempt 上新增内部思考回放 Blob 引用。v21 数据库会通过事务新增 nullable 列；迁移不会改写历史 Item 或补造思考正文。启动清理保留这些 Blob。思考回放验证应覆盖多厂商 mocked wire、同一响应中的正文和多工具调用、重启、取消后的迟到结果、旧会话缺少思考、上下文部分保留、升级失败回滚和 Session Feed 隔离。
+Schema v22 在 ModelAttempt 上新增内部思考回放 Blob 引用。v21 数据库会通过事务新增 nullable 列；迁移不会改写历史 Item 或补造思考正文。Blob 清理保留这些 Blob。思考回放验证应覆盖多厂商 mocked wire、同一响应中的正文和多工具调用、重启、取消后的迟到结果、旧会话缺少思考、上下文部分保留、升级失败回滚和 Session Feed 隔离。
 
 Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录也位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
 

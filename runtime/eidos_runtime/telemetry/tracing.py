@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import logging
+import time
 from collections.abc import Iterator, Mapping
 
 from opentelemetry import trace
@@ -10,6 +11,22 @@ from opentelemetry.trace import Span
 
 logger = logging.getLogger("eidos.runtime.telemetry")
 TRACER_NAME = "eidos.runtime"
+
+
+@contextmanager
+def startup_phase(name: str) -> Iterator[None]:
+    """Time Runtime startup work in local logs, including failed phases."""
+    started = time.perf_counter()
+    outcome = "failed"
+    with start_span("eidos.startup", attributes={"eidos.startup.phase": name}):
+        try:
+            yield
+            outcome = "completed"
+        finally:
+            logger.info(
+                "Runtime startup phase=%s duration_ms=%.3f outcome=%s",
+                name, (time.perf_counter() - started) * 1000, outcome,
+            )
 
 
 def get_tracer() -> trace.Tracer:

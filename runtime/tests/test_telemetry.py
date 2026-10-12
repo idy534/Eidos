@@ -30,7 +30,21 @@ from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.supervisor import RunSupervisor
 from eidos_runtime.runtime.tool_runtime import ReadOnlyToolHandler
 from eidos_runtime.telemetry.provider import initialize_telemetry
-from eidos_runtime.telemetry.tracing import start_span
+from eidos_runtime.telemetry.tracing import start_span, startup_phase
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_startup_phase_logs_duration_and_preserves_errors(caplog, failed: bool) -> None:
+    with caplog.at_level(logging.INFO, logger="eidos.runtime.telemetry"):
+        if failed:
+            with pytest.raises(OSError, match="startup failed"), startup_phase("test.storage"):
+                raise OSError("startup failed")
+        else:
+            with startup_phase("test.storage"):
+                pass
+    message = next(record.getMessage() for record in caplog.records if "phase=test.storage" in record.getMessage())
+    assert "duration_ms=" in message
+    assert f"outcome={'failed' if failed else 'completed'}" in message
 
 
 def _install_in_memory_exporter() -> InMemorySpanExporter:

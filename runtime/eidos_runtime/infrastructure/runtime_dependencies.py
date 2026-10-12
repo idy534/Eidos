@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import stat
-from typing import Iterable
 from email import policy
 from email.parser import BytesParser
 
@@ -39,12 +38,8 @@ from eidos_runtime.models.skill_runtime import (
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_MANIFEST_FILES = 32 * 1024
 MAX_RUNTIME_FILE_BYTES = 512 * 1024 * 1024
-MAX_RUNTIME_INVENTORY_BYTES = 1024 * 1024 * 1024
-MAX_RUNTIME_TRAVERSAL_ENTRIES = 128 * 1024
-MAX_RUNTIME_TRAVERSAL_DEPTH = 128
 MAX_RUNTIME_PATH_CHARS = 1024
 MAX_PACKAGE_METADATA_BYTES = 2 * 1024 * 1024
-_MAX_HASH_CHUNK_BYTES = 1024 * 1024
 
 
 class RuntimeDependencyCatalogError(ValueError):
@@ -63,7 +58,7 @@ RuntimeDependencyError = RuntimeDependencyCatalogError
 
 
 class RuntimeDependencyCatalog:
-    """Load, verify, snapshot, and resolve one application-owned bundle."""
+    """Resolve build-declared dependencies and validate Runtime launch paths."""
 
     def __init__(
         self,
@@ -125,7 +120,7 @@ class RuntimeDependencyCatalog:
         )
 
     def snapshot(self) -> RuntimeDependencySnapshot:
-        """Return the immutable verified snapshot captured at catalog creation."""
+        """Return the immutable catalog declaration captured at creation."""
 
         return self._snapshot
 
@@ -192,7 +187,7 @@ class RuntimeDependencyCatalog:
                 )
         _verify_directory(self._bundle_root, "bundle_root")
         _validate_manifest_versions(self._manifest)
-        inventory = self._verify_inventory()
+        inventory, canonical_inventory = self._declared_inventory()
         inventory_by_relative = {
             entry.path: entry for entry in self._manifest.files
         }
@@ -229,16 +224,12 @@ class RuntimeDependencyCatalog:
             )
         python_package_roots = self._verify_python_packages(
             python_paths,
-            inventory_by_relative,
+            canonical_inventory,
         )
         node_package_roots = self._verify_node_packages(
             node_modules,
-            inventory_by_relative,
+            canonical_inventory,
         )
-        audit_roots = [*python_paths, *native_bin_paths]
-        if node_modules is not None:
-            audit_roots.append(node_modules)
-        _verify_inventory_coverage(self._bundle_root, audit_roots, inventory_by_relative)
         runtime_roots = (str(self._bundle_root),)
         snapshot_without_hash = RuntimeDependencySnapshot(
             manifest_path=str(self._manifest_path),
@@ -262,32 +253,30 @@ class RuntimeDependencyCatalog:
         snapshot_hash = _snapshot_hash(snapshot_without_hash)
         return snapshot_without_hash.model_copy(update={"snapshot_sha256": snapshot_hash})
 
-    def _verify_inventory(self) -> tuple[RuntimeDependencyVerifiedFile, ...]:
-        if len(self._manifest.files) > MAX_MANIFEST_FILES:
-            raise RuntimeDependencyCatalogError(
-                "inventory_too_large", "files inventory exceeds the bounded limit"
-            )
-        verified: list[RuntimeDependencyVerifiedFile] = []
-        canonical_paths: set[Path] = set()
-        total_bytes = 0
+    def _declared_inventory(
+        self,
+    ) -> tuple[tuple[RuntimeDependencyVerifiedFile, ...], dict[Path, RuntimeDependencyInventoryFile]]:
+        # Build/release verifies bytes. Runtime normalizes aliases once per
+        # directory to preserve snapshot IDs and indexes declarations once.
+        parents: dict[Path, Path] = {}
+        declared: list[RuntimeDependencyVerifiedFile] = []
+        canonical: dict[Path, RuntimeDependencyInventoryFile] = {}
         for entry in self._manifest.files:
-            path = _resolve_declared_path(self._bundle_root, entry.path, "files")
-            if path in canonical_paths:
-                raise RuntimeDependencyCatalogError(
-                    "inventory_duplicate_target", f"{entry.path} resolves to a duplicate file"
-                )
-            canonical_paths.add(path)
-            metadata = _verify_regular_file(path, f"files:{entry.path}")
-            total_bytes += metadata.st_size
-            if total_bytes > MAX_RUNTIME_INVENTORY_BYTES:
-                raise RuntimeDependencyCatalogError(
-                    "inventory_too_large", "files inventory exceeds the bounded byte limit"
-                )
-            _verify_expected_file(path, entry, f"files:{entry.path}")
-            verified.append(
-                RuntimeDependencyVerifiedFile(path=str(path), sha256=entry.sha256)
-            )
-        return tuple(sorted(verified, key=lambda value: value.path.encode("utf-8")))
+            lexical = self._bundle_root.joinpath(*entry.path.split("/"))
+            parent = parents.get(lexical.parent)
+            if parent is None:
+                parent = lexical.parent.resolve(strict=False)
+                parents[lexical.parent] = parent
+            path = parent / lexical.name
+            if path.is_symlink():
+                path = path.resolve(strict=False)
+            if not _is_contained(path, self._bundle_root):
+                raise RuntimeDependencyCatalogError("path_outside_bundle", "inventory alias escapes bundle root")
+            if path in canonical:
+                raise RuntimeDependencyCatalogError("inventory_duplicate_target", "inventory aliases share a target")
+            declared.append(RuntimeDependencyVerifiedFile(path=str(path), sha256=entry.sha256))
+            canonical[path] = entry
+        return tuple(sorted(declared, key=lambda value: value.path.encode("utf-8"))), canonical
 
     def _verify_executables(
         self,
@@ -307,7 +296,9 @@ class RuntimeDependencyCatalog:
                     f"executable {entry.name!r} disagrees with files inventory",
                 )
             path = _resolve_declared_path(self._bundle_root, entry.path, "executable")
-            _verify_expected_file(path, entry, f"executable:{entry.name}", executable=True)
+            _verify_expected_file(
+                path, entry, f"executable:{entry.name}", executable=True,
+            )
             verified.append(
                 RuntimeDependencyExecutablePath(
                     name=entry.name,
@@ -321,7 +312,7 @@ class RuntimeDependencyCatalog:
     def _verify_python_packages(
         self,
         python_paths: tuple[Path, ...],
-        inventory: dict[str, RuntimeDependencyInventoryFile],
+        inventory: dict[Path, RuntimeDependencyInventoryFile],
     ) -> tuple[RuntimeDependencyPackageRoot, ...]:
         roots: list[RuntimeDependencyPackageRoot] = []
         for package in self._manifest.python_packages:
@@ -360,7 +351,7 @@ class RuntimeDependencyCatalog:
                         self._bundle_root, root, inventory
                     ),
                     f"pythonPackage:{package.name}",
-                )
+                    )
             _verify_python_distribution_metadata(
                 self._bundle_root,
                 python_paths,
@@ -381,7 +372,7 @@ class RuntimeDependencyCatalog:
     def _verify_node_packages(
         self,
         node_modules: Path | None,
-        inventory: dict[str, RuntimeDependencyInventoryFile],
+        inventory: dict[Path, RuntimeDependencyInventoryFile],
     ) -> tuple[RuntimeDependencyPackageRoot, ...]:
         if self._manifest.node_packages and node_modules is None:
             raise RuntimeDependencyCatalogError(
@@ -494,13 +485,11 @@ def _verify_python_distribution_metadata(
     bundle_root: Path,
     python_paths: tuple[Path, ...],
     package: RuntimeDependencyPythonPackage,
-    inventory: dict[str, RuntimeDependencyInventoryFile],
+    inventory: dict[Path, RuntimeDependencyInventoryFile],
 ) -> None:
     candidates: list[tuple[Path, RuntimeDependencyInventoryFile]] = []
-    seen_paths: set[Path] = set()
-    for entry in inventory.values():
-        path = _resolve_declared_path(bundle_root, entry.path, "files")
-        if path in seen_paths:
+    for path, entry in inventory.items():
+        if path.name != "METADATA" or not path.parent.name.endswith(".dist-info"):
             continue
         for python_path in python_paths:
             try:
@@ -512,9 +501,10 @@ def _verify_python_distribution_metadata(
                 and relative.parts[0].endswith(".dist-info")
                 and relative.parts[1] == "METADATA"
             ):
-                _verify_expected_file(path, entry, f"pythonMetadata:{entry.path}")
+                _verify_expected_file(
+                    path, entry, f"pythonMetadata:{entry.path}",
+                )
                 candidates.append((path, entry))
-                seen_paths.add(path)
                 break
 
     if not candidates:
@@ -1011,27 +1001,6 @@ def _read_bounded_file(path: Path, limit: int, label: str) -> bytes:
     return content
 
 
-def _hash_file(path: Path, label: str) -> str:
-    digest = hashlib.sha256()
-    total = 0
-    try:
-        with path.open("rb") as stream:
-            while chunk := stream.read(_MAX_HASH_CHUNK_BYTES):
-                total += len(chunk)
-                if total > MAX_RUNTIME_FILE_BYTES:
-                    raise RuntimeDependencyCatalogError(
-                        "file_too_large", f"{label} exceeds the bounded file size"
-                    )
-                digest.update(chunk)
-    except RuntimeDependencyCatalogError:
-        raise
-    except OSError as error:
-        raise RuntimeDependencyCatalogError(
-            "file_unreadable", f"{label} cannot be read: {error}"
-        ) from None
-    return digest.hexdigest()
-
-
 def _verify_expected_file(
     path: Path,
     expected: RuntimeDependencyExecutable
@@ -1049,11 +1018,6 @@ def _verify_expected_file(
     if executable and not metadata.st_mode & 0o111:
         raise RuntimeDependencyCatalogError(
             "executable_invalid", f"{label} is not executable"
-        )
-    actual_hash = _hash_file(path, label)
-    if actual_hash != expected.sha256:
-        raise RuntimeDependencyCatalogError(
-            "hash_mismatch", f"{label} hash does not match the manifest"
         )
 
 
@@ -1073,133 +1037,20 @@ def _verify_roots(root: Path, relative_paths: tuple[str, ...], label: str) -> tu
 def _inventory_entry_for_canonical_path(
     bundle_root: Path,
     path: Path,
-    inventory: dict[str, RuntimeDependencyInventoryFile],
-) -> RuntimeDependencyInventoryFile | None:
-    relative = path.relative_to(bundle_root).as_posix()
-    for declared_path, entry in inventory.items():
-        declared = _resolve_declared_path(bundle_root, declared_path, "files")
-        if declared == path:
-            return entry
-    raise RuntimeDependencyCatalogError(
-        "file_not_in_inventory", f"{relative} is not in files inventory"
-    )
-
-
-def _verify_inventory_coverage(
-    bundle_root: Path,
-    roots: Iterable[Path],
-    inventory: dict[str, RuntimeDependencyInventoryFile],
-) -> None:
-    seen_roots: set[Path] = set()
-    inventory_targets = {
-        _resolve_declared_path(bundle_root, relative, "files")
-        for relative in inventory
-    }
-    traversed_entries = 0
-    discovered_files: set[Path] = set()
-    total_bytes = 0
-    for root in roots:
-        if root in seen_roots:
-            continue
-        seen_roots.add(root)
-        for current, directories, filenames in os.walk(
-            root,
-            topdown=True,
-            followlinks=False,
-            onerror=_raise_inventory_walk_error,
-        ):
-            directories.sort()
-            filenames.sort()
-            current_path = Path(current)
-            try:
-                depth = len(current_path.relative_to(root).parts)
-            except ValueError:
-                raise RuntimeDependencyCatalogError(
-                    "inventory_walk_failed", "declared root escaped during traversal"
-                ) from None
-            if depth > MAX_RUNTIME_TRAVERSAL_DEPTH:
-                raise RuntimeDependencyCatalogError(
-                    "inventory_too_large", "declared roots exceed traversal depth"
-                )
-            traversed_entries += len(directories) + len(filenames)
-            if traversed_entries > MAX_RUNTIME_TRAVERSAL_ENTRIES:
-                raise RuntimeDependencyCatalogError(
-                    "inventory_too_large", "declared roots contain too many entries"
-                )
-            for directory_name in directories:
-                directory_path = current_path / directory_name
-                try:
-                    metadata = directory_path.lstat()
-                except OSError as error:
-                    raise RuntimeDependencyCatalogError(
-                        "inventory_walk_failed", str(error)
-                    ) from None
-                if stat.S_ISLNK(metadata.st_mode):
-                    raise RuntimeDependencyCatalogError(
-                        "path_symlink_directory", "directory symlinks are not inventory roots"
-                    )
-                if not stat.S_ISDIR(metadata.st_mode):
-                    raise RuntimeDependencyCatalogError(
-                        "file_type_invalid", "declared package root contains a special entry"
-                    )
-                _verify_owner(metadata, f"inventory directory:{directory_path}")
-            for filename in filenames:
-                file_path = current_path / filename
-                try:
-                    metadata = file_path.lstat()
-                except OSError as error:
-                    raise RuntimeDependencyCatalogError(
-                        "inventory_walk_failed", str(error)
-                    ) from None
-                if stat.S_ISLNK(metadata.st_mode):
-                    _verify_owner(metadata, f"inventory symlink:{file_path}")
-                    resolved = _resolve_path_candidate(
-                        bundle_root,
-                        file_path,
-                        "inventory symlink",
-                    )
-                    target_metadata = _verify_regular_file(
-                        resolved,
-                        f"inventory symlink:{file_path}",
-                    )
-                    actual_path = resolved
-                elif not stat.S_ISREG(metadata.st_mode):
-                    raise RuntimeDependencyCatalogError(
-                        "file_type_invalid", "declared package root contains a special file"
-                    )
-                else:
-                    _verify_owner(metadata, f"inventory file:{file_path}")
-                    target_metadata = metadata
-                    actual_path = file_path
-                if actual_path not in discovered_files:
-                    discovered_files.add(actual_path)
-                    total_bytes += target_metadata.st_size
-                    if total_bytes > MAX_RUNTIME_INVENTORY_BYTES:
-                        raise RuntimeDependencyCatalogError(
-                            "inventory_too_large",
-                            "declared roots exceed the bounded byte limit",
-                        )
-                if actual_path not in inventory_targets:
-                    raise RuntimeDependencyCatalogError(
-                        "inventory_unlisted_file",
-                        f"file {file_path.relative_to(bundle_root)} is not in files inventory",
-                    )
-
-
-def _raise_inventory_walk_error(error: OSError) -> None:
-    raise RuntimeDependencyCatalogError(
-        "inventory_walk_failed",
-        f"declared root cannot be traversed: {error}",
-    ) from None
+    inventory: dict[Path, RuntimeDependencyInventoryFile],
+) -> RuntimeDependencyInventoryFile:
+    entry = inventory.get(path)
+    if entry is None:
+        raise RuntimeDependencyCatalogError(
+            "file_not_in_inventory", f"{path.relative_to(bundle_root)} is not in files inventory",
+        )
+    return entry
 
 
 __all__ = [
     "MAX_MANIFEST_BYTES",
     "MAX_MANIFEST_FILES",
     "MAX_RUNTIME_FILE_BYTES",
-    "MAX_RUNTIME_INVENTORY_BYTES",
-    "MAX_RUNTIME_TRAVERSAL_DEPTH",
-    "MAX_RUNTIME_TRAVERSAL_ENTRIES",
     "RuntimeDependencyCatalog",
     "RuntimeDependencyCatalogError",
     "RuntimeDependencyError",

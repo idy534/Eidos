@@ -88,6 +88,7 @@ from eidos_runtime.runtime.long_task import LongTaskRepository
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.runtime.protocol_diagnostics import ProtocolDiagnostic
+from eidos_runtime.telemetry.tracing import startup_phase
 from eidos_runtime.runtime.resolution import (
     RuleResolutionSnapshot,
     RunResolutionSnapshot,
@@ -133,7 +134,8 @@ class SessionStore:
         self._worktree_settings_repository: WorktreeSettingsRepository | None = None
 
     def initialize(self) -> None:
-        self._database.initialize()
+        with startup_phase("storage.state_database"):
+            self._database.initialize()
         if self._database.health_state != "ready":
             return
         try:
@@ -143,7 +145,7 @@ class SessionStore:
                 json_blobs=self._database.json_blobs,
             )
             self._persistence_layout.initialize(self._database)
-            with self._database.transaction() as connection:
+            with startup_phase("storage.runtime_recovery"), self._database.transaction() as connection:
                 recover_runtime_facts(connection)
         except (OSError, sqlite3.Error, StorageError) as error:
             if self._persistence_layout is not None:
@@ -539,10 +541,16 @@ class SessionStore:
             )
         )
 
-    def collect_unreferenced_blobs(self) -> None:
+    def collect_unreferenced_blobs(self, cancel: threading.Event | None = None) -> None:
         layout = self._persistence_layout
         if layout is not None:
-            layout.garbage_collect_blobs(self._database)
+            layout.garbage_collect_blobs(self._database, cancel=cancel)
+
+    def maintain_repository_cache(self, cancel: threading.Event) -> bool:
+        layout = self._persistence_layout
+        if layout is None:
+            return False
+        return layout.repository.maintain(cancel)
 
     def delete_session(
         self,

@@ -657,6 +657,9 @@ class RuntimeDependencyCoordinator:
             _binding_paths(binding),
             _canonical_path(self._snapshot.bundle_root),
         )
+        self._validate_inventory_paths(
+            (entry.path for entry in binding.files), _canonical_path(self._snapshot.bundle_root),
+        )
 
     def _validate_snapshot(self, snapshot: RuntimeDependencySnapshot) -> None:
         bundle_root = _canonical_path(snapshot.bundle_root)
@@ -667,6 +670,21 @@ class RuntimeDependencyCoordinator:
                     "runtime bundle is inside Eidos data storage",
                 )
         self._validate_paths(_snapshot_paths(snapshot), bundle_root)
+
+        self._validate_inventory_paths((entry.path for entry in snapshot.files), bundle_root)
+
+    def _validate_inventory_paths(self, paths: Iterable[str], bundle_root: Path) -> None:
+        for value in paths:
+            path = Path(value)
+            if (
+                not path.is_absolute()
+                or ".." in path.parts
+                or not _contained(path, bundle_root)
+                or any(_contained(path, forbidden) for forbidden in self._forbidden_roots)
+            ):
+                raise RuntimeDependencyPathError(
+                    "runtime_path_outside_bundle", "declared inventory path is outside the runtime bundle",
+                )
 
     def _validate_paths(self, paths: Iterable[str], bundle_root: Path) -> None:
         for value in paths:
@@ -839,7 +857,6 @@ def _snapshot_paths(snapshot: RuntimeDependencySnapshot) -> tuple[str, ...]:
     paths.extend(value.path for value in snapshot.executables)
     paths.extend(value.path for value in snapshot.python_package_roots)
     paths.extend(value.path for value in snapshot.node_package_roots)
-    paths.extend(value.path for value in snapshot.files)
     return tuple(paths)
 
 
@@ -857,7 +874,6 @@ def _binding_paths(binding: RuntimeDependencyBinding) -> tuple[str, ...]:
     paths.extend(value.path for value in binding.executables)
     paths.extend(value.path for value in binding.python_package_roots)
     paths.extend(value.path for value in binding.node_package_roots)
-    paths.extend(value.path for value in binding.files)
     return tuple(paths)
 
 

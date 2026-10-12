@@ -230,18 +230,30 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // Lock layout containers and window scroll so that no ancestor scrollIntoView or gesture can displace the desktop viewport.
   useEffect(() => {
-    const layoutSelectors = [
-      "#root",
-      ".workbench",
-      ".workspace",
-      ".workspace-body",
-      ".workspace-main-column",
-      ".workspace-drawer",
-      ".workspace-dock",
-      ".workspace-dock__body",
+    const layoutClasses = [
+      "workbench",
+      "workspace",
+      "workspace-body",
+      "workspace-main-column",
+      "workspace-drawer",
+      "workspace-dock",
+      "workspace-dock__body",
     ];
 
-    const enforceNoLayoutScroll = () => {
+    const enforceNoLayoutScroll = (event?: Event) => {
+      const target = event?.target;
+      // Never interfere with legitimate scrolling in content/input elements (textarea, feed, code preview, file tree, terminal)
+      if (target instanceof Element && (
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "INPUT" ||
+        target.closest(".feed") ||
+        target.closest(".workspace-preview-pane") ||
+        target.closest(".workspace-tree-scroll") ||
+        target.closest(".terminal-body")
+      )) {
+        return;
+      }
+
       if (window.scrollY !== 0 || window.scrollX !== 0) {
         window.scrollTo(0, 0);
       }
@@ -250,21 +262,18 @@ export function AppShell({ runtime }: AppShellProps) {
       if (document.body && document.body.scrollTop !== 0) document.body.scrollTop = 0;
       if (document.body && document.body.scrollLeft !== 0) document.body.scrollLeft = 0;
 
-      for (const selector of layoutSelectors) {
-        const elements = document.querySelectorAll<HTMLElement>(selector);
-        for (const el of elements) {
-          if (el.scrollTop !== 0) el.scrollTop = 0;
-          if (el.scrollLeft !== 0) el.scrollLeft = 0;
+      if (target instanceof HTMLElement) {
+        if (target.id === "root" || layoutClasses.some((cls) => target.classList.contains(cls))) {
+          if (target.scrollTop !== 0) target.scrollTop = 0;
+          if (target.scrollLeft !== 0) target.scrollLeft = 0;
         }
       }
     };
 
     enforceNoLayoutScroll();
     window.addEventListener("scroll", enforceNoLayoutScroll, { capture: true, passive: true });
-    document.addEventListener("scroll", enforceNoLayoutScroll, { capture: true, passive: true });
     return () => {
       window.removeEventListener("scroll", enforceNoLayoutScroll, { capture: true });
-      document.removeEventListener("scroll", enforceNoLayoutScroll, { capture: true });
     };
   }, []);
   const [environmentPopoverOpen, setEnvironmentPopoverOpen] = useState(false);

@@ -283,7 +283,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Distribution
 
 - `pnpm build:runtime:mac` 可以构建 macOS arm64 的 self-contained Runtime Bundle。
-- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundle 根目录的 `runtime.json` contract 固定 `schemaVersion: 1`、Bundle version、相对资源路径和 SHA-256 inventory。Node 资源的 contract 包含固定 Node 版本、`node_modules` 和 CJS/ESM loader。构建脚本会生成并校验这个 manifest，再把 Bundle 放入 App resources。Runtime 初始化时会完整校验一次 Bundle，并把已校验的 Catalog 传给 Run，Shell 启动前仍会重新校验绑定。
+- Bundle 使用 managed CPython 3.12.13、锁定的 production dependencies、Runtime 资源、`eidos_runtime/workspace/apply_patch.lark` grammar 和受管 Ripgrep。Bundle 根目录的 `runtime.json` contract 固定 `schemaVersion: 1`、Bundle version、相对资源路径和 SHA-256 inventory。Node 资源的 contract 包含固定 Node 版本、`node_modules` 和 CJS/ESM loader。构建脚本会生成并校验这个 manifest，再把 Bundle 放入 App resources。构建与发布执行完整 Bundle 文件 Hash 和 inventory 校验。日常 Runtime 只读取清单并检查版本、必要文件与路径；Shell 启动前复查清单和执行路径，不重复计算依赖文件 Hash。Catalog/Binding 中的文件 Hash 是构建声明。
 - Packaged Electron 使用 `Contents/Resources/runtime/`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。
 - `pnpm package:mac` 生成未签名的本地 arm64 DMG，并执行 packaged smoke。
 - `pnpm package:mac:release` 接入签名、hardened runtime、notarization、stapling 和 Gatekeeper 验证。正确时序是先完成 Bundle 文件和 manifest hash，再签名；签名改变嵌套文件后，需要 refresh 并重新校验 `runtime.json`，再做最终 Gatekeeper 检查。Release 需要构建机提供 Apple credentials。没有 credentials 时，仓库不能验证真实签名结果。

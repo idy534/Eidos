@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, contextmanager
 import os
+import logging
 from pathlib import Path
 import sqlite3
 import stat
 import threading
+import uuid
 from typing import Callable, Iterator, Mapping, Protocol, TypeVar
 
 from eidos_runtime.db.errors import StorageError
@@ -47,6 +49,10 @@ from eidos_runtime.db.json_blobs import (
     JsonBlobReference,
     JsonBlobStore,
 )
+from eidos_runtime.telemetry.tracing import startup_phase
+
+
+logger = logging.getLogger("eidos.runtime.storage")
 
 
 STATE_DATABASE_NAME = "state.sqlite"
@@ -258,14 +264,17 @@ class AuxiliaryDatabase:
                         except sqlite3.Error:
                             pass
                         raise StorageError("schema_migration_failed") from error
-                if int(connection.execute("PRAGMA auto_vacuum").fetchone()[0]) == 0:
-                    connection.execute("PRAGMA auto_vacuum = INCREMENTAL")
-                    connection.execute("VACUUM")
-                _verify_connection(connection)
+                self._finish_initialization(connection)
                 self._connection = connection
             except Exception:
                 connection.close()
                 raise
+
+    def _finish_initialization(self, connection: sqlite3.Connection) -> None:
+        if int(connection.execute("PRAGMA auto_vacuum").fetchone()[0]) == 0:
+            connection.execute("PRAGMA auto_vacuum = INCREMENTAL")
+            connection.execute("VACUUM")
+        _verify_connection(connection)
 
     def _migration_for(
         self, _connection: sqlite3.Connection, revision: int
@@ -318,10 +327,143 @@ class RepositoryDatabase(AuxiliaryDatabase):
             name=REPOSITORY_DATABASE_NAME,
             schema_sql=REPOSITORY_SCHEMA_SQL,
         )
+        self._cache_revision = 0
+        self._unavailable = False
+        self._rebuild_pending = False
+
+    def _finish_initialization(self, connection: sqlite3.Connection) -> None:
+        # This rebuildable cache does not gate authoritative Runtime startup.
+        if not set((*_REPOSITORY_TABLES, "repository_fts")).issubset(_table_names(connection)):
+            raise StorageError("repository_cache_schema_invalid")
 
     def initialize(self) -> None:
         _prepare_private_directory(self.data_directory)
-        super().initialize()
+        was_unavailable = self._unavailable
+        try:
+            super().initialize()
+            self._unavailable = False
+            if was_unavailable:
+                self._cache_revision += 1
+        except sqlite3.DatabaseError as error:
+            if _repository_corruption(error):
+                self._rebuild()
+            else:
+                self._unavailable = True
+                logger.warning("Repository cache initialization unavailable error_class=%s", type(error).__name__)
+        except StorageError as error:
+            # Unknown cache revisions and path/permission failures remain closed
+            # to indexing. They never authorize discarding an untrusted target.
+            if _repository_corruption(error):
+                self._rebuild()
+            else:
+                self._unavailable = True
+                logger.warning("Repository cache initialization unavailable error_class=%s", type(error).__name__)
+
+    def connection(self) -> sqlite3.Connection:
+        if self._unavailable:
+            raise StorageError("repository_cache_unavailable")
+        return super().connection()
+
+    def maintain(self, cancel: threading.Event) -> bool:
+        """Check through a separate WAL reader; keep the owner lock short."""
+        with self.lock:
+            revision = self._cache_revision
+            if cancel.is_set():
+                return False
+            if self._connection is None:
+                if self._rebuild_pending:
+                    self._rebuild()
+                else:
+                    self.initialize()
+                return self._cache_revision != revision
+            _verify_private_database(self.path)
+            identity = self.path.stat()
+
+        damaged = False
+        reader: sqlite3.Connection | None = None
+        try:
+            reader = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)
+            reader.set_progress_handler(lambda: int(cancel.is_set()), 1000)
+            reader.execute("BEGIN")
+            _verify_connection(reader)
+            self._finish_initialization(reader)
+        except (sqlite3.DatabaseError, StorageError) as error:
+            if cancel.is_set():
+                return False
+            if not _repository_corruption(error):
+                raise
+            damaged = True
+        finally:
+            if reader is not None:
+                reader.close()
+
+        with self.lock:
+            if self._cache_revision != revision or cancel.is_set():
+                return self._cache_revision != revision
+            _verify_private_database(self.path)
+            current = self.path.stat()
+            if (current.st_dev, current.st_ino) != (identity.st_dev, identity.st_ino):
+                self.close()
+                self._unavailable = True
+                self._cache_revision += 1
+                return True
+            if damaged:
+                self._rebuild()
+                return True
+            connection = self.connection()
+            connection.set_progress_handler(lambda: int(cancel.is_set()), 1000)
+            try:
+                # No full VACUUM or automatic format conversion. Older caches
+                # reuse free pages; INCREMENTAL caches release a bounded slice.
+                connection.execute("PRAGMA incremental_vacuum(1024)").fetchall()
+            except sqlite3.DatabaseError:
+                if not cancel.is_set():
+                    raise
+            finally:
+                connection.set_progress_handler(None, 0)
+            return False
+
+    def _rebuild(self) -> None:
+        """Preserve a damaged private cache and start an empty derived store."""
+        self._cache_revision += 1
+        self._unavailable = True
+        self._rebuild_pending = True
+        self.close()
+        try:
+            token = uuid.uuid4().hex
+            paths = [self.path, *(self.path.with_name(self.name + suffix) for suffix in ("-wal", "-shm"))]
+            # Validate all existing targets before moving any of them. Permission,
+            # symlink and hardlink failures do not authorize replacing a path.
+            identities: dict[Path, os.stat_result] = {}
+            for path in paths:
+                if path.exists() or path.is_symlink():
+                    _verify_private_database(path)
+                    metadata = path.lstat()
+                    if metadata.st_nlink != 1:
+                        raise StorageError("repository_cache_identity_invalid")
+                    identities[path] = metadata
+            for path, expected in identities.items():
+                actual = path.lstat()
+                if (actual.st_dev, actual.st_ino, actual.st_uid, actual.st_mode, actual.st_nlink) != (
+                    expected.st_dev, expected.st_ino, expected.st_uid, expected.st_mode, expected.st_nlink,
+                ):
+                    raise StorageError("repository_cache_identity_invalid")
+                os.replace(path, path.with_name(path.name + ".invalid-" + token))
+            _fsync_directory(self.data_directory)
+            super().initialize()
+            self._unavailable = False
+            self._rebuild_pending = False
+            logger.warning("Repository cache discarded and scheduled for generation rebuild")
+        except (OSError, sqlite3.DatabaseError, StorageError):
+            logger.exception("Repository cache remains unavailable; authoritative storage is unchanged")
+
+
+def _repository_corruption(error: BaseException) -> bool:
+    if isinstance(error, sqlite3.DatabaseError):
+        return (getattr(error, "sqlite_errorcode", 0) & 0xff) in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}
+    return isinstance(error, StorageError) and str(error) in {
+        "database_corrupt", "foreign_key_violation", "repository_cache_schema_invalid",
+    }
 
 
 class LogsDatabase(AuxiliaryDatabase):
@@ -378,11 +520,14 @@ class PersistenceLayout:
         self.memory_store: MemoryStore | None = None
 
     def initialize(self, state: StateDatabase) -> None:
-        _extract_repository_database(state, self.repository.path)
-        _externalize_state_snapshots(state, self.json_blobs)
-        _migrate_state_schema(state)
-        self.garbage_collect_blobs(state)
-        _retry_state_compaction(state)
+        with startup_phase("storage.repository_extraction"):
+            _extract_repository_database(state, self.repository.path)
+        with startup_phase("storage.snapshot_externalization"):
+            _externalize_state_snapshots(state, self.json_blobs)
+        with startup_phase("storage.schema_migration"):
+            _migrate_state_schema(state)
+        with startup_phase("storage.compaction"):
+            _retry_state_compaction(state)
         initialized: list[AuxiliaryDatabase] = []
         try:
             for database in (
@@ -391,7 +536,8 @@ class PersistenceLayout:
                 self.logs,
                 self.memories,
             ):
-                database.initialize()
+                with startup_phase(f"storage.{database.name}"):
+                    database.initialize()
                 initialized.append(database)
             self.thread_history_store = ThreadHistoryStore(
                 self.data_directory, self.thread_history
@@ -402,7 +548,8 @@ class PersistenceLayout:
             self.memory_store = MemoryStore(
                 self.data_directory, self.memories
             )
-            self.thread_history_store.catch_up(state)
+            with startup_phase("storage.history_projection"):
+                self.thread_history_store.catch_up(state)
         except Exception:
             self.thread_history_store = None
             self.runtime_logs = None
@@ -423,8 +570,10 @@ class PersistenceLayout:
         ):
             database.close()
 
-    def garbage_collect_blobs(self, state: StateDatabase) -> int:
-        return collect_unreferenced_blobs(state, self.json_blobs)
+    def garbage_collect_blobs(
+        self, state: StateDatabase, *, cancel: threading.Event | None = None,
+    ) -> int:
+        return collect_unreferenced_blobs(state, self.json_blobs, cancel=cancel)
 
 
 
@@ -551,34 +700,32 @@ def _externalize_state_snapshots(
         connection = state.connection()
         if table not in _table_names(connection):
             continue
-        identifiers = tuple(
-            str(row[0])
-            for row in connection.execute(f"SELECT id FROM {table}")
-        )
-        for identifier in identifiers:
-            row = state.connection().execute(
-                f"SELECT snapshot_json FROM {table} WHERE id = ?",
-                (identifier,),
-            ).fetchone()
-            if row is None:
-                continue
-            stored = str(row[0])
-            reference = JsonBlobReference.from_json(stored)
-            if reference is not None:
-                if reference.kind != kind and not (
-                    kind == "context-snapshot" and reference.kind == "context-snapshot-v2"
-                ):
-                    raise StorageError("snapshot_blob_reference_invalid")
-                continue
-            replacement = blobs.put_json(kind, stored)
-            with state.transaction() as write_connection:
-                updated = write_connection.execute(
-                    f"UPDATE {table} SET snapshot_json = ? "
-                    "WHERE id = ? AND snapshot_json = ?",
-                    (replacement, identifier, stored),
-                )
-                if updated.rowcount == 1:
-                    changed = True
+        # Keep reference validation on restart, but avoid an ID-sized allocation
+        # and one extra SELECT per historical snapshot. Updates only replace the
+        # payload; they do not change the key used by this cursor.
+        cursor = connection.execute(f"SELECT id, snapshot_json FROM {table}")
+        try:
+            while rows := cursor.fetchmany(256):
+                for row in rows:
+                    identifier, stored = str(row[0]), str(row[1])
+                    reference = JsonBlobReference.from_json(stored)
+                    if reference is not None:
+                        if reference.kind != kind and not (
+                            kind == "context-snapshot" and reference.kind == "context-snapshot-v2"
+                        ):
+                            raise StorageError("snapshot_blob_reference_invalid")
+                        continue
+                    replacement = blobs.put_json(kind, stored)
+                    with state.transaction() as write_connection:
+                        updated = write_connection.execute(
+                            f"UPDATE {table} SET snapshot_json = ? "
+                            "WHERE id = ? AND snapshot_json = ?",
+                            (replacement, identifier, stored),
+                        )
+                        if updated.rowcount == 1:
+                            changed = True
+        finally:
+            cursor.close()
     if changed:
         _write_empty_marker(
             state.data_directory / STATE_COMPACTION_MARKER_NAME
@@ -887,31 +1034,37 @@ __all__ = [
 ]
 
 
-def collect_unreferenced_blobs(state: StateDatabase, blobs: JsonBlobStore) -> int:
+def collect_unreferenced_blobs(
+    state: StateDatabase, blobs: JsonBlobStore, *, cancel: threading.Event | None = None,
+) -> int:
     with state.lock, blobs.lock:
-        references: list[str] = []
-        connection = state.connection()
-        tables = _table_names(connection)
-        for table in ("context_snapshots", "step_resolution_snapshots", "input_references"):
-            if table not in tables:
-                continue
-            references.extend(
-                str(row[0])
-                for row in connection.execute(
-                    f"SELECT snapshot_json FROM {table}"
-                )
-            )
-        if "manual_mcp_servers" in tables:
-            references.extend(
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT env_blob_ref FROM manual_mcp_servers"
-                )
-            )
-        if "model_attempts" in tables and "response_replay_json" in {
-            row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")
-        }:
-            references.extend(str(row[0]) for row in connection.execute(
-                "SELECT response_replay_json FROM model_attempts WHERE response_replay_json IS NOT NULL"
-            ))
-        return blobs.garbage_collect(references)
+        references = _blob_references(state)
+        try:
+            return blobs.garbage_collect(references, cancel=cancel)
+        finally:
+            references.close()
+
+
+def _blob_references(state: StateDatabase) -> Iterator[str]:
+    """Stream references while the collector owns both state and Blob locks."""
+    connection = state.connection()
+    tables = _table_names(connection)
+    queries = [
+        f"SELECT snapshot_json FROM {table}"
+        for table in ("context_snapshots", "step_resolution_snapshots", "input_references")
+        if table in tables
+    ]
+    if "manual_mcp_servers" in tables:
+        queries.append("SELECT env_blob_ref FROM manual_mcp_servers")
+    if "model_attempts" in tables and "response_replay_json" in {
+        row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")
+    }:
+        queries.append(
+            "SELECT response_replay_json FROM model_attempts WHERE response_replay_json IS NOT NULL"
+        )
+    for query in queries:
+        cursor = connection.execute(query)
+        try:
+            yield from (str(row[0]) for row in cursor)
+        finally:
+            cursor.close()

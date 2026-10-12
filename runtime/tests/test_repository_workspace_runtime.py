@@ -54,6 +54,57 @@ def _clear_watchers() -> None:
     _BlockingWatchController.instances.clear()
 
 
+def test_cache_rebuild_discards_snapshot_and_reuses_existing_watcher(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "main.py").write_text("def main():\n    return 1\n")
+    database = _database(tmp_path)
+    runtime = _runtime(RepositoryIntelligenceRepository(database))
+    try:
+        active = runtime.ensure_ready(root)
+        assert active.snapshot is not None
+        old = active.snapshot.persisted_snapshot.snapshot_id
+        watcher = _BlockingWatchController.instances[0]
+        watcher.emit()
+        worker = active.watcher_thread
+        connection = database.connection()
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.executescript("CREATE TABLE cache_parent(id PRIMARY KEY); CREATE TABLE cache_child(parent REFERENCES cache_parent(id)); INSERT INTO cache_child VALUES (1);")
+        connection.execute("PRAGMA foreign_keys=ON")
+        assert database.maintain(threading.Event()) is True
+        runtime.discard_cached_generations()
+        assert active.snapshot is None
+        assert active.reconciliation_required
+        watcher.emit()
+        assert active.snapshot is not None
+        assert active.snapshot.persisted_snapshot.snapshot_id != old
+        assert active.watcher_thread is worker
+        assert len(_BlockingWatchController.instances) == 1
+    finally:
+        runtime.shutdown_all()
+        database.close()
+
+
+def test_unavailable_cache_does_not_block_model_run(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    runtime = _runtime(store.repository_intelligence_repository())
+    try:
+        store.repository_database._unavailable = True
+        session = store.create_session(str(root))
+        run, _ = store.create_run(session["id"], "answer")
+        model = ScriptedModel([ModelResponse(text="Available through normal tools.")])
+        RuntimeEngine(store, model, lambda _: None, repository_runtime=runtime).run(run["id"], threading.Event())
+        assert store.read_run(run["id"])["status"] == "succeeded"
+        assert runtime.get_active(root).snapshot is None
+        assert store.health_state == "ready"
+    finally:
+        runtime.shutdown_all()
+        store.close()
+
+
 def _database(tmp_path: Path) -> RepositoryDatabase:
     database = RepositoryDatabase(tmp_path / "data")
     database.initialize()
