@@ -1173,10 +1173,7 @@ function ToolItem({
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
-  const [open, setOpen] = useState(item.status === "in_progress");
-  useEffect(() => {
-    if (item.status !== "in_progress") setOpen(false);
-  }, [item.status]);
+  const [open, setOpen] = useState(false);
 
   if (isSubagentTool(toolCall.toolName)) {
     const { id: agentId, name: agentName } = extractSubagentInfo(toolCall, agents);
