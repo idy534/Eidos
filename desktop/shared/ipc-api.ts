@@ -1,3 +1,4 @@
+import type { SessionForkRequest } from "./session-fork.generated.js";
 import type { MemoryMethods } from "./memory.js";
 import type { CollaborationState } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
@@ -146,6 +147,7 @@ export interface EidosRuntimeAPI {
       includeLocalChanges?: boolean;
     },
   ): Promise<Session>;
+  forkSession(request: SessionForkRequest): Promise<Session>;
   createSessionBranch(sessionId: string, branch: string): Promise<CreateBranchResult>;
   handoffSession(
     sessionId: string,

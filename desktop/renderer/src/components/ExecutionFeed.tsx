@@ -58,6 +58,9 @@ interface Props {
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
   onFeedback?: FeedbackHandler;
+  onFork?: ((item: Item) => void) | undefined;
+  onLoadOlder?: (() => void) | undefined;
+  loadingOlder?: boolean;
   onRegenerate?: RegenerateHandler;
   onEditResend?: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
@@ -115,6 +118,9 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   onApprove,
   onReject,
   onFeedback = NOOP_FEEDBACK,
+  onFork,
+  onLoadOlder,
+  loadingOlder = false,
   onRegenerate = NOOP_REGENERATE,
   onEditResend = NOOP_EDIT_RESEND,
   onOpenFile,
@@ -220,11 +226,14 @@ export const ExecutionFeed = memo(function ExecutionFeed({
         aria-live="polite"
         onScroll={handleScroll}
       >
+        {onLoadOlder && <button type="button" className="btn btn--ghost" disabled={loadingOlder} onClick={onLoadOlder}>
+          {loadingOlder ? "正在读取历史…" : "加载更早的记录"}
+        </button>}
         {itemGroups.map(({ runId, items: runItems }) => {
           const run = runsById.get(runId);
           if (!run) return null;
           const segments = splitRunIntoSegments(runItems);
-          const canReviseRun = latestVisibleRun?.id === run.id
+          const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
             && TERMINAL_RUN_STATUSES.has(run.status)
             && !hasActiveRun
             && !revisionSubmitting;
@@ -253,6 +262,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                   onApprove={onApprove}
                   onReject={onReject}
                   onFeedback={onFeedback}
+                  onFork={onFork}
                   onRegenerate={onRegenerate}
                   onEditResend={onEditResend}
                   onOpenFile={onOpenFile}
@@ -312,6 +322,7 @@ const RunSegment = memo(function RunSegment({
   onApprove,
   onReject,
   onFeedback,
+  onFork,
   onRegenerate,
   onEditResend,
   onOpenFile,
@@ -341,6 +352,7 @@ const RunSegment = memo(function RunSegment({
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
   onFeedback: FeedbackHandler;
+  onFork?: ((item: Item) => void) | undefined;
   onRegenerate: RegenerateHandler;
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
@@ -417,7 +429,7 @@ const RunSegment = memo(function RunSegment({
             feedback={feedbackByItemId.get(item.id)}
             feedbackPending={pendingFeedbackItemIds.has(item.id)}
             canRegenerate={allowRegenerate && isLast && index === segment.response.length - 1 && canReviseRun}
-            allowFeedback={allowFeedback}
+            allowFeedback={allowFeedback && !item.inherited}
             isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
             showTurnResults={isLast
               && index === segment.response.length - 1
@@ -427,6 +439,7 @@ const RunSegment = memo(function RunSegment({
             showTextChanges={true}
             revisionSubmitting={revisionSubmitting}
             onFeedback={onFeedback}
+            onFork={onFork}
             onRegenerate={onRegenerate}
           />
         );
@@ -676,6 +689,7 @@ function AssistantMessage({
   showTextChanges,
   revisionSubmitting = false,
   onFeedback,
+  onFork,
   onRegenerate,
 }: {
   item: Item;
@@ -692,6 +706,7 @@ function AssistantMessage({
   showTextChanges: boolean;
   revisionSubmitting?: boolean | undefined;
   onFeedback: FeedbackHandler;
+  onFork?: ((item: Item) => void) | undefined;
   onRegenerate: RegenerateHandler;
 }) {
   const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
@@ -708,7 +723,7 @@ function AssistantMessage({
   }, [canRegenerate]);
 
   return (
-    <article className="feed-item feed-item--assistant" ref={contentRef}>
+    <article id={`item-${item.id}`} className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent className="eidos-chat-prose" content={item.content || ""} isStreaming={isStreaming} />
       {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
@@ -716,6 +731,11 @@ function AssistantMessage({
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
             <CopyButton content={item.content} />
+            {onFork && item.status === "completed" && !item.incomplete && (
+              <ActionButton label="从这里分叉" onClick={() => onFork(item)}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12m0-6h8a4 4 0 0 1 4 4v2" fill="none" stroke="currentColor" strokeWidth="1.7"/><circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="1.7"/><circle cx="18" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="1.7"/></svg>
+              </ActionButton>
+            )}
             {allowFeedback && (
               <>
                 <ActionButton
@@ -761,14 +781,14 @@ function AssistantMessage({
                 />
               </>
             )}
-            <MoreActionsDropdown
+            {!item.inherited && <MoreActionsDropdown
               session={run.sessionId}
               run={run.id}
               item={item.id}
               step={item.modelStepIndex ?? run.modelStepCount ?? 1}
               model={run.modelId}
               workspace={workspaceRoot}
-            />
+            />}
           </div>
           <div className="response-meta">
             <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
@@ -1010,7 +1030,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
   const data = objectField(result, "data");
-  const running = item.status === "in_progress" || stringField(data, "executionStatus") === "running";
+  const running = !item.inherited && (item.status === "in_progress" || stringField(data, "executionStatus") === "running");
   const command = stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令";
   const stdout = stringField(data, "stdout");
   const stderr = stringField(data, "stderr");

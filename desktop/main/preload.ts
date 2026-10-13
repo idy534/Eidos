@@ -174,6 +174,7 @@ const api: EidosRuntimeAPI = {
       includeLocalChanges?: boolean;
     },
   ): Promise<Session> => ipcRenderer.invoke(IPC.SESSION_CREATE, workspaceRoot, options),
+  forkSession: (request) => ipcRenderer.invoke(IPC.SESSION_FORK, request),
   createSessionBranch: (sessionId: string, branch: string): Promise<CreateBranchResult> =>
     ipcRenderer.invoke(IPC.SESSION_CREATE_BRANCH, sessionId, branch),
   handoffSession: (

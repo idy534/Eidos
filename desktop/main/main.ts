@@ -1,3 +1,4 @@
+import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
@@ -653,6 +654,10 @@ ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unk
     throw new Error("Workspace 参数无效。");
   }
   return clientOrThrow().createSession(workspaceRoot, validateSessionCreateOptions(options));
+});
+ipcMain.handle(IPC.SESSION_FORK, (_event, request: unknown) => {
+  if (!isSessionForkRequest(request)) throw new Error("分叉参数无效。");
+  return clientOrThrow().forkSession(request);
 });
 ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: unknown) => {
   if (

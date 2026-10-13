@@ -62,6 +62,83 @@ describe("useSessionController real Hook behavior", () => {
     return api;
   }
 
+  it("keeps the source open on fork failure and reuses operationId when retrying", async () => {
+    const forkSession = vi.fn().mockRejectedValueOnce(new Error("capture failed")).mockResolvedValueOnce(mockSession2);
+    const startRun = vi.fn();
+    setupMockRuntime({ forkSession, startRun });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].loadSessions(); await result.current[1].selectSession(mockSession1); });
+    await act(async () => { await result.current[1].forkSession(mockSession1.id, "answer-1", { kind: "same_workspace" }); });
+    expect(result.current[0].snapshot?.session.id).toBe(mockSession1.id);
+    expect(result.current[0].pending.creatingSession).toBe(false);
+    await act(async () => { await result.current[1].forkSession(mockSession1.id, "answer-1", { kind: "same_workspace" }); });
+    expect(forkSession.mock.calls[0]?.[0]).toEqual(forkSession.mock.calls[1]?.[0]);
+    expect(result.current[0].snapshot?.session.id).toBe(mockSession2.id);
+    expect(result.current[0].sessions.filter((session) => session.id === mockSession2.id)).toHaveLength(1);
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
+  it("admits one fork while the first request is still in progress", async () => {
+    let resolveFork!: (session: Session) => void;
+    const forkSession = vi.fn().mockImplementation(() => new Promise<Session>((resolve) => { resolveFork = resolve; }));
+    setupMockRuntime({ forkSession });
+    const { result } = renderHook(() => useSessionController());
+    let first!: Promise<SessionSnapshot | undefined>;
+    await act(async () => {
+      first = result.current[1].forkSession(mockSession1.id, "answer", { kind: "same_workspace" });
+      await result.current[1].forkSession(mockSession1.id, "answer", { kind: "same_workspace" });
+    });
+    expect(forkSession).toHaveBeenCalledTimes(1);
+    expect(result.current[0].pending.creatingSession).toBe(true);
+    await act(async () => { resolveFork(mockSession2); await first; });
+    expect(result.current[0].snapshot?.session.id).toBe(mockSession2.id);
+  });
+
+  it("loads older transcript records and preserves current facts while merging", async () => {
+    const entry = (id: string) => ({ id, sessionId: mockSession1.id, runId: "run", ordinal: 1,
+      kind: "assistant_message" as const, status: "completed" as const, createdAt: 1, content: id });
+    const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, items: [entry("recent")], previousItemId: "recent" })
+      .mockResolvedValueOnce({ ...mockSnapshot1, items: [entry("old"), entry("recent")], previousItemId: "old" });
+    setupMockRuntime({ readSession });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].selectSession(mockSession1); });
+    await act(async () => {
+      result.current[1].setSnapshot((snapshot) => ({ ...snapshot!, session: { ...snapshot!.session, title: "new title" } }));
+    });
+    await act(async () => { await result.current[1].loadOlderSession(); });
+    expect(result.current[0].snapshot?.items.map((item) => item.id)).toEqual(["old", "recent"]);
+    expect(result.current[0].snapshot?.session.title).toBe("new title");
+    expect(result.current[0].snapshot?.previousItemId).toBe("old");
+    expect(readSession).toHaveBeenLastCalledWith(mockSession1.id, { itemLimit: 500, beforeItemId: "recent" });
+  });
+
+  it("ignores a late history page after navigation to another Session", async () => {
+    let resolveHistory!: (snapshot: SessionSnapshot) => void;
+    const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent" })
+      .mockImplementationOnce(() => new Promise<SessionSnapshot>((resolve) => { resolveHistory = resolve; }))
+      .mockResolvedValueOnce(mockSnapshot2);
+    setupMockRuntime({ readSession });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].selectSession(mockSession1); });
+    let loading!: Promise<void>;
+    await act(async () => { loading = result.current[1].loadOlderSession(); });
+    await act(async () => { await result.current[1].selectSession(mockSession2); });
+    await act(async () => { resolveHistory(mockSnapshot1); await loading; });
+    expect(result.current[0].snapshot?.session.id).toBe(mockSession2.id);
+  });
+
+  it("loads the page containing the source fork answer before selecting it", async () => {
+    const selected = { id: "source-answer", sessionId: mockSession1.id, runId: "old-run", ordinal: 2,
+      kind: "assistant_message" as const, status: "completed" as const, createdAt: 1 };
+    const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent" })
+      .mockResolvedValueOnce({ ...mockSnapshot1, items: [selected] });
+    setupMockRuntime({ readSession });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].selectSession(mockSession1, selected.id); });
+    expect(result.current[0].snapshot?.items[0]?.id).toBe(selected.id);
+    expect(readSession).toHaveBeenLastCalledWith(mockSession1.id, { itemLimit: 500, beforeItemId: "recent" });
+  });
+
   it("loads every Session page so older Projects retain their conversations", async () => {
     const sessions = Array.from({ length: 112 }, (_, index): Session => ({
       ...mockSession1,

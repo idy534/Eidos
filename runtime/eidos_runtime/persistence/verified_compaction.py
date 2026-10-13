@@ -3,7 +3,6 @@ from __future__ import annotations
 from eidos_runtime.domain.input_reference import InputReference
 
 import json
-import sqlite3
 import time
 import uuid
 
@@ -237,9 +236,14 @@ class VerifiedCompactionRepository(Repository):
             for row in selected_rows
             if row["tool_call_id"] is not None
         )
-        changes = _workspace_changes(selected_rows)
+        from eidos_runtime.persistence.session_history import SessionHistoryRepository
+        inherited = SessionHistoryRepository(self.database).verification_records(candidate.session_id, source_ids)
+        inherited_facts = tuple(record.fact(self.database, replay=False) for record in inherited)
+        tool_ids = tuple(record.item.tool_call.id for record in inherited if record.item.tool_call is not None) + tool_ids
+        changes = _workspace_changes([row["result_json"] for row in selected_rows]
+                                    + [fact.model_result_json or fact.result_json for fact in inherited_facts])
         return candidate.model_copy(update={
-            "items": tuple(ContextItemFact(
+            "items": inherited_facts + tuple(ContextItemFact(
                 item_id=str(row["id"]), run_id=str(row["run_id"]), kind=str(row["kind"]),
                 status=str(row["status"]), content=row["content"],
                 input_references=tuple(InputReference.model_validate(value) for value in json.loads(row["input_references_json"])),
@@ -258,10 +262,9 @@ class VerifiedCompactionRepository(Repository):
         })
 
 
-def _workspace_changes(rows: list[sqlite3.Row]) -> tuple[str, ...]:
+def _workspace_changes(values: list[str | None]) -> tuple[str, ...]:
     changes: list[str] = []
-    for row in rows:
-        raw = row["result_json"]
+    for raw in values:
         if raw is None:
             continue
         try:

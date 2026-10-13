@@ -1,5 +1,17 @@
 # Eidos 当前限制
 
+## 回答级聊天分叉（2026-10-14）
+
+- 分叉入口只接受已结束 Run 的完整最终回答。Runtime 拒绝进行中、未完成的回答和子 Agent Session。源 Session 存在待确认副作用时，Runtime 拒绝创建分叉。
+- 单次分叉最多保留 20,000 条历史记录。记录与独立引用资源的未压缩内容合计最多为 128 MiB。Runtime 超限时返回 `SESSION_FORK_HISTORY_LIMIT`，不会发布部分 Session。
+- 分叉保留完整聊天前缀，但模型上下文继续受既有预算约束。模型可以读取预算内的近期历史，或使用新 Session 自己生成的压缩摘要。Runtime 不复制截止点之后的旧摘要。
+- 共享目录分叉使用当前文件。独立 Worktree 保存分叉时的 HEAD、staged、unstaged 和 untracked 状态。该功能不恢复历史回答时的文件状态，也不复制 ignored 文件。Managed Session 只允许独立 Worktree 分叉。
+- 历史记录不授权新 Run。Runtime 不复制 Approval、Run Grant、写入证据、Worker 或子 Agent。Desktop 不从继承 Run 恢复权限模式。用户的新输入仍走现有 Run 创建流程。
+- Worktree 创建后、历史提交前的失败会保留 durable lifecycle 和快照。相同 `operationId` 的重试复用原目标身份与快照。Runtime 不发布半份历史。来源已删除或环境需要对账时，操作明确失败。
+- 来源回答定位最多自动读取 20,000 条展示记录。用户仍可以手动分页加载更早记录。
+- 本次 Runtime 定向测试通过 75 项。Renderer 行为测试通过 75 项，ExecutionFeed 静态测试通过 42 项。Main/Runtime 分叉与共享 Fixture 测试通过 2 项，现有 Desktop 契约检查通过。测试覆盖长历史、响应分组、工具回放、来源删除、重启、Worktree 重试、迁移回滚、界面分页与迟到响应。
+- Ruff、Deptry、Python 依赖审计、构建和原生 Electron smoke 均通过。构建保留现有 Chunk 体积提示。本次没有新增依赖或修改锁文件。本次没有执行 Full Suite 或真实产品窗口的人工验收。
+
 ## 项目和 Session 置顶验证（2026-10-13）
 
 - 置顶功能已经接通右键菜单、typed IPC、Runtime 方法和 SQLite。项目与 Session 共用固定置顶顺序；首版不提供拖拽排序或排序设置。Runtime 最多保存 1000 个引用，未物化草稿和内部子会话不可置顶。

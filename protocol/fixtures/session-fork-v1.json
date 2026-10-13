@@ -1,0 +1,21 @@
+{
+  "validRequests": [
+    {"operationId":"11111111-1111-1111-1111-111111111111","sourceSessionId":"source","sourceItemId":"answer","target":{"kind":"same_workspace"}},
+    {"operationId":"22222222-2222-2222-2222-222222222222","sourceSessionId":"source","sourceItemId":"answer","target":{"kind":"new_worktree","state":"current_workspace"}}
+  ],
+  "invalidRequests": [
+    {"sourceSessionId":"source","sourceItemId":"answer","target":{"kind":"same_workspace"}},
+    {"operationId":"not-a-uuid","sourceSessionId":"source","sourceItemId":"answer","target":{"kind":"same_workspace"}},
+    {"operationId":"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx","sourceSessionId":"source","sourceItemId":"answer","target":{"kind":"same_workspace"}},
+    {"operationId":"11111111-1111-1111-1111-111111111111","sourceSessionId":"","sourceItemId":"answer","target":{"kind":"same_workspace"}},
+    {"operationId":"11111111-1111-1111-1111-111111111111","sourceSessionId":"source","sourceItemId":"answer","target":{"kind":"new_worktree","state":"historical_answer"}},
+    {"operationId":"11111111-1111-1111-1111-111111111111","sourceSessionId":"source","sourceItemId":"answer","target":{"kind":"same_workspace","approvalMode":"full_access"}}
+  ],
+  "validResponses": [
+    {"session":{"id":"target","workspaceRoot":"/workspace","taskStatus":"new","createdAt":1,"updatedAt":1,"forkedFrom":{"sessionId":"source","runId":"run","itemId":"answer","itemCount":2,"createdAt":1}}}
+  ],
+  "invalidResponses": [
+    {"session":{"id":"target","workspaceRoot":"/workspace","taskStatus":"new","createdAt":1,"updatedAt":1,"forkedFrom":{"sessionId":"source","runId":"run","itemId":"answer","itemCount":0,"createdAt":1}}},
+    {"session":{"id":"target","workspaceRoot":"/workspace","taskStatus":"new","createdAt":1,"updatedAt":1},"run":{"status":"running"}}
+  ]
+}

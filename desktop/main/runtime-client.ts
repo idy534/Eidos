@@ -1,3 +1,5 @@
+import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
+import type { SessionForkRequest } from "../shared/session-fork.generated.js";
 import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
 import { isCollaborationState } from "../shared/collaboration.js";
 import { isRunTermination } from "../shared/run-termination.js";
@@ -131,6 +133,10 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "WORKTREE_DIRTY",
   "WORKTREE_DELETE_FAILED",
   "SESSION_PERSISTENCE_FAILED",
+  "SESSION_FORK_FAILED",
+  "SESSION_FORK_WORKTREE_FAILED",
+  "SESSION_FORK_CANCELED",
+  "SESSION_FORK_HISTORY_LIMIT",
   "MODEL_NOT_AVAILABLE",
   "RUN_CANCEL_TIMEOUT",
   "RUN_RECONCILIATION_REQUIRED",
@@ -494,15 +500,24 @@ export class RuntimeClient {
     return this.validatedRequest("session/list", options, isSessionListResult);
   }
 
-  readSession(
+  async readSession(
     sessionId: string,
     options: { itemLimit?: number; beforeItemId?: string } = {},
   ): Promise<SessionSnapshot> {
-    return this.validatedRequest(
+    const snapshot = await this.validatedRequest(
       "session/read",
       { sessionId, ...options },
       isSessionSnapshot,
     );
+    const history = snapshot.inheritedHistory ?? [];
+    const inheritedRuns = [...new Map(history.map((entry) => [entry.run.id, { ...entry.run, inherited: true }])).values()];
+    return { ...snapshot, runs: [...inheritedRuns, ...snapshot.runs],
+      items: [...history.map((entry) => ({ ...entry.item, inherited: true })), ...snapshot.items] };
+  }
+
+  async forkSession(request: SessionForkRequest): Promise<Session> {
+    const result = await this.validatedRequest("session/fork", { ...request }, isSessionForkResponse);
+    return result.session;
   }
 
   readToolText(sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset = 0): Promise<ToolTextPage> {
@@ -1476,11 +1491,12 @@ function isSession(value: unknown): value is Session {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
-      "worktreeRestoreAvailable", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
+      "worktreeRestoreAvailable", "forkedFrom", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
       "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
+    && (value.forkedFrom === undefined || isSessionForkSource(value.forkedFrom))
     && (value.projectless === undefined || typeof value.projectless === "boolean")
     && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
     && (value.associatedWorktreeId === undefined || typeof value.associatedWorktreeId === "string")
@@ -1844,9 +1860,10 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     isRecord(value)
     && hasOnlyKeys(value, [
       "session", "runs", "items", "stepResolutions",
-      "previousItemId", "throughEventId",
+      "previousItemId", "throughEventId", "inheritedHistory",
     ])
     && isSession(value.session)
+    && (value.inheritedHistory === undefined || Array.isArray(value.inheritedHistory) && value.inheritedHistory.every((entry) => isInheritedHistoryEntry(entry)))
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
     && Array.isArray(value.items)

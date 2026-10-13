@@ -43,6 +43,10 @@ from eidos_runtime.application.repository import (
 )
 from eidos_runtime.application.review import ReviewApplication
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
+from eidos_runtime.application.session_fork import SessionForkApplication
+from eidos_runtime.persistence.session_history import SessionHistoryRepository
+from eidos_runtime.protocol.session_fork import SessionForkRequest, SessionForkResponse
+
 from eidos_runtime.application.sessions import (
     DeferredGitFetch,
     DeferredGitPull,
@@ -517,11 +521,38 @@ class _DeferredGitObserveAdapter:
         return DeferredMethodResult()
 
 
+class _DeferredSessionForkAdapter:
+    """Keep history capture and Git IO off the protocol input loop."""
+
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(self, request_id: str, request: SessionForkRequest) -> DeferredMethodResult:
+        application = self._server._applications_or_error().session_forks
+
+        def complete(cancel: threading.Event) -> None:
+            try:
+                result = application.fork(request, cancel)
+            except ApplicationError as error:
+                self._server.send(business_error(request_id, error.code))
+                return
+            except Exception:
+                logger.exception("Conversation fork failed")
+                self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+                return
+            self._server.send(response(request_id, result.to_json_value()))
+
+        if not self._server.supervisor.start_managed_task("session-fork", complete):
+            raise ApplicationError("RUNTIME_DRAINING", "runtime is draining")
+        return DeferredMethodResult()
+
+
 @dataclass(frozen=True)
 class _RuntimeApplications:
     sidebar: SidebarApplication
     projects: ProjectApplication
     sessions: SessionApplication
+    session_forks: SessionForkApplication
     runs: RunApplication
     approvals: ApprovalApplication
     models: ModelApplication
@@ -825,6 +856,10 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().sessions.create(
                     request
                 ),
+            ),
+            (
+                "session/fork", SessionForkRequest, SessionForkResponse,
+                lambda _id, request: self._applications_or_error().session_forks.fork(request),
             ),
             (
                 "session/createBranch",
@@ -1340,9 +1375,9 @@ class RuntimeServer:
                     name=name,
                     request_type=request_type,
                     response_type=response_type,
-                    handler=_ApplicationMethodAdapter(handler, response_type),
-                    allowed_when_draining=name not in draining_blocked,
-                    allowed_during_reconfiguration=name not in reconfiguration_blocked,
+                    handler=_DeferredSessionForkAdapter(self) if name == "session/fork" else _ApplicationMethodAdapter(handler, response_type),
+                    allowed_when_draining=name not in draining_blocked and name != "session/fork",
+                    allowed_during_reconfiguration=name not in reconfiguration_blocked and name != "session/fork",
                     error_mapper=_application_error_mapping,
                 )
             )
@@ -1497,6 +1532,11 @@ class RuntimeServer:
                 cleanup_empty_sessions=sessions.cleanup_empty_sessions_for_project,
             ),
             sessions=sessions,
+            session_forks=SessionForkApplication(
+                SessionHistoryRepository(self.store.database), sessions, session_lifecycle,
+                self.supervisor.events, self.worktree_manager,
+                self.worktree_retention.snapshot_service if self.worktree_retention else None,
+            ),
             runs=RunApplication(
                 store=self.store,
                 runtime=self.supervisor,

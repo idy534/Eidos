@@ -19,7 +19,8 @@ class InputContextRepository:
                 connection.execute(
                     "DELETE FROM input_references WHERE created_at < ? "
                     "AND id NOT IN (SELECT json_extract(value, '$.id') FROM items, json_each(items.input_references_json)) "
-                    "AND id NOT IN (SELECT value FROM input_drafts, json_each(input_drafts.reference_ids_json))",
+                    "AND id NOT IN (SELECT value FROM input_drafts, json_each(input_drafts.reference_ids_json)) "
+                    "AND id NOT IN (SELECT input_reference_id FROM session_history_resources WHERE input_reference_id IS NOT NULL)",
                     (now_ms() - 7 * 24 * 60 * 60 * 1000,),
                 )
                 total = connection.execute("SELECT COALESCE(SUM(byte_size), 0) FROM input_references WHERE id != ?", (snapshot.reference.id,)).fetchone()[0]
@@ -69,13 +70,18 @@ class InputContextRepository:
                 "AND kind IN ('user_message', 'assistant_message') AND content IS NOT NULL "
                 + item_filter + " ORDER BY created_at DESC, creation_seq DESC LIMIT 20", parameters,
             ).fetchall()
+        from eidos_runtime.persistence.session_history import SessionHistoryRepository
+        inherited = SessionHistoryRepository(self.database).messages(source, item_ids, limit=20)
+        inherited_rows = [dict(id=item.id, kind=item.kind, content=item.content[:12000], length=len(item.content)) for item in inherited]
+        rows = list(reversed(rows))
+        rows = (inherited_rows + rows)[-20:]
         if item_ids and len(rows) != len(set(item_ids)):
             raise ValueError('history_selection_unavailable')
         if not rows:
             raise ValueError('history_empty')
         text = '\n\n'.join(
             f"[{row['kind']} / {row['id']}]\n{row['content']}" + ('\n[消息摘录已截断]' if row['length'] > 12000 else '')
-            for row in reversed(rows)
+            for row in rows
         )
         if len(text) > 65536:
             text = text[:65500] + '\n[历史摘录已截断]'

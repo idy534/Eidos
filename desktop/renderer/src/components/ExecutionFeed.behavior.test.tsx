@@ -55,6 +55,53 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("conversation fork actions", () => {
+  it("lets the user request an earlier page and disables repeated clicks during loading", () => {
+    const onLoadOlder = vi.fn();
+    const items: Item[] = [{ id: "recent", runId: baseRun.id, sessionId: baseRun.sessionId,
+      kind: "user_message", ordinal: 1, status: "completed", content: "最近输入", createdAt: 1 }];
+    const { rerender } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} />);
+    fireEvent.click(screen.getByRole("button", { name: "加载更早的记录" }));
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+    rerender(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} loadingOlder />);
+    expect(screen.getByRole("button", { name: "正在读取历史…" })).toBeDisabled();
+  });
+  const answer = (run: Run, overrides: Partial<Item> = {}): Item => ({
+    id: "answer", sessionId: run.sessionId, runId: run.id, ordinal: 2,
+    kind: "assistant_message", status: "completed", createdAt: 1_000, content: "回答内容", ...overrides,
+  });
+
+  it("forks an older ended answer even when a later Run is active", () => {
+    const oldRun = { ...baseRun, id: "old", status: "succeeded" as const };
+    const selected = answer(oldRun);
+    const onFork = vi.fn();
+    render(<ExecutionFeed items={[selected, answer(baseRun, { id: "stream", status: "in_progress" })]}
+      runs={[oldRun, baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} onFork={onFork} />);
+    expect(screen.getAllByRole("button", { name: "从这里分叉" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    expect(onFork).toHaveBeenCalledWith(selected);
+  });
+
+  it("keeps inherited answers forkable without exposing execution revision or feedback", () => {
+    const historical = { ...baseRun, status: "succeeded" as const, inherited: true };
+    const selected = answer(historical, { inherited: true });
+    render(<ExecutionFeed items={[selected]} runs={[historical]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onFork={() => {}} allowRegenerate allowEditResend allowFeedback />);
+    expect(screen.getByRole("button", { name: "从这里分叉" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "重新生成" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "点赞" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer a fork for incomplete answers or progress inside a tool round", () => {
+    const ended = { ...baseRun, status: "stopped" as const };
+    render(<ExecutionFeed items={[answer(ended, { incomplete: true })]} runs={[ended]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onFork={() => {}} />);
+    expect(screen.queryByRole("button", { name: "从这里分叉" })).not.toBeInTheDocument();
+  });
+});
+
 describe("Run failure presentation", () => {
   it("shows a concrete cause without technical diagnostics in the Session body", () => {
     const run: Run = { ...baseRun, status: "failed", errorCode: "MODEL_PROTOCOL_ERROR",

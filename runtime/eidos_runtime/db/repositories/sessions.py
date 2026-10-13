@@ -57,6 +57,7 @@ SESSION_SELECT = """
     SELECT s.creation_seq, s.id, s.workspace_root, s.worktree_id,
            s.associated_worktree_id,
            s.execution_mode, s.title,
+           (SELECT source_json FROM session_forks WHERE session_id=s.id) AS fork_source_json,
            s.created_at, s.updated_at,
            CASE
              WHEN EXISTS (
@@ -141,6 +142,7 @@ class SessionRepository(Repository):
         associated_worktree_id: str | None = None,
         projectless: bool = False,
         projectless_creation_id: str | None = None,
+        transaction_connection: sqlite3.Connection | None = None,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
         if projectless and workspace.parent.parent != projectless_root():
@@ -275,6 +277,8 @@ class SessionRepository(Repository):
                 )
             return CommittedMutation(session, (event,))
 
+        if transaction_connection is not None:
+            return write(transaction_connection)
         return self._write_committed(
             write,
             operation_id=operation_id,
@@ -887,7 +891,12 @@ class SessionRepository(Repository):
                 (tool_call_id, session_id),
             ).fetchone()
         if row is None:
-            raise ResourceNotFoundError("tool call not found in session")
+            from eidos_runtime.persistence.session_history import SessionHistoryRepository
+            historical = SessionHistoryRepository(self.database).tool_record(session_id, tool_call_id)
+            if historical is None or historical.item.tool_call is None:
+                raise ResourceNotFoundError("tool call not found in session")
+            tool = historical.item.tool_call
+            row = {"content": tool.change_diff if field == "diff" else tool.result_json, "result_json": tool.result_json}
         content = row["content"]
         if content is None and field == "result":
             content = row["result_json"]
@@ -918,7 +927,15 @@ class SessionRepository(Repository):
             if session_row is None:
                 raise ResourceNotFoundError("session not found")
             before_sequence: int | None = None
-            if before_item_id is not None:
+            from eidos_runtime.persistence.session_history import SessionHistoryRepository
+            history = SessionHistoryRepository(self.database)
+            inherited_cursor = before_item_id is not None and connection.execute(
+                "SELECT 1 FROM session_history_entries WHERE session_id=? AND item_id=?",
+                (session_id, before_item_id),
+            ).fetchone() is not None
+            if inherited_cursor:
+                before_sequence = 0
+            elif before_item_id is not None:
                 before_row = connection.execute(
                     """
                     SELECT creation_seq FROM items
@@ -1007,6 +1024,20 @@ class SessionRepository(Repository):
         }
         if has_more and selected_items:
             snapshot["previousItemId"] = selected_items[0]["id"]
+        if not has_more:
+            history_page = history.page(
+                session_id, limit=max(0, item_limit - len(selected_items)),
+                before_item_id=before_item_id if inherited_cursor else None,
+                byte_budget=max(0, MAX_SNAPSHOT_BYTES - _json_bytes(snapshot)),
+            )
+            if history_page.records:
+                snapshot["inheritedHistory"] = [history.view(record) for record in history_page.records]
+            if history_page.previous_item_id:
+                snapshot["previousItemId"] = history_page.previous_item_id
+            elif not history_page.records and connection.execute(
+                "SELECT 1 FROM session_history_entries WHERE session_id=?", (session_id,),
+            ).fetchone() and selected_items:
+                snapshot["previousItemId"] = selected_items[0]["id"]
         return snapshot
 
     def list_events(

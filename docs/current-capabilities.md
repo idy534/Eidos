@@ -4,6 +4,12 @@
 
 本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
+Eidos 提供回答级聊天分叉。用户可以在已结束 Run 的完整最终回答下点击“从这里分叉”。新 Session 保留截至该回答的消息、工具结果和输入引用，并等待用户输入。Local 和 Projectless 会话可以在当前目录继续；Git 会话也可以选择独立 Worktree。Managed 会话的分叉使用独立 Worktree。独立 Worktree 保存分叉时的 HEAD、staged、unstaged 和 untracked 状态。用户选择历史回答不会回退来源文件。
+
+Runtime 使用 `session/fork`、必填 `operationId` 和不可变历史清单完成分叉。相同请求重试返回同一个 Session。分叉可以再次从继承回答创建。来源删除、重启和 Blob GC 不会删除仍被分叉引用的历史、附件或私有模型回放。历史不会创建可执行 Run，也不会复制 Approval、Run Grant、Worker 或子 Agent。模型继续遵守现有上下文预算和压缩规则。
+
+用户可以点击“加载更早的记录”分页查看继承历史与真实记录。来源按钮会打开原 Session，并加载包含原回答的页面。界面保留当前消息与状态，不让迟到的历史页覆盖其他 Session。
+
 Runtime 已移除额外模型完成审查。普通工具任务的最终答复不会再因为内部评估失败或答复去重被停止；原生继续信号、输入、协作和最终事务检查继续生效。旧审查 Event 与 ModelProfile 仍可读取。
 
 执行屏障使用实际执行事实。准备失败和未启动命令不会产生未知副作用；已知结果后的输出过滤、格式校验和投影失败不会单独建立屏障。完全访问 Shell 可以使用已核验的 Workspace 外 cwd。已知文件操作的恢复只观察受影响目标，并在 SQLite 中核对 epoch 和目标集合，避免无关目录扫描阻断恢复。
@@ -264,7 +270,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v13。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 包含旧版本逐级迁移到 v13 的代码；本次 v12 → v13 迁移尚待验证。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
+- 当前 state schema 是 v26。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。

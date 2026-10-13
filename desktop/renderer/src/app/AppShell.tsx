@@ -11,7 +11,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedbackValue, Run, Session } from "../contracts.js";
+import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedbackValue, Run, Session, Item } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -125,10 +125,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const [responseActionState, responseActionActions] = useResponseActionController(
     sessionState.snapshot?.session.id,
   );
-  const latestRun = sessionState.snapshot?.runs.length
-    ? sessionState.snapshot.runs[sessionState.snapshot.runs.length - 1]
-    : undefined;
-  const sessionConfigRun = resolveSessionRun(sessionState.snapshot?.runs ?? []);
+  const latestRun = sessionState.snapshot?.runs.filter((run) => !run.inherited).at(-1);
+  const [forkSelection, setForkSelection] = useState<{ session: Session; item: Item } | null>(null);
+  const [forkTarget, setForkTarget] = useState<"same_workspace" | "new_worktree">("same_workspace");
+  const sessionConfigRun = resolveSessionRun(sessionState.snapshot?.runs.filter((run) => !run.inherited) ?? []);
   const [approvalModes, setApprovalModes] = useState<Record<string, ApprovalMode>>({});
   const approvalSessionId = sessionState.draft && !sessionState.snapshot?.runs.length
     ? sessionState.draft.session.id
@@ -918,6 +918,25 @@ export function AppShell({ runtime }: AppShellProps) {
     await reviseLatestRun(run);
   }, [reviseLatestRun]);
 
+  const createConversationFork = useCallback(async (source: Session, item: Item, kind: "same_workspace" | "new_worktree") => {
+    const loaded = await sessionActions.forkSession(source.id, item.id,
+      kind === "same_workspace" ? { kind } : { kind, state: "current_workspace" });
+    if (loaded) {
+      setForkSelection(null);
+      requestAnimationFrame(() => composerRef.current?.focus());
+    }
+  }, [sessionActions.forkSession]);
+  const handleFeedFork = useCallback((item: Item) => {
+    const source = sessionState.snapshot?.session;
+    if (!source || sessionState.pending.creatingSession) return;
+    if (!source.project?.gitAvailable) {
+      void createConversationFork(source, item, "same_workspace");
+      return;
+    }
+    setForkTarget(source.executionMode === "worktree" ? "new_worktree" : "same_workspace");
+    setForkSelection({ session: source, item });
+  }, [sessionState.snapshot?.session, sessionState.pending.creatingSession, createConversationFork]);
+
   const handleFeedEditResend = useCallback((run: Run, editedInput?: string, references?: string[]) => {
     return reviseLatestRun(run, editedInput, references);
   }, [reviseLatestRun]);
@@ -1520,6 +1539,19 @@ export function AppShell({ runtime }: AppShellProps) {
                   </p>
                 )}
 
+                {currentSnapshot.session.forkedFrom && (
+                  <p className="feed-label">
+                    本会话从历史回答分叉，已继承 {currentSnapshot.session.forkedFrom.itemCount} 条记录。
+                    {sessionState.sessions.find((session) => session.id === currentSnapshot.session.forkedFrom?.sessionId)
+                      ? <button type="button" onClick={() => {
+                        const source = sessionState.sessions.find((session) => session.id === currentSnapshot.session.forkedFrom?.sessionId);
+                        if (source) void sessionActions.selectSession(source, currentSnapshot.session.forkedFrom?.itemId).then((loaded) => {
+                          if (loaded) requestAnimationFrame(() => document.getElementById(`item-${currentSnapshot.session.forkedFrom?.itemId}`)?.scrollIntoView({ block: "center" }));
+                        });
+                      }}>打开来源会话</button>
+                      : " 来源会话已删除。"}
+                  </p>
+                )}
                 <ExecutionFeed
                   key={currentSnapshot.session.id}
                   items={currentSnapshot.items}
@@ -1543,6 +1575,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   onApprove={handleFeedApprove}
                   onReject={handleFeedReject}
                   onFeedback={handleFeedFeedback}
+                  onFork={handleFeedFork}
+                  onLoadOlder={currentSnapshot.previousItemId ? () => void sessionActions.loadOlderSession() : undefined}
+                  loadingOlder={sessionState.pending.loadingHistorySessionId === currentSnapshot.session.id}
                   onRegenerate={handleFeedRegenerate}
                   onEditResend={handleFeedEditResend}
                   onOpenFile={handleOpenFileInDock}
@@ -1704,7 +1739,7 @@ export function AppShell({ runtime }: AppShellProps) {
                         sessionId={currentSnapshot.session.id}
                         workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
                         items={completeSessionItems.items}
-                        latestRunId={currentSnapshot.runs.at(-1)?.id}
+                        latestRunId={currentSnapshot.runs.filter((run) => !run.inherited).at(-1)?.id}
                         previousItemId={currentSnapshot.previousItemId}
                         lastTurnRequest={reviewRequest}
                         scope={gitReviewState.scope}
@@ -1906,6 +1941,28 @@ export function AppShell({ runtime }: AppShellProps) {
           setHandoffSessionId(undefined);
           sessionActions.setError(undefined);
         }}
+      />
+      <ConfirmDialog
+        open={forkSelection !== null}
+        title="从这里分叉"
+        description={<>
+          <p>新会话会保留截至这次回答的聊天。工作区使用当前文件状态。</p>
+          <fieldset disabled={sessionState.pending.creatingSession}>
+            {forkSelection?.session.executionMode !== "worktree" && <label>
+              <input type="radio" name="fork-target" checked={forkTarget === "same_workspace"} onChange={() => setForkTarget("same_workspace")} />
+              在当前目录继续，两条会话共享文件。
+            </label>}
+            <label>
+              <input type="radio" name="fork-target" checked={forkTarget === "new_worktree"} onChange={() => setForkTarget("new_worktree")} />
+              在独立工作树继续。
+            </label>
+          </fieldset>
+        </>}
+        confirmLabel="创建分叉"
+        busy={sessionState.pending.creatingSession === true}
+        error={sessionState.error}
+        onCancel={() => setForkSelection(null)}
+        onConfirm={() => { if (forkSelection) void createConversationFork(forkSelection.session, forkSelection.item, forkTarget); }}
       />
       <ConfirmDialog
         open={Boolean(sessionToDelete)}

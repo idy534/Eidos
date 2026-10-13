@@ -20,6 +20,7 @@ from eidos_runtime.db.schema import (
     V22_SCHEMA_VERSION,
     V23_SCHEMA_VERSION,
     V24_SCHEMA_VERSION,
+    V25_SCHEMA_VERSION,
     V18_SCHEMA_VERSION,
     V17_SCHEMA_VERSION,
     V16_SCHEMA_VERSION,
@@ -760,6 +761,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V22_SCHEMA_VERSION,
         V23_SCHEMA_VERSION,
         V24_SCHEMA_VERSION,
+    V25_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -827,6 +829,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V24_SCHEMA_VERSION:
                 from eidos_runtime.db.sidebar_migration import migrate_sidebar_pins
                 migrate_sidebar_pins(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V25_SCHEMA_VERSION:
+                from eidos_runtime.db.session_fork_migration import migrate_session_forks
+                migrate_session_forks(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()
@@ -1069,6 +1074,9 @@ def _blob_references(state: StateDatabase) -> Iterator[str]:
         for table in ("context_snapshots", "step_resolution_snapshots", "input_references")
         if table in tables
     ]
+    if "session_history_entries" in tables:
+        queries.append("SELECT record_json FROM session_history_entries")
+        queries.append("SELECT blob_ref FROM session_history_resources")
     if "manual_mcp_servers" in tables:
         queries.append("SELECT env_blob_ref FROM manual_mcp_servers")
     if "tool_calls" in tables:

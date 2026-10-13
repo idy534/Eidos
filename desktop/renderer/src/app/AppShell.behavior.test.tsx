@@ -4,11 +4,11 @@ import type { Item, Run, SessionSnapshot } from "../contracts.js";
 import { deriveRuntimePresentation } from "../session-state.js";
 import { AppShell } from "./AppShell.js";
 
-const fixture = vi.hoisted(() => ({ snapshot: undefined as SessionSnapshot | undefined }));
+const fixture = vi.hoisted(() => ({ snapshot: undefined as SessionSnapshot | undefined, forkSession: vi.fn() }));
 vi.mock("./useSessionController.js", () => ({
   useSessionController: () => [{
     snapshot: fixture.snapshot, projects: [], sessions: [], pending: {},
-  }, { loadProjects: vi.fn(), loadSessions: vi.fn() }],
+  }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession }],
 }));
 vi.mock("./useRunController.js", () => ({
   useRunController: () => [{ composerMode: "idle", input: "", references: [], draftReady: false }, {}],
@@ -42,7 +42,9 @@ vi.mock("../components/InputContext.js", () => ({
 vi.mock("../components/ExecutionFeed.js", async () => {
   const { MarkdownContent } = await import("../components/MarkdownContent.js");
   const { TurnResults } = await import("../components/TurnResults.js");
-  return { ExecutionFeed: ({ runs, items }: { runs: Run[]; items: Item[] }) => <><MarkdownContent content={[
+  return { ExecutionFeed: ({ runs, items, onFork }: { runs: Run[]; items: Item[]; onFork?: (item: Item) => void }) => <>
+    {items.filter((item) => item.kind === "assistant_message").map((item) => <button key={item.id} onClick={() => onFork?.(item)}>从这里分叉</button>)}
+    <MarkdownContent content={[
     "[第一个文件](/workspace/one.txt)",
     "[第二个文件](/workspace/two.txt)",
     "[再次定位](/workspace/one.txt:2)",
@@ -112,6 +114,7 @@ describe("AppShell text change review", () => {
 });
 
 beforeEach(() => {
+  fixture.forkSession.mockReset().mockImplementation(async () => fixture.snapshot);
   fixture.snapshot = {
     session: {
       id: "session-a", workspaceRoot: "/workspace", executionMode: "local",
@@ -141,6 +144,49 @@ function renderShell() {
     restarting: false, restartRuntime: vi.fn(),
   }} />);
 }
+
+describe("AppShell conversation fork targets", () => {
+  function selectedAnswer() {
+    const snapshot = fixture.snapshot!;
+    snapshot.items = [{ id: "selected", runId: "ended", sessionId: snapshot.session.id,
+      kind: "assistant_message", ordinal: 2, status: "completed", content: "完成", createdAt: 1 }];
+    return snapshot;
+  }
+
+  it("forks a non-Git conversation into its current directory", async () => {
+    const snapshot = selectedAnswer();
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    await waitFor(() => expect(fixture.forkSession).toHaveBeenCalledWith(snapshot.session.id, "selected", { kind: "same_workspace" }));
+    expect(screen.queryByRole("alertdialog", { name: "从这里分叉" })).not.toBeInTheDocument();
+  });
+
+  it("lets a Git conversation choose an independent Worktree", async () => {
+    const snapshot = selectedAnswer();
+    snapshot.session.project!.gitAvailable = true;
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "从这里分叉" });
+    const target = within(dialog).getByRole("radio", { name: "在独立工作树继续。" });
+    fireEvent.click(target);
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建分叉" }));
+    await waitFor(() => expect(fixture.forkSession).toHaveBeenCalledWith(snapshot.session.id, "selected", { kind: "new_worktree", state: "current_workspace" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "从这里分叉" })).not.toBeInTheDocument());
+  });
+
+  it("requires an independent Worktree for managed conversations", async () => {
+    const snapshot = selectedAnswer();
+    snapshot.session.project!.gitAvailable = true;
+    snapshot.session.executionMode = "worktree";
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "从这里分叉" });
+    expect(within(dialog).getAllByRole("radio")).toHaveLength(1);
+    expect(within(dialog).getByRole("radio")).toBeChecked();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(fixture.forkSession).not.toHaveBeenCalled();
+  });
+});
 
 function expectOneFilesPanel() {
   const tools = screen.getByRole("tablist", { name: "工作区窗口" });

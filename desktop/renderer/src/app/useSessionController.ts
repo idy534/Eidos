@@ -1,3 +1,4 @@
+import type { SessionForkRequest } from "../../../shared/session-fork.generated.js";
 import { useCallback, useRef, useState } from "react";
 import type {
   CreateBranchResult,
@@ -35,6 +36,7 @@ export interface PendingOperations {
   creatingBranchSessionId?: string;
   branchSessionId?: string;
   selectingSessionId?: string;
+  loadingHistorySessionId?: string;
   renamingSessionId?: string;
   deletingSessionId?: string;
   handoffSessionId?: string;
@@ -61,7 +63,8 @@ export interface SessionControllerActions {
   materializeDraft: (workspaceNameHint?: string) => Promise<SessionSnapshot | undefined>;
   discardDraft: () => void;
   rollbackMaterializedSession: (session: Session, draft: SessionSnapshot) => Promise<boolean>;
-  selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
+  selectSession: (session: Session, focusItemId?: string) => Promise<SessionSnapshot | undefined>;
+  loadOlderSession: () => Promise<void>;
   createSession: (
     workspaceRoot?: string | null,
     options?: {
@@ -71,6 +74,7 @@ export interface SessionControllerActions {
       includeLocalChanges?: boolean;
     },
   ) => Promise<SessionSnapshot | undefined>;
+  forkSession: (sourceSessionId: string, sourceItemId: string, target: SessionForkRequest["target"]) => Promise<SessionSnapshot | undefined>;
   createSessionBranch: (
     sessionId: string,
     branch: string,
@@ -106,7 +110,21 @@ export interface SessionControllerActions {
 interface SessionSelectionOperation {
   token: symbol;
   sessionId: string;
+  focusItemId: string | undefined;
   promise: Promise<SessionSnapshot | undefined>;
+}
+
+function mergeOlderHistory(current: SessionSnapshot, older: SessionSnapshot): SessionSnapshot {
+  if (older.session.id !== current.session.id) throw new Error("History scope mismatch");
+  const { previousItemId: _cursor, ...base } = current;
+  const history = [...new Map([...(older.inheritedHistory ?? []), ...(current.inheritedHistory ?? [])].map((entry) => [entry.item.id, entry])).values()];
+  return {
+    ...base,
+    runs: [...new Map([...older.runs, ...current.runs].map((run) => [run.id, run])).values()],
+    items: [...new Map([...older.items, ...current.items].map((item) => [item.id, item])).values()],
+    ...(older.previousItemId ? { previousItemId: older.previousItemId } : {}),
+    ...(history.length ? { inheritedHistory: history } : {}),
+  };
 }
 
 export function useSessionController(): [SessionControllerState, SessionControllerActions] {
@@ -133,6 +151,8 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const creatingSessionRef = useRef<boolean>(false);
   const activeSelectionRef = useRef<SessionSelectionOperation | undefined>(undefined);
+  const selectionEpochRef = useRef(0);
+  const historyLoadingRef = useRef<{ sessionId: string; epoch: number } | undefined>(undefined);
   const sessionListLoadRef = useRef(0);
 
   function updateReadCompleted(updater: (prev: Set<string>) => Set<string>): void {
@@ -242,17 +262,18 @@ export function useSessionController(): [SessionControllerState, SessionControll
       : prev);
   }, []);
 
-  const selectSession = useCallback(async (session: Session): Promise<SessionSnapshot | undefined> => {
+  const selectSession = useCallback(async (session: Session, focusItemId?: string): Promise<SessionSnapshot | undefined> => {
     setDraft(undefined);
     setNavigationSessionId(session.id);
 
-    if (activeSelectionRef.current?.sessionId === session.id) {
+    if (activeSelectionRef.current?.sessionId === session.id && activeSelectionRef.current.focusItemId === focusItemId) {
       return activeSelectionRef.current.promise;
     }
 
     if (
       selectedSessionIdRef.current === session.id
       && snapshot?.session.id === session.id
+      && !focusItemId
     ) {
       if (session.taskStatus === "completed") {
         updateReadCompleted((prev) => new Set(prev).add(session.id));
@@ -261,6 +282,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     }
 
     const tokenSymbol = Symbol("session_selection");
+    selectionEpochRef.current += 1;
     const snapshotToken = snapshotReads.select(session.id);
     selectedSessionIdRef.current = session.id;
     if (session.taskStatus === "completed") {
@@ -271,7 +293,17 @@ export function useSessionController(): [SessionControllerState, SessionControll
 
     const promise = (async (): Promise<SessionSnapshot | undefined> => {
       try {
-        const loaded = await loadAuthoritativeSnapshot(session.id);
+        let loaded = await loadAuthoritativeSnapshot(session.id);
+        if (activeSelectionRef.current?.token !== tokenSymbol) return undefined;
+        const seenCursors = new Set<string>();
+        while (focusItemId && !loaded.items.some((item) => item.id === focusItemId)) {
+          const cursor = loaded.previousItemId;
+          if (!cursor || seenCursors.has(cursor) || loaded.items.length >= 20_000) throw new Error("Source answer unavailable");
+          seenCursors.add(cursor);
+          const older = await window.eidosRuntime.readSession(session.id, { itemLimit: 500, beforeItemId: cursor });
+          if (activeSelectionRef.current?.token !== tokenSymbol) return undefined;
+          loaded = mergeOlderHistory(loaded, older);
+        }
         if (activeSelectionRef.current?.token !== tokenSymbol) {
           return undefined;
         }
@@ -302,11 +334,36 @@ export function useSessionController(): [SessionControllerState, SessionControll
     activeSelectionRef.current = {
       token: tokenSymbol,
       sessionId: session.id,
+      focusItemId,
       promise,
     };
 
     return promise;
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
+
+  const loadOlderSession = useCallback(async (): Promise<void> => {
+    if (!snapshot?.previousItemId) return;
+    const sessionId = snapshot.session.id;
+    const epoch = selectionEpochRef.current;
+    if (historyLoadingRef.current?.sessionId === sessionId && historyLoadingRef.current.epoch === epoch) return;
+    const operation = { sessionId, epoch };
+    historyLoadingRef.current = operation;
+    setPending((prev) => ({ ...prev, loadingHistorySessionId: sessionId }));
+    try {
+      const older = await window.eidosRuntime.readSession(sessionId, { itemLimit: 500, beforeItemId: snapshot.previousItemId });
+      if (older.session.id !== sessionId || older.previousItemId === snapshot.previousItemId) throw new Error("Invalid history page");
+      if (selectedSessionIdRef.current === sessionId && selectionEpochRef.current === epoch) {
+        setSnapshot((current) => current?.session.id === sessionId ? mergeOlderHistory(current, older) : current);
+      }
+    } catch (cause) {
+      if (selectedSessionIdRef.current === sessionId && selectionEpochRef.current === epoch) setError(userFacingError(cause));
+    } finally {
+      if (historyLoadingRef.current === operation) {
+        historyLoadingRef.current = undefined;
+        clearPending("loadingHistorySessionId");
+      }
+    }
   }, [snapshot]);
 
   const createSession = useCallback(async (
@@ -417,6 +474,33 @@ export function useSessionController(): [SessionControllerState, SessionControll
       clearPending("renamingSessionId");
     }
   }, []);
+
+  const forkOperations = useRef(new Map<string, string>());
+  const forkSession = useCallback(async (sourceSessionId: string, sourceItemId: string, target: SessionForkRequest["target"]): Promise<SessionSnapshot | undefined> => {
+    if (creatingSessionRef.current) return undefined;
+    creatingSessionRef.current = true;
+    setPending((prev) => ({ ...prev, creatingSession: true }));
+    setError(undefined);
+    const key = `${sourceSessionId}:${sourceItemId}:${target.kind}`;
+    let operationId = forkOperations.current.get(key);
+    if (!operationId) {
+      operationId = crypto.randomUUID();
+      forkOperations.current.set(key, operationId);
+    }
+    try {
+      const session = await window.eidosRuntime.forkSession({ sourceSessionId, sourceItemId, target, operationId });
+      setSessions((prev) => [session, ...prev.filter((existing) => existing.id !== session.id)]);
+      const loaded = await selectSession(session);
+      forkOperations.current.delete(key);
+      return loaded;
+    } catch (cause) {
+      setError(userFacingError(cause));
+      return undefined;
+    } finally {
+      creatingSessionRef.current = false;
+      setPending((prev) => ({ ...prev, creatingSession: false }));
+    }
+  }, [selectSession]);
 
   const createSessionBranch = useCallback(async (
     sessionId: string,
@@ -654,7 +738,9 @@ export function useSessionController(): [SessionControllerState, SessionControll
     discardDraft,
     rollbackMaterializedSession,
     selectSession,
+    loadOlderSession,
     createSession,
+    forkSession,
     createSessionBranch,
     switchLocalBranch,
     createLocalBranch,

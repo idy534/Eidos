@@ -169,6 +169,7 @@ class WorktreeRecoveryReport(EidosFrozenStrictModel):
 
 
 class WorktreeLifecycleOperation(EidosFrozenStrictModel):
+    request_hash: str | None = None
     scope: WorktreeLifecycleScope
     operation_id: str = Field(min_length=1)
     state: WorktreeLifecycleState
