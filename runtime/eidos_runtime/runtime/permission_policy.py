@@ -23,6 +23,10 @@ class PermissionDecision(EidosFrozenStrictModel):
     reason_code: str
     requested_permissions: AdditionalPermissionProfile | None = None
 
+    @property
+    def requires_human_confirmation(self) -> bool:
+        return self.reason_code == "dangerous_permission_requires_confirmation"
+
 
 def _contains(entry: FileSystemPermissionEntry, path: str) -> bool:
     return entry.path == path or (
@@ -43,12 +47,8 @@ class PermissionPolicyEvaluator:
     ) -> PermissionDecision:
         if base.full_access:
             return PermissionDecision(disposition=PermissionDisposition.ALLOW, reason_code="already_granted", requested_permissions=requested)
-        disposition = PermissionDisposition.ALLOW
-        if unsandboxed:
-            disposition = (
-                PermissionDisposition.DENY if (base.hard_confidentiality_denies or base.protected_write_paths)
-                else PermissionDisposition.ASK
-            )
+        disposition = PermissionDisposition.ASK if unsandboxed else PermissionDisposition.ALLOW
+        dangerous = unsandboxed
         if requested is not None:
             existing = (*base.entries, *(granted.file_system if granted else ()))
             for entry in requested.file_system:
@@ -57,9 +57,9 @@ class PermissionPolicyEvaluator:
                     base.protected_write_paths
                     if entry.access is FileSystemAccessMode.WRITE else ()
                 ))
-                if (
+                protected_request = (
                     entry.access is FileSystemAccessMode.WRITE
-                    and ".git" in PurePath(entry.path).parts
+                    and any(name in PurePath(entry.path).parts for name in (".git", ".agents", ".eidos"))
                     and not any(
                         PurePath(entry.path) == PurePath(root)
                         or PurePath(entry.path).is_relative_to(root)
@@ -92,18 +92,15 @@ class PermissionPolicyEvaluator:
                         )
                     )
                     for path in protected
-                ):
-                    return PermissionDecision(
-                        disposition=PermissionDisposition.DENY,
-                        reason_code="permission_not_requestable",
-                        requested_permissions=requested,
-                    )
-                needs_explicit_write = entry.access is FileSystemAccessMode.WRITE and any(
+                )
+                if protected_request:
+                    dangerous = True
+                needs_explicit_grant = protected_request or (entry.access is FileSystemAccessMode.WRITE and any(
                     PurePath(entry.path).is_relative_to(root)
                     or (entry.recursive and PurePath(root).is_relative_to(entry.path))
                     for root in (*base.approval_write_roots, *base.active_skill_roots)
-                )
-                prior_entries = (granted.file_system if granted else ()) if needs_explicit_write else existing
+                ))
+                prior_entries = (granted.file_system if granted else ()) if needs_explicit_grant else existing
                 if entry.access is not FileSystemAccessMode.DENY and not any(
                     _contains(prior, entry.path)
                     and (not entry.recursive or prior.recursive)
@@ -112,17 +109,16 @@ class PermissionPolicyEvaluator:
                         and entry.access is FileSystemAccessMode.READ
                     )) for prior in prior_entries
                 ):
-                    if disposition is not PermissionDisposition.DENY:
-                        disposition = PermissionDisposition.ASK
+                    disposition = PermissionDisposition.ASK
             network = requested.network
             if network is not None and network.enabled is True and not (
                 base.network_enabled or (granted and granted.network
                                          and granted.network.enabled is True)
-            ) and disposition is not PermissionDisposition.DENY:
+            ):
                 disposition = PermissionDisposition.ASK
         return PermissionDecision(
             disposition=disposition,
-            reason_code={
+            reason_code="dangerous_permission_requires_confirmation" if dangerous and disposition is PermissionDisposition.ASK else {
                 PermissionDisposition.ALLOW: "already_granted",
                 PermissionDisposition.ASK: "approval_required",
                 PermissionDisposition.DENY: "permission_not_requestable",

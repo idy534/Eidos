@@ -1,6 +1,6 @@
 # Eidos 当前架构
 
-> 权限模式范围：本文原有的逐操作请求审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。权限模式相关单元与行为测试已纳入测试套件。
+> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。
 
@@ -270,15 +270,15 @@ Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKI
 
 已有普通文件的候选内容通过 stdin 有界传入受控 helper，不生成临时文件。helper 使用 `O_NOFOLLOW` 打开并核验目标，检查当前内容哈希后执行 `ftruncate`、完整写入、`fsync` 和内容/路径身份核验。Runtime 不再克隆已有文件，也不再复制或逐字节比较 xattr/ACL。文件保留原 inode，系统管理现有元数据。真实 ACL 或 mode 拒绝写入时，Runtime 不会通过替换 inode 或 chmod 绕过限制。Runtime 仍然拒绝 symlink、hardlink、特殊文件、owner 不匹配、特殊 mode 和文件 flags。
 
-文件提交仍使用现有 Seatbelt helper；外部路径使用物化后的附加权限，Sandbox 的 Workspace Root 仍是原工作区。已有外部文件只申请该文件的写权限；创建新文件时才申请最近的已有父目录。沙盒不可用时，Runtime 只在现有策略允许且用户明确批准后启动无沙盒 helper。审批不提供系统管理员权限，也不覆盖永久拒绝路径。新文件继续使用排他 rename 提交；Add 覆盖已有文件、Move 覆盖已有目标都走原地写入。多文件不提供整体事务。截断后没有普通取消点，helper 完成当前有界文件后再停止后续修改；异常、超时或非约定 helper 退出进入不确定结果。Runtime 保留已提交的前缀变化和取消后的文件结果，不会自动回滚或重放。写前哈希检查不提供跨外部编辑器的原子 CAS 保证。外部文件的 Durable Intent 使用 `mutationScope=external_file`。Workspace 刷新不能解除外部文件的不确定状态；Repository 在事务内重新检查意图范围，避免把外部修改误标为已核实。
+文件提交仍使用现有 Seatbelt helper；外部路径使用物化后的附加权限，Sandbox 的 Workspace Root 仍是原工作区。已有外部文件只申请该文件的写权限；创建新文件时才申请最近的已有父目录。沙盒不可用时，Runtime 只在现有策略允许且用户明确批准后启动无沙盒 helper。审批不提供系统管理员权限。Runtime 将受保护路径变更标记为高危请求；manual 与 auto_review 都由用户确认。获批后，权限物化与 Seatbelt 只为批准范围添加例外。新文件继续使用排他 rename 提交；Add 覆盖已有文件、Move 覆盖已有目标都走原地写入。多文件不提供整体事务。截断后没有普通取消点，helper 完成当前有界文件后再停止后续修改；异常、超时或非约定 helper 退出进入不确定结果。Runtime 保留已提交的前缀变化和取消后的文件结果，不会自动回滚或重放。写前哈希检查不提供跨外部编辑器的原子 CAS 保证。外部文件的 Durable Intent 使用 `mutationScope=external_file`。Workspace 刷新不能解除外部文件的不确定状态；Repository 在事务内重新检查意图范围，避免把外部修改误标为已核实。
 
 只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以在自身的有界范围内并发执行。每个 Run 的 Workspace write、Shell、Eidos-state、MCP 和 external Tool 实际副作用窗口使用该 Run 自己的独占门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使它们共享同一个 Workspace。Approval 等待不占用该 Run 的副作用门。并发结果最终按模型声明顺序提交。
 
 ## 9. Sandbox & Approval
 
-ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。模型可以用 `networkAccess=request` 表达高层联网意图，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以在同一条命令中合并。Shell contract 会把 intent 规范化为现有 additional permission。Runtime 会在启动进程前请求一次 Approval，获批后仍使用 Seatbelt。旧的底层权限输入继续兼容。联网、Git metadata 写入、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数，也不能删除永久拒绝、Runtime 保护路径或 hard confidentiality deny。
+ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。模型可以用 `networkAccess=request` 表达高层联网意图，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以在同一条命令中合并。Shell contract 会把 intent 规范化为现有 additional permission。Runtime 会在启动进程前请求一次 Approval，获批后仍使用 Seatbelt。旧的底层权限输入继续兼容。联网、Git metadata 写入、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数。受保护数据、Runtime、系统 Skill 和非专用 Git 扩权入口需要高危人工确认。批准仅开放窗口中展示的范围，其他保护仍生效。
 
-默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。Runtime 只有在 hard confidentiality deny 不存在并且 policy 允许时才允许 unsandboxed attempt。
+默认 Shell attempt 使用 macOS Seatbelt。Seatbelt Policy 根据 Workspace、Runtime root、Eidos 数据目录、永久拒绝、附加权限和网络权限物化为 effective permission profile，并保存 profile hash。默认 Workspace profile 在权限校验和 Durable Intent 后直接启动。显式权限升级会创建新的 Approval attempt。用户可以通过高危人工审批允许显式 unsandboxed attempt。窗口说明命令及其子进程会使用当前 macOS 用户的权限。Runtime 不因未知副作用自动重放命令。
 
 ### Shell
 
@@ -306,7 +306,7 @@ Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本
 
 默认 profile 只允许 Workspace、snapshot `TMPDIR` 和 canonical system temp root `/tmp` 写入。macOS 的 `/tmp` 会规范化为 `/private/tmp`。真实 `HOME` 和其他位置默认只读。
 
-Seatbelt 永久拒绝 Eidos data 和 credential 路径的 read、write 和 map。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。Workspace 的 `.git`、`.agents`、`.eidos`、linked Worktree metadata 和 Git common metadata 默认只读。`gitWriteAccess=request` 获批后只把当前 repository 已重新核验的 Git worktree/common metadata roots 加入本次 Shell 的写权限。原 repository working tree、相邻 `.git` 和其他保护路径不会因此开放。普通 Workspace `.env` 和其他敏感命名文件可以读取；命令、cwd 和审批理由在展示层使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。明确的 network denial 不会进入通用 unsandboxed retry。
+Seatbelt 默认拒绝 Eidos data 和配置的保密路径的 read、write 和 map。用户高危确认后，编译器按批准的访问类型和路径增加例外，不开放相邻数据。data 内的 projectless 或 Worktree workspace 仍可读写。active Skill root 允许 read 和 execute，但拒绝 write。Workspace 的 `.git`、`.agents`、`.eidos`、linked Worktree metadata 和 Git common metadata 默认只读。`gitWriteAccess=request` 获批后只把当前 repository 已重新核验的 Git worktree/common metadata roots 加入本次 Shell 的写权限。原 repository working tree、相邻 `.git` 和其他保护路径不会因此开放。普通 Workspace `.env` 和其他敏感命名文件可以读取；命令、cwd 和审批理由在展示层使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network 继续拒绝，只有 effective profile 启用 network 时才允许连接。明确的 network denial 不会进入通用 unsandboxed retry。
 
 Managed linked Worktree 会把 Worktree 的已验证 `git_dir` 和 Project 的已验证 `git_common_dir` 传入 Seatbelt。这两个 Git metadata root 默认只读，只有当前命令的 `gitWriteAccess=request` 获批后才会写入。原始 repository working tree 不属于该 Thread 的 execution workspace。
 
@@ -668,13 +668,15 @@ Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审�
 
 Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 在 `runs` 增加 `approval_mode`，旧 Run 默认为 `manual`；该版本在 `approvals` 增加 `review_json`，旧审批默认为空。迁移沿用事务和失败回滚。Runtime 在执行前检查 Run 模式与权限快照一致。当前自定义权限没有配置、解析器或 UI；后续可以在既有 Run 权限快照工厂和 PermissionPolicyEvaluator 中接入 `config.toml`，本期不接受 `custom` 模式。
 
-请求审批模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。硬拒绝仍由确定性策略直接拒绝。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请、MCP 和 Eidos-state 的原有审批。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。
+请求审批模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。Runtime 将原路径硬拒绝和显式取消沙盒保护改为高危人工请求。auto_review 对这些请求不调用审查模型；用户通过 danger 样式的审批窗口决定。参数无效、身份变化、版本冲突、取消和结果不确定仍按实际错误处理。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请、MCP 和 Eidos-state 的原有审批。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。
 
 审查证据包括当前 Run 及之前最近 32 条用户消息、具体 Tool 参数、权限请求、完整 Diff 和 Base Hash。策略把项目内容、工具输出和操作理由作为不可信数据。请求最多 48 KiB、答复最多 8 KiB、审查超时 60 秒、理由最多 400 字符。明确风险拒绝保留；无法完成可信审查或未知风险时通过原审批通道交由用户决定。请求指纹纳入用户证据，新用户指令可触发重新评估，模型重复相同请求仍去重。
 
 审批决定、理由、风险、模型标识、策略及证据 Hash、可取得的 Token Usage 和耗时写入原 Approval 记录。该记录与 Tool 状态、Run 状态、Event/Outbox 同事务提交。事务验证审批来源与 Run 模式一致。取消优先于迟到判断。Runtime 重启后不重新采样未完成的自动审批，保留中断原因和未获批准事实，并交由用户决定原请求。Desktop 在自动审查时通过位于底栏上方的状态胶囊（ApprovalStatusBanner）展示“模型正在审查操作…”与动效进度，并保留取消入口；Feed 展示审批状态与拒绝理由；实际决定来源保存在 Approval 记录中。ToolResult 区分模型拒绝和人工拒绝。审查用量保存在 Approval 中，当前 Context Usage 展示仍只反映主模型上下文。
 
-完全访问使用 `fullAccess` 权限快照，启用网络并移除 Eidos 路径 deny。Shell、受控文件 helper 和 MCP 执行不使用 Seatbelt。普通操作跳过逐项审批；仍经过原 Coordinator 的操作以模式授权记录批准，不调用审查模型或人工窗口。文件工具允许绝对路径访问，但仍拒绝不支持的链接和特殊文件；Shell 使用当前 macOS 用户的权限，不能绕过操作系统 ACL、TCC 或只读卷。该模式没有管理员提权，也没有无界输出或自动重放不确定副作用。
+完全访问使用 `fullAccess` 权限快照，启用网络并移除 Eidos 路径 deny。Shell、受控文件 helper 和 MCP 执行不使用 Seatbelt。所有操作直接执行，不创建逐项 Approval，不进入 waiting_approval，不记录模式授权，也不调用审查模型或人工窗口。共享执行入口仍先提交 Durable Intent，再执行和核验。模型不暴露 request_permissions，并被指示使用普通参数。历史或冗余的网络、Git 和沙盒权限 request 参数按完全访问模式直接执行。历史的完全访问审批卡片不再显示。文件工具允许绝对路径访问，但仍拒绝不支持的链接和特殊文件；Shell 使用当前 macOS 用户的权限，不能绕过操作系统 ACL、TCC 或只读卷。该模式没有管理员提权，也没有无界输出或自动重放不确定副作用。
+
+高危审批协议在原请求 JSON 中增加可选的 `requiresHumanConfirmation` 和 `riskWarning`。Main 严格验证这两个字段，再传给 Renderer。审批界面只显示一个简短风险提示框，高危与沙盒外执行提示合并为一句。标识来自 Runtime，不接受工具参数设置。SQLite 沿用原 Approval 表；auto_review 下的高危决定来源是 manual，事务核对持久请求标识后才接受该来源。普通扩权的模型审查行为保持不变。文件准备可以生成受保护目标的候选 Diff；实际提交仍要求对应人工决定或已批准的 Run Grant，并在提交前核验目录、文件身份与 Base Hash。
 
 ## 输入引用与草稿
 

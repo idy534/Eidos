@@ -306,11 +306,11 @@ class RunShellInput(StrictToolModel):
     )
     networkAccess: NetworkAccess = Field(
         default=NetworkAccess.DEFAULT,
-        description='Set to "request" when the command requires network access.',
+        description='Set to "request" only when the current Run lacks network access. In full_access use "default".',
     )
     gitWriteAccess: GitWriteAccess = Field(
         default=GitWriteAccess.DEFAULT,
-        description='Set to "request" when the command requires writing Git metadata for the current repository.',
+        description='Set to "request" when the current Run needs Git metadata write permission. In full_access use "default".',
     )
     sandboxPermissions: SandboxPermissions = SandboxPermissions.USE_DEFAULT
     additionalPermissions: AdditionalPermissionProfile | None = None

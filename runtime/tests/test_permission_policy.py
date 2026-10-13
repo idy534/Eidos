@@ -28,8 +28,9 @@ def test_protected_paths_and_unsandboxed_constraints(tmp_path):
         path=str(secret), access=FileSystemAccessMode.READ,
     ),))
     policy = PermissionPolicyEvaluator()
-    assert policy.evaluate(base, None, requested).disposition == 'deny'
-    assert policy.evaluate(base, None, None, unsandboxed=True).disposition == 'deny'
+    assert policy.evaluate(base, None, requested).disposition == 'ask'
+    assert policy.evaluate(base, None, requested).requires_human_confirmation
+    assert policy.evaluate(base, None, None, unsandboxed=True).disposition == 'ask'
     assert policy.evaluate(base, None, None).disposition == 'allow'
 
 
@@ -78,7 +79,7 @@ def test_verified_git_metadata_write_requires_approval_then_stays_scoped(tmp_pat
     assert not effective.allows_file_write(runtime / 'state.json')
 
 
-def test_arbitrary_git_metadata_write_remains_unrequestable(tmp_path):
+def test_arbitrary_git_metadata_write_requires_human_confirmation(tmp_path):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     outside_git = tmp_path / 'other' / '.git'
@@ -91,7 +92,7 @@ def test_arbitrary_git_metadata_write_remains_unrequestable(tmp_path):
         BasePermissionProfile.for_workspace(workspace_root=workspace),
         None,
         requested,
-    ).disposition == 'deny'
+    ).disposition == 'ask'
 
 
 def test_git_approval_cannot_override_an_overlapping_unapproved_protection(tmp_path):
@@ -109,7 +110,7 @@ def test_git_approval_cannot_override_an_overlapping_unapproved_protection(tmp_p
 
     assert PermissionPolicyEvaluator().evaluate(
         base, None, requested,
-    ).disposition == 'deny'
+    ).disposition == 'ask'
     with pytest.raises(ValueError):
         materialize_effective_profile(base, requested)
 
@@ -142,7 +143,7 @@ def test_user_skill_write_requires_approval_then_accepts_run_grant(tmp_path, act
 
 @pytest.mark.parametrize('workspace_is_system', [False, True])
 @pytest.mark.parametrize('unsandboxed', [False, True])
-def test_system_skill_is_denied_even_with_grant_or_workspace_identity(
+def test_system_skill_requires_confirmation_even_with_workspace_identity(
     tmp_path, workspace_is_system, unsandboxed,
 ):
     data = tmp_path / '.eidos'
@@ -158,15 +159,15 @@ def test_system_skill_is_denied_even_with_grant_or_workspace_identity(
     ),))
 
     assert PermissionPolicyEvaluator().evaluate(
-        base, requested, requested, unsandboxed=unsandboxed,
-    ).disposition == 'deny'
+        base, None, requested, unsandboxed=unsandboxed,
+    ).disposition == 'ask'
     assert not materialize_effective_profile(base).allows_file_write(target.resolve())
     with pytest.raises(ValueError):
         materialize_effective_profile(base, requested)
 
 
 @pytest.mark.parametrize('relative', ['state.sqlite', 'skills', 'skills/.system'])
-def test_data_root_and_skill_container_cannot_be_broadly_granted(tmp_path, relative):
+def test_data_root_and_skill_container_require_human_confirmation(tmp_path, relative):
     data = tmp_path / '.eidos'
     workspace = data / '..eidos-projectless' / 'session'
     workspace.mkdir(parents=True)
@@ -180,7 +181,7 @@ def test_data_root_and_skill_container_cannot_be_broadly_granted(tmp_path, relat
         path=str(target.resolve()), access=FileSystemAccessMode.WRITE,
     ),))
 
-    assert PermissionPolicyEvaluator().evaluate(base, requested, requested).disposition == 'deny'
+    assert PermissionPolicyEvaluator().evaluate(base, None, requested).disposition == 'ask'
     with pytest.raises(ValueError):
         materialize_effective_profile(base, requested)
 
@@ -222,6 +223,6 @@ def test_hard_deny_has_no_workspace_or_active_skill_exception(tmp_path):
     requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
         path=str(target), access=FileSystemAccessMode.WRITE, recursive=False,
     ),))
-    assert PermissionPolicyEvaluator().evaluate(base, requested, requested).disposition == 'deny'
+    assert PermissionPolicyEvaluator().evaluate(base, None, requested).disposition == 'ask'
     with pytest.raises(ValueError):
         materialize_effective_profile(base, requested)

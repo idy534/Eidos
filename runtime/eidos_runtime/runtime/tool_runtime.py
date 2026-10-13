@@ -99,7 +99,6 @@ from eidos_runtime.sandbox.permissions import (
     FileSystemPermissionEntry,
     materialize_effective_profile,
     merge_permissions,
-    unsandboxed_execution_allowed,
     SandboxAttempt,
     SandboxPermissions,
     SandboxType,
@@ -330,8 +329,16 @@ class FileChangeToolHandler:
                 )})
             paths = executor.external_patch_paths(
                 _tool_payload_value(call),
-                approval_roots=(*base.approval_write_roots, *base.active_skill_roots),
+                approval_roots=(*base.approval_write_roots, *base.active_skill_roots,
+                                *base.protected_write_paths),
             ) if call.name == "apply_patch" else ()
+            if call.name != "apply_patch":
+                target = executor.workspace.path / call.arguments["path"]
+                if not target.is_relative_to(executor.workspace.path) or any(
+                    target == Path(root) or target.is_relative_to(root)
+                    for root in (*base.protected_write_paths, *base.approval_write_roots)
+                ) or any(name in target.parts for name in (".git", ".agents", ".eidos")):
+                    paths = (target,)
             if paths and self.dependencies.base_permissions is None:
                 return HandlerOutcome(tool_error(call.name, "permission_not_requestable", "File permissions are unavailable"), "failed", "failed")
             entries = []
@@ -350,16 +357,17 @@ class FileChangeToolHandler:
             decision = PermissionPolicyEvaluator().evaluate(base, granted, additional)
             if decision.disposition is PermissionDisposition.DENY:
                 return HandlerOutcome(tool_error(call.name, decision.reason_code, "This path cannot be authorized for writing"), "failed", "failed")
-            effective = materialize_effective_profile(base, merge_permissions(granted, additional))
+            effective = materialize_effective_profile(base, merge_permissions(granted, additional), allow_protected=True)
 
             def revalidate_permissions() -> EffectivePermissionProfile:
                 return materialize_effective_profile(base, merge_permissions(
                     self.dependencies.store.run_permission_grants(run_id), additional,
-                ))
+                ), allow_protected=True)
 
             scope = ExitStack()
             scope.enter_context(executor.external_write_scope(paths, effective, revalidate_permissions))
             executor.external_write_approved = decision.disposition is PermissionDisposition.ALLOW
+            executor.dangerous_write = decision.requires_human_confirmation
         except (WorkspacePathError, PatchError, ValidationError, OSError, ValueError) as error:
             return HandlerOutcome(tool_error(
                 call.name, getattr(error, "code", "file_prepare_failed"),
@@ -414,7 +422,7 @@ class FileChangeToolHandler:
         permissions = executor.write_permissions
         full_access = bool(permissions and permissions.full_access)
         unsandboxed = full_access or not is_seatbelt_ready()
-        if unsandboxed and (permissions is None or not unsandboxed_execution_allowed(permissions, controlled_file_write=True)):
+        if unsandboxed and permissions is None:
             return VerifiedToolExecutionResult(result=tool_error(
                 runtime.spec.name, "sandbox_unavailable", "File sandbox is unavailable and escalation is forbidden",
             ))
@@ -423,7 +431,7 @@ class FileChangeToolHandler:
             if external:
                 prepared = prepared.model_copy(update={"intent_preconditions": {
                     **prepared.intent_preconditions,
-                    "authorization": "full_access" if full_access else "run_grant",
+                    **({"authorization": "run_grant"} if not full_access else {}),
                     "mutationScope": "external_file",
                     "effectivePermissions": permissions.summary() if permissions is not None else {},
                 }})
@@ -446,6 +454,11 @@ class FileChangeToolHandler:
                 "inode": executor.workspace.inode, "owner": executor.workspace.owner,
             },
         }
+        if executor.dangerous_write or unsandboxed:
+            request.update({
+                "requiresHumanConfirmation": True,
+                "riskWarning": "此操作会修改受保护路径或在沙盒外写入。它可能改变 Eidos 数据、Runtime、系统 Skill 或 Git metadata。批准仅适用于本次文件变更。",
+            })
         approved_prepared = prepared.model_copy(update={
             "approval_description": {
                 **prepared.approval_description,
@@ -735,7 +748,7 @@ class ShellToolHandler:
             )
         workspace = runtime.implementation.executor.workspace  # type: ignore[attr-defined]
         git_write_roots: tuple[str, ...] = ()
-        if shell_input.gitWriteAccess is GitWriteAccess.REQUEST:
+        if shell_input.gitWriteAccess is GitWriteAccess.REQUEST and not full_access:
             try:
                 git_write_roots = resolve_git_write_roots(workspace)
             except GitWriteAccessError as error:
@@ -786,19 +799,6 @@ class ShellToolHandler:
                     ), "failed", "failed",
                 )
         if dependency_binding_id is not None:
-            if (
-                effective_sandbox_permissions
-                is SandboxPermissions.REQUIRE_ESCALATED
-            ):
-                return HandlerOutcome(
-                    _dependency_binding_error_result(
-                        call.name,
-                        "dependency_binding_unsandboxed_forbidden",
-                        "A dependency-bound Shell cannot run unsandboxed",
-                    ),
-                    "failed",
-                    "failed",
-                )
             coordinator = self.dependencies.runtime_dependencies
             if coordinator is None:
                 return HandlerOutcome(
@@ -1184,6 +1184,11 @@ class ShellToolHandler:
                     else {}
                 ),
             }
+            if request.requires_human_confirmation:
+                description.update({
+                    "requiresHumanConfirmation": True,
+                    "riskWarning": "此命令会开放受保护路径，或使用当前 macOS 用户的权限在沙盒外执行。沙盒外命令及其子进程可能读取、修改工作区外文件并访问网络。批准仅适用于本次命令。",
+                })
             prepared = PreparedToolExecution(
                 approval_description=description,
                 transition_reason=(

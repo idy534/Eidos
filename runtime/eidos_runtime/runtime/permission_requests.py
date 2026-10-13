@@ -38,13 +38,15 @@ class PermissionRequests:
                 *, reason: str | None = None, command: str | None = None,
                 cwd: str | None = None, denial_category: str | None = None,
                 completed_result: dict[str, object] | None = None) -> str:
+        if self.base.full_access:
+            return "already_granted"
         try:
             permissions = permissions.model_copy(update={
                 "file_system": tuple(entry.model_copy(update={
                     "path": str(Path(entry.path).resolve(strict=True)),
                 }) for entry in sorted(permissions.file_system, key=lambda entry: (entry.path, entry.access.value, entry.recursive))),
             })
-            materialize_effective_profile(self.base, permissions)
+            materialize_effective_profile(self.base, permissions, allow_protected=True)
         except (OSError, ValueError, RuntimeError):
             return "permission_not_requestable"
         decision = PermissionPolicyEvaluator().evaluate(
@@ -61,6 +63,9 @@ class PermissionRequests:
             denial_category=denial_category,
         )
         description = intent.to_wire_dict()
+        if decision.requires_human_confirmation:
+            description["requiresHumanConfirmation"] = True
+            description["riskWarning"] = "此请求会开放受保护路径。操作可能读取私有数据，或修改 Eidos 数据、Runtime、系统 Skill 和 Git metadata。权限持续到当前任务结束。"
         outcome = self.approval.request(
             run_id, item, description, cancel, request={**description, **(
                 {"completedResult": completed_result} if completed_result is not None else {}

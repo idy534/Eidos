@@ -22,13 +22,13 @@ export function ComposerSlot({
   ...props
 }: ComposerSlotProps) {
   // 1. Waiting Approval has priority
-  if (run?.status === "waiting_approval") {
-    if (!approval?.reviewFallback && (run.approvalMode === "auto_review" || run.approvalMode === "full_access")) {
+  if (run?.status === "waiting_approval" && run.approvalMode !== "full_access") {
+    if (!approval?.reviewFallback && !approval?.requiresHumanConfirmation && run.approvalMode === "auto_review") {
       return (
         <ApprovalStatusBanner
           mode={run.approvalMode}
-          title={run.approvalMode === "auto_review" ? "模型正在审查操作…" : "正在处理完全访问授权…"}
-          hint={run.approvalMode === "auto_review" ? "正在评估工具调用的安全性与潜在风险" : "准备以系统直接权限执行当前操作"}
+          title="模型正在审查操作…"
+          hint="正在评估工具调用的安全性与潜在风险"
         />
       );
     }

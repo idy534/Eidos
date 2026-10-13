@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePath
 import stat
+import sys
 from typing import Literal
 
 from pydantic import Field, StrictStr, field_validator, model_validator
@@ -199,6 +200,8 @@ def base_permission_profile_for_workspace(
             workspace_root / ".agents",
             workspace_root / ".eidos",
             Path(__file__).resolve().parents[1],
+            Path(sys.prefix).resolve(),
+            Path(sys.base_prefix).resolve(),
             *(
                 (data_directory / "skills" / ".system",)
                 if data_directory is not None
@@ -235,6 +238,9 @@ class EffectivePermissionProfile(ClosedModel):
         default=(), alias="approvalWriteRoots"
     )
     profile_hash: StrictStr = Field(alias="profileHash")
+    protected_overrides: tuple[MaterializedFileSystemPermissionEntry, ...] = Field(
+        default=(), alias="protectedOverrides",
+    )
 
     @model_validator(mode="after")
     def valid_hash(self) -> "EffectivePermissionProfile":
@@ -275,6 +281,8 @@ class EffectivePermissionProfile(ClosedModel):
         """Check a canonical file target, including unsandboxed helper targets."""
         if self.full_access:
             return path.is_absolute()
+        if self.overrides_protection(path, FileSystemAccessMode.WRITE):
+            return True
         approved = any(
             entry.source == "additional" and entry.access is FileSystemAccessMode.WRITE
             and (path == Path(entry.resolved_path) or (
@@ -329,6 +337,18 @@ class EffectivePermissionProfile(ClosedModel):
             for entry in self.entries
         )
 
+    def overrides_protection(self, path: Path, access: FileSystemAccessMode) -> bool:
+        if any(entry.source == "additional" and entry.access is FileSystemAccessMode.DENY
+               and (path == Path(entry.resolved_path) or (entry.recursive and path.is_relative_to(entry.resolved_path)))
+               for entry in self.entries):
+            return False
+        return any(
+            entry.access is access
+            and (path == Path(entry.resolved_path) or (
+                entry.recursive and path.is_relative_to(entry.resolved_path)
+            )) for entry in self.protected_overrides
+        )
+
 
 class SandboxType(StrEnum):
     MACOS_SEATBELT = "macos_seatbelt"
@@ -351,9 +371,13 @@ class SandboxAttempt(ClosedModel):
 def materialize_effective_profile(
     base: BasePermissionProfile,
     additional: AdditionalPermissionProfile | None = None,
+    *, allow_protected: bool = False,
 ) -> EffectivePermissionProfile:
+    # This only prepares a candidate profile. Execution still requires the
+    # persisted human decision or an existing Run grant before committing Intent.
     if base.full_access:
         base = base.with_full_access()
+        additional = None
     protected = tuple(Path(path) for path in base.protected_metadata_paths)
     protected_write = tuple(Path(path) for path in base.protected_write_paths)
     active_skill_roots = _canonical_active_skill_roots(base.active_skill_roots)
@@ -371,19 +395,19 @@ def materialize_effective_profile(
     if additional is not None:
         for requested in additional.file_system:
             resolved = Path(requested.path).resolve(strict=True)
-            if requested.access is not FileSystemAccessMode.DENY and any(
+            if not allow_protected and requested.access is not FileSystemAccessMode.DENY and any(
                 _paths_overlap(resolved, Path(entry.path).resolve(strict=False))
                 for entry in base.hard_confidentiality_denies
             ):
                 raise ValueError("additional permission targets a hard confidentiality deny")
-            if requested.access is not FileSystemAccessMode.DENY and any(
+            if not allow_protected and requested.access is not FileSystemAccessMode.DENY and any(
                 _paths_overlap(resolved, path) and not (
                     requested.access is FileSystemAccessMode.WRITE
                     and is_approval_write_exception(resolved, path, base.approval_write_roots)
                 ) for path in protected
             ):
                 raise ValueError("additional permission targets protected Eidos state")
-            if requested.access is FileSystemAccessMode.WRITE and any(
+            if not allow_protected and requested.access is FileSystemAccessMode.WRITE and any(
                 _paths_overlap(resolved, path)
                 and not is_approval_protected_write_exception(
                     resolved,
@@ -408,6 +432,8 @@ def materialize_effective_profile(
     entries = _deduplicate(entries)
     permanent = _deduplicate(permanent)
     hard = _deduplicate(hard)
+    overrides = tuple(entry for entry in entries if entry.source == "additional"
+                      and entry.access is not FileSystemAccessMode.DENY) if allow_protected else ()
     payload = {
         "workspaceRoots": base.workspace_roots,
         "entries": [
@@ -434,6 +460,8 @@ def materialize_effective_profile(
     }
     if base.full_access:
         payload["fullAccess"] = True
+    if overrides:
+        payload["protectedOverrides"] = [entry.model_dump(mode="json", by_alias=True) for entry in overrides]
     profile_hash = hashlib.sha256(
         json.dumps(
             payload,
@@ -455,6 +483,7 @@ def materialize_effective_profile(
         activeSkillRoots=active_skill_roots,
         approvalWriteRoots=base.approval_write_roots,
         profileHash=profile_hash,
+        protectedOverrides=overrides,
     )
 
 

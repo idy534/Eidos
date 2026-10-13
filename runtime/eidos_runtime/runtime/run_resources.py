@@ -238,7 +238,7 @@ class RunResources:
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
                 declare_outputs_entry(self.tool_executor.workspace),
-                request_permissions_entry(),
+                *((request_permissions_entry(),) if not self.tool_executor.full_access else ()),
                 *memory_entries(
                     child=self.is_child,
                     read_enabled=memory_access.read_enabled,

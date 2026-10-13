@@ -116,7 +116,7 @@ class ShellOrchestrationRuntime:
         request: ShellOrchestrationRequest,
         _context: OrchestratorContext,
     ) -> ExecApprovalRequirement:
-        if (
+        if _context.base_permissions.full_access or (
             request.input.effective_sandbox_permissions
             is SandboxPermissions.USE_DEFAULT
         ):
@@ -128,7 +128,7 @@ class ShellOrchestrationRuntime:
             unsandboxed=request.input.effective_sandbox_permissions is SandboxPermissions.REQUIRE_ESCALATED,
         )
         return {
-            PermissionDisposition.ALLOW: ExecApprovalRequirement.NEEDS_APPROVAL,
+            PermissionDisposition.ALLOW: ExecApprovalRequirement.SKIP,
             PermissionDisposition.ASK: ExecApprovalRequirement.NEEDS_APPROVAL,
             PermissionDisposition.DENY: ExecApprovalRequirement.FORBIDDEN,
         }[decision.disposition]

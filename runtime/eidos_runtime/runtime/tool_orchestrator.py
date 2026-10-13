@@ -9,6 +9,7 @@ import threading
 from typing import Callable, Protocol, TypeVar
 
 from pydantic import BaseModel
+from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator
 
 from eidos_runtime.sandbox.permissions import merge_permissions
 from eidos_runtime.sandbox.denial import SandboxDenied, SandboxDenialCategory
@@ -57,6 +58,7 @@ class OrchestratorApprovalRequest:
     approval_key: str
     effective_permissions: dict[str, object]
     file_system_permissions: tuple[FileSystemPermissionEntry, ...] = ()
+    requires_human_confirmation: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,9 @@ class ToolOrchestrator:
     ) -> OrchestratorResult:
         mode = runtime.sandbox_permissions(request)
         additional = runtime.additional_permissions(request)
+        if context.base_permissions.full_access:
+            mode = SandboxPermissions.USE_DEFAULT
+            additional = None
         if additional is None:
             if mode is SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS:
                 raise ValueError("additional_permissions are required")
@@ -126,6 +131,7 @@ class ToolOrchestrator:
             context.base_permissions,
             merge_permissions(context.granted_permissions, additional
                               if mode is SandboxPermissions.WITH_ADDITIONAL_PERMISSIONS else None),
+            allow_protected=True,
         )
         workspace_roots = tuple(
             str(Path(root).resolve(strict=True))
@@ -137,15 +143,6 @@ class ToolOrchestrator:
         ):
             raise ValueError("runtime workspace roots exceed effective permissions")
         explicit_escalation = mode is SandboxPermissions.REQUIRE_ESCALATED
-        if explicit_escalation and not unsandboxed_execution_allowed(effective):
-            return OrchestratorResult(
-                _error_result(
-                    "unsandboxed_execution_forbidden",
-                    "Unsandboxed execution would discard protected filesystem restrictions",
-                ),
-                0,
-                False,
-            )
         first = self._attempt(
             ordinal=0,
             sandbox=(
@@ -169,6 +166,8 @@ class ToolOrchestrator:
             if authorize_without_approval is None:
                 raise ValueError("workspace authorization callback is required")
             authorize_without_approval()
+        if context.cancel.is_set():
+            return OrchestratorResult(_error_result("canceled", "Execution was canceled"), 0, explicit_escalation)
         result, denial = self._run_attempt(
             runtime, request, first, context, record_attempt
         )
@@ -324,6 +323,10 @@ class ToolOrchestrator:
             escalation_reason=attempt.escalation_reason,
             approval_key=key,
             effective_permissions=attempt.permissions.summary(),
+            requires_human_confirmation=PermissionPolicyEvaluator().evaluate(
+                context.base_permissions, context.granted_permissions, additional,
+                unsandboxed=attempt.sandbox is SandboxType.NONE,
+            ).requires_human_confirmation,
             file_system_permissions=tuple(
                 FileSystemPermissionEntry(
                     path=entry.resolved_path,

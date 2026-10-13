@@ -38,7 +38,6 @@ describe("Approval composer slot", () => {
 
   it.each([
     ["auto_review", "模型正在审查操作…"],
-    ["full_access", "正在处理完全访问授权…"],
   ] as const)("does not show manual buttons while %s is resolving", (approvalMode, message) => {
     render(
       <ComposerSlot
@@ -72,6 +71,38 @@ describe("Approval composer slot", () => {
     expect(statusBanner).toHaveTextContent("正在评估工具调用的安全性与潜在风险");
     expect(statusBanner).toHaveTextContent("替我审批");
     expect(statusBanner.querySelector(".approval-status-banner__spinner")).toBeInTheDocument();
+  });
+
+  it("presents dangerous requests to the user in auto_review mode", () => {
+    const onApprove = vi.fn();
+    render(<ComposerSlot run={{ ...run, approvalMode: "auto_review", allowedActions: ["cancel"] }}
+      approval={{ ...approval, requiresHumanConfirmation: true, riskWarning: "此操作会修改系统 Skill。" }}
+      onApprove={onApprove} onReject={vi.fn()}><textarea aria-label="message" /></ComposerSlot>);
+    expect(screen.getByRole("heading", { name: "高危操作，需要你的确认" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("此操作将修改受保护文件，请确认变更范围。");
+    expect(screen.getByRole("button", { name: "允许并执行" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeEnabled();
+    expect(screen.queryByText("模型正在审查操作…")).toBeNull();
+  });
+
+  it("does not display approval controls or mode authorization in full_access", () => {
+    render(<ComposerSlot run={{ ...run, approvalMode: "full_access" }} approval={approval}
+      onApprove={vi.fn()} onReject={vi.fn()}><textarea aria-label="message" /></ComposerSlot>);
+    expect(screen.getByRole("textbox")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "批准" })).toBeNull();
+    expect(screen.queryByText(/完全访问授权/)).toBeNull();
+  });
+
+  it("shows one short warning for a dangerous unsandboxed command", () => {
+    const view = render(<ComposerSlot run={run} approval={{
+      ...approval, kind: "command_execution", command: "touch example.txt", cwd: ".",
+      networkEnabled: true, timeoutSeconds: 600, executionMode: "unsandboxed",
+      requiresHumanConfirmation: true, riskWarning: "旧版的完整高危警告，包含多句风险说明。",
+    }} onApprove={vi.fn()} onReject={vi.fn()}><textarea /></ComposerSlot>);
+    expect(view.container.querySelectorAll(".approval-warning")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("命令将在沙盒外执行，可访问外部文件和网络。");
+    expect(screen.queryByText(/旧版的完整高危警告/)).toBeNull();
+    expect(screen.getByRole("button", { name: "允许并执行" })).toBeEnabled();
   });
 });
 

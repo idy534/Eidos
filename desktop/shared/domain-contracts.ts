@@ -505,6 +505,8 @@ interface ApprovalRequestBase {
   toolCallId: string;
   summary: string;
   reviewFallback?: string | undefined;
+  requiresHumanConfirmation?: boolean | undefined;
+  riskWarning?: string | undefined;
 }
 
 export interface ApprovalFileSystemAccess {

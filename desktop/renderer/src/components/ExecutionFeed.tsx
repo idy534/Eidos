@@ -943,11 +943,11 @@ function ProcessItem({
     ? <ShellItem item={item} toolCall={item.toolCall} />
     : <ToolItem item={item} toolCall={item.toolCall} onOpenFile={onOpenFile} agents={agents} onOpenSubagent={onOpenSubagent} />;
 
-  if (approval) {
+  if (approval && run.approvalMode !== "full_access") {
     return <><p className="feed-label">需要批准 · {{ file_change: "文件变更", command_execution: "Shell 命令", network_access: "网络访问", external_tool: "MCP 工具", permission_request: "权限申请" }[approval.kind]} · <span>{approval.summary}</span></p>{toolItem}</>;
   }
-  if (item.toolCall.approvalDecision) {
-    return <div><p className="feed-label">{run.approvalMode === "auto_review" ? "审批 · " : run.approvalMode === "full_access" ? "完全访问 · " : ""}{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>
+  if (item.toolCall.approvalDecision && run.approvalMode !== "full_access") {
+    return <div><p className="feed-label">{run.approvalMode === "auto_review" ? "审批 · " : ""}{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>
       {item.toolCall.approvalFeedback && <p className="feed-label">{item.toolCall.approvalFeedback}</p>}
       {toolItem}</div>;
   }

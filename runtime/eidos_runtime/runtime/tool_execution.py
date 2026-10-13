@@ -17,6 +17,7 @@ from eidos_runtime.runtime.cancellation import DeadlineCancellation as _Deadline
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.db.errors import InvalidRunStateError, StorageError
 from eidos_runtime.db.invariants import RuntimeInvariantError
+from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.model.client import ModelToolCall
 from eidos_runtime.runtime.approval import (
     ApprovalCoordinator,
@@ -386,10 +387,23 @@ class ToolExecutionController:
         item: dict[str, object],
         prepared: PreparedToolExecution,
     ) -> None:
+        run_id = item.get("runId")
+        full_access = bool(run_id and self.store.read_run(str(run_id)).get("approvalMode") == "full_access")
+        # Older versions briefly persisted full-access approvals. Recover that
+        # existing record without creating a new wait or requesting a decision.
+        tool = item.get("toolCall")
+        if full_access and isinstance(tool, dict) and tool.get("approvalStatus") == "pending":
+            mutation = self.store.resolve_approval_committed(
+                str(item["id"]), "approve", None,
+                review=ApprovalReview(source="mode", decision="approve",
+                    reason_code="legacy_full_access", rationale="恢复旧版完全访问执行，未请求审批。"),
+            )
+            self.events.publish(mutation, run=self.store.read_run(str(run_id)), item=mutation.value)
         if not self._execution_state.intent_started:
             self.begin_durable_intent(
                 str(item["id"]),
-                prepared.intent_preconditions,
+                {key: value for key, value in prepared.intent_preconditions.items() if key != "authorization"}
+                if full_access else prepared.intent_preconditions,
                 approval_required=False,
             )
             self._execution_state.authorized_effects += 1
@@ -407,8 +421,6 @@ class ToolExecutionController:
         execute: Callable[[], dict[str, object]],
         verify: Callable[[dict[str, object]], VerifiedToolExecutionResult] | None = None,
     ) -> tuple[ApprovalOutcome, VerifiedToolExecutionResult | None]:
-        if self.approval is None:
-            raise RuntimeError("tool execution approval coordinator is unavailable")
         approval = self.authorize_side_effect(
             run_id=run_id,
             item=item,
@@ -432,6 +444,11 @@ class ToolExecutionController:
         prepared: PreparedToolExecution,
         cancel: threading.Event,
     ) -> ApprovalOutcome:
+        if self.store.read_run(run_id).get("approvalMode") == "full_access":
+            if cancel.is_set():
+                raise RuntimeCancelled
+            self.authorize_workspace_side_effect(item=item, prepared=prepared)
+            return ApprovalOutcome(decision="approve", feedback=None, item=item)
         if self.approval is None:
             raise RuntimeError("tool execution approval coordinator is unavailable")
         self._execution_state.phase = ToolExecutionPhase.WAITING_APPROVAL

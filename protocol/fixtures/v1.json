@@ -71,6 +71,8 @@
         "toolCallId": "55555555-5555-4555-8555-555555555555",
         "kind": "file_change",
         "summary": "Modify README.md",
+        "requiresHumanConfirmation": true,
+        "riskWarning": "此操作会修改受保护路径。",
         "diff": "--- a/README.md\n+++ b/README.md\n",
         "sandboxPermissions": "with_additional_permissions",
         "additionalPermissions": {

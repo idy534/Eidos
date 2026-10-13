@@ -2402,6 +2402,11 @@ function approvalRequestFrom(
     typeof params.reviewFallback !== "string" || params.reviewFallback.length > 1500
   )) return undefined;
   const reviewFallback = params.reviewFallback as string | undefined;
+  if (params.requiresHumanConfirmation !== undefined && typeof params.requiresHumanConfirmation !== "boolean") return undefined;
+  if (params.riskWarning !== undefined && (typeof params.riskWarning !== "string" || params.riskWarning.length > 1500)) return undefined;
+  if (params.requiresHumanConfirmation === true && (typeof params.riskWarning !== "string" || !params.riskWarning.trim())) return undefined;
+  const requiresHumanConfirmation = params.requiresHumanConfirmation as boolean | undefined;
+  const riskWarning = params.riskWarning as string | undefined;
   if (params.kind === "file_change") {
     if (typeof params.diff !== "string" || !hasTextReference(params, "diff")) {
       return undefined;
@@ -2419,6 +2424,8 @@ function approvalRequestFrom(
       toolCallId: params.toolCallId as string,
       kind: "file_change",
       reviewFallback,
+      requiresHumanConfirmation,
+      riskWarning,
       summary: params.summary as string,
       diff: params.diff as string,
       diffBytes: typeof params.diffBytes === "number" ? params.diffBytes : undefined,
@@ -2448,6 +2455,8 @@ function approvalRequestFrom(
       toolCallId: params.toolCallId as string,
       kind: "external_tool",
       reviewFallback,
+      requiresHumanConfirmation,
+      riskWarning,
       summary: params.summary as string,
       toolName: params.toolName as string,
       arguments: params.arguments as Record<string, unknown>,
@@ -2476,6 +2485,8 @@ function approvalRequestFrom(
       toolCallId: params.toolCallId as string,
       kind: "permission_request",
       reviewFallback,
+      requiresHumanConfirmation,
+      riskWarning,
       summary: params.summary as string,
       grantScope: "run",
       permissions: {
@@ -2509,6 +2520,8 @@ function approvalRequestFrom(
       toolCallId: params.toolCallId as string,
       kind: "network_access",
       reviewFallback,
+      requiresHumanConfirmation,
+      riskWarning,
       summary: params.summary as string,
       toolName: params.toolName as string,
       hosts: [...(params.hosts as string[])],
@@ -2545,6 +2558,8 @@ function approvalRequestFrom(
       toolCallId: params.toolCallId as string,
       kind: "command_execution",
       reviewFallback,
+      requiresHumanConfirmation,
+      riskWarning,
       summary: params.summary as string,
       command: params.command as string,
       cwd: params.cwd as string,

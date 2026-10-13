@@ -28,6 +28,8 @@ from eidos_runtime.runtime.approval_review import (
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker
 from eidos_runtime.sandbox.permissions import BasePermissionProfile
+from eidos_runtime.runtime.tool_execution import ToolExecutionController, PreparedToolExecution
+from eidos_runtime.sandbox.sensitive import default_scanner
 
 
 @dataclass
@@ -324,7 +326,7 @@ def test_auto_review_definite_rejection_cannot_masquerade_as_manual_fallback(tmp
         store.close()
 
 
-def test_full_access_approval_is_recorded_as_mode_authorization(tmp_path: Path) -> None:
+def test_full_access_does_not_create_an_approval(tmp_path: Path) -> None:
     store, run, item = _approval_fixture(tmp_path, "full_access")
     coordinator = ApprovalCoordinator(
         store,
@@ -348,8 +350,61 @@ def test_full_access_approval_is_recorded_as_mode_authorization(tmp_path: Path) 
             transition_reason="file_change_approval",
         )
         assert outcome.decision == "approve"
-        assert coordinator.last_review is not None
-        assert coordinator.last_review.source == "mode"
-        assert coordinator.last_review.reason_code == "full_access"
+        assert coordinator.last_review is None
+        assert store.connection.execute("SELECT COUNT(*) FROM approvals").fetchone()[0] == 0
+        assert store.read_run(str(run["id"]))["status"] == "running"
+    finally:
+        store.close()
+
+
+def test_full_access_generic_side_effect_needs_no_approval_coordinator(tmp_path: Path) -> None:
+    store, run, item = _approval_fixture(tmp_path, "full_access")
+    controller = ToolExecutionController(store, None, None, RuntimeEvents(lambda _: None), default_scanner())
+    controller._execution_state.intent_started = False
+    controller._execution_state.authorized_effects = 0
+    effects = []
+    try:
+        outcome, result = controller.execute_side_effect(
+            run_id=str(run['id']), item=item, cancel=threading.Event(),
+            prepared=PreparedToolExecution(approval_description={'kind': 'external_tool'},
+                transition_reason='external_call', intent_preconditions={'scope': 'external'}),
+            execute=lambda: effects.append('executed') or {'outcome': 'success', 'reconciliationRequired': False},
+        )
+        assert effects == ['executed']
+        assert result is not None
+        assert store.connection.execute('SELECT count(*) FROM approvals').fetchone()[0] == 0
+        assert store.connection.execute('SELECT count(*) FROM durable_intents').fetchone()[0] == 1
+        assert store.read_run(str(run['id']))['status'] == 'running'
+    finally:
+        store.close()
+
+
+def test_full_access_recovers_an_existing_legacy_approval_without_creating_another(tmp_path: Path) -> None:
+    store, run, item = _approval_fixture(tmp_path, "full_access")
+    pending = store.begin_approval_committed(str(item['id']), '', None,
+        request={'kind': 'file_change', 'summary': 'Legacy approval'})
+    controller = ToolExecutionController(store, None, None, RuntimeEvents(lambda _: None), default_scanner())
+    controller._execution_state.intent_started = False
+    controller._execution_state.authorized_effects = 0
+    try:
+        controller.authorize_workspace_side_effect(item=pending.value,
+            prepared=PreparedToolExecution(approval_description={}, transition_reason='direct', intent_preconditions={}))
+        assert store.read_run(str(run['id']))['status'] == 'running'
+        assert store.connection.execute('SELECT count(*) FROM approvals').fetchone()[0] == 1
+        assert store.connection.execute('SELECT status FROM approvals').fetchone()[0] == 'approved'
+        assert store.connection.execute('SELECT count(*) FROM durable_intents').fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_high_risk_request_cannot_be_resolved_by_the_auto_reviewer(tmp_path: Path) -> None:
+    store, _run, item = _approval_fixture(tmp_path, 'auto_review')
+    try:
+        store.begin_approval_committed(str(item['id']), '', None,
+            request={'requiresHumanConfirmation': True, 'riskWarning': 'Protected path'})
+        with pytest.raises(InvalidRunStateError, match='source'):
+            store.resolve_approval_committed(str(item['id']), 'approve', None,
+                review=ApprovalReview(source='model', decision='approve', reason_code='allowed', rationale='Model decision'))
+        assert store.connection.execute('SELECT status FROM approvals').fetchone()[0] == 'pending'
     finally:
         store.close()

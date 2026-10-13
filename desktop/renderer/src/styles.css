@@ -6751,6 +6751,15 @@ span.tool-file-link:hover {
   transform: translateY(0.5px);
 }
 
+.approval-card--danger .btn-approval-approve,
+.approval-card--danger .btn-approval-approve:hover:not(:disabled),
+.approval-card--danger .btn-approval-approve:active:not(:disabled) {
+  background: var(--danger, #913d34) !important;
+  border-color: var(--danger, #913d34) !important;
+  box-shadow: none !important;
+  color: #ffffff !important;
+}
+
 /* Composer Input Capsule */
 .composer {
   flex: none;

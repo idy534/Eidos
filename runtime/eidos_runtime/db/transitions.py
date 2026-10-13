@@ -3,6 +3,7 @@ from __future__ import annotations
 from eidos_runtime.domain.approval_policy import ApprovalReview
 
 from dataclasses import dataclass
+import json
 import sqlite3
 
 from eidos_runtime.db.database import now_ms as _now_ms
@@ -175,7 +176,7 @@ def resolve_approval_and_transition(
     fact = connection.execute(
         """
         SELECT items.run_id, runs.consecutive_rejects, runs.approval_mode,
-               approvals.id AS approval_id
+               approvals.id AS approval_id, approvals.request_json
         FROM items
         JOIN runs ON runs.id = items.run_id
         JOIN approvals ON approvals.item_id = items.id
@@ -188,6 +189,9 @@ def resolve_approval_and_transition(
     if fact is None:
         raise InvalidRunStateError("approval is no longer pending")
     expected_source = {"manual": None, "auto_review": "model", "full_access": "mode"}[fact["approval_mode"]]
+    human_confirmation = json.loads(fact["request_json"]).get("requiresHumanConfirmation") is True
+    if fact["approval_mode"] == "auto_review" and human_confirmation:
+        expected_source = "manual"
     if fact["approval_mode"] == "auto_review" and review is not None and review.source == "manual" and review.allows_manual_fallback:
         expected_source = "manual"
     if (review.source if review is not None else None) != expected_source:

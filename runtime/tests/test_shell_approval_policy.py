@@ -277,7 +277,7 @@ class ShellApprovalPolicyTests(unittest.TestCase):
         self.assertEqual(result.result["code"], "user_rejected")
         self.assertEqual(attempts, [])
 
-    def test_forbidden_legacy_git_path_does_not_start_or_require_reconciliation(self) -> None:
+    def test_legacy_git_path_requires_human_confirmation(self) -> None:
         git_dir = self.root / ".git"
         git_dir.mkdir()
         request = ShellOrchestrationRequest(
@@ -306,6 +306,7 @@ class ShellApprovalPolicyTests(unittest.TestCase):
             }
         )
 
+        approvals = []
         result = ToolOrchestrator().run(
             ShellOrchestrationRuntime(
                 lambda attempt: attempts.append(attempt)
@@ -313,13 +314,13 @@ class ShellApprovalPolicyTests(unittest.TestCase):
             ),
             request,
             context,
-            approve=lambda _approval: True,
+            approve=lambda approval: approvals.append(approval) or True,
         )
 
-        self.assertEqual(result.result["code"], "approval_forbidden")
-        self.assertFalse(result.result["reconciliationRequired"])
-        self.assertEqual(result.attempt_count, 0)
-        self.assertEqual(attempts, [])
+        self.assertEqual(result.result["code"], "ok")
+        self.assertTrue(approvals[0].requires_human_confirmation)
+        self.assertEqual(result.attempt_count, 1)
+        self.assertEqual(len(attempts), 1)
 
     def test_unsandboxed_execution_requires_approval(self) -> None:
         request = ShellOrchestrationRequest(

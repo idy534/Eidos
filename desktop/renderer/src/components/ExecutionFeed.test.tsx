@@ -854,6 +854,22 @@ test("renders approved run_shell with the Shell details and output", () => {
   assert.doesNotMatch(html, /已运行 run_shell/);
 });
 
+test("hides legacy approval labels for full-access Shell execution", () => {
+  const html = renderToStaticMarkup(<ExecutionFeed
+    items={[item({ id: "direct-shell", ordinal: 2, kind: "tool_call", toolCall: {
+      id: "tool-direct-shell", itemId: "direct-shell", modelStepIndex: 1, batchOrder: 0,
+      providerCallId: "provider-direct-shell", toolName: "run_shell", status: "completed", startedAt: 1000,
+      approvalStatus: "resolved", approvalDecision: "approve",
+      argumentsJson: JSON.stringify({ command: "printf direct" }),
+      resultJson: JSON.stringify({ outcome: "success", code: "ok", summary: "Command completed",
+        data: { stdout: "direct", stderr: "", exitCode: 0 } }),
+    } })]}
+    runs={[{ ...run, approvalMode: "full_access" }]} approvals={[]}
+    onApprove={() => {}} onReject={() => {}} />);
+  assert.doesNotMatch(html, /已批准|需要批准|完全访问授权/);
+  assert.match(html, /printf direct/);
+});
+
 test("distinguishes expanded and unsandboxed command approvals", () => {
   const { completedAt: _completedAt, ...runWithoutCompletion } = run;
   const waitingRun: Run = {
@@ -928,7 +944,7 @@ test("distinguishes expanded and unsandboxed command approvals", () => {
   assert.match(expanded, /允许访问网络，不限域名/);
   assert.match(unsandboxed, /approval-card--unsandboxed/);
   assert.match(unsandboxed, /沙盒外执行/);
-  assert.match(unsandboxed, /命令将使用当前 macOS 用户的权限/);
+  assert.match(unsandboxed, /命令将在沙盒外执行，可访问外部文件和网络。/);
   assert.match(unsandboxed, /Seatbelt denied executable mapping/);
 });
 

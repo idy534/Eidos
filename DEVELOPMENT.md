@@ -348,7 +348,7 @@ fi
 
 测试者还应使用已存在的 Eidos data 路径执行 `cat "<EIDOS_DATA_DIR>/models.json" >/dev/null`，并确认读取被拒绝。测试者应在可丢弃的 Git Workspace 中尝试写入 `.git/config`，或在可丢弃的 Non-Git Workspace 中尝试创建 `workspace/.git`，并确认 Git metadata 写入被拒绝。测试者不应修改真实项目的 Git metadata。
 
-网络默认应被拒绝。测试者可以在 Agent Shell 外启动已知的 localhost listener，再在默认 profile 中使用可用的本地客户端连接，并确认连接失败。测试者随后应让 Agent 使用 `networkAccess=request` 和非空 justification 执行同一连接。Desktop 应在进程启动前展示 network-enabled Approval。用户批准后，同一命令应在 expanded macOS Seatbelt profile 中成功，而不是转成 unsandboxed。测试者还应确认用户拒绝时没有 Tool attempt 或进程副作用。旧的 additional network 参数仍可用于兼容性验收。additional write 和 unsandboxed 也必须先经过对应 Approval。Unsandboxed 仍受现有 hard confidentiality deny 约束。明确的 network denial 不得触发 unsandboxed retry。
+网络默认应被拒绝。测试者可以在 Agent Shell 外启动已知的 localhost listener，再在默认 profile 中使用可用的本地客户端连接，并确认连接失败。测试者随后应让 Agent 使用 `networkAccess=request` 和非空 justification 执行同一连接。Desktop 应在进程启动前展示 network-enabled Approval。用户批准后，同一命令应在 expanded macOS Seatbelt profile 中成功，而不是转成 unsandboxed。测试者还应确认用户拒绝时没有 Tool attempt 或进程副作用。旧的 additional network 参数仍可用于兼容性验收。additional write 和 unsandboxed 也必须先经过对应 Approval。Unsandboxed 需要高危人工确认，窗口说明本次命令及其子进程会失去原有路径和网络保护。明确的 network denial 不得触发 unsandboxed retry。
 
 命令结束后，Runtime 会记录 Workspace manifest observation、diff、退出状态和 reconciliation 状态。Workspace-wide observation 不要求在 Shell 启动前完整扫描 Workspace。`unknown` observation 不等于 Runtime 已经证明了不确定副作用。Runtime 明确报告的 execution uncertainty 仍必须进入 reconciliation。
 
@@ -365,7 +365,7 @@ PTY 和后台进程 follow-up：Agent Shell 支持同一 Run 内的管道 stdin 
 
 已有文件使用原地写入，新文件使用排他创建。相关定向用例位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_runtime_loop.py` 和 `runtime/tests/test_seatbelt.py`。macOS 验收必须覆盖 inode 不变、ACL 拒绝、写前版本冲突、部分写入、取消、外部路径拒批/批准和无沙盒审批。Runtime Bundle 必须重新构建并执行 bundled smoke；源码检查不能代表已安装 App 的行为。
 
-Projectless 文件提交和 Skill 写入权限的定向回归位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_permission_policy.py` 和 `runtime/tests/test_seatbelt.py`。验证者需要执行真实 macOS Seatbelt 用例，覆盖受保护数据目录内的 Projectless 新建、更新、删除，普通 Skill 的精确写入授权，以及系统 Skill 和相邻数据文件的拒写；mock 通过不能替代这些原生结果。
+Projectless 文件提交和 Skill 写入权限的定向回归位于 `runtime/tests/test_file_commit_helper.py`、`runtime/tests/test_file_write_approval.py`、`runtime/tests/test_permission_policy.py` 和 `runtime/tests/test_seatbelt.py`。验证者需要执行真实 macOS Seatbelt 用例，覆盖受保护数据目录内的 Projectless 新建、更新、删除，普通 Skill 的精确写入授权，以及系统 Skill 的高危批准与拒绝、相邻数据文件的拒写；mock 通过不能替代这些原生结果。
 
 
 ## 权限模式验收
@@ -436,3 +436,5 @@ EIDOS_DATA_DIR=/absolute/path/new-eidos-data pnpm start
 ```
 
 ZIP 含私有聊天、记忆和执行状态，可能含 MCP 环境配置，未加密。Provider 配置和 Workspace 不包含在内，需另行配置/恢复路径。旧备份可能恢复之后被遗忘资料；恢复默认取消旧作业与回填授权、关闭生成，需要明确确认后重新启用。不要仅复制 `state.sqlite` 当作完整备份。
+
+审批模式定向回归增加 `runtime/tests/test_dangerous_approvals.py`，覆盖高危人工批准、拒绝、取消、重启恢复、版本冲突、完全访问直接执行和真实 Seatbelt 的精确路径例外。完全访问不得创建新的 Approval 或进入 waiting_approval；旧版待审批记录只恢复完成原操作。

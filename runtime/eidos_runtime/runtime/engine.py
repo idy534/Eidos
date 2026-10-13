@@ -94,7 +94,6 @@ from eidos_runtime.sandbox.permissions import (
     BasePermissionProfile,
     AdditionalPermissionProfile,
     materialize_effective_profile,
-    unsandboxed_execution_allowed,
 )
 from eidos_runtime.model.instructions import StepPermissionPolicy
 
@@ -1475,7 +1474,7 @@ def _build_step_policy(
         base_permissions = BasePermissionProfile.model_validate_json(
             permission_profile_json
         )
-        effective = materialize_effective_profile(base_permissions, granted_permissions)
+        effective = materialize_effective_profile(base_permissions, granted_permissions, allow_protected=True)
         network_enabled = effective.network_enabled
         writable_roots = tuple(
             entry.resolved_path
@@ -1513,8 +1512,7 @@ def _build_step_policy(
     )
     allow_escalated = bool(
         shell_available
-        and effective is not None
-        and unsandboxed_execution_allowed(effective)
+        and approval_mode != "full_access"
     )
 
     return StepPermissionPolicy(

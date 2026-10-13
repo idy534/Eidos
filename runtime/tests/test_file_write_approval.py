@@ -107,7 +107,7 @@ class FileWriteApprovalTests(unittest.TestCase):
         self.assertEqual(request.approval_kind, "escalated")
         self.assertEqual(request.approval_request["sandboxPermissions"], "require_escalated")
 
-    def test_permanent_deny_does_not_prepare_or_request_approval(self) -> None:
+    def test_protected_path_can_prepare_a_candidate_for_human_approval(self) -> None:
         self.dependencies.base_permissions = BasePermissionProfile.for_workspace(
             workspace_root=self.workspace, protected_paths=(self.external,),
         )
@@ -117,7 +117,7 @@ class FileWriteApprovalTests(unittest.TestCase):
             patch.object(self.handler, "_execute") as prepare,
         ):
             self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
-        prepare.assert_not_called()
+        prepare.assert_called_once()
         self.dependencies.execute_side_effect.assert_not_called()
         self.assertEqual(self.target.read_text(), "base\n")
 
@@ -263,7 +263,7 @@ class FileWriteApprovalTests(unittest.TestCase):
                     self.dependencies.execute_workspace_side_effect.assert_not_called()
                 self.assertEqual(target.read_text(), "old skill\n")
 
-    def test_system_skill_never_reaches_approval_even_with_active_skill_and_grant(self) -> None:
+    def test_system_skill_can_use_an_explicit_human_grant(self) -> None:
         data = self.workspace.parent / ".eidos"
         system = data / "skills" / ".system"
         system.mkdir(parents=True)
@@ -282,7 +282,7 @@ class FileWriteApprovalTests(unittest.TestCase):
             patch.object(self.handler, "_execute") as prepare,
         ):
             self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
-        prepare.assert_not_called()
+        prepare.assert_called_once()
         self.dependencies.execute_side_effect.assert_not_called()
         self.dependencies.execute_workspace_side_effect.assert_not_called()
         self.assertEqual(target.read_text(), "system skill\n")

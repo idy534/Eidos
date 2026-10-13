@@ -35,6 +35,7 @@ class SeatbeltPolicyCompiler:
         sections = [base.rstrip()]
         parameters: dict[str, str] = {}
         approved_writes: list[tuple[MaterializedFileSystemPermissionEntry, str]] = []
+        overrides: list[tuple[MaterializedFileSystemPermissionEntry, str]] = []
         for index, entry in enumerate(
             item for item in profile.entries if item.source == "additional"
         ):
@@ -42,6 +43,8 @@ class SeatbeltPolicyCompiler:
             parameters[key] = entry.resolved_path
             sections.append(_metadata_rule(key))
             sections.append(_allow_rule(entry, key))
+            if entry in profile.protected_overrides:
+                overrides.append((entry, key))
             if entry.access is FileSystemAccessMode.WRITE:
                 approved_writes.append((entry, key))
         skill_root_keys: tuple[str, ...] = ()
@@ -115,6 +118,11 @@ class SeatbeltPolicyCompiler:
                             Path(allowed.resolved_path), Path(entry.resolved_path), profile.approval_write_roots,
                         )
                     ),
+                    protected_overrides=() if any(
+                        item.source == "additional" and item.access is FileSystemAccessMode.DENY
+                        and item.resolved_path == entry.resolved_path
+                        for item in profile.entries
+                    ) else tuple(overrides),
                 )
             )
         for index, path in enumerate(profile.protected_write_paths):
@@ -129,12 +137,24 @@ class SeatbeltPolicyCompiler:
                         Path(allowed.resolved_path),
                         Path(path),
                         profile.approval_write_roots,
-                    )
+                    ) or any(allowed == override for override, _key in overrides)
                 ),
             )
             sections.append(
                 f'(deny file-write* {write_filter})'
             )
+        if overrides:
+            # Keep the fixed interpreter protection, with only the approved
+            # write targets excluded for this execution.
+            python_deny = '(deny file-write*\n  (subpath (param "PYTHON_RUNTIME_ROOT"))\n  (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))'
+            exclusions = tuple(_filter(entry, key) for entry, key in overrides
+                               if entry.access is FileSystemAccessMode.WRITE)
+            if exclusions:
+                python_filter = _exclude_filters(
+                    '(require-any (subpath (param "PYTHON_RUNTIME_ROOT")) (subpath (param "PYTHON_BASE_RUNTIME_ROOT")))',
+                    exclusions,
+                )
+                sections[0] = sections[0].replace(python_deny, f'(deny file-write* {python_filter})')
         for index, path in enumerate(profile.runtime_roots):
             key = f"RUNTIME_ROOT_{index}"
             parameters[key] = path
@@ -195,6 +215,7 @@ def _deny_rule(
     exception_keys: tuple[str, ...] = (),
     exception_filters: tuple[str, ...] = (),
     metadata_exceptions: tuple[str, ...] = (),
+    protected_overrides: tuple[tuple[MaterializedFileSystemPermissionEntry, str], ...] = (),
 ) -> str:
     path_filter = _filter(entry, key)
     keys = tuple(dict.fromkeys((*exception_keys, *(
@@ -204,6 +225,19 @@ def _deny_rule(
         *(f'(subpath (param "{value}"))' for value in keys),
         *exception_filters,
     ))
+    if protected_overrides:
+        reads = tuple(_filter(allowed, allowed_key) for allowed, allowed_key in protected_overrides)
+        ancestors = tuple(f'(path-ancestors (param "{allowed_key}"))' for _allowed, allowed_key in protected_overrides)
+        writes = tuple(_filter(allowed, allowed_key) for allowed, allowed_key in protected_overrides
+                       if allowed.access is FileSystemAccessMode.WRITE)
+        executes = tuple(_filter(allowed, allowed_key) for allowed, allowed_key in protected_overrides
+                         if allowed.access is FileSystemAccessMode.EXECUTE)
+        return (
+            f'(deny file-read-data file-read-xattr {_exclude_filters(path_filter, reads)})\n'
+            f'(deny file-read-metadata file-test-existence {_exclude_filters(path_filter, (*reads, *ancestors, *metadata_exceptions))})\n'
+            f'(deny file-write* {_exclude_filters(path_filter, writes)})\n'
+            f'(deny file-map-executable {_exclude_filters(path_filter, executes)})'
+        )
     if metadata_exceptions:
         # An inherited directory fd still needs identity checks. Allow ancestor
         # metadata, never ancestor contents, enumeration, xattrs or writes.

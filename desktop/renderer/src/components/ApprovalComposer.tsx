@@ -50,27 +50,30 @@ export function ApprovalComposer({
   const isResponding = Boolean(respondingApprovalIds && respondingApprovalIds.has(approval.id));
   const isApproving = isResponding && respondingKindByApprovalId?.[approval.id] === "approve";
   const isRejecting = isResponding && respondingKindByApprovalId?.[approval.id] === "reject";
-  const canApprove = !isExpired && (run.allowedActions?.includes("approve") || Boolean(approval.reviewFallback)) && !isResponding;
-  const canReject = !isExpired && (run.allowedActions?.includes("reject") || Boolean(approval.reviewFallback)) && !isResponding;
+  const isDangerous = approval.requiresHumanConfirmation === true;
+  const canApprove = !isExpired && (run.allowedActions?.includes("approve") || Boolean(approval.reviewFallback) || isDangerous) && !isResponding;
+  const canReject = !isExpired && (run.allowedActions?.includes("reject") || Boolean(approval.reviewFallback) || isDangerous) && !isResponding;
   const isUnsandboxed = (approval.kind === "command_execution" && approval.executionMode === "unsandboxed")
     || (approval.kind === "file_change" && approval.sandboxPermissions === "require_escalated");
+  const warning = approvalWarning(approval);
 
   return (
     <article
       className={[
         "approval-card approval-composer",
         isExpired ? "approval-card--expired" : "",
-        isUnsandboxed ? "approval-card--unsandboxed" : "",
+        isUnsandboxed || isDangerous ? "approval-card--unsandboxed" : "",
+        isDangerous ? "approval-card--danger" : "",
       ].filter(Boolean).join(" ")}
       aria-labelledby={`approval-${approval.id}`}
     >
       <div className="approval-heading">
         <div className="approval-heading-left">
           <div className="approval-heading-icon" aria-hidden="true">
-            {isUnsandboxed ? <AlertTriangleIcon /> : <ShieldIcon />}
+            {isUnsandboxed || isDangerous ? <AlertTriangleIcon /> : <ShieldIcon />}
           </div>
           <div className="approval-heading-text">
-            <h3 id={`approval-${approval.id}`}>{approvalTitle(approval)}</h3>
+            <h3 id={`approval-${approval.id}`}>{isDangerous ? "高危操作，需要你的确认" : approvalTitle(approval)}</h3>
             <span className="approval-heading-divider" aria-hidden="true">·</span>
             <span className="approval-heading-tag">
               <span className="approval-status-pulse" />
@@ -82,7 +85,13 @@ export function ApprovalComposer({
           {isExpired ? "已过期" : approval.kind === "file_change" ? "文件变更" : approval.kind === "external_tool" ? "MCP 工具" : approval.kind === "network_access" ? "网络访问" : approval.kind === "permission_request" ? "权限申请" : "Shell 命令"}
         </span>
       </div>
-      <div className="approval-body"><ApprovalContent approval={approval} /></div>
+      <div className="approval-body">
+        {warning && <div className="approval-warning" role={isDangerous ? "alert" : "note"}>
+          <AlertTriangleIcon className="approval-warning-icon" />
+          <span>{warning}</span>
+        </div>}
+        <ApprovalContent approval={approval} />
+      </div>
       {localError && <p className="approval-error" role="alert">{localError}</p>}
       {approval.reviewFallback && <p className="approval-fallback-note" role="status">{approval.reviewFallback} 可在此手动决定。</p>}
       <div className="approval-actions">
@@ -102,19 +111,32 @@ export function ApprovalComposer({
             拒绝
           </Button>
           <Button
-            variant="primary"
+            variant={isDangerous ? "danger" : "primary"}
             size="medium"
             className="btn-approval-approve"
             disabled={!canApprove}
             loading={isApproving}
             onClick={() => onApprove(approval)}
           >
-            批准
+            {isDangerous ? "允许并执行" : "批准"}
           </Button>
         </div>
       </div>
     </article>
   );
+}
+
+function approvalWarning(approval: ApprovalRequest): string | undefined {
+  if (approval.kind === "command_execution") {
+    if (approval.executionMode === "unsandboxed") return "命令将在沙盒外执行，可访问外部文件和网络。";
+    if (approval.requiresHumanConfirmation) return "命令将访问受保护路径，请确认执行范围。";
+  }
+  if (approval.kind === "file_change") {
+    if (approval.sandboxPermissions === "require_escalated") return "文件将在沙盒外写入，请确认变更范围。";
+    if (approval.requiresHumanConfirmation) return "此操作将修改受保护文件，请确认变更范围。";
+  }
+  if (approval.requiresHumanConfirmation) return "此请求将开放受保护路径，请确认权限范围。";
+  return undefined;
 }
 
 function approvalTitle(approval: ApprovalRequest): string {
@@ -167,12 +189,6 @@ function commandFilePermissions(approval: CommandApprovalRequest) {
 
 function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
   if (approval.kind === "file_change") return <>
-    {approval.sandboxPermissions === "require_escalated" && (
-      <div className="approval-warning" role="note">
-        <AlertTriangleIcon className="approval-warning-icon" />
-        <span>文件操作将在沙盒外执行。系统仍会核验目标文件的权限和版本。</span>
-      </div>
-    )}
     <dl className="approval-details">
       <DetailRow label="批准范围">仅本次文件操作</DetailRow>
       <FilePermissions entries={approval.additionalFileSystemAccess ?? []} />
@@ -183,12 +199,6 @@ function ApprovalContent({ approval }: { approval: ApprovalRequest }) {
   </>;
 
   if (approval.kind === "command_execution") return <>
-    {approval.executionMode === "unsandboxed" && (
-      <div className="approval-warning" role="note">
-        <AlertTriangleIcon className="approval-warning-icon" />
-        <span>命令将使用当前 macOS 用户的权限，可能访问或修改工作区外的文件和网络。</span>
-      </div>
-    )}
     <pre className="approval-command" aria-label="完整命令">{approval.command}</pre>
     <dl className="approval-details">
       <Directory cwd={approval.cwd} />

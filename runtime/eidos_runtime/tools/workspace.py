@@ -26,7 +26,7 @@ from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.db.storage import WorkspaceIdentity
 from eidos_runtime.sandbox.seatbelt import secure_workspace_move
-from eidos_runtime.sandbox.permissions import EffectivePermissionProfile
+from eidos_runtime.sandbox.permissions import EffectivePermissionProfile, FileSystemAccessMode
 from eidos_runtime.sandbox.workspace_index import (
     WorkspaceIndex,
     WorkspaceIndexIncomplete,
@@ -469,6 +469,7 @@ class ToolExecutor:
         self._revalidate_write_permissions: Callable[[], EffectivePermissionProfile] | None = None
         self.unsandboxed_write = False
         self.full_access = False
+        self.dangerous_write = False
         self.external_write_approved = False
         self.workspace = identity
         self.root_fd = root_fd
@@ -500,6 +501,9 @@ class ToolExecutor:
                 if ".." in path.parts or path.resolve(strict=False) != path:
                     raise WorkspacePathError("workspace_boundary_violation")
                 if not path.is_relative_to(self.workspace.path) or any(
+                    part in _PROTECTED_WORKSPACE_METADATA_NAMES
+                    for part in path.relative_to(self.workspace.path).parts
+                ) or any(
                     path.is_relative_to(root) for root in approval_roots
                 ):
                     paths.append(path)
@@ -531,16 +535,23 @@ class ToolExecutor:
             self._revalidate_write_permissions = None
             self.external_write_approved = False
             self.unsandboxed_write = False
+            self.dangerous_write = False
 
     def _resolve_write_path(self, value: str) -> str:
         absolute = str(self.workspace.path / value)
         resolved = absolute if absolute in self._external_writers else resolve_workspace_write_path(value, self.workspace.path)
         target = self.workspace.path / resolved
-        if not (self.write_permissions and self.write_permissions.full_access) and _is_protected_workspace_metadata_path(target, self.workspace.path):
+        if not self._protected_write_allowed(target) and _is_protected_workspace_metadata_path(target, self.workspace.path):
             raise WorkspacePathError("permission_not_requestable")
         if self.write_permissions is not None and not self.write_permissions.allows_file_write(target):
             raise WorkspacePathError("permission_not_requestable")
         return resolved
+
+    def _protected_write_allowed(self, target: Path) -> bool:
+        return bool(self.write_permissions and (
+            self.write_permissions.full_access
+            or self.write_permissions.overrides_protection(target, FileSystemAccessMode.WRITE)
+        ))
 
     def verify_write_scope(self) -> None:
         self._verify_root()
@@ -765,7 +776,7 @@ class ToolExecutor:
             assert isinstance(path_value, str)
             parts = _validate_relative_path(path_value)
             normalized_path = "/".join(parts)
-            if not (self.write_permissions and self.write_permissions.full_access) and _is_protected_workspace_metadata_path(
+            if not self._protected_write_allowed(self.workspace.path / normalized_path) and _is_protected_workspace_metadata_path(
                 self.workspace.path / normalized_path, self.workspace.path
             ):
                 raise WorkspacePathError("permission_not_requestable")
@@ -1052,7 +1063,7 @@ class ToolExecutor:
             self.verify_write_scope()
             _check_cancel(cancel)
             parts = _validate_relative_path(change.path)
-            if not (self.write_permissions and self.write_permissions.full_access) and _is_protected_workspace_metadata_path(
+            if not self._protected_write_allowed(self.workspace.path / change.path) and _is_protected_workspace_metadata_path(
                 self.workspace.path / change.path, self.workspace.path
             ):
                 raise WorkspacePathError("permission_not_requestable")

@@ -1,6 +1,6 @@
 # Eidos 当前能力
 
-> 权限模式范围：本文原有的逐操作请求审批、永久拒绝和 Seatbelt 保护说明适用于 `manual` 与 `auto_review`。`auto_review` 用模型代替人工作出原有审批决定。用户在 Desktop 确认的 `full_access` Run 使用当前 macOS 用户的文件和网络权限，并关闭执行沙盒；该模式不保留 Eidos 数据、Runtime、系统 Skill 和 Git metadata 的永久写入保护。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。权限模式相关单元与行为测试已纳入测试套件。
+> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
@@ -182,7 +182,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、路径授权、Seatbelt 和最终内容校验。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。
 - 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
-- 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；永久拒绝路径不能扩权。
+- 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；受保护路径需要高危人工确认后才可扩权。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
@@ -210,7 +210,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
 - 数据目录内的当前 Workspace 支持 Shell 创建子目录和读写普通文件。Seatbelt 只为其祖先补充 metadata / 存在性检查；其他会话、数据文件和父目录内容继续受保护。
 - 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、Workspace 的 `.git`、`.agents`、`.eidos` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 默认可读和执行；普通 Skill 的具体写入范围可经审批开放，系统 Skill 永久禁写。Workspace `.env` 和其他敏感命名文件可读；命令和审批信息展示使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network denied。
-- `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以组合，所以 `git push` 可以用一次审批同时获得 Git metadata 写入和 network。Runtime 使用现有 GitBackend 重新解析并核验 `git_dir` 与 `git_common_dir`，模型不能提交路径。获批后的命令仍在 macOS Seatbelt 中运行；`.agents`、`.eidos`、Runtime、系统 Skill 和其他 repository 的 Git metadata 继续拒写。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。其他 additional write 需要 Approval。存在永久写入保护或 hard confidentiality deny 时，Runtime 拒绝裸 Shell 的 unsandboxed attempt，审批也不能移除这些保护。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
+- `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以组合，所以 `git push` 可以用一次审批同时获得 Git metadata 写入和 network。Runtime 使用现有 GitBackend 重新解析并核验 `git_dir` 与 `git_common_dir`，模型不能提交路径。获批后的命令仍在 macOS Seatbelt 中运行；`.agents`、`.eidos`、Runtime、系统 Skill 和其他 repository 的 Git metadata 继续拒写。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。其他 additional write 需要 Approval。显式裸 Shell unsandboxed 请求需要高危人工确认；用户可以允许本次命令使用系统直接权限。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
 - Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。Workspace 外的 absolute cwd 返回普通 Tool Error。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
 - Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
@@ -389,7 +389,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - 环境信息始终属于左侧 Session 标题栏。右侧工作区独立顶格显示，打开后工作区开关位于 Dock 标题栏；关闭时开关回到 Session 标题栏。工作区全宽展开时覆盖左侧标题栏，环境信息不迁入 Dock。按钮统一尺寸、圆角和悬停色，不再使用独立的右上角绝对定位。本次修订未运行测试或 Desktop 视觉验收。
 
-- Session 与 Dock 标题栏统一为 56px 高度。左侧导航通过列宽和位移折叠；右侧工作区通过宽度和位移推入推出，全宽切换沿用相同过渡。右侧关闭后在 280ms 过渡结束时卸载内容；快速重新打开会取消卸载。拖动分隔条时关闭过渡，减少动态效果设置下直接切换。本次动画尚未完成 Desktop 视觉验收。
+- Session 与 Dock 标题栏统一为 2.75rem 高度。左侧导航通过列宽和位移折叠；右侧工作区通过宽度和位移推入推出，全宽切换沿用相同过渡。右侧工作区无打开标签页时展示副标题和带双行功能说明的行动卡片列表（窄栏单列，展开或宽容器下切换为双列网格）。右侧关闭后在 280ms 过渡结束时卸载内容；快速重新打开会取消卸载。拖动分隔条时关闭过渡，减少动态效果设置下直接切换。
 
 ### 技能设置页面（生产实现，待测试验收）
 
@@ -465,3 +465,5 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 ## 记忆
 
 支持全局/Project 记忆、来源证据、不可变版本、无向量检索、常驻摘要与四个模型工具、独立使用/生成控制、临时会话、当前 Run 即时自动保存、无二次模型审核的前台保存与更正、事实来源解析、版本更正与去重，以及两阶段有限历史整理和预算恢复。Desktop 提供候选确认、来源跳转、纠正、固定、归档、遗忘、显式历史学习、任务重试、索引重建、导出和完整 ZIP 备份。详见 [current-memory.md](current-memory.md)。
+
+审批支持高危人工确认。manual 与 auto_review 遇到受保护数据、Runtime、系统 Skill、非专用 Git 路径扩权或显式取消沙盒保护时，展示 danger 样式和具体范围，由用户决定。批准后系统执行对应操作；相邻路径、身份和版本核验继续生效。full_access 不请求或记录逐项审批，模型使用默认工具参数直接执行。

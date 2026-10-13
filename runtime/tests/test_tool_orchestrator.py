@@ -254,7 +254,7 @@ class ToolOrchestratorTests(unittest.TestCase):
         self.assertTrue(result.escalated)
         self.assertEqual(runtime.attempts[0].sandbox, SandboxType.NONE)
 
-    def test_hard_confidentiality_deny_blocks_unsandboxed_execution(self) -> None:
+    def test_hard_confidentiality_deny_requires_human_confirmation_for_unsandboxed_execution(self) -> None:
         runtime = _Runtime([({"outcome": "success", "code": "ok"}, None)])
         context = OrchestratorContext(
             **{
@@ -266,15 +266,17 @@ class ToolOrchestratorTests(unittest.TestCase):
             }
         )
 
+        approvals = []
         result = ToolOrchestrator().run(
             runtime,
             _Request(permissions=SandboxPermissions.REQUIRE_ESCALATED),
             context,
-            approve=lambda _request: self.fail("approval must not be requested"),
+            approve=lambda request: approvals.append(request) or True,
         )
 
-        self.assertEqual(result.result["code"], "unsandboxed_execution_forbidden")
-        self.assertEqual(runtime.attempts, [])
+        self.assertEqual(result.result["code"], "ok")
+        self.assertTrue(approvals[0].requires_human_confirmation)
+        self.assertEqual(len(runtime.attempts), 1)
 
     def test_hard_confidentiality_deny_blocks_retry_after_denial(self) -> None:
         denied = SandboxDenied(

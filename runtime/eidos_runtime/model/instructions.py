@@ -89,8 +89,9 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
     if policy.approval_mode == "full_access":
         lines.append(
             "The user confirmed full access for this Run. Shell commands run without the Eidos sandbox. "
-            "File and network operations need no further approval; operating-system permissions still apply. "
-            "Use normal tool arguments. Use Shell for host resources outside bounded file tools."
+            "Execute file, Shell, network and external tool operations directly; do not request approval or permissions. "
+            "Use default networkAccess, gitWriteAccess and sandboxPermissions; omit additionalPermissions and justification. "
+            "Operating-system permissions still apply. Use Shell for host resources outside bounded file tools."
         )
     else:
         if policy.approval_mode == "auto_review":

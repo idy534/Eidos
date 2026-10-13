@@ -121,6 +121,10 @@ class ApprovalCoordinator:
     ) -> ApprovalOutcome:
         self.last_review = None
         mode = self.store.read_run(run_id).get("approvalMode", "manual")
+        if mode == "full_access":
+            self.check_cancel(run_id, cancel)
+            return ApprovalOutcome(decision="approve", item=item)
+        human_confirmation = description.get("requiresHumanConfirmation") is True
         user_evidence = self.store.approval_user_evidence(run_id)
         fingerprint = hashlib.sha256(json.dumps({
             "tool": item.get("toolCall", {}).get("toolName"),
@@ -176,9 +180,18 @@ class ApprovalCoordinator:
         if callable(suspend_deadline):
             suspend_deadline()
         try:
-            if mode == "full_access":
-                self.last_review = ApprovalReview(source="mode", decision="approve",
-                    reason_code="full_access", rationale="用户已为本次任务开启完全访问。")
+            if human_confirmation:
+                result = self._validated(self.transport.request(
+                    ApprovalRequest({
+                        "sessionId": pending_item["sessionId"], "runId": pending_item["runId"],
+                        "itemId": pending_item["id"], "toolCallId": tool_call["id"],
+                        **project_approval_diff(description),
+                    }), cancel,
+                ))
+                if mode == "auto_review":
+                    self.last_review = ApprovalReview(source="manual", decision=result.decision,
+                        reason_code="dangerous_permission_confirmed", risk="high",
+                        rationale="用户已决定本次高危操作。")
             elif mode == "auto_review":
                 if pending is not None:
                     self.last_review = ApprovalReview(source="model", decision="reject",
@@ -219,7 +232,7 @@ class ApprovalCoordinator:
                 if self.last_review.decision == "reject":
                     feedback = self.last_review.rationale + " Do not retry the same action or circumvent this refusal. Choose a materially safer alternative or explain the blocker."
                 result = ApprovalResult(self.last_review.decision, feedback)
-            else:
+            elif not human_confirmation:
                 result = self.transport.request(
                     ApprovalRequest({
                         "sessionId": pending_item["sessionId"],
