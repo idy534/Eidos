@@ -357,7 +357,7 @@
   font-weight: 450;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 120ms ease;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
   user-select: none;
 }
 

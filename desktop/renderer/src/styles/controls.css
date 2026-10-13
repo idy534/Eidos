@@ -24,7 +24,6 @@ button {
 button:hover:not(:disabled) {
   color: var(--text);
   background: var(--surface-hover);
-  box-shadow: var(--apple-shadow-sm);
 }
 
 button:active:not(:disabled) {
@@ -115,12 +114,11 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
 .primary-action-arrow {
   flex: none;
   color: rgba(41, 72, 58, 0.48);
-  transition: color 140ms ease, transform 160ms var(--apple-spring);
+  transition: color 140ms ease;
 }
 
 .primary-action-btn:hover:not(:disabled) .primary-action-arrow {
   color: rgba(41, 72, 58, 0.75);
-  transform: translateX(2px);
 }
 
 /* Shortcut: Hidden by default, fades in on hover/focus (Approach A - layout reserved) */
@@ -136,8 +134,7 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
   font-weight: 500;
   letter-spacing: 0;
   opacity: 0;
-  transform: translateX(3px);
-  transition: opacity 140ms ease, transform 160ms var(--apple-spring);
+  transition: opacity 140ms ease;
   pointer-events: none;
   line-height: 1;
 }
@@ -145,7 +142,6 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
 .primary-action-btn:hover:not(:disabled) .primary-action-shortcut,
 .primary-action-btn:focus-visible .primary-action-shortcut {
   opacity: 1;
-  transform: translateX(0);
 }
 
 .primary-action-btn:disabled .primary-action-shortcut {
@@ -234,7 +230,7 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 100ms var(--apple-spring);
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
   text-decoration: none;
   box-sizing: border-box;
 }
@@ -292,7 +288,6 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
   background: var(--action-primary-active);
   border-color: var(--action-primary-active);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  transform: translateY(0.5px);
 }
 
 .btn--secondary {
@@ -314,7 +309,6 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
   background: var(--surface-muted, #f0efe9);
   border-color: var(--line);
   box-shadow: none;
-  transform: translateY(0.5px);
 }
 
 .btn--ghost {
@@ -333,7 +327,6 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
   color: var(--text);
   background: var(--surface-muted, rgba(0, 0, 0, 0.06));
   border-color: transparent;
-  transform: translateY(0.5px);
 }
 
 .btn--danger {
@@ -355,7 +348,6 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
   background: var(--action-danger-active);
   border-color: var(--action-danger-active);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  transform: translateY(0.5px);
 }
 
 /* Loading & Spinner */
@@ -467,7 +459,7 @@ textarea:focus {
   color: var(--muted);
   cursor: pointer;
   box-shadow: none !important;
-  transition: all 120ms ease;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
   flex-shrink: 0;
 }
 

@@ -600,8 +600,7 @@ button.environment-popover__row:hover:not(:disabled) {
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
-    box-shadow 160ms var(--apple-spring),
-    transform 160ms var(--apple-spring);
+    box-shadow 160ms var(--apple-spring);
 }
 
 .workspace-dock__empty-option:hover,
@@ -610,13 +609,11 @@ button.environment-popover__row:hover:not(:disabled) {
   background: var(--surface-raised);
   border-color: var(--primary-action-border-hover);
   box-shadow: var(--primary-action-shadow-hover);
-  transform: translateY(-1px);
 }
 
 .workspace-dock__empty-option:active {
   background: var(--surface-hover);
   box-shadow: var(--apple-shadow-sm);
-  transform: translateY(0);
 }
 
 .workspace-dock__empty-option .workspace-dock__tool-icon {
@@ -668,7 +665,7 @@ button.environment-popover__row:hover:not(:disabled) {
   height: 1rem;
   place-items: center;
   color: var(--text-tertiary);
-  transition: color 140ms ease, transform 160ms var(--apple-spring);
+  transition: color 140ms ease;
 }
 
 .workspace-dock__empty-option-arrow svg {
@@ -680,7 +677,6 @@ button.environment-popover__row:hover:not(:disabled) {
 .workspace-dock__empty-option:hover .workspace-dock__empty-option-arrow,
 .workspace-dock__empty-option:focus-visible .workspace-dock__empty-option-arrow {
   color: var(--accent);
-  transform: translateX(2px);
 }
 
 .terminal-panel {
@@ -791,12 +787,6 @@ button.environment-popover__row:hover:not(:disabled) {
   .workspace-dock__empty-option .workspace-dock__tool-icon,
   .workspace-dock__empty-option-arrow {
     transition: none;
-  }
-  .workspace-dock__empty-option:hover,
-  .workspace-dock__empty-option:focus-visible,
-  .workspace-dock__empty-option:hover .workspace-dock__empty-option-arrow,
-  .workspace-dock__empty-option:focus-visible .workspace-dock__empty-option-arrow {
-    transform: none;
   }
 }
 

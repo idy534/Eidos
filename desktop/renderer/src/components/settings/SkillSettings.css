@@ -191,7 +191,7 @@
   font-size: 1.15rem;
   line-height: 1;
   cursor: pointer;
-  transition: all 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 .skill-detail-actions .dropdown-trigger:hover,
 .skill-detail-actions .skill-detail-close-btn:hover {

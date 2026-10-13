@@ -429,12 +429,6 @@ button.composer-context-project--empty:hover:not(:disabled) {
   color: var(--muted);
   outline: none;
   flex: none;
-  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.composer-context-usage:hover,
-.composer-context-usage:focus-visible {
-  transform: scale(1.12);
 }
 
 .composer-context-usage:focus-visible {
@@ -529,7 +523,7 @@ button.composer-context-project--empty:hover:not(:disabled) {
   color: var(--primary-action-icon) !important;
   border: 1px solid var(--primary-action-border) !important;
   box-shadow: var(--primary-action-shadow) !important;
-  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 100ms var(--apple-spring);
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .composer-submit-btn:hover:not(:disabled):not(.composer-submit-btn--empty) {

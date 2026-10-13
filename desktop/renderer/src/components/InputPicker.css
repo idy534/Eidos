@@ -118,7 +118,7 @@
   font-weight: 500;
   cursor: pointer;
   flex: none;
-  transition: all 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 .input-picker__collapse-btn:hover {
   color: var(--text);
@@ -157,7 +157,7 @@
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   white-space: nowrap;
   box-sizing: border-box;
 }
@@ -208,7 +208,7 @@
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: all 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
   flex: none;
   box-sizing: border-box;
 }
@@ -255,7 +255,7 @@
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
   white-space: nowrap;
 }
 .input-picker__category-pill:hover:not(.is-active) {
@@ -266,7 +266,7 @@
 .input-picker__category-pill.is-active:hover {
   background: var(--surface-raised, #ffffff);
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
   box-shadow: 0 1px 2px rgba(32, 36, 31, 0.08), 0 0.5px 1px rgba(32, 36, 31, 0.04);
 }
 /* History Breadcrumb */

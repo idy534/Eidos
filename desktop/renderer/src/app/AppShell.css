@@ -72,7 +72,6 @@
 }
 .nav-icon-btn:active:not(:disabled) {
   background: var(--surface-hover);
-  transform: scale(0.96);
 }
 .nav-icon-btn:disabled {
   color: var(--muted);

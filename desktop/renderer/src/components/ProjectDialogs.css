@@ -216,7 +216,7 @@
   cursor: pointer;
   user-select: none;
   box-sizing: border-box;
-  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease, transform 100ms var(--apple-spring);
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
 
 .handoff-mode-card:hover:not(.is-disabled) {

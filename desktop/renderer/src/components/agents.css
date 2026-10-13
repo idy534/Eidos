@@ -83,27 +83,37 @@
   border-radius: var(--radius-pill);
   padding: 3px 9px;
   font-size: var(--font-size-xs);
+  font-weight: 500;
+  box-shadow: none;
   cursor: pointer;
-  transition: all 0.14s var(--apple-spring);
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
-.agent-filter-pill:hover {
+.agent-filter-pill:hover,
+.agent-filter-pill:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
   border-color: rgba(49, 95, 74, 0.2);
+  box-shadow: none;
 }
 
-.agent-filter-pill--active {
+.agent-filter-pill--active,
+.agent-filter-pill--active:hover,
+.agent-filter-pill--active:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: rgba(49, 95, 74, 0.3);
   font-weight: 500;
+  box-shadow: none;
 }
 
-.agent-filter-pill--warning.agent-filter-pill--active {
+.agent-filter-pill--warning.agent-filter-pill--active,
+.agent-filter-pill--warning.agent-filter-pill--active:hover,
+.agent-filter-pill--warning.agent-filter-pill--active:hover:not(:disabled) {
   background: var(--status-warning-bg);
   color: var(--status-warning);
   border-color: rgba(138, 103, 35, 0.3);
+  box-shadow: none;
 }
 
 /* Agent Empty State */
@@ -177,7 +187,7 @@
   color: var(--text);
   font: inherit;
   text-align: left;
-  transition: background 0.14s var(--apple-spring);
+  transition: background-color 140ms ease;
 }
 
 .agent-list__row--compact:hover {
@@ -233,7 +243,7 @@
   align-items: stretch;
   justify-content: space-between;
   box-shadow: 0 1px 2px rgba(32, 36, 31, 0.04);
-  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s var(--apple-spring);
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   position: relative;
   font-family: inherit;
   color: var(--text);
@@ -244,12 +254,7 @@
 .agent-card:hover {
   background: var(--surface-hover);
   border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
-  transform: translateY(-1px);
   box-shadow: var(--apple-shadow-sm);
-}
-
-.agent-card:active {
-  transform: translateY(0);
 }
 
 .agent-card--selected {
@@ -353,7 +358,7 @@
   white-space: nowrap;
   flex-shrink: 0;
   border: 1px solid transparent;
-  transition: all 0.14s var(--apple-spring);
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
 .agent-status-pill--active {
@@ -578,15 +583,18 @@
   color: var(--muted);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
+  box-shadow: none;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.14s var(--apple-spring);
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
-.agent-detail-back-btn:hover {
+.agent-detail-back-btn:hover,
+.agent-detail-back-btn:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
   border-color: rgba(49, 95, 74, 0.2);
+  box-shadow: none;
 }
 
 .agent-heading {
@@ -634,7 +642,7 @@
   font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.14s var(--apple-spring);
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
   flex-shrink: 0;
 }
 

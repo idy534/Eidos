@@ -33,14 +33,13 @@
   transform: translateX(-50%);
   font-size: 1.1rem;
   font-weight: 450;
-  transition: transform 150ms var(--apple-spring), background-color 150ms ease;
+  transition: background-color 150ms ease, box-shadow 150ms ease;
 }
 .feed-jump-to-bottom[hidden] {
   display: none !important;
 }
 .feed-jump-to-bottom:hover:not(:disabled) {
   background: var(--surface-muted);
-  transform: translateX(-50%) translateY(-2px);
   box-shadow: var(--apple-shadow-lg);
 }
 .feed-empty { display: grid; place-content: center; text-align: center; color: var(--muted); }
@@ -360,7 +359,7 @@ span.tool-file-link:hover {
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease, transform 120ms ease;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
 }
 .shell-command-zone:hover .shell-copy-button,
 .shell-command-zone:focus-within .shell-copy-button,
@@ -373,7 +372,7 @@ span.tool-file-link:hover {
   color: var(--text);
 }
 .shell-copy-button:active:not(:disabled) {
-  transform: scale(0.94);
+  background: rgba(0, 0, 0, 0.08);
 }
 .shell-copy-button.is-copied {
   color: var(--accent);

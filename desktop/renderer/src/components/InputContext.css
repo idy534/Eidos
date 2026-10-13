@@ -292,7 +292,7 @@
   border: 1px solid var(--primary-action-border);
   background: var(--primary-action-bg);
   color: var(--accent);
-  transition: all 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .ref-image-lightbox__action-btn:hover {
   background: var(--primary-action-bg-hover);

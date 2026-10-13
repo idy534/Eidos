@@ -290,6 +290,7 @@
   color: var(--text);
   background: transparent;
   box-shadow: none;
+  font-weight: 500;
   line-height: var(--line-height-body);
   text-align: left;
   transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
@@ -304,7 +305,7 @@
   border-color: rgba(49, 95, 74, 0.22);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   color: var(--text);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .session-list > .session-item > button.selected:hover,
