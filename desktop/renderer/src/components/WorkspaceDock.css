@@ -234,14 +234,7 @@
 }
 
 .environment-popover__body::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.28);
-}
-
-.environment-popover__panel h2 {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--font-size-sidebar);
-  font-weight: 650;
+  background: var(--scrollbar-thumb-hover);
 }
 
 .environment-popover__row {
@@ -491,7 +484,9 @@ button.environment-popover__row:hover:not(:disabled) {
 }
 
 .workspace-dock__add .dropdown-trigger:hover,
+.workspace-dock__add .dropdown-trigger:hover:not(:disabled),
 .workspace-dock__add .dropdown-trigger[aria-expanded="true"],
+.workspace-dock__actions .icon-button:hover:not(:disabled),
 .workspace-dock__actions .icon-button:hover {
   color: var(--text);
   background: var(--surface-selected);

@@ -134,6 +134,28 @@ app.whenReady().then(async () => {
     }
     const thumb = await evaluate("getComputedStyle(document.querySelector('#scrollbar-0'), '::-webkit-scrollbar-thumb').backgroundColor");
     assert.equal(thumb, "rgba(106, 111, 103, 0.28)", "Scrollbar thumb retains a valid visible color");
+    for (const selector of ["#scrollbar-11", "#scrollbar-12"]) {
+      const restThumb = await evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(selector)}), '::-webkit-scrollbar-thumb').backgroundColor`);
+      assert.equal(restThumb, "rgba(0, 0, 0, 0)", `${selector} hides scrollbar thumb at rest`);
+      const restBounds = await evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }; })()`);
+      const sampleThumbPixel = async () => {
+        const img = await win.webContents.capturePage(restBounds);
+        const w = img.getSize(1).width;
+        const bmp = img.toBitmap({ scaleFactor: 1 });
+        return Array.from(bmp.subarray((8 * w + (w - 3)) * 4, (8 * w + (w - 3)) * 4 + 4));
+      };
+      const restThumbPixel = await sampleThumbPixel();
+      await pointer(selector);
+      const revealedVar = await evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).getPropertyValue('--scrollbar-thumb').trim()`);
+      assert.equal(revealedVar, "rgba(106, 111, 103, 0.38)", `${selector} reveals scrollbar thumb token on hover`);
+      const centerThumbPixel = await sampleThumbPixel();
+      assert.notDeepEqual(centerThumbPixel, restThumbPixel, `${selector} paints visible scrollbar thumb when container is hovered`);
+      win.webContents.sendInputEvent({ type: "mouseMove", x: restBounds.x + restBounds.width - 3, y: restBounds.y + 8 });
+      await settle();
+      const hoverThumbPixel = await sampleThumbPixel();
+      assert.notDeepEqual(hoverThumbPixel, centerThumbPixel, `${selector} darkens scrollbar thumb when thumb itself is hovered`);
+    }
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 }); await settle();
     const hoverThumb = await evaluate(`(() => {
       const probe = document.createElement('div'); probe.style.backgroundColor = 'var(--scrollbar-thumb-hover)'; document.body.append(probe);
       const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color;
@@ -182,6 +204,10 @@ app.whenReady().then(async () => {
       const content = await Promise.all(contentTargets.map(([selector, properties]) => read(selector, properties)));
       assert.equal(content[0].fontSize, "14px"); assert.equal(content[0].lineHeight, "23px");
       assert.equal(content[3].fontSize, "12.5px"); assert.equal(content[3].whiteSpace, "pre");
+      assert.equal(await evaluate("getComputedStyle(document.querySelector('.code-block-content'), '::-webkit-scrollbar-thumb').backgroundColor"), "rgba(0, 0, 0, 0)", "Code block hides scrollbar thumb at rest");
+      await pointer(".code-block-header");
+      assert.equal(await evaluate("getComputedStyle(document.querySelector('.code-block-content'), '::-webkit-scrollbar-thumb').backgroundColor"), "rgba(106, 111, 103, 0.38)", "Hovering code block card reveals its scrollbar thumb");
+      win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 }); await settle();
       await compareBaseline(contentTargets, content);
       await show("layout");
       for (const collapsed of [false, true]) {

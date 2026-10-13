@@ -1,5 +1,11 @@
 /* Chromium uses this custom skin only while the standard properties stay auto.
    Modules may hide their scrollbars, but tracks and frames are shared here. */
+@property --scrollbar-thumb {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(106, 111, 103, 0.28);
+}
+
 * {
   scrollbar-width: auto;
   scrollbar-color: auto;
@@ -35,15 +41,43 @@
   background: var(--scrollbar-thumb-hover);
 }
 
+::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+}
+
 ::-webkit-scrollbar-button {
   display: none;
   width: 0;
   height: 0;
 }
 
+.code-block-content,
+.diff-viewer-group,
+.diff-file-body {
+  --scrollbar-thumb: transparent;
+  --scrollbar-thumb-hover: rgba(106, 111, 103, 0.65);
+  --scrollbar-thumb-active: rgba(106, 111, 103, 0.85);
+  transition: --scrollbar-thumb 180ms ease;
+}
+
+.code-block-card:hover .code-block-content,
+.code-block-content:hover,
+.diff-viewer-group:hover,
+.diff-file-card:hover .diff-file-body,
+.diff-file-body:hover {
+  --scrollbar-thumb: rgba(106, 111, 103, 0.38);
+}
+
 .code-block-content::-webkit-scrollbar-thumb,
 .diff-viewer-group::-webkit-scrollbar-thumb,
 .diff-file-body::-webkit-scrollbar-thumb {
-  background: transparent;
-  transition: background-color 160ms ease;
+  background: var(--scrollbar-thumb);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .code-block-content,
+  .diff-viewer-group,
+  .diff-file-body {
+    transition: none;
+  }
 }

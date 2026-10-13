@@ -195,7 +195,7 @@
 }
 
 .approval-command::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Diff View */

@@ -10,10 +10,13 @@
   overflow-x: hidden;
   padding: 1px 4px 1px 1px;
 }
-.diff-viewer-group:hover::-webkit-scrollbar-thumb:hover {
+.diff-viewer-group:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+.diff-viewer-group::-webkit-scrollbar-thumb:hover {
   background: rgba(106, 111, 103, 0.65);
 }
-.diff-viewer-group:hover::-webkit-scrollbar-thumb:active {
+.diff-viewer-group::-webkit-scrollbar-thumb:active {
   background: rgba(106, 111, 103, 0.85);
 }
 .diff-file-card {
@@ -61,6 +64,7 @@
   color: #ef4444;
   font-weight: 600;
 }
+.diff-file-card pre.diff-file-body,
 .diff-file-body {
   margin: 0;
   border: 0;
@@ -74,10 +78,16 @@
   font: var(--font-size-code)/var(--line-height-code) var(--font-code);
   tab-size: 2;
 }
-.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:hover {
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb,
+.diff-file-body:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:hover,
+.diff-file-body::-webkit-scrollbar-thumb:hover {
   background: rgba(106, 111, 103, 0.65);
 }
-.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:active {
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:active,
+.diff-file-body::-webkit-scrollbar-thumb:active {
   background: rgba(106, 111, 103, 0.85);
 }
 .diff-row {

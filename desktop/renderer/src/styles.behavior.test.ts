@@ -213,4 +213,31 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.mermaid-svg-wrapper svg\s*\{[^}]*max-width:\s*none;/s);
     expect(styles).not.toMatch(/\.mermaid-svg-wrapper svg\s*\{[^}]*max-width:\s*100%\s*!important;/s);
   });
+
+  it("hides code block and diff viewer scrollbar thumbs at rest and smoothly transitions them on hover", () => {
+    expect(styles).toMatch(
+      /@property\s+--scrollbar-thumb\s*\{[^}]*syntax:\s*"<color>";[^}]*inherits:\s*true;/s,
+    );
+    expect(styles).toMatch(
+      /\.code-block-content,\s*\.diff-viewer-group,\s*\.diff-file-body\s*\{[^}]*--scrollbar-thumb:\s*transparent;[^}]*transition:\s*--scrollbar-thumb 180ms ease;/s,
+    );
+    expect(styles).toMatch(
+      /\.code-block-card:hover \.code-block-content,\s*\.code-block-content:hover,\s*\.diff-viewer-group:hover,\s*\.diff-file-card:hover \.diff-file-body,\s*\.diff-file-body:hover\s*\{[^}]*--scrollbar-thumb:\s*rgba\(106,\s*111,\s*103,\s*0\.38\);/s,
+    );
+    expect(styles).toMatch(
+      /\.code-block-content::-webkit-scrollbar-thumb,\s*\.diff-viewer-group::-webkit-scrollbar-thumb,\s*\.diff-file-body::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--scrollbar-thumb\);/s,
+    );
+    expect(styles).toMatch(
+      /\.code-block-card:hover \.code-block-content::-webkit-scrollbar-thumb:hover,\s*\.code-block-content::-webkit-scrollbar-thumb:hover\s*\{[^}]*background:\s*rgba\(106,\s*111,\s*103,\s*0\.65\);/s,
+    );
+    expect(styles).toMatch(
+      /\.code-block-card:hover \.code-block-content::-webkit-scrollbar-thumb:active,\s*\.code-block-content::-webkit-scrollbar-thumb:active\s*\{[^}]*background:\s*rgba\(106,\s*111,\s*103,\s*0\.85\);/s,
+    );
+    expect(styles).toMatch(
+      /\.approval-command::-webkit-scrollbar-thumb:hover\s*\{[^}]*background:\s*var\(--scrollbar-thumb-hover\);/s,
+    );
+    expect(styles).toMatch(
+      /\.environment-popover__body::-webkit-scrollbar-thumb:hover\s*\{[^}]*background:\s*var\(--scrollbar-thumb-hover\);/s,
+    );
+  });
 });
