@@ -55,13 +55,21 @@ function Harness({ initialTabs = [
 
 describe("WorkspaceDock", () => {
   it("shows a picker when no tool tab is open", () => {
-    render(<Harness initialTabs={[]} />);
+    const { container } = render(<Harness initialTabs={[]} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("打开工作区");
-    expect(screen.getByRole("button", { name: "审查" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "终端" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "文件" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "网页" })).toBeInTheDocument();
+    const emptyStatus = screen.getByRole("status");
+    expect(emptyStatus).toHaveTextContent("打开工作区");
+    expect(emptyStatus).toHaveTextContent("查看代码改动、浏览文件、运行命令或预览网页");
+    expect(container.querySelector(".workspace-dock__empty-hero")).not.toBeInTheDocument();
+
+    const reviewBtn = screen.getByRole("button", { name: "审查" });
+    expect(reviewBtn).toBeInTheDocument();
+    expect(reviewBtn).toHaveAccessibleDescription("查看代码改动与 Git 提交状态");
+    expect(reviewBtn.querySelector(".workspace-dock__empty-option-arrow svg")).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "终端" })).toHaveAccessibleDescription("在当前项目目录中运行命令");
+    expect(screen.getByRole("button", { name: "文件" })).toHaveAccessibleDescription("浏览项目目录与查看文件内容");
+    expect(screen.getByRole("button", { name: "网页" })).toHaveAccessibleDescription("打开网页或预览本地运行的服务");
 
     fireEvent.click(screen.getByRole("button", { name: "终端" }));
     expect(screen.getByRole("tab", { name: "终端 1" })).toHaveAttribute("aria-selected", "true");

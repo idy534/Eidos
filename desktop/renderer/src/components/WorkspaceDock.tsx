@@ -35,6 +35,16 @@ const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
   browser: "网页",
 };
 
+const TOOL_DESCRIPTIONS: Record<WorkspaceToolKind, string> = {
+  "text-review": "对比本轮与历史文件修改",
+  plan: "查看或编辑当前任务计划",
+  agent: "查看子任务进度与执行记录",
+  review: "查看代码改动与 Git 提交状态",
+  terminal: "在当前项目目录中运行命令",
+  files: "浏览项目目录与查看文件内容",
+  browser: "打开网页或预览本地运行的服务",
+};
+
 function ToolIcon({ tool }: { tool: WorkspaceToolKind }) {
   if (tool === "plan") {
     return (
@@ -232,17 +242,40 @@ export function WorkspaceDock({
         ))}
         {openTabs.length === 0 && (
           <div className="workspace-dock__empty" role="status">
-            <p>打开工作区</p>
+            <p className="workspace-dock__empty-title">打开工作区</p>
+            <p className="workspace-dock__empty-subtitle">查看代码改动、浏览文件、运行命令或预览网页</p>
             <div className="workspace-dock__empty-list">
               {availableTools.map((tool) => (
                 <button
                   type="button"
                   className="workspace-dock__empty-option"
                   key={tool}
+                  aria-labelledby={`workspace-empty-tool-label-${tool}`}
+                  aria-describedby={`workspace-empty-tool-desc-${tool}`}
                   onClick={() => onAddTool(tool)}
                 >
-                  <span className="workspace-dock__tool-icon"><ToolIcon tool={tool} /></span>
-                  <span>{TOOL_LABELS[tool]}</span>
+                  <span className="workspace-dock__tool-icon" aria-hidden="true">
+                    <ToolIcon tool={tool} />
+                  </span>
+                  <span className="workspace-dock__empty-option-copy">
+                    <span
+                      id={`workspace-empty-tool-label-${tool}`}
+                      className="workspace-dock__empty-option-label"
+                    >
+                      {TOOL_LABELS[tool]}
+                    </span>
+                    <span
+                      id={`workspace-empty-tool-desc-${tool}`}
+                      className="workspace-dock__empty-option-desc"
+                    >
+                      {TOOL_DESCRIPTIONS[tool]}
+                    </span>
+                  </span>
+                  <span className="workspace-dock__empty-option-arrow" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 3.5 10.5 8 6 12.5" />
+                    </svg>
+                  </span>
                 </button>
               ))}
             </div>

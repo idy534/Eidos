@@ -65,6 +65,13 @@ describe("interactive color tokens", () => {
     expect(dockStyles).toMatch(/\.workspace-body \.session-header,\s*\.workspace-dock__header\s*\{[^}]*height:\s*2\.75rem;[^}]*min-height:\s*2\.75rem;/s);
   });
 
+  it("styles workspace dock empty state as elevated two-line action cards with expanded grid layout", () => {
+    expect(dockStyles).not.toContain(".workspace-dock__empty-hero");
+    expect(dockStyles).toMatch(/\.workspace-dock__empty-option\s*\{[^}]*border:\s*1px solid var\(--line\);[^}]*background:\s*var\(--surface-raised\);/s);
+    expect(dockStyles).toMatch(/\.workspace-dock__empty-option-label\s*\{[^}]*font-size:\s*var\(--font-size-sidebar\);/s);
+    expect(dockStyles).toMatch(/\.workspace-dock--expanded\s+\.workspace-dock__empty-list\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s);
+  });
+
   it("renders compact single-column diff colors", () => {
     expect(styles).toMatch(/\.git-diff-unified col\.diff-gutter-col:nth-of-type\(2\)/);
     expect(styles).toMatch(/\.git-diff-unified \.diff-code-insert\s*\{[^}]*color: var\(--status-success\);/s);
