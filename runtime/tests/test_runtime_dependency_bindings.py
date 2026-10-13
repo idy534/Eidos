@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from pathlib import Path
 import shlex
 import sys
@@ -41,6 +42,7 @@ from eidos_runtime.runtime.tool_runtime import (
 )
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.sandbox.permissions import BasePermissionProfile
+from eidos_runtime.sandbox.seatbelt import is_seatbelt_ready
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.tools.contracts import (
     RunShellInput,
@@ -51,6 +53,15 @@ from eidos_runtime.tools.workspace import ToolExecutor
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@contextmanager
+def _seatbelt_ready():
+    with (
+        patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
+        patch("eidos_runtime.sandbox.seatbelt.is_seatbelt_ready", return_value=True),
+    ):
+        yield
 
 
 def _write_file(
@@ -304,9 +315,7 @@ def test_runtime_bound_shell_does_not_hash_dependency_contents(tmp_path: Path) -
         }
 
     try:
-        with (
-            patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True),
-        ):
+        with _seatbelt_ready():
             outcome = _execute_shell(store, run_id, controller, dispatcher, _shell_arguments(binding.binding_id), fake_shell)
         assert outcome.result["code"] == "ok", outcome.result
         assert len(launches) == 1
@@ -482,10 +491,7 @@ def test_bound_shell_passes_verified_environment_and_result_provenance(
 
     try:
         with (
-            patch(
-                "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
-                return_value=True,
-            ),
+            _seatbelt_ready(),
             patch.object(
                 catalog,
                 "verify_binding",
@@ -520,6 +526,8 @@ def test_bound_shell_passes_verified_environment_and_result_provenance(
 def test_skill_script_selects_its_runtime_without_a_model_binding_id(
     tmp_path: Path, scenario: str,
 ) -> None:
+    if scenario == "real" and not is_seatbelt_ready():
+        pytest.skip("real Shell integration requires an available macOS Seatbelt")
     bundle, manifest = _make_bundle(tmp_path, real_python=scenario == "real")
     if scenario == "incompatible":
         payload = json.loads(manifest.read_text())
@@ -553,23 +561,27 @@ def test_skill_script_selects_its_runtime_without_a_model_binding_id(
         }
 
     try:
-        with patch("eidos_runtime.runtime.tool_runtime.is_seatbelt_ready", return_value=True):
+        with _seatbelt_ready():
             outcome = _execute_shell(
                 store, run_id, controller, dispatcher, arguments,
                 manager.start if scenario == "real" else fake_shell,
             )
-        if scenario in {"invalid", "incompatible", "unsandboxed"}:
+        if scenario in {"invalid", "incompatible"}:
             assert not launches
             assert outcome.result["outcome"] == "error"
             assert outcome.result["data"]["termination"] == "not_started"
             assert outcome.result["sideEffectsMayExist"] is False
-        elif scenario in {"skill", "real"}:
+        elif scenario in {"skill", "real", "unsandboxed"}:
             assert outcome.result["code"] == "ok", outcome.result
             if scenario == "real":
                 plugin = tmp_path / "workspace/generated/example/plugin.json"
                 assert json.loads(plugin.read_text())["id"] == "example"
             else:
                 assert launches[0].environment["RUNTIME_PYTHON"] == str(bundle / "bin/python3")
+                if scenario == "unsandboxed":
+                    assert launches[0].sandboxed is False
+                    assert outcome.result["data"]["sandboxed"] is False
+                    assert store.connection.execute("SELECT COUNT(*) FROM approvals").fetchone()[0] == 1
             provenance = outcome.result["data"]["dependencyBinding"]
             assert provenance["skillQualifiedId"] == "system:plugin-creator"
             assert provenance["bindingId"] != _binding.binding_id
@@ -599,10 +611,7 @@ def test_invalid_bound_shell_is_not_started_and_never_reconciles(
         raise AssertionError("invalid dependency binding must not spawn Shell")
 
     try:
-        with patch(
-            "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
-            return_value=True,
-        ):
+        with _seatbelt_ready():
             outcome = _execute_shell(
                 store,
                 run_id,
@@ -621,7 +630,7 @@ def test_invalid_bound_shell_is_not_started_and_never_reconciles(
         store.close()
 
 
-def test_bound_shell_rejects_unsandboxed_execution_without_starting(
+def test_bound_shell_runs_unsandboxed_after_explicit_approval(
     tmp_path: Path,
 ) -> None:
     _bundle, manifest = _make_bundle(tmp_path)
@@ -629,11 +638,16 @@ def test_bound_shell_rejects_unsandboxed_execution_without_starting(
     store, run_id, executor, shell_process_manager, controller, dispatcher, binding = (
         _make_shell_controller(tmp_path, catalog)
     )
-    calls: list[object] = []
+    launches: list[object] = []
 
-    def fake_shell(*_args: object, **_kwargs: object) -> dict[str, object]:
-        calls.append(True)
-        raise AssertionError("unsandboxed dependency binding must not spawn Shell")
+    def fake_shell(launch, **_kwargs: object) -> dict[str, object]:
+        launches.append(launch)
+        return {
+            "outcome": "success", "code": "ok", "summary": "Completed",
+            "data": {"exitCode": 0, "stdout": "", "stderr": "", "truncated": False,
+                     "termination": "exit", "executionStatus": "exited"},
+            "sideEffectsMayExist": True,
+        }
 
     try:
         arguments = _shell_arguments(
@@ -649,9 +663,11 @@ def test_bound_shell_rejects_unsandboxed_execution_without_starting(
             arguments,
             fake_shell,
         )
-        assert calls == []
-        assert outcome.result["code"] == "dependency_binding_unsandboxed_forbidden"
-        assert outcome.result["data"]["termination"] == "not_started", outcome.result
+        assert len(launches) == 1
+        assert launches[0].sandboxed is False
+        assert outcome.result["code"] == "ok", outcome.result
+        assert outcome.result["data"]["sandboxed"] is False
+        assert store.connection.execute("SELECT COUNT(*) FROM approvals").fetchone()[0] == 1
         assert outcome.result["reconciliationRequired"] is False
     finally:
         shell_process_manager.close()
@@ -664,6 +680,8 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path, auto
     _bundle, manifest = _make_bundle(tmp_path)
     catalog = RuntimeDependencyCatalog.from_manifest(manifest)
     loader = tmp_path / "runtime-bundle" / "dependencies/node/runtime-loader.mjs"
+    additional_read_root = tmp_path / "additional-read"
+    additional_read_root.mkdir()
 
     def approve(_request: dict[str, object], _cancel: threading.Event) -> ApprovalDecision:
         loader.unlink()
@@ -687,7 +705,7 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path, auto
             sandboxPermissions="with_additional_permissions",
             additionalPermissions={
                 "fileSystem": [{
-                    "path": str(tmp_path / "workspace"),
+                    "path": str(additional_read_root),
                     "access": "read",
                     "recursive": True,
                 }],
@@ -699,10 +717,7 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path, auto
             del arguments["dependencyBindingId"]
             script = tmp_path / "data/skills/.system/plugin-creator/scripts/create_basic_plugin.py"
             arguments["command"] = f'"$RUNTIME_PYTHON" "{script}" example --path generated'
-        with patch(
-            "eidos_runtime.runtime.tool_runtime.is_seatbelt_ready",
-            return_value=True,
-        ):
+        with _seatbelt_ready():
             outcome = _execute_shell(
                 store,
                 run_id,

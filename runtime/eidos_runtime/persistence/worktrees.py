@@ -232,13 +232,16 @@ class ProjectWorktreeRepository(Repository):
                 "DELETE FROM worktrees WHERE project_id = ?",
                 (project_id,),
             )
+            from eidos_runtime.persistence.sidebar import remove_sidebar_pin
+
+            pin_events = remove_sidebar_pin(connection, "project", project_id)
             deleted = connection.execute(
                 "DELETE FROM projects WHERE id = ?",
                 (project_id,),
             )
             if deleted.rowcount != 1:
                 raise ResourceNotFoundError("project not found")
-            return CommittedMutation(DeletedProject(deleted_project_id=project_id), ())
+            return CommittedMutation(DeletedProject(deleted_project_id=project_id), pin_events)
 
         return self._write_committed(
             write,

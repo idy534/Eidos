@@ -8,6 +8,7 @@ import zipfile
 import pytest
 
 from eidos_runtime.application.runs import RunApplication
+from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.memory.backup import backup, restore
 from eidos_runtime.memory.contracts import (
@@ -24,6 +25,7 @@ from eidos_runtime.model.client import ModelResponse, ModelToolCall, ModelUsage,
 from eidos_runtime.protocol.methods import ContextUsageRequestDto
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.tools.memory import memory_entries
+from eidos_runtime.workspace.projectless import projectless_root
 
 pytestmark = pytest.mark.integration
 
@@ -180,7 +182,7 @@ def test_projectless_memory_state_uses_the_global_generation_setting(setup, gene
     service.settings(MemorySettingsRequest(
         session_id=session["id"], scope="global", settings=MemorySettings(generate_enabled=generate_enabled),
     ))
-    root = store.data_directory / f".{store.data_directory.name}-projectless" / "memory"
+    root = projectless_root() / "2026-10-13" / "memory"
     root.mkdir(parents=True)
     chat = store.typed_runtime_repository().create_session(str(root), projectless=True).value
     run, _ = store.create_run(chat.id, "Answer briefly")
@@ -618,7 +620,7 @@ def test_record_publishes_sourced_model_proposal_without_secondary_review(setup,
 @pytest.mark.parametrize("mode", ["automatic", "candidate", "remember"])
 def test_projectless_language_preference_saves_without_review_model(setup, mode):
     store, _ = setup
-    root = store.data_directory / f".{store.data_directory.name}-projectless" / "language"
+    root = projectless_root() / "2026-10-13" / "language"
     root.mkdir(parents=True)
     session = store.typed_runtime_repository().create_session(str(root), projectless=True).value
     service = store.database.memory
@@ -638,7 +640,7 @@ def test_projectless_language_preference_saves_without_review_model(setup, mode)
     assert entry.status == ("candidate" if mode == "candidate" else "active")
     assert entry.evidence[0].item_id == source["id"]
     assert len(model.contexts) == 2
-    assert store.connection.execute("SELECT count(*) FROM approvals").fetchone()[0] == (1 if mode == "remember" else 0)
+    assert store.connection.execute("SELECT count(*) FROM approvals").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("tool", ["memory_record", "memory_manage"])
@@ -1122,6 +1124,10 @@ def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
         connection.execute("ALTER TABLE memory_sources DROP COLUMN use_epoch")
         connection.execute("ALTER TABLE memory_sources DROP COLUMN backfill_until")
         connection.execute("ALTER TABLE model_attempts DROP COLUMN response_replay_json")
+        connection.execute("DROP TABLE IF EXISTS sidebar_pins")
+        connection.execute("DROP INDEX IF EXISTS sidebar_pins_event_revision")
+        connection.execute("DROP TABLE IF EXISTS projectless_workspace_creations")
+        connection.execute("ALTER TABLE runs DROP COLUMN termination_json")
         connection.execute("PRAGMA user_version=18")
     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     connection.close()
@@ -1138,7 +1144,7 @@ def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
     reopened = SessionStore(destination)
     reopened.initialize()
     try:
-        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 22
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert reopened.database.memory.get(MemoryGetRequest(session_id=session["id"], entry_id=entry.entry_id)).entry.content == "Prefer concise Chinese responses"
     finally:
         reopened.close()

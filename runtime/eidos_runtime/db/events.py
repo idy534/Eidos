@@ -30,6 +30,10 @@ class SkillStateChangedPayload(ClosedModel):
     removed: bool
 
 
+class SidebarPinsChangedPayload(ClosedModel):
+    pass
+
+
 class SessionCreatedPayload(ClosedModel):
     session: SessionDto
 
@@ -180,6 +184,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.PLUGIN_IMPORTED: PluginEventPayload,
     EventType.PLUGIN_STATE_CHANGED: PluginEventPayload,
     EventType.SKILL_STATE_CHANGED: SkillStateChangedPayload,
+    EventType.SIDEBAR_PINS_CHANGED: SidebarPinsChangedPayload,
     EventType.MCP_SERVER_STATE_CHANGED: McpServerEventPayload,
     EventType.MCP_TOOL_LIST_CHANGED: McpToolListChangedPayload,
     EventType.CONTEXT_COMPACTED: ContextCompactedPayload,

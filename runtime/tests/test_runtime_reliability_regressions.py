@@ -21,6 +21,7 @@ from eidos_runtime.runtime.provider_control import (  # noqa: E402
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker  # noqa: E402
 from eidos_runtime.sandbox.sensitive import SensitiveScanner  # noqa: E402
 from eidos_runtime.tools.runtime_workspace import ToolExecutor  # noqa: E402
+from eidos_runtime.workspace.projectless import projectless_root  # noqa: E402
 
 
 class RuntimeReliabilityRegressionTests(unittest.TestCase):
@@ -129,10 +130,10 @@ class RuntimeReliabilityRegressionTests(unittest.TestCase):
         project_session = self.store.typed_runtime_repository().create_session(
             str(project_root), project_id=project.id
         ).value
-        projectless_root = self.data / f".{self.data.name}-projectless" / "finalizer"
-        projectless_root.mkdir(parents=True)
+        projectless_workspace = projectless_root() / "2026-10-13" / "finalizer"
+        projectless_workspace.mkdir(parents=True)
         projectless_session = self.store.typed_runtime_repository().create_session(
-            str(projectless_root), projectless=True
+            str(projectless_workspace), projectless=True
         ).value
 
         cases = (

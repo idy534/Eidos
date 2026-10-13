@@ -231,6 +231,7 @@ export function useGitReviewController({
       !readyRef.current
       || !gitAvailableRef.current
       || !sessionId
+      || !("sessionId" in notification.params)
       || notification.params.sessionId !== sessionId
     ) return;
     const shouldRefresh = notification.method === "run/completed" || (

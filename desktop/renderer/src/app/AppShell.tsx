@@ -44,6 +44,7 @@ import {
 } from "../components/WorkspaceDock.js";
 import type { RuntimeLifecycleState } from "./useRuntimeLifecycle.js";
 import { useSessionController } from "./useSessionController.js";
+import { useSidebarPins } from "./useSidebarPins.js";
 import { useRunController } from "./useRunController.js";
 import { useApprovalController } from "./useApprovalController.js";
 import { usePlanningState } from "./usePlanningState.js";
@@ -110,6 +111,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // Domain controllers
   const [sessionState, sessionActions] = useSessionController();
+  const sidebarPins = useSidebarPins(isStorageReady && runtimeStatus.state === "ready");
   const activeSnapshot = sessionState.snapshot ?? sessionState.draft;
   const [runState, runActions] = useRunController(activeSnapshot, isStorageReady);
   const [approvalState, approvalActions] = useApprovalController();
@@ -313,17 +315,18 @@ export function AppShell({ runtime }: AppShellProps) {
       : workspaceRef.current;
   }, []);
 
-  const topError = sessionState.error ?? runState.error;
+  const topError = sessionState.error ?? sidebarPins.error ?? runState.error;
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
     sessionActions.setError(undefined);
+    sidebarPins.clearError();
     const activeSessionId = activeSnapshot?.session.id;
     if (activeSessionId) {
       runActions.clearError(activeSessionId);
     }
-  }, [sessionActions, runActions, activeSnapshot?.session.id]);
+  }, [sessionActions, runActions, activeSnapshot?.session.id, sidebarPins.clearError]);
 
   const showToast = useCallback((message: string, type: ToastType = "info", duration?: number) => {
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -446,7 +449,9 @@ export function AppShell({ runtime }: AppShellProps) {
     const unsubNotifications = window.eidosRuntime?.onNotification?.((notification) => {
       handleContextUsageNotification(notification);
       gitReviewActions.handleNotification(notification);
-      if (notification.method === "session/titleUpdated") {
+      if (notification.method === "sidebar/pinsChanged") {
+        sidebarPins.handleChanged(notification.params.eventId);
+      } else if (notification.method === "session/titleUpdated") {
         sessionActions.handleTitleNotification(notification.params);
       } else if (
         notification.method === "run/started"
@@ -1344,6 +1349,10 @@ export function AppShell({ runtime }: AppShellProps) {
         collapsed={!sidebarOpen || settingsOpen}
         sessions={sessionState.sessions}
         projects={sessionState.projects}
+        pins={sidebarPins.pins}
+        pinningDisabled={!sidebarPins.loaded || !isStorageReady}
+        pendingPinTargets={sidebarPins.pending}
+        onSetPinned={(target, pinned) => void sidebarPins.setPinned(target, pinned)}
         selectedId={sessionState.navigationSessionId ?? currentSnapshot?.session.id}
         disabled={sidebarDisabled}
         readCompletedSessions={sessionState.readCompletedSessions}

@@ -1,5 +1,6 @@
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
+import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
@@ -593,6 +594,11 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.SIDEBAR_LIST_PINS, () => clientOrThrow().listSidebarPins());
+ipcMain.handle(IPC.SIDEBAR_SET_PINNED, (_event, request: unknown) => {
+  if (!isSidebarSetPinnedRequest(request)) throw new Error("置顶参数无效。");
+  return clientOrThrow().setSidebarPinned(request);
+});
 ipcMain.handle(IPC.PROJECT_CREATE, (_event, name: unknown, workspaceRoot: unknown) => {
   if (
     (name !== undefined && (typeof name !== "string" || name.length > 120))

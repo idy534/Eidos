@@ -1,0 +1,22 @@
+{
+  "validRequests": [
+    {"target": {"kind": "project", "id": "11111111-1111-1111-1111-111111111111"}, "pinned": true, "operationId": "33333333-3333-3333-3333-333333333333"},
+    {"target": {"kind": "session", "id": "22222222-2222-2222-2222-222222222222"}, "pinned": false, "operationId": "44444444-4444-4444-4444-444444444444"}
+  ],
+  "invalidRequests": [
+    {"target": {"kind": "session", "id": "draft-22222222-2222-2222-2222-222222222222"}, "pinned": true, "operationId": "33333333-3333-3333-3333-333333333333"},
+    {"target": {"kind": "workspace", "id": "11111111-1111-1111-1111-111111111111"}, "pinned": true, "operationId": "33333333-3333-3333-3333-333333333333"},
+    {"target": {"kind": "project", "id": "11111111-1111-1111-1111-111111111111", "path": "/workspace"}, "pinned": true, "operationId": "33333333-3333-3333-3333-333333333333"},
+    {"target": {"kind": "project", "id": "11111111-1111-1111-1111-111111111111"}, "pinned": "true", "operationId": "33333333-3333-3333-3333-333333333333"}
+  ],
+  "validResponses": [
+    {"items": [], "throughEventId": 0},
+    {"items": [{"kind": "project", "id": "11111111-1111-1111-1111-111111111111"}, {"kind": "session", "id": "22222222-2222-2222-2222-222222222222"}], "throughEventId": 7}
+  ],
+  "invalidResponses": [
+    {"items": [], "throughEventId": -1},
+    {"items": [], "throughEventId": 9007199254740992},
+    {"items": [{"kind": "session", "id": "../../workspace"}], "throughEventId": 7},
+    {"items": [], "throughEventId": 7, "pinned": true}
+  ]
+}

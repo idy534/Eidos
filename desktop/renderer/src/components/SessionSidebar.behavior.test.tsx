@@ -695,6 +695,60 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     });
   });
 
+  it("does not scroll back to the active session when browsing project groups", async () => {
+    vi.useFakeTimers();
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    const otherSession: Session = {
+      id: "session-other-project",
+      workspaceRoot: "/other-project",
+      title: "Other Project Thread",
+      createdAt: 3,
+    };
+    const props = {
+      sessions: [managedSession, otherSession],
+      projects: [],
+      selectedId: managedSession.id,
+      disabled: false,
+      readCompletedSessions: new Set<string>(),
+      runtimePresentation: { tone: "success", label: "Ready" } as const,
+      onCreate: vi.fn(),
+      onCreateInProject: vi.fn(),
+      onSelect: vi.fn(),
+      onRename: vi.fn(),
+      onDelete: vi.fn(),
+      onDeleteProject: vi.fn(),
+      onOpenSettings: vi.fn(),
+    };
+    const { rerender, unmount } = render(<SessionSidebar {...props} />);
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      scrollIntoView.mockClear();
+      const nav = screen.getByRole("navigation");
+      nav.scrollTop = 120;
+
+      // Browsing both another project and the current project is not navigation.
+      for (const name of ["other-project", "repository"]) {
+        const toggle = screen.getByRole("button", { name });
+        for (const expanded of [false, true]) {
+          fireEvent.click(toggle);
+          await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+          expect(toggle).toHaveAttribute("aria-expanded", String(expanded));
+          expect(scrollIntoView).not.toHaveBeenCalled();
+          expect(nav.scrollTop).toBe(120);
+          expect(nav.querySelector("button.selected")).toHaveAttribute("aria-current", "page");
+        }
+      }
+
+      rerender(<SessionSidebar {...props} sessions={[...props.sessions]} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+      scrollIntoView.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("shows project hover tooltip with project name and folder path on hover", async () => {
     vi.useFakeTimers();
     render(

@@ -380,12 +380,13 @@ class ToolContractTests(unittest.TestCase):
         properties = RunShellInput.model_json_schema(by_alias=True)["properties"]
         self.assertEqual(
             properties["gitWriteAccess"]["description"],
-            'Set to "request" when the command requires writing Git metadata '
-            "for the current repository.",
+            'Set to "request" when the current Run needs Git metadata write '
+            'permission. In full_access use "default".',
         )
         self.assertEqual(
             properties["networkAccess"]["description"],
-            'Set to "request" when the command requires network access.',
+            'Set to "request" only when the current Run lacks network access. '
+            'In full_access use "default".',
         )
         self.assertEqual(
             properties["justification"]["description"],

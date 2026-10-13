@@ -143,4 +143,10 @@ describe("ProjectPicker", () => {
       /\.git-scope-tab:not\(\[aria-selected="true"\]\):hover:not\(:disabled\)\s*\{[^}]*background: var\(--surface-hover\);[^}]*box-shadow: none;/,
     );
   });
+
+  it("removes focus box and outline from the search input", () => {
+    expect(styles).toMatch(
+      /\.project-picker-search-row input:focus,\s*\.project-picker-search-row input:focus-visible\s*\{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/,
+    );
+  });
 });

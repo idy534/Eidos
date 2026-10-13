@@ -20,6 +20,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - Desktop 可以选择 Workspace，读取 Runtime 提供的 Git context，并在 Session Composer 中选择 Local 或 Worktree execution。Git Worktree execution 可以选择 starting branch。Source dirty 且 starting branch 是 current branch 时，Desktop 默认勾选 `Include current changes`，但 Runtime 只接受显式的 `includeLocalChanges`。Non-Git Workspace 只启用 Local，Composer 不显示 execution mode 和 branch。Desktop 也可以创建不绑定 Project 的会话；这类会话默认使用 Local。
 - Desktop 可以列出、读取、重命名和删除 Session。Session 删除不会删除所属 Project。
 - Desktop 侧边栏会连续读取 Session 列表的所有分页。总数超过 50 的 Session 不会因位于后续页而从项目下消失。分页失败时，Desktop 保留上一次完整列表并显示错误。
+- 用户展开或收起项目时，侧边栏不会重新滚到当前高亮会话。Desktop 切换到另一个 Session 时仍会定位目标；用户通过输入引用查看其他会话时，Desktop 也会展开目标项目并定位。目标已在可见范围内时，侧边栏不会主动滚动。
 - Session 首屏和历史分页的读取代码不再构建 Step Resolution Review。响应保留空的 `stepResolutions` 字段。Items、Runs 和事件游标继续使用原有读取路径。本项代码修订尚未进入测试和性能验收阶段。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
 - 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
@@ -143,6 +144,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 ## Runtime Git Worktree Kernel
 
 - Runtime 可以从任意已验证的 filesystem workspace discovery Project。Git repository root 和 Git common directory 是成对可空的 optional Project capability。
+- Desktop 支持在 Project 和 Session 右键菜单中置顶或取消置顶。用户也可以通过 Shift+F10 打开菜单。侧栏在存在有效置顶项时显示位于“项目”上方的混合置顶区，顺序按置顶先后固定。项目仍能展开和新建会话，独立置顶的 Session 保留所属项目和状态，但不重复出现在项目子列表或“最近”中。空项目、无项目 Session 和正在运行的 Session 都可置顶。SQLite Schema v25 保存引用和顺序，应用重启后保留；删除对象会同时清理记录。该功能不改变 Workspace、权限、Run 或普通列表排序，也不支持置顶未物化草稿或内部子会话。
 - Runtime 对 Non-Git Project 提供 Local Execution Session。Git Project 可以选择 Local 或 Managed Worktree Execution。
 - Runtime 提供 `project/gitContext`，通过现有 `GitBackend` 返回 Git availability、current branch、HEAD、local branches、dirty 和 changed file count。Renderer 和 Electron Main 不执行 Git CLI。
 - Runtime 可以创建、打开、验证、列出、恢复、清理和删除 managed Worktree。新 Worktree 使用 Runtime-controlled root 和 detached HEAD，不创建 `eidos/*` branch。`baseRef`、immutable `baseCommit` 和 nullable `branch` 会进入 Worktree projection。

@@ -3,6 +3,8 @@ import { isCollaborationState } from "../shared/collaboration.js";
 import { isRunTermination } from "../shared/run-termination.js";
 import type { CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
+import { isSidebarPinsResponse } from "../shared/sidebar.js";
+import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import { isInputReference, isInputDraft, isInputPreview, isInputAssetChunk, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference, type InputAssetChunk } from "../shared/input-context.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -23,6 +25,8 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "INVALID_EVENT_CURSOR",
   "RUN_ALREADY_ACTIVE",
   "RESOURCE_NOT_FOUND",
+  "SIDEBAR_PIN_LIMIT_REACHED",
+  "SIDEBAR_PERSISTENCE_FAILED",
   "INVALID_STATE",
   "APPROVAL_NO_LONGER_PENDING",
   "WORKSPACE_BOUNDARY_VIOLATION",
@@ -453,6 +457,14 @@ export class RuntimeClient {
 
   listProjects(): Promise<ProjectListResult> {
     return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  listSidebarPins(): Promise<SidebarPinsResponse> {
+    return this.validatedRequest("sidebar/listPins", {}, isSidebarPinsResponse);
+  }
+
+  setSidebarPinned(request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse> {
+    return this.validatedRequest("sidebar/setPinned", { ...request }, isSidebarPinsResponse);
   }
 
   createProject(
@@ -1249,6 +1261,10 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "sidebar/pinsChanged") {
+    return hasOnlyKeys(params, ["eventId"])
+      && Number.isSafeInteger(params.eventId) && Number(params.eventId) > 0;
+  }
   if (value.method === "workspace/changed") {
     return (
       hasOnlyKeys(params, ["sessionId", "paths"])

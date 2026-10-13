@@ -72,6 +72,8 @@ import type {
 
 export type Unsubscribe = () => void;
 
+import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js";
+
 export interface EidosRuntimeAPI {
   backupMemory(): Promise<void>;
   memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]>;
@@ -126,6 +128,8 @@ export interface EidosRuntimeAPI {
   onTerminalExit(callback: (event: TerminalExitEvent) => void): Unsubscribe;
 
   // Sessions
+  listSidebarPins(): Promise<SidebarPinsResponse>;
+  setSidebarPinned(request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse>;
   createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
   listProjects(): Promise<ProjectListResult>;
   deleteProject(projectId: string): Promise<DeleteProjectResult>;

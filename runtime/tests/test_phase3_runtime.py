@@ -19,6 +19,7 @@ from eidos_runtime.runtime.loop import RuntimeEngine  # noqa: E402
 from eidos_runtime.runtime.loop import ApprovalDecision  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
+from eidos_runtime.workspace.projectless import projectless_root  # noqa: E402
 
 
 class _StatusRecordingModel(ScriptedModel):
@@ -579,7 +580,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="eidos-p3-projectless-resources-") as directory:
             root = Path(directory)
             data = root / "data"
-            chat_root = data / ".data-projectless" / "chat-root"
+            chat_root = projectless_root() / "2026-10-13" / "chat-root"
             source = root / "plugin"
             data.mkdir(mode=0o700)
             chat_root.mkdir(parents=True)

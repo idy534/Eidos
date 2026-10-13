@@ -5,6 +5,7 @@ import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/index.js";
 import type { EidosRuntimeAPI, Unsubscribe } from "../shared/ipc-api.js";
+import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
 import type {
   RuntimeStatus,
   RuntimeHealth,
@@ -151,6 +152,9 @@ const api: EidosRuntimeAPI = {
   },
 
   // Sessions
+  listSidebarPins: (): Promise<SidebarPinsResponse> => ipcRenderer.invoke(IPC.SIDEBAR_LIST_PINS),
+  setSidebarPinned: (request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse> =>
+    ipcRenderer.invoke(IPC.SIDEBAR_SET_PINNED, request),
   createProject: (name: string | undefined, workspaceRoot: string): Promise<Project> =>
     ipcRenderer.invoke(IPC.PROJECT_CREATE, name, workspaceRoot),
   listProjects: (): Promise<ProjectListResult> => ipcRenderer.invoke(IPC.PROJECT_LIST),

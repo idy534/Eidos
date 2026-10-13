@@ -825,9 +825,12 @@ class SessionRepository(Repository):
                 "DELETE FROM session_handoff_operations WHERE session_id = ?",
                 (session_id,),
             )
+            from eidos_runtime.persistence.sidebar import remove_sidebar_pin
+
+            pin_events = remove_sidebar_pin(connection, "session", session_id)
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return CommittedMutation(
-                DeletedSession(deleted_session_id=session_id), ()
+                DeletedSession(deleted_session_id=session_id), pin_events
             )
 
         if transaction_connection is not None:

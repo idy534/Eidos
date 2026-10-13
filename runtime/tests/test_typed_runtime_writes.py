@@ -7,6 +7,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.run import Run, RunStatus
 from eidos_runtime.domain.session import DeletedSession, Session
 from eidos_runtime.domain.tool import Approval, ApprovalStatus
+from eidos_runtime.workspace.projectless import projectless_root
 
 
 def _store(tmp_path: Path) -> SessionStore:
@@ -58,8 +59,7 @@ def test_typed_session_repository_can_persist_a_session_without_a_project(
 ) -> None:
     store = _store(tmp_path)
     try:
-        data = Path(store.data_directory)
-        workspace = data / f".{data.name}-projectless" / "chat-workspace"
+        workspace = projectless_root() / "2026-10-13" / "chat-workspace"
         workspace.mkdir(parents=True)
         repository = store.typed_runtime_repository()
         created = repository.create_session(str(workspace), projectless=True)

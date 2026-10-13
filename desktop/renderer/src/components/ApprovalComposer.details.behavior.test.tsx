@@ -52,8 +52,8 @@ describe("Approval decision details", () => {
   it("keeps unsandboxed warnings and escalation reasons outside collapsed details", () => {
     show({ ...command, executionMode: "unsandboxed", escalationReason: "系统沙盒无法启动" });
     const warning = screen.getByRole("note");
-    expect(warning).toHaveTextContent("命令将使用当前 macOS 用户的权限");
-    expect(warning).toHaveTextContent("工作区外的文件和网络");
+    expect(warning).toHaveTextContent("命令将在沙盒外执行，可访问外部文件和网络。");
+    expect(warning).toHaveTextContent("外部文件和网络");
     expect(warning.closest("details")).toBeNull();
     expect(screen.getByText("系统沙盒无法启动")).toBeVisible();
   });
@@ -74,7 +74,7 @@ describe("Approval decision details", () => {
       additionalFileSystemAccess: [{ path: "/outside/a.txt", access: "write", recursive: false }],
     });
     expect(screen.getByText((_, element) => element?.tagName === "PRE" && element.textContent === diff)).toBeVisible();
-    expect(screen.getByRole("note")).toHaveTextContent("文件操作将在沙盒外执行");
+    expect(screen.getByRole("note")).toHaveTextContent("文件将在沙盒外写入，请确认变更范围。");
     expect(screen.getByText("写入 /outside/a.txt（仅此路径）")).toBeVisible();
   });
 

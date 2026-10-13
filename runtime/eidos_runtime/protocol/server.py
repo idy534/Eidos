@@ -32,6 +32,9 @@ from eidos_runtime.application.extensions import (
 )
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.projects import ProjectApplication
+from eidos_runtime.application.sidebar import SidebarApplication
+from eidos_runtime.persistence.sidebar import SidebarRepository
+from eidos_runtime.protocol import sidebar as sidebar_dtos
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
 from eidos_runtime.application.repository import (
     RepositoryApplicationFactory,
@@ -516,6 +519,7 @@ class _DeferredGitObserveAdapter:
 
 @dataclass(frozen=True)
 class _RuntimeApplications:
+    sidebar: SidebarApplication
     projects: ProjectApplication
     sessions: SessionApplication
     runs: RunApplication
@@ -778,6 +782,18 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            (
+                "sidebar/listPins",
+                sidebar_dtos.SidebarListPinsRequest,
+                sidebar_dtos.SidebarPinsResponse,
+                lambda _id, request: self._applications_or_error().sidebar.list_pins(request),
+            ),
+            (
+                "sidebar/setPinned",
+                sidebar_dtos.SidebarSetPinnedRequest,
+                sidebar_dtos.SidebarPinsResponse,
+                lambda _id, request: self._applications_or_error().sidebar.set_pinned(request),
+            ),
             (
                 "project/list",
                 method_dtos.ProjectListRequestDto,
@@ -1298,6 +1314,7 @@ class RuntimeServer:
             ),
         )
         draining_blocked = {
+            "sidebar/setPinned",
             "run/start",
             "input/prepare",
             "input/draftWrite",
@@ -1472,6 +1489,7 @@ class RuntimeServer:
             repository_runtime=self.repository_runtime,
         )
         return _RuntimeApplications(
+            sidebar=SidebarApplication(SidebarRepository(self.store.database), self.supervisor.events),
             projects=ProjectApplication(
                 self.worktree_manager.repository,
                 lifecycle=session_lifecycle,

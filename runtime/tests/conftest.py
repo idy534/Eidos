@@ -79,6 +79,7 @@ INTEGRATION_FILES = frozenset(
         "test_shell.py",
         "test_storage_compatibility.py",
         "test_storage_schema.py",
+        "test_sidebar_pins.py",
         "test_tool_execution.py",
         "test_tool_orchestrator.py",
         "test_worktree_lifecycle.py",

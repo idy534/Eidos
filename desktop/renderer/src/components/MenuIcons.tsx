@@ -13,6 +13,14 @@ const defaultIconProps: IconProps = {
   className: "menu-item-icon-svg",
 };
 
+export function PinIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="m6 2 5 0-1 4 2 3H4l2-3V2ZM8 9v5" />
+    </svg>
+  );
+}
+
 /**
  * macOS Finder icon (or Folder open in Finder)
  */

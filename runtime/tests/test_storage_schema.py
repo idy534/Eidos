@@ -85,6 +85,7 @@ EXPECTED_TABLES = {
     "run_revisions",
     "review_comments",
     "projects",
+    "sidebar_pins",
     "worktrees",
     "worktree_lifecycle_operations",
     "session_handoff_operations",
@@ -472,6 +473,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_async_operation_per_operation_id",
                 "one_pending_outbox_delivery_per_event",
                 "checkpoints_run_boundary",
+                "sidebar_pins_event_revision",
                 "run_revisions_source",
                 "review_comments_session_path",
                 "worktrees_project_state",
@@ -540,8 +542,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 24)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 23)
+        self.assertEqual(SCHEMA_VERSION, 25)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 24)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

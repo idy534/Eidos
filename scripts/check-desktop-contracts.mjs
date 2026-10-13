@@ -447,8 +447,8 @@ if (appShellText) {
     sf,
     (node) => ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "topError",
   )[0];
-  if (!topError || topError.initializer?.getText(sf) !== "sessionState.error ?? runState.error") {
-    errors.push("AppShell.tsx AST error: topError must only combine Session and Run errors");
+  if (!topError || topError.initializer?.getText(sf) !== "sessionState.error ?? sidebarPins.error ?? runState.error") {
+    errors.push("AppShell.tsx AST error: topError must only combine Session, sidebar and Run errors");
   }
   const jsxAttributes = descendants(sf, ts.isJsxAttribute);
   const hasAttribute = (name, expression) => jsxAttributes.some((attribute) => (
@@ -561,6 +561,8 @@ if (contractsText) {
     "onTerminalExit",
     "listSessions",
     "listProjects",
+    "listSidebarPins",
+    "setSidebarPinned",
     "readSession",
     "listEvents",
     "createSession",

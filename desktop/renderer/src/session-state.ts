@@ -22,6 +22,47 @@ export interface ProjectSessionGroup {
   sessions: Session[];
 }
 
+export type PinnedSidebarEntry =
+  | { kind: "project"; project: ProjectSessionGroup }
+  | { kind: "session"; session: Session; project: ProjectSessionGroup };
+
+export function sidebarTargetKey(target: import("../../shared/sidebar.js").SidebarTarget): string {
+  return `${target.kind}:${target.id}`;
+}
+
+/** Pin references change placement; the original Project/Session facts stay intact. */
+export function projectSidebarGroups(
+  groups: ProjectSessionGroup[],
+  pins: readonly import("../../shared/sidebar.js").SidebarTarget[],
+): { pinned: PinnedSidebarEntry[]; projects: ProjectSessionGroup[] } {
+  const pinnedProjects = new Set(pins.filter((pin) => pin.kind === "project").map((pin) => pin.id));
+  const pinnedSessions = new Set(pins.filter((pin) => pin.kind === "session").map((pin) => pin.id));
+  const projectById = new Map(groups.filter((group) => group.projectId).map((group) => [group.projectId, group]));
+  const sessionById = new Map(groups.flatMap((project) => project.sessions.map((session) => [session.id, { project, session }] as const)));
+  const filterSessions = (group: ProjectSessionGroup): ProjectSessionGroup => ({
+    ...group, sessions: group.sessions.filter((session) => !pinnedSessions.has(session.id)),
+  });
+  const pinned: PinnedSidebarEntry[] = [];
+  const seen = new Set<string>();
+  for (const pin of pins) {
+    const key = `${pin.kind}:${pin.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (pin.kind === "project") {
+      const group = projectById.get(pin.id);
+      if (group && !group.projectless) pinned.push({ kind: "project", project: filterSessions(group) });
+    } else {
+      const entry = sessionById.get(pin.id);
+      if (entry) pinned.push({ kind: "session", ...entry });
+    }
+  }
+  return {
+    pinned,
+    projects: groups.filter((group) => group.projectless || !pinnedProjects.has(group.projectId ?? ""))
+      .map(filterSessions).filter((group) => !group.projectless || group.sessions.length > 0),
+  };
+}
+
 export interface TaskStatusPresentation {
   label: string;
   tone: "success" | "progress" | "error";
@@ -198,7 +239,7 @@ export function applyNotification(
   snapshot: SessionSnapshot | undefined,
   notification: RuntimeNotification,
 ): SessionSnapshot | undefined {
-  if (!snapshot || notification.params.sessionId !== snapshot.session.id) {
+  if (!snapshot || !("sessionId" in notification.params) || notification.params.sessionId !== snapshot.session.id) {
     return snapshot;
   }
   if (notification.method === "session/titleUpdated") {
@@ -354,6 +395,8 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   WORKTREE_DELETE_FAILED: "任务的 Worktree 删除失败，请查看 Runtime 日志后重试。",
   SESSION_PERSISTENCE_FAILED: "任务状态写入失败。Worktree 已保留或可安全重试。",
   PROJECT_HAS_SESSIONS: "项目下还有任务，请先删除任务后再删除项目。",
+  SIDEBAR_PIN_LIMIT_REACHED: "置顶数量已达到上限，请先取消部分置顶。",
+  SIDEBAR_PERSISTENCE_FAILED: "置顶保存失败，请重试。",
   PROJECT_WORKTREE_RECOVERY_REQUIRED: "项目的 Managed Worktree 仍需恢复，暂时不能删除项目。",
   PROJECT_PERSISTENCE_FAILED: "项目状态写入失败，请查看 Runtime 日志。",
   MODEL_NOT_AVAILABLE: "所选模型当前不可用，请重新选择。",

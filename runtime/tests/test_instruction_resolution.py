@@ -17,6 +17,7 @@ sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
+from eidos_runtime.workspace.projectless import projectless_root  # noqa: E402
 from eidos_runtime.extensions.skills import RetainedContextSection  # noqa: E402
 from eidos_runtime.model.instructions import InstructionResolver  # noqa: E402
 from eidos_runtime.model.prompts import (  # noqa: E402
@@ -317,10 +318,10 @@ class ContextBuilderInstructionTests(unittest.TestCase):
         ).value
         project_run, _ = self.store.create_run(project_session.id, "Project request")
 
-        projectless_root = self.data / f".{self.data.name}-projectless" / "chat-root"
-        projectless_root.mkdir(parents=True)
+        projectless_workspace = projectless_root() / "2026-10-13" / "chat-root"
+        projectless_workspace.mkdir(parents=True)
         projectless_session = self.store.typed_runtime_repository().create_session(
-            str(projectless_root), projectless=True
+            str(projectless_workspace), projectless=True
         ).value
         projectless_run, _ = self.store.create_run(
             projectless_session.id, "Projectless request"

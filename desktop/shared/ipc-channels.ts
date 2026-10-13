@@ -36,6 +36,8 @@ export const IPC = {
   TERMINAL_EXIT_EVENT: "terminal:exit",
 
   // Session
+  SIDEBAR_LIST_PINS: "sidebar:list-pins",
+  SIDEBAR_SET_PINNED: "sidebar:set-pinned",
   PROJECT_CREATE: "project:create",
   PROJECT_LIST: "project:list",
   PROJECT_DELETE: "project:delete",

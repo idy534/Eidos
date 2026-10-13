@@ -7,7 +7,7 @@ import zipfile
 import pytest
 
 from eidos_runtime.db.agent_roles_migration import migrate_agent_roles
-from eidos_runtime.db.schema import V20_SCHEMA_SQL
+from eidos_runtime.db.schema import SCHEMA_VERSION, V20_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
 
 
@@ -100,7 +100,7 @@ def test_database_startup_upgrades_v20_and_keeps_existing_agent_roles(tmp_path) 
     store.initialize()
     try:
         assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 22
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert store.connection.execute("SELECT role FROM agent_delegations ORDER BY role").fetchall()[0][0] == "explorer"
         assert store.connection.execute("SELECT status FROM runs WHERE id='parent-run'").fetchone()[0] == "waiting_agents"
         assert store.connection.execute("SELECT status FROM agent_waits").fetchone()[0] == "pending"

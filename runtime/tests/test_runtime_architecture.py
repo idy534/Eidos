@@ -16,6 +16,7 @@ RUNTIME_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME_ROOT))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
+from eidos_runtime.workspace.projectless import projectless_root  # noqa: E402
 from eidos_runtime.model.client import (  # noqa: E402
     ModelRequestError,
     ModelRequestFailure,
@@ -336,11 +337,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
         from eidos_runtime.runtime.run_resources import RunResources
 
         with self.runtime() as (store, _session, _workspace):
-            chat_root = (
-                Path(store.data_directory)
-                / f".{Path(store.data_directory).name}-projectless"
-                / "chat-root"
-            )
+            chat_root = projectless_root() / "2026-10-13" / "chat-root"
             chat_root.mkdir(parents=True)
             chat = store.typed_runtime_repository().create_session(
                 str(chat_root), projectless=True
@@ -378,11 +375,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
                 raise AssertionError("projectless runs must not build a repository index")
 
         with self.runtime() as (store, _session, _workspace):
-            chat_root = (
-                Path(store.data_directory)
-                / f".{Path(store.data_directory).name}-projectless"
-                / "chat-root"
-            )
+            chat_root = projectless_root() / "2026-10-13" / "chat-root"
             chat_root.mkdir(parents=True)
             chat = store.typed_runtime_repository().create_session(
                 str(chat_root), projectless=True

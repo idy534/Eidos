@@ -22,6 +22,7 @@ from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.input_context import DraftResponse
 from eidos_runtime.protocol.planning import PlanResponse
 from eidos_runtime.protocol.server import RuntimeServer
+from eidos_runtime.protocol.sidebar import SidebarPinsResponse
 
 
 class Params(RootModel[dict[str, object]]):
@@ -204,7 +205,14 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         response_type
         for response_type, count in response_type_counts.items()
         if count > 1
-    } == {CollaborationState, DraftResponse, PlanResponse, MemoryState, MemoryActionResult}
+    } == {
+        CollaborationState,
+        DraftResponse,
+        PlanResponse,
+        MemoryState,
+        MemoryActionResult,
+        SidebarPinsResponse,
+    }
     assert all(
         not registration.response_type.__pydantic_root_model__
         for registration in server.method_registry

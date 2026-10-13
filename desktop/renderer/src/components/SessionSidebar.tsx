@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project, Session, SessionGitStatus } from "../contracts.js";
 import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.js";
-import { groupSessionsByProject, taskStatusPresentation } from "../session-state.js";
+import { groupSessionsByProject, projectSidebarGroups, sidebarTargetKey, taskStatusPresentation } from "../session-state.js";
+import type { SidebarTarget } from "../../../shared/sidebar.js";
 import { ContextMenu } from "./DropdownMenu.js";
-import { FinderIcon, EditIcon, TrashIcon } from "./MenuIcons.js";
+import { FinderIcon, EditIcon, TrashIcon, PinIcon } from "./MenuIcons.js";
 import { EidosMark } from "./EidosMark.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
 import { SidebarTooltip, type SidebarTooltipState, type SidebarTooltipTarget } from "./SidebarTooltip.js";
@@ -37,6 +38,10 @@ interface Props {
   collapsed?: boolean;
   sessions: Session[];
   projects: Project[];
+  pins?: readonly SidebarTarget[];
+  pinningDisabled?: boolean;
+  pendingPinTargets?: ReadonlySet<string>;
+  onSetPinned?: (target: SidebarTarget, pinned: boolean) => void;
   selectedId: string | undefined;
   disabled: boolean;
   readCompletedSessions: ReadonlySet<string>;
@@ -76,6 +81,7 @@ type ContextMenuState =
 export function SessionSidebar({
   collapsed = false,
   sessions, projects: catalogProjects, selectedId, disabled, readCompletedSessions,
+  pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
   navigationSlot,
@@ -84,6 +90,7 @@ export function SessionSidebar({
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
   );
   const projects = groupSessionsByProject(visibleSessions, catalogProjects);
+  const sidebar = projectSidebarGroups(projects, pins);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(loadCollapsedProjects);
   const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
@@ -93,6 +100,36 @@ export function SessionSidebar({
   const isHoveringTriggerRef = useRef(false);
   const isHoveringTooltipRef = useRef(false);
   const navRef = useRef<HTMLElement | null>(null);
+  const pinFocusRef = useRef<{ target: SidebarTarget; pinned: boolean; element: HTMLElement | null; started: boolean } | null>(null);
+
+  const requestPin = (target: SidebarTarget, element?: HTMLElement | null) => {
+    const pinned = !pins.some((pin) => sidebarTargetKey(pin) === sidebarTargetKey(target));
+    pinFocusRef.current = { target, pinned, element: element ?? null, started: false };
+    setContextMenu(undefined);
+    onSetPinned?.(target, pinned);
+  };
+
+  useEffect(() => {
+    const request = pinFocusRef.current;
+    if (!request) return;
+    if (pendingPinTargets?.has(sidebarTargetKey(request.target))) request.started = true;
+    const confirmed = pins.some((pin) => sidebarTargetKey(pin) === sidebarTargetKey(request.target)) === request.pinned;
+    if (!confirmed) {
+      if (request.started && !pendingPinTargets?.has(sidebarTargetKey(request.target))) pinFocusRef.current = null;
+      return;
+    }
+    pinFocusRef.current = null;
+    if (document.activeElement !== document.body && document.activeElement !== request.element) return;
+    const selector = request.target.kind === "session" ? "[data-session-id]" : "[data-project-id]";
+    const row = [...(navRef.current?.querySelectorAll<HTMLElement>(selector) ?? [])].find((element) => (
+      request.target.kind === "session" ? element.dataset.sessionId : element.dataset.projectId
+    ) === request.target.id);
+    const hiddenInProject = row?.closest(".workspace-collapse")?.getAttribute("aria-hidden") === "true";
+    const focusTarget = hiddenInProject
+      ? row?.closest(".workspace-group")?.querySelector<HTMLElement>(".workspace-toggle")
+      : row?.querySelector<HTMLElement>(request.target.kind === "session" ? "button" : ".workspace-toggle");
+    focusTarget?.focus({ preventScroll: true });
+  }, [pins, pendingPinTargets]);
 
   const dismissTooltipImmediately = useCallback(() => {
     if (enterTimeoutRef.current) {
@@ -200,6 +237,7 @@ export function SessionSidebar({
   useEffect(() => {
     if (selectedId && selectedId !== prevSelectedIdRef.current) {
       prevSelectedIdRef.current = selectedId;
+      if (pins.some((pin) => pin.kind === "session" && pin.id === selectedId)) return;
       const activeProject = projects.find((project) =>
         project.sessions.some((session) => session.id === selectedId),
       );
@@ -215,17 +253,17 @@ export function SessionSidebar({
     } else {
       prevSelectedIdRef.current = selectedId;
     }
-  }, [selectedId, projects, collapsedProjects]);
+  }, [selectedId, projects, collapsedProjects, pins]);
 
+  // Only session navigation requests a reveal. Project browsing keeps its scroll position.
   useEffect(() => {
     if (!selectedId) return;
 
     const scrollToSelected = () => {
       const container = navRef.current;
-      const activeElement = document.querySelector<HTMLElement>(
-        `.session-item button.selected, [data-session-id="${selectedId}"] button`
-      );
+      const activeElement = container?.querySelector<HTMLElement>(".session-item button.selected");
       if (!activeElement || !container) return;
+      if (activeElement.closest<HTMLElement>("[data-session-id]")?.dataset.sessionId !== selectedId) return;
 
       const elemRect = activeElement.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
@@ -258,7 +296,7 @@ export function SessionSidebar({
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
-  }, [selectedId, collapsedProjects]);
+  }, [selectedId]);
 
   useEffect(() => {
     if (contextMenu) {
@@ -314,6 +352,209 @@ export function SessionSidebar({
     };
   }, []);
 
+  const renderSessionList = (project: ProjectSessionGroup, isExpanded: boolean, emptyLabel = "暂无会话") => (
+    <ProjectSessionList
+      project={project}
+      isExpanded={isExpanded}
+      emptyLabel={emptyLabel}
+      selectedId={selectedId}
+      disabled={disabled}
+      readCompletedSessions={readCompletedSessions}
+      isSelectingSessionId={isSelectingSessionId}
+      gitStatusBySessionId={gitStatusBySessionId}
+      onSelect={(session) => {
+        dismissTooltipImmediately();
+        onSelect(session);
+      }}
+      onHoverSession={(session, projectDisplayName, element, statusLabel, statusTone) => {
+        const isProjectless = project.projectless || session.projectless === true;
+        handleTriggerEnter(
+          {
+            kind: "session",
+            session,
+            projectDisplayName: isProjectless ? undefined : projectDisplayName,
+            projectless: isProjectless,
+            statusLabel,
+            statusTone,
+          },
+          element,
+        );
+      }}
+      onLeaveSession={handleTriggerLeave}
+      onDismissContextMenu={() => setContextMenu(undefined)}
+      onOpenSessionContextMenu={(session, coords, element) => {
+        dismissTooltipImmediately();
+        setContextMenu({
+          kind: "session",
+          session,
+          x: coords.x,
+          y: coords.y,
+          element,
+        });
+      }}
+    />
+  );
+
+  const renderProject = (project: ProjectSessionGroup) => {
+    const isExpanded = !collapsedProjects.has(project.key);
+    return (
+      <li key={project.key}>
+        <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName} data-project-id={project.projectId}>
+          <div className={`workspace-title-row${project.projectless ? " workspace-title-row--recent" : ""}`}>
+            {project.projectless ? (
+              <button
+                className="workspace-toggle workspace-toggle--recent"
+                aria-expanded={isExpanded}
+                onClick={() => {
+                  dismissTooltipImmediately();
+                  toggleProject(project.key);
+                }}
+                onMouseEnter={(e) =>
+                  handleTriggerEnter(
+                    {
+                      kind: "project",
+                      projectName: project.displayName,
+                      workspaceRoot: project.workspaceRoot,
+                      projectless: true,
+                    },
+                    e.currentTarget,
+                  )
+                }
+                onMouseLeave={handleTriggerLeave}
+                onFocus={(e) =>
+                  handleTriggerEnter(
+                    {
+                      kind: "project",
+                      projectName: project.displayName,
+                      workspaceRoot: project.workspaceRoot,
+                      projectless: true,
+                    },
+                    e.currentTarget,
+                  )
+                }
+                onBlur={handleTriggerLeave}
+              >
+                <span className="workspace-name">{project.displayName}</span>
+                <ChevronIcon open={isExpanded} />
+              </button>
+            ) : (
+              <button
+                className="workspace-toggle"
+                aria-expanded={isExpanded}
+                aria-haspopup={project.project ? "menu" : undefined}
+                onClick={() => {
+                  dismissTooltipImmediately();
+                  toggleProject(project.key);
+                }}
+                onMouseEnter={(e) => {
+                  const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
+                  handleTriggerEnter(
+                    {
+                      kind: "project",
+                      projectName: project.displayName,
+                      workspaceRoot: project.workspaceRoot,
+                      projectless: false,
+                    },
+                    rowElement,
+                  );
+                }}
+                onMouseLeave={handleTriggerLeave}
+                onFocus={(e) => {
+                  const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
+                  handleTriggerEnter(
+                    {
+                      kind: "project",
+                      projectName: project.displayName,
+                      workspaceRoot: project.workspaceRoot,
+                      projectless: false,
+                    },
+                    rowElement,
+                  );
+                }}
+                onBlur={handleTriggerLeave}
+                onContextMenu={(event) => {
+                  dismissTooltipImmediately();
+                  if (!project.project) return;
+                  event.preventDefault();
+                  const hasSessions = project.sessions.length > 0
+                    || sessions.some((session) => session.project?.id === project.project?.id);
+                  setContextMenu({
+                    kind: "project",
+                    project: project.project,
+                    hasSessions,
+                    x: event.clientX,
+                    y: event.clientY,
+                    element: event.currentTarget,
+                  });
+                }}
+                onKeyDown={(event) => {
+                  if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                    return;
+                  }
+                  dismissTooltipImmediately();
+                  event.preventDefault();
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  const hasSessions = project.sessions.length > 0
+                    || sessions.some((session) => session.project?.id === project.project?.id);
+                  setContextMenu({
+                    kind: "project",
+                    project: project.project,
+                    hasSessions,
+                    x: bounds.left,
+                    y: bounds.bottom,
+                    element: event.currentTarget,
+                  });
+                }}
+              >
+                <FolderIcon open={isExpanded} />
+                <span className="workspace-name">{project.displayName}</span>
+              </button>
+            )}
+            {!project.projectless && (
+              <button
+                className="workspace-add"
+                aria-label={`在 ${project.displayName} 中新建会话`}
+                disabled={disabled}
+                onClick={() => {
+                  dismissTooltipImmediately();
+                  setCollapsedProjects((current) => {
+                    const next = new Set(current);
+                    next.delete(project.key);
+                    saveCollapsedProjects(next);
+                    return next;
+                  });
+                  onCreateInProject(project.workspaceRoot);
+                }}
+                onMouseEnter={(e) => {
+                  const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
+                  handleTriggerEnter(
+                    {
+                      kind: "project",
+                      projectName: project.displayName,
+                      workspaceRoot: project.workspaceRoot,
+                      projectless: false,
+                    },
+                    rowElement,
+                  );
+                }}
+                onMouseLeave={handleTriggerLeave}
+              >＋</button>
+            )}
+          </div>
+          <div
+            className={`workspace-collapse ${isExpanded ? "workspace-collapse--expanded" : ""}`}
+            aria-hidden={!isExpanded}
+            style={{ visibility: isExpanded ? "visible" : "hidden" }}
+          >
+            <div className="workspace-collapse-inner">
+              {renderSessionList(project, isExpanded, project.sessions.length === 0 && projects.some((group) => group.key === project.key && group.sessions.length > 0) ? "会话已置顶" : "暂无会话")}
+            </div>
+          </div>
+        </section>
+      </li>
+    );
+  };
+
   // Dot CSS class derived from real RuntimePresentation tone
   const dotClass = `runtime-pulse-dot runtime-pulse-dot--${runtimePresentation.tone}${runtimePresentation.animated ? " runtime-pulse-dot--animated" : ""}`;
 
@@ -340,209 +581,29 @@ export function SessionSidebar({
         }}
       />
       <nav ref={navRef} aria-label="项目与最近" onScroll={dismissTooltipImmediately}>
-        <p className="nav-label">项目</p>
-        {projects.length === 0 ? (
-          <p className="nav-empty">还没有任务，点击上方按键创建</p>
-        ) : (
-          <ul className="workspace-list">
-            {projects.map((project) => {
-              const isExpanded = !collapsedProjects.has(project.key);
-              return (
-                <li key={project.key}>
-                  <section className={`workspace-group${project.projectless ? " workspace-group--recent" : ""}`} aria-label={project.displayName}>
-                    <div className={`workspace-title-row${project.projectless ? " workspace-title-row--recent" : ""}`}>
-                      {project.projectless ? (
-                        <button
-                          className="workspace-toggle workspace-toggle--recent"
-                          aria-expanded={isExpanded}
-                          onClick={() => {
-                            dismissTooltipImmediately();
-                            toggleProject(project.key);
-                          }}
-                          onMouseEnter={(e) =>
-                            handleTriggerEnter(
-                              {
-                                kind: "project",
-                                projectName: project.displayName,
-                                workspaceRoot: project.workspaceRoot,
-                                projectless: true,
-                              },
-                              e.currentTarget,
-                            )
-                          }
-                          onMouseLeave={handleTriggerLeave}
-                          onFocus={(e) =>
-                            handleTriggerEnter(
-                              {
-                                kind: "project",
-                                projectName: project.displayName,
-                                workspaceRoot: project.workspaceRoot,
-                                projectless: true,
-                              },
-                              e.currentTarget,
-                            )
-                          }
-                          onBlur={handleTriggerLeave}
-                        >
-                          <span className="workspace-name">{project.displayName}</span>
-                          <ChevronIcon open={isExpanded} />
-                        </button>
-                      ) : (
-                        <button
-                          className="workspace-toggle"
-                          aria-expanded={isExpanded}
-                          aria-haspopup={project.project ? "menu" : undefined}
-                          onClick={() => {
-                            dismissTooltipImmediately();
-                            toggleProject(project.key);
-                          }}
-                          onMouseEnter={(e) => {
-                            const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
-                            handleTriggerEnter(
-                              {
-                                kind: "project",
-                                projectName: project.displayName,
-                                workspaceRoot: project.workspaceRoot,
-                                projectless: false,
-                              },
-                              rowElement,
-                            );
-                          }}
-                          onMouseLeave={handleTriggerLeave}
-                          onFocus={(e) => {
-                            const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
-                            handleTriggerEnter(
-                              {
-                                kind: "project",
-                                projectName: project.displayName,
-                                workspaceRoot: project.workspaceRoot,
-                                projectless: false,
-                              },
-                              rowElement,
-                            );
-                          }}
-                          onBlur={handleTriggerLeave}
-                          onContextMenu={(event) => {
-                            dismissTooltipImmediately();
-                            if (!project.project) return;
-                            event.preventDefault();
-                            const hasSessions = project.sessions.length > 0
-                              || sessions.some((session) => session.project?.id === project.project?.id);
-                            setContextMenu({
-                              kind: "project",
-                              project: project.project,
-                              hasSessions,
-                              x: event.clientX,
-                              y: event.clientY,
-                              element: event.currentTarget,
-                            });
-                          }}
-                          onKeyDown={(event) => {
-                            if (!project.project || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
-                              return;
-                            }
-                            dismissTooltipImmediately();
-                            event.preventDefault();
-                            const bounds = event.currentTarget.getBoundingClientRect();
-                            const hasSessions = project.sessions.length > 0
-                              || sessions.some((session) => session.project?.id === project.project?.id);
-                            setContextMenu({
-                              kind: "project",
-                              project: project.project,
-                              hasSessions,
-                              x: bounds.left,
-                              y: bounds.bottom,
-                              element: event.currentTarget,
-                            });
-                          }}
-                        >
-                          <FolderIcon open={isExpanded} />
-                          <span className="workspace-name">{project.displayName}</span>
-                        </button>
-                      )}
-                      {!project.projectless && (
-                        <button
-                          className="workspace-add"
-                          aria-label={`在 ${project.displayName} 中新建会话`}
-                          disabled={disabled}
-                          onClick={() => {
-                            dismissTooltipImmediately();
-                            setCollapsedProjects((current) => {
-                              const next = new Set(current);
-                              next.delete(project.key);
-                              saveCollapsedProjects(next);
-                              return next;
-                            });
-                            onCreateInProject(project.workspaceRoot);
-                          }}
-                          onMouseEnter={(e) => {
-                            const rowElement = (e.currentTarget.closest(".workspace-title-row") as HTMLElement) ?? e.currentTarget;
-                            handleTriggerEnter(
-                              {
-                                kind: "project",
-                                projectName: project.displayName,
-                                workspaceRoot: project.workspaceRoot,
-                                projectless: false,
-                              },
-                              rowElement,
-                            );
-                          }}
-                          onMouseLeave={handleTriggerLeave}
-                        >＋</button>
-                      )}
-                    </div>
-                    <div
-                      className={`workspace-collapse ${isExpanded ? "workspace-collapse--expanded" : ""}`}
-                      aria-hidden={!isExpanded}
-                      style={{ visibility: isExpanded ? "visible" : "hidden" }}
-                    >
-                      <div className="workspace-collapse-inner">
-                        <ProjectSessionList
-                          project={project}
-                          isExpanded={isExpanded}
-                          selectedId={selectedId}
-                          disabled={disabled}
-                          readCompletedSessions={readCompletedSessions}
-                          isSelectingSessionId={isSelectingSessionId}
-                          gitStatusBySessionId={gitStatusBySessionId}
-                          onSelect={(session) => {
-                            dismissTooltipImmediately();
-                            onSelect(session);
-                          }}
-                          onHoverSession={(session, projectDisplayName, element, statusLabel, statusTone) => {
-                            const isProjectless = project.projectless || session.projectless === true;
-                            handleTriggerEnter(
-                              {
-                                kind: "session",
-                                session,
-                                projectDisplayName: isProjectless ? undefined : projectDisplayName,
-                                projectless: isProjectless,
-                                statusLabel,
-                                statusTone,
-                              },
-                              element,
-                            );
-                          }}
-                          onLeaveSession={handleTriggerLeave}
-                          onDismissContextMenu={() => setContextMenu(undefined)}
-                          onOpenSessionContextMenu={(session, coords, element) => {
-                            dismissTooltipImmediately();
-                            setContextMenu({
-                              kind: "session",
-                              session,
-                              x: coords.x,
-                              y: coords.y,
-                              element,
-                            });
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </section>
-                </li>
-              );
-            })}
-          </ul>
+        {sidebar.pinned.length > 0 && (
+          <section className="sidebar-pinned" aria-label="置顶">
+            <p className="nav-label">置顶</p>
+            <ul className="workspace-list">
+              {sidebar.pinned.map((entry) => entry.kind === "project"
+                ? renderProject(entry.project)
+                : <li key={`session:${entry.session.id}`} className="sidebar-pinned-session">
+                    {renderSessionList({ ...entry.project, sessions: [entry.session] }, true)}
+                  </li>)}
+            </ul>
+          </section>
+        )}
+        {(sidebar.projects.length > 0 || sidebar.pinned.length === 0) && (
+          <>
+            <p className="nav-label">项目</p>
+            {projects.length === 0 ? (
+              <p className="nav-empty">还没有任务，点击上方按键创建</p>
+            ) : (
+              <ul className="workspace-list">
+                {sidebar.projects.map(renderProject)}
+              </ul>
+            )}
+          </>
         )}
       </nav>
       <div className="sidebar-footer">
@@ -566,6 +627,17 @@ export function SessionSidebar({
           restoreFocusElement={contextMenu.element}
           onClose={() => setContextMenu(undefined)}
           items={[
+            {
+              key: "pin",
+              label: pins.some((pin) => pin.kind === "session" && pin.id === contextMenu.session.id) ? "取消置顶" : "置顶",
+              icon: <PinIcon />,
+              disabled: pinningDisabled || !onSetPinned || contextMenu.session.id.startsWith("draft-")
+                || pendingPinTargets?.has(sidebarTargetKey({ kind: "session", id: contextMenu.session.id })) === true,
+              onClick: () => {
+                const target: SidebarTarget = { kind: "session", id: contextMenu.session.id };
+                requestPin(target, contextMenu.element);
+              },
+            },
             {
               key: "rename",
               label: "编辑标题",
@@ -597,6 +669,17 @@ export function SessionSidebar({
           restoreFocusElement={contextMenu.element}
           onClose={() => setContextMenu(undefined)}
           items={[
+            {
+              key: "pin",
+              label: pins.some((pin) => pin.kind === "project" && pin.id === contextMenu.project.id) ? "取消置顶" : "置顶",
+              icon: <PinIcon />,
+              disabled: pinningDisabled || !onSetPinned
+                || pendingPinTargets?.has(sidebarTargetKey({ kind: "project", id: contextMenu.project.id })) === true,
+              onClick: () => {
+                const target: SidebarTarget = { kind: "project", id: contextMenu.project.id };
+                requestPin(target, contextMenu.element);
+              },
+            },
             {
               key: "show-in-finder",
               label: "在 Finder 中显示",
@@ -634,6 +717,7 @@ export const DEFAULT_VISIBLE_SESSION_COUNT = 6;
 interface ProjectSessionListProps {
   project: ProjectSessionGroup;
   isExpanded: boolean;
+  emptyLabel?: string;
   selectedId: string | undefined;
   disabled: boolean;
   readCompletedSessions: ReadonlySet<string>;
@@ -659,6 +743,7 @@ interface ProjectSessionListProps {
 function ProjectSessionList({
   project,
   isExpanded,
+  emptyLabel = "暂无会话",
   selectedId,
   disabled,
   readCompletedSessions,
@@ -681,7 +766,7 @@ function ProjectSessionList({
   }
 
   if (project.sessions.length === 0) {
-    return <p className="session-empty">暂无会话</p>;
+    return <p className="session-empty">{emptyLabel}</p>;
   }
 
   const hasMore = project.sessions.length > DEFAULT_VISIBLE_SESSION_COUNT;

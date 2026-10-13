@@ -1,5 +1,26 @@
 # Eidos 当前限制
 
+## 项目和 Session 置顶验证（2026-10-13）
+
+- 置顶功能已经接通右键菜单、typed IPC、Runtime 方法和 SQLite。项目与 Session 共用固定置顶顺序；首版不提供拖拽排序或排序设置。Runtime 最多保存 1000 个引用，未物化草稿和内部子会话不可置顶。
+- Runtime 定向测试覆盖置顶、幂等重试、标题与 Run 状态独立、重启、Outbox 重投、失败回滚、删除清理、内部子会话排除，以及 v24 → v25 和历史存储升级。置顶、Schema、Project 生命周期、Event/Operation、协议路由和 Run 终态测试通过 64 项；新增失败与子会话用例及受影响的 Worktree/Session 删除用例通过 20 项，33 项非删除用例未选择；存储布局测试通过 24 项。
+- Renderer 定向行为验证通过 68 项。置顶、侧栏和请求竞争的 33 项在最终焦点处理后再次通过。Session 分组、置顶投影和共享 DTO 纯测试通过 26 项。Main → 真实 Runtime 的定向测试确认混合置顶、无项目 Session、幂等、删除清理和重启恢复。Desktop 契约检查通过。
+- `pnpm test:sidebar-pinning` 通过。隔离的真实 Electron 页面覆盖项目右键、Session 的 Shift+F10、混合显示、唯一高亮、状态图标、移动后的键盘焦点、取消置顶、项目浏览滚动位置，以及 1100px 和 420px 的菜单边界。取消置顶到已折叠的项目时，焦点回到项目标题，项目保持折叠。页面沿用禁止 JavaScript eval 的 CSP，并使用测试 API。这个结果与 Main/Runtime 实联结果分别证明 UI 交互和持久化链路，不代表真实产品窗口的人工验收。
+- Main、Preload 和 Renderer 构建通过。Electron smoke 正常初始化 Runtime 并退出。Python Ruff、Deptry 和两份 Python 依赖审计通过；本次没有新增依赖或修改锁文件。Renderer 构建仍报告部分 Chunk 超过 500 kB。
+- 本次 `pnpm test` 全量通过：Runtime 2,382 项通过、2 项按配置排除；Desktop 合约 4 项、Renderer 纯状态 165 项、Main 83 项、Renderer 行为 521 项通过。`pnpm build`、`pnpm lint:python`、`pnpm deps:python` 和 `ruff check scripts/evaluate-memory-learning.py` 通过。Electron smoke 和 `pnpm test:sidebar-pinning` 在本机环境下通过；受限环境中的 Electron 进程会在启动时收到 `SIGABRT`。Renderer 构建仍报告部分 Chunk 超过 500 kB。本轮没有执行 Seatbelt 原生测试或打包测试，也没有新增依赖或修改锁文件。Desktop 与 Runtime 需要一同更新。旧 Runtime 不识别 Schema v25；回退旧代码时需要恢复升级前的数据库备份。
+
+## 项目选择器搜索框焦点样式修复（2026-10-13）
+
+- 项目选择器（`ProjectPicker`）搜索输入框在获取焦点时清除了公共控件样式带有的 `box-shadow`、`outline`、圆角和多余内边距，点击搜索项目时仅保留文字输入光标，不再出现外层高亮框。
+- 定向行为测试 `pnpm test:renderer-behavior ProjectPicker`（7 项）全部通过，包含新增的焦点边框与阴影移除断言。Renderer 构建通过。
+
+## 项目列表自动定位修复（2026-10-13）
+
+- Renderer 已把会话定位的触发条件与项目展开状态分开。用户展开、收起项目或刷新列表时，侧边栏不会重新滚到当前高亮会话。会话切换与输入引用查看其他会话仍使用原有定位链路。
+- SessionSidebar 与 InputContext 定向测试共 27 项通过。新增回归用例在修复前复现了项目展开状态变化导致的两次额外滚动，修复后覆盖其他项目与当前项目的展开、收起和列表刷新。
+- 隔离 Electron 页面使用真实 Renderer 组件与样式验证了 22 个项目的列表。展开其他项目的滚动偏移为 0；导航会展开折叠的目标项目，并在动画结束后让目标会话进入可见范围。导航后再次浏览其他项目也没有被拉回。
+- Renderer 类型检查与构建通过，构建仍有 Chunk 体积提示。Node 生产依赖审计报告 1 项低危漏洞，按 high 门槛退出码为 0。`git diff --check` 通过。本轮没有执行 Full Suite 或真实产品窗口的人工验收。测试不读取真实 Session 数据；本次没有修改协议、SQLite、依赖或锁文件。
+
 ## 滚动条透明与无边框修复（2026-10-13）
 
 - 公共滑块颜色变量已从错误的自引用恢复为有效 RGBA 颜色。Renderer 已统一使用自定义滚动条外观，并清除模块内会覆盖该外观的标准滚动条属性。标签栏隐藏滚动条与代码、Diff 的悬停滑块行为保留。

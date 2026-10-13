@@ -141,6 +141,8 @@ pnpm build
 
 `pnpm test:composer-layout` 使用真实 Electron、隔离的临时 user-data 和本地 Vite 测试页面。该定向测试检查输入框自动高度和历史记录滚动位置，不启动 Runtime，也不读取真实 Session 数据。测试记录包含代码块和图片，预览上下文随草稿编辑更新。测试覆盖单行输入、全选删除、等高编辑、多行删除、组合输入事件、窄窗口换行、窗口宽度变化和输入框内部滚动。该入口不属于完整测试套件。
 
+`pnpm test:sidebar-pinning` 使用真实 Electron、隔离的临时 user-data 和生产侧栏组件。该定向测试检查项目右键置顶、Session 的 Shift+F10 置顶、混合显示、取消置顶、唯一高亮、状态图标、项目浏览时的滚动位置，以及 1100px 和 420px 窗口中的菜单边界。测试页沿用禁止 JavaScript eval 的 CSP。该页面使用测试 API，不启动 Runtime，也不读取真实 Project 或 Session。Main → Runtime 持久化验证使用 `pnpm build:main` 后的 `node --test dist/main/runtime-client-sidebar.test.js`。开发者可以通过 `EIDOS_SIDEBAR_SCREENSHOT` 指定截图输出路径。这两个入口不属于完整测试套件。
+
 `pnpm test:renderer-styles` 使用真实 Electron 和隔离页面加载 Renderer 的统一样式入口。该定向测试检查公共按钮与审批、计划按钮的默认、悬停、按下、禁用和键盘焦点状态，检查列表选中项的悬停颜色与菜单外观，并覆盖 1100px、420px 下的侧栏和 Dock 组合。测试还检查聊天、代码和非聊天正文的字号，以及 Composer 的高度范围。测试不启动 Runtime，也不读取真实 Session 数据。开发者可以通过 `EIDOS_STYLE_BASELINE_CSS` 指定改动前的构建 CSS 文件，让测试对照正文排版和布局；该路径只用于本次测试。该入口不属于完整测试套件。
 
 滚动条检查覆盖 13 处滚动区域。测试读取最终计算样式，并比较原生截图中的横向轨道、纵向轨道与角落像素，确认这些部位直接显示容器底色。测试也检查滚动条没有边框、阴影，滑块颜色变量有效，公共尺寸保持为 6px，以及代码块与 Diff 视图在静止时隐藏滑块、悬停时显示滑块并绘制可见像素。

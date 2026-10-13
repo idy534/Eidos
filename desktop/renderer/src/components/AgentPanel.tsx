@@ -335,7 +335,7 @@ function AgentTranscript({
 
     void load();
     const unsubscribe = window.eidosRuntime.onNotification((notification) => {
-      if (notification.params.sessionId === agent.sessionId) scheduleLoad();
+      if ("sessionId" in notification.params && notification.params.sessionId === agent.sessionId) scheduleLoad();
     });
     return () => {
       disposed = true;

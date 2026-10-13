@@ -19,6 +19,7 @@ from eidos_runtime.db.schema import (
     V21_SCHEMA_VERSION,
     V22_SCHEMA_VERSION,
     V23_SCHEMA_VERSION,
+    V24_SCHEMA_VERSION,
     V18_SCHEMA_VERSION,
     V17_SCHEMA_VERSION,
     V16_SCHEMA_VERSION,
@@ -758,6 +759,7 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V21_SCHEMA_VERSION,
         V22_SCHEMA_VERSION,
         V23_SCHEMA_VERSION,
+        V24_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -822,6 +824,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V23_SCHEMA_VERSION:
                 from eidos_runtime.db.run_termination_migration import migrate_run_termination
                 migrate_run_termination(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V24_SCHEMA_VERSION:
+                from eidos_runtime.db.sidebar_migration import migrate_sidebar_pins
+                migrate_sidebar_pins(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

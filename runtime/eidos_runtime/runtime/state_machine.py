@@ -72,6 +72,7 @@ class OperationStatus(StrEnum):
 
 
 class EventType(StrEnum):
+    SIDEBAR_PINS_CHANGED = "sidebar.pins_changed"
     SESSION_CREATED = "session.created"
     SESSION_TITLE_UPDATED = "session.title_updated"
     SESSION_TITLE_GENERATION_STARTED = "session.title_generation_started"

@@ -1,8 +1,10 @@
 import argparse
 import json
 import logging
+import os
 import tempfile
 import threading
+from datetime import date
 from pathlib import Path
 
 from eidos_runtime.db.storage import SessionStore
@@ -57,6 +59,7 @@ class EvalModel:
 
 
 model = EvalModel()
+original_projectless_root = os.environ.get("EIDOS_PROJECTLESS_ROOT")
 cases = [
     ('projectless_language_preference', '以后都用中文回答', 'execute', True),
     ('self_identity', '我的名字是 Maple，你可以这样称呼我。请简单回应。', 'execute', True),
@@ -111,8 +114,10 @@ try:
             store.initialize()
             try:
                 if name == 'projectless_language_preference':
-                    workspace = store.data_directory / f'.{store.data_directory.name}-projectless' / 'language'
+                    projectless_home = root / 'Eidos'
+                    workspace = projectless_home / date.today().isoformat() / 'language'
                     workspace.mkdir(parents=True)
+                    os.environ['EIDOS_PROJECTLESS_ROOT'] = str(projectless_home)
                     session = store.typed_runtime_repository().create_session(str(workspace), projectless=True).value.model_dump(by_alias=True)
                 else:
                     session = store.create_session(str(root / 'workspace'))
@@ -132,6 +137,10 @@ try:
 finally:
     lease.close()
     kernel.close()
+    if original_projectless_root is None:
+        os.environ.pop("EIDOS_PROJECTLESS_ROOT", None)
+    else:
+        os.environ["EIDOS_PROJECTLESS_ROOT"] = original_projectless_root
     output = {'model_id': config.id, 'requests': model.requests, 'tokens': model.tokens, 'results': results, 'review_required': 'Selection flags check state only. Review claim scope, source fidelity, unsupported requirements, and continuity about unadopted proposals manually.'}
     args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2))
     print(json.dumps({'model_id': config.id, 'requests': model.requests, 'tokens': model.tokens, 'completed': len(results)}, ensure_ascii=False), flush=True)

@@ -145,6 +145,8 @@ def test_v23_upgrade_preserves_state_and_adds_no_invented_causes(store):
     run, _ = value.create_run(session["id"], "keep this run")
     value.close()
     connection = sqlite3.connect(data / DATABASE_NAME)
+    connection.execute("DROP TABLE sidebar_pins")
+    connection.execute("DROP INDEX sidebar_pins_event_revision")
     connection.execute("ALTER TABLE runs DROP COLUMN termination_json")
     connection.execute("PRAGMA user_version=23")
     connection.commit()

@@ -44,11 +44,26 @@
   flex: 1;
   min-width: 0;
   border: 0;
+  border-radius: 0;
   outline: 0;
+  box-shadow: none;
+  padding: 0;
   color: var(--text);
   background: transparent;
   font: inherit;
   font-size: 0.95rem;
+}
+.project-picker-search-row input:focus,
+.project-picker-search-row input:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+.project-picker-search-row input::-webkit-search-decoration,
+.project-picker-search-row input::-webkit-search-cancel-button,
+.project-picker-search-row input::-webkit-search-results-button,
+.project-picker-search-row input::-webkit-search-results-decoration {
+  -webkit-appearance: none;
 }
 .project-picker-search-row input::placeholder { color: var(--muted); }
 .project-picker-icon { width: 1.1rem; height: 1.1rem; flex: none; }

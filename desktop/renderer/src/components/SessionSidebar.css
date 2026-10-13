@@ -17,6 +17,19 @@
   user-select: none;
 }
 
+.sidebar-pinned {
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-pinned-session > .session-list {
+  margin-top: 0;
+  margin-left: 0;
+}
+
+.sidebar-pinned-session .session-item {
+  padding-left: 0;
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .sidebar {
     background: #f6f6f8;

@@ -117,8 +117,11 @@ def test_v16_migration_preserves_delegation_and_defaults_to_required(state):
         'DROP TRIGGER IF EXISTS memory_scope_changed; DROP TRIGGER IF EXISTS memory_session_use_revoke; '
         'ALTER TABLE context_snapshots DROP COLUMN memory_revoked; '
         'DROP TABLE agent_message_receipts; DROP TABLE run_skill_leases; '
+        'DROP TABLE IF EXISTS sidebar_pins; DROP INDEX IF EXISTS sidebar_pins_event_revision; '
+        'DROP TABLE IF EXISTS projectless_workspace_creations; '
         'ALTER TABLE agent_delegations DROP COLUMN required_for_completion; '
         'ALTER TABLE model_attempts DROP COLUMN response_replay_json; '
+        'ALTER TABLE runs DROP COLUMN termination_json; '
         'PRAGMA user_version=16;'
     )
     migrate_gate_refinements(connection)

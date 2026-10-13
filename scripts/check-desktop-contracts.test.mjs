@@ -161,9 +161,9 @@ test("Approval removal rejects an unconditional notification block", () => {
     "desktop/renderer/src/app/AppShell.tsx",
     (source) => source
       .replace(
-        '      if (notification.method === "session/titleUpdated") {\n',
-        "      approvalActions.removeApproval(notification.params.approvalId);\n"
-          + '      if (notification.method === "session/titleUpdated") {\n',
+        '      handleContextUsageNotification(notification);\n',
+        '      handleContextUsageNotification(notification);\n'
+          + "      approvalActions.removeApproval(notification.params.approvalId);\n",
       )
       .replace(
         "        approvalActions.removeApproval(notification.params.approvalId);\n",
