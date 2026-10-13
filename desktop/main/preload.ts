@@ -156,7 +156,7 @@ const api: EidosRuntimeAPI = {
   listProjects: (): Promise<ProjectListResult> => ipcRenderer.invoke(IPC.PROJECT_LIST),
   deleteProject: (projectId: string): Promise<DeleteProjectResult> =>
     ipcRenderer.invoke(IPC.PROJECT_DELETE, projectId),
-  listSessions: (): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST),
+  listSessions: (cursor?: string): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST, cursor),
   readSession: (sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot> => ipcRenderer.invoke(IPC.SESSION_READ, sessionId, options),
   readToolText: (sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset = 0): Promise<ToolTextPage> => ipcRenderer.invoke(IPC.TOOL_TEXT_READ, sessionId, toolCallId, field, sha256, offset),
   listEvents: (sessionId: string, afterEventId: number): Promise<EventListResult> =>

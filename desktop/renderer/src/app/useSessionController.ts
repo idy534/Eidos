@@ -133,6 +133,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const selectedSessionIdRef = useRef<string | undefined>(undefined);
   const creatingSessionRef = useRef<boolean>(false);
   const activeSelectionRef = useRef<SessionSelectionOperation | undefined>(undefined);
+  const sessionListLoadRef = useRef(0);
 
   function updateReadCompleted(updater: (prev: Set<string>) => Set<string>): void {
     setReadCompletedSessions((prev) => {
@@ -159,12 +160,27 @@ export function useSessionController(): [SessionControllerState, SessionControll
   }
 
   const loadSessions = useCallback(async (): Promise<void> => {
+    const loadId = ++sessionListLoadRef.current;
     setError(undefined);
     try {
-      const page = await window.eidosRuntime.listSessions();
-      setSessions(page.items);
+      const loaded: Session[] = [];
+      const seenCursors = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const page = cursor === undefined
+          ? await window.eidosRuntime.listSessions()
+          : await window.eidosRuntime.listSessions(cursor);
+        if (loadId !== sessionListLoadRef.current) return;
+        loaded.push(...page.items);
+        cursor = page.nextCursor;
+        if (cursor !== undefined) {
+          if (!cursor || seenCursors.has(cursor)) throw new Error("Invalid Session list cursor");
+          seenCursors.add(cursor);
+        }
+      } while (cursor !== undefined);
+      setSessions(loaded);
     } catch (cause) {
-      setError(userFacingError(cause));
+      if (loadId === sessionListLoadRef.current) setError(userFacingError(cause));
     }
   }, []);
 

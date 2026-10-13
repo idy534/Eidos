@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessionController } from "./useSessionController.js";
-import type { EidosRuntimeAPI, Session, SessionSnapshot } from "../contracts.js";
+import type { EidosRuntimeAPI, Session, SessionListResult, SessionSnapshot } from "../contracts.js";
 
 const mockSession1: Session = {
   id: "session-1",
@@ -61,6 +61,80 @@ describe("useSessionController real Hook behavior", () => {
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
     return api;
   }
+
+  it("loads every Session page so older Projects retain their conversations", async () => {
+    const sessions = Array.from({ length: 112 }, (_, index): Session => ({
+      ...mockSession1,
+      id: `session-${index}`,
+      title: `Conversation ${index}`,
+      project: {
+        id: `project-${Math.floor(index / 15)}`,
+        workspaceRoot: `/project/${Math.floor(index / 15)}`,
+        gitAvailable: false,
+      },
+    }));
+    let resolveLastPage!: (page: SessionListResult) => void;
+    const listSessions = vi.fn()
+      .mockResolvedValueOnce({ items: sessions.slice(0, 50), nextCursor: "page-2" })
+      .mockResolvedValueOnce({ items: sessions.slice(50, 100), nextCursor: "page-3" })
+      .mockImplementationOnce(() => new Promise<SessionListResult>((resolve) => { resolveLastPage = resolve; }));
+    setupMockRuntime({ listSessions });
+    const { result } = renderHook(() => useSessionController());
+    let loading!: Promise<void>;
+    await act(async () => { loading = result.current[1].loadSessions(); });
+
+    expect(result.current[0].sessions).toEqual([]);
+    expect(listSessions.mock.calls).toEqual([[], ["page-2"], ["page-3"]]);
+    await act(async () => {
+      resolveLastPage({ items: sessions.slice(100) });
+      await loading;
+    });
+    expect(result.current[0].sessions).toEqual(sessions);
+    expect(result.current[0].sessions.at(-1)?.project?.id).toBe("project-7");
+  });
+
+  it("preserves the previous complete list if a later page fails", async () => {
+    const listSessions = vi.fn()
+      .mockResolvedValueOnce({ items: [mockSession1, mockSession2] })
+      .mockResolvedValueOnce({ items: [mockSession1], nextCursor: "page-2" })
+      .mockRejectedValueOnce(new Error("Page unavailable"));
+    setupMockRuntime({ listSessions });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].loadSessions(); });
+    await act(async () => { await result.current[1].loadSessions(); });
+    expect(result.current[0].sessions).toEqual([mockSession1, mockSession2]);
+    expect(result.current[0].error).toBe("操作失败，请查看 Runtime 日志。");
+  });
+
+  it("stops a repeated pagination cursor without publishing a partial list", async () => {
+    const listSessions = vi.fn().mockResolvedValue({ items: [mockSession1], nextCursor: "repeated" });
+    setupMockRuntime({ listSessions });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].loadSessions(); });
+    expect(listSessions).toHaveBeenCalledTimes(2);
+    expect(result.current[0].sessions).toEqual([]);
+    expect(result.current[0].error).toBe("操作失败，请查看 Runtime 日志。");
+  });
+
+  it("ignores an older list load after a newer refresh has completed", async () => {
+    let resolveOldPage!: (page: SessionListResult) => void;
+    const listSessions = vi.fn()
+      .mockResolvedValueOnce({ items: [mockSession1], nextCursor: "old-page-2" })
+      .mockImplementationOnce(() => new Promise<SessionListResult>((resolve) => { resolveOldPage = resolve; }))
+      .mockResolvedValueOnce({ items: [mockSession2] });
+    setupMockRuntime({ listSessions });
+    const { result } = renderHook(() => useSessionController());
+    let older!: Promise<void>;
+    await act(async () => { older = result.current[1].loadSessions(); });
+    await act(async () => { await result.current[1].loadSessions(); });
+    await act(async () => {
+      resolveOldPage({ items: [mockSession1], nextCursor: "old-page-3" });
+      await older;
+    });
+    expect(listSessions).toHaveBeenCalledTimes(3);
+    expect(result.current[0].sessions).toEqual([mockSession2]);
+    expect(result.current[0].error).toBeUndefined();
+  });
 
   it("1 & 2. Two synchronous projectless createSession() calls call IPC once", async () => {
     const createSpy = vi.fn().mockResolvedValue(mockSession1);

@@ -15,6 +15,7 @@ import warnings
 from PIL import Image, UnidentifiedImageError
 
 from pydantic import ValidationError
+from eidos_runtime.domain.tool_content import ToolBinaryContent, ToolContentSnapshot
 
 from eidos_runtime.tools.contracts import (
     ViewImageInput,
@@ -25,6 +26,7 @@ from eidos_runtime.tools.registry import (
     ToolProvenance,
     ToolRegistryEntry,
     ToolSpec,
+    VerifiedToolOutput,
 )
 from eidos_runtime.tools.workspace import canonical_tool_result
 
@@ -100,7 +102,7 @@ class ViewImageTool:
         self,
         arguments: dict[str, object],
         cancel: threading.Event,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | VerifiedToolOutput:
         if cancel.is_set():
             return _error("tool_canceled", "Image read canceled")
         try:
@@ -120,7 +122,7 @@ class ViewImageTool:
                 "unsafe_path": "Image path is not a safe regular file",
             }
             return _error(error.code, summaries.get(error.code, "Image could not be read"))
-        return canonical_tool_result("view_image", {
+        result = canonical_tool_result("view_image", {
             "outcome": "success",
             "code": "ok",
             "summary": "Image loaded",
@@ -133,6 +135,12 @@ class ViewImageTool:
             "sideEffectsMayExist": False,
             "reconciliationRequired": False,
         }, data_model=ViewImageResultData)
+        return VerifiedToolOutput(
+            result,
+            model_content=ToolContentSnapshot(items=(
+                ToolBinaryContent.from_bytes(image.data, image.mime),
+            )),
+        )
 
 
 def view_image_entry(

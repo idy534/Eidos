@@ -19,6 +19,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - Main 可以启动、健康检查、通知和关闭 Python Runtime。单个 RPC 超时会作为请求级错误返回，迟到响应不会因为找不到已完成的请求而终止 Runtime。Runtime 进程真正意外退出时，Desktop 会显示启动错误，并提供“重新启动 Runtime”恢复入口。
 - Desktop 可以选择 Workspace，读取 Runtime 提供的 Git context，并在 Session Composer 中选择 Local 或 Worktree execution。Git Worktree execution 可以选择 starting branch。Source dirty 且 starting branch 是 current branch 时，Desktop 默认勾选 `Include current changes`，但 Runtime 只接受显式的 `includeLocalChanges`。Non-Git Workspace 只启用 Local，Composer 不显示 execution mode 和 branch。Desktop 也可以创建不绑定 Project 的会话；这类会话默认使用 Local。
 - Desktop 可以列出、读取、重命名和删除 Session。Session 删除不会删除所属 Project。
+- Desktop 侧边栏会连续读取 Session 列表的所有分页。总数超过 50 的 Session 不会因位于后续页而从项目下消失。分页失败时，Desktop 保留上一次完整列表并显示错误。
 - Session 首屏和历史分页的读取代码不再构建 Step Resolution Review。响应保留空的 `stepResolutions` 字段。Items、Runs 和事件游标继续使用原有读取路径。本项代码修订尚未进入测试和性能验收阶段。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
 - 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
@@ -44,7 +45,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - `session/create` 允许省略或传入空的 `workspaceRoot` 来创建 projectless Session。Projectless Session 只接受 `executionMode = local`，不创建 Project 或 Worktree binding。
 - Runtime 创建的 Projectless 工作空间默认位于 `~/Eidos/YYYY-MM-DD/可读名称`，重名追加数字后缀。Desktop 首次输入通过 `workspaceNameHint` 提供命名提示，标题变化不移动目录。`EIDOS_PROJECTLESS_ROOT` 可以隔离开发和测试目录。Managed Worktree 根目录仍位于 `EIDOS_DATA_DIR` 内，默认是 `~/.eidos/.eidos-worktrees/<worktree_id>`。
 - 本次 Alpha 更新会在启动时废弃旧无项目 Session 及关联历史，不做旧目录迁移或兼容。旧工作空间文件原地保留。有项目的 Session 不受该清理影响。
-- Projectless Run 使用日期目录下的可读工作空间作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 保留环境信息中的“输出内容”和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。Projectless 对话不展示文本修改卡，但仍可以展示产物卡。
+- Projectless Run 使用日期目录下的可读工作空间作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 保留环境信息中的“输出内容”和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。Projectless 对话可以展示文本修改卡和产物卡。用户通过文本修改卡打开持久化补丁审查。
 - Local Session 和 Worktree Session 都是正式 Session projection。Worktree Session 默认使用 detached HEAD，`worktree.branch` 为 NULL。Git Project 的 Local Session 通过当前 Local checkout 提供 Git status 和 Git diff。
 - Worktree 创建只会从 source repository root 的 `.worktreeinclude` 复制同时命中 `pathspec.GitIgnoreSpec` 且由 Git ignore 判定为 ignored 的 local files。Tracked files 和 untracked non-ignored files 不由 `.worktreeinclude` 复制。Runtime 只在 matched concrete path 上执行 `.git`、target boundary、source symlink、target parent、atomic replacement、fsync 和 permission safety；Runtime 不重新限制 Git pattern grammar。Managed Worktree 内的 `.worktreeinclude` 不具有 authority。Ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md` 会自动 materialize；tracked override 只使用 Git checkout 内容。
 - `includeLocalChanges = true` 要求 source `HEAD == baseCommit`。Runtime 使用 hardened Git CLI capture/apply full patch 和 staged patch，覆盖 tracked modified/deleted、staged、unstaged、binary、symlink、mode 和 untracked state。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Local-change state conflict、source change 和 materialization failure 会 rollback Worktree，无法安全清理时进入 `cleanup_required`。Dirty submodule checkout 不属于当前 transfer contract，Runtime 返回 `worktree_gitlink_unsupported`。
@@ -192,6 +193,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
+- Runtime 可以在共同的工具结果提交边界保存已取得的文字和二进制内容。`view_image` 已使用该边界保存读取时的 PNG/JPEG；后续请求与重启恢复从保存的内容组装，源文件删除或替换不会触发重新读取或源文件 Hash 比对。内容快照没有新增 Hash 字段。公共 ToolResult 与 UI 契约保持不变，模型内容引用只进入内部持久投影。
 - 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
 - 普通 Tool Error 不会单独终止 Run。模型可以根据错误事实修正参数或选择替代 Tool。
 - 只有安全只读的 `parallel_safe` Tool 批次可以在自身的有界范围内并发。每个 Run 的 Workspace write、Shell、MCP、external 和 Eidos-state Tool 使用自己的提交/启动窗口门；同一 Run 的活动 Shell 不持续占有该门，不同 Session 也可以在同一 Workspace 并行。等待 Approval 不占用该 Run 的门。结果按模型声明顺序提交。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
@@ -250,7 +252,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Selection 当前支持 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。选中后 Runtime 才完整读取 `SKILL.md`。Skill 使用 progressive disclosure：`references/`、`scripts/` 和 `assets/` 只按说明通过相对路径读取，不能把完整 Skill tree 注入 Context。
 - `agents/eidos.yaml` 是可选 metadata。Runtime 使用统一 YAML parser 读取 interface、asset、dependency、policy 和有界 `runtimeDependencies` metadata。Runtime 使用严格的 `RuntimeRequirements` discriminated union 保存 Python package、Node package 和 executable declaration。缺失 declaration 保持旧行为。无效 declaration 会保留固定 error code，并保留旧的 interface、MCP dependency 和 policy metadata。无效的整个可选 YAML 会保留 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活，但不影响显式选择和 `skill_read`。Skill 不管理 pip、npm、系统命令或其他运行时依赖。
 - Skill 脚本复用已有 `run_shell`。受信任的 Catalog Skill 下的相对 `scripts/` 调用可以产生 implicit activation，并把 active Skill root 放入权限快照。Workspace root 是读写；active Skill root 默认只读并允许 executable mapping。普通 Skill 的获批写权限只覆盖审批展示的具体文件或目录，系统 Skill 不接受写入授权。插件脚本的系统依赖不进入 Skill 目录。
-- Skill binary asset 在安装时按 bytes 保留。系统 Skill 私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并以 multimodal binary content 重新投影给模型。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
+- Skill binary asset 在安装时按 bytes 保留。系统 Skill 私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并回放读取时保存的 multimodal binary content。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
 - `skill_read` 和 `skill_read_resource` 接受 UTF-8 字节 `offset` 与 `maxBytes`，默认及上限为 12,000 bytes。结果返回 `startByte`、`endByte`、`totalBytes` 和可选 `nextOffset`；模型按 nextOffset 续读。工具保留完整资源的 contentHash，并拒绝字符中间的 offset。分页还为 JSON 转义预留空间，避免分页正文再次被通用投影截断。
 - Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。Runtime dependency catalog 还会固定 `runtime.json` 的 manifest hash、Bundle snapshot hash 和 requirement hash。每个已声明 Skill dependency 的 binding 使用 `dependencyBindingId` 标识。Runtime 为识别到的 Skill 脚本选择对应声明的 binding，模型无需获取 ID。Runtime 在准备和启动前校验依赖；缺失或无效依赖会阻止启动，普通项目命令保留原环境。
 - RunResources 会收集 active Skill 的 MCP dependency，并与本 Run extension snapshot 中 available 的 Plugin 或手动 MCP server 比较，生成 installed、missing 或 unsupported 诊断。未满足项会进入低权限 user context warning。Runtime 不会静默安装、启用或启动 MCP server。Plugin 和手动 MCP 都使用独立的 server consent、官方 Python MCP SDK stdio client、Tool discovery、Tool call、Approval 和 Sandbox 链路。
@@ -376,7 +378,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 用户点击卡片时，系统通过已有受控文件预览读取当前文件信息。图片使用全屏预览，HTML 使用隔离网页，PDF、文本和 Markdown 进入 Files；不支持内置预览的文件使用受控系统应用打开。卡片标题使用声明标题或文件名，不再读取当前 HTML 的 `<title>`。系统显示打开失败或版本变化提示；声明文件所属执行目录与当前目录不同时，卡片禁止打开，避免读取另一个同名文件。
 - 环境信息浮层提供“输出内容”。它跨当前 Session 分页读取声明，按执行目录和相对路径保留最新声明。已声明文件的删除不抹除历史交付记录；用户打开已删除文件时会收到失败提示。Run 后续失败或取消不会移除此前已经成功提交的声明。Projectless Session 同样支持声明和输出入口。Files 继续提供文件树和预览。
 - 旧会话没有交付声明时，不再凭后缀生成历史产物卡；原始工具记录、回复链接和 Files 入口保留。系统不会补造旧交付事实。
-- 历史修改卡打开记录中的 Run 和文件 Diff；产物卡打开当前 Workspace 文件，文件版本变化由已有预览版本和刷新提示处理。当前没有足够证据时，“撤销”按钮显示不可用原因，不调用当前整文件 Discard。
+- 历史修改卡打开记录中的 Run 和文件 Diff。文件名和“审核”按钮都打开独立文本审查面板，入口不要求项目具备 Git 能力，非 Git 和 Projectless 会话也可以打开。产物卡打开当前 Workspace 文件，文件版本变化由已有预览版本和刷新提示处理。当前没有足够证据时，“撤销”按钮显示不可用原因，不调用当前整文件 Discard。
 - 最终回复中的 Workspace 文件链接、工具卡片中的文件名和 Files 中的文件共用文件打开入口，不建立第二套执行状态。
 - Session 中连续点击不同文件链接时，Desktop 会复用已有的“文件”工具 Tab，并在其中添加或选中对应的文件预览 Tab。用户先从工具菜单打开“文件”后，文件链接也会复用该面板。用户关闭“文件”后，再次点击链接会重新打开一个面板。
 - Files 展开时，文件列表默认沿用展开前的侧栏宽度，窗口空间不足时会限制列表宽度。用户仍可以拖动分隔条，Desktop 会保留展开布局中调整过的宽度。未选择文件时，预览区显示“选择文件以查看预览”；实际读取文件时，预览区才显示读取提示。

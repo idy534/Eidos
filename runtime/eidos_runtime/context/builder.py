@@ -16,6 +16,8 @@ from eidos_runtime.context.budget import (
     estimate_model_request_budget,
 )
 from eidos_runtime.persistence.input_context import InputContextRepository
+from eidos_runtime.persistence.tool_content import ToolContentRepository
+from eidos_runtime.domain.tool_content import MAX_CONTEXT_CONTENT_BYTES, ToolContentSnapshot
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import SessionStore
@@ -171,7 +173,24 @@ class ContextBuilder:
         reference_characters = 0
         input_repository = InputContextRepository(self.store.database)
         current_image_bytes = sum(len(value.image or "") for value in input_repository.for_run(run_id))
-        historical_image_budget = max(0, 16 * 1024 * 1024 - current_image_bytes)
+        historical_image_budget = max(0, MAX_CONTEXT_CONTENT_BYTES - current_image_bytes)
+        content_repository = ToolContentRepository(self.store.database)
+        saved_content: dict[str, ToolContentSnapshot | None] = {}
+        # Prefer recent observations; omitted media never requires a source-file read.
+        for item in reversed(facts.items):
+            if item.item_id in source_ids and item.item_id != facts.current_user_goal_id:
+                continue
+            if item.model_result_json is None:
+                continue
+            payload = json.loads(item.model_result_json)
+            reference = payload.get("modelContentSnapshot") if isinstance(payload, dict) else None
+            if isinstance(reference, str):
+                size = content_repository.stored_size(reference)
+                if size > historical_image_budget:
+                    saved_content[item.item_id] = None
+                else:
+                    saved_content[item.item_id] = content_repository.read(reference)
+                    historical_image_budget -= size
         for item in facts.items:
             if (
                 item.item_id in source_ids
@@ -214,6 +233,16 @@ class ContextBuilder:
                                 **({"phase": item.phase.value} if item.phase is not None else {})})
             elif item.provider_call_id is not None:
                 result_json = item.model_result_json or item.result_json or "{}"
+                content_metadata: dict[str, object] = {}
+                if item.item_id in saved_content:
+                    payload = json.loads(result_json)
+                    payload.pop("modelContentSnapshot")
+                    result_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+                    snapshot = saved_content[item.item_id]
+                    content_metadata = (
+                        {"toolContent": snapshot.model_dump(mode="json", by_alias=True)}
+                        if snapshot is not None else {"toolContentOmitted": True}
+                    )
                 projected_result = result_json
                 payload_kind = item.payload_kind or "function"
                 custom_input = (
@@ -248,6 +277,7 @@ class ContextBuilder:
                             "callId": item.provider_call_id,
                             "name": item.tool_name or "",
                             "result": projected_result,
+                            **content_metadata,
                         },
                     ))
                 else:
@@ -266,6 +296,7 @@ class ContextBuilder:
                             "name": item.tool_name or "",
                             "payloadKind": "custom",
                             "result": projected_result,
+                            **content_metadata,
                         },
                     ))
                 if _tool_result_changes_workspace(result_json):

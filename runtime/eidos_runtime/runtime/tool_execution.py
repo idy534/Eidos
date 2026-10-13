@@ -18,6 +18,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.db.errors import InvalidRunStateError, StorageError
 from eidos_runtime.db.invariants import RuntimeInvariantError
 from eidos_runtime.domain.approval_policy import ApprovalReview
+from eidos_runtime.domain.tool_content import ToolContentSnapshot
 from eidos_runtime.model.client import ModelToolCall
 from eidos_runtime.runtime.approval import (
     ApprovalCoordinator,
@@ -45,6 +46,7 @@ from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolConcurrencyPolicy,
     WorkspaceMutationRuntime,
+    VerifiedToolOutput,
 )
 from eidos_runtime.telemetry.tracing import (
     finish_tool_call,
@@ -235,6 +237,7 @@ class HandlerOutcome:
     item: dict[str, object] | None = None
     progress_fingerprint: str | None = None
     argument_validation: ToolArgumentValidationResult | None = None
+    model_content: ToolContentSnapshot | None = None
 
 
 class ToolExecutionPhase(StrEnum):
@@ -268,6 +271,7 @@ class VerifiedToolExecutionResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     result: dict[str, object]
+    model_content: ToolContentSnapshot | None = None
 
 
 class ToolExecutionController:
@@ -366,8 +370,8 @@ class ToolExecutionController:
 
     def _execute_authorized_side_effect(
         self,
-        execute: Callable[[], dict[str, object]],
-        verify: Callable[[dict[str, object]], VerifiedToolExecutionResult] | None,
+        execute: Callable[[], dict[str, object] | VerifiedToolOutput],
+        verify: Callable[[dict[str, object] | VerifiedToolOutput], VerifiedToolExecutionResult] | None,
     ) -> VerifiedToolExecutionResult:
         self.mark_execution_started()
         raw = execute()
@@ -375,6 +379,8 @@ class ToolExecutionController:
         verified = (
             verify(raw)
             if verify is not None
+            else VerifiedToolExecutionResult(result=raw.result, model_content=raw.model_content)
+            if isinstance(raw, VerifiedToolOutput)
             else VerifiedToolExecutionResult(result=raw)
         )
         self._execution_state.result_known = _explicit_reconciliation_required(verified.result) is not True
@@ -895,6 +901,7 @@ class ToolExecutionController:
                 workspace_changed=outcome.workspace_changed,
                 diff_hash=outcome.diff_hash,
                 duration_ms=duration_ms,
+                model_content=(outcome.model_content if outcome.result.get("outcome") == "success" else None),
             )
             self.events.publish(
                 mutation,

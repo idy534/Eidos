@@ -307,6 +307,7 @@ class ReadOnlyToolHandler:
             verified.result,
             "completed",
             activations=verified.activated_tool_names,
+            model_content=verified.model_content,
         )
 
 
@@ -1489,7 +1490,7 @@ class ExternalToolHandler:
         if result["outcome"] == "success":
             self.dependencies.store.clear_rejects(run_id)
         status = "completed" if result["outcome"] == "success" else "failed"
-        return HandlerOutcome(result, status, status)
+        return HandlerOutcome(result, status, status, model_content=verified.model_content)
 
 
 class EidosStateToolHandler:

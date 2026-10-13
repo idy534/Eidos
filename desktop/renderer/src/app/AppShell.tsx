@@ -1126,7 +1126,7 @@ export function AppShell({ runtime }: AppShellProps) {
   }
 
   function handleOpenReview(request: { runId: string; path?: string; itemId?: string }): void {
-    if (!currentSnapshot || !availableTools.includes("review")) return;
+    if (!currentSnapshot) return;
     setOpenTabs((tabs) => tabs.some((tab) => tab.kind === "text-review") ? tabs : [...tabs, { id: "text-review", kind: "text-review" }]);
     setActiveTabId("text-review");
     setDockOpen(true);

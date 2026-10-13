@@ -129,7 +129,7 @@ export interface EidosRuntimeAPI {
   createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
   listProjects(): Promise<ProjectListResult>;
   deleteProject(projectId: string): Promise<DeleteProjectResult>;
-  listSessions(): Promise<SessionListResult>;
+  listSessions(cursor?: string): Promise<SessionListResult>;
   readSession(sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot>;
   readToolText(sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset?: number): Promise<ToolTextPage>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;

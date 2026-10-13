@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.tool_content import ToolContentSnapshot
+
 from eidos_runtime.domain.run_termination import RunTermination
 
 
@@ -1226,6 +1228,7 @@ class SessionStore:
         workspace_changed: bool = False,
         diff_hash: str | None = None,
         duration_ms: int | None = None,
+        model_content: ToolContentSnapshot | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).complete_tool_item_once_committed(
             item_id,
@@ -1238,6 +1241,7 @@ class SessionStore:
             workspace_changed=workspace_changed,
             diff_hash=diff_hash,
             duration_ms=duration_ms,
+            model_content=model_content,
         )
 
     def begin_approval(

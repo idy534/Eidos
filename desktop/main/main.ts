@@ -612,7 +612,12 @@ ipcMain.handle(IPC.PROJECT_DELETE, (_event, projectId: unknown) => {
   }
   return clientOrThrow().deleteProject(projectId);
 });
-ipcMain.handle(IPC.SESSION_LIST, () => clientOrThrow().listSessions());
+ipcMain.handle(IPC.SESSION_LIST, (_event, cursor: unknown) => {
+  if (cursor !== undefined && (typeof cursor !== "string" || !cursor || cursor.length > 512)) {
+    throw new Error("分页参数无效。");
+  }
+  return clientOrThrow().listSessions(cursor === undefined ? {} : { cursor });
+});
 ipcMain.handle(IPC.TOOL_TEXT_READ, (_event, sessionId: unknown, toolCallId: unknown, field: unknown, sha256: unknown, offset: unknown) => {
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256
     || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 256

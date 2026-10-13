@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 from eidos_runtime.file_limits import function_argument_limit
+from eidos_runtime.domain.tool_content import ToolContentSnapshot
 from eidos_runtime.protocol.schemas import ClosedModel, StepToolSnapshotDto
 from eidos_runtime.model.client import (
     CustomToolDefinition,
@@ -112,7 +113,7 @@ class ToolProvenance(ClosedModel):
 class ToolImplementation(Protocol):
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
-    ) -> dict[str, object]: ...
+    ) -> dict[str, object] | VerifiedToolOutput: ...
 
 
 class ToolCancellationPolicy(ClosedModel):
@@ -146,6 +147,7 @@ class VerifiedToolOutput:
     result: dict[str, object]
     activated_tool_names: tuple[str, ...] = ()
     workspace_change: object | None = None
+    model_content: ToolContentSnapshot | None = None
 
 
 class ToolRuntime(Protocol):
@@ -161,13 +163,13 @@ class ToolRuntime(Protocol):
         context: object,
         prepared: PreparedToolInvocation,
         cancel: threading.Event,
-    ) -> dict[str, object]: ...
+    ) -> dict[str, object] | VerifiedToolOutput: ...
 
     def verify(
         self,
         context: object,
         prepared: PreparedToolInvocation,
-        raw: dict[str, object],
+        raw: dict[str, object] | VerifiedToolOutput,
         cancel: threading.Event,
     ) -> VerifiedToolOutput: ...
 
@@ -204,17 +206,17 @@ class AdapterToolRuntime:
         _context: object,
         prepared: PreparedToolInvocation,
         cancel: threading.Event,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | VerifiedToolOutput:
         return self.implementation.execute(prepared.arguments, cancel)
 
     def verify(
         self,
         _context: object,
         _prepared: PreparedToolInvocation,
-        raw: dict[str, object],
+        raw: dict[str, object] | VerifiedToolOutput,
         _cancel: threading.Event,
     ) -> VerifiedToolOutput:
-        return VerifiedToolOutput(raw)
+        return raw if isinstance(raw, VerifiedToolOutput) else VerifiedToolOutput(raw)
 
     def cleanup(self, _context: object, _reason: str) -> None:
         return None

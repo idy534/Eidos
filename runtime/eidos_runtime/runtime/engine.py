@@ -286,11 +286,6 @@ class RuntimeEngine:
                 runtime_dependency_catalog=self.runtime_dependency_catalog,
                 collaboration=self.collaboration,
             ) as resources:
-                bind_image_authority = getattr(
-                    self.model, "set_image_authority_provider", None
-                )
-                if callable(bind_image_authority):
-                    bind_image_authority(resources.image_authority)
                 self._drive(run_context, resources, cancel, repository_context)
         except (PlanningSuspended, AgentSuspended):
             self.events.deliver_pending()

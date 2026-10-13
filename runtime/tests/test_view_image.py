@@ -21,7 +21,8 @@ from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig, ModelProfileS
 from eidos_runtime.model.pydantic_ai_client import PydanticAIModelClient, encode_context
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.tools.contracts import project_tool_result
-from eidos_runtime.tools.registry import ToolRegistry
+from eidos_runtime.tools.registry import ToolRegistry, VerifiedToolOutput
+from eidos_runtime.domain.tool_content import ToolBinaryContent, ToolContentSnapshot
 from eidos_runtime.tools.view_image import (
     MAX_VIEW_IMAGE_BYTES,
     MAX_VIEW_IMAGE_PIXELS,
@@ -67,6 +68,15 @@ def _entry(authority: ViewImageRootAuthority, *, supports_images: bool = True):
     )
 
 
+def _execute(entry, arguments, cancel):
+    raw = entry.adapter.execute(arguments, cancel)
+    return raw.result if isinstance(raw, VerifiedToolOutput) else raw
+
+
+def _saved_image(data: bytes) -> dict[str, object]:
+    return ToolContentSnapshot(items=(ToolBinaryContent.from_bytes(data, "image/png"),)).model_dump(mode="json", by_alias=True)
+
+
 def _canonical_view_image_result(
     path: Path,
     data: bytes,
@@ -97,7 +107,7 @@ def test_real_image_handler_output_satisfies_registered_result_contract(tmp_path
     if exists:
         path.write_bytes(_png_bytes())
     entry = _entry(_authority(tmp_path))
-    result = entry.adapter.execute({"path": path.name}, threading.Event())
+    result = _execute(entry, {"path": path.name}, threading.Event())
     validated = entry.validate_result(result)
     assert validated["toolName"] == "view_image"
     assert validated["outcome"] == ("success" if exists else "error")
@@ -165,7 +175,7 @@ def test_view_image_reads_a_valid_png_and_returns_canonical_metadata(tmp_path: P
     path.write_bytes(image)
     entry = _entry(_authority(tmp_path))
 
-    result = entry.adapter.execute({"path": path.name}, threading.Event())
+    result = _execute(entry, {"path": path.name}, threading.Event())
 
     assert result["outcome"] == "success"
     assert result["data"] == {
@@ -181,7 +191,7 @@ def test_view_image_reads_a_valid_jpeg_using_magic_and_structure(tmp_path: Path)
     path.write_bytes(_JPEG_BYTES)
     entry = _entry(_authority(tmp_path))
 
-    result = entry.adapter.execute({"path": path.name}, threading.Event())
+    result = _execute(entry, {"path": path.name}, threading.Event())
 
     assert result["outcome"] == "success"
     assert result["data"]["mime"] == "image/jpeg"
@@ -192,7 +202,7 @@ def test_view_image_rejects_invalid_image_bytes_even_with_image_extension(tmp_pa
     path.write_bytes(b"not an image")
     entry = _entry(_authority(tmp_path))
 
-    result = entry.adapter.execute({"path": path.name}, threading.Event())
+    result = _execute(entry, {"path": path.name}, threading.Event())
 
     assert result["outcome"] == "error"
     assert result["code"] == "invalid_image"
@@ -203,7 +213,7 @@ def test_view_image_rejects_oversized_files_before_reading_them(tmp_path: Path) 
     path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * MAX_VIEW_IMAGE_BYTES)
     entry = _entry(_authority(tmp_path))
 
-    result = entry.adapter.execute({"path": path.name}, threading.Event())
+    result = _execute(entry, {"path": path.name}, threading.Event())
 
     assert result["outcome"] == "error"
     assert result["code"] == "image_too_large"
@@ -228,7 +238,7 @@ def test_view_image_rejects_pixel_bomb_dimensions(tmp_path: Path) -> None:
     path = tmp_path / "pixel-bomb.png"
     path.write_bytes(image)
 
-    result = _entry(_authority(tmp_path)).adapter.execute(
+    result = _execute(_entry(_authority(tmp_path)),
         {"path": path.name}, threading.Event()
     )
 
@@ -243,8 +253,8 @@ def test_view_image_rejects_traversal_and_external_paths(tmp_path: Path) -> None
     outside.write_bytes(_png_bytes())
     entry = _entry(_authority(workspace))
 
-    traversal = entry.adapter.execute({"path": "../outside.png"}, threading.Event())
-    external = entry.adapter.execute({"path": str(outside)}, threading.Event())
+    traversal = _execute(entry, {"path": "../outside.png"}, threading.Event())
+    external = _execute(entry, {"path": str(outside)}, threading.Event())
 
     assert traversal["code"] == "invalid_path"
     assert external["code"] == "path_outside_authority"
@@ -258,7 +268,7 @@ def test_view_image_rejects_symlink_escape(tmp_path: Path) -> None:
     (workspace / "link.png").symlink_to(outside)
     entry = _entry(_authority(workspace))
 
-    result = entry.adapter.execute({"path": "link.png"}, threading.Event())
+    result = _execute(entry, {"path": "link.png"}, threading.Event())
 
     assert result["outcome"] == "error"
     assert result["code"] == "unsafe_path"
@@ -274,7 +284,7 @@ def test_view_image_accepts_an_authorized_active_skill_root(tmp_path: Path) -> N
     path.write_bytes(_png_bytes((1, 2, 3, 255)))
     entry = _entry(_authority(workspace, skill_root))
 
-    result = entry.adapter.execute({"path": "assets/diagram.dat"}, threading.Event())
+    result = _execute(entry, {"path": "assets/diagram.dat"}, threading.Event())
 
     assert result["outcome"] == "success"
     assert result["data"]["path"] == str(path)
@@ -329,95 +339,52 @@ def test_encode_context_projects_an_actual_binary_content_for_view_image(
                 "callId": "call-image",
                 "name": "view_image",
                 "result": json.dumps(canonical),
+                "toolContent": _saved_image(data),
             },
         ),
         supports_images=True,
-        image_authority=_authority(tmp_path),
     )
 
     assert isinstance(messages[-1], ModelRequest)
     part = messages[-1].parts[0]
     assert isinstance(part, ToolReturnPart)
     assert isinstance(part.content, list)
-    assert any(isinstance(value, str) and '"toolName":"view_image"' in value for value in part.content)
+    assert json.loads(part.content[0])["toolName"] == "view_image"
     binary = next(value for value in part.content if isinstance(value, BinaryContent))
     assert binary.data == data
     assert binary.media_type == "image/png"
 
 
-def test_encode_context_resolves_dynamic_image_authority_at_projection_time(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    skill = tmp_path / "skill"
-    workspace.mkdir()
-    skill.mkdir()
-    path = skill / "image.png"
-    data = _png_bytes()
-    path.write_bytes(data)
-    canonical = _canonical_view_image_result(path, data)
-    active = False
-
-    def authority() -> ViewImageRootAuthority:
-        return ViewImageRootAuthority(
-            workspace,
-            (skill,) if active else (),
-        )
-
-    context = (
-        {
-            "type": "tool_call",
-            "callId": "image-1",
-            "name": "view_image",
-            "arguments": "{}",
-            "responseId": "response-1",
-        },
-        {
-            "type": "tool_result",
-            "callId": "image-1",
-            "name": "view_image",
-            "result": json.dumps(canonical),
-        },
-    )
-    with pytest.raises(ValueError, match="view_image_projection_failed"):
-        encode_context(context, supports_images=True, image_authority=authority)
-
-    active = True
-    messages = encode_context(
-        context, supports_images=True, image_authority=authority
-    )
-    part = messages[-1].parts[0]
-    assert isinstance(part, ToolReturnPart)
-    assert any(isinstance(value, BinaryContent) for value in part.content)
-
-
-def test_encode_context_fails_closed_when_view_image_hash_changes(tmp_path: Path) -> None:
-    original = _png_bytes()
+@pytest.mark.parametrize("change", ["delete", "replace"])
+def test_saved_image_content_survives_source_changes(tmp_path: Path, change: str) -> None:
     path = tmp_path / "image.png"
+    original = _png_bytes()
     path.write_bytes(original)
-    canonical = _canonical_view_image_result(path, original)
-    path.write_bytes(_png_bytes((99, 2, 3, 255)))
+    raw = _entry(_authority(tmp_path)).adapter.execute({"path": path.name}, threading.Event())
+    assert isinstance(raw, VerifiedToolOutput)
+    assert raw.model_content is not None
+    path.unlink()
+    if change == "replace":
+        path.write_bytes(_png_bytes((99, 2, 3, 255)))
+    messages = encode_context((
+        {"type": "tool_call", "callId": "image", "name": "view_image", "arguments": "{}", "responseId": "response"},
+        {"type": "tool_result", "callId": "image", "name": "view_image", "result": json.dumps(raw.result),
+         "toolContent": raw.model_content.model_dump(mode="json", by_alias=True)},
+    ), supports_images=True)
+    binary = next(value for value in messages[-1].parts[0].content if isinstance(value, BinaryContent))
+    assert binary.data == original
+    # A new read checks the live file; history does not recreate or reread it.
+    current = _execute(_entry(_authority(tmp_path)), {"path": path.name}, threading.Event())
+    assert current["outcome"] == ("error" if change == "delete" else "success")
 
-    with pytest.raises(ValueError, match="view_image_result_changed"):
-        encode_context(
-            (
-                {
-                    "type": "tool_call",
-                    "callId": "call-image",
-                    "name": "view_image",
-                    "arguments": "{}",
-                    "responseId": "response-1",
-                },
-                {
-                    "type": "tool_result",
-                    "callId": "call-image",
-                    "name": "view_image",
-                    "result": json.dumps(canonical),
-                },
-            ),
-            supports_images=True,
-            image_authority=_authority(tmp_path),
-        )
+
+def test_legacy_image_result_does_not_read_the_source(tmp_path: Path) -> None:
+    canonical = _canonical_view_image_result(tmp_path / "missing.png", _png_bytes())
+    messages = encode_context((
+        {"type": "tool_call", "callId": "image", "name": "view_image", "arguments": "{}", "responseId": "response"},
+        {"type": "tool_result", "callId": "image", "name": "view_image", "result": json.dumps(canonical)},
+    ), supports_images=True)
+    assert "Historical image content was not saved" in messages[-1].parts[0].content
 
 
 def test_encode_context_keeps_image_result_text_only_without_image_capability(
@@ -441,12 +408,14 @@ def test_encode_context_keeps_image_result_text_only_without_image_capability(
             "callId": "call-image",
             "name": "view_image",
             "result": json.dumps(canonical),
+                "toolContent": _saved_image(data),
         },
-    ), image_authority=_authority(tmp_path))
+    ))
 
     part = messages[-1].parts[0]
     assert isinstance(part, ToolReturnPart)
-    assert isinstance(part.content, str)
+    assert isinstance(part.content, list)
+    assert all(isinstance(value, str) for value in part.content)
 
 
 @pytest.mark.parametrize("image_positions", [(0,), (1,), (2,), (0, 2)])
@@ -479,13 +448,13 @@ def test_chat_completion_maps_every_tool_reply_before_batch_images(
                     if index in image_positions
                     else f"text result {index}"
                 ),
+                **({"toolContent": _saved_image(data)} if index in image_positions else {}),
             },
         ))
 
     messages = encode_context(
         tuple(context),
         supports_images=True,
-        image_authority=_authority(tmp_path),
     )
     tool_request = messages[-1]
     assert isinstance(tool_request, ModelRequest)
@@ -549,6 +518,7 @@ def test_chat_completion_wire_payload_keeps_image_after_all_batch_tool_replies(
             "callId": "call-image",
             "name": "view_image",
             "result": json.dumps(canonical),
+                "toolContent": _saved_image(data),
         },
         {
             "type": "tool_result",
@@ -557,6 +527,7 @@ def test_chat_completion_wire_payload_keeps_image_after_all_batch_tool_replies(
             "result": "text result",
         },
     )
+    path.unlink()
     payloads: list[dict[str, object]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -599,7 +570,6 @@ def test_chat_completion_wire_payload_keeps_image_after_all_batch_tool_replies(
             supports_images=True,
         ),
         openai_client=openai_client,
-        image_authority=_authority(tmp_path),
         async_kernel=kernel,
     )
     try:

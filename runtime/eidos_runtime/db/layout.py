@@ -1066,6 +1066,12 @@ def _blob_references(state: StateDatabase) -> Iterator[str]:
     ]
     if "manual_mcp_servers" in tables:
         queries.append("SELECT env_blob_ref FROM manual_mcp_servers")
+    if "tool_calls" in tables:
+        queries.append(
+            "SELECT json_extract(model_result_json, '$.modelContentSnapshot') "
+            "FROM tool_calls WHERE json_valid(model_result_json) "
+            "AND json_type(model_result_json, '$.modelContentSnapshot') = 'text'"
+        )
     if "model_attempts" in tables and "response_replay_json" in {
         row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")
     }:

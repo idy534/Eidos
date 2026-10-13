@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.tool_content import ToolContentSnapshot
+
 import hashlib
 import json
 from pathlib import Path
@@ -1529,6 +1531,7 @@ class ExecutionRepository(Repository):
         workspace_changed: bool = False,
         diff_hash: str | None = None,
         duration_ms: int | None = None,
+        model_content: ToolContentSnapshot | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         if item_status not in {"completed", "failed", "declined", "canceled"}:
             raise ValueError("invalid item status")
@@ -1568,6 +1571,14 @@ class ExecutionRepository(Repository):
                     model_result_json = ui_result_json = result_json
                     connection.execute("UPDATE tool_calls SET arguments_json='{}',raw_arguments_json=NULL WHERE item_id=?", (item_id,))
 
+            if model_content is not None and item_status == "completed" and tool_status == "completed":
+                projected = json.loads(model_result_json or result_json)
+                if projected.get("outcome") == "success":
+                    # The state lock also excludes Blob GC until this reference commits.
+                    projected["modelContentSnapshot"] = self.database.json_blobs.put_json(
+                        "tool-result-content", model_content.model_dump_json(by_alias=True)
+                    )
+                    model_result_json = json.dumps(projected, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
             tool_update = connection.execute(
                 """
                 UPDATE tool_calls
@@ -1744,6 +1755,7 @@ class ExecutionRepository(Repository):
         workspace_changed: bool = False,
         diff_hash: str | None = None,
         duration_ms: int | None = None,
+        model_content: ToolContentSnapshot | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         with self.lock:
             row = self._connection().execute(
@@ -1764,6 +1776,7 @@ class ExecutionRepository(Repository):
                 workspace_changed=workspace_changed,
                 diff_hash=diff_hash,
                 duration_ms=duration_ms,
+                model_content=model_content,
             )
 
     def begin_approval(

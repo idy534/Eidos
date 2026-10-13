@@ -134,7 +134,7 @@ def estimate_model_request_budget(
         {
             "instructions": instructions,
             "messages": tuple(
-                {key: value for key, value in item.items() if key not in {"inputImage", "imageTokenEstimate"}}
+                _text_budget_item(item)
                 for item in model_context
             ),
             "tools": [
@@ -142,7 +142,11 @@ def estimate_model_request_budget(
             ],
         },
         # Image bytes are not text tokens. This remains an explicitly estimated budget.
-        media_tokens=sum(int(item.get("imageTokenEstimate", 4096)) for item in model_context if item.get("inputImage")),
+        media_tokens=sum(
+            int(item.get("imageTokenEstimate", 4096)) if item.get("inputImage") else
+            _tool_media_tokens(item)
+            for item in model_context
+        ),
         context_window_tokens=context_window_tokens,
         request_max_output_tokens=request_max_output_tokens,
         message_count=len(model_context),
@@ -155,6 +159,30 @@ def estimate_model_request_budget(
         provider_usage=provider_usage,
         provider_calibration_estimate=provider_calibration_estimate,
         usage_updated_at=usage_updated_at,
+    )
+
+
+def _text_budget_item(item: ModelContextItem) -> ModelContextItem:
+    projected = {key: value for key, value in item.items() if key not in {"inputImage", "imageTokenEstimate"}}
+    content = projected.get("toolContent")
+    if isinstance(content, dict):
+        projected["toolContent"] = {
+            "items": [
+                {key: value for key, value in part.items() if key != "data"}
+                for part in content.get("items", [])
+            ],
+        }
+    return projected
+
+
+def _tool_media_tokens(item: ModelContextItem) -> int:
+    content = item.get("toolContent")
+    if not isinstance(content, dict):
+        return 0
+    return 4096 * sum(
+        isinstance(part, dict) and part.get("kind") == "binary"
+        and str(part.get("mime", "")).startswith("image/")
+        for part in content.get("items", [])
     )
 
 

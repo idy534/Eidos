@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionSnapshot } from "../contracts.js";
+import type { Item, Run, SessionSnapshot } from "../contracts.js";
 import { deriveRuntimePresentation } from "../session-state.js";
 import { AppShell } from "./AppShell.js";
 
@@ -38,16 +38,77 @@ vi.mock("../components/InputContext.js", () => ({
   InputContextProvider: ({ children }: { children: React.ReactNode }) => children,
   InputDropZone: ({ children }: { children: React.ReactNode }) => children,
 }));
-// Keep the real Markdown link, ArtifactProvider, Dock and Explorer path under test.
+// Keep the real links, result cards, ArtifactProvider, Dock and preview panels under test.
 vi.mock("../components/ExecutionFeed.js", async () => {
   const { MarkdownContent } = await import("../components/MarkdownContent.js");
-  return { ExecutionFeed: () => <MarkdownContent content={[
+  const { TurnResults } = await import("../components/TurnResults.js");
+  return { ExecutionFeed: ({ runs, items }: { runs: Run[]; items: Item[] }) => <><MarkdownContent content={[
     "[第一个文件](/workspace/one.txt)",
     "[第二个文件](/workspace/two.txt)",
     "[再次定位](/workspace/one.txt:2)",
     "[第一个网页](https://example.com/one)",
     "[第二个网页](https://example.com/two)",
-  ].join("\n\n")} /> };
+  ].join("\n\n")} />{runs.map((run) => <TurnResults key={run.id} run={run} items={items} />)}</> };
+});
+
+describe("AppShell text change review", () => {
+  it.each([
+    ["non-Git", "file"], ["non-Git", "review"],
+    ["Git", "file"], ["Git", "review"],
+    ["projectless", "file"], ["projectless", "review"],
+  ] as const)("opens persisted changes in a %s session through the %s button", async (sessionKind, target) => {
+    const snapshot = fixture.snapshot!;
+    if (sessionKind === "projectless") {
+      delete snapshot.session.project;
+      snapshot.session.projectless = true;
+    } else {
+      snapshot.session.project!.gitAvailable = sessionKind === "Git";
+    }
+    snapshot.runs = ["older-run", "current-run"].map((id, index) => ({
+      id, sessionId: snapshot.session.id, status: "succeeded", modelId: "test-model",
+      modelStepCount: 1, createdAt: index + 1, updatedAt: index + 1,
+    }));
+    snapshot.items = snapshot.runs.map((run, index): Item => {
+      const path = index === 0 ? "older.js" : "work/current.js";
+      const id = `item-${run.id}`;
+      return {
+        id, sessionId: snapshot.session.id, runId: run.id, ordinal: index + 1,
+        kind: "file_change", status: "completed", createdAt: index + 1,
+        toolCall: {
+          id: `tool-${id}`, itemId: id, modelStepIndex: 1, batchOrder: 0,
+          providerCallId: `provider-${id}`, toolName: "apply_patch", status: "completed",
+          startedAt: index + 1,
+          // Runtime persists ordinary unified patches without a Git file header.
+          changeDiff: `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+${run.id}\n`,
+          resultJson: JSON.stringify({ outcome: "success", data: { path, changes: [{ kind: "update", path }] } }),
+        },
+      };
+    });
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "打开工作区工具" }));
+    expect(screen.queryByRole("button", { name: "文本审查", exact: true })).not.toBeInTheDocument();
+    if (sessionKind !== "Git") {
+      expect(screen.queryByRole("button", { name: "审查", exact: true })).not.toBeInTheDocument();
+    }
+    const cardButton = screen.getByRole("button", { name: "已编辑 current.js" });
+    const card = cardButton.closest("article")!;
+    fireEvent.click(target === "file" ? cardButton : within(card).getByRole("button", { name: "审核", exact: true }));
+
+    const tools = await screen.findByRole("tablist", { name: "工作区窗口" });
+    expect(within(tools).getAllByRole("tab", { name: "文本审查" })).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "最近一轮修改" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "work/current.js" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("button", { name: "older.js" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel")).getByText("current-run")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "整个任务修改" }));
+    expect(screen.getByRole("button", { name: "older.js" })).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: "审核", exact: true }));
+    expect(within(tools).getAllByRole("tab", { name: "文本审查" })).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "最近一轮修改" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: "older.js" })).not.toBeInTheDocument();
+    expect(window.eidosRuntime.readWorkspaceFilePreview).not.toHaveBeenCalled();
+  });
 });
 
 beforeEach(() => {

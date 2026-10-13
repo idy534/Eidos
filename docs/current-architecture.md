@@ -290,6 +290,10 @@ Bundled Runtime dependency 使用三层资源边界。Skill 内容层保存 `SKI
 
 只有同时满足 `parallel_safe`、无副作用、参数安全和共享 Kernel 条件的只读批次可以在自身的有界范围内并发执行。每个 Run 的 Workspace write、Shell、Eidos-state、MCP 和 external Tool 实际副作用窗口使用该 Run 自己的独占门，所以同一 Run 内保持串行，不同 Session 的 Run 可以并行，即使它们共享同一个 Workspace。Approval 等待不占用该 Run 的副作用门。并发结果最终按模型声明顺序提交。
 
+工具可以随已验证结果提供 `ToolContentSnapshot`。该内部模型保存有界文字与带 MIME 的二进制内容，不增加内容 Hash 字段。Execution Repository 在既有 ToolResult、Event 与 Outbox 事务中保存 `tool-result-content` Blob 引用；引用进入 `model_result_json`，公共结果与 UI DTO 保持原契约。ContextBuilder 从引用读取内容，冻结到现有 ContextSnapshot。Runtime 优先保留最近的工具内容，并与用户图片引用共用 16 MiB 的编码内容预算；单个工具内容的原始字节总量最多 10 MiB。预算省略会保留说明，原始结果继续保存。Blob GC 保留 ToolCall 引用和既有 ContextSnapshot 共享块。此路径复用 SQLite、现有 Blob 存储、Pydantic 与标准库，不增加数据库列或生产依赖。
+
+工具内容快照只保存已取得的内容，不备份全部生成文件。工作区临时文件被删除或替换后，历史仍回放当时取得的内容；新工具调用继续核验当前路径与权限。旧 `view_image` 结果没有保存图片正文时，模型上下文保留元数据和缺失说明，不读取当前文件来补造历史。Chat Completions 与 Responses 都从同一内容快照编码请求。不支持的二进制类型只显示省略说明；当前产品没有因此新增音频工具或音频模型能力。已有 Blob 存储的完整性与权限检查继续使用原实现。
+
 ## 9. Sandbox & Approval
 
 ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、暂停状态和恢复状态写入 SQLite。普通 Workspace 文件变更和默认 Workspace Seatbelt Shell 不创建 Approval。模型可以用 `networkAccess=request` 表达高层联网意图，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以在同一条命令中合并。Shell contract 会把 intent 规范化为现有 additional permission。Runtime 会在启动进程前请求一次 Approval，获批后仍使用 Seatbelt。旧的底层权限输入继续兼容。联网、Git metadata 写入、附加路径、unsandboxed、MCP 和 Eidos-state 副作用继续使用 Approval。Approval 不能修改 Tool 参数。受保护数据、Runtime、系统 Skill 和非专用 Git 扩权入口需要高危人工确认。批准仅开放窗口中展示的范围，其他保护仍生效。
@@ -470,6 +474,8 @@ Session Delete 通过既有 `session/delete` lifecycle 清理 Snapshot metadata�
 
 Project 和 Session 使用独立生命周期。`project/list` 从 SQLite `projects` 表读取 Project projection。`session/delete` 只删除 Session 及其允许清理的生命周期数据，不删除 Project row。`project/delete` 需要用户显式调用。Runtime 会先通过 Session 删除边界清理没有标题且没有 Run 的历史空 Session，再检查正式 Session、未完成 Worktree lifecycle、Snapshot 和 Handoff。检查通过后，Runtime 只删除 Project 与已完成的 Worktree 元数据，不删除 Workspace 文件、Git 仓库或 Git branch。Projectless Session 不创建 Project，因此不会进入 Project 列表。
 
+Desktop 侧边栏通过 typed IPC 传递 `session/list` 的游标。Session Controller 按顺序读取所有页，直到 Runtime 不再返回 `nextCursor`，再更新列表。Runtime 每页默认返回 50 条记录，并用原有的创建序号上界固定本次分页范围。后续页读取失败或游标重复时，Desktop 保留上一次完整列表并显示错误。较早开始的刷新不能覆盖较新的刷新结果。项目分组、旧空 Session 隐藏和内部子会话排除规则继续生效；本次修复不修改 SQLite、Session 或 Project 生命周期。
+
 WorktreeManager 保留 Eidos 的 Project、Worktree、Session、Run、operationId、SQLite lifecycle、recovery、compensation 和 Sandbox 语义。Git mechanics 通过 typed `GitBackend` 提供。Eidos 不实现 Git working-tree、Index、patch、commit、merge tree、rebase replay、conflict marker、fetch、fast-forward 或 push semantics。Dulwich 负责 discovery、HEAD、refs、branch metadata、revision、ignore observation 和 Worktree metadata mechanics。唯一的 `GitCli` authority 负责 status、file-scoped diff、stage、commit、fetch、merge、merge abort、rebase、rebase continue/abort、push、patch capture/apply、untracked new-file patch、Worktree Add 和 destructive `clean -fdx`。`HardenedGitRunner` 继续禁用 hooks、pager、interactive prompt 和 fsmonitor。Observation 和 Local Mutation profile 禁用 credentials。Remote profile 只开放受控 credential helper 和 SSH Agent。Observation command 继续禁用 executable filters。Stage 由 native `git add` 执行 repository 和受控 user global config 中的 clean/process filter。Commit、merge commit 和 rebase replay 只读取 repository-local identity，或从用户 global config 受控读取 `user.name` 和 `user.email`，再通过命令级配置传给 Git。Runtime 始终禁用 hooks。Runtime 不对失败的 Dulwich 或 Git CLI operation 自动切换另一套 semantics。Manager 不知道 subprocess result。
 
 最终 Git 开发工作流使用单一且明确的权威边界。Dulwich 负责 repository discovery、refs 和 revision metadata。Native Git 负责 Working Tree、Index、diff、commit、remote、merge、rebase 和 snapshot patch semantics。共享 `WorkspaceReader` 负责 Desktop Workspace Explorer 的有界文件观察。Review 的 Accept/Unstage 结果以 Git Index 为事实。HTTPS 认证交给 Git Credential Helper，SSH 认证交给 OpenSSH 和受控 SSH Agent。Checkpoint 复用现有 Git snapshot artifact、checksum 和 hidden ref，不建立第二套文件快照格式。
@@ -524,7 +530,7 @@ Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md`
 
 `run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 默认只读，并额外允许脚本所需的 executable mapping。用户对普通 Skill 的具体写入授权可以成为这个只读规则的例外，系统 Skill 永久禁写。带 runtime declaration 的 Skill 脚本由 Runtime 根据已验证的脚本归属自动选择依赖 binding。识别器支持直接使用 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE` 调用 canonical absolute Skill 脚本；它不会解释任意 Shell 包装表达式，也不会根据已激活 Skill 列表替普通项目命令选择环境。无效或非 ready 声明不能按无依赖处理。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
 
-Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 从 Workspace root 或 active Skill root 读取受信任的 PNG/JPEG，并把经 hash 和 size 复核的 binary content 投影为 Pydantic AI 的 multimodal `BinaryContent`。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
+Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 在受控读取成功时捕获 PNG/JPEG 内容，并通过共同的工具结果提交边界保存。Provider Adapter 只把已保存的内容编码为 multimodal `BinaryContent`，不重读源路径，也不比较源文件 Hash。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
 
 Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skill 的 `type: mcp` 声明，并与本 Run extension snapshot 中已配置且 available 的 Plugin 或手动 MCP server 比较。Runtime 保存 installed、missing 或 unsupported 的结构化诊断。Runtime 也会把未满足项作为低权限 user context warning 提供给后续 Step。这个检查不会安装、启用或启动新的 MCP server。Plugin 和手动 MCP 都由独立的 MCP 配置、consent、官方 Python MCP SDK stdio client、Tool Registry、Approval 和 Sandbox 链路管理。Runtime 不负责 pip、npm、系统包或 MCP server 的自动安装。
 
@@ -647,7 +653,7 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 声明结果包含 executionRoot、outputs（path、可选 title、sizeBytes、version）。version 沿用文件身份、大小和修改时间生成的版本标识，不是内容快照或质量证明。输入每批最多 20 项，路径沿用 512 UTF-8 字节上限，标题最多 120 个字符。任一核验失败时，整个调用没有成功声明；后续成功调用按文件新增或更新，省略其他文件不撤销其声明。Renderer 只接收 builtin/eidos.declare-outputs 的成功结果；Shell 观察、Diff、文件后缀和回复标记不产生交付事实。工具结果仍通过现有 resultJson 传递，不修改 RPC Envelope 或 SQLite Schema。
 
-修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览、Main 的受控系统应用打开入口和 Finder 显示能力；DOCX 等没有内置预览的 Office 产物只展示系统应用打开和在 Finder 中显示。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
+修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。`AppShell.handleOpenReview` 只要求存在当前会话，不使用 Git Review 的工具可用性作为条件。文本审查面板读取持久化 Item/ToolCall 补丁，非 Git 和 Projectless 会话也可以打开；面板仍不列入工作区工具菜单。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览、Main 的受控系统应用打开入口和 Finder 显示能力；DOCX 等没有内置预览的 Office 产物只展示系统应用打开和在 Finder 中显示。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
 
 本轮没有数据库迁移或第二套 Artifact 表；浏览器地址识别新增直接依赖 `tldts`。
 
