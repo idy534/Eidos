@@ -1,5 +1,5 @@
 import { useInputContext } from "./InputContext.js";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
 
@@ -52,7 +52,7 @@ type ExplorerLayout = "side" | "expanded";
 
 const SIDE_SPLIT_MIN = 5.5 * 16;
 const EXPANDED_SPLIT_MIN = 13 * 16;
-const EXPANDED_SPLIT_MAX = 24 * 16;
+const EXPANDED_SPLIT_DEFAULT = 18 * 16;
 const INVALID_FILE_PATH_ERROR = "文件路径无效。请从当前文件树重新选择。";
 
 const defaultListDirectory = (sessionId: string, path: string) =>
@@ -178,6 +178,8 @@ export function WorkspaceExplorer({
   const [splitSizes, setSplitSizes] = useState<Partial<Record<ExplorerLayout, number>>>({});
   const requestVersion = useRef(0);
   const explorerRef = useRef<HTMLElement>(null);
+  const sideTreeWidthRef = useRef<number | undefined>(undefined);
+  const expandedSplitAdjustedRef = useRef(false);
   const treeResizeObserverRef = useRef<ResizeObserver | null>(null);
   const previewsRef = useRef(previews);
   const selectedFileCallbackRef = useRef(onSelectedFileChange);
@@ -196,6 +198,29 @@ export function WorkspaceExplorer({
   selectedFileCallbackRef.current = onSelectedFileChange;
   nodesRef.current = nodes;
   openPreviewPathsRef.current = openPreviewPaths;
+
+  useLayoutEffect(() => {
+    const explorer = explorerRef.current;
+    if (!explorer) return;
+    if (layout === "expanded") {
+      if (expandedSplitAdjustedRef.current) return;
+      const { min, max } = getSplitBounds("expanded");
+      const size = Math.min(max, Math.max(min, sideTreeWidthRef.current ?? EXPANDED_SPLIT_DEFAULT));
+      setSplitSizes((current) => current.expanded === size ? current : { ...current, expanded: size });
+      return;
+    }
+    const measure = () => {
+      // Keep the last side width through the Dock's expansion transition.
+      if (!explorer.classList.contains("workspace-explorer--side")) return;
+      const width = explorer.getBoundingClientRect().width;
+      if (width > 0) sideTreeWidthRef.current = Math.round(width);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(explorer);
+    return () => observer.disconnect();
+  }, [layout]);
 
   useEffect(() => {
     const version = ++requestVersion.current;
@@ -339,7 +364,11 @@ export function WorkspaceExplorer({
 
   function getSplitBounds(targetLayout: ExplorerLayout = layout): { min: number; max: number } {
     const rect = explorerRef.current?.getBoundingClientRect();
-    const width = rect?.width || Math.max(640, window.innerWidth);
+    // The Dock animates its width; expanded bounds use the final workspace space.
+    const workspaceWidth = targetLayout === "expanded" && layout === "expanded"
+      ? explorerRef.current?.closest(".workspace-body")?.getBoundingClientRect().width
+      : undefined;
+    const width = workspaceWidth || rect?.width || Math.max(640, window.innerWidth);
     const height = rect?.height || 600;
     if (targetLayout === "side") {
       return {
@@ -348,19 +377,19 @@ export function WorkspaceExplorer({
       };
     }
     const min = Math.min(EXPANDED_SPLIT_MIN, Math.max(208, width - 20 * 16));
-    return { min, max: Math.max(min, Math.min(EXPANDED_SPLIT_MAX, width - 20 * 16)) };
+    return { min, max: Math.max(min, width - 20 * 16) };
   }
 
   function getSplitSize(targetLayout: ExplorerLayout = layout): number {
     const current = splitSizes[targetLayout];
     if (current !== undefined) return current;
-    const rect = explorerRef.current?.getBoundingClientRect();
     if (targetLayout === "side") return SIDE_SPLIT_MIN;
-    return 18 * 16;
+    return EXPANDED_SPLIT_DEFAULT;
   }
 
   function setSplitSize(size: number, targetLayout: ExplorerLayout = layout): void {
     const { min, max } = getSplitBounds(targetLayout);
+    if (targetLayout === "expanded") expandedSplitAdjustedRef.current = true;
     setSplitSizes((current) => ({
       ...current,
       [targetLayout]: Math.min(max, Math.max(min, Math.round(size))),
@@ -555,7 +584,7 @@ export function WorkspaceExplorer({
             </div>
           </div>
         )}
-        {previewLoadingPath === activePreviewPath && !activePreview ? (
+        {previewLoadingPath !== undefined && previewLoadingPath === activePreviewPath && !activePreview ? (
           <p className="workspace-preview-placeholder" role="status">正在读取文件…</p>
         ) : activePreview ? (
           <WorkspacePreview key={`${executionKey}:${activePreview.path}:${activePreview.version ?? ""}`} preview={activePreview}

@@ -357,6 +357,114 @@ describe("WorkspaceExplorer", () => {
     }
   });
 
+  it.each([320, 480])("uses the previous %ipx side width when expanding Files", async (sideWidth) => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return new DOMRect(0, 0, this.classList.contains("workspace-explorer--expanded") ? 1200 : sideWidth, 600);
+      });
+    const listDirectory = vi.fn(async () => ({ path: ".", entries: [], truncated: false }));
+    try {
+      const { container, rerender } = render(
+        <WorkspaceExplorer sessionId="session-a" layout="side" listDirectory={listDirectory} />,
+      );
+      await screen.findByText("Workspace 中没有可显示的文件");
+      rerender(<WorkspaceExplorer sessionId="session-a" layout="expanded" listDirectory={listDirectory} />);
+      const splitter = screen.getByRole("separator", { name: "调整文件树大小" });
+      expect(splitter).toHaveAttribute("aria-valuenow", String(sideWidth));
+      expect(container.querySelector(".workspace-explorer"))
+        .toHaveStyle({ "--workspace-tree-size": `${sideWidth}px`, "--workspace-tree-divider": `${sideWidth}px` });
+
+      fireEvent.keyDown(splitter, { key: "ArrowLeft" });
+      rerender(<WorkspaceExplorer sessionId="session-a" layout="side" listDirectory={listDirectory} />);
+      expect(screen.getByRole("separator", { name: "调整文件树大小" })).toHaveAttribute("aria-valuenow", "88");
+      rerender(<WorkspaceExplorer sessionId="session-a" layout="expanded" listDirectory={listDirectory} />);
+      expect(screen.getByRole("separator", { name: "调整文件树大小" }))
+        .toHaveAttribute("aria-valuenow", String(sideWidth - 16));
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("tracks side resizes before expansion and keeps room for the preview", async () => {
+    let sideWidth = 320;
+    const observers: Array<{ target: Element; callback: () => void }> = [];
+    const previousResizeObserver = globalThis.ResizeObserver;
+    class TestResizeObserver {
+      constructor(private callback: () => void) {}
+      observe(target: Element) { observers.push({ target, callback: this.callback }); }
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return new DOMRect(0, 0, this.classList.contains("workspace-explorer--expanded") ? 700 : sideWidth, 600);
+      });
+    const listDirectory = vi.fn(async () => ({ path: ".", entries: [], truncated: false }));
+    try {
+      const { container, rerender } = render(
+        <WorkspaceExplorer sessionId="session-a" layout="side" listDirectory={listDirectory} />,
+      );
+      await screen.findByText("Workspace 中没有可显示的文件");
+      sideWidth = 450;
+      act(() => observers.filter(({ target }) => target === container.querySelector(".workspace-explorer"))
+        .forEach(({ callback }) => callback()));
+      rerender(<WorkspaceExplorer sessionId="session-a" layout="expanded" listDirectory={listDirectory} />);
+      const splitter = screen.getByRole("separator", { name: "调整文件树大小" });
+      expect(splitter).toHaveAttribute("aria-valuenow", "380");
+      expect(splitter).toHaveAttribute("aria-valuemax", "380");
+      expect(container.querySelector(".workspace-explorer")).toHaveStyle({ "--workspace-tree-size": "380px" });
+      sideWidth = 340;
+      rerender(<WorkspaceExplorer sessionId="session-a" layout="side" listDirectory={listDirectory} />);
+      rerender(<WorkspaceExplorer sessionId="session-a" layout="expanded" listDirectory={listDirectory} />);
+      expect(screen.getByRole("separator", { name: "调整文件树大小" })).toHaveAttribute("aria-valuenow", "340");
+    } finally {
+      rectSpy.mockRestore();
+      vi.stubGlobal("ResizeObserver", previousResizeObserver);
+    }
+  });
+
+  it("uses the full workspace bounds while the Dock expansion animation starts", async () => {
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        return new DOMRect(0, 0, this.classList.contains("workspace-body") ? 1100 : 320, 600);
+      });
+    const listDirectory = vi.fn(async () => ({ path: ".", entries: [], truncated: false }));
+    try {
+      const { rerender } = render(<div className="workspace-body">
+        <WorkspaceExplorer sessionId="session-a" layout="side" listDirectory={listDirectory} />
+      </div>);
+      await screen.findByText("Workspace 中没有可显示的文件");
+      rerender(<div className="workspace-body">
+        <WorkspaceExplorer sessionId="session-a" layout="expanded" listDirectory={listDirectory} />
+      </div>);
+      const splitter = screen.getByRole("separator", { name: "调整文件树大小" });
+      expect(splitter).toHaveAttribute("aria-valuenow", "320");
+      expect(splitter).toHaveAttribute("aria-valuemax", "780");
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("shows an idle preview until a file read actually starts and after its last tab closes", async () => {
+    const listDirectory = vi.fn(async () => ({
+      path: ".", entries: [{ name: "one.txt", relativePath: "one.txt", kind: "file" as const }], truncated: false,
+    }));
+    let finishRead!: (preview: { path: string; kind: "text"; content: string; sizeBytes: number; truncated: boolean }) => void;
+    const readPreview = vi.fn(() => new Promise<Parameters<typeof finishRead>[0]>((resolve) => { finishRead = resolve; }));
+    render(<WorkspaceExplorer sessionId="session-a" listDirectory={listDirectory} readPreview={readPreview} />);
+    expect(screen.getByText("选择文件以查看预览")).toBeInTheDocument();
+    expect(screen.queryByText("正在读取文件…")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByText("one.txt"));
+    expect(screen.getByText("正在读取文件…")).toBeInTheDocument();
+    await act(async () => finishRead({ path: "one.txt", kind: "text", content: "File content", sizeBytes: 12, truncated: false }));
+    expect(await screen.findByText("File content")).toBeInTheDocument();
+    expect(screen.queryByText("正在读取文件…")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭 one.txt" }));
+    expect(screen.getByText("选择文件以查看预览")).toBeInTheDocument();
+    expect(screen.queryByText("正在读取文件…")).not.toBeInTheDocument();
+    expect(readPreview).toHaveBeenCalledTimes(1);
+  });
+
   it("refreshes only the affected loaded subtree after watcher invalidation", async () => {
     let notify: ((paths: string[]) => void) | undefined;
     const listDirectory = vi.fn(async (_sessionId: string, path: string) => ({

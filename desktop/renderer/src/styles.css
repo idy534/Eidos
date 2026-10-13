@@ -1355,8 +1355,8 @@ button:disabled { cursor: not-allowed; opacity: 0.48; }
 }
 
 .workspace-explorer--expanded {
-  --workspace-tree-divider: 24rem;
-  grid-template-columns: var(--workspace-tree-size, minmax(13rem, 24rem)) minmax(0, 1fr);
+  --workspace-tree-divider: 18rem;
+  grid-template-columns: var(--workspace-tree-size, 18rem) minmax(0, 1fr);
 }
 
 .workspace-explorer--expanded .workspace-tree-pane {

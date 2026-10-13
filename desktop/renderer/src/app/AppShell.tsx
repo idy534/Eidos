@@ -944,14 +944,14 @@ export function AppShell({ runtime }: AppShellProps) {
         currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot,
       ].join(":")
     : "empty";
-  const availableTools: WorkspaceToolKind[] = currentSnapshot
+  const availableTools = useMemo<WorkspaceToolKind[]>(() => currentSnapshot
     ? [
         ...(agents.state?.agents?.length ? ["agent" as const] : []),
         ...(sessionHasGit ? ["review" as const] : []),
         ...(sessionHasProject ? ["terminal", "files"] as const : []),
         "browser",
       ]
-    : [];
+    : [], [currentSnapshot, agents.state?.agents?.length, sessionHasGit, sessionHasProject]);
 
   useEffect(() => {
     setEnvironmentPopoverOpen(false);
@@ -1048,7 +1048,7 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }
 
-  function openTool(tool: WorkspaceToolKind): string | undefined {
+  const openTool = useCallback((tool: WorkspaceToolKind): string | undefined => {
     if (!availableTools.includes(tool)) return;
     if (environmentPopoverRef.current) environmentPopoverRef.current.open = false;
     setEnvironmentPopoverOpen(false);
@@ -1065,11 +1065,11 @@ export function AppShell({ runtime }: AppShellProps) {
     } else if (!tab) {
       tab = { id: tool, kind: tool };
     }
-    if (!existing) setOpenTabs((current) => [...current, tab]);
+    if (!existing) setOpenTabs((current) => current.some((entry) => entry.id === tab.id) ? current : [...current, tab]);
     setActiveTabId(tab.id);
     setDockOpen(true);
     return tab.id;
-  }
+  }, [availableTools, openTabs]);
 
   const openAgentList = useCallback((): void => {
     if (!currentSnapshot) return;
@@ -1167,7 +1167,7 @@ export function AppShell({ runtime }: AppShellProps) {
       ...(position?.line === undefined ? {} : { line: position.line }),
       ...(position?.column === undefined ? {} : { column: position.column }),
     });
-  }, [currentSnapshot]);
+  }, [currentSnapshot, openTool]);
 
   function toggleDock(): void {
     if (dockOpen) {

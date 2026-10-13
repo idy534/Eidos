@@ -33,6 +33,10 @@ Desktop Workspace Explorer 也只读取当前 Session execution root。`Workspac
 
 Conversation 文件引用沿用 `MarkdownContent → ArtifactLink → AppShell → WorkspaceExplorer → typed IPC → WorkspaceExplorerApplication → WorkspaceReader`。`workspaceFileLink` 从显式 Markdown 链接目标解析绝对路径和可选行列号，并把当前 execution root 内的目标转为工作区相对路径。显示标签不参与路径解析。行内代码不再自动变成文件链接。文档预览通过 `documentPath` 保留相对链接语义。`ArtifactActions.openFile` 和 Renderer 内部的 `WorkspaceFileOpenRequest` 携带可选 `line`、`column`；位置只控制预览滚动与选区，不改变 Runtime 文件读取请求、权限或文件身份。Shiki 的 line transformer 和普通文本行节点提供源行标记。Markdown 的 rehype 节点位置提供源文本块标记。代码高亮完成后，预览会再次应用当前定位请求；同文件的不同请求用 `requestId` 区分。
 
+AppShell 的文件打开回调跟随当前工具打开函数更新。工具打开函数在 React 状态更新中按 Tab ID 去重，连续文件链接点击会复用同一个 Files 面板，并在面板内部添加或选中对应文件 Tab。这个规则也适用于工具菜单已打开的 Files 面板；Terminal 和 Browser 仍使用独立 ID 创建多个工具 Tab。
+
+WorkspaceExplorer 在侧栏布局中记录实际宽度，并通过 ResizeObserver 跟随侧栏调整。Files 展开时，文件树默认使用展开前的侧栏宽度，并按当前可用空间限制大小。用户在展开布局中调整过的宽度会保留，侧栏布局的文件树高度单独保存。预览区在未选择文件时显示“选择文件以查看预览”；只有当前文件确实处于读取中且没有可显示的预览时，界面才显示“正在读取文件…”。
+
 `ContextBuilder` 根据持久化的 Session 项目绑定判断是否加入 `project-file-references` 指令层。`InstructionResolver` 只在 `has_project` 为真时添加该层，Memory 投影触发提示词重建时保留这个条件。无项目的 Session 不增加文件引用提示词。已有指令快照仍保留原文；新构建的提示词才包含新规则。Finalizer 沿用已有指令，缺少指令时也按 Run 的项目绑定构建默认提示词。本轮不修改协议 DTO、SQLite Schema 或依赖。定向提示词测试覆盖项目绑定、Memory 重建和 Finalizer 回退；验证结果见 `current-limitations.md`。
 
 Desktop 会让 Conversation 始终保持挂载。Session header 右侧固定显示环境信息入口；用户可以通过工作区开关打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab 保留在预览栏中，预览区不显示当前路径、文件大小或手动刷新入口，侧栏布局默认给预览区更多空间。产物卡的图片会直接进入全屏预览，HTML 会直接打开隔离网页面板，PDF 会进入 Files 的内置预览，系统应用打开入口保持可用。Dock 普通展开时环境信息入口仍在 Session header，完全展开时入口显示在 Dock header。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。Dock 支持 Tab 切换、关闭、关闭最后一个 Tab 时自动折叠工作区、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
