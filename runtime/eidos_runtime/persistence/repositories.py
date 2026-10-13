@@ -28,6 +28,7 @@ from eidos_runtime.persistence.mappers.runtime import (
     tool_call_from_row,
 )
 from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
+from eidos_runtime.persistence.projectless_workspaces import ProjectlessWorkspaceRepository
 
 
 class TypedRuntimeRepository(Repository):
@@ -63,6 +64,7 @@ class TypedRuntimeRepository(Repository):
         operation_id: str | None = None,
         session_id: str | None = None,
         projectless: bool = False,
+        projectless_creation_id: str | None = None,
     ) -> CommittedMutation[Session]:
         return self._sessions.create_session_committed(
             workspace_root,
@@ -72,7 +74,11 @@ class TypedRuntimeRepository(Repository):
             operation_id=operation_id,
             session_id=session_id,
             projectless=projectless,
+            projectless_creation_id=projectless_creation_id,
         )
+
+    def projectless_workspaces(self) -> ProjectlessWorkspaceRepository:
+        return ProjectlessWorkspaceRepository(self.database)
 
     def list_sessions(
         self, *, limit: int = 50, cursor: str | None = None

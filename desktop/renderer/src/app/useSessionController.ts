@@ -58,13 +58,14 @@ export interface SessionControllerActions {
   createProject: (name: string | undefined, workspaceRoot: string) => Promise<Project | undefined>;
   startDraft: (project?: Project | null) => void;
   updateDraftExecutionMode: (mode: "local" | "worktree") => void;
-  materializeDraft: () => Promise<SessionSnapshot | undefined>;
+  materializeDraft: (workspaceNameHint?: string) => Promise<SessionSnapshot | undefined>;
   discardDraft: () => void;
   rollbackMaterializedSession: (session: Session, draft: SessionSnapshot) => Promise<boolean>;
   selectSession: (session: Session) => Promise<SessionSnapshot | undefined>;
   createSession: (
     workspaceRoot?: string | null,
     options?: {
+      workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
       includeLocalChanges?: boolean;
@@ -295,6 +296,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
   const createSession = useCallback(async (
     workspaceRoot?: string | null,
     options: {
+      workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
       includeLocalChanges?: boolean;
@@ -351,12 +353,13 @@ export function useSessionController(): [SessionControllerState, SessionControll
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const materializeDraft = useCallback(async (): Promise<SessionSnapshot | undefined> => {
+  const materializeDraft = useCallback(async (workspaceNameHint?: string): Promise<SessionSnapshot | undefined> => {
     const currentDraft = draft;
     if (!currentDraft) return undefined;
     const projectRoot = currentDraft.session.project?.workspaceRoot ?? null;
     return createSession(projectRoot, {
       executionMode: currentDraft.session.executionMode ?? "local",
+      ...(projectRoot === null ? { workspaceNameHint: workspaceNameHint ?? "新会话" } : {}),
     });
   }, [createSession, draft]);
 

@@ -4,7 +4,7 @@ import type { ApprovalRequest, Item, Run, SessionSnapshot } from "../contracts.j
 import { ApprovalComposer } from "./ApprovalComposer.js";
 import { ExecutionFeed, formatItemTime } from "./ExecutionFeed.js";
 import { userFacingError } from "../session-state.js";
-import "./agents.css";
+import { terminalRunPresentation } from "../run-presentation.js";
 
 const active = new Set([
   "queued",
@@ -98,25 +98,6 @@ export function useAgentState(sessionId: string | undefined, ready: boolean) {
   return { state, error, stopping, stop };
 }
 
-const errorCodeLabels: Record<string, string> = {
-  RUNTIME_INTERRUPTED: "执行已中断",
-  completion_unconfirmed: "答复已生成，旧版完成检查未确认",
-  agent_failed: "执行失败",
-  agent_task_limit: "任务超限",
-  agent_task_name_exists: "任务名冲突",
-  agent_operation_conflict: "操作冲突",
-  nested_delegation_not_supported: "不支持嵌套委派",
-  timeout: "超时",
-  canceled: "已取消",
-  interrupted: "已中断",
-  stopped: "已停止",
-};
-
-export function formatErrorCode(code: string | null | undefined): string {
-  if (!code) return "";
-  return errorCodeLabels[code] ?? code.replace(/_/g, " ");
-}
-
 export function statusBadgeTone(status: AgentSummary["status"]): "success" | "warning" | "danger" | "neutral" | "active" {
   switch (status) {
     case "running":
@@ -150,8 +131,9 @@ export function formatAgentTooltip(agent: AgentSummary): string {
   if (agent.result?.trim()) {
     parts.push(`交付成果：${agent.result.trim()}`);
   }
-  if (agent.errorCode?.trim()) {
-    parts.push(`错误代码：${formatErrorCode(agent.errorCode)}`);
+  const outcome = terminalRunPresentation(agent);
+  if (outcome && (agent.status !== "succeeded" || agent.reconciliationRequired)) {
+    parts.push(`结束原因：${outcome.label}`);
   }
   return parts.join("\n");
 }

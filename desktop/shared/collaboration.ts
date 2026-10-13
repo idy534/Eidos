@@ -1,4 +1,5 @@
 import type { AgentSummary, CollaborationState } from "./collaboration.generated.js";
+import { isRunTermination } from "./run-termination.js";
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -17,6 +18,9 @@ function agent(value: unknown): value is AgentSummary {
     && ["queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing", "succeeded", "failed", "stopped", "canceled", "interrupted"].includes(String(value.status))
     && text(value.task, 512) && optionalText(value.result, 2000)
     && optionalText(value.resultItemId) && optionalText(value.errorCode, 1024)
+    && optionalText(value.stopReason, 128)
+    && (value.termination == null || isRunTermination(value.termination))
+    && (value.reconciliationRequired === undefined || typeof value.reconciliationRequired === "boolean")
     && Number.isSafeInteger(value.createdAt);
 }
 export function isCollaborationState(value: unknown): value is CollaborationState {

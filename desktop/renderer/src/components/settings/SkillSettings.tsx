@@ -3,7 +3,6 @@ import type { SkillMetadata, SkillRemoval } from "../../contracts.js";
 import type { SettingsPendingAction } from "./settings-types.js";
 import { EmptySettingsState } from "./EmptySettingsState.js";
 import { SkillDetailDialog, SkillIcon, SkillInitial } from "./SkillDetailDialog.js";
-import "./SkillSettings.css";
 
 interface SkillSettingsProps {
   skills: SkillMetadata[];

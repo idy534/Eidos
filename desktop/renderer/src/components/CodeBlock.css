@@ -1,0 +1,64 @@
+/* Code Block Card & Chrome */
+.code-block-card {
+  margin: 0.75rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-muted);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+.code-block-content {
+  max-height: 28rem;
+  overflow: auto;
+}
+.code-block-card:hover .code-block-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.65);
+}
+.code-block-card:hover .code-block-content::-webkit-scrollbar-thumb:active {
+  background: rgba(106, 111, 103, 0.85);
+}
+.code-block-card pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem 1rem;
+  font: var(--font-size-code, 12.5px)/1.55 var(--font-code);
+}
+.code-block-card pre code {
+  display: block;
+  font: inherit;
+}
+.code-block-card pre .line {
+  display: inline;
+  line-height: var(--line-height-code, 1.55);
+}
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 2rem;
+  padding: 0 0.5rem 0 0.75rem;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--font-size-caption);
+  color: var(--muted);
+  user-select: none;
+}
+.shiki-code-body {
+  overflow: visible;
+  font: var(--font-size-code, 12.5px)/var(--line-height-code, 1.55) var(--font-code);
+}
+.shiki-code-body pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: transparent !important;
+  overflow: visible;
+  font: inherit;
+}
+.shiki-code-body code {
+  font: inherit;
+}
+.shiki-code-body pre .line {
+  display: inline;
+}

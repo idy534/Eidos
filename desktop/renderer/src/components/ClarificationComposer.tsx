@@ -6,7 +6,6 @@ import type {
 } from "../../../shared/planning.generated.js";
 import { userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
-import "./planning.css";
 
 export interface ClarificationComposerProps {
   request: UserInputRequest;

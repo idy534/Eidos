@@ -1,0 +1,148 @@
+/* Diff Viewer Group & File Cards */
+.diff-viewer-group {
+  --diff-single-max-height: 16rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  max-height: calc(var(--diff-single-max-height) * 1.5);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1px 4px 1px 1px;
+}
+.diff-viewer-group:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.65);
+}
+.diff-viewer-group:hover::-webkit-scrollbar-thumb:active {
+  background: rgba(106, 111, 103, 0.85);
+}
+.diff-file-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  flex-shrink: 0;
+  max-height: var(--diff-single-max-height, 16rem);
+  display: flex;
+  flex-direction: column;
+}
+.diff-file-card.diff-view {
+  max-height: var(--diff-single-max-height, 16rem);
+  overflow: hidden;
+  padding: 0;
+}
+.diff-file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 2.1rem;
+  padding: 0 0.5rem 0 0.75rem;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.diff-file-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-code);
+  font-size: 0.8rem;
+}
+.diff-file-name {
+  font-weight: 500;
+  color: var(--muted, #475569);
+}
+.diff-stat-add {
+  color: var(--status-success);
+  font-weight: 600;
+}
+.diff-stat-del {
+  color: #ef4444;
+  font-weight: 600;
+}
+.diff-file-body {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0.35rem 0;
+  background: var(--surface);
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(var(--diff-single-max-height, 16rem) - 2.1rem);
+  overflow: auto;
+  font: var(--font-size-code)/var(--line-height-code) var(--font-code);
+  tab-size: 2;
+}
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(106, 111, 103, 0.65);
+}
+.diff-file-card:hover .diff-file-body::-webkit-scrollbar-thumb:active {
+  background: rgba(106, 111, 103, 0.85);
+}
+.diff-row {
+  display: flex;
+  align-items: stretch;
+  min-width: max-content;
+  width: 100%;
+  border-left: 3px solid transparent;
+  transition: background-color 80ms ease;
+}
+.diff-line-number {
+  display: inline-block;
+  width: 3.25rem;
+  padding-right: 0.75rem;
+  text-align: right;
+  color: var(--muted, #94a3b8);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.diff-line-content {
+  flex-grow: 1;
+  white-space: pre;
+  padding-right: 1rem;
+  color: var(--text);
+}
+/* Additions: 3px solid green indicator + soft green tint */
+.diff-row--add {
+  border-left-color: var(--status-success);
+  background: rgba(34, 197, 94, 0.08);
+}
+.diff-row--add .diff-line-number {
+  color: var(--status-success);
+}
+/* Deletions: 3px solid red indicator + soft red tint */
+.diff-row--del {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+.diff-row--del .diff-line-number {
+  color: #ef4444;
+}
+/* Context lines */
+.diff-row--context {
+  background: transparent;
+}
+/* Hunk header divider */
+.diff-row--hunk {
+  background: var(--surface-raised);
+  border-left-color: transparent;
+}
+.diff-hunk-text {
+  padding: 0.15rem 0.75rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+.diff-viewer-empty {
+  margin: 0.75rem 0;
+  padding: 1.5rem;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}

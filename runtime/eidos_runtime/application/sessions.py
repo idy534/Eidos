@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import logging
+import sqlite3
 from pathlib import Path
 import unicodedata
 import uuid
@@ -29,7 +30,14 @@ from eidos_runtime.application.git_workflow import (
     GitRebasePlan,
     GitWorkflowApplication,
 )
-from eidos_runtime.db.database import CommittedMutation, projectless_root_for
+from eidos_runtime.db.database import CommittedMutation
+from eidos_runtime.persistence.projectless_workspaces import ProjectlessWorkspaceRepository
+from eidos_runtime.workspace.projectless import (
+    ProjectlessDirectoryAllocator,
+    projectless_root,
+    readable_workspace_name,
+)
+from eidos_runtime.workspace.reader import WorkspacePathError
 from eidos_runtime.db.errors import (
     InvalidCursorError,
     InvalidRunStateError,
@@ -169,7 +177,10 @@ class TypedSessionRepositoryPort(Protocol):
         operation_id: str | None = None,
         session_id: str | None = None,
         projectless: bool = False,
+        projectless_creation_id: str | None = None,
     ) -> CommittedMutation[Session]: ...
+
+    def projectless_workspaces(self) -> ProjectlessWorkspaceRepository: ...
 
     def list_sessions(
         self, *, limit: int, cursor: str | None
@@ -563,17 +574,8 @@ class SessionApplication:
                     "PROJECTLESS_REQUIRES_LOCAL",
                     "projectless conversations require local execution",
                 )
-            workspace_root, session_id = self._create_projectless_workspace(
-                request.operation_id
-            )
             try:
-                mutation = self._repository.create_session(
-                    workspace_root,
-                    execution_mode=execution_mode,
-                    operation_id=request.operation_id,
-                    session_id=session_id,
-                    projectless=True,
-                )
+                session_id = self._create_projectless_session(request)
             except WorkspaceBoundaryError as error:
                 raise ApplicationError(
                     "WORKSPACE_BOUNDARY_VIOLATION", str(error)
@@ -582,10 +584,24 @@ class SessionApplication:
                 raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
             except OperationInProgressError as error:
                 raise ApplicationError("OPERATION_IN_PROGRESS", str(error)) from error
+            except (OSError, WorkspacePathError, sqlite3.Error, StorageError) as error:
+                raise ApplicationError(
+                    "SESSION_PERSISTENCE_FAILED", "could not create conversation workspace"
+                ) from error
             return self._activate_created_session(_result(
                 SessionCreateResponseDto,
-                self._project_session(self._projection_for_session(mutation.value.id)),
+                self._project_session(self._projection_for_session(session_id)),
             ))
+
+        if request.workspace_name_hint is not None:
+            raise ApplicationInvalidParamsError(
+                "INVALID_PARAMS", "workspaceNameHint only applies to projectless Sessions"
+            )
+        if request.operation_id is not None:
+            try:
+                self._repository.projectless_workspaces().assert_project_operation(request.operation_id)
+            except OperationConflictError as error:
+                raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
 
         resolution: ProjectResolution | None = None
         if self._worktree_manager is not None:
@@ -627,26 +643,52 @@ class SessionApplication:
             self._project_session(self._projection_for_session(mutation.value.id)),
         ))
 
-    def _create_projectless_workspace(self, operation_id: str | None) -> tuple[str, str]:
-        data_directory = self._store.data_directory
-        if data_directory is None:
+    def _create_projectless_session(self, request: SessionCreateRequestDto) -> str:
+        if self._store.data_directory is None:
             raise ApplicationError("STORAGE_NOT_READY", "runtime storage is not ready")
-        session_id = str(
-            uuid.uuid5(uuid.NAMESPACE_URL, f"eidos-projectless:{operation_id}")
-            if operation_id is not None
-            else uuid.uuid4()
-        )
-        root = projectless_root_for(data_directory) / session_id
-        try:
-            root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            root.parent.chmod(0o700)
-            root.mkdir(mode=0o700, exist_ok=True)
-            root.chmod(0o700)
-        except OSError as error:
-            raise ApplicationError(
-                "SESSION_PERSISTENCE_FAILED", "could not create private conversation storage"
-            ) from error
-        return str(root), session_id
+        operation_id = request.operation_id or str(uuid.uuid4())
+        name = readable_workspace_name(request.workspace_name_hint)
+        allocator = ProjectlessDirectoryAllocator()
+        repository = self._repository.projectless_workspaces()
+        with self._lifecycle.hold_operation("session/create", operation_id):
+            creation = repository.prepare(operation_id, name, projectless_root())
+            if creation.status == "completed":
+                # A deleted Session must never be recreated by replaying its old operation.
+                if self._repository.read_session(creation.session_id) is None:
+                    raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
+                return creation.session_id
+            if creation.status == "prepared":
+                for _ in range(1000):
+                    try:
+                        identity = allocator.create(Path(creation.workspace_root))
+                    except FileExistsError:
+                        # A crash before the identity commit leaves an unowned directory.
+                        # Never adopt or remove it, even if it appears empty.
+                        creation = repository.next_path(creation)
+                        continue
+                    creation = repository.mark_created(creation, identity)
+                    break
+                else:
+                    raise ApplicationError("SESSION_PERSISTENCE_FAILED", "workspace name exhausted")
+            identity = creation.identity()
+            allocator.verify(identity)
+            try:
+                self._repository.create_session(
+                    creation.workspace_root, session_id=creation.session_id,
+                    operation_id=creation.operation_id,
+                    projectless=True, projectless_creation_id=creation.operation_id,
+                )
+            except Exception:
+                if self._repository.read_session(creation.session_id) is None:
+                    try:
+                        allocator.remove_empty(identity)
+                    except (OSError, WorkspacePathError):
+                        # Preserve a changed/nonempty directory and its durable reservation.
+                        pass
+                    else:
+                        repository.abandon(creation)
+                raise
+            return creation.session_id
 
     def _activate_created_session(
         self, result: SessionCreateResponseDto

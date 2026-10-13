@@ -14,6 +14,7 @@ import {
   RuntimeRequestError,
 } from "./runtime-client.js";
 import type { RuntimeNotification } from "./runtime-client.js";
+import type { Session } from "../shared/domain-contracts.js";
 
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -296,6 +297,49 @@ test("accepts Volcengine model presets and models without reasoning metadata", a
     client?.terminate();
     await client?.waitForExit().catch(() => undefined);
     await rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test("creates readable Projectless workspaces and replays creation across runtime restarts", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-projectless-"));
+  const dataDirectory = path.join(temporaryRoot, "data");
+  const workspaces = path.join(temporaryRoot, "Eidos");
+  const fixture = JSON.parse(await readFile(path.join(projectRoot, "protocol/fixtures/projectless-v1.json"), "utf8")) as {
+    request: { params: { workspaceNameHint: string; operationId: string } };
+    response: { result: Session };
+  };
+  let firstClient: RuntimeClient | undefined;
+  let secondClient: RuntimeClient | undefined;
+  const options = { workspaceNameHint: fixture.request.params.workspaceNameHint, operationId: fixture.request.params.operationId };
+  const runtimeOptions = {
+    pythonExecutable, runtimeRoot: path.join(projectRoot, "runtime"), dataDirectory,
+    environment: { EIDOS_PROJECTLESS_ROOT: workspaces },
+  };
+  try {
+    firstClient = new RuntimeClient(runtimeOptions);
+    await firstClient.initialize();
+    const created = await firstClient.createSession(null, options);
+    assert.equal(created.projectless, fixture.response.result.projectless);
+    assert.equal(created.executionMode, fixture.response.result.executionMode);
+    assert.equal(path.basename(created.workspaceRoot), "整理销售数据");
+    assert.equal(path.dirname(path.dirname(created.workspaceRoot)), await realpath(workspaces));
+    assert.deepEqual(await firstClient.createSession(null, options), created);
+    const duplicate = await firstClient.createSession(null, { workspaceNameHint: options.workspaceNameHint });
+    assert.equal(path.basename(duplicate.workspaceRoot), "整理销售数据-2");
+    await firstClient.shutdown();
+    assert.equal(await firstClient.waitForExit(), 0);
+    secondClient = new RuntimeClient(runtimeOptions);
+    await secondClient.initialize();
+    assert.deepEqual(await secondClient.createSession(null, options), created);
+    assert.equal((await secondClient.readSession(created.id)).session.workspaceRoot, created.workspaceRoot);
+    await secondClient.shutdown();
+    assert.equal(await secondClient.waitForExit(), 0);
+  } finally {
+    firstClient?.terminate();
+    secondClient?.terminate();
+    await firstClient?.waitForExit().catch(() => undefined);
+    await secondClient?.waitForExit().catch(() => undefined);
+    await rm(temporaryRoot, { recursive: true, force: true });
   }
 });
 

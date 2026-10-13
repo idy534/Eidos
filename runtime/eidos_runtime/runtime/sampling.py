@@ -203,7 +203,7 @@ class SamplingRuntime:
                 protocol_diagnostic=ProtocolDiagnostic(
                     stage="model_transport",
                     code=_diagnostic_code(
-                        failure.code if failure else type(error).__name__
+                        (failure.reason or failure.code) if failure else type(error).__name__
                     ),
                 ),
                 retry_decision=_retry_decision_payload(decision, failure),

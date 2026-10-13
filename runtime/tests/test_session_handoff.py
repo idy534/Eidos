@@ -98,7 +98,7 @@ def test_schema_and_handoff_request_contract_are_phase3c_shapes(
     store = SessionStore(tmp_path / "data")
     store.initialize()
     try:
-        assert SCHEMA_VERSION == 22
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         columns = {
             str(row[1])
             for row in store.connection.execute("PRAGMA table_info(sessions)")

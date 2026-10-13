@@ -1427,8 +1427,6 @@ function RunNotice({ run }: { run: Run }) {
   return (
     <p className={`run-notice run-notice--${active.tone}`} role={active.tone === "error" ? "alert" : "status"}>
       {active.label}
-      {run.reconciliationRequired === true
-        && "；有操作结果未确认，详情见对应操作记录"}
     </p>
   );
 }

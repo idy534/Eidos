@@ -1,4 +1,5 @@
 import type { ModelId } from "./constants.js";
+import type { RunTermination } from "./run-termination.generated.js";
 import { IPC } from "./ipc-channels.js";
 
 export type { ModelId };
@@ -301,6 +302,7 @@ export interface Run {
   cancelCompletedAt?: number;
   cancelFailureCode?: string;
   stopReason?: string;
+  termination?: RunTermination;
   sideEffectsMayExist?: boolean;
   reconciliationRequired?: boolean;
   extensionSnapshot?: Record<string, unknown>;

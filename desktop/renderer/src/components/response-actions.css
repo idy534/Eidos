@@ -51,7 +51,7 @@
 }
 
 .response-action-button:focus-visible {
-  outline: 2px solid var(--accent-glow);
+  outline: var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -108,7 +108,7 @@
 }
 
 .response-more-dropdown .dropdown-trigger:focus-visible {
-  outline: 2px solid var(--accent-glow);
+  outline: var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -139,7 +139,7 @@
  * open-circle arrow, while keeping the same quiet icon-button surface. */
 .response-action-button[aria-label="重新回答"] {
   position: relative;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .response-action-button[aria-label="重新回答"] svg {
@@ -166,7 +166,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-caption);
 }
 
 .response-meta .feed-item-timestamp::before {
@@ -185,7 +185,7 @@
   resize: vertical;
   box-sizing: border-box;
   border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.72);
   color: inherit;
   font: inherit;

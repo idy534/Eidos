@@ -740,7 +740,7 @@ test("does not show a succeeded run with a reconciliation barrier as complete", 
     />,
   );
 
-  assert.match(html, /完成状态待核验，尚未确认/);
+  assert.match(html, /Eidos 尚未确认部分操作的结果，任务完成状态仍需检查/);
   assert.doesNotMatch(html, /已完成/);
 });
 

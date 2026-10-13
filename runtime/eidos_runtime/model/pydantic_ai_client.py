@@ -332,6 +332,7 @@ class PydanticAIModelClient:
                 code="protocol_error",
                 retryable=False,
                 provider_name=self._profile_spec.provider_id,
+                reason="invalid_tool_results" if isinstance(error, _ToolResultBatchError) else None,
             )) from None
 
     async def _complete(
@@ -856,6 +857,7 @@ def map_model_response(
                 code="protocol_error",
                 retryable=False,
                 provider_name=response.provider_name,
+                reason="invalid_tool_arguments",
             )) from None
         encoded = json.dumps(
             arguments,
@@ -875,6 +877,7 @@ def map_model_response(
                 code="protocol_error",
                 retryable=False,
                 provider_name=response.provider_name,
+                reason="invalid_tool_call",
             ))
         calls.append(ModelToolCall(call_id, call.tool_name, arguments))
     text = response.text or ""
@@ -891,7 +894,7 @@ def map_model_response(
     try:
         end_turn = validate_end_turn((response.provider_details or {}).get("end_turn"))
     except ValueError:
-        raise ModelRequestError(ModelRequestFailure(code="protocol_error", retryable=False, provider_name=response.provider_name)) from None
+        raise ModelRequestError(ModelRequestFailure(code="protocol_error", reason="invalid_turn_signal", retryable=False, provider_name=response.provider_name)) from None
     return ModelResponse(
         text=text,
         tool_calls=tuple(calls),

@@ -55,6 +55,14 @@ EIDOS_PYTHON=/absolute/path/to/python3 pnpm start
 EIDOS_DATA_DIR=/private/tmp/eidos-dev-data pnpm start
 ```
 
+Projectless 工作空间默认位于 `~/Eidos/YYYY-MM-DD/可读名称`。`EIDOS_DATA_DIR` 不控制这个位置。开发者需要隔离工作空间时，应同时设置：
+
+```bash
+EIDOS_DATA_DIR=/private/tmp/eidos-dev-data EIDOS_PROJECTLESS_ROOT=/private/tmp/eidos-dev-workspaces pnpm start
+```
+
+Schema v23 是不兼容旧 Projectless Session 的 Alpha 更新。新版 Runtime 启动时会废弃旧数据目录内的无项目 Session 和关联历史，旧工作空间文件原地保留。该更新不会迁移目录，也不会清理有项目的 Session。Runtime 定向测试通过自动 fixture 隔离 Projectless 根目录；其他测试进程需要显式设置 `EIDOS_PROJECTLESS_ROOT`，不能向真实 HOME 写入。
+
 Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使用工作区共享副作用门控。`EIDOS_MAX_ACTIVE_RUNS` 与 `EIDOS_MAX_RUN_WORKERS` 不再作为配置读取。每个父 Run 最多同时执行 8 个子 Agent Run，名额不与其他父 Run 共享；这不是单 Run 内工具线程池大小。同一 Session 仍按 FIFO 顺序执行，父任务仍可主动等待子任务结果。同目录并发修改可能冲突，现有文件版本核验、权限、取消和副作用对账继续生效；需要修改隔离时使用独立 Worktree。
 
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
@@ -132,6 +140,8 @@ pnpm build
 `pnpm test:desktop` 和 `pnpm test:main` 会运行完整 Desktop 或 Main 测试层。用户明确要求 Full Suite 或要求执行完整套件命令时，执行者才运行完整层级。普通 Desktop 修改优先运行相关测试文件；没有合适的定向入口时，执行者再运行 Fast。
 
 `pnpm test:composer-layout` 使用真实 Electron、隔离的临时 user-data 和本地 Vite 测试页面。该定向测试检查输入框自动高度和历史记录滚动位置，不启动 Runtime，也不读取真实 Session 数据。测试记录包含代码块和图片，预览上下文随草稿编辑更新。测试覆盖单行输入、全选删除、等高编辑、多行删除、组合输入事件、窄窗口换行、窗口宽度变化和输入框内部滚动。该入口不属于完整测试套件。
+
+`pnpm test:renderer-styles` 使用真实 Electron 和隔离页面加载 Renderer 的统一样式入口。该定向测试检查公共按钮与审批、计划按钮的默认、悬停、按下、禁用和键盘焦点状态，检查列表选中项的悬停颜色与菜单外观，并覆盖 1100px、420px 下的侧栏和 Dock 组合。测试还检查聊天、代码和非聊天正文的字号，以及 Composer 的高度范围。测试不启动 Runtime，也不读取真实 Session 数据。开发者可以通过 `EIDOS_STYLE_BASELINE_CSS` 指定改动前的构建 CSS 文件，让测试对照正文排版和布局；该路径只用于本次测试。该入口不属于完整测试套件。
 
 修改 Terminal、Main 进程生命周期或原生 Desktop 依赖时，还需要运行：
 

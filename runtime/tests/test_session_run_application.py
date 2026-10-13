@@ -100,11 +100,10 @@ def test_session_application_supports_projectless_conversations(
         assert created.root["projectless"] is True
         assert "project" not in created.root
         workspace_root = Path(created.root["workspaceRoot"])
-        assert workspace_root.is_relative_to(store.data_directory)
-        assert workspace_root.parent == (
-            store.data_directory
-            / f".{store.data_directory.name}-projectless"
-        )
+        assert not workspace_root.is_relative_to(store.data_directory)
+        assert workspace_root.parent.parent == tmp_path / "Eidos"
+        assert workspace_root.name == "新会话"
+        assert len(workspace_root.parent.name) == 10
         assert repository_runtime.activated == []
         assert application.list(SessionListRequestDto()).root["items"] == [created.root]
         assert application.read_snapshot(

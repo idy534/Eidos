@@ -54,6 +54,23 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("Run failure presentation", () => {
+  it("shows a concrete cause without technical diagnostics in the Session body", () => {
+    const run: Run = { ...baseRun, status: "failed", errorCode: "MODEL_PROTOCOL_ERROR",
+      termination: { stage: "tool_validation", reason: "TOOL_ARGUMENT_CONTRACT_VIOLATION", toolName: "read_file", validationPath: "path" },
+    };
+    renderFeed({ id: "user", ordinal: 0, sessionId: run.sessionId, runId: run.id,
+      kind: "user_message", status: "completed", createdAt: 1_000, content: "读取文件",
+    }, run);
+    expect(screen.getByRole("alert")).toHaveTextContent("模型调用“读取文件”时提供的“文件路径”参数不符合要求");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("MODEL_PROTOCOL_ERROR");
+    expect(screen.queryByText("诊断信息")).not.toBeInTheDocument();
+    expect(screen.queryByText("错误码")).not.toBeInTheDocument();
+    expect(screen.queryByText("MODEL_PROTOCOL_ERROR")).not.toBeInTheDocument();
+    expect(screen.queryByText("TOOL_ARGUMENT_CONTRACT_VIOLATION")).not.toBeInTheDocument();
+  });
+});
+
 describe("ExecutionFeed chat typography scope", () => {
   it("scopes user, progress and final prose without including tool controls", () => {
     const message = (id: string, ordinal: number, kind: Item["kind"], content: string): Item => ({

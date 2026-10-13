@@ -213,6 +213,8 @@ def _run_from_row(
         run["cancelFailureCode"] = row["cancel_failure_code"]
     if "stop_reason" in row.keys() and row["stop_reason"] is not None:
         run["stopReason"] = row["stop_reason"]
+    if row["termination_json"] is not None:
+        run["termination"] = json.loads(row["termination_json"])
     if "side_effects_may_exist" in row.keys():
         run["sideEffectsMayExist"] = bool(row["side_effects_may_exist"])
     if "reconciliation_required" in row.keys():

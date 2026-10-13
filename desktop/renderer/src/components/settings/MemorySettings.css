@@ -95,7 +95,7 @@
 .memory-budget-input-group {
   display: flex;
   align-items: center;
-  background: white;
+  background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -144,7 +144,7 @@
 .memory-textarea-wrapper {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: white;
+  background: var(--surface-raised);
   overflow: hidden;
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
@@ -240,7 +240,7 @@
 }
 
 .memory-search-input:focus {
-  background: white;
+  background: var(--surface-raised);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
@@ -315,7 +315,7 @@
 }
 
 .memory-entry:hover {
-  background: white;
+  background: var(--surface-raised);
   box-shadow: var(--apple-shadow-sm);
 }
 
@@ -573,7 +573,7 @@
   font-size: 0.875rem;
   line-height: 1.55;
   color: var(--text);
-  background: white;
+  background: var(--surface-raised);
   outline: none;
   resize: vertical;
   transition: border-color 150ms ease, box-shadow 150ms ease;

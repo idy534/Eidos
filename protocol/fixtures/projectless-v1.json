@@ -1,0 +1,25 @@
+{
+  "request": {
+    "jsonrpc": "2.0",
+    "id": "projectless-create-1",
+    "method": "session/create",
+    "params": {
+      "workspaceRoot": null,
+      "workspaceNameHint": "整理销售数据",
+      "operationId": "6c110989-4a3c-4a12-a6fc-774ac4e65f4d"
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": "projectless-create-1",
+    "result": {
+      "id": "87b44936-c9cb-4a73-b78b-057f94a32f61",
+      "workspaceRoot": "/Users/example/Eidos/2026-06-22/整理销售数据",
+      "executionMode": "local",
+      "projectless": true,
+      "taskStatus": "new",
+      "createdAt": 1782057600000,
+      "updatedAt": 1782057600000
+    }
+  }
+}

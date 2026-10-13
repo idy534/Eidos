@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.run_termination import RunTermination
+
 from eidos_runtime.domain.collaboration import MAX_ACTIVE_AGENTS
 
 from eidos_runtime.domain.input_reference import InputReference
@@ -16,7 +18,6 @@ from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
     WorkspaceIdentity,
-    projectless_root_for,
     now_ms as _now_ms,
 )
 from eidos_runtime.db.errors import (
@@ -178,15 +179,8 @@ class RunRepository(Repository):
             ).fetchone()
             if session is None:
                 raise ResourceNotFoundError("session not found")
-            allowed_roots = (
-                (projectless_root_for(self.database.data_directory),)
-                if session["projectless"]
-                and self.database.data_directory is not None
-                else ()
-            )
             if self._workspace_overlaps_data(
                 Path(session["workspace_root"]),
-                allowed_roots=allowed_roots,
             ):
                 raise WorkspaceBoundaryError("workspace overlaps runtime data")
             execution_workspace = execution_workspace_for_session(
@@ -934,13 +928,28 @@ class RunRepository(Repository):
         )
         return CommittedMutation((item, run), events)
 
-    def fail_run(self, run_id: str, error_code: str) -> dict[str, object]:
-        return self.fail_run_committed(run_id, error_code).value
+    def fail_run(
+        self, run_id: str, error_code: str, *, termination: RunTermination | None = None
+    ) -> dict[str, object]:
+        return self.fail_run_committed(run_id, error_code, termination=termination).value
 
     def fail_run_committed(
-        self, run_id: str, error_code: str
+        self, run_id: str, error_code: str, *, termination: RunTermination | None = None
     ) -> CommittedMutation[dict[str, object]]:
         with self.lock, self._connection() as connection:
+            if termination is not None and termination.step_id is not None:
+                source = connection.execute(
+                    """SELECT a.id, a.status FROM model_attempts a JOIN steps s ON s.id=a.step_id
+                    WHERE a.step_id=? AND s.run_id=? ORDER BY a.ordinal DESC LIMIT 1""",
+                    (termination.step_id, run_id),
+                ).fetchone()
+                if source is None or source["status"] != "failed" or (
+                    termination.model_attempt_id is not None and source["id"] != termination.model_attempt_id
+                ):
+                    raise InvalidRunStateError("termination source does not match failed attempt")
+                termination = termination.model_copy(update={"model_attempt_id": source["id"]})
+            elif termination is not None and termination.model_attempt_id is not None:
+                raise InvalidRunStateError("termination source requires its step")
             now = _now_ms()
             events = list(settle_run_children(
                 connection, run_id, RunStatus.FAILED, now
@@ -955,6 +964,7 @@ class RunRepository(Repository):
                 }),
                 RunStatus.FAILED,
                 error_code,
+                termination=termination,
             )
             events.append(event)
         return CommittedMutation(run, tuple(events))

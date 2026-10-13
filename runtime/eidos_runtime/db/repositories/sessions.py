@@ -11,7 +11,6 @@ from typing import Literal
 from eidos_runtime.db.database import (
     CommittedMutation,
     Repository,
-    projectless_root_for,
     now_ms as _now_ms,
 )
 from eidos_runtime.db.errors import (
@@ -47,6 +46,7 @@ from eidos_runtime.persistence.mappers.session import (
     session_to_operation_dict,
 )
 from eidos_runtime.runtime.state_machine import EventType
+from eidos_runtime.workspace.projectless import projectless_root
 
 DEFAULT_LIST_LIMIT = 50
 MAX_LIST_LIMIT = 200
@@ -140,17 +140,13 @@ class SessionRepository(Repository):
         session_id: str | None = None,
         associated_worktree_id: str | None = None,
         projectless: bool = False,
+        projectless_creation_id: str | None = None,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
-        allowed_roots: tuple[Path, ...] = ()
-        if projectless and self.database.data_directory is not None:
-            projectless_root = projectless_root_for(self.database.data_directory)
-            if projectless_root.resolve(strict=False) not in workspace.parents:
-                raise WorkspaceBoundaryError("workspace overlaps runtime data")
-            allowed_roots = (projectless_root,)
+        if projectless and workspace.parent.parent != projectless_root():
+            raise WorkspaceBoundaryError("projectless workspace is outside its managed root")
         if self._workspace_overlaps_data(
             workspace,
-            allowed_roots=allowed_roots,
         ):
             raise WorkspaceBoundaryError("workspace overlaps runtime data")
         metadata = workspace.stat()
@@ -187,6 +183,16 @@ class SessionRepository(Repository):
         })
 
         def write(connection: sqlite3.Connection) -> CommittedMutation[Session]:
+            if projectless_creation_id is not None:
+                reservation = connection.execute(
+                    "SELECT * FROM projectless_workspace_creations WHERE operation_id = ?",
+                    (projectless_creation_id,),
+                ).fetchone()
+                if reservation is None or reservation["status"] != "created" or (
+                    reservation["session_id"], reservation["workspace_root"],
+                    reservation["workspace_dev"], reservation["workspace_inode"], reservation["workspace_uid"],
+                ) != (session_id, str(workspace), metadata.st_dev, metadata.st_ino, metadata.st_uid):
+                    raise WorkspaceBoundaryError("projectless workspace identity changed")
             if worktree_id is not None:
                 worktree = connection.execute(
                     """
@@ -262,6 +268,11 @@ class SessionRepository(Repository):
                 {"session": session_to_legacy_dict(session)},
                 session_id=session_id,
             )
+            if projectless_creation_id is not None:
+                connection.execute(
+                    "UPDATE projectless_workspace_creations SET status = 'completed' WHERE operation_id = ?",
+                    (projectless_creation_id,),
+                )
             return CommittedMutation(session, (event,))
 
         return self._write_committed(
@@ -639,6 +650,7 @@ class SessionRepository(Repository):
         session_id: str,
         *,
         operation_id: str | None = None,
+        transaction_connection: sqlite3.Connection | None = None,
     ) -> CommittedMutation[DeletedSession]:
         def write(
             connection: sqlite3.Connection, session_id: str = session_id,
@@ -818,6 +830,8 @@ class SessionRepository(Repository):
                 DeletedSession(deleted_session_id=session_id), ()
             )
 
+        if transaction_connection is not None:
+            return write(transaction_connection)
         return self._write_committed(
             write,
             operation_id=operation_id,

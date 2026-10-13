@@ -1,5 +1,6 @@
 import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
 import { isCollaborationState } from "../shared/collaboration.js";
+import { isRunTermination } from "../shared/run-termination.js";
 import type { CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
@@ -385,6 +386,7 @@ export class RuntimeClient {
   async createSession(
     workspaceRoot: string | null,
     options: {
+      workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
       includeLocalChanges?: boolean;
@@ -1947,6 +1949,7 @@ function isRun(value: unknown): value is Run {
       "cancelCompletedAt",
       "cancelFailureCode",
       "stopReason",
+      "termination",
       "sideEffectsMayExist",
       "reconciliationRequired",
       "extensionSnapshot",
@@ -1998,6 +2001,7 @@ function isRun(value: unknown): value is Run {
       || typeof value.cancelFailureCode === "string"
     )
     && (value.stopReason === undefined || typeof value.stopReason === "string")
+    && (value.termination === undefined || isRunTermination(value.termination))
     && (value.sideEffectsMayExist === undefined || typeof value.sideEffectsMayExist === "boolean")
     && (value.reconciliationRequired === undefined || typeof value.reconciliationRequired === "boolean")
     && (value.extensionSnapshot === undefined || isExtensionSnapshot(value.extensionSnapshot))

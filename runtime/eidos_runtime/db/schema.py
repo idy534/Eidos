@@ -6,7 +6,9 @@ from eidos_runtime.db.gate_refinements_migration import GATE_REFINEMENTS_SCHEMA_
 from eidos_runtime.memory.schema import MEMORY_SCHEMA_SQL, MEMORY_USE_SCHEMA_SQL, MEMORY_HISTORY_SCHEMA_SQL
 
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 24
+V23_SCHEMA_VERSION = 23
+V22_SCHEMA_VERSION = 22
 V21_SCHEMA_VERSION = 21
 V20_SCHEMA_VERSION = 20
 V19_SCHEMA_VERSION = 19
@@ -24,7 +26,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V21_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V23_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1484,7 +1486,28 @@ if V21_SCHEMA_SQL == V20_SCHEMA_SQL:
     raise RuntimeError("agent roles schema check is missing")
 
 V21_TO_V22_MIGRATION_SQL = "ALTER TABLE model_attempts ADD COLUMN response_replay_json TEXT;\n"
-SCHEMA_SQL = V21_SCHEMA_SQL + V21_TO_V22_MIGRATION_SQL
+V22_SCHEMA_SQL = V21_SCHEMA_SQL + V21_TO_V22_MIGRATION_SQL
+PROJECTLESS_WORKSPACE_SCHEMA_SQL = """
+CREATE TABLE projectless_workspace_creations (
+    operation_id TEXT PRIMARY KEY,
+    request_hash TEXT NOT NULL,
+    session_id TEXT NOT NULL UNIQUE,
+    base_name TEXT NOT NULL,
+    suffix INTEGER NOT NULL CHECK (suffix >= 1),
+    workspace_root TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'created', 'completed')),
+    workspace_dev INTEGER,
+    workspace_inode INTEGER,
+    workspace_uid INTEGER,
+    created_at INTEGER NOT NULL,
+    CHECK (status = 'prepared' OR (
+        workspace_dev IS NOT NULL AND workspace_inode IS NOT NULL AND workspace_uid IS NOT NULL
+    ))
+);
+"""
+V23_SCHEMA_SQL = V22_SCHEMA_SQL + PROJECTLESS_WORKSPACE_SCHEMA_SQL
+RUN_TERMINATION_SCHEMA_SQL = "ALTER TABLE runs ADD COLUMN termination_json TEXT;\n"
+SCHEMA_SQL = V23_SCHEMA_SQL + RUN_TERMINATION_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

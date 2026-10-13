@@ -10,7 +10,11 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 
 ## Desktop
 
+- 主任务与子 Agent 共用中文结束原因提示。模型超时、访问被拒绝、工具输入不符合要求和普通中断按持久事实解释；未知原因使用通用提示。Session 正文不展示诊断信息区块，Runtime 继续保留错误码和请求标识。操作结果未确认单独提示，不把中断当作进程重启，也不默认建议重放操作。
+
 - Eidos 提供 macOS Electron Desktop。
+- Renderer 样式按公共基础、应用布局和功能模块分别维护，并通过单一入口固定加载顺序。公共按钮与审批、计划按钮共用交互状态；菜单、Composer 选择器和滚动条共用基础外观。同类列表项与选择卡使用相同选中背景，已选中项在悬停时保持该背景。危险审批继续使用红色。聊天专用排版、非聊天 Markdown、代码字号、Composer 自动高度和既有内容宽度保留。
+- Renderer 滚动条使用透明轨道与角落，不显示边框、阴影和箭头，只保留 6px 灰色滑块。代码与 Diff 保留悬停时显示滑块的行为；标签栏仍可隐藏滚动条。
 - Renderer、Preload 和 Main 之间使用 context-isolated typed IPC。
 - Main 可以启动、健康检查、通知和关闭 Python Runtime。单个 RPC 超时会作为请求级错误返回，迟到响应不会因为找不到已完成的请求而终止 Runtime。Runtime 进程真正意外退出时，Desktop 会显示启动错误，并提供“重新启动 Runtime”恢复入口。
 - Desktop 可以选择 Workspace，读取 Runtime 提供的 Git context，并在 Session Composer 中选择 Local 或 Worktree execution。Git Worktree execution 可以选择 starting branch。Source dirty 且 starting branch 是 current branch 时，Desktop 默认勾选 `Include current changes`，但 Runtime 只接受显式的 `includeLocalChanges`。Non-Git Workspace 只启用 Local，Composer 不显示 execution mode 和 branch。Desktop 也可以创建不绑定 Project 的会话；这类会话默认使用 Local。
@@ -38,8 +42,9 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - Git directory 可以使用 `executionMode = local` 创建不绑定 Worktree 的 Local Session，也可以使用 `executionMode = worktree` 创建 Managed Worktree Session。Worktree Session 的 Run、Tool、Shell cwd、Project Rules 和 Repository Intelligence 使用 Worktree root。
 - `session/create` 的协议默认 `executionMode` 是 `local`。Desktop 只在首次提交时调用它。Worktree 请求会先解析可选 `baseRef` 为 immutable `baseCommit`，并接受显式的 `includeLocalChanges`。缺省 `baseRef` 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。不存在的 ref 返回 `BASE_REF_NOT_FOUND`。
 - `session/create` 允许省略或传入空的 `workspaceRoot` 来创建 projectless Session。Projectless Session 只接受 `executionMode = local`，不创建 Project 或 Worktree binding。
-- Runtime 创建的 projectless 私有锚点和默认 Managed Worktree 根目录都位于 `EIDOS_DATA_DIR` 内。默认路径分别是 `~/.eidos/.eidos-projectless/<session_id>` 和 `~/.eidos/.eidos-worktrees/<worktree_id>`。
-- Projectless Run 使用系统私有锚点作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 保留环境信息中的“输出内容”和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。Projectless 对话不展示文本修改卡，但仍可以展示产物卡。
+- Runtime 创建的 Projectless 工作空间默认位于 `~/Eidos/YYYY-MM-DD/可读名称`，重名追加数字后缀。Desktop 首次输入通过 `workspaceNameHint` 提供命名提示，标题变化不移动目录。`EIDOS_PROJECTLESS_ROOT` 可以隔离开发和测试目录。Managed Worktree 根目录仍位于 `EIDOS_DATA_DIR` 内，默认是 `~/.eidos/.eidos-worktrees/<worktree_id>`。
+- 本次 Alpha 更新会在启动时废弃旧无项目 Session 及关联历史，不做旧目录迁移或兼容。旧工作空间文件原地保留。有项目的 Session 不受该清理影响。
+- Projectless Run 使用日期目录下的可读工作空间作为执行 workspace。Run 仍提供文件工具、Shell、Skill、MCP 和 Plugin 资源。Projectless Run 不提供 Project Rules、Repository Intelligence、Git status 或 Git diff。Desktop 保留环境信息中的“输出内容”和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。Projectless 对话不展示文本修改卡，但仍可以展示产物卡。
 - Local Session 和 Worktree Session 都是正式 Session projection。Worktree Session 默认使用 detached HEAD，`worktree.branch` 为 NULL。Git Project 的 Local Session 通过当前 Local checkout 提供 Git status 和 Git diff。
 - Worktree 创建只会从 source repository root 的 `.worktreeinclude` 复制同时命中 `pathspec.GitIgnoreSpec` 且由 Git ignore 判定为 ignored 的 local files。Tracked files 和 untracked non-ignored files 不由 `.worktreeinclude` 复制。Runtime 只在 matched concrete path 上执行 `.git`、target boundary、source symlink、target parent、atomic replacement、fsync 和 permission safety；Runtime 不重新限制 Git pattern grammar。Managed Worktree 内的 `.worktreeinclude` 不具有 authority。Ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md` 会自动 materialize；tracked override 只使用 Git checkout 内容。
 - `includeLocalChanges = true` 要求 source `HEAD == baseCommit`。Runtime 使用 hardened Git CLI capture/apply full patch 和 staged patch，覆盖 tracked modified/deleted、staged、unstaged、binary、symlink、mode 和 untracked state。Source Workspace 不执行 stash、reset、checkout、add 或其他写入。Local-change state conflict、source change 和 materialization failure 会 rollback Worktree，无法安全清理时进入 `cleanup_required`。Dirty submodule checkout 不属于当前 transfer contract，Runtime 返回 `worktree_gitlink_unsupported`。

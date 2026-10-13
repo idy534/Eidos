@@ -29,6 +29,7 @@ from eidos_runtime.db.storage import (
 )
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.domain.approval_policy import FULL_ACCESS_WARNING_VERSION
+from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.domain.long_task import LongTaskStatus, SafePoint
 from eidos_runtime.runtime.approval import ApprovalCoordinator, ApprovalDecision
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -787,7 +788,7 @@ class RuntimeEngine:
                                 context_recovered = True
                                 break
                             continue
-                    self._handle_sampling_failure(run.run_id, error)
+                    self._handle_sampling_failure(run.run_id, error, step=step)
                     return
 
                 validation = tools.validate(step, sampled)
@@ -832,7 +833,14 @@ class RuntimeEngine:
                     self.store.complete_current_step(
                         run.run_id, "failed", reason=reason
                     )
-                    self._fail(run.run_id, "MODEL_PROTOCOL_ERROR")
+                    diagnostic = validation.protocol_diagnostic
+                    self._fail(run.run_id, "MODEL_PROTOCOL_ERROR", termination=RunTermination(
+                        stage="tool_validation" if diagnostic and diagnostic.stage == "tool_validation" else "model",
+                        reason=reason,
+                        step_id=step.step_id,
+                        tool_name=diagnostic.tool_name if diagnostic else None,
+                        validation_path=diagnostic.validation_path if diagnostic else None,
+                    ))
                     return
 
                 if validation.status == "no_tools" and not sampled.text:
@@ -884,7 +892,10 @@ class RuntimeEngine:
                             instructions=built.instructions,
                         )
                     else:
-                        self._fail(run.run_id, "MODEL_PROTOCOL_ERROR")
+                        self._fail(run.run_id, "MODEL_PROTOCOL_ERROR", termination=RunTermination(
+                            stage="model", reason="empty_response",
+                            step_id=step.step_id,
+                        ))
                     return
 
                 guard.observe_empty_response(False)
@@ -1244,12 +1255,26 @@ class RuntimeEngine:
             item=user_item,
         )
 
-    def _handle_sampling_failure(self, run_id: str, error: SamplingError) -> None:
+    def _handle_sampling_failure(
+        self, run_id: str, error: SamplingError, *, step: StepContext | None = None
+    ) -> None:
+        failure = error.failure
+        known_reason = str(error) if str(error) in {"length", "content_filter", "incomplete", "incomplete_response", "empty_response"} else (
+            "model_request_failed" if isinstance(error, SamplingRetryableError) else "protocol_error"
+        )
+        termination = RunTermination(
+            stage="model",
+            reason=(failure.reason or failure.code) if failure else known_reason,
+            step_id=step.step_id if step else None,
+            http_status=failure.status_code if failure else None,
+        )
         if isinstance(error, SamplingRetryableError) and error.had_progress:
             self.store.complete_current_step(
                 run_id, "failed", reason="model_stream_interrupted"
             )
-            self._fail(run_id, "MODEL_STREAM_INTERRUPTED")
+            self._fail(run_id, "MODEL_STREAM_INTERRUPTED", termination=termination.model_copy(
+                update={"reason": "model_stream_interrupted"}
+            ))
             return
         code = "MODEL_REQUEST_FAILED"
         if isinstance(error, SamplingAuthenticationFailed):
@@ -1262,7 +1287,7 @@ class RuntimeEngine:
             code = "MODEL_PROTOCOL_ERROR"
         elif isinstance(error, SamplingRateLimited):
             code = "MODEL_RATE_LIMITED"
-        self._fail(run_id, code)
+        self._fail(run_id, code, termination=termination)
 
     def _check_cancel(self, run_id: str, cancel: threading.Event) -> None:
         if cancel.is_set() or self.store.read_run(run_id)["status"] in {
@@ -1342,11 +1367,17 @@ class RuntimeEngine:
         self.active_started = None
         return self.store.add_effective_time_committed(run_id, elapsed_ms)
 
-    def _fail(self, run_id: str, error_code: str) -> None:
+    def _fail(
+        self, run_id: str, error_code: str, *, termination: RunTermination | None = None
+    ) -> None:
         self.state_machine.track(RuntimeState.FAILED, error_code)
+        termination = termination or RunTermination(
+            stage="context" if error_code.startswith("CONTEXT_") else "runtime",
+            reason=error_code,
+        )
         self._pause_effective_time(run_id)
-        self.store.complete_current_step(run_id, "failed", reason=error_code)
-        mutation = self.store.fail_run_committed(run_id, error_code)
+        self.store.complete_current_step(run_id, "failed", reason=termination.reason)
+        mutation = self.store.fail_run_committed(run_id, error_code, termination=termination)
         items = {
             str(item["id"]): item for item in self.store.canceled_items_for_run(run_id)
         }

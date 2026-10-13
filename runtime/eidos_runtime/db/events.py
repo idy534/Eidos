@@ -18,6 +18,7 @@ from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.runtime.state_machine import EventType, RunStatus
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.domain.completion import CompletionCheckRecord
+from eidos_runtime.domain.run_termination import RunTermination
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -61,6 +62,7 @@ class RunStatusChangedPayload(ClosedModel):
     previous: RunStatus
     current: RunStatus
     reason: str | None = None
+    termination: RunTermination | None = None
 
 
 class RunUpdatedPayload(ClosedModel):

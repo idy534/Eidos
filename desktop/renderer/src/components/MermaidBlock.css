@@ -1,0 +1,251 @@
+/* Mermaid Frameless Seamless Presentation */
+.mermaid-container {
+  position: relative;
+  margin: 1.25rem 0;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  contain: layout;
+  overflow-anchor: none;
+}
+.mermaid-floating-actions {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 10;
+}
+.mermaid-container:hover .mermaid-floating-actions,
+.mermaid-container:focus-within .mermaid-floating-actions,
+.mermaid-floating-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.mermaid-floating-actions .dropdown-trigger,
+.mermaid-floating-actions .mermaid-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  margin: 0;
+  border: 0 !important;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent !important;
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: color 120ms ease;
+}
+.mermaid-floating-actions .dropdown-trigger:hover,
+.mermaid-floating-actions .dropdown-trigger:focus-visible,
+.mermaid-floating-actions .dropdown-trigger[aria-expanded="true"],
+.mermaid-floating-actions .mermaid-action-btn:hover,
+.mermaid-floating-actions .mermaid-action-btn:focus-visible {
+  background: transparent !important;
+  color: var(--text);
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none;
+}
+.mermaid-floating-actions .mermaid-action-icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  display: block;
+}
+.mermaid-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.mermaid-svg-wrapper {
+  padding: 0.5rem 0;
+  max-height: none !important;
+  overflow-y: visible !important;
+  overflow-x: auto;
+  overflow-anchor: none;
+  contain: layout style;
+  text-align: center;
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sidebar);
+  line-height: 1.5;
+}
+.mermaid-svg-wrapper svg {
+  display: inline-block;
+  max-width: none;
+  height: auto;
+  vertical-align: middle;
+  overflow-anchor: none;
+}
+/* 隔离 Markdown 外部排版样式对 Mermaid 内部节点标签（foreignObject）的污染，消除节点文字遮挡与底边溢出 */
+.mermaid-svg-wrapper foreignObject p,
+.mermaid-modal-svg-wrapper foreignObject p {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.5 !important;
+  white-space: inherit;
+}
+.mermaid-svg-wrapper foreignObject,
+.mermaid-svg-wrapper foreignObject div,
+.mermaid-svg-wrapper foreignObject span,
+.mermaid-modal-svg-wrapper foreignObject,
+.mermaid-modal-svg-wrapper foreignObject div,
+.mermaid-modal-svg-wrapper foreignObject span {
+  margin: 0;
+  line-height: 1.5;
+  font-size: var(--font-size-sidebar);
+}
+/* 仅针对连线上的文字标签（edgeLabel）清除白色贴片底色，绝不误伤普通流程节点（node）的边框与填充 */
+.mermaid-svg-wrapper svg .edgeLabel,
+.mermaid-svg-wrapper svg .edgeLabel *,
+.mermaid-modal-svg-wrapper svg .edgeLabel,
+.mermaid-modal-svg-wrapper svg .edgeLabel * {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+.mermaid-svg-wrapper svg .edgeLabels rect,
+.mermaid-svg-wrapper svg .edgeLabel rect,
+.mermaid-modal-svg-wrapper svg .edgeLabels rect,
+.mermaid-modal-svg-wrapper svg .edgeLabel rect {
+  fill: transparent !important;
+  stroke: transparent !important;
+}
+.mermaid-fallback-box {
+  background: var(--surface-muted);
+  padding: 0.5rem 0;
+}
+.mermaid-fallback {
+  margin: 0;
+  border: 0;
+  padding: 0.5rem 1rem;
+  background: transparent;
+  overflow-x: auto;
+}
+.mermaid-error-hint {
+  display: block;
+  padding: 0.25rem 1rem 0.5rem;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+/* Mermaid Fullscreen Lightbox Modal */
+.mermaid-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  animation: mermaidModalFadeIn 150ms ease-out;
+}
+@keyframes mermaidModalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.mermaid-modal-window {
+  display: flex;
+  flex-direction: column;
+  width: 92vw;
+  height: 88vh;
+  max-width: 1400px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.mermaid-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  height: 2.5rem;
+  padding: 0 1rem;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+.mermaid-modal-zoom-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 6px);
+}
+.mermaid-zoom-indicator {
+  min-width: 3.5rem;
+  height: 1.5rem;
+  padding: 0 0.35rem;
+  font-size: 0.82rem;
+  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--text, #111827);
+  text-transform: none;
+  letter-spacing: normal;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs, 4px);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 120ms ease;
+  user-select: none;
+}
+.mermaid-zoom-indicator:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+.mermaid-zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.mermaid-modal-body {
+  flex: 1;
+  overflow: auto;
+  padding: 2rem;
+  background: var(--surface);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  justify-content: safe center;
+  align-items: safe center;
+  cursor: grab;
+}
+.mermaid-modal-body.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+.mermaid-modal-svg-wrapper {
+  margin: auto;
+  text-align: center;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sidebar);
+  line-height: 1.5;
+}
+.mermaid-modal-svg-wrapper svg {
+  display: inline-block;
+  max-width: none;
+  height: auto;
+  vertical-align: middle;
+}

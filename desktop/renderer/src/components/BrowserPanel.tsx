@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { parse as parseDomain } from "tldts";
 import type { BrowserPageState } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
-import "./ArtifactPreview.css";
 
 function isIpv4(hostname: string): boolean {
   const parts = hostname.split(".");

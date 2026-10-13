@@ -78,6 +78,14 @@ Python Runtime 的 stdout 只输出有界的 JSON-RPC 行。Runtime 日志写入
 
 Renderer 通过 context-isolated preload 使用 typed IPC。Preload 使用 `contextBridge` 暴露受限的 `window.eidosRuntime` API。Renderer 不直接读取 Runtime stdout，也不直接访问文件系统、子进程和 API Key。
 
+Renderer 的本地 CSS 由 `desktop/renderer/src/styles.css` 统一导入。该文件只维护加载顺序，不再包含业务样式。`styles/` 保存设计变量、页面基础、公共控件、浮层、提示和滚动条。`app/AppShell.css` 保存窗口与应用布局；组件旁的 CSS 保存各模块的样式、响应式规则和动画。组件不再各自导入本地 CSS，第三方 CSS 保留现有库入口。
+
+滚动条外观统一由 `styles/scrollbars.css` 管理。Renderer 使用 Chromium 的 `::-webkit-scrollbar-*` 定义 6px 滑块、透明轨道和角落；这些部位不显示边框、阴影和箭头。公共层将标准 `scrollbar-width` 与 `scrollbar-color` 保持为 `auto`，避免它们覆盖自定义外观。模块只保留隐藏滚动条和代码、Diff 悬停显示滑块的规则。灰色滑块与悬停颜色来自有效的颜色变量，变量不引用自身。
+
+公共控件负责 Button 的颜色、交互状态、焦点和禁用样式。审批和计划模块只补充按钮排列与尺寸。Composer 的模型与审批模式选择器共用触发按钮和浮层基础规则。列表与选择卡使用 `--surface-selected`，普通悬停使用 `--surface-hover`；危险操作继续使用危险颜色。代码与 Mermaid 共用标题标签和复制控件。聊天专用 `.eidos-chat-prose` 保留独立范围，文件预览与其他 Markdown 不启用该范围。
+
+Workspace Dock 独立维护 Session 内容列和环境浮层。居中 Session 沿用原构建实际生效的单列布局，并由 `--session-content-width` 限制回答与 Composer 宽度。规划样式不再重复定义环境浮层，技能样式不再修改整个设置窗口。样式测试按统一入口读取模块；原生 Electron 定向检查验证最终计算样式和响应式布局。
+
 Electron Main 负责以下职责：
 
 - 创建启用 `contextIsolation`、禁用 `nodeIntegration` 和启用 sandbox 的 BrowserWindow；
@@ -146,6 +154,12 @@ Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归
 正常 assistant-only 完成调用在 SQLite 写事务中检查取消、input_mailbox、活动子 Run 与原采样协作投影。事务拒绝过期完成后，Engine 保存有效回答并重新构建 Context，或进入已有 waiting_agents；这些控制事实不依赖额外模型判分。正常无工具 follow-up 先完成 Item/Step，取消在采样边界优先处理。合法受管轮询对 LoopGuard 为中性，不覆盖先前收敛证据。
 
 Runtime 不再发送 `_eidos_assess_completion` 模型审查。完成审查的请求、候选答复去重、反馈注入和 `completion_unconfirmed` 生产路径已移除。Loop 保留 Provider 的 `needs_follow_up`、`end_turn` 和消息 phase；文件交付仍来自 `declare_outputs` 的实际核验结果。旧 ModelProfile 的 `completion_check_version` 与旧 completionCheck Event 只用于兼容读取，不能重新启用审查。
+
+Run 的失败、停止和中断使用统一的 `termination` 记录解释结束原因。记录只保存阶段、原因码，以及必要的 Step、ModelAttempt、工具名称、参数位置和 HTTP 状态。Runtime 在结束状态与 Event/Outbox 的同一事务中保存该记录。模型失败绑定当前 Step 的最后一次失败 Attempt；Repository 在提交时核对所属 Run 和状态，不能引用其他任务或已成功的请求。该记录不增加第二套状态机，也不改变审批、取消、重试和 Reconciliation 决策。
+
+Desktop 的主任务提示和子 Agent 提示使用同一份中文文案规则。界面优先使用具体原因，再使用已有错误码能证明的通用原因；未知原因不会被猜测为网络错误或工具执行失败。Session 正文只展示中文结束原因，不提供诊断信息区块。Runtime 和协议继续保留技术错误码、步骤和请求标识。子 Agent 摘要分别保留错误码和停止原因，不再混用字段。界面只为当前原因维护专用文案，已移除的完成检查和执行预算原因使用通用停止提示。操作结果未确认继续根据 `reconciliationRequired` 单独说明。
+
+Schema v23→v24 为 `runs` 增加可空的 `termination_json`。迁移在事务内完成，失败回滚；已有记录保持原值，不推断或补写结束原因。Python 的 `RunTermination` 通过 `scripts/generate-run-termination-contracts.mjs` 和协作契约生成器提供 TypeScript 类型。两端使用 `protocol/fixtures/run-termination-v1.json` 验证有界字段与未知字段拒绝规则。
 
 ToolExecutionController 区分 Durable Intent 授权和实际执行开始。文件与外部操作在执行回调开始时记录执行事实；Shell 在 Popen 成功后记录启动，stdin 在实际写入后记录输入事实。准备异常、进程未启动和未送出的输入返回普通工具错误。Controller 保留可信 Handler 的已知结果，结果格式校验、输出屏蔽和投影失败不再仅凭工具类型或授权记录建立 reconciliation。取消继续控制 Run 生命周期，已取得的结果确定性不被迟到取消或后置扫描超时覆盖。
 
@@ -416,7 +430,11 @@ Project
 ```
 
 新的 `project/create` 接收可选的 `name` 和必需的 `workspaceRoot`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再保存 Project 元数据。名称缺省时，Runtime 使用 canonical Workspace 的文件夹名。这个调用不创建 Session。新的 `session/create` 接收 `workspaceRoot`、`executionMode`、可选的 `baseRef` 和显式的 `includeLocalChanges`。Runtime 先通过 Project resolution boundary 校验并 canonicalize 用户选择的目录，再检测可选 Git capability。`executionMode = local` 时，Runtime 创建 `worktree_id = NULL` 的 Local Session，不创建 Git side effect，也不创建 Worktree lifecycle intent。`executionMode = worktree` 时，Runtime 要求 Git capability，通过 `GitBackend` 将 `baseRef` 解析为 immutable `base_commit`，确定 `project_id`、`worktree_id`、`worktree_root` 和 `branch = NULL`，写入 durable lifecycle intent，然后通过唯一的 hardened Git CLI `worktree add --detach` 创建 Worktree。Runtime 只复制 ignored 且命中 source `.worktreeinclude` 的文件、自动复制 ignored 的 `EIDOS.override.md` 和 `AGENTS.override.md`，以及可选的 Git patch bytes。没有 Git 时，Worktree 请求返回 typed `WORKTREE_REQUIRES_GIT`。没有显式 `baseRef` 时，Runtime 使用当前 branch；repository 处于 detached HEAD 时使用 `HEAD`。Local Run 使用 `Project.workspace_root`，Worktree Run 使用 Worktree root。
-`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。该 Session 使用 Runtime 数据目录内的私有锚点目录作为内部执行 workspace 和 identity。默认路径是 `~/.eidos/.eidos-projectless/<session_id>`。自定义 `EIDOS_DATA_DIR` 时，锚点目录仍位于该数据目录内。该 Session 不会创建 Project、Worktree 或 Repository workspace。它固定为 Local execution。Run resolution 为这个系统 workspace 生成普通的 workspace permission profile，并保留数据目录保护。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules、Repository Context 或 workspace-environment。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
+`workspaceRoot` 省略或为 null 时，Runtime 创建 projectless Session。默认工作空间是 `~/Eidos/YYYY-MM-DD/可读名称`，与 `EIDOS_DATA_DIR` 分离。Desktop 首次提交通过 `workspaceNameHint` 传递首行短文本；Runtime 统一清理名称并限制 UTF-8 字节长度。名称缺省时使用“新会话”，重名时使用 `-2`、`-3`，目录创建采用排他 mkdir。日期使用首次创建请求的本地日期，后续标题变化不移动目录。开发和测试可以通过 `EIDOS_PROJECTLESS_ROOT` 指定独立根目录。该 Session 不创建 Project、Worktree 或 Repository workspace，固定为 Local execution。Run 使用普通 Workspace permission profile，写权限只作用于当前工作空间。RunResources 仍创建文件工具、Shell、Skill、MCP 和 Plugin 资源。projectless Run 不注入 Project Rules、Repository Context 或 workspace-environment。Desktop 保留输出内容和文件预览，但 Workspace Dock 不展示 Files、Terminal 或 Review；Browser 仍可用。
+
+Schema v23 的 `projectless_workspace_creations` 保存新工作空间的操作 ID、目录分配和身份。重复请求复用首次路径；已保存身份的创建可以在重启后继续。目录已经存在但没有已提交身份时，Runtime 不接管该目录，而是分配下一个后缀。Session、创建完成状态和 `session.created` Event/Outbox 在同一事务提交。失败清理只删除已核验且仍为空的本次目录。子 Agent 继续借用父 Session 的工作空间。
+
+本次 Alpha 更新不兼容或迁移旧无项目 Session。Runtime 在持有 state lock、恢复持久事实后，废弃旧 Projectless 根目录下的无项目 Session 和父子关联记录，并清理对应历史投影。该过程不启动旧 Run、不移动或删除旧工作空间文件，也不触碰 Project/Worktree Session。新版不保留旧路径回退或历史文件映射。
 
 ### Local ↔ Managed Worktree Handoff
 
@@ -430,7 +448,7 @@ Worktree → Local 先捕获两边的 Git common directory、HEAD、branch、sta
 
 `worktrees.branch` 保存 Eidos 当前管理的 user branch identity，`worktrees.checkout_branch` 保存当前实际 checkout branch。User Branch handoff 给 Local 后，Runtime 将这两个字段和 `branch_ownership` 一起清为 NULL、NULL、`none`；Git branch ref 仍然保留。Worktree 返回 background 时可以保持 detached checkout。Handoff 完成后，下一次 Run 按新的 execution root 重新构建 resolution；已有 Run 的 `RunResolutionSnapshot.workspace_identity` 不会更新。Inactive Worktree 的完成后 fingerprint 发生变化时，返回 `HANDOFF_TARGET_CHANGED`。
 
-`sessions.workspace_root` 保存 Project workspace root，projectless Session 保存私有锚点目录。Session 持久化的 `execution_mode` 是执行语义的权威字段，`worktree_id` 是 Worktree binding。Session projection 对普通 Session 提供 `projectId`、`workspaceRoot`、`gitAvailable` 和 `executionMode`；projectless Session 提供 `projectless = true` 和 `project = null`。因此 Desktop 不需要通过 `worktree_id` 推断执行模式。
+`sessions.workspace_root` 保存 Project workspace root，projectless Session 保存日期目录下的可读工作空间。Session 持久化的 `execution_mode` 是执行语义的权威字段，`worktree_id` 是 Worktree binding。Session projection 对普通 Session 提供 `projectId`、`workspaceRoot`、`gitAvailable` 和 `executionMode`；projectless Session 提供 `projectless = true` 和 `project = null`。因此 Desktop 不需要通过 `worktree_id` 推断执行模式。
 
 当 `associated_worktree_id` 对应的 Worktree 为 deleted 且存在 ready Snapshot 时，Session projection 提供 `worktreeRestoreAvailable = true`。Desktop 显示 Restore Worktree action。Desktop 在 Worktree execution unavailable 时保持 Composer read-only；Local execution 可以继续使用 Local workspace。
 

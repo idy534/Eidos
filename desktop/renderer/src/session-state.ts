@@ -7,6 +7,7 @@ import type {
   Session,
   SessionSnapshot,
 } from "./contracts.js";
+export { terminalRunPresentation, type RunStatusPresentation } from "./run-presentation.js";
 
 
 export interface ProjectSessionGroup {
@@ -261,11 +262,6 @@ export function applyNotification(
 
 export type RunStatusTone = "success" | "error" | "neutral" | "warning";
 
-export interface RunStatusPresentation {
-  label: string;
-  tone: RunStatusTone;
-}
-
 const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   SKILL_CATALOG_UNAVAILABLE: "技能列表暂时无法读取，请检查技能文件后重试。",
   SKILL_UNAVAILABLE: "技能已不存在或内容无法读取，请重新打开设置。",
@@ -364,22 +360,6 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   INTERNAL_ERROR: "Runtime 遇到内部错误，请查看诊断日志。",
 };
 
-const STOP_REASON_MESSAGES: Record<string, string> = {
-  // Legacy persisted stop reasons; Runtime no longer emits these.
-  max_total_steps: "已达到任务执行预算",
-  max_effective_runtime: "已达到最长执行时间",
-  segment_step_limit: "已达到单段任务执行预算",
-  segment_time_limit: "已达到单段执行时间",
-  context_still_over_budget: "上下文容量已达到上限",
-  repeated_tool_call: "检测到重复工具调用，任务已结束",
-  // Legacy persisted stop reason; convergence no longer emits error counts.
-  repeated_tool_error: "工具持续失败，任务已结束",
-  no_progress: "恢复后仍返回相同执行状态，任务已结束",
-  repeated_empty_response: "模型连续返回空响应，任务已结束",
-  repeated_sensitive_tool_input: "连续工具输入被安全策略拒绝，任务已结束",
-  completion_unconfirmed: "答复已生成，旧版完成检查未确认",
-};
-
 export function runtimeBusinessCode(cause: unknown): string | undefined {
   const message = cause instanceof Error ? cause.message : "";
   const match = message.match(/EIDOS_RUNTIME_ERROR:([A-Z_]+)/);
@@ -393,48 +373,6 @@ export function userFacingError(cause: unknown): string {
     return cause.message;
   }
   return "操作失败，请查看 Runtime 日志。";
-}
-
-export function terminalRunPresentation(
-  run: Run,
-): RunStatusPresentation | undefined {
-  switch (run.status) {
-    case "succeeded":
-      if (run.reconciliationRequired === true) {
-        return { label: "完成状态待核验，尚未确认", tone: "warning" };
-      }
-      return { label: "已完成", tone: "success" };
-    case "failed":
-      return {
-        label: `失败：${run.errorCode ?? "UNKNOWN_ERROR"}`,
-        tone: "error",
-      };
-    case "canceled":
-      return { label: "已取消", tone: "neutral" };
-    case "interrupted":
-      return {
-        label: run.stopReason === "side_effect_reconciliation_required"
-          ? "任务已结束"
-          : run.stopReason === "active_shell_stopped"
-            ? "任务已结束，运行中的命令已停止"
-            : "任务执行已中断",
-        tone: "warning",
-      };
-    case "stopped":
-      return {
-        label: run.stopReason
-          ? STOP_REASON_MESSAGES[run.stopReason] ?? "任务已结束"
-          : "任务已结束",
-        tone: "warning",
-      };
-    case "queued":
-    case "finalizing":
-    case "running":
-    case "waiting_agents":
-    case "waiting_input":
-    case "waiting_approval":
-      return undefined;
-  }
 }
 
 // ---------------------------------------------------------------------------

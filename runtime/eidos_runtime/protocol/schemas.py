@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.run_termination import RunTermination
+
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -276,6 +278,7 @@ class RunDto(ClosedModel):
         default=None, alias="cancelFailureCode"
     )
     stop_reason: StrictStr | None = Field(default=None, alias="stopReason")
+    termination: RunTermination | None = None
     side_effects_may_exist: bool = Field(default=False, alias="sideEffectsMayExist")
     reconciliation_required: bool = Field(
         default=False, alias="reconciliationRequired"

@@ -3,7 +3,6 @@ import type { PlanDocument } from "../../../shared/planning.generated.js";
 import { userFacingError } from "../session-state.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { Button } from "./Button.js";
-import "./planning.css";
 
 export interface PlanPanelProps {
   sessionId: string;

@@ -24,6 +24,15 @@ export type Task = string;
 export type Result = string | null;
 export type Resultitemid = string | null;
 export type Errorcode = string | null;
+export type Stopreason = string | null;
+export type Stage = "model" | "tool_validation" | "context" | "runtime" | "lifecycle";
+export type Reason = string;
+export type Stepid = string | null;
+export type Modelattemptid = string | null;
+export type Toolname = string | null;
+export type Validationpath = string | null;
+export type Httpstatus = number | null;
+export type Reconciliationrequired = boolean;
 export type Createdat = number;
 /**
  * @maxItems 16
@@ -63,7 +72,22 @@ export interface AgentSummary {
   result?: Result;
   resultItemId?: Resultitemid;
   errorCode?: Errorcode;
+  stopReason?: Stopreason;
+  termination?: RunTermination | null;
+  reconciliationRequired?: Reconciliationrequired;
   createdAt: Createdat;
+}
+/**
+ * Facts explaining a terminal transition, without a second Run status.
+ */
+export interface RunTermination {
+  stage: Stage;
+  reason: Reason;
+  stepId?: Stepid;
+  modelAttemptId?: Modelattemptid;
+  toolName?: Toolname;
+  validationPath?: Validationpath;
+  httpStatus?: Httpstatus;
 }
 export interface AgentMessage {
   id: Id1;

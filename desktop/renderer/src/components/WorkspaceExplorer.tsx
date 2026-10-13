@@ -13,7 +13,6 @@ import { useArtifacts, usePreviewUrl, type WorkspaceFilePosition } from "./Artif
 import { ContextMenu } from "./DropdownMenu.js";
 import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
-import "./ArtifactPreview.css";
 import { MarkdownContent } from "./MarkdownContent.js";
 
 

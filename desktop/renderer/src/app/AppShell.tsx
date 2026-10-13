@@ -779,7 +779,10 @@ export function AppShell({ runtime }: AppShellProps) {
       const draftInput = runState.input;
       const draftReferences = runState.references;
       if (!draftInput.trim() && !draftReferences.length) return;
-      const materialized = await sessionActions.materializeDraft();
+      const workspaceNameHint = draftInput.trim()
+        ? Array.from(draftInput.trim().split(/\r?\n/, 1)[0] ?? "").slice(0, 512).join("")
+        : "附件任务";
+      const materialized = await sessionActions.materializeDraft(workspaceNameHint);
       if (!materialized) return;
       navHistoryActions.replaceCurrent(materialized.session.id);
       const started = await runActions.submitInput({

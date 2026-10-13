@@ -443,6 +443,19 @@ describe("useSessionController real Hook behavior", () => {
     expect(result.current[0].draft).toBeDefined();
   });
 
+  it("passes the first input hint when materializing a projectless draft", async () => {
+    const createSession = vi.fn().mockResolvedValue({ ...mockSession1, projectless: true });
+    setupMockRuntime({ createSession });
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft(null));
+    await act(async () => {
+      await result.current[1].materializeDraft("整理销售数据");
+    });
+    expect(createSession).toHaveBeenCalledWith(null, {
+      executionMode: "local", workspaceNameHint: "整理销售数据",
+    });
+  });
+
   it("restores the draft when a materialized Session has no Run", async () => {
     const deleteSession = vi.fn().mockResolvedValue({ deletedSessionId: mockSession1.id });
     setupMockRuntime({ deleteSession });

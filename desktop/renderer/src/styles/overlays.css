@@ -1,0 +1,217 @@
+/* Popovers & Context Menus */
+.session-menu-popover, .task-context-menu,
+.dropdown-menu {
+  min-width: max-content;
+  width: max-content;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-menu);
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.75);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  box-shadow:
+    var(--shadow-menu);
+  animation: apple-popover-in 140ms var(--apple-spring);
+  user-select: none;
+}
+.session-menu-popover,
+.task-context-menu {
+  position: absolute;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  transform-origin: top right;
+}
+.task-context-menu { position: fixed; transform-origin: top left; }
+.session-menu-popover button,
+.task-context-menu button,
+.dropdown-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 26px;
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 10px;
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  font-size: var(--font-size-sidebar);
+  font-weight: 450;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: default;
+  transition: background-color 80ms ease, color 80ms ease;
+}
+.session-menu-popover button:hover:not(:disabled),
+.task-context-menu button:hover:not(:disabled),
+.dropdown-menu button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.055);
+  color: var(--text);
+}
+.session-menu-popover button:active:not(:disabled),
+.task-context-menu button:active:not(:disabled),
+.dropdown-menu button:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.09);
+}
+.session-menu-popover .danger-action:hover:not(:disabled),
+.task-context-menu .danger-action:hover:not(:disabled),
+.dropdown-menu .danger-action:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.session-menu-popover .danger-action:active:not(:disabled),
+.task-context-menu .danger-action:active:not(:disabled),
+.dropdown-menu .danger-action:active:not(:disabled) {
+  background: rgba(145, 61, 52, 0.18);
+  color: var(--danger);
+}
+.session-menu-popover .danger-action,
+.task-context-menu .danger-action,
+.dropdown-menu .danger-action {
+  color: var(--danger);
+}
+.dropdown-menu-item__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: color 80ms ease;
+}
+.dropdown-menu-item__icon svg,
+.dropdown-menu-item__icon .menu-item-icon-svg {
+  width: 15px;
+  height: 15px;
+}
+.dropdown-menu button:hover:not(:disabled) .dropdown-menu-item__icon,
+.task-context-menu button:hover:not(:disabled) .dropdown-menu-item__icon,
+.session-menu-popover button:hover:not(:disabled) .dropdown-menu-item__icon {
+  color: var(--text);
+}
+.danger-action .dropdown-menu-item__icon {
+  color: var(--danger);
+}
+.danger-action:hover:not(:disabled) .dropdown-menu-item__icon {
+  color: var(--danger);
+}
+.dropdown-menu-item__label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+.dropdown-menu-item__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-left: 10px;
+  color: var(--accent);
+}
+.dropdown-menu-item__check svg,
+.dropdown-menu-item__check .menu-item-icon-svg {
+  width: 14px;
+  height: 14px;
+}
+.dropdown-menu-separator {
+  height: 1px;
+  margin: 3px 2px;
+  background: rgba(0, 0, 0, 0.08);
+}
+@keyframes apple-popover-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-2px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.menu-dropdown-wrapper {
+  position: relative;
+}
+.dropdown-menu {
+  position: fixed;
+  z-index: 9999;
+}
+/* Modal Dialog System */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(32, 36, 31, 0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: modal-fade-in 150ms ease-out;
+}
+.modal-dialog {
+  width: min(100%, 28rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-lg);
+  animation: modal-scale-in 180ms var(--apple-spring);
+  overflow: hidden;
+}
+.modal-dialog--wide {
+  width: min(100%, 36rem);
+}
+.modal-header {
+  padding: 1.25rem 1.35rem 0.75rem;
+  border-bottom: 1px solid var(--surface-muted);
+}
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 650;
+  color: var(--text);
+}
+.modal-subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.modal-body {
+  padding: 1.25rem 1.35rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.85rem 1.35rem;
+  border-top: 1px solid var(--surface-muted);
+  background: rgba(246, 246, 248, 0.7);
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-menu-popover,
+.task-context-menu,
+.modal-dialog {
+    animation: none;
+  }
+}
+.dialog-note {
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-scale-in {
+  from { opacity: 0; transform: scale(0.95) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-menu-popover,
+.task-context-menu { animation: none; }
+}
+.session-menu { position: relative; }

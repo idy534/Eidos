@@ -69,7 +69,7 @@ def test_schema_v18_contains_durable_worktree_lifecycle_table(
     store = SessionStore(tmp_path / "data")
     store.initialize()
     try:
-        assert SCHEMA_VERSION == 22
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         table = store.connection.execute(
             """
             SELECT name FROM sqlite_master

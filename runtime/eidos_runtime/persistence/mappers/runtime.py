@@ -82,6 +82,7 @@ def run_from_row(row: RowValues | Mapping[str, object]) -> Run:
         "completed_at": values.optional_integer("completed_at"),
         "error_code": values.optional_text("error_code"),
         "stop_reason": values.optional_text("stop_reason"),
+        "termination": json.loads(values.optional_json_text("termination_json") or "null") if "termination_json" in values._columns else None,
         "cancel_requested_at": values.optional_integer("cancel_requested_at"),
         "cancel_completed_at": values.optional_integer("cancel_completed_at"),
     })

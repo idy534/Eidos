@@ -144,6 +144,7 @@ class ModelResponse(_FrozenModel):
 
 class ModelRequestFailure(_FrozenModel):
     code: str
+    reason: str | None = Field(default=None, min_length=1, max_length=128)
     retryable: bool
     status_code: int | None = None
     retry_after_seconds: float | None = Field(default=None, ge=0)

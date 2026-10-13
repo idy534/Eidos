@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.run_termination import RunTermination
+
 import json
 import sqlite3
 import uuid
@@ -66,7 +68,9 @@ class CollaborationRepository:
             required_for_completion=bool(row['required_for_completion']),
             session_id=row['child_session_id'], run_id=run['id'], status=DomainRunStatus(run['status']), task=row['task'][:512],
             result=result['content'] if result else None, result_item_id=result['id'] if result else None,
-            error_code=run['error_code'] or run['stop_reason'], created_at=row['created_at'])
+            error_code=run['error_code'], stop_reason=run['stop_reason'],
+            termination=RunTermination.model_validate_json(run['termination_json']) if run['termination_json'] else None,
+            reconciliation_required=bool(run['reconciliation_required']), created_at=row['created_at'])
 
     def state(self, run_id: str) -> CollaborationState:
         with self.database.lock:

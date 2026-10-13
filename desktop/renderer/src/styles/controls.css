@@ -1,0 +1,494 @@
+button,
+input,
+textarea,
+select { font: inherit; }
+
+/* Apple-style Buttons */
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 0.55rem 0.875rem;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  font-weight: 550;
+  font-size: var(--font-size-sidebar);
+  cursor: pointer;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+  user-select: none;
+}
+
+button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+  box-shadow: var(--apple-shadow-sm);
+}
+
+button:active:not(:disabled) {
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity); }
+
+/* Unified Primary Action Button System - Light Sage Theme */
+
+.primary-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--primary-action-border);
+  border-radius: var(--radius);
+  color: var(--primary-action-text);
+  background: var(--primary-action-bg);
+  box-shadow: var(--primary-action-shadow);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.primary-action-btn:hover:not(:disabled) {
+  background: var(--primary-action-bg-hover);
+  border-color: var(--primary-action-border-hover);
+  box-shadow: var(--primary-action-shadow-hover);
+}
+
+.primary-action-btn:active:not(:disabled) {
+  background: var(--primary-action-bg-active);
+  box-shadow: none;
+}
+
+.primary-action-btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.primary-action-btn:disabled {
+  cursor: not-allowed;
+  color: rgba(48, 70, 58, 0.48);
+  background: rgba(223, 233, 226, 0.55);
+  border-color: rgba(49, 95, 74, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+.primary-action-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.primary-action-text-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+.primary-action-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primary-action-icon {
+  flex: none;
+  color: var(--primary-action-icon);
+}
+
+.primary-action-arrow {
+  flex: none;
+  color: rgba(41, 72, 58, 0.48);
+  transition: color 140ms ease, transform 160ms var(--apple-spring);
+}
+
+.primary-action-btn:hover:not(:disabled) .primary-action-arrow {
+  color: rgba(41, 72, 58, 0.75);
+  transform: translateX(2px);
+}
+
+/* Shortcut: Hidden by default, fades in on hover/focus (Approach A - layout reserved) */
+
+.primary-action-shortcut {
+  flex: 0 0 24px;
+  width: 24px;
+  text-align: right;
+  margin-left: auto;
+  color: rgba(41, 72, 58, 0.42);
+  font-family: var(--font-code);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0;
+  transform: translateX(3px);
+  transition: opacity 140ms ease, transform 160ms var(--apple-spring);
+  pointer-events: none;
+  line-height: 1;
+}
+
+.primary-action-btn:hover:not(:disabled) .primary-action-shortcut,
+.primary-action-btn:focus-visible .primary-action-shortcut {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.primary-action-btn:disabled .primary-action-shortcut {
+  opacity: 0;
+  display: none;
+}
+
+.primary-action-spinner {
+  flex: none;
+  animation: spin 0.8s linear infinite;
+  color: var(--primary-action-icon);
+}
+
+/* Compact Variant (Sidebar "新建任务") */
+
+.primary-action-btn--compact {
+  width: 100%;
+  margin-bottom: 1.25rem;
+  padding: 0 12px;
+  min-height: 38px;
+  height: 38px;
+}
+
+.primary-action-btn--compact .primary-action-label {
+  font-size: var(--font-size-sidebar);
+}
+
+/* Large Variant (Home Empty State "选择工作空间目录") */
+
+.primary-action-btn--large {
+  width: min(100%, 360px);
+  min-height: 58px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+}
+
+.primary-action-btn--large .primary-action-main {
+  gap: 10px;
+}
+
+.primary-action-btn--large .primary-action-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--primary-action-text);
+}
+
+.primary-action-btn--large .primary-action-subtitle {
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+  color: rgba(48, 70, 58, 0.62);
+  margin-top: 2px;
+}
+
+.icon-button {
+  min-width: 1.6rem;
+  height: 1.6rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Unified Button Primitives
+ * --------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 100ms var(--apple-spring);
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: var(--control-disabled-opacity);
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* Sizes */
+
+.btn--small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--font-size-caption);
+}
+
+.btn--medium {
+  height: 34px;
+  padding: 0 14px;
+  font-size: var(--font-size-sidebar);
+}
+
+.btn--large {
+  height: 42px;
+  padding: 0 18px;
+  font-size: var(--font-size-body);
+}
+
+/* Variants */
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: 1px solid var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.btn--primary:hover:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-primary-hover);
+  border-color: var(--action-primary-hover);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(49, 95, 74, 0.2);
+}
+
+.btn--primary:active:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-primary-active);
+  border-color: var(--action-primary-active);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transform: translateY(0.5px);
+}
+
+.btn--secondary {
+  background: var(--surface-raised, #ffffff);
+  color: var(--text);
+  border: 1px solid var(--line, var(--line));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover, #f3f2eb);
+  border-color: #c5c4bc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.btn--secondary:active:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted, #f0efe9);
+  border-color: var(--line);
+  box-shadow: none;
+  transform: translateY(0.5px);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--muted, var(--muted));
+  border: 1px solid transparent;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+  border-color: transparent;
+}
+
+.btn--ghost:active:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted, rgba(0, 0, 0, 0.06));
+  border-color: transparent;
+  transform: translateY(0.5px);
+}
+
+.btn--danger {
+  background: var(--danger, #913d34);
+  color: var(--text-on-accent);
+  border: 1px solid var(--danger, #913d34);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.btn--danger:hover:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-danger-hover);
+  border-color: var(--action-danger-hover);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(145, 61, 52, 0.2);
+}
+
+.btn--danger:active:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-danger-active);
+  border-color: var(--action-danger-active);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transform: translateY(0.5px);
+}
+
+/* Loading & Spinner */
+
+.btn--loading {
+  position: relative;
+  pointer-events: none;
+}
+
+.btn-spinner {
+  animation: btn-spin 0.8s linear infinite;
+  flex: none;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.btn-label {
+  display: inline-block;
+}
+
+.btn-label:empty,
+.btn-label:has(> .sr-only:only-child) {
+  display: contents;
+}
+
+@keyframes btn-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-spinner {
+    animation: none;
+  }
+  .btn {
+    transition: none;
+  }
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 760px) {
+  .primary-action-btn--compact { width: auto; margin: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary-action-btn,
+.primary-action-arrow,
+.primary-action-shortcut,
+.primary-action-spinner {
+    transition: none;
+    animation: none;
+    transform: none !important;
+  }
+  .primary-action-btn:hover:not(:disabled) .primary-action-arrow {
+    transform: none;
+  }
+  .primary-action-btn:hover:not(:disabled) .primary-action-shortcut,
+.primary-action-btn:focus-visible .primary-action-shortcut {
+    transform: none;
+  }
+}
+
+/* Code and diagram previews share their caption and copy controls. */
+
+.code-block-language,
+.mermaid-badge {
+  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text, #111827);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: all 120ms ease;
+  flex-shrink: 0;
+}
+
+.code-copy-btn:hover {
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: none !important;
+}
+
+.code-copy-btn:active {
+  background: var(--surface-muted);
+  box-shadow: none !important;
+}
+
+.code-copy-btn .copy-icon-svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  display: block;
+}
+
+.code-copy-btn .copy-icon-svg--copied {
+  color: var(--status-success);
+}

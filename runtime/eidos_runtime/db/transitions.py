@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.approval_policy import ApprovalReview
+from eidos_runtime.domain.run_termination import RunTermination
 
 from dataclasses import dataclass
 import json
@@ -35,6 +36,8 @@ def transition_run(
     expected_statuses: frozenset[RunStatus],
     target_status: RunStatus,
     reason: str | None,
+    *,
+    termination: RunTermination | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Validate, update, and event one persisted Run transition."""
     row = connection.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
@@ -68,6 +71,12 @@ def transition_run(
             updates.update({"cancel_completed_at": now, "cancel_failure_code": None})
     elif target_status is RunStatus.SUCCEEDED:
         updates["completed_at"] = now
+    if target_status in {RunStatus.FAILED, RunStatus.STOPPED, RunStatus.INTERRUPTED}:
+        termination = termination or RunTermination(
+            stage="runtime" if target_status is RunStatus.FAILED else "lifecycle",
+            reason=reason or "unknown",
+        )
+        updates["termination_json"] = termination.model_dump_json(exclude_none=True)
     assignments = ", ".join(f"{column} = ?" for column in updates)
     changed = connection.execute(
         f"UPDATE runs SET {assignments} WHERE id = ? AND status = ?",
@@ -82,7 +91,10 @@ def transition_run(
         connection,
         EventType.RUN_STATUS_CHANGED,
         now,
-        {"previous": current, "current": target_status, "reason": reason},
+        {
+            "previous": current, "current": target_status, "reason": reason,
+            **({"termination": termination.to_wire_dict(exclude_none=True)} if termination else {}),
+        },
         session_id=str(run["sessionId"]),
         run_id=run_id,
     )

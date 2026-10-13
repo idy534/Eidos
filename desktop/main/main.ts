@@ -245,6 +245,7 @@ function isReviewCommentCreateInput(value: unknown): value is ReviewCommentCreat
 }
 
 function validateSessionCreateOptions(value: unknown): {
+  workspaceNameHint?: string;
   executionMode?: "local" | "worktree";
   baseRef?: string;
   includeLocalChanges?: boolean;
@@ -254,7 +255,7 @@ function validateSessionCreateOptions(value: unknown): {
     throw new Error("Session 创建参数无效。");
   }
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !["executionMode", "baseRef", "includeLocalChanges"].includes(key))) {
+  if (Object.keys(record).some((key) => !["workspaceNameHint", "executionMode", "baseRef", "includeLocalChanges"].includes(key))) {
     throw new Error("Session 创建参数无效。");
   }
   if (
@@ -270,7 +271,13 @@ function validateSessionCreateOptions(value: unknown): {
   if (record.includeLocalChanges !== undefined && typeof record.includeLocalChanges !== "boolean") {
     throw new Error("Session 本地修改参数无效。");
   }
+  if (record.workspaceNameHint !== undefined && (
+    typeof record.workspaceNameHint !== "string" || [...record.workspaceNameHint].length > 512
+  )) {
+    throw new Error("Session 工作目录名称无效。");
+  }
   return {
+    ...(record.workspaceNameHint !== undefined ? { workspaceNameHint: record.workspaceNameHint } : {}),
     ...(record.executionMode !== undefined
       ? { executionMode: record.executionMode }
       : {}),

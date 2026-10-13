@@ -12,7 +12,6 @@ import { Toggle } from "./Toggle.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { StatusBadge, type StatusTone } from "./StatusBadge.js";
 import { EmptySettingsState } from "./EmptySettingsState.js";
-import "./MemorySettings.css";
 
 const statusLabels: Record<string, string> = {
   active: "已生效",

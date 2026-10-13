@@ -8,7 +8,7 @@ import type { EidosRuntimeAPI, Item, Run, RuntimeNotification, SessionSnapshot }
 import {
   AgentList,
   AgentWorkspacePanel,
-  formatErrorCode,
+  formatAgentTooltip,
   useAgentState,
 } from "./AgentPanel.js";
 
@@ -85,9 +85,11 @@ function historySnapshot(
 }
 
 describe("agent error labels", () => {
-  it("describes interruption and legacy completion checks", () => {
-    expect(formatErrorCode("RUNTIME_INTERRUPTED")).toBe("执行已中断");
-    expect(formatErrorCode("completion_unconfirmed")).toBe("答复已生成，旧版完成检查未确认");
+  it("uses the shared terminal cause instead of a raw error code", () => {
+    expect(formatAgentTooltip({ ...historyAgent(), status: "failed", errorCode: "MODEL_PROTOCOL_ERROR",
+      termination: { stage: "tool_validation", reason: "TOOL_ARGUMENT_CONTRACT_VIOLATION", toolName: "read_file", validationPath: "path" },
+    })).toContain("模型调用“读取文件”时提供的“文件路径”参数不符合要求");
+    expect(formatAgentTooltip({ ...historyAgent(), status: "stopped", stopReason: "completion_unconfirmed" })).toContain("任务已停止。");
   });
 });
 
@@ -645,7 +647,8 @@ describe("AgentWorkspacePanel", () => {
     // .agent-list has vertical scroll and custom scrollbar
     expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-y:\s*auto;/s);
     expect(agentsCss).toMatch(/\.agent-list\s*\{[^}]*overflow-x:\s*hidden;/s);
-    expect(agentsCss).toMatch(/\.agent-list::-webkit-scrollbar\s*\{[^}]*width:\s*6px;/s);
+    // The common skin owns appearance; agent and dock styles own scrolling layout.
+    expect(agentsCss).not.toContain("scrollbar-width: thin");
 
     // .environment-popover__panel has max-height and overflow: hidden, with .environment-popover__body handling overflow-y: auto and custom scrollbar
     const dockCss = readFileSync(
@@ -656,6 +659,11 @@ describe("AgentWorkspacePanel", () => {
     expect(dockCss).toMatch(/\.environment-popover__panel\s*\{[^}]*overflow:\s*hidden;/s);
     expect(dockCss).toMatch(/\.environment-popover__body\s*\{[^}]*overflow-y:\s*auto;/s);
     expect(dockCss).toMatch(/\.environment-popover__body\s*\{[^}]*overflow-x:\s*hidden;/s);
-    expect(dockCss).toMatch(/\.environment-popover__body::-webkit-scrollbar\s*\{[^}]*width:\s*5px;/s);
+    expect(dockCss).not.toContain("scrollbar-width: thin");
+    const scrollbarCss = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/styles/scrollbars.css"),
+      "utf8",
+    );
+    expect(scrollbarCss).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*var\(--scrollbar-size\);/s);
   });
 });

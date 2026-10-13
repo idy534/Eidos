@@ -39,6 +39,7 @@
     "test:renderer-state": "node scripts/check-renderer-test-discovery.mjs && node --test \"dist/renderer-test/**/*.test.js\"",
     "test:renderer-behavior": "vitest run --config vitest.renderer.config.ts",
     "test:composer-layout": "electron scripts/test-composer-layout.cjs",
+    "test:renderer-styles": "electron scripts/test-renderer-styles.cjs",
     "test:main:fast": "pnpm build:main && node --test dist/main/app-command-dispatch.test.js dist/main/log-redaction.test.js dist/main/quit-flow.test.js dist/main/runtime-paths.test.js dist/main/runtime-shutdown.test.js dist/main/terminal-manager.test.js",
     "test:main": "pnpm build:main && node --test \"dist/main/*.test.js\"",
     "test:desktop": "pnpm build && pnpm test:contracts && pnpm test:renderer-state && pnpm test:renderer-behavior && pnpm test:main",

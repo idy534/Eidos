@@ -1,5 +1,14 @@
 # Eidos 当前限制
 
+## Renderer 样式统一与拆分验证（2026-10-13）
+
+- `styles.css` 已改为 31 行的统一导入入口。公共基础与功能模块分别维护样式，现有聊天专用排版保留。审批与计划模块已移除对公共 Button 颜色和交互状态的单独覆盖。
+- 本轮 17 个 Renderer 定向测试文件共 240 项通过。最后一次公共样式整理后，相关 6 个文件共 63 项复测通过。新增样式模块检查确认全部本地 CSS 只通过入口导入一次。
+- `pnpm test:renderer-styles` 通过。真实 Electron 检查公共、审批、计划和澄清按钮的状态，检查 10 类选中控件与 3 类菜单。测试覆盖 1100px 和 420px 下的 8 种侧栏、Dock 组合，并与改动前的构建 CSS 对照正文、代码、文件预览和布局的最终计算样式。开发页面与本轮构建生成的 CSS 均通过了这组检查。
+- `pnpm test:composer-layout` 通过。单行输入、全选删除、等高编辑和原生键盘编辑的历史滚动偏移均为 0。窄窗口换行和 56px 至 168px 的自动高度范围保留。
+- Renderer 类型检查与构建通过，构建仍报告部分 Chunk 超过 500 kB。Node 生产依赖审计报告 1 项低危漏洞，按 high 门槛退出码为 0。本次没有新增依赖。
+- 本轮没有执行 Full Suite 或真实产品窗口的人工验收。隔离 Electron 页面验证了源码样式，不证明当前已安装 App 已加载这些修改。
+
 ## 聊天正文排版验证（2026-10-13）
 
 - 本轮 Renderer 定向行为测试通过 60 项，Markdown 和 Execution Feed 纯测试通过 57 项。Renderer 类型检查与构建通过；构建仍报告部分 Chunk 超过 500 kB 的体积警告。
@@ -214,7 +223,7 @@
 
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
 - Workspace 文件 Intent 的自动恢复只核验实际目标和必要父目录。Runtime 最多观察 512 个目标，读取总量最多 64 MiB，并检查读取期限、取消、文件类型、链接、owner 和当前版本。SQLite 提交再次匹配 epoch 与目标集合；未知 Shell、MCP、外部操作和 Eidos-state 不通过该路径恢复。历史完整 Workspace refresh 入口继续兼容，但不再是自动恢复的前置条件。
-- `interrupted` 保持稳定错误码 `RUNTIME_INTERRUPTED`，并在既有 `stopReason` 与 Event 中保留真实触发原因。界面区分执行中断、活动命令清理和真实未确认操作。旧 `completion_unconfirmed` 显示为旧版完成检查未确认，新 Run 不再产生该原因。
+- `interrupted` 保持稳定错误码 `RUNTIME_INTERRUPTED`，并在既有 `stopReason` 与 Event 中保留真实触发原因。主任务和子 Agent 共用结束原因提示，并区分执行中断、活动命令清理和真实未确认操作。新终态保存有界 `termination` 事实；已有记录不补写或推测原因。已移除的完成检查原因使用通用停止提示。系统没有具体证据时，界面不会断言网络故障、密钥失效或操作成功。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
 - 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
 - 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验和输出限额；展示片段使用 best-effort 凭据脱敏，聚合 stdout/stderr 保留原始内容。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
@@ -319,3 +328,11 @@ Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用�
 - 遗忘不删除原始聊天，不追回已发送内容、外部导出或旧备份。ZIP/Markdown 未加密，旧备份可恢复后续遗忘资料；恢复默认停止自动学习，需要用户重新确认。
 - 正文大小/mtime 校验不防主动保留元数据篡改。孤立文件按小时回收、保留一小时宽限，单次最多扫描十万项。
 - 离线恢复仅导入新目录，Workspace 和 Provider 配置另行处理；macOS 原生沙盒、sidecar 和安装包仍需支持平台验收。
+
+## Projectless 工作空间 Alpha 更新
+
+新版只使用 `~/Eidos/YYYY-MM-DD/可读名称`。目录名来自首条输入的短文本，不是模型生成的最终标题。标题变化不移动目录。旧无项目 Session 在启动时废弃，旧工作空间文件原地保留；新版不提供旧 Session、旧产物链接或旧路径的兼容。
+
+新建在排他 mkdir 后、身份提交前崩溃时，磁盘可能留下未被接管的目录。Runtime 会保留该目录并分配数字后缀，不会根据目录为空猜测它属于本次操作。数据库提交失败时，Runtime 只删除已核验且仍为空的本次目录；非空目录保留，已有身份记录可以继续创建。
+
+2026-10-13 的定向验证通过：Runtime 63 个用例、Renderer 30 个用例、Main/JSON-RPC 重启创建用例、两端协议检查、真实 macOS Seatbelt 定向用例、Desktop 构建和 Electron smoke。Ruff、Deptry、两组锁定 Python 依赖的 pip-audit 与 `git diff --check` 通过。原生 Seatbelt、Electron smoke 和依赖联网审计在工具沙箱外完成。验证只使用临时数据，没有执行真实数据清理、Full Suite 或安装包验收。

@@ -14,6 +14,7 @@ const executable = path.join(root, "node_modules", ".bin", "electron");
 const environment = {
   ...process.env,
   EIDOS_DATA_DIR: dataDirectory,
+  EIDOS_PROJECTLESS_ROOT: `${dataDirectory}-workspaces`,
   EIDOS_ELECTRON_SMOKE: "1",
   EIDOS_PYTHON: process.env.EIDOS_PYTHON ?? path.join(root, ".venv", "bin", "python"),
 };

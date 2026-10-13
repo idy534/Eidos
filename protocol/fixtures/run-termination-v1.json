@@ -1,0 +1,82 @@
+{
+  "run": {
+    "id": "run-1",
+    "sessionId": "session-1",
+    "status": "failed",
+    "modelId": "deepseek-v4-flash",
+    "modelStepCount": 1,
+    "createdAt": 1,
+    "updatedAt": 2,
+    "completedAt": 2,
+    "errorCode": "MODEL_PROTOCOL_ERROR",
+    "termination": {
+      "stage": "tool_validation",
+      "reason": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "read_file",
+      "validationPath": "path"
+    }
+  },
+  "invalid": [
+    {
+      "stage": "unknown",
+      "reason": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "read_file",
+      "validationPath": "path"
+    },
+    {
+      "stage": "tool_validation",
+      "reason": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "read_file",
+      "validationPath": "path",
+      "privateMessage": "secret"
+    },
+    {
+      "stage": "tool_validation",
+      "reason": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "read_file",
+      "validationPath": "path",
+      "httpStatus": true
+    },
+    {
+      "stage": "tool_validation",
+      "reason": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "read_file",
+      "validationPath": "path",
+      "httpStatus": 600
+    },
+    {
+      "stage": "tool_validation",
+      "reason": "",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "read_file",
+      "validationPath": "path"
+    },
+    {
+      "stage": "tool_validation",
+      "reason": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "validationPath": "path"
+    },
+    {
+      "stage": "tool_validation",
+      "reason": "TOOL_ARGUMENT_CONTRACT_VIOLATION",
+      "stepId": "step-1",
+      "modelAttemptId": "attempt-2",
+      "toolName": "read_file",
+      "validationPath": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  ]
+}

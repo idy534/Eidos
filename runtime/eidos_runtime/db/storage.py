@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.run_termination import RunTermination
+
 
 from eidos_runtime.domain.input_reference import InputReference
 from eidos_runtime.domain.collaboration import CollaborationState
@@ -73,6 +75,7 @@ from eidos_runtime.persistence.mappers.session import (
     session_to_legacy_dict,
 )
 from eidos_runtime.persistence.repositories import TypedRuntimeRepository
+from eidos_runtime.persistence.projectless_reset import discard_legacy_projectless_sessions
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
 )
@@ -147,6 +150,10 @@ class SessionStore:
             self._persistence_layout.initialize(self._database)
             with startup_phase("storage.runtime_recovery"), self._database.transaction() as connection:
                 recover_runtime_facts(connection)
+            with startup_phase("storage.projectless_alpha_reset"):
+                if discard_legacy_projectless_sessions(self._database):
+                    assert self._persistence_layout.thread_history_store is not None
+                    self._persistence_layout.thread_history_store.catch_up(self._database)
         except (OSError, sqlite3.Error, StorageError) as error:
             if self._persistence_layout is not None:
                 self._persistence_layout.close()
@@ -1422,13 +1429,15 @@ class SessionStore:
             error_message=error_message,
         )
 
-    def fail_run(self, run_id: str, error_code: str) -> dict[str, object]:
-        return self._repository(self._runs).fail_run(run_id, error_code)
+    def fail_run(
+        self, run_id: str, error_code: str, *, termination: RunTermination | None = None
+    ) -> dict[str, object]:
+        return self._repository(self._runs).fail_run(run_id, error_code, termination=termination)
 
     def fail_run_committed(
-        self, run_id: str, error_code: str
+        self, run_id: str, error_code: str, *, termination: RunTermination | None = None
     ) -> CommittedMutation[dict[str, object]]:
-        return self._repository(self._runs).fail_run_committed(run_id, error_code)
+        return self._repository(self._runs).fail_run_committed(run_id, error_code, termination=termination)
 
     def cancel_run(
         self, run_id: str, *, operation_id: str | None = None

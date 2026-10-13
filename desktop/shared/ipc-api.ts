@@ -136,6 +136,7 @@ export interface EidosRuntimeAPI {
   createSession(
     workspaceRoot: string | null,
     options?: {
+      workspaceNameHint?: string;
       executionMode?: "local" | "worktree";
       baseRef?: string;
       includeLocalChanges?: boolean;

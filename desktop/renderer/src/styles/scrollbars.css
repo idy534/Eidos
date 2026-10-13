@@ -1,0 +1,49 @@
+/* Chromium uses this custom skin only while the standard properties stay auto.
+   Modules may hide their scrollbars, but tracks and frames are shared here. */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece,
+::-webkit-scrollbar-corner {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-pill);
+  background: var(--scrollbar-thumb);
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.code-block-content::-webkit-scrollbar-thumb,
+.diff-viewer-group::-webkit-scrollbar-thumb,
+.diff-file-body::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background-color 160ms ease;
+}

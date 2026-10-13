@@ -101,7 +101,7 @@ export function ApprovalComposer({
         </div>
         <div className="approval-actions-buttons">
           <Button
-            variant="ghost"
+            variant="secondary"
             size="medium"
             className="btn-approval-reject"
             disabled={!canReject}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 from eidos_runtime.domain.approval_policy import ApprovalMode
+from eidos_runtime.domain.run_termination import RunTermination
 
 from pydantic import Field
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
@@ -50,6 +51,7 @@ class Run(EidosFrozenStrictModel):
     completed_at: JsonSafeInt | None = None
     error_code: str | None = None
     stop_reason: str | None = None
+    termination: RunTermination | None = None
     cancel_requested_at: JsonSafeInt | None = None
     cancel_completed_at: JsonSafeInt | None = None
 

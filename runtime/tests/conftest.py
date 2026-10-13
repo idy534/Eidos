@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every Runtime test owns its workspace root, including child Runtime processes."""
+    monkeypatch.setenv("EIDOS_PROJECTLESS_ROOT", str(tmp_path / "Eidos"))
 
 # Test layers are assigned at collection time so product tests stay focused on
 # behavior instead of repeating infrastructure markers in every file. Keep this
@@ -52,6 +59,7 @@ INTEGRATION_FILES = frozenset(
         "test_phase5c_workspace_index.py",
         "test_planning.py",
         "test_project_lifecycle.py",
+        "test_projectless_workspaces.py",
         "test_plugins.py",
         "test_repository_application_persistence.py",
         "test_repository_persistence.py",

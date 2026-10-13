@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import { DropdownMenu, ContextMenu } from "./DropdownMenu.js";
 import { CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
-import "./WorkspaceDock.css";
 
 export type WorkspaceToolKind = "text-review" | "plan" | "agent" | "review" | "terminal" | "files" | "browser";
 

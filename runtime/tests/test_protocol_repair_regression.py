@@ -595,6 +595,10 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(failed["modelStepCount"], 1)
         attempts = self.store.read_model_attempts(run["id"])
         self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed"])
+        self.assertEqual(failed["termination"]["reason"], "invalid_tool_call")
+        self.assertEqual(failed["termination"]["stage"], "tool_validation")
+        self.assertEqual(failed["termination"]["modelAttemptId"], attempts[-1]["id"])
+        self.assertEqual(failed["termination"]["toolName"], "write_file")
         diagnostic = attempts[0]["protocolDiagnostics"]
         assert isinstance(diagnostic, dict)
         self.assertNotIn("argumentsSha256", diagnostic)

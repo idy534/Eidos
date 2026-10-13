@@ -113,6 +113,9 @@ def _include_detached_worktree_branch(
 
 
 class SessionCreateRequestDto(_OperationRequest):
+    workspace_name_hint: StrictStr | None = Field(
+        default=None, alias="workspaceNameHint", max_length=512
+    )
     workspace_root: StrictStr | None = Field(
         default=None, alias="workspaceRoot", min_length=1, max_length=4096
     )

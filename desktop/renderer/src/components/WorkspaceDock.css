@@ -19,7 +19,7 @@
 }
 
 .workspace-body--session-centered {
-  grid-template-columns: minmax(0, 1fr) min(72rem, 100%) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .workspace-main-column {
@@ -54,7 +54,7 @@
 }
 
 .workspace-body--session-centered .workspace-main-column {
-  grid-column: 2;
+  grid-column: 1;
   width: 100%;
   margin: 0;
 }
@@ -231,23 +231,6 @@
   overflow-x: hidden;
   padding-right: 0.35rem;
   padding-bottom: 0.2rem;
-  scrollbar-color: rgba(106, 111, 103, 0.28) transparent;
-  scrollbar-width: thin;
-}
-
-.environment-popover__body::-webkit-scrollbar {
-  width: 5px;
-  background: transparent;
-}
-
-.environment-popover__body::-webkit-scrollbar-track,
-.environment-popover__body::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-.environment-popover__body::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.16);
 }
 
 .environment-popover__body::-webkit-scrollbar-thumb:hover {
@@ -300,11 +283,11 @@ button.environment-popover__row:hover:not(:disabled) {
 .environment-popover__section {
   margin-top: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px solid var(--border-color, #e5e5e5);
+  border-top: 1px solid var(--line, #e5e5e5);
 }
 
 .environment-popover__section-title {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   color: var(--muted, #647b6e);
   padding: 0.125rem 0.55rem;
@@ -317,14 +300,14 @@ button.environment-popover__row:hover:not(:disabled) {
 }
 
 .environment-popover__row--plan .plan-icon {
-  color: #46735a;
+  color: var(--accent);
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
 }
 
 .environment-popover__row--plan .plan-title {
-  font-size: 12px;
+  font-size: var(--font-size-caption);
   font-weight: 500;
   color: var(--text, #1f3126);
   overflow: hidden;

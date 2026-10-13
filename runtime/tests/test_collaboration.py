@@ -21,6 +21,7 @@ from eidos_runtime.domain.collaboration import (
     CollaborationRejected,
 )
 from eidos_runtime.persistence.collaboration import CollaborationRepository
+from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.sandbox.permissions import BasePermissionProfile
 from eidos_runtime.runtime.run_resources import RunResources
 from eidos_runtime.context.builder import ContextBuilder
@@ -84,7 +85,7 @@ def test_v15_migration_creates_collaboration_tables_and_rolls_back_on_fk_failure
     clean = SessionStore(tmp_path / "clean-data")
     clean.initialize()
     try:
-        assert SCHEMA_VERSION == 22
+        assert clean.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert clean.connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_waits'"
         ).fetchone() is not None
@@ -115,6 +116,21 @@ def test_spawn_is_idempotent_and_keeps_child_session_out_of_normal_listing(tmp_p
             "SELECT COUNT(*) FROM agent_delegations WHERE parent_run_id=?",
             (parent["id"],),
         ).fetchone()[0] == 1
+    finally:
+        store.close()
+
+
+def test_child_summary_keeps_failure_and_stop_facts_separate(tmp_path):
+    store, _, parent = _parent(tmp_path)
+    try:
+        repository, child, _ = _spawn(store, parent, 0)
+        assert store.claim_next_run()["id"] == child.run_id
+        cause = RunTermination(stage="model", reason="provider_timeout", http_status=504)
+        store.fail_run(child.run_id, "MODEL_REQUEST_FAILED", termination=cause)
+        summary = repository.state(str(parent["id"])).agents[0]
+        assert summary.termination == cause
+        assert summary.error_code == "MODEL_REQUEST_FAILED"
+        assert summary.stop_reason is None
     finally:
         store.close()
 

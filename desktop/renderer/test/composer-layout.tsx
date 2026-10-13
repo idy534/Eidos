@@ -5,7 +5,6 @@ import { Composer } from "../src/components/Composer.js";
 import { ExecutionFeed } from "../src/components/ExecutionFeed.js";
 import { ArtifactProvider } from "../src/components/ArtifactContext.js";
 import "../src/styles.css";
-import "../src/components/WorkspaceDock.css";
 
 const runs: Run[] = [{
   id: "layout-run", sessionId: "layout-session", status: "succeeded", modelId: "layout-model",

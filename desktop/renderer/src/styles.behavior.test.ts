@@ -1,12 +1,28 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { readRendererStyleModules, readRendererStyles } from "../test/read-styles.js";
 
-const styles = readFileSync(path.resolve(process.cwd(), "desktop/renderer/src/styles.css"), "utf8");
+const styles = readRendererStyles();
 const dockStyles = readFileSync(
   path.resolve(process.cwd(), "desktop/renderer/src/components/WorkspaceDock.css"),
   "utf8",
 );
+
+describe("renderer style ownership", () => {
+  it("loads every local module once through the ordered CSS entry", () => {
+    const modules = readRendererStyleModules();
+    const rendererRoot = path.resolve(process.cwd(), "desktop/renderer/src");
+    const localFiles = readdirSync(rendererRoot, { recursive: true })
+      .filter((file) => typeof file === "string" && file.endsWith(".css") && file !== "styles.css")
+      .map((file) => path.join(rendererRoot, file as string));
+    expect(new Set(modules.map(({ file }) => file)).size).toBe(modules.length);
+    expect(modules.map(({ file }) => file).sort()).toEqual(localFiles.sort());
+    expect(modules[0]?.file).toBe(path.join(rendererRoot, "styles/tokens.css"));
+    expect(modules[1]?.file).toBe(path.join(rendererRoot, "styles/base.css"));
+    for (const { styles: moduleStyles } of modules) expect(moduleStyles).not.toMatch(/^@import/m);
+  });
+});
 
 describe("interactive color tokens", () => {
   it("does not use the dark green hover token", () => {
@@ -16,14 +32,18 @@ describe("interactive color tokens", () => {
   });
 
   it("maintains high contrast and dark hover background on unified primary and danger buttons", () => {
-    // Primary button should not wash out to pale sage on hover, and should keep pure white text
+    // Action variants retain their contrast throughout pointer interaction.
     expect(styles).not.toMatch(/\.btn--primary:hover[^{]*\{[^}]*background:\s*var\(--primary-action-bg-hover\);/s);
-    expect(styles).toMatch(/\.btn--primary:hover:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#274e3c;/s);
-    expect(styles).toMatch(/\.btn--primary:active:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#1e3d2f;/s);
+    expect(styles).toMatch(/--action-primary-hover:\s*#274e3c;/);
+    expect(styles).toMatch(/--action-primary-active:\s*#1e3d2f;/);
+    expect(styles).toMatch(/\.btn--primary:hover:not\(:disabled\)\s*\{[^}]*color:\s*var\(--text-on-accent\);[^}]*background:\s*var\(--action-primary-hover\);/s);
+    expect(styles).toMatch(/\.btn--primary:active:not\(:disabled\)\s*\{[^}]*color:\s*var\(--text-on-accent\);[^}]*background:\s*var\(--action-primary-active\);/s);
 
     // Danger button must keep pure white text on hover and active so labels like "遗忘" remain crisp and visible
-    expect(styles).toMatch(/\.btn--danger:hover:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#7a3028;/s);
-    expect(styles).toMatch(/\.btn--danger:active:not\(:disabled\)\s*\{[^}]*color:\s*#ffffff;[^}]*background:\s*#65251e;/s);
+    expect(styles).toMatch(/--action-danger-hover:\s*#7a3028;/);
+    expect(styles).toMatch(/--action-danger-active:\s*#65251e;/);
+    expect(styles).toMatch(/\.btn--danger:hover:not\(:disabled\)\s*\{[^}]*color:\s*var\(--text-on-accent\);[^}]*background:\s*var\(--action-danger-hover\);/s);
+    expect(styles).toMatch(/\.btn--danger:active:not\(:disabled\)\s*\{[^}]*color:\s*var\(--text-on-accent\);[^}]*background:\s*var\(--action-danger-active\);/s);
   });
 
   it("does not wash out the selected session item on hover", () => {
@@ -36,8 +56,8 @@ describe("interactive color tokens", () => {
   });
 
   it("keeps session content centered and reserves one shared action rail", () => {
-    expect(dockStyles).toMatch(/\.workspace-body--session-centered\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) min\(72rem, 100%\) minmax\(0, 1fr\);/s);
-    expect(dockStyles).toMatch(/\.workspace-body--session-centered \.workspace-main-column\s*\{[^}]*grid-column: 2;[^}]*width: 100%;[^}]*margin: 0;/s);
+    expect(dockStyles).toMatch(/\.workspace-body--session-centered\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
+    expect(dockStyles).toMatch(/\.workspace-body--session-centered \.workspace-main-column\s*\{[^}]*grid-column: 1;[^}]*width: 100%;[^}]*margin: 0;/s);
     expect(dockStyles).toMatch(/\.workspace-main\s*\{[^}]*flex: 1 1 auto;/s);
     expect(dockStyles).toMatch(/\.workspace-body--session-centered \.workspace-main-column > \.session-header\s*\{[^}]*padding-right: 1\.5rem;/s);
   });
@@ -95,7 +115,7 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.window-traffic-spacer\s*\{[^}]*width:\s*86px;/s);
     expect(styles).toMatch(/\.nav-icon-btn\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
     expect(styles).toMatch(/\.workbench--sidebar-collapsed\s*\.workspace-header::before\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
-    expect(styles).toMatch(/\.workspace-body--session-centered,\s*\.workbench--sidebar-collapsed\s*\.workspace-body--session-centered\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
+    expect(dockStyles).toMatch(/\.workspace-body--session-centered\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s);
     expect(styles).toMatch(/\.workspace-header--empty\s*\{[^}]*position:\s*absolute;[^}]*-webkit-app-region:\s*drag;/s);
     expect(styles).toMatch(/\.settings-page-header\s*\{[^}]*-webkit-app-region:\s*drag;/s);
     expect(dockStyles).toMatch(/\.workbench--sidebar-collapsed\s+\.workspace-dock--expanded\s+\.workspace-dock__header,\s*\.workbench--sidebar-collapsed\s+\.workspace-body--expanded\s+\.workspace-dock__header\s*\{[^}]*padding-left:\s*calc\(86px\s*\+\s*8rem\);/s);

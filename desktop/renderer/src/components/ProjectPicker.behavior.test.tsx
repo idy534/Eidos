@@ -1,14 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { useState } from "react";
+import { readRendererStyles } from "../../test/read-styles.js";
 
 import type { Project } from "../contracts.js";
 import { ProjectPicker } from "./ProjectPicker.js";
 
-const styles = readFileSync(path.resolve(process.cwd(), "desktop/renderer/src/styles.css"), "utf8");
+const styles = readRendererStyles();
 
 const projects: Project[] = [
   {

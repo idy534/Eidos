@@ -253,6 +253,14 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(raised.exception.failure.code, "protocol_error")
         self.assertFalse(raised.exception.failure.retryable)
 
+    def test_response_mapping_keeps_specific_invalid_argument_reason(self) -> None:
+        with self.assertRaises(ModelRequestError) as raised:
+            map_model_response(PAIModelResponse(parts=[ToolCallPart(
+                tool_name="read_file", args='["not-object"]', tool_call_id="bad-call",
+            )]))
+        self.assertEqual(raised.exception.failure.code, "protocol_error")
+        self.assertEqual(raised.exception.failure.reason, "invalid_tool_arguments")
+
     def test_encode_context_only_encodes_messages_without_instructions(self) -> None:
         messages = encode_context((
             {"type": "user", "content": "你好"},

@@ -239,7 +239,7 @@
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  color: white;
+  color: var(--text-on-accent);
   background: rgb(0 0 0 / 86%);
   cursor: zoom-out;
 }
@@ -251,7 +251,7 @@
   cursor: default;
 }
 
-.artifact-image-preview p { margin: 0; color: white; }
+.artifact-image-preview p { margin: 0; color: var(--text-on-accent); }
 .artifact-image-preview__close {
   position: absolute;
   top: 1rem;
@@ -259,9 +259,9 @@
   width: 2.25rem;
   height: 2.25rem;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0;
-  color: white;
+  color: var(--text-on-accent);
   background: rgb(255 255 255 / 16%);
   font-size: 1.5rem;
   line-height: 1;
@@ -342,7 +342,6 @@
   gap: 0.4rem;
   overflow-x: auto;
   padding-bottom: 0.25rem;
-  scrollbar-width: thin;
 }
 
 .text-review-chip {
@@ -350,7 +349,7 @@
   align-items: center;
   gap: 0.35rem;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.25rem 0.65rem;
   color: var(--text-secondary);
   background: var(--surface);

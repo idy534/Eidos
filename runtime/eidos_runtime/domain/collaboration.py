@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field
 
 from eidos_runtime.domain.run import RunStatus
+from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
 # Delegation is currently one level deep. These bounds cap persisted context
@@ -52,6 +53,9 @@ class AgentSummary(EidosFrozenStrictModel):
     result: str | None = None
     result_item_id: str | None = None
     error_code: str | None = None
+    stop_reason: str | None = None
+    termination: RunTermination | None = None
+    reconciliation_required: bool = False
     created_at: JsonSafeInt
 
 
