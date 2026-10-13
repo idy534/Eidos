@@ -113,7 +113,7 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
       created = url;
       if (current) setState({ key, url });
       else if (typeof window.eidosRuntime?.releaseWorkspacePreview === "function") void window.eidosRuntime.releaseWorkspacePreview(url).catch(() => {});
-    }).catch(() => { if (current) setState({ key, error: "预览不可用，请重新打开文件。" }); });
+    }).catch(() => { if (current) setState({ key, error: "暂无预览" }); });
     return () => {
       current = false;
       if (created && typeof window.eidosRuntime?.releaseWorkspacePreview === "function") {

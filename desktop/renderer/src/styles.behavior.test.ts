@@ -55,6 +55,18 @@ describe("interactive color tokens", () => {
     );
   });
 
+  it("unifies project row hover background and avoids dual hover backgrounds on toggle and add button", () => {
+    expect(styles).toMatch(
+      /\.workspace-title-row:not\(\.workspace-title-row--recent\):hover,\s*\.workspace-title-row:not\(\.workspace-title-row--recent\):focus-within\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.65\);/s,
+    );
+    expect(styles).toMatch(
+      /\.workspace-toggle:not\(\.workspace-toggle--recent\):hover:not\(:disabled\),\s*\.workspace-toggle:not\(\.workspace-toggle--recent\):active:not\(:disabled\)\s*\{[^}]*background:\s*transparent;/s,
+    );
+    expect(styles).toMatch(
+      /\.workspace-add:hover:not\(:disabled\),\s*\.workspace-add:focus-visible\s*\{[^}]*background:\s*rgba\(0,\s*0,\s*0,\s*0\.08\);/s,
+    );
+  });
+
   it("keeps session content centered and reserves one shared action rail", () => {
     expect(dockStyles).toMatch(/\.workspace-body--session-centered\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);/s);
     expect(dockStyles).toMatch(/\.workspace-body--session-centered \.workspace-main-column\s*\{[^}]*grid-column: 1;[^}]*width: 100%;[^}]*margin: 0;/s);

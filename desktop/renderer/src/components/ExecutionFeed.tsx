@@ -3,7 +3,9 @@ import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import stripAnsi from "strip-ansi";
+import { artifactPath, useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 
 import type {
   ApprovalRequest,
@@ -140,6 +142,24 @@ export const ExecutionFeed = memo(function ExecutionFeed({
         cancelAnimationFrame(followRafRef.current);
         followRafRef.current = null;
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const feed = feedRef.current;
+    if (!feed) return;
+    const handleToggle = () => {
+      requestAnimationFrame(() => {
+        const target = feedRef.current;
+        if (!target) return;
+        const bottom = isFeedAtBottom(target);
+        isAtBottomRef.current = bottom;
+        setAtBottom(bottom);
+      });
+    };
+    feed.addEventListener("toggle", handleToggle, true);
+    return () => {
+      feed.removeEventListener("toggle", handleToggle, true);
     };
   }, []);
 
@@ -1160,6 +1180,143 @@ function PlanResponseItem({
   );
 }
 
+function formatFileSize(bytes: number | undefined): string {
+  if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatMime(mime: string): string {
+  if (!mime) return "";
+  if (mime === "image/jpeg") return "JPEG";
+  if (mime === "image/png") return "PNG";
+  if (mime === "image/webp") return "WebP";
+  if (mime === "image/gif") return "GIF";
+  if (mime === "image/svg+xml") return "SVG";
+  return mime.replace(/^image\//i, "").toUpperCase();
+}
+
+function ViewImageViewer({
+  toolCall,
+  onOpenFile,
+  isError,
+  errorSummary,
+}: {
+  toolCall: ToolCall;
+  onOpenFile?: ((path: string) => void) | undefined;
+  isError: boolean;
+  errorSummary?: string | undefined;
+}) {
+  const actions = useArtifacts();
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightboxOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [lightboxOpen]);
+
+  const args = parseObject(toolCall.argumentsJson);
+  const result = parseObject(toolCall.resultJson);
+  const data = objectField(result, "data");
+  const rawPath = stringField(args, "path") || stringField(data, "path");
+  const mime = stringField(data, "mime");
+  const size = numberField(data, "size");
+  const displayName = rawPath ? pathBasename(rawPath) : "图像";
+
+  const targetPath = (actions?.executionRoot && rawPath && artifactPath(rawPath, actions.executionRoot)) || rawPath;
+  const { url: previewUrl, error: previewError } = usePreviewUrl(targetPath || undefined);
+
+  if (isError) {
+    return (
+      <div className="tool-image-error">
+        {errorSummary && <p className="tool-summary--error">{errorSummary}</p>}
+        {rawPath && (
+          <div className="tool-file-entry">
+            {onOpenFile ? (
+              <button
+                type="button"
+                className="tool-file-link"
+                title={`打开当前文件：${rawPath}`}
+                onClick={() => onOpenFile(rawPath)}
+              >
+                {rawPath}
+              </button>
+            ) : (
+              <span className="tool-file-link" title={rawPath}>{rawPath}</span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const metaParts = [formatMime(mime), formatFileSize(size)].filter(Boolean);
+  const metaText = metaParts.join(" · ");
+  const absolutePath = stringField(data, "path")
+    || (actions?.executionRoot && rawPath && !rawPath.startsWith("/")
+      ? `${actions.executionRoot.replace(/\/+$/, "")}/${rawPath.replace(/^\.?\/+/, "")}`
+      : rawPath);
+  const tooltipDetails = [absolutePath, metaText].filter(Boolean).join(" · ");
+  const imageTooltip = tooltipDetails || `预览 ${displayName}`;
+
+  return (
+    <div className="tool-image-container" title={imageTooltip}>
+      <div className="tool-image-preview-card">
+        {previewUrl ? (
+          <button
+            type="button"
+            className="tool-image-thumbnail-btn"
+            onClick={() => setLightboxOpen(true)}
+            title={imageTooltip}
+            aria-label={`预览 ${displayName}`}
+          >
+            <img src={previewUrl} alt={displayName} loading="lazy" />
+          </button>
+        ) : previewError ? (
+          <p className="tool-image-empty" role="status">暂无预览</p>
+        ) : (
+          <div className="tool-image-loading">
+            <span>正在加载图像…</span>
+          </div>
+        )}
+      </div>
+
+      {lightboxOpen && typeof document !== "undefined" && createPortal(
+        <div
+          className="artifact-image-preview"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${displayName} 图片预览`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setLightboxOpen(false);
+          }}
+        >
+          <button
+            type="button"
+            className="artifact-image-preview__close"
+            aria-label="关闭图片预览"
+            autoFocus
+            onClick={() => setLightboxOpen(false)}
+          >
+            ×
+          </button>
+          {previewUrl ? (
+            <img src={previewUrl} alt={displayName} />
+          ) : (
+            <p role="status">暂无预览</p>
+          )}
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
 function ToolItem({
   item,
   toolCall,
@@ -1304,6 +1461,32 @@ function ToolItem({
     );
   }
 
+  if (isMemoryTool(toolCall.toolName)) {
+    const resultObj = parseObject(toolCall.resultJson);
+    const isError = Boolean(
+      resultObj.outcome === "error"
+      || (typeof resultObj.code === "string" && resultObj.code && resultObj.code !== "ok")
+      || item.status === "failed"
+      || item.status === "declined"
+      || item.status === "canceled"
+      || toolCall.status === "failed"
+      || toolCall.status === "canceled"
+      || isReconciliationGate(resultObj),
+    );
+    const errSummary = safeToolSummary(toolCall.resultJson, item.status);
+    const summaryText = toolSummary(toolCall, item.status, agents);
+    const titleText = isError && errSummary ? errSummary : summaryText;
+
+    return (
+      <div className="tool-item tool-item--read-done" title={titleText}>
+        <span className="tool-icon" aria-hidden="true">
+          <MemoryIcon />
+        </span>
+        <span>{summaryText}</span>
+      </div>
+    );
+  }
+
   const isReadFile = ["read_file", "read_file_range"].includes(toolCall.toolName);
   const isDoneRead = isReadFile && item.status === "completed";
 
@@ -1336,6 +1519,7 @@ function ToolItem({
 
   const result = parseObject(toolCall.resultJson);
   const isDeclareOutputs = toolCall.toolName === "declare_outputs";
+  const isViewImage = toolCall.toolName === "view_image";
   const isError = Boolean(
     result.outcome === "error"
     || (typeof result.code === "string" && result.code && result.code !== "ok")
@@ -1351,6 +1535,7 @@ function ToolItem({
     summary && (
       /^Success\.\s*Updated the following files:/i.test(summary)
       || summary === "File change committed"
+      || (isViewImage && summary === "Image loaded")
     ),
   );
   const showSummary = (!isDeclareOutputs || isError) && !isRedundantFileSummary;
@@ -1363,47 +1548,58 @@ function ToolItem({
         <span>{toolSummary(toolCall, item.status, agents)}</span>
       </summary>
       <div className="tool-body">
-        {showSummary && summary && (
-          <p className={isError ? "tool-summary--error" : undefined}>{summary}</p>
-        )}
-        {filePaths.length > 0 && (
-          <div className="tool-file-list">
-            {filePaths.map((path) => (
-              <div key={path} className="tool-file-entry">
-                {onOpenFile ? (
-                  <button
-                    type="button"
-                    className="tool-file-link"
-                    title={`打开当前文件：${path}`}
-                    onClick={() => onOpenFile(path)}
-                  >
-                    {path}
-                  </button>
-                ) : (
-                  <span className="tool-file-link" title={path}>{path}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {item.kind === "file_change" && (toolCall.changeDiff || toolCall.changeDiffHash) && (
+        {isViewImage ? (
+          <ViewImageViewer
+            toolCall={toolCall}
+            onOpenFile={onOpenFile}
+            isError={isError}
+            errorSummary={isError ? summary : undefined}
+          />
+        ) : (
           <>
-            {toolCall.status !== "completed" && (
-              <p className="feed-label">
-                {toolCall.status === "running" ? "准备或执行中的变更" : "计划变更（可能只完成部分写入）"}
+            {showSummary && summary && (
+              <p className={isError ? "tool-summary--error" : undefined}>{summary}</p>
+            )}
+            {filePaths.length > 0 && (
+              <div className="tool-file-list">
+                {filePaths.map((path) => (
+                  <div key={path} className="tool-file-entry">
+                    {onOpenFile ? (
+                      <button
+                        type="button"
+                        className="tool-file-link"
+                        title={`打开当前文件：${path}`}
+                        onClick={() => onOpenFile(path)}
+                      >
+                        {path}
+                      </button>
+                    ) : (
+                      <span className="tool-file-link" title={path}>{path}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {item.kind === "file_change" && (toolCall.changeDiff || toolCall.changeDiffHash) && (
+              <>
+                {toolCall.status !== "completed" && (
+                  <p className="feed-label">
+                    {toolCall.status === "running" ? "准备或执行中的变更" : "计划变更（可能只完成部分写入）"}
+                  </p>
+                )}
+                {toolCall.changeDiffHash
+                  ? <ToolTextView key={toolCall.changeDiffHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="diff" sha256={toolCall.changeDiffHash} totalBytes={toolCall.changeDiffBytes!} />
+                  : <DiffViewer diff={toolCall.changeDiff} title="代码变更" />}
+              </>
+            )}
+            {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
+            {toolCall.provenance?.kind === "mcp" && (
+              <p className="tool-provenance">
+                Plugin {toolCall.provenance.pluginId} · Server {toolCall.provenance.serverId}
+                {toolCall.completedAt && ` · ${Math.max(0, toolCall.completedAt - toolCall.startedAt)}ms`}
               </p>
             )}
-            {toolCall.changeDiffHash
-              ? <ToolTextView key={toolCall.changeDiffHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="diff" sha256={toolCall.changeDiffHash} totalBytes={toolCall.changeDiffBytes!} />
-              : <DiffViewer diff={toolCall.changeDiff} title="代码变更" />}
           </>
-        )}
-        {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
-        {toolCall.provenance?.kind === "mcp" && (
-          <p className="tool-provenance">
-            Plugin {toolCall.provenance.pluginId} · Server {toolCall.provenance.serverId}
-            {toolCall.completedAt && ` · ${Math.max(0, toolCall.completedAt - toolCall.startedAt)}ms`}
-          </p>
         )}
       </div>
     </details>
@@ -1515,6 +1711,53 @@ function isSubagentTool(name: string): boolean {
   ].includes(name);
 }
 
+function isMemoryTool(name: string): boolean {
+  return [
+    "memory_search",
+    "memory_read",
+    "memory_record",
+    "memory_manage",
+  ].includes(name);
+}
+
+function formatMemorySearchTerms(args: Record<string, unknown>): string {
+  const rawList = Array.isArray(args.queries)
+    ? args.queries
+    : Array.isArray(args.query)
+      ? args.query
+      : Array.isArray(args.keywords)
+        ? args.keywords
+        : undefined;
+
+  if (rawList) {
+    return rawList
+      .filter((term): term is string => typeof term === "string" && Boolean(term.trim()))
+      .map((term) => term.trim())
+      .join("|");
+  }
+
+  const rawString = typeof args.query === "string"
+    ? args.query
+    : typeof args.queries === "string"
+      ? args.queries
+      : typeof args.pattern === "string"
+        ? args.pattern
+        : "";
+
+  if (rawString.trim()) {
+    if (rawString.includes("|")) {
+      return rawString
+        .split("|")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join("|");
+    }
+    return rawString.trim();
+  }
+
+  return "";
+}
+
 function extractSubagentInfo(
   toolCall: ToolCall,
   agents?: AgentSummary[],
@@ -1595,6 +1838,9 @@ function subagentActionLabel(
 function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[]): string {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
+  const data = objectField(result, "data");
+  const rawImagePath = stringField(args, "path") || stringField(args, "filePath") || stringField(data, "path");
+  const imageFileName = rawImagePath ? pathBasename(rawImagePath) : "";
   const path = stringField(args, "path") || stringField(args, "filePath");
   const query = stringField(args, "query") || stringField(args, "pattern");
   const running = status === "in_progress";
@@ -1602,6 +1848,8 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     ? extractSubagentInfo(toolCall, agents)
     : undefined;
   const subagentName = subagentInfo?.name;
+  const isMemory = isMemoryTool(toolCall.toolName);
+  const memoryQuery = isMemory ? formatMemorySearchTerms(args) : "";
 
   const baseLabels: Record<string, string> = {
     spawn_agent: subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体",
@@ -1610,8 +1858,15 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     stop_agent: subagentName ? `停止子智能体 · ${subagentName}` : "停止子智能体",
     send_message: subagentName ? `发送智能体消息 · ${subagentName}` : "发送智能体消息",
     followup_task: subagentName ? `追加智能体任务 · ${subagentName}` : "追加智能体任务",
+    view_image: imageFileName ? `查看图像 · ${imageFileName}` : "查看图像",
+    memory_search: memoryQuery ? `搜索记忆 "${memoryQuery}"` : "搜索记忆",
+    memory_read: "读取记忆",
+    memory_record: "修订记忆",
+    memory_manage: "优化记忆",
   };
-  const targetLabel = path || query || baseLabels[toolCall.toolName] || toolCall.toolName;
+  const targetLabel = isMemory
+    ? baseLabels[toolCall.toolName]
+    : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
     return `未执行：与尚未确认的操作冲突 ${targetLabel}`;
   }
@@ -1622,11 +1877,20 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     list_files: running ? "正在列出文件" : "已列出文件",
     read_file: running ? `正在读取 ${path || "文件"}` : `已读取 ${path || "文件"}`,
     read_file_range: running ? `正在读取 ${path || "文件"}` : `已读取 ${path || "文件"}`,
+    view_image: running
+      ? (imageFileName ? `正在查看图像 · ${imageFileName}` : "正在查看图像")
+      : (imageFileName ? `已查看图像 · ${imageFileName}` : "已查看图像"),
     search_text: running ? `正在搜索 ${query || "文本"}` : `已搜索 ${query || "文本"}`,
     write_file: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
     declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
+    memory_search: running
+      ? (memoryQuery ? `正在搜索记忆 "${memoryQuery}"` : "正在搜索记忆")
+      : (memoryQuery ? `已搜索记忆 "${memoryQuery}"` : "已搜索记忆"),
+    memory_read: running ? "正在读取记忆" : "已读取记忆",
+    memory_record: running ? "正在修订记忆" : "已修订记忆",
+    memory_manage: running ? "正在优化记忆" : "已优化记忆",
     spawn_agent: running
       ? (subagentName ? `正在创建子智能体 · ${subagentName}` : "正在创建子智能体")
       : (subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体"),
@@ -1739,6 +2003,27 @@ function SubagentToolIcon() {
   );
 }
 
+function ImageIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2" width="12" height="12" rx="2" />
+      <circle cx="5.5" cy="5.5" r="1.25" />
+      <path d="m14 11-3.2-3.2a1.4 1.4 0 0 0-1.8 0L3 13.8" />
+    </svg>
+  );
+}
+
+function MemoryIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3.2a2.2 2.2 0 0 0-2.2-1.2 2.2 2.2 0 0 0-2 1.5 2.5 2.5 0 0 0-.8 3.5 2.5 2.5 0 0 0 1.2 4.2A2.2 2.2 0 0 0 8 12.8" />
+      <path d="M8 3.2a2.2 2.2 0 0 1 2.2-1.2 2.2 2.2 0 0 1 2 1.5 2.5 2.5 0 0 1 .8 3.5 2.5 2.5 0 0 1-1.2 4.2A2.2 2.2 0 0 1 8 12.8" />
+      <path d="M8 3.2v9.6" />
+      <path d="M5.5 7.5H8M8 9.5h2.5" />
+    </svg>
+  );
+}
+
 function DefaultToolIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -1750,6 +2035,8 @@ function DefaultToolIcon() {
 function toolIcon(name: string): ReactNode {
   if (name === "list_files") return <FileListIcon />;
   if (["read_file", "read_file_range"].includes(name)) return <FileReadIcon />;
+  if (name === "view_image") return <ImageIcon />;
+  if (isMemoryTool(name)) return <MemoryIcon />;
   if (["search_text", "tool_search"].includes(name)) return <SearchIcon />;
   if (["write_file", "apply_patch"].includes(name)) return <FileWriteIcon />;
   if (name === "delete_file") return <FileDeleteIcon />;

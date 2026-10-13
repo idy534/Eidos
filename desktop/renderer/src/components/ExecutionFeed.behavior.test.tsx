@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 
 import type { Item, Run } from "../contracts.js";
+import { ArtifactProvider } from "./ArtifactContext.js";
 import { ExecutionFeed } from "./ExecutionFeed.js";
 
 const baseRun: Run = {
@@ -1051,3 +1052,279 @@ describe("ExecutionFeed regenerate confirmation", () => {
     expect(onRegenerate).not.toHaveBeenCalled();
   });
 });
+
+describe("ExecutionFeed view_image tool rendering and lightbox", () => {
+  it("renders view_image and opens fullscreen preview when thumbnail is clicked", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        onNotification: vi.fn().mockReturnValue(vi.fn()),
+        prepareWorkspacePreview: vi.fn().mockResolvedValue("eidos-preview://test-token/assets/flowchart.png"),
+        releaseWorkspacePreview: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+
+    const openFile = vi.fn();
+    const imageItem: Item = {
+      id: "view-image-item",
+      sessionId: "session-view-image",
+      runId: "run-view-image",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-img-1",
+        itemId: "view-image-item",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-img-1",
+        toolName: "view_image",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1200,
+        argumentsJson: JSON.stringify({ path: "assets/flowchart.png" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Image loaded",
+          data: {
+            path: "assets/flowchart.png",
+            mime: "image/png",
+            size: 30720,
+            sha256: "hash123",
+          },
+        }),
+      },
+    };
+
+    const finishedRun: Run = {
+      ...baseRun,
+      id: "run-view-image",
+      sessionId: "session-view-image",
+      status: "succeeded",
+      completedAt: 1200,
+    };
+
+    try {
+      render(
+        <ArtifactProvider
+          value={{
+            sessionId: "session-view-image",
+            executionRoot: "/workspace",
+            openFile,
+            openBrowser: vi.fn(),
+          }}
+        >
+          <ExecutionFeed
+            items={[imageItem]}
+            runs={[finishedRun]}
+            approvals={[]}
+            onApprove={() => {}}
+            onReject={() => {}}
+            onOpenFile={openFile}
+          />
+        </ArtifactProvider>,
+      );
+
+      // Summary label should show completed status and filename
+      expect(screen.getByText("已查看图像 · flowchart.png")).toBeInTheDocument();
+
+      // Open details
+      const details = screen.getByText("已查看图像 · flowchart.png").closest("details");
+      expect(details).not.toBeNull();
+      fireEvent.click(details!.querySelector("summary")!);
+      if (!details!.open) {
+        details!.open = true;
+        fireEvent(details!, new Event("toggle"));
+      }
+
+      // Thumbnail with preview image should be rendered
+      const thumbnailBtn = await screen.findByRole("button", { name: "预览 flowchart.png" });
+      expect(thumbnailBtn).toBeInTheDocument();
+
+      // Hover title should show absolute path and size, without appearing in body text
+      expect(thumbnailBtn).toHaveAttribute(
+        "title",
+        expect.stringMatching(/assets\/flowchart\.png.*30\.0 KB/),
+      );
+      expect(screen.queryByRole("button", { name: "assets/flowchart.png" })).not.toBeInTheDocument();
+
+      // Click thumbnail to open lightbox modal
+      fireEvent.click(thumbnailBtn);
+      const dialog = await screen.findByRole("dialog", { name: "flowchart.png 图片预览" });
+      expect(dialog).toBeInTheDocument();
+
+      // Close lightbox
+      const closeBtn = screen.getByRole("button", { name: "关闭图片预览" });
+      fireEvent.click(closeBtn);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("renders 暂无预览 fallback with neutral styling when preview fails", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        onNotification: vi.fn().mockReturnValue(vi.fn()),
+        prepareWorkspacePreview: vi.fn().mockRejectedValue(new Error("preview error")),
+        releaseWorkspacePreview: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+
+    const openFile = vi.fn();
+    const imageItem: Item = {
+      id: "view-image-item-err",
+      sessionId: "session-view-image",
+      runId: "run-view-image",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-img-err",
+        itemId: "view-image-item-err",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-img-err",
+        toolName: "view_image",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1200,
+        argumentsJson: JSON.stringify({ path: "assets/corrupted.png" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Image loaded",
+          data: {
+            path: "assets/corrupted.png",
+            mime: "image/png",
+            size: 30720,
+          },
+        }),
+      },
+    };
+
+    const finishedRun: Run = {
+      ...baseRun,
+      id: "run-view-image",
+      sessionId: "session-view-image",
+      status: "succeeded",
+      completedAt: 1200,
+    };
+
+    try {
+      render(
+        <ArtifactProvider
+          value={{
+            sessionId: "session-view-image",
+            executionRoot: "/workspace",
+            openFile,
+            openBrowser: vi.fn(),
+          }}
+        >
+          <ExecutionFeed
+            items={[imageItem]}
+            runs={[finishedRun]}
+            approvals={[]}
+            onApprove={() => {}}
+            onReject={() => {}}
+            onOpenFile={openFile}
+          />
+        </ArtifactProvider>,
+      );
+
+      const details = screen.getByText("已查看图像 · corrupted.png").closest("details");
+      details!.open = true;
+      fireEvent(details!, new Event("toggle"));
+
+      const fallback = await screen.findByText("暂无预览");
+      expect(fallback).toBeInTheDocument();
+      expect(fallback).toHaveClass("tool-image-empty");
+      expect(screen.queryByText(/预览不可用/)).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+});
+
+describe("ExecutionFeed memory tools static rendering", () => {
+  it("renders memory tools without details/summary and without expanding", () => {
+    const memoryItems: Item[] = [
+      {
+        id: "mem-search-1",
+        sessionId: "session-mem",
+        runId: "run-mem",
+        ordinal: 1,
+        kind: "tool_call",
+        status: "in_progress",
+        createdAt: 1000,
+        toolCall: {
+          id: "tc-mem-search",
+          itemId: "mem-search-1",
+          modelStepIndex: 1,
+          batchOrder: 0,
+          providerCallId: "p-mem-s",
+          toolName: "memory_search",
+          status: "running",
+          startedAt: 1000,
+          argumentsJson: JSON.stringify({ query: "2026-10-13|最近|latest|rollout" }),
+        },
+      },
+      {
+        id: "mem-read-1",
+        sessionId: "session-mem",
+        runId: "run-mem",
+        ordinal: 2,
+        kind: "tool_call",
+        status: "completed",
+        createdAt: 1000,
+        toolCall: {
+          id: "tc-mem-read",
+          itemId: "mem-read-1",
+          modelStepIndex: 1,
+          batchOrder: 1,
+          providerCallId: "p-mem-r",
+          toolName: "memory_read",
+          status: "completed",
+          startedAt: 1000,
+          completedAt: 1100,
+          argumentsJson: JSON.stringify({ entryId: "entry-1" }),
+          resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+        },
+      },
+    ];
+
+    render(
+      <ExecutionFeed
+        items={memoryItems}
+        runs={[{ ...baseRun, id: "run-mem", status: "running" }]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    const searchRow = screen.getByText('正在搜索记忆 "2026-10-13|最近|latest|rollout"');
+    const readRow = screen.getByText("已读取记忆");
+
+    expect(searchRow).toBeInTheDocument();
+    expect(readRow).toBeInTheDocument();
+
+    // Verify neither item is inside a <details> element
+    expect(searchRow.closest("details.tool-item")).toBeNull();
+    expect(readRow.closest("details.tool-item")).toBeNull();
+
+    // Verify they are rendered inside .tool-item--read-done
+    expect(searchRow.closest(".tool-item--read-done")).not.toBeNull();
+    expect(readRow.closest(".tool-item--read-done")).not.toBeNull();
+  });
+});
+
+

@@ -152,6 +152,11 @@
   transition: color 120ms ease;
 }
 
+.workspace-toggle:not(.workspace-toggle--recent):hover:not(:disabled),
+.workspace-toggle:not(.workspace-toggle--recent):active:not(:disabled) {
+  background: transparent;
+}
+
 .workspace-toggle--recent {
   flex: none;
   width: fit-content;
@@ -212,7 +217,7 @@
   opacity: 0;
   pointer-events: none;
   flex: none;
-  transition: opacity 150ms ease, color 120ms ease, background-color 120ms ease;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
 }
 
 .workspace-title-row:hover .workspace-add,
@@ -226,6 +231,10 @@
 .workspace-add:focus-visible {
   background: rgba(0, 0, 0, 0.08);
   color: var(--text);
+}
+
+.workspace-add:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.14);
 }
 
 .workspace-collapse {

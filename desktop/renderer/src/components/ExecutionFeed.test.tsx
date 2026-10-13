@@ -1311,3 +1311,340 @@ test("renders errored declare_outputs with error message and no file list", () =
   // Must NOT render any file list
   assert.doesNotMatch(html, /class="tool-file-list"/);
 });
+
+test("renders view_image in progress with dynamic label, filename and custom image icon", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "view-image-item-running",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "in_progress",
+          toolCall: {
+            id: "tc-view-image-run",
+            itemId: "view-image-item-running",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-view-img-1",
+            toolName: "view_image",
+            status: "running",
+            startedAt: 1000,
+            argumentsJson: JSON.stringify({ path: "images/screenshot.png" }),
+          },
+        }),
+      ]}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+      onOpenFile={() => {}}
+    />,
+  );
+
+  assert.match(html, /正在查看图像 · screenshot\.png/);
+  assert.doesNotMatch(html, /已运行 view_image|正在运行 view_image/);
+  // Contains rect and path matching ImageIcon
+  assert.match(html, /<rect x="2" y="2"/);
+});
+
+test("renders view_image completed with 已查看图像, metadata and thumbnail container", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "view-image-item-done",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-view-image-done",
+            itemId: "view-image-item-done",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-view-img-2",
+            toolName: "view_image",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1200,
+            argumentsJson: JSON.stringify({ path: "docs/architecture.png" }),
+            resultJson: JSON.stringify({
+              outcome: "success",
+              code: "ok",
+              summary: "Image loaded",
+              data: {
+                path: "docs/architecture.png",
+                mime: "image/png",
+                size: 20480,
+                sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              },
+            }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+      onOpenFile={() => {}}
+    />,
+  );
+
+  assert.match(html, /已查看图像 · architecture\.png/);
+  assert.doesNotMatch(html, /已运行 view_image/);
+  assert.doesNotMatch(html, />Image loaded</);
+  assert.match(html, /PNG · 20\.0 KB/);
+  assert.match(html, /class="tool-image-container"/);
+  assert.match(html, /docs\/architecture\.png/);
+});
+
+test("renders view_image fallback label gracefully when path is absent", () => {
+  const runningHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "view-image-no-path-run",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "in_progress",
+          toolCall: {
+            id: "tc-view-image-no-path",
+            itemId: "view-image-no-path-run",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-view-img-3",
+            toolName: "view_image",
+            status: "running",
+            startedAt: 1000,
+            argumentsJson: JSON.stringify({}),
+          },
+        }),
+      ]}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+  assert.match(runningHtml, /正在查看图像/);
+  assert.doesNotMatch(runningHtml, /正在查看图像 ·/);
+
+  const completedHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "view-image-no-path-done",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-view-image-no-path-done",
+            itemId: "view-image-no-path-done",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-view-img-4",
+            toolName: "view_image",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({}),
+            resultJson: JSON.stringify({ outcome: "success", code: "ok", summary: "Image loaded", data: {} }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+  assert.match(completedHtml, /已查看图像/);
+  assert.doesNotMatch(completedHtml, /已查看图像 ·/);
+});
+
+test("renders memory tools as static rows with unified icon and accurate copy", () => {
+  const items = [
+    item({
+      id: "mem-search-run",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-mem-1",
+        itemId: "mem-search-run",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-mem-1",
+        toolName: "memory_search",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ query: "2026-10-13|最近|latest|rollout" }),
+      },
+    }),
+    item({
+      id: "mem-search-done",
+      ordinal: 2,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-mem-2",
+        itemId: "mem-search-done",
+        modelStepIndex: 1,
+        batchOrder: 1,
+        providerCallId: "p-mem-2",
+        toolName: "memory_search",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ queries: ["2026-10-13", "最近", "latest", "rollout"] }),
+      },
+    }),
+    item({
+      id: "mem-read-run",
+      ordinal: 3,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-mem-3",
+        itemId: "mem-read-run",
+        modelStepIndex: 1,
+        batchOrder: 2,
+        providerCallId: "p-mem-3",
+        toolName: "memory_read",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ entryId: "entry-1" }),
+      },
+    }),
+    item({
+      id: "mem-read-done",
+      ordinal: 4,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-mem-4",
+        itemId: "mem-read-done",
+        modelStepIndex: 1,
+        batchOrder: 3,
+        providerCallId: "p-mem-4",
+        toolName: "memory_read",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ entryId: "entry-1" }),
+      },
+    }),
+    item({
+      id: "mem-record-run",
+      ordinal: 5,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-mem-5",
+        itemId: "mem-record-run",
+        modelStepIndex: 1,
+        batchOrder: 4,
+        providerCallId: "p-mem-5",
+        toolName: "memory_record",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ content: "用户偏好" }),
+      },
+    }),
+    item({
+      id: "mem-record-done",
+      ordinal: 6,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-mem-6",
+        itemId: "mem-record-done",
+        modelStepIndex: 1,
+        batchOrder: 5,
+        providerCallId: "p-mem-6",
+        toolName: "memory_record",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ content: "用户偏好" }),
+      },
+    }),
+    item({
+      id: "mem-manage-run",
+      ordinal: 7,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-mem-7",
+        itemId: "mem-manage-run",
+        modelStepIndex: 1,
+        batchOrder: 6,
+        providerCallId: "p-mem-7",
+        toolName: "memory_manage",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ action: "optimize" }),
+      },
+    }),
+    item({
+      id: "mem-manage-done",
+      ordinal: 8,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-mem-8",
+        itemId: "mem-manage-done",
+        modelStepIndex: 1,
+        batchOrder: 7,
+        providerCallId: "p-mem-8",
+        toolName: "memory_manage",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ action: "optimize" }),
+      },
+    }),
+  ];
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={items}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // memory_search
+  assert.match(html, /正在搜索记忆 &quot;2026-10-13\|最近\|latest\|rollout&quot;/);
+  assert.match(html, /已搜索记忆 &quot;2026-10-13\|最近\|latest\|rollout&quot;/);
+
+  // memory_read
+  assert.match(html, />正在读取记忆</);
+  assert.match(html, />已读取记忆</);
+
+  // memory_record
+  assert.match(html, />正在修订记忆</);
+  assert.match(html, />已修订记忆</);
+
+  // memory_manage
+  assert.match(html, />正在优化记忆</);
+  assert.match(html, />已优化记忆</);
+
+  // Verify memory tools are rendered as static rows (tool-item--read-done) without details tags
+  const memoryStaticRows = (html.match(/class="tool-item tool-item--read-done"/g) ?? []).length;
+  assert.equal(memoryStaticRows, 8);
+});
+
+
