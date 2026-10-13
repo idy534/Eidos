@@ -5423,6 +5423,87 @@ input:focus, textarea:focus {
   display: inline;
 }
 
+/* Chat prose only; font sizes, theme colors and container layout stay inherited. */
+.eidos-chat-prose {
+  --chat-font-code: "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 23px;
+  letter-spacing: normal;
+  word-spacing: normal;
+  font-kerning: auto;
+  font-optical-sizing: auto;
+  font-variant-ligatures: normal;
+  font-variant-numeric: normal;
+  text-transform: none;
+  text-decoration: none;
+  -webkit-font-smoothing: auto;
+  text-rendering: auto;
+  -webkit-text-size-adjust: 100%;
+  -webkit-text-stroke-width: 0;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-break: auto;
+  hyphens: manual;
+  text-align: left;
+}
+
+.user-message-bubble > p.eidos-chat-prose { margin: 0; white-space: pre-wrap; }
+.markdown-body.eidos-chat-prose :where(p):not(:where(.mermaid-container *)) {
+  margin: 0;
+  line-height: inherit;
+  white-space: normal;
+}
+.markdown-body.eidos-chat-prose :where(p + p):not(:where(.mermaid-container *)) { margin-top: 14px; }
+.markdown-body.eidos-chat-prose :where(strong, b):not(:where(.mermaid-container *)) { font-weight: 600; }
+.markdown-body.eidos-chat-prose :where(em):not(:where(.mermaid-container *)) { font-style: italic; }
+.markdown-body.eidos-chat-prose :where(h1, h2, h3, h4, h5, h6):not(:where(.mermaid-container *)) {
+  margin: 20px 0 10px;
+  font-family: inherit;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: normal;
+}
+.markdown-body.eidos-chat-prose :where(ul, ol):not(:where(.mermaid-container *)) {
+  margin: 10px 0 14px;
+  padding-left: 24px;
+  line-height: inherit;
+}
+.markdown-body.eidos-chat-prose :where(li + li):not(:where(.mermaid-container *)) { margin-top: 4px; }
+.markdown-body.eidos-chat-prose :where(li > ul, li > ol):not(:where(.mermaid-container *)) { margin: 6px 0 0; }
+.markdown-body.eidos-chat-prose :where(blockquote):not(:where(.mermaid-container *)) {
+  margin: 14px 0;
+  padding-left: 12px;
+  line-height: inherit;
+}
+.markdown-body.eidos-chat-prose :where(table, hr, .code-block-card, .diff-viewer-group, .mermaid-container):not(:where(.mermaid-container *)) { margin-block: 14px; }
+.eidos-chat-prose :where(.code-block-card, .diff-viewer-group, .mermaid-container) {
+  font-family: var(--font-ui);
+  line-height: var(--line-height-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.markdown-body.eidos-chat-prose :where(code):not(:where(.mermaid-container *)) {
+  font-family: var(--chat-font-code);
+  font-weight: 400;
+  letter-spacing: normal;
+}
+.eidos-chat-prose .code-block-content :where(pre, .shiki-code-body) {
+  font-family: var(--chat-font-code);
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.eidos-chat-prose .code-block-content .line { line-height: inherit; }
+.markdown-body.eidos-chat-prose :where(a, .markdown-link):not(:where(.mermaid-container *)) { font-weight: 500; }
+.markdown-body.eidos-chat-prose :where(a, .markdown-link):is(:hover, :focus-visible):not(:where(.mermaid-container *)) { text-decoration-style: solid; }
+.eidos-chat-prose > :first-child { margin-top: 0; }
+.eidos-chat-prose > :last-child { margin-bottom: 0; }
+
 /* Diff Viewer Group & File Cards */
 .diff-viewer-group {
   --diff-single-max-height: 16rem;

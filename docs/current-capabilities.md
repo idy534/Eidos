@@ -25,6 +25,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - Desktop 可以在 Session 对应的 managed Worktree 被 retention 清理后显示 Restore Worktree 提示。Restore 会调用 `session/restoreWorktree`，并继续使用同一个 Session 和同一个 `associatedWorktreeId`。当前 execution mode 是 Worktree 且 Worktree 已删除时，Composer 会保持只读。
 - Settings 可以读取和修改 `automaticCleanup` 与 `managedWorktreeLimit`。Worktree limit 的有效范围是 1 到 100，默认值是 15。
 - Execution Feed 可以展示用户消息、模型文本、ToolCall、Tool Result、Approval、终态和恢复后的历史。
+- 聊天正文使用独立的 `.eidos-chat-prose` 样式。用户消息、过程文字和最终回答优先使用系统字体；正文保持 14px，代码块保持 12.5px，标题和行内代码也保留原字号。正文行高为 23px，相邻段落间距为 14px，列表缩进为 24px，列表项间距为 4px。标题和加粗文字使用 600 字重，代码保留等宽字体与原始空白。现有颜色、背景、消息宽度和气泡结构保持不变；文件预览、计划面板、技能详情和其他 UI 不启用这组样式。
 - Composer 可以选择已配置 Model，并显示当前选中 Model 最新 ContextSnapshot 对应的持久化 Context Usage。Runtime 直接查询关联 Plan 的预算和 ModelAttempt usage，不加载快照正文。该 Snapshot 有正数 Provider `input_tokens` 时显示 Provider 值，否则显示该 Plan 的 `projected_input_tokens` 估算值。快照正文撤销或清理后，这些统计仍可查询。
 - Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。新的 Run 在产生自己的 ContextSnapshot 前显示无数据状态，刷新返回无数据时会清空旧读数。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
 - Quit 流程会先处理活动 Run，再关闭 Runtime 和窗口资源。

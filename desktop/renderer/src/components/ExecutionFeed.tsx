@@ -617,7 +617,7 @@ function UserMessage({
             </div>
           </div>
         ) : item.content ? (
-          <p>{item.content}</p>
+          <p className="eidos-chat-prose">{item.content}</p>
         ) : null}
       </div>
       {!editing && (
@@ -689,7 +689,7 @@ function AssistantMessage({
 
   return (
     <article className="feed-item feed-item--assistant" ref={contentRef}>
-      <MarkdownContent content={item.content || ""} isStreaming={isStreaming} />
+      <MarkdownContent className="eidos-chat-prose" content={item.content || ""} isStreaming={isStreaming} />
       {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
       {isFinal && item.content && (
@@ -931,7 +931,7 @@ function ProcessItem({
 }) {
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
-    return <div className="process-text"><MarkdownContent content={item.content} isStreaming={item.status === "in_progress"} /></div>;
+    return <div className="process-text"><MarkdownContent className="eidos-chat-prose" content={item.content} isStreaming={item.status === "in_progress"} /></div>;
   }
   if (!item.toolCall) return null;
 

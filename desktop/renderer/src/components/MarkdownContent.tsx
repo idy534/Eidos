@@ -139,10 +139,12 @@ function MarkdownImage({ src, alt, documentPath }: ComponentProps<"img"> & { doc
 
 export const MarkdownContent = memo(function MarkdownContent({
   content,
+  className,
   documentPath,
   isStreaming = false,
 }: {
   content: string;
+  className?: string;
   documentPath?: string;
   isStreaming?: boolean;
 }) {
@@ -175,7 +177,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   }), [documentPath, isStreaming]);
 
   return (
-    <div className="markdown-body">
+    <div className={className ? `markdown-body ${className}` : "markdown-body"}>
       <Markdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}

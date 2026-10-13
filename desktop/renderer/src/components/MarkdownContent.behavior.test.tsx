@@ -12,7 +12,7 @@ const baseActions: ArtifactActions = {
   sessionId: "session-a", executionRoot: "/workspace", openFile: vi.fn(), openBrowser: vi.fn(),
 };
 const document = (actions: ArtifactActions) => (
-  <ArtifactProvider value={actions}><MarkdownContent content={content} /></ArtifactProvider>
+  <ArtifactProvider value={actions}><MarkdownContent className="eidos-chat-prose" content={content} /></ArtifactProvider>
 );
 
 describe("MarkdownContent context updates", () => {

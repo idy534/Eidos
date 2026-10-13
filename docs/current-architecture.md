@@ -10,6 +10,8 @@ Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electro
 
 Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也不能直接连接 Python Runtime。Electron Main 是 Desktop 和 Runtime 之间的控制边界。Python Runtime 是 Session、Run、Item、ToolCall、Approval、事件和副作用状态的业务协调边界。
 
+聊天排版沿用 `ExecutionFeed → MarkdownContent → react-markdown / CodeBlock`。ExecutionFeed 只给用户正文、过程文字和最终回答添加 `.eidos-chat-prose`；MarkdownContent 的可选 `className` 让其他复用方保持原样式。CSS 只覆盖聊天字体、行距、字重和 Markdown 间距，字号、主题颜色、背景和容器布局继续沿用原规则。用户正文仍按原始换行显示；代码块仍保留空白和横向滚动。Renderer 没有增加字体文件、依赖、协议字段或持久化数据。
+
 远端模型只提供不可信的文本和 ToolCall 提案。Runtime 负责验证模型输出、构建 Context、执行 Tool、处理 Approval、应用 Sandbox Policy 和提交持久事实。
 
 ## Workspace model

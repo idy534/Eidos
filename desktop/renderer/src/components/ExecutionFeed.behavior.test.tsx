@@ -54,6 +54,35 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("ExecutionFeed chat typography scope", () => {
+  it("scopes user, progress and final prose without including tool controls", () => {
+    const message = (id: string, ordinal: number, kind: Item["kind"], content: string): Item => ({
+      id, ordinal, kind, content, sessionId: baseRun.sessionId, runId: baseRun.id,
+      status: "completed", createdAt: 1_000,
+    });
+    const { container } = render(
+      <ExecutionFeed
+        items={[
+          message("user", 0, "user_message", "第一行\n第二行"),
+          message("progress", 1, "assistant_message", "我正在检查。"),
+          shellItem({ ordinal: 2 }),
+          message("answer", 3, "assistant_message", "**结论**\n\n- 第一项\n- 第二项"),
+        ]}
+        runs={[baseRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    expect(container.querySelector(".user-message-bubble > p.eidos-chat-prose")?.textContent).toBe("第一行\n第二行");
+    expect(container.querySelector(".process-text > .markdown-body.eidos-chat-prose")).not.toBeNull();
+    expect(container.querySelector(".feed-item--assistant > .markdown-body.eidos-chat-prose strong")).toHaveTextContent("结论");
+    expect(container.querySelectorAll(".eidos-chat-prose")).toHaveLength(3);
+    expect(container.querySelector(".eidos-chat-prose .tool-item, .eidos-chat-prose .feed-item-footer")).toBeNull();
+  });
+});
+
 describe("ExecutionFeed shell output", () => {
   it("updates from cumulative live output to a completed result without duplicating it", () => {
     const activeItem = shellItem();
