@@ -12,6 +12,8 @@ Local 与 Projectless 分叉可以共享当前目录。独立 Worktree 分叉复
 
 分叉是已持久化的正常 Session。创建事务同时保存来源标题和 Session created Event。分叉没有自己的 Run 时，侧栏也会展示它，空 Session 清理也不会删除它。v26→v27 是数据迁移。迁移按创建顺序补齐未命名分叉的标题，并在同一事务中提交 Title updated Event/Outbox。嵌套分叉会使用已补齐的父标题。来源已删除时，迁移使用“新会话”。现有非空标题不变。
 
+Renderer 的 `ForkIcon` 统一侧栏、回答操作栏和分叉弹窗的图标。侧栏根据 `forkedFrom.sessionId` 从已有 Session 列表读取直接来源的当前名称。气泡通过既有 `onSelect` 跳转到来源，并关闭气泡。来源缺失时，气泡不提供跳转。该显示和导航变化不修改 RPC、SQLite Schema 或历史记录。
+
 ## 1. System Boundary
 
 Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。

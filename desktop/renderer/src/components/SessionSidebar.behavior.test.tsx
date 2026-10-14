@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -1021,5 +1021,88 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     vi.useRealTimers();
+  });
+});
+
+describe("SessionSidebar fork origin hover", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const parent: Session = {
+    ...managedSession, id: "parent-fork", title: "直接来源",
+    forkedFrom: { sessionId: managedSession.id, runId: "root-run", itemId: "root-answer", itemCount: 2, createdAt: 3 },
+  };
+  const fork: Session = {
+    id: "projectless-fork", title: parent.title, workspaceRoot: "/chat-workspaces/fork", projectless: true,
+    taskStatus: "new", createdAt: 4, updatedAt: 4,
+    forkedFrom: { sessionId: parent.id, runId: "parent-run", itemId: "parent-answer", itemCount: 4, createdAt: 4 },
+  };
+  const props = {
+    projects: [], selectedId: fork.id, disabled: false, readCompletedSessions: new Set<string>(),
+    runtimePresentation: { tone: "success" as const, label: "Ready" },
+    onCreate: vi.fn(), onCreateInProject: vi.fn(), onRename: vi.fn(), onDelete: vi.fn(),
+    onDeleteProject: vi.fn(), onOpenSettings: vi.fn(),
+  };
+
+  it.each([false, true])("opens the immediate source with its updated name (pinned: %s)", async (pinned) => {
+    const onSelect = vi.fn();
+    const pins = pinned ? [{ kind: "session" as const, id: fork.id }] : [];
+    const { container, rerender } = render(<SessionSidebar {...props} pins={pins}
+      sessions={[managedSession, parent, fork]} onSelect={onSelect} />);
+    const trigger = container.querySelector<HTMLElement>(`[data-session-id="${fork.id}"] button`)!;
+    fireEvent.mouseEnter(trigger);
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+
+    const renamed = { ...parent, title: "直接来源的新名称" };
+    rerender(<SessionSidebar {...props} pins={pins} sessions={[managedSession, renamed, fork]} onSelect={onSelect} />);
+    const tooltip = screen.getByRole("tooltip");
+    const source = within(tooltip).getByRole("button", { name: "打开来源会话：直接来源的新名称" });
+    expect(within(tooltip).queryByRole("button", { name: /Managed Thread/ })).not.toBeInTheDocument();
+    act(() => {
+      fireEvent.mouseLeave(trigger);
+      fireEvent.mouseEnter(tooltip);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    fireEvent.click(source);
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(renamed);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("keeps the source button available while it has keyboard focus", async () => {
+    const { container } = render(<SessionSidebar {...props} sessions={[parent, fork]} onSelect={vi.fn()} />);
+    const trigger = container.querySelector<HTMLElement>(`[data-session-id="${fork.id}"] button`)!;
+    fireEvent.focus(trigger);
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    const tooltip = screen.getByRole("tooltip");
+    const source = within(tooltip).getByRole("button", { name: "打开来源会话：直接来源" });
+    act(() => {
+      source.focus();
+      fireEvent.mouseLeave(trigger);
+      fireEvent.mouseLeave(tooltip);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    act(() => source.blur());
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it("removes the source button when the source disappears and respects disabled navigation", async () => {
+    const onSelect = vi.fn();
+    const { container, rerender } = render(<SessionSidebar {...props} sessions={[parent, fork]} onSelect={onSelect} />);
+    fireEvent.mouseEnter(container.querySelector<HTMLElement>(`[data-session-id="${fork.id}"] button`)!);
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    rerender(<SessionSidebar {...props} sessions={[parent, fork]} onSelect={onSelect} disabled />);
+    const source = screen.getByRole("button", { name: "打开来源会话：直接来源" });
+    expect(source).toBeDisabled();
+    fireEvent.click(source);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    rerender(<SessionSidebar {...props} sessions={[fork]} onSelect={onSelect} />);
+    expect(screen.getByText("来源会话不可用")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /打开来源会话/ })).not.toBeInTheDocument();
   });
 });
