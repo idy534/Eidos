@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+from unidiff import PatchSet, UnidiffParseError
+
 from eidos_runtime.file_limits import INLINE_TOOL_TEXT_BYTES
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 
@@ -13,6 +15,34 @@ _DISPLAY_ARGUMENT_FIELDS = {
     "write_stdin": ("chars",),
     "search_text": ("query",),
 }
+
+
+def display_file_diff(content: str) -> str:
+    """Adapt Runtime unified patches to react-diff-view without rewriting hunks."""
+    if not content.startswith("--- "):
+        return content
+    try:
+        files = PatchSet(content)
+    except (UnidiffParseError, ValueError, IndexError):
+        return content
+    if not files or any(file.is_binary_file or file.diff_line_no is None for file in files):
+        return content
+    lines = content.splitlines(keepends=True)
+    # unidiff records the +++ header's one-based position for ordinary patches.
+    starts = [file.diff_line_no - 2 for file in files]
+    if any(start < 0 or not lines[start].startswith("--- ") for start in starts):
+        return content
+    segments: list[str] = []
+    for index, file in enumerate(files):
+        end = starts[index + 1] if index + 1 < len(starts) else len(lines)
+        body = lines[starts[index] + 2:end]
+        segments.append(f"diff --git {file.source_file} {file.target_file}\n")
+        # Eidos-only notes are header metadata, not Git's no-newline markers.
+        # Moving them before --- also permits newline-only, hunkless changes.
+        segments.extend(line for line in body if line.startswith("\\ Eidos "))
+        segments.extend((f"--- {file.source_file}\n", f"+++ {file.target_file}\n"))
+        segments.extend(line for line in body if not line.startswith("\\ Eidos "))
+    return "".join(segments)
 
 
 def project_tool_text(item: dict[str, object]) -> dict[str, object]:
@@ -34,7 +64,10 @@ def project_tool_text(item: dict[str, object]) -> dict[str, object]:
             continue
         encoded = content.encode("utf-8")
         if len(encoded) <= INLINE_TOOL_TEXT_BYTES:
-            continue
+            display = display_file_diff(content) if field == "changeDiff" else content
+            if len(display.encode("utf-8")) <= INLINE_TOOL_TEXT_BYTES:
+                projected[field] = display
+                continue
         projected[prefix + "Bytes"] = len(encoded)
         projected[prefix + "Hash"] = hashlib.sha256(encoded).hexdigest()
         if field == "changeDiff":

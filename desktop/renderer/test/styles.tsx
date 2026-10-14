@@ -5,7 +5,8 @@ import "katex/dist/katex.min.css";
 import { Button } from "../src/components/Button.js";
 import { ApprovalComposer } from "../src/components/ApprovalComposer.js";
 import { MarkdownContent } from "../src/components/MarkdownContent.js";
-import type { ApprovalRequest, Run } from "../src/contracts.js";
+import { TurnResults } from "../src/components/TurnResults.js";
+import type { ApprovalRequest, Item, Run } from "../src/contracts.js";
 import "../src/styles.css";
 
 type Sample = "controls" | "selected" | "content" | "layout" | "menu" | "scrollbars";
@@ -18,6 +19,16 @@ const approval = {
   id: "style-approval", sessionId: run.sessionId, runId: run.id, itemId: "style-item",
   toolCallId: "style-tool", kind: "file_change", summary: "Write document", diff: "+ document",
 } satisfies ApprovalRequest;
+
+const textChange = {
+  id: "style-change", sessionId: run.sessionId, runId: run.id, ordinal: 1,
+  kind: "file_change", status: "completed", createdAt: 1,
+  toolCall: {
+    id: "style-change-tool", itemId: "style-change", modelStepIndex: 1, batchOrder: 0,
+    providerCallId: "style-call", toolName: "apply_patch", status: "completed", startedAt: 1,
+    changeDiff: "diff --git a/main.ts b/main.ts\n--- a/main.ts\n+++ b/main.ts\n@@ -1 +1 @@\n-old\n+new\n",
+  },
+} satisfies Item;
 
 function StyleSamples() {
   const [sample, setSample] = useState<Sample>("controls");
@@ -63,6 +74,8 @@ function StyleSamples() {
     </div>
   </div>;
   if (sample === "content") return <div id="content-samples">
+    <div className="git-review-stats" id="git-stat-reference"><span className="git-review-stat">+682</span><span className="git-review-stat">-4</span></div>
+    <TurnResults run={run} items={[textChange]} />
     <MarkdownContent className="eidos-chat-prose" content={"# 标题\n\n正文中的 `inline` 代码。\n\n第二段文字。\n\n- 第一项\n- 第二项\n\n```text\nfirst line\nsecond line\n```"} />
     <div className="user-message-bubble"><p className="eidos-chat-prose">用户消息</p></div>
     <MarkdownContent content={"非聊天正文。\n\n第二段。"} />

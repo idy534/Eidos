@@ -1,0 +1,262 @@
+/* TextReviewPanel.css - Dedicated styling for Text Review Dock Panel */
+
+/* -------------------------------------------------------------
+ * 1. Single-row Toolbar (Aligned with Git Review)
+ * ------------------------------------------------------------- */
+.git-changes-panel .git-changes-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  min-height: 2.25rem;
+}
+
+.git-changes-panel .git-changes-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+/* Crucial: Override the broken @container git-review (max-width: 30rem) rule that forced width: 100% on tabs */
+.git-changes-panel .git-changes-toolbar .git-scope-tabs {
+  display: inline-flex !important;
+  width: auto !important;
+  flex: 0 0 auto !important;
+  grid-template-columns: unset !important;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.git-changes-panel .git-changes-toolbar .git-scope-tab {
+  min-height: 1.55rem;
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 0.15rem 0.55rem;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.git-changes-panel .git-changes-toolbar .git-scope-tab:not([aria-selected="true"]):hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.git-changes-panel .git-changes-toolbar .git-scope-tab[aria-selected="true"] {
+  color: var(--text);
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+  font-weight: 600;
+}
+
+.text-review-files-count {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-caption);
+  color: var(--muted);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.git-changes-panel .git-review-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.git-changes-panel .git-changes-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+}
+
+/* -------------------------------------------------------------
+ * 2. Diff Styling (Refined, Subtle, Matching Git Review)
+ * ------------------------------------------------------------- */
+.git-file-diff-scroll .diff {
+  --diff-background-color: var(--surface-raised);
+  --diff-text-color: var(--text);
+  --diff-font-family: var(--font-code);
+  --diff-selection-background-color: rgba(46, 98, 76, 0.15);
+  font-size: var(--font-size-code);
+  font-family: var(--font-code);
+  line-height: var(--line-height-code);
+  tab-size: 2;
+  -moz-tab-size: 2;
+}
+
+.git-file-diff-scroll .diff-line {
+  font-family: var(--font-code);
+  font-size: var(--font-size-code);
+  line-height: var(--line-height-code);
+  border-left: 3px solid transparent;
+  transition: background-color 80ms ease;
+}
+
+.git-file-diff-scroll .diff-line:hover {
+  background: var(--surface-hover);
+}
+
+.git-file-diff-scroll .diff-code {
+  font-family: var(--font-code);
+  font-size: var(--font-size-code);
+  line-height: var(--line-height-code);
+  tab-size: 2;
+  -moz-tab-size: 2;
+  padding-inline: 0.8ch;
+  font-feature-settings: "liga" 0, "calt" 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.git-file-diff-scroll .diff-gutter {
+  color: var(--muted);
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: var(--line-height-code);
+  font-variant-numeric: tabular-nums;
+  padding-inline: 0.6ch;
+  border-right: 1px solid var(--line);
+  user-select: none;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.git-file-diff-scroll .diff-gutter:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+/* Subtle, sophisticated additions */
+.git-file-diff-scroll .diff-line-insert {
+  background: rgba(36, 104, 69, 0.08) !important;
+  border-left-color: var(--status-success) !important;
+}
+
+.git-file-diff-scroll .diff-gutter-insert {
+  background: rgba(36, 104, 69, 0.13) !important;
+  color: var(--status-success) !important;
+  font-weight: 600;
+}
+
+.git-file-diff-scroll .diff-code-insert {
+  color: var(--text) !important;
+}
+
+/* Subtle, sophisticated deletions */
+.git-file-diff-scroll .diff-line-delete {
+  background: rgba(158, 53, 43, 0.08) !important;
+  border-left-color: var(--status-danger) !important;
+}
+
+.git-file-diff-scroll .diff-gutter-delete {
+  background: rgba(158, 53, 43, 0.13) !important;
+  color: var(--status-danger) !important;
+  font-weight: 600;
+}
+
+.git-file-diff-scroll .diff-code-delete {
+  color: var(--text) !important;
+}
+
+/* Unified diff gutter columns */
+.git-diff-unified col.diff-gutter-col:nth-of-type(1) {
+  width: 4.5ch;
+}
+
+.git-diff-unified col.diff-gutter-col:nth-of-type(2) {
+  width: 0;
+}
+
+.git-diff-unified .diff-line > .diff-gutter:nth-child(2) {
+  padding: 0;
+  font-size: 0;
+}
+
+/* Hunk header decoration */
+.git-file-diff-scroll .diff-decoration {
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: var(--line-height-code);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.git-file-diff-scroll .diff-decoration-content {
+  font-family: var(--font-code);
+  font-size: 11px;
+  padding: 0.2rem 0.6rem;
+  color: var(--muted);
+}
+
+/* Raw diff and preformatted fallback */
+.text-review-raw-diff {
+  width: 100%;
+  margin: 0;
+  overflow: auto;
+  padding: 0.75rem 1rem;
+  color: var(--text);
+  background: var(--surface-raised);
+  font-family: var(--font-code);
+  font-size: var(--font-size-code);
+  line-height: var(--line-height-code);
+  tab-size: 2;
+  white-space: pre;
+}
+
+/* -------------------------------------------------------------
+ * 3. Status, Notes & Empty States
+ * ------------------------------------------------------------- */
+.text-review-status {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}
+
+.text-review-error {
+  margin: 0.5rem 0.75rem 0;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.75rem;
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+  border: 1px solid rgba(158, 53, 43, 0.18);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.text-review-note {
+  margin: 0.4rem 0.75rem;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.text-review-load-older {
+  padding: 0.5rem;
+  text-align: center;
+}
+
+/* -------------------------------------------------------------
+ * 4. Responsive Container Handling
+ * ------------------------------------------------------------- */
+@container git-review (max-width: 360px) {
+  .text-review-files-count {
+    display: none;
+  }
+}

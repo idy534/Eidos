@@ -173,6 +173,8 @@ Schema v23→v24 为 `runs` 增加可空的 `termination_json`。迁移在事务
 
 ToolExecutionController 区分 Durable Intent 授权和实际执行开始。文件与外部操作在执行回调开始时记录执行事实；Shell 在 Popen 成功后记录启动，stdin 在实际写入后记录输入事实。准备异常、进程未启动和未送出的输入返回普通工具错误。Controller 保留可信 Handler 的已知结果，结果格式校验、输出屏蔽和投影失败不再仅凭工具类型或授权记录建立 reconciliation。取消继续控制 Run 生命周期，已取得的结果确定性不被迟到取消或后置扫描超时覆盖。
 
+文件 Handler 在准备后确认内容已经相同时，通过内部 `HandlerOutcome.execution_skipped` 记录没有进入执行。Controller 允许这类成功结果不创建 Durable Intent，不把它改成执行契约错误。这个内部字段不来自模型参数或外部工具结果。Controller 仍检查实际执行开始、文件变化和未知副作用证据。单文件与多文件的无改动 Update Patch 都返回 `no_changes`；空文件创建、移动和混合真实修改仍使用原有提交流程。该结果不清除其他操作留下的 reconciliation。
+
 MCP 分别记录 SDK tool call 已进入调用和已收到有效 CallToolResult。进入调用前的连接、内核拒绝或取消不会建立副作用屏障。调用之后失去结果继续标记为未知。已收到结果后的取消、超时或连接故障保留执行确定性；响应可能有副作用，但不要求对账。SDK 的传输和响应解析保持原实现。薄 ClientSession Adapter 使用 SDK 的公开输出校验入口，把重复校验延后到 Eidos 的结果处理阶段；McpToolAdapter 使用固定快照的有界 Schema 和既有 jsonschema/referencing 校验器检查成功响应。输出 Schema 错误、内容不支持和输出超限可以使 Tool Result 失败，但不会把有效响应改成未知执行。
 
 已知 Workspace 文件操作的恢复使用 WorkspaceReader 对实际目标执行有界读取、缺失确认和版本复核，随后在 SQLite 中核对 reconciliation epoch 和目标集合。Runtime 不要求无关目录的 manifest 完整。Shell、MCP、外部操作与未知范围不能通过文件观察清除；健康的受管 Shell 不作为未知操作来源。恢复只确认当前文件状态，不重放原操作，也不把原失败结果改为成功。
@@ -671,7 +673,13 @@ Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受�
 
 `record_workspace_change` 在同一 SQLite 事务内记录准备后的 Diff 和 `item.updated` Event。Event/Outbox 将更新后的 Item 投影为 `item/updated`。Desktop 的“最近一轮”从已有 Item/ToolCall 读取，不维护另一个 Run 成功状态。准备中、完成和失败仍使用原 ToolCall 状态。原始模型参数流不作为可执行补丁展示。
 
-Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组；重复路径保留各次完整补丁的累计增删，并显示“累计”及非净差异说明。任一次缺少补丁时，统计保持未知。产物标题来自声明中的可选标题或文件名。`OutputContent` 按执行目录和相对路径保留当前 Session 最新声明。Files 只负责文件树和预览。
+Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组。卡片和两种审查入口共用 `projectNetFileDiff`，按补丁顺序显示范围开始到结束的净增删，不显示“累计”标签。新建 5 行后替换其中 1 行仍显示 +5/-0；已有内容改回原样显示 +0/-0。系统保留完成状态、改名后的路径和最后一条记录的定位。补丁缺失、内容衔接冲突、未完成或待核验时，统计保持未知。产物标题来自声明中的可选标题或文件名。`OutputContent` 按执行目录和相对路径保留当前 Session 最新声明。Files 只负责文件树和预览。
+
+Runtime 的 `project_tool_text → display_file_diff` 为内联普通 Unified Diff 补充展示文件头。适配器使用已锁定的 `unidiff` 校验补丁和定位每个文件，不依赖文件头中的时间戳。它保留原来的新增、删除、改名路径和所有修改块，并将 Eidos 换行说明移到展示文件头中，使仅换行变化也能显示零行增删。Session 快照、继承历史和实时 Item 通知共用这个入口。SQLite 中的原始补丁不变；大补丁或展示头使文本超出内联上限时，系统仍使用原始文本的大小、Hash 和分页读取。卡片没有内联补丁时仍保持统计未知。Python 和 Renderer 共用 `protocol/fixtures/text-diffs-v1.json` 验证展示格式与统计。
+
+`persisted-file-diff.ts` 只投影已保存的补丁，不读取当前 Workspace。Node 依赖 `diff==9.0.0`（jsdiff，BSD-3-Clause）负责标准补丁解析、严格应用和最终差异生成；现有 `react-diff-view` 负责展示。Eidos 保留记录顺序、状态核验、改名归组和有界历史重建。既有文件未记录的行只使用内部稳定标识；系统只从后续补丁学习可证实的旧内容，且不把内部标识放进展示补丁。净补丁使用零上下文，避免补造未记录文本。单文件重建上限为 50,000 行、4 Mi 个字符和 512 个补丁，重建预算为 100ms，最终比较超时为 50ms；超限或不一致时保留原始记录并显示未知统计。系统不修改持久化补丁，也不调用文件写入或当前 Git Diff。
+
+文本修改卡的增删数字复用 Git 审查的 `git-review-stat` 样式，使用相同的界面字体、13px 字号、550 字重和等宽数字。文本审查中的 Diff 行号继续共用 Git 审查的 gutter 样式。Renderer 原生样式测试在完整 CSS 加载后比较卡片与 Git 审查的最终字体属性。
 
 产物身份由内置 `declare_outputs` 的成功 ToolResult 提供。`RunResources` 将该工具作为 direct、single-batch 的内置工具注册；系统级 Agent 指令要求模型仅对用户期望接收的独立终态交付文件调用，文件被创建或修改不等于交付物，项目内普通修改仍是工作区变更，中间文件默认不声明，Skill 不负责定义工具的适用范围。工具使用现有 Pydantic 工具 Schema 和通用结果投影。其 Adapter 使用 Run 固定的 WorkspaceIdentity，通过 WorkspaceReader 的 fd-relative 边界核验普通文件元数据，并复查整个批次。文件读取采用非阻塞打开，特殊文件不会在类型检查前阻塞；符号链接、多硬链接、文件 owner 不匹配、敏感路径和 `.git` 路径不能声明。该工具不读取文件内容，也不改变文件；声明只存在于控制器正常提交的 ToolResult 中，所以它沿用只读工具执行链、取消和结果提交语义，不增加独立持久化动作或 Durable Intent。现有控制器继续承担结果校验、敏感信息扫描以及 ToolResult/Event/Outbox 的同事务提交。
 
@@ -679,7 +687,7 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 声明结果包含 executionRoot、outputs（path、可选 title、sizeBytes、version）。version 沿用文件身份、大小和修改时间生成的版本标识，不是内容快照或质量证明。输入每批最多 20 项，路径沿用 512 UTF-8 字节上限，标题最多 120 个字符。任一核验失败时，整个调用没有成功声明；后续成功调用按文件新增或更新，省略其他文件不撤销其声明。Renderer 只接收 builtin/eidos.declare-outputs 的成功结果；Shell 观察、Diff、文件后缀和回复标记不产生交付事实。工具结果仍通过现有 resultJson 传递，不修改 RPC Envelope 或 SQLite Schema。
 
-修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。`AppShell.handleOpenReview` 只要求存在当前会话，不使用 Git Review 的工具可用性作为条件。文本审查面板读取持久化 Item/ToolCall 补丁，非 Git 和 Projectless 会话也可以打开；面板仍不列入工作区工具菜单。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览、Main 的受控系统应用打开入口和 Finder 显示能力；DOCX 等没有内置预览的 Office 产物只展示系统应用打开和在 Finder 中显示。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
+修改卡的 Review 请求携带 Run、文件路径和 Item 定位，并打开右侧的最近一轮 Diff。`AppShell.handleOpenReview` 只要求存在当前会话，不使用 Git Review 的工具可用性作为条件。文本审查面板读取持久化 Item/ToolCall 补丁，非 Git 和 Projectless 会话也可以打开；面板仍不列入工作区工具菜单。文本审查采用专属的 `TextReviewPanel.css`，工具栏深度参考 Git 审查设计，将操作控制（范围切换与展开/折叠、刷新）与增删统计合并为紧凑单行工具栏；列表结构完全向 Git 审查对齐，采用无厚重边框的简洁列表与 `修改 <span>N</span>` 分组标题，行内展示代码路径与增删统计，悬浮时呼出打开入口；针对单轮内多次工具调用，通过公共 `projectNetFileDiff` 聚合为该范围的最终净差异，避免暴露中间冗余步骤。支持内置预览的产物卡同时复用 Workspace Explorer、隔离 HTML 预览、Main 的受控系统应用打开入口和 Finder 显示能力；DOCX 等没有内置预览的 Office 产物只展示系统应用打开和在 Finder 中显示。当前没有可证明安全的本轮 Checkpoint 恢复入口，因此卡片的撤销操作保持禁用并显示原因。
 
 本轮没有数据库迁移或第二套 Artifact 表；浏览器地址识别新增直接依赖 `tldts`。
 

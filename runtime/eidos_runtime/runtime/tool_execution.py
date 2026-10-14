@@ -238,6 +238,8 @@ class HandlerOutcome:
     progress_fingerprint: str | None = None
     argument_validation: ToolArgumentValidationResult | None = None
     model_content: ToolContentSnapshot | None = None
+    # Internal preparation fact, never inferred from a tool's code or payload.
+    execution_skipped: bool = False
 
 
 class ToolExecutionPhase(StrEnum):
@@ -633,11 +635,18 @@ class ToolExecutionController:
                             raise RuntimeError("invalid tool runtime outcome")
                         self.observe_execution_result(outcome.result)
                         hit_fault("tool_late_result")
+                        execution_skipped = (
+                            outcome.execution_skipped
+                            and not self.execution_started
+                            and not outcome.workspace_changed
+                            and not _result_requires_reconciliation(outcome.result)
+                        )
                         if (
                             plan.side_effect != "none"
                             and self._execution_state.authorized_effects == 0
                             and (
-                                outcome.result.get("outcome") == "success"
+                                (outcome.result.get("outcome") == "success"
+                                 and not execution_skipped)
                                 or outcome.result.get(
                                     "sideEffectsMayExist"
                                 ) is True

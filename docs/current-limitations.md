@@ -138,7 +138,7 @@
 
 ### Run 并发与资源模型
 
-- 执行门控整改的 Linux 定向验证与完整回归结果记录在 PR #103。Runtime Full 和 Desktop Main 仍有原始 main 上可复现的失败，原生 macOS 验证未完成。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩、PTY、用户 Hooks 和流式工具调度仍属后续工作。
+- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 当前工作区的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩、PTY、用户 Hooks 和流式工具调度仍属后续工作。
 
 - 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
@@ -169,6 +169,7 @@
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
 - 延迟工具仍须先通过 `tool_search` 激活，再在后续 Step 使用。当前目录中的未激活工具会返回可恢复的 `tool_not_activated`，Runtime 不自动激活或重放该调用。同一批次内的搜索结果不会修改该 Step 已固定的可用工具集合。
 - Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，异常才建立未知副作用屏障。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
+- 无改动文件操作不会创建新的副作用屏障，但它不能清除其他操作的未知结果。Runtime 不修改历史 Run 的错误标记，也不根据工具返回的 `no_changes` 字符串推断已经安全跳过执行。
 - MCP 的有效响应表示调用已经返回，不证明外部业务目标已经达成。Runtime 在收到响应后做有界内容和固定输出 Schema 校验；校验失败仍报告工具错误，并保留可能已经发生的副作用。SDK 调用已进入但没有有效响应时，Runtime 仍按未知结果处理。当前提交标记是 SDK 调用边界，不是远端业务执行的确认。
 - 2026-10-09 测试记录：`pnpm test` 在默认外层沙盒下运行 Runtime Full。Runtime Full 结果为 90 failed、2112 passed、31 skipped、2 deselected。
 - 一个代表性失败的错误码是 `sandbox_unavailable`。Runtime Full 没有在提权环境重跑。受限环境中的 90 个失败没有全部逐项复测，因此不能全部归因于环境限制。全量结果仍未通过。
@@ -302,8 +303,8 @@
 - 文件链接和产物卡打开当前 Workspace 内容。历史 ToolCall 保留执行时的 Diff；预览不提供历史文件字节快照。卡片在打开时比较声明版本与当前版本，并显示变化或打开失败信息；当前文件可能在核验后再次变化，图片和 HTML 预览仍使用已有版本授权检查。环境输出汇总已加载的成功声明，不代表完整目录或内容质量。删除不会抹除交付历史，缺失状态在点击时核验。执行目录不同的历史卡片禁止打开。Projectless 对话支持产物声明和文本修改卡。卡片标题使用声明标题或文件名。
 - 旧会话没有 `declare_outputs` 记录时不会显示推断的产物卡。工具记录、最终回复中的文件链接和 Files 文件树继续可用；旧 Skill 的 `purpose="output"` 文本和普通路径不会自动补成声明。
 - 支持内置预览的产物卡同时提供内置预览、系统应用打开和在 Finder 中显示。文档、演示文稿和 Excel 文件已有专属产物分类，DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM 提供受控的系统应用打开与在 Finder 中显示，暂不提供内置预览。CSV/TSV 使用文本预览，尚无电子表格网格、公式计算或幻灯片内置查看器。对应的分类、图标和 Workspace Reader 测试已经覆盖这些边界。
-- 文本修改卡会区分已完成、部分失败和待核验记录。重复修改同一路径且各次补丁完整时，卡片显示累计增删，并明确标记“累计”；该统计包含重复编辑，不是最终净差异。缺少补丁时仍显示行数未完整统计。当前没有可精确恢复本轮修改的用户级 Checkpoint 入口，所以“撤销”按钮只显示不可用原因。
-- 2026-10-13 修复了文本修改卡被 Git Review 可用性挡住的入口。33 项 Renderer 定向测试、Renderer 类型检查与构建通过。真实 Desktop 已使用非 Git `Office-Test` 会话验证文件名和“审核”按钮均可打开已有 Run 的持久化补丁；Git 和 Projectless 入口由自动测试覆盖，尚未补做人工验收。本轮未运行 Full Suite。普通 Unified Diff 缺少 Git 文件头时，卡片路径统计仍可能显示“行数未完整统计”；该展示问题不阻止文本审查面板读取已有补丁，本轮没有修改统计逻辑。
+- 文本修改卡会区分已完成、部分失败和待核验记录。重复修改同一路径时，卡片与审查入口显示净变化，不再相加各次补丁。缺少可用内联补丁、只有大补丁分页引用、内容衔接不一致或操作未核验时，卡片仍显示“行数未完整统计”。当前没有可精确恢复本轮修改的用户级 Checkpoint 入口，所以“撤销”按钮只显示不可用原因。
+- 2026-10-13 修复了文本修改卡被 Git Review 可用性挡住的入口。33 项 Renderer 定向测试、Renderer 类型检查与构建通过。真实 Desktop 已使用非 Git `Office-Test` 会话验证文件名和“审核”按钮均可打开已有 Run 的持久化补丁；Git 和 Projectless 入口由自动测试覆盖，尚未补做人工验收。该次修复未运行 Full Suite，也未修改统计逻辑。2026-10-14 的后续修复在 Runtime 公共展示入口补充文件头，解决普通 Unified Diff 的路径丢失和行数未知问题；该修复不改写历史补丁，不改变大补丁分页边界。
 - “最近一轮”展示文件工具记录的补丁。Shell 的文件观察只能给出路径变化，不能证明每条变化都由该 Shell 独占造成；完整仓库差异仍在仓库范围查看。
 - 未提交文件列表为只读审查，不提供暂存、取消暂存、丢弃或按修改块操作；需要变更 Index 时使用提交弹层的暂存后提交，或在外部终端操作。
 - Browser 是用户可操作的预览面板，尚未向 Agent 注册浏览器自动化 Tool。网页面板当前不提供标注入口，也没有独立的后退和前进 IPC，所以这两个导航按钮保持不可用。地址栏使用 `tldts` 识别域名、IP 和本地地址；输入框可以在已打开页面后继续编辑，无法确认是地址时会提交 Google 搜索。

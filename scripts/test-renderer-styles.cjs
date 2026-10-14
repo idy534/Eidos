@@ -200,6 +200,12 @@ app.whenReady().then(async () => {
     for (const width of [1100, 420]) {
       win.setContentSize(width, 800); await settle();
       await show("content");
+      const reviewTypography = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "fontVariantNumeric"];
+      const gitStatTypography = await read("#git-stat-reference .git-review-stat", reviewTypography);
+      for (const selector of [".turn-result__stats ins", ".turn-result__stats del"]) {
+        assert.deepEqual(await read(selector, reviewTypography), gitStatTypography,
+          "Text-change counts match Git review typography after the full CSS cascade");
+      }
       for (let attempt = 0; attempt < 100 && !await evaluate("Boolean(document.querySelector('.shiki-code-body'))"); attempt++) await new Promise(resolve => setTimeout(resolve, 50));
       const content = await Promise.all(contentTargets.map(([selector, properties]) => read(selector, properties)));
       assert.equal(content[0].fontSize, "14px"); assert.equal(content[0].lineHeight, "23px");

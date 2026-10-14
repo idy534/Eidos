@@ -99,16 +99,16 @@ describe("AppShell text change review", () => {
 
     const tools = await screen.findByRole("tablist", { name: "工作区窗口" });
     expect(within(tools).getAllByRole("tab", { name: "文本审查" })).toHaveLength(1);
-    expect(screen.getByRole("tab", { name: "最近一轮修改" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "最近一轮" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "work/current.js" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByRole("button", { name: "older.js" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("tabpanel")).getByText("current-run")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "整个任务修改" }));
+    fireEvent.click(screen.getByRole("tab", { name: "整个任务" }));
     expect(screen.getByRole("button", { name: "older.js" })).toBeInTheDocument();
     fireEvent.click(within(card).getByRole("button", { name: "审核", exact: true }));
     expect(within(tools).getAllByRole("tab", { name: "文本审查" })).toHaveLength(1);
-    expect(screen.getByRole("tab", { name: "最近一轮修改" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "最近一轮" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("button", { name: "older.js" })).not.toBeInTheDocument();
     expect(window.eidosRuntime.readWorkspaceFilePreview).not.toHaveBeenCalled();
   });

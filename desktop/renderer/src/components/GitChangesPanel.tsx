@@ -265,6 +265,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     deletions: 0,
     count: 0,
     allExpanded: false,
+    statsKnown: true,
   });
   const [itemExpandSignal, setItemExpandSignal] = useState<{ id: number; expand: boolean }>();
   const handleItemStats = useCallback((next: ItemReviewStats) => {
@@ -273,6 +274,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
       && current.deletions === next.deletions
       && current.count === next.count
       && current.allExpanded === next.allExpanded
+      && current.statsKnown === next.statsKnown
         ? current
         : next
     ));
@@ -494,8 +496,10 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             items={scopeMenuItems}
           />
           <div className="git-review-stats" aria-label="变更统计">
-            <span className="git-review-stat git-review-stat--addition">+{toolbarStats.additions}</span>
-            <span className="git-review-stat git-review-stat--deletion">-{toolbarStats.deletions}</span>
+            {isItemTab && !itemStats.statsKnown ? <span>行数未完整统计</span> : <>
+              <span className="git-review-stat git-review-stat--addition">+{toolbarStats.additions}</span>
+              <span className="git-review-stat git-review-stat--deletion">-{toolbarStats.deletions}</span>
+            </>}
           </div>
         </div>
 

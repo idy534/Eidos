@@ -592,6 +592,68 @@ class ToolExecutionControllerTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(intent["status"], "completed")
 
+    def test_handler_can_report_success_without_starting_execution(self) -> None:
+        handler = _Handler()
+        handler.execute = lambda *_args: HandlerOutcome(
+            handler.result, "completed", execution_skipped=True,
+        )
+        controller = self._controller({"file": handler})
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item(), call=self.call,
+            plan=_plan("file", 5, "workspace", False),
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "ok")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(self.store.connection.execute(
+            "SELECT COUNT(*) FROM durable_intents",
+        ).fetchone()[0], 0)
+
+    def test_tool_reported_no_changes_does_not_bypass_execution_contract(self) -> None:
+        handler = _Handler()
+        handler.result["code"] = "no_changes"
+        outcome = self._controller({"file": handler}).execute(
+            run_id=self.run["id"], item=self._item(), call=self.call,
+            plan=_plan("file", 5, "workspace", False),
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_CONTRACT_VIOLATION")
+        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+
+    def test_skipped_execution_cannot_override_side_effect_evidence(self) -> None:
+        for evidence in ("started", "workspace_changed", "sideEffectsMayExist", "reconciliationRequired"):
+            with self.subTest(evidence=evidence):
+                handler = _Handler()
+                controller = self._controller({"file": handler})
+                result = dict(handler.result)
+                if evidence in {"sideEffectsMayExist", "reconciliationRequired"}:
+                    result[evidence] = True
+
+                def execute(*_args):
+                    if evidence == "started":
+                        controller.mark_execution_started()
+                    return HandlerOutcome(
+                        result, "completed", execution_skipped=True,
+                        workspace_changed=evidence == "workspace_changed",
+                    )
+
+                handler.execute = execute
+                # Each case uses an independent Run so an earlier barrier cannot
+                # short-circuit the execution-contract check under test.
+                session = self.store.create_session(str(Path(self.temporary.name) / "workspace"))
+                run, _ = self.store.create_run(session["id"], "evidence")
+                self.store.increment_model_step(run["id"])
+                item = self.store.create_tool_item(
+                    run["id"], 1, 0, "evidence", "read_file", json.dumps({"path": "a.txt"}),
+                )
+                outcome = controller.execute(
+                    run_id=run["id"], item=item, call=self.call,
+                    plan=_plan("file", 5, "workspace", False),
+                    cancel=threading.Event(), deadline=None,
+                )
+                self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_CONTRACT_VIOLATION")
+                self.assertTrue(self.store.side_effects_blocked(run["id"]))
+
     def test_failure_after_execution_started_remains_uncertain(self) -> None:
         handler = _Handler()
         controller = self._controller({"file": handler})

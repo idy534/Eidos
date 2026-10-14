@@ -511,7 +511,12 @@ class FileChangeToolHandler:
                 bounded_tool_result(call.name, prepared), "failed", "failed"
             )
         if isinstance(prepared, PreparedPatch):
-            if prepared.base_sha256 is not None and not prepared.diff:
+            if prepared.changes and all(
+                change.kind == "update"
+                and change.base_sha256 is not None
+                and not change.diff
+                for change in prepared.changes
+            ):
                 return HandlerOutcome(
                     tool_result(
                         call.name,
@@ -521,6 +526,7 @@ class FileChangeToolHandler:
                         {"path": prepared.path, "changes": []},
                     ),
                     "completed",
+                    execution_skipped=True,
                 )
             paths = list(dict.fromkeys(
                 path for change in prepared.changes
@@ -592,6 +598,7 @@ class FileChangeToolHandler:
                     {"path": prepared.path, "baseSha256": prepared.base_sha256},
                 ),
                 "completed",
+                execution_skipped=True,
             )
         prepared_execution = PreparedToolExecution(
             approval_description={

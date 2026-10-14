@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Diff, Hunk, getChangeKey, parseDiff } from "react-diff-view";
 import type { Item } from "../contracts.js";
+import { committedFileDiff, projectNetFileDiff } from "../persisted-file-diff.js";
 import { userFacingError } from "../session-state.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
@@ -47,18 +48,6 @@ function fallbackItemPath(item: Item): string | undefined {
   return undefined;
 }
 
-function computeDiffStats(hunks: Array<{ changes: Array<{ type: string }> }>): { additions: number; deletions: number } {
-  let additions = 0;
-  let deletions = 0;
-  for (const hunk of hunks) {
-    for (const change of hunk.changes) {
-      if (change.type === "insert") additions++;
-      else if (change.type === "delete") deletions++;
-    }
-  }
-  return { additions, deletions };
-}
-
 function ExpandIcon({ collapse }: { collapse: boolean }) {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -89,7 +78,7 @@ function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
   return (
     <svg
       viewBox="0 0 20 20"
-      className="git-file-disclosure-icon"
+      className="text-review-disclosure-icon git-file-disclosure-icon"
       data-state={expanded ? "open" : "closed"}
       aria-hidden="true"
     >
@@ -109,8 +98,8 @@ interface FileChangeEntry {
 
 interface FileReviewSummary {
   path: string;
-  additions: number;
-  deletions: number;
+  additions: number | undefined;
+  deletions: number | undefined;
   changes: FileChangeEntry[];
 }
 
@@ -169,9 +158,9 @@ export function TextReviewPanel({
       if (!call) continue;
 
       if (call.changeDiffHash) {
-        const pathKey = `patch-${call.id}`;
+        const pathKey = fallbackItemPath(item) ?? `patch-${call.id}`;
         const existing = map.get(pathKey) ?? {
-          path: `补丁 ${call.id.slice(0, 8)}`,
+          path: fallbackItemPath(item) ?? `补丁 ${call.id.slice(0, 8)}`,
           additions: 0,
           deletions: 0,
           changes: [],
@@ -186,22 +175,35 @@ export function TextReviewPanel({
         continue;
       }
 
-      if (!call.changeDiff) continue;
+      if (!call.changeDiff) {
+        if (item.kind === "file_change" || ["apply_patch", "write_file", "delete_file"].includes(call.toolName)) {
+          const missingPath = fallbackItemPath(item);
+          if (missingPath) {
+            const summary = map.get(missingPath) ?? { path: missingPath, additions: undefined, deletions: undefined, changes: [] };
+            summary.changes.push({ item, toolCallId: call.id });
+            map.set(missingPath, summary);
+          }
+        }
+        continue;
+      }
 
       try {
         const parsed = parseDiff(call.changeDiff);
         for (const file of parsed) {
           const cleanPath = cleanFilePath(file) || fallbackItemPath(item);
           if (!cleanPath) continue;
-          const stats = computeDiffStats(file.hunks);
+          if (file.oldPath !== cleanPath && !map.has(cleanPath) && map.has(file.oldPath)) {
+            const previous = map.get(file.oldPath)!;
+            map.delete(file.oldPath);
+            previous.path = cleanPath;
+            map.set(cleanPath, previous);
+          }
           const existing = map.get(cleanPath) ?? {
             path: cleanPath,
             additions: 0,
             deletions: 0,
             changes: [],
           };
-          existing.additions += stats.additions;
-          existing.deletions += stats.deletions;
           existing.changes.push({
             item,
             toolCallId: call.id,
@@ -226,22 +228,35 @@ export function TextReviewPanel({
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => a.path.localeCompare(b.path));
+    const result = [...map.values()].map((summary): FileReviewSummary => {
+      const net = projectNetFileDiff(summary.changes.map((change) => committedFileDiff(change.item, change.parsedFile)));
+      const last = summary.changes.at(-1);
+      return {
+        path: summary.path,
+        additions: net?.additions,
+        deletions: net?.deletions,
+        changes: net && last ? [{ ...last, parsedFile: net.file }] : summary.changes,
+      };
+    });
+
+    return result.sort((a, b) => a.path.localeCompare(b.path));
   }, [scopedItems]);
 
   const totalStats = useMemo(() => {
     let additions = 0;
     let deletions = 0;
     for (const file of fileSummaries) {
-      additions += file.additions;
-      deletions += file.deletions;
+      additions += file.additions ?? 0;
+      deletions += file.deletions ?? 0;
     }
-    return { additions, deletions };
+    return { additions, deletions, known: fileSummaries.every((file) => file.additions !== undefined && file.deletions !== undefined) };
   }, [fileSummaries]);
 
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => {
     return path ? new Set([path]) : new Set();
   });
+
+  const autoExpandedKeyRef = useRef<string>("");
 
   useEffect(() => {
     if (path) {
@@ -250,11 +265,16 @@ export function TextReviewPanel({
   }, [path]);
 
   useEffect(() => {
-    const first = fileSummaries[0];
-    if (fileSummaries.length === 1 && expandedKeys.size === 0 && first) {
-      setExpandedKeys(new Set([first.path]));
+    if (path) return;
+    const currentKey = `${scope}:${runId}:${fileSummaries.map((f) => f.path).join(",")}`;
+    if (!fileSummaries.length) return;
+    if (autoExpandedKeyRef.current !== currentKey) {
+      autoExpandedKeyRef.current = currentKey;
+      if (fileSummaries.length === 1 && fileSummaries[0]) {
+        setExpandedKeys(new Set([fileSummaries[0].path]));
+      }
     }
-  }, [fileSummaries, expandedKeys.size]);
+  }, [fileSummaries, path, scope, runId]);
 
   const allFilesExpanded = fileSummaries.length > 0
     && fileSummaries.every((f) => expandedKeys.has(f.path));
@@ -332,7 +352,7 @@ export function TextReviewPanel({
 
   return (
     <section
-      className={`git-changes-panel${expanded ? " git-changes-panel--expanded" : ""}`}
+      className={`git-changes-panel text-review-panel${expanded ? " git-changes-panel--expanded text-review-panel--expanded" : ""}`}
       aria-label="文本修改审查"
     >
       <header className="git-changes-toolbar" aria-label="审查工具栏">
@@ -345,7 +365,7 @@ export function TextReviewPanel({
               aria-selected={scope === "turn"}
               onClick={() => setScope("turn")}
             >
-              最近一轮修改
+              最近一轮
             </button>
             <button
               type="button"
@@ -354,17 +374,19 @@ export function TextReviewPanel({
               aria-selected={scope === "task"}
               onClick={() => setScope("task")}
             >
-              整个任务修改
+              整个任务
             </button>
           </div>
 
-          <span className="text-review-files-count">
+          <span className="sr-only">
             共 {fileSummaries.length} 个文件修改
           </span>
 
           <div className="git-review-stats" aria-label="变更统计">
-            <span className="git-review-stat git-review-stat--addition">+{totalStats.additions}</span>
-            <span className="git-review-stat git-review-stat--deletion">-{totalStats.deletions}</span>
+            {totalStats.known ? <>
+              <span className="git-review-stat git-review-stat--addition">+{totalStats.additions}</span>
+              <span className="git-review-stat git-review-stat--deletion">-{totalStats.deletions}</span>
+            </> : <span>行数未完整统计</span>}
           </div>
         </div>
 
@@ -419,131 +441,135 @@ export function TextReviewPanel({
           </div>
         )}
 
-        {fileSummaries.map((file) => {
-          const isFileExpanded = expandedKeys.has(file.path);
-          const hasRealPath = file.changes.some((change) => change.parsedFile !== undefined || change.rawDiff !== undefined);
-          return (
-            <article className="git-review-file" key={file.path}>
-              <header className="git-review-file-header">
-                <button
-                  type="button"
-                  className="git-file-button"
-                  aria-expanded={isFileExpanded}
-                  aria-controls={`text-review-diff-${encodeURIComponent(file.path)}`}
-                  aria-label={file.path}
-                  onClick={() => toggleFile(file.path)}
-                >
-                  <span className="git-file-disclosure">
-                    <FileDisclosureIcon expanded={isFileExpanded} />
-                  </span>
-                  <span className="text-review-file-icon" aria-hidden="true">
-                    <WorkspaceFileIcon name={file.path} />
-                  </span>
-                  <code>{file.path}</code>
-                  <span className="git-file-stats">
-                    <span className="git-review-stat--addition">+{file.additions}</span>
-                    <span className="git-review-stat--deletion">-{file.deletions}</span>
-                  </span>
-                </button>
-                {hasRealPath && (
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    className="git-icon-button"
-                    icon={<OpenInEditorIcon />}
-                    aria-label={`在编辑器中打开 ${file.path}`}
-                    title={`在编辑器中打开 ${file.path}`}
-                    onClick={() => {
-                      setOpenError("");
-                      void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.path).catch((cause: unknown) => {
-                        setOpenError(userFacingError(cause));
-                      });
-                    }}
-                  >
-                    <span className="sr-only">{`在编辑器中打开 ${file.path}`}</span>
-                  </Button>
-                )}
-                <Button
-                  size="small"
-                  variant="ghost"
-                  className="git-icon-button"
-                  icon={<WorkspaceFolderIcon />}
-                  aria-label={`在工作区打开 ${file.path}`}
-                  title={`在工作区打开 ${file.path}`}
-                  onClick={() => actions?.openFile(file.path)}
-                >
-                  <span className="sr-only">{`在工作区打开 ${file.path}`}</span>
-                </Button>
-              </header>
+        {fileSummaries.length > 0 && (
+          <section className="git-file-group" aria-label="修改">
+            <h2>修改 <span>{fileSummaries.length}</span></h2>
+            {fileSummaries.map((file) => {
+              const isFileExpanded = expandedKeys.has(file.path);
+              const hasRealPath = file.changes.some((change) => change.parsedFile !== undefined || change.rawDiff !== undefined);
+              return (
+                <article className="git-review-file" key={file.path}>
+                  <header className="git-review-file-header">
+                    <button
+                      type="button"
+                      className="git-file-button"
+                      aria-expanded={isFileExpanded}
+                      aria-controls={`text-review-diff-${encodeURIComponent(file.path)}`}
+                      aria-label={file.path}
+                      onClick={() => toggleFile(file.path)}
+                    >
+                      <span className="git-file-disclosure">
+                        <FileDisclosureIcon expanded={isFileExpanded} />
+                      </span>
+                      <code>{file.path}</code>
+                      <span className="git-file-stats">
+                        {file.additions !== undefined && file.deletions !== undefined ? <>
+                          <span>+{file.additions}</span>
+                          <span>-{file.deletions}</span>
+                        </> : <span>行数未完整统计</span>}
+                      </span>
+                    </button>
+                    {hasRealPath && (
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        className="git-icon-button"
+                        icon={<OpenInEditorIcon />}
+                        aria-label={`在编辑器中打开 ${file.path}`}
+                        title={`在编辑器中打开 ${file.path}`}
+                        onClick={() => {
+                          setOpenError("");
+                          void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.path).catch((cause: unknown) => {
+                            setOpenError(userFacingError(cause));
+                          });
+                        }}
+                      >
+                        <span className="sr-only">{`在编辑器中打开 ${file.path}`}</span>
+                      </Button>
+                    )}
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      className="git-icon-button"
+                      icon={<WorkspaceFolderIcon />}
+                      aria-label={`在工作区打开 ${file.path}`}
+                      title={`在工作区打开 ${file.path}`}
+                      onClick={() => actions?.openFile(file.path)}
+                    >
+                      <span className="sr-only">{`在工作区打开 ${file.path}`}</span>
+                    </Button>
+                  </header>
 
-              {isFileExpanded && (
-                <div
-                  id={`text-review-diff-${encodeURIComponent(file.path)}`}
-                  className="git-file-diff-scroll"
-                >
-                  {file.changes.map((change, idx) => {
-                    if (change.hash) {
-                      return (
-                        <ToolTextView
-                          key={change.hash}
-                          sessionId={sessionId}
-                          toolCallId={change.toolCallId}
-                          field="diff"
-                          sha256={change.hash}
-                          totalBytes={change.bytes!}
-                        />
-                      );
-                    }
-                    if (change.parsedFile) {
-                      return (
-                        <Diff
-                          key={`${change.item.id}:${idx}`}
-                          className="git-diff-unified"
-                          viewType="unified"
-                          diffType={change.parsedFile.type}
-                          hunks={change.parsedFile.hunks}
-                          gutterClassName="git-diff-line-numbers"
-                          renderGutter={({ change: lineChange, side, renderDefault }) => {
-                            if (side === "new") return null;
-                            return lineChange.type === "insert" ? lineChange.lineNumber : renderDefault();
-                          }}
-                          gutterEvents={{
-                            onClick: ({ change: lineChange, side }) => {
-                              if (!lineChange) return;
-                              const line = lineChange.type === "normal"
-                                ? (side === "old" ? lineChange.oldLineNumber : lineChange.newLineNumber)
-                                : lineChange.lineNumber;
-                              const call = change.item.toolCall!;
-                              setDraft({
-                                filePath: file.path,
-                                toolCallId: change.toolCallId,
-                                changeKey: getChangeKey(lineChange),
-                                anchorText: `Run: ${change.item.runId}\nToolCall: ${call.id}\n文件: ${file.path}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`,
-                              });
-                              setDraftBody("");
-                              setFeedbackError("");
-                            },
-                          }}
-                          widgets={draftWidgets(file.path, change.toolCallId)}
-                        >
-                          {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
-                        </Diff>
-                      );
-                    }
-                    if (change.rawDiff) {
-                      return (
-                        <pre key={change.item.id} className="text-review-raw-diff">
-                          {change.rawDiff}
-                        </pre>
-                      );
-                    }
-                    return null;
-                  })}
-                </div>
-              )}
-            </article>
-          );
-        })}
+                  {isFileExpanded && (
+                    <div
+                      id={`text-review-diff-${encodeURIComponent(file.path)}`}
+                      className="git-file-diff-scroll"
+                    >
+                      {file.changes.map((change, idx) => {
+                        if (change.hash) {
+                          return (
+                            <ToolTextView
+                              key={change.hash}
+                              sessionId={sessionId}
+                              toolCallId={change.toolCallId}
+                              field="diff"
+                              sha256={change.hash}
+                              totalBytes={change.bytes!}
+                            />
+                          );
+                        }
+                        if (change.parsedFile) {
+                          return (
+                            <Diff
+                              key={`${change.item.id}:${idx}`}
+                              className="git-diff-unified"
+                              viewType="unified"
+                              diffType={change.parsedFile.type}
+                              hunks={change.parsedFile.hunks}
+                              gutterClassName="git-diff-line-numbers"
+                              renderGutter={({ change: lineChange, side, renderDefault }) => {
+                                if (side === "new") return null;
+                                return lineChange.type === "insert" ? lineChange.lineNumber : renderDefault();
+                              }}
+                              gutterEvents={{
+                                onClick: ({ change: lineChange, side }) => {
+                                  if (!lineChange) return;
+                                  const line = lineChange.type === "normal"
+                                    ? (side === "old" ? lineChange.oldLineNumber : lineChange.newLineNumber)
+                                    : lineChange.lineNumber;
+                                  const call = change.item.toolCall!;
+                                  setDraft({
+                                    filePath: file.path,
+                                    toolCallId: change.toolCallId,
+                                    changeKey: getChangeKey(lineChange),
+                                    anchorText: `Run: ${change.item.runId}\nToolCall: ${call.id}\n文件: ${file.path}\n位置: ${side ?? "new"} 第 ${line} 行\nBase SHA: ${call.baseSha256 ?? "无"}`,
+                                  });
+                                  setDraftBody("");
+                                  setFeedbackError("");
+                                },
+                              }}
+                              widgets={draftWidgets(file.path, change.toolCallId)}
+                            >
+                              {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+                            </Diff>
+                          );
+                        }
+                        if (change.rawDiff) {
+                          return (
+                            <pre key={change.item.id} className="text-review-raw-diff">
+                              {change.rawDiff}
+                            </pre>
+                          );
+                        }
+                        return null;
+                      })}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </section>
+        )}
       </div>
     </section>
   );

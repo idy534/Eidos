@@ -232,6 +232,29 @@ def test_unknown_shell_does_not_block_messages_or_stopping_owned_children(execut
     assert not e.resources.shell_process_manager.has_running()
 
 
+def test_unchanged_patch_does_not_clear_an_unknown_shell_effect(execution):
+    e = execution
+    target = e.workspace / "unchanged.txt"
+    target.write_text("known\n")
+    origin = _uncertain(e, "run_shell")
+    result = _execute(e, (
+        ModelToolCall("unchanged", "apply_patch", {"patch":
+            "*** Begin Patch\n*** Update File: unchanged.txt\n@@\n-known\n+known\n*** End Patch"}),
+        ModelToolCall("new-shell", "run_shell", {"command": "echo must-not-run"}),
+    ), threading.Event())
+    assert result.error_fingerprints
+    assert [code for _, code, _ in _results(e)][-2:] == ["no_changes", "reconciliation_required"]
+    assert e.store.side_effects_blocked(e.run["id"])
+    assert e.store.connection.execute(
+        "SELECT reconciliation_epoch FROM runs WHERE id=?", (e.run["id"],),
+    ).fetchone()[0] == 1
+    assert not e.resources.shell_process_manager.has_running()
+    assert target.read_text() == "known\n"
+    assert e.store.connection.execute(
+        "SELECT status FROM durable_intents WHERE tool_call_id=?", (origin["toolCall"]["id"],),
+    ).fetchone()[0] == "uncertain"
+
+
 def test_wait_keeps_live_shell_owned_and_can_be_canceled(execution):
     e = execution
     _spawn(e)

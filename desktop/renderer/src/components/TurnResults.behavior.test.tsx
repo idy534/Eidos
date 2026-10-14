@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Item, Run } from "../contracts.js";
@@ -10,6 +11,14 @@ import {
   TurnResults,
   useCompleteSessionItems,
 } from "./TurnResults.js";
+
+const diffFixtures = JSON.parse(readFileSync(
+  "protocol/fixtures/text-diffs-v1.json", "utf8",
+)) as Array<{
+  name: string;
+  displayDiff: string;
+  files: Array<{ path: string; additions: number; deletions: number; deleted: boolean }>;
+}>;
 
 const run: Run = {
   id: "run-results",
@@ -112,6 +121,26 @@ function PaginatedOutput({ items }: { items: Item[] }) {
 }
 
 describe("TurnResults", () => {
+  it.each(diffFixtures)("counts persisted Runtime display patches: $name", ({ displayDiff, files }) => {
+    const item = changeItem("item-1", files[0]!.path, {
+      changeDiff: displayDiff,
+      resultJson: JSON.stringify({ outcome: "success", code: "ok", data: {
+        changes: files.map(({ path, deleted }) => ({ path, kind: deleted ? "delete" : "update" })),
+      } }),
+    });
+    const projection = projectTurnResults([item], run.id);
+    expect(projection.statsKnown).toBe(true);
+    expect(projection.textChanges).toEqual([...files].sort((a, b) => a.path.localeCompare(b.path)).map((file) => ({
+      ...file, runId: run.id, itemId: item.id, state: "committed",
+    })));
+    const additions = files.reduce((total, file) => total + file.additions, 0);
+    const deletions = files.reduce((total, file) => total + file.deletions, 0);
+    const { container } = render(<TurnResults run={run} items={[item]} />);
+    expect(container.querySelector(".turn-result-card__title ins")).toHaveTextContent(`+${additions}`);
+    expect(container.querySelector(".turn-result-card__title del")).toHaveTextContent(`-${deletions}`);
+    expect(screen.queryByText("行数未完整统计")).not.toBeInTheDocument();
+  });
+
   it("opens image artifacts in a fullscreen preview and HTML artifacts in the browser", async () => {
     const openFile = vi.fn();
     const openBrowser = vi.fn();
@@ -216,6 +245,20 @@ describe("TurnResults", () => {
     }
   });
 
+  it("shows repeated-edit counts without a cumulative label", () => {
+    const items = [
+      changeItem("item-1", "src/index.ts"),
+      changeItem("item-2", "src/index.ts", { changeDiff: diff("src/index.ts", "new", "newer") }),
+    ];
+    const { container } = render(<TurnResults run={run} items={items} />);
+    expect(container.querySelector(".turn-result-card__title ins")).toHaveTextContent("+1");
+    expect(container.querySelector(".turn-result-card__title del")).toHaveTextContent("-1");
+    expect(screen.queryByText("累计")).not.toBeInTheDocument();
+    expect(container.querySelector(".turn-result__stats")).toHaveAttribute(
+      "title", "本轮开始到结束的净变化。",
+    );
+  });
+
   it("keeps repeated paths honest and exposes persisted artifacts", () => {
     const items = [
       changeItem("item-1", "src/index.ts"),
@@ -235,9 +278,8 @@ describe("TurnResults", () => {
     expect(projection.textChanges.map((change) => change.path)).toEqual(["gone.txt", "index.html", "src/index.ts"]);
     expect(projection.statsKnown).toBe(false);
     expect(projection.textChanges.find((change) => change.path === "src/index.ts")).toMatchObject({
-      additions: 2,
-      deletions: 2,
-      cumulative: true,
+      additions: 1,
+      deletions: 1,
     });
     expect(projection.artifacts).toMatchObject([
       { path: "docs/report.docx", kind: "document", itemId: "item-3" },

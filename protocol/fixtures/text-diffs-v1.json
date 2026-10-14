@@ -1,0 +1,118 @@
+[
+  {
+    "name": "created",
+    "rawDiff": "--- /dev/null\n+++ b/build-sea.js\n@@ -0,0 +1,3 @@\n+one\n+two\n+three\n\\ Eidos EOF newline: before=absent, after=present\n\\ Eidos line endings: before=none, after=LF:3\n",
+    "displayDiff": "diff --git /dev/null b/build-sea.js\n\\ Eidos EOF newline: before=absent, after=present\n\\ Eidos line endings: before=none, after=LF:3\n--- /dev/null\n+++ b/build-sea.js\n@@ -0,0 +1,3 @@\n+one\n+two\n+three\n",
+    "files": [
+      {
+        "path": "build-sea.js",
+        "additions": 3,
+        "deletions": 0,
+        "deleted": false
+      }
+    ]
+  },
+  {
+    "name": "modified",
+    "rawDiff": "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1,2 +1,3 @@\n-old\n+new\n+extra\n same\n\\ Eidos line endings: before=LF:2, after=LF:3\n",
+    "displayDiff": "diff --git a/src/main.ts b/src/main.ts\n\\ Eidos line endings: before=LF:2, after=LF:3\n--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1,2 +1,3 @@\n-old\n+new\n+extra\n same\n",
+    "files": [
+      {
+        "path": "src/main.ts",
+        "additions": 2,
+        "deletions": 1,
+        "deleted": false
+      }
+    ]
+  },
+  {
+    "name": "deleted",
+    "rawDiff": "--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-old\n-gone\n\\ Eidos EOF newline: before=present, after=absent\n\\ Eidos line endings: before=LF:2, after=none\n",
+    "displayDiff": "diff --git a/gone.txt /dev/null\n\\ Eidos EOF newline: before=present, after=absent\n\\ Eidos line endings: before=LF:2, after=none\n--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-old\n-gone\n",
+    "files": [
+      {
+        "path": "gone.txt",
+        "additions": 0,
+        "deletions": 2,
+        "deleted": true
+      }
+    ]
+  },
+  {
+    "name": "renamed",
+    "rawDiff": "--- a/old.ts\n+++ b/new.ts\n@@ -1 +1 @@\n-old\n+new\n",
+    "displayDiff": "diff --git a/old.ts b/new.ts\n--- a/old.ts\n+++ b/new.ts\n@@ -1 +1 @@\n-old\n+new\n",
+    "files": [
+      {
+        "path": "new.ts",
+        "additions": 1,
+        "deletions": 1,
+        "deleted": false
+      }
+    ]
+  },
+  {
+    "name": "space-unicode",
+    "rawDiff": "--- a/docs/海洋 notes.md\n+++ b/docs/海洋 notes.md\n@@ -1 +1 @@\n-old\n+new\n",
+    "displayDiff": "diff --git a/docs/海洋 notes.md b/docs/海洋 notes.md\n--- a/docs/海洋 notes.md\n+++ b/docs/海洋 notes.md\n@@ -1 +1 @@\n-old\n+new\n",
+    "files": [
+      {
+        "path": "docs/海洋 notes.md",
+        "additions": 1,
+        "deletions": 1,
+        "deleted": false
+      }
+    ]
+  },
+  {
+    "name": "eof-only",
+    "rawDiff": "--- a/notes.txt\n+++ b/notes.txt\n\\ Eidos EOF newline: before=absent, after=present\n\\ Eidos line endings: before=none, after=LF:1\n",
+    "displayDiff": "diff --git a/notes.txt b/notes.txt\n\\ Eidos EOF newline: before=absent, after=present\n\\ Eidos line endings: before=none, after=LF:1\n--- a/notes.txt\n+++ b/notes.txt\n",
+    "files": [
+      {
+        "path": "notes.txt",
+        "additions": 0,
+        "deletions": 0,
+        "deleted": false
+      }
+    ]
+  },
+  {
+    "name": "line-endings-only",
+    "rawDiff": "--- a/notes.txt\n+++ b/notes.txt\n\\ Eidos line endings: before=CRLF:1, after=LF:1\n",
+    "displayDiff": "diff --git a/notes.txt b/notes.txt\n\\ Eidos line endings: before=CRLF:1, after=LF:1\n--- a/notes.txt\n+++ b/notes.txt\n",
+    "files": [
+      {
+        "path": "notes.txt",
+        "additions": 0,
+        "deletions": 0,
+        "deleted": false
+      }
+    ]
+  },
+  {
+    "name": "multiple-files",
+    "rawDiff": "--- /dev/null\n+++ b/build-sea.js\n@@ -0,0 +1,3 @@\n+one\n+two\n+three\n\\ Eidos EOF newline: before=absent, after=present\n\\ Eidos line endings: before=none, after=LF:3\n--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1,2 +1,3 @@\n-old\n+new\n+extra\n same\n\\ Eidos line endings: before=LF:2, after=LF:3\n--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-old\n-gone\n\\ Eidos EOF newline: before=present, after=absent\n\\ Eidos line endings: before=LF:2, after=none\n",
+    "displayDiff": "diff --git /dev/null b/build-sea.js\n\\ Eidos EOF newline: before=absent, after=present\n\\ Eidos line endings: before=none, after=LF:3\n--- /dev/null\n+++ b/build-sea.js\n@@ -0,0 +1,3 @@\n+one\n+two\n+three\ndiff --git a/src/main.ts b/src/main.ts\n\\ Eidos line endings: before=LF:2, after=LF:3\n--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1,2 +1,3 @@\n-old\n+new\n+extra\n same\ndiff --git a/gone.txt /dev/null\n\\ Eidos EOF newline: before=present, after=absent\n\\ Eidos line endings: before=LF:2, after=none\n--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-old\n-gone\n",
+    "files": [
+      {
+        "path": "build-sea.js",
+        "additions": 3,
+        "deletions": 0,
+        "deleted": false
+      },
+      {
+        "path": "src/main.ts",
+        "additions": 2,
+        "deletions": 1,
+        "deleted": false
+      },
+      {
+        "path": "gone.txt",
+        "additions": 0,
+        "deletions": 2,
+        "deleted": true
+      }
+    ]
+  }
+]

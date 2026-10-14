@@ -1,9 +1,18 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Item } from "../contracts.js";
 import { ArtifactProvider } from "./ArtifactContext.js";
 import { TextReviewPanel } from "./TextReviewPanel.js";
+
+const diffFixtures = JSON.parse(readFileSync(
+  "protocol/fixtures/text-diffs-v1.json", "utf8",
+)) as Array<{
+  name: string;
+  displayDiff: string;
+  files: Array<{ path: string; additions: number; deletions: number }>;
+}>;
 
 function makePatch(path: string, oldValue = "old", newValue = "new"): string {
   return [
@@ -75,7 +84,23 @@ describe("TextReviewPanel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("defaults to '最近一轮修改' and displays only current run changes", () => {
+  it.each(diffFixtures)("reviews persisted Runtime display patches: $name", ({ displayDiff, files }) => {
+    const item = makeChangeItem({ id: "item-1", diffContent: displayDiff });
+    render(
+      <ArtifactProvider value={artifactValue()}>
+        <TextReviewPanel sessionId="session-a" runId="run-2" items={[item]} loading={false}
+          onFeedback={vi.fn().mockResolvedValue(undefined)} disabled={false} />
+      </ArtifactProvider>,
+    );
+    expect(screen.getByText(`共 ${files.length} 个文件修改`)).toBeInTheDocument();
+    for (const { path, additions, deletions } of files) {
+      const button = screen.getByRole("button", { name: path });
+      expect(button).toHaveTextContent(`+${additions}`);
+      expect(button).toHaveTextContent(`-${deletions}`);
+    }
+  });
+
+  it("defaults to '最近一轮' and displays only current run changes", () => {
     const item1 = makeChangeItem({ id: "item-1", runId: "run-1", path: "src/old.ts" });
     const item2 = makeChangeItem({ id: "item-2", runId: "run-2", path: "src/current.ts" });
 
@@ -92,8 +117,8 @@ describe("TextReviewPanel", () => {
       </ArtifactProvider>,
     );
 
-    const turnTab = screen.getByRole("tab", { name: "最近一轮修改" });
-    const taskTab = screen.getByRole("tab", { name: "整个任务修改" });
+    const turnTab = screen.getByRole("tab", { name: "最近一轮" });
+    const taskTab = screen.getByRole("tab", { name: "整个任务" });
     expect(turnTab).toHaveAttribute("aria-selected", "true");
     expect(taskTab).toHaveAttribute("aria-selected", "false");
 
@@ -105,7 +130,7 @@ describe("TextReviewPanel", () => {
     expect(screen.queryByRole("button", { name: "src/old.ts" })).not.toBeInTheDocument();
   });
 
-  it("switches to '整个任务修改' and displays all changes across the session", () => {
+  it("switches to '整个任务' and displays all changes across the session", () => {
     const item1 = makeChangeItem({ id: "item-1", runId: "run-1", path: "src/old.ts" });
     const item2 = makeChangeItem({ id: "item-2", runId: "run-2", path: "src/current.ts" });
 
@@ -122,10 +147,10 @@ describe("TextReviewPanel", () => {
       </ArtifactProvider>,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "整个任务修改" }));
+    fireEvent.click(screen.getByRole("tab", { name: "整个任务" }));
 
-    const turnTab = screen.getByRole("tab", { name: "最近一轮修改" });
-    const taskTab = screen.getByRole("tab", { name: "整个任务修改" });
+    const turnTab = screen.getByRole("tab", { name: "最近一轮" });
+    const taskTab = screen.getByRole("tab", { name: "整个任务" });
     expect(turnTab).toHaveAttribute("aria-selected", "false");
     expect(taskTab).toHaveAttribute("aria-selected", "true");
 
@@ -135,7 +160,7 @@ describe("TextReviewPanel", () => {
     expect(screen.getByRole("button", { name: "src/old.ts" })).toBeInTheDocument();
   });
 
-  it("keeps '最近一轮修改' empty when the latest run has no patches", () => {
+  it("keeps '最近一轮' empty when the latest run has no patches", () => {
     const item1 = makeChangeItem({ id: "item-1", runId: "run-1", path: "src/old.ts" });
 
     render(
@@ -222,6 +247,41 @@ describe("TextReviewPanel", () => {
     // Click to collapse a.ts
     fireEvent.click(aBtn);
     expect(aBtn).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("allows collapsing when only one file is modified", () => {
+    const item = makeChangeItem({ id: "item-1", runId: "run-2", path: "src/single.ts" });
+
+    render(
+      <ArtifactProvider value={artifactValue()}>
+        <TextReviewPanel
+          sessionId="session-a"
+          runId="run-2"
+          items={[item]}
+          loading={false}
+          onFeedback={vi.fn().mockResolvedValue(undefined)}
+          disabled={false}
+        />
+      </ArtifactProvider>,
+    );
+
+    const fileBtn = screen.getByRole("button", { name: "src/single.ts" });
+    // Initially auto-expanded
+    expect(fileBtn).toHaveAttribute("aria-expanded", "true");
+
+    // Click to collapse
+    fireEvent.click(fileBtn);
+    expect(fileBtn).toHaveAttribute("aria-expanded", "false");
+
+    // Toolbar toggle button should now offer expanding
+    const toggleBtn = screen.getByRole("button", { name: "展开全部差异" });
+    fireEvent.click(toggleBtn);
+    expect(fileBtn).toHaveAttribute("aria-expanded", "true");
+
+    // Toolbar collapse all button collapses it and stays collapsed
+    const collapseBtn = screen.getByRole("button", { name: "折叠全部差异" });
+    fireEvent.click(collapseBtn);
+    expect(fileBtn).toHaveAttribute("aria-expanded", "false");
   });
 
   it("expands and collapses all files with the toolbar toggle button", () => {

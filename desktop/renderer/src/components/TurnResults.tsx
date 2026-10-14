@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff } from "react-diff-view";
 import { createPortal } from "react-dom";
 import type { Item, Run } from "../contracts.js";
+import { committedFileDiff, projectNetFileDiff, type ParsedFileDiff } from "../persisted-file-diff.js";
 import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
@@ -12,7 +13,6 @@ type ChangeState = "committed" | "partial" | "planned";
 type ArtifactKind = "document" | "pdf" | "presentation" | "spreadsheet" | "image" | "html" | "file";
 
 export interface TurnTextChange {
-  cumulative?: boolean;
   path: string;
   additions: number | undefined;
   deletions: number | undefined;
@@ -45,8 +45,7 @@ export interface TurnResultProjection {
 
 interface ParsedFileChange {
   path: string;
-  additions?: number;
-  deletions?: number;
+  file?: ParsedFileDiff;
   deleted: boolean;
 }
 
@@ -120,15 +119,7 @@ function parsedDiffChanges(diff: string): ParsedFileChange[] {
     return parseDiff(diff).flatMap((file) => {
       const path = normalizedPath(file.newPath === "/dev/null" ? file.oldPath : file.newPath);
       if (!path || path === "/dev/null") return [];
-      let additions = 0;
-      let deletions = 0;
-      for (const hunk of file.hunks) {
-        for (const change of hunk.changes) {
-          if (change.type === "insert") additions += 1;
-          if (change.type === "delete") deletions += 1;
-        }
-      }
-      return [{ path, additions, deletions, deleted: file.type === "delete" }];
+      return [{ path, file, deleted: file.type === "delete" }];
     });
   } catch {
     return [];
@@ -227,19 +218,30 @@ function artifactKey(artifact: TurnArtifact): string {
 
 export function projectTurnResults(items: Item[], runId: string): TurnResultProjection {
   const changes = new Map<string, TurnTextChange>();
+  const patches = new Map<string, Array<ParsedFileDiff | undefined>>();
   const artifacts = new Map<string, TurnArtifact>();
 
-  for (const item of items.filter((candidate) => candidate.runId === runId)) {
+  for (const item of items.filter((candidate) => candidate.runId === runId).sort((a, b) => a.ordinal - b.ordinal)) {
     const call = item.toolCall;
     if (!call) continue;
     const state = changeState(item);
     for (const change of recordedTextChanges(item)) {
+      const previousPath = change.file?.oldPath;
+      if (previousPath && previousPath !== change.path && !changes.has(change.path) && changes.has(previousPath)) {
+        changes.set(change.path, changes.get(previousPath)!);
+        patches.set(change.path, patches.get(previousPath)!);
+        changes.delete(previousPath);
+        patches.delete(previousPath);
+      }
+      const chain = patches.get(change.path) ?? [];
+      chain.push(committedFileDiff(item, change.file));
+      patches.set(change.path, chain);
       const current = changes.get(change.path);
       if (!current) {
         changes.set(change.path, {
           path: change.path,
-          additions: change.additions,
-          deletions: change.deletions,
+          additions: undefined,
+          deletions: undefined,
           state,
           deleted: change.deleted,
           runId,
@@ -249,9 +251,7 @@ export function projectTurnResults(items: Item[], runId: string): TurnResultProj
       } else {
         changes.set(change.path, {
           ...current,
-          additions: current.additions === undefined || change.additions === undefined ? undefined : current.additions + change.additions,
-          deletions: current.deletions === undefined || change.deletions === undefined ? undefined : current.deletions + change.deletions,
-          cumulative: true,
+          path: change.path,
           state: current.state === "partial" || state === "partial" ? "partial" : state,
           deleted: change.deleted,
           itemId: item.id,
@@ -264,6 +264,11 @@ export function projectTurnResults(items: Item[], runId: string): TurnResultProj
     }
   }
 
+  for (const [path, change] of changes) {
+    const net = projectNetFileDiff(patches.get(path) ?? []);
+    change.additions = net?.additions;
+    change.deletions = net?.deletions;
+  }
   const textChanges = [...changes.values()].sort((a, b) => a.path.localeCompare(b.path));
   const statsKnown = textChanges.every((change) => change.additions !== undefined && change.deletions !== undefined);
   return {
@@ -524,10 +529,10 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
   );
 }
 
-function ChangeStats({ additions, deletions, cumulative = false }: { additions: number | undefined; deletions: number | undefined; cumulative?: boolean }) {
+function ChangeStats({ additions, deletions }: { additions: number | undefined; deletions: number | undefined }) {
   return additions === undefined || deletions === undefined
     ? <span className="turn-result__stats turn-result__stats--unknown">行数未完整统计</span>
-    : <span className="turn-result__stats" title={cumulative ? "本轮各次补丁的累计增删，包含重复编辑，不是最终净差异。" : undefined}>{cumulative && <span className="turn-result__stats-label">累计</span>}<ins>+{additions}</ins><del>-{deletions}</del></span>;
+    : <span className="turn-result__stats" title="本轮开始到结束的净变化。"><ins className="git-review-stat">+{additions}</ins><del className="git-review-stat">-{deletions}</del></span>;
 }
 
 function ChangePath({ path }: { path: string }) {
@@ -565,7 +570,7 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
           <span className="turn-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={first.path} /></span>
           <span className="turn-result-card__title">
             <strong>{title}</strong>
-            <ChangeStats additions={projection.additions} deletions={projection.deletions} cumulative={projection.textChanges.some((change) => change.cumulative)} />
+            <ChangeStats additions={projection.additions} deletions={projection.deletions} />
           </span>
         </button>
         <div className="turn-result-card__actions">
@@ -588,7 +593,7 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
             {files.map((change) => (
               <button type="button" className="turn-result-file" key={`${change.path}:${change.itemId}`} onClick={() => review(change)} title={`审核 ${change.path}`} aria-label={`审核 ${change.path}`}>
                 <ChangePath path={change.path} />
-                <ChangeStats additions={change.additions} deletions={change.deletions} cumulative={change.cumulative === true} />
+                <ChangeStats additions={change.additions} deletions={change.deletions} />
               </button>
             ))}
           </div>

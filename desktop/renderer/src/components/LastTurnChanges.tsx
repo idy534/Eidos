@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Diff, Hunk, getChangeKey, parseDiff } from "react-diff-view";
 import type { Item } from "../contracts.js";
+import { committedFileDiff, projectNetFileDiff } from "../persisted-file-diff.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { userFacingError } from "../session-state.js";
 import { ToolTextView } from "./ToolTextView.js";
@@ -15,13 +16,6 @@ function cleanFilePath(file: { oldPath: string; newPath: string }): string {
 function cleanFocusPath(focus?: string): string | undefined {
   if (!focus) return undefined;
   return focus.replace(/^[ab]\//, "");
-}
-
-function matchesFocus(file: { oldPath: string; newPath: string }, focus?: string): boolean {
-  if (!focus) return true;
-  const clean = cleanFilePath(file);
-  const cleanFocus = cleanFocusPath(focus) ?? focus;
-  return clean === cleanFocus || file.oldPath === focus || file.newPath === focus;
 }
 
 function fallbackItemPath(item: Item): string | undefined {
@@ -59,18 +53,6 @@ function fallbackItemPath(item: Item): string | undefined {
   return undefined;
 }
 
-function computeDiffStats(hunks: Array<{ changes: Array<{ type: string }> }>): { additions: number; deletions: number } {
-  let additions = 0;
-  let deletions = 0;
-  for (const hunk of hunks) {
-    for (const change of hunk.changes) {
-      if (change.type === "insert") additions++;
-      else if (change.type === "delete") deletions++;
-    }
-  }
-  return { additions, deletions };
-}
-
 function FileDisclosureIcon({ expanded }: { expanded: boolean }) {
   return (
     <svg
@@ -97,6 +79,7 @@ export interface ItemReviewStats {
   deletions: number;
   count: number;
   allExpanded: boolean;
+  statsKnown: boolean;
 }
 
 interface FileChangeEntry {
@@ -110,8 +93,8 @@ interface FileChangeEntry {
 
 interface FileReviewSummary {
   path: string;
-  additions: number;
-  deletions: number;
+  additions: number | undefined;
+  deletions: number | undefined;
   changes: FileChangeEntry[];
   openPath?: string;
 }
@@ -143,9 +126,9 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
       const call = item.toolCall;
       if (!call) continue;
       if (call.changeDiffHash) {
-        const pathKey = `patch-${call.id}`;
+        const pathKey = fallbackItemPath(item) ?? `patch-${call.id}`;
         const existing = map.get(pathKey) ?? {
-          path: `补丁 ${call.id.slice(0, 8)}`,
+          path: fallbackItemPath(item) ?? `补丁 ${call.id.slice(0, 8)}`,
           additions: 0,
           deletions: 0,
           changes: [],
@@ -159,20 +142,30 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
         map.set(pathKey, existing);
         continue;
       }
-      if (!call.changeDiff) continue;
+      if (!call.changeDiff) {
+        if (item.kind === "file_change" || ["apply_patch", "write_file", "delete_file"].includes(call.toolName)) {
+          const missingPath = fallbackItemPath(item);
+          if (missingPath) {
+            const summary = map.get(missingPath) ?? { path: missingPath, additions: undefined, deletions: undefined, changes: [], openPath: missingPath };
+            summary.changes.push({ item, toolCallId: call.id });
+            map.set(missingPath, summary);
+          }
+        }
+        continue;
+      }
       const fallbackPath = fallbackItemPath(item);
       try {
-        const parsed = parseDiff(call.changeDiff).filter((f) => {
-          if (matchesFocus(f, focusPath)) return true;
-          if (!cleanFilePath(f) && fallbackPath && focusPath) {
-            return fallbackPath === (cleanFocusPath(focusPath) ?? focusPath);
-          }
-          return false;
-        });
+        const parsed = parseDiff(call.changeDiff);
         for (const file of parsed) {
           const cleanPath = cleanFilePath(file) || fallbackPath;
           if (!cleanPath) continue;
-          const stats = computeDiffStats(file.hunks);
+          if (file.oldPath !== cleanPath && !map.has(cleanPath) && map.has(file.oldPath)) {
+            const previous = map.get(file.oldPath)!;
+            map.delete(file.oldPath);
+            previous.path = cleanPath;
+            previous.openPath = cleanPath;
+            map.set(cleanPath, previous);
+          }
           const existing = map.get(cleanPath) ?? {
             path: cleanPath,
             additions: 0,
@@ -180,8 +173,6 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
             changes: [],
             openPath: cleanPath,
           };
-          existing.additions += stats.additions;
-          existing.deletions += stats.deletions;
           existing.changes.push({
             item,
             toolCallId: call.id,
@@ -205,23 +196,31 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
         map.set(pathKey, existing);
       }
     }
-    return Array.from(map.values()).sort((a, b) => a.path.localeCompare(b.path));
+    return [...map.values()].filter((summary) => !focusPath || !summary.openPath || summary.path === cleanFocusPath(focusPath))
+      .map((summary): FileReviewSummary => {
+        const net = projectNetFileDiff(summary.changes.map((change) => committedFileDiff(change.item, change.parsedFile)));
+        const last = summary.changes.at(-1);
+        return { ...summary, additions: net?.additions, deletions: net?.deletions,
+          changes: net && last ? [{ ...last, parsedFile: net.file }] : summary.changes };
+      }).sort((a, b) => a.path.localeCompare(b.path));
   }, [currentItems, focusPath]);
 
   const totalStats = useMemo(() => {
     let additions = 0;
     let deletions = 0;
     for (const file of fileSummaries) {
-      additions += file.additions;
-      deletions += file.deletions;
+      additions += file.additions ?? 0;
+      deletions += file.deletions ?? 0;
     }
-    return { additions, deletions };
+    return { additions, deletions, known: fileSummaries.every((file) => file.additions !== undefined && file.deletions !== undefined) };
   }, [fileSummaries]);
 
   const focused = cleanFocusPath(focusPath);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => (
     focused ? new Set([focused]) : new Set()
   ));
+
+  const autoExpandedKeyRef = useRef<string>("");
 
   useEffect(() => {
     if (focused) {
@@ -230,11 +229,16 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
   }, [focused]);
 
   useEffect(() => {
-    if (fileSummaries.length === 1 && expandedKeys.size === 0) {
-      const first = fileSummaries[0];
-      if (first) setExpandedKeys(new Set([first.path]));
+    if (focused) return;
+    const currentKey = `${entireTask}:${runId}:${fileSummaries.map((f) => f.path).join(",")}`;
+    if (!fileSummaries.length) return;
+    if (autoExpandedKeyRef.current !== currentKey) {
+      autoExpandedKeyRef.current = currentKey;
+      if (fileSummaries.length === 1 && fileSummaries[0]) {
+        setExpandedKeys(new Set([fileSummaries[0].path]));
+      }
     }
-  }, [fileSummaries, expandedKeys.size]);
+  }, [fileSummaries, focused, entireTask, runId]);
 
   const allFilesExpanded = fileSummaries.length > 0
     && fileSummaries.every((f) => expandedKeys.has(f.path));
@@ -245,8 +249,9 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
       deletions: totalStats.deletions,
       count: fileSummaries.length,
       allExpanded: allFilesExpanded,
+      statsKnown: totalStats.known,
     });
-  }, [onStats, totalStats.additions, totalStats.deletions, fileSummaries.length, allFilesExpanded]);
+  }, [onStats, totalStats.additions, totalStats.deletions, totalStats.known, fileSummaries.length, allFilesExpanded]);
 
   useEffect(() => {
     if (!expandSignal) return;
@@ -380,8 +385,10 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
                   </span>
                   <code>{file.path}</code>
                   <span className="git-file-stats">
-                    <span className="git-review-stat--addition">+{file.additions}</span>
-                    <span className="git-review-stat--deletion">-{file.deletions}</span>
+                    {file.additions !== undefined && file.deletions !== undefined ? <>
+                      <span className="git-review-stat--addition">+{file.additions}</span>
+                      <span className="git-review-stat--deletion">-{file.deletions}</span>
+                    </> : <span>行数未完整统计</span>}
                   </span>
                 </button>
                 {file.openPath && (

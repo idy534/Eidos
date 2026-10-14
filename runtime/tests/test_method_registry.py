@@ -23,6 +23,7 @@ from eidos_runtime.protocol.input_context import DraftResponse
 from eidos_runtime.protocol.planning import PlanResponse
 from eidos_runtime.protocol.server import RuntimeServer
 from eidos_runtime.protocol.sidebar import SidebarPinsResponse
+from eidos_runtime.protocol.queued_runs import QueuedRunChangeResponse
 
 
 class Params(RootModel[dict[str, object]]):
@@ -212,6 +213,7 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         MemoryState,
         MemoryActionResult,
         SidebarPinsResponse,
+        QueuedRunChangeResponse,
     }
     assert all(
         not registration.response_type.__pydantic_root_model__
