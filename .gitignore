@@ -3,6 +3,7 @@
 .env.*
 
 .idea/
+.cache/
 .venv/
 .workbuddy/
 __pycache__/

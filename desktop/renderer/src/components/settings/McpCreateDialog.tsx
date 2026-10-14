@@ -295,7 +295,7 @@ export function McpCreateDialog({
             <span>工作目录</span>
             <input
               aria-label="工作目录"
-              placeholder="留空使用用户主目录"
+              placeholder={`留空使用 ~/Eidos/eidos-mcp/${draft.serverId.trim() || "<服务名>"}/`}
               value={draft.cwd}
               disabled={busy}
               onChange={(event) => setDraft({ ...draft, cwd: event.target.value })}

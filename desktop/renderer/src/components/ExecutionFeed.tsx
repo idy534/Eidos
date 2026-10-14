@@ -450,7 +450,7 @@ const RunSegment = memo(function RunSegment({
       {isLast
         && segment.response.length === 0
         && TERMINAL_RUN_STATUSES.has(run.status)
-        && <TurnResults run={run} items={resultItems} showTextChanges={true} />}
+        && <TurnResults run={run} items={resultItems} showTextChanges={true} className="turn-results--standalone" />}
     </>
   );
 });

@@ -286,11 +286,16 @@ describe("App & Runtime Lifecycle behavior", () => {
     const session: Session = {
       ...startupSession,
       id: "git-session",
-      title: "Review workspace",
+      title: "Review Alpha",
       taskStatus: "in_progress",
       workspaceRoot: project.workspaceRoot,
       executionMode: "local",
       project,
+    };
+    const session2: Session = {
+      ...session,
+      id: "git-session-2",
+      title: "Review Beta",
     };
     const snapshot: SessionSnapshot = {
       session,
@@ -299,10 +304,14 @@ describe("App & Runtime Lifecycle behavior", () => {
       stepResolutions: [],
       throughEventId: 0,
     };
+    const snapshot2: SessionSnapshot = {
+      ...snapshot,
+      session: session2,
+    };
     setupMockRuntime({
       listProjects: vi.fn().mockResolvedValue({ items: [project] }),
-      listSessions: vi.fn().mockResolvedValue({ items: [session] }),
-      readSession: vi.fn().mockResolvedValue(snapshot),
+      listSessions: vi.fn().mockResolvedValue({ items: [session, session2] }),
+      readSession: vi.fn().mockImplementation(async (id: string) => id === "git-session-2" ? snapshot2 : snapshot),
       listEvents: vi.fn().mockResolvedValue({ items: [], throughEventId: 0, hasMore: false }),
       readSessionGitStatus: vi.fn().mockResolvedValue({
         worktreeId: null,
@@ -445,6 +454,11 @@ describe("App & Runtime Lifecycle behavior", () => {
     expect(screen.getByRole("button", { name: "打开工作区工具" })).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".workspace-body")).toHaveClass("workspace-body--session-centered");
     fireEvent.click(screen.getByRole("button", { name: "关闭提交和推送" }));
+    expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
+
+    // 切换 session 时，之前已关闭的“提交和推送”弹窗不会再次弹出
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(session2.title!) }));
+    expect(await screen.findByRole("heading", { name: session2.title! })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
     unmount();
   });

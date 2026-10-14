@@ -1014,6 +1014,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   useEffect(() => {
     setReviewRequest(undefined);
+    setWorkflowOpenRequest(0);
   }, [currentSnapshot?.session.id]);
 
   function getDockResizeBounds(): { min: number; max: number } {
@@ -1892,6 +1893,7 @@ export function AppShell({ runtime }: AppShellProps) {
           }
           onRefresh={gitReviewActions.refresh}
           openRequest={workflowOpenRequest}
+          onClose={() => setWorkflowOpenRequest(0)}
           dialogOnly
           onCreateBranch={
             sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)

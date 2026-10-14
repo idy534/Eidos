@@ -18,6 +18,10 @@
   margin: 1rem 0 0;
 }
 
+.turn-results--standalone {
+  margin-bottom: 1.25rem;
+}
+
 .turn-result-card,
 .artifact-result-card {
   border: 1px solid var(--result-line);

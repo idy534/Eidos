@@ -198,7 +198,7 @@ class PreparedPatch:
 class ResolvedAuthorizedPath:
     root: Path
     relative_path: str
-    authority: Literal["workspace", "active_skill", "mcp_output", "full_access"]
+    authority: Literal["workspace", "active_skill", "full_access"]
     writable: bool
 
 
@@ -480,7 +480,6 @@ class ToolExecutor:
         self._search_sessions: dict[str, _SearchSession] = {}
         self._search_closed = False
         self._active_skill_roots: Callable[[], tuple[Path, ...]] = lambda: ()
-        self._mcp_output_roots: Callable[[], tuple[Path, ...]] = lambda: ()
         self.supports_custom_tools = supports_custom_tools
         self.supports_tool_grammar = supports_tool_grammar
         self.registry = builtin_tool_registry(
@@ -600,9 +599,6 @@ class ToolExecutor:
         self, roots: Callable[[], tuple[Path, ...]]
     ) -> None:
         self._active_skill_roots = roots
-
-    def set_mcp_output_roots(self, roots: Callable[[], tuple[Path, ...]]) -> None:
-        self._mcp_output_roots = roots
 
     def has_search_session(self, session_id: str) -> bool:
         with self._search_lock:
@@ -1690,7 +1686,6 @@ class ToolExecutor:
             value,
             self.workspace.path,
             tuple(self._active_skill_roots()),
-            tuple(self._mcp_output_roots()),
         )
 
     @contextmanager
@@ -2017,7 +2012,6 @@ def resolve_read_path(
     value: str,
     workspace_root: Path,
     active_skill_roots: tuple[Path, ...],
-    mcp_output_roots: tuple[Path, ...] = (),
 ) -> ResolvedAuthorizedPath:
     if (
         not isinstance(value, str)
@@ -2039,11 +2033,10 @@ def resolve_read_path(
             True,
         )
 
-    roots: list[tuple[Path, Literal["active_skill", "mcp_output", "workspace"], bool]] = [
+    roots: list[tuple[Path, Literal["active_skill", "workspace"], bool]] = [
         (Path(root), "active_skill", False)
         for root in active_skill_roots
     ]
-    roots.extend((Path(root), "mcp_output", False) for root in mcp_output_roots)
     roots.append((workspace_root, "workspace", True))
     for root, authority, writable in sorted(
         roots, key=lambda item: len(item[0].parts), reverse=True

@@ -9,11 +9,11 @@ import os
 from pathlib import Path
 import signal
 import shutil
+import stat
 import sys
 import tempfile
 import threading
 import time
-import uuid
 from typing import Callable, cast
 
 import anyio
@@ -22,8 +22,6 @@ from mcp.client.stdio import stdio_client
 from mcp import types as mcp_types
 
 from eidos_runtime.extensions.contracts import McpServerConfigV1
-from eidos_runtime.extensions.mcp_environment import McpSocketDirectory
-from eidos_runtime.extensions.mcp_outputs import McpOutputDirectory, is_playwright_server
 from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog, PluginImportError
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
@@ -98,7 +96,6 @@ class McpConnection:
         self,
         *,
         plugin_root: Path,
-        runtime_root: Path,
         workspace_root: Path,
         config: McpServerConfigV1,
         env_values: dict[str, str] | None = None,
@@ -106,7 +103,6 @@ class McpConnection:
         async_kernel: RuntimeAsyncKernel,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
-        output_directory: McpOutputDirectory,
     ) -> None:
         self.plugin_root = plugin_root
         self.workspace_root = workspace_root
@@ -118,10 +114,14 @@ class McpConnection:
         self.closed = threading.Event()
         self.tools: tuple[mcp_types.Tool, ...] = ()
         self.error_code: str | None = None
-        self.runtime_root = runtime_root / uuid.uuid4().hex
-        self._socket_directory: McpSocketDirectory | None = None
-        self.output_directory = output_directory
-        self.playwright_server = is_playwright_server(config)
+        # Keep the whole connection tree short, including TMPDIR and the
+        # server's own socket subdirectories. Never inherit a deep temp root.
+        try:
+            parent = Path("/private/tmp" if sys.platform == "darwin" else "/tmp").resolve(strict=True)
+            self.runtime_root = Path(tempfile.mkdtemp(prefix="eidos-mcp-", dir=parent))
+            self._runtime_identity = self.runtime_root.lstat()
+        except OSError:
+            raise McpUnavailable("mcp_temporary_directory_unavailable") from None
         self.resources = resource_registry
         self.resource: RuntimeResource | None = None
         self._service: RuntimeAsyncTask[None] | None = None
@@ -248,24 +248,17 @@ class McpConnection:
                     else "MCP_CANCEL_TIMEOUT"
                 )
             raise McpShutdownTimeout("MCP_SHUTDOWN_TIMEOUT")
-        temporary = self._socket_directory
-        if temporary is not None:
+        if getattr(self, "_runtime_identity", None) is not None:
             try:
-                temporary.cleanup()
+                self._verify_runtime_directory()
+                shutil.rmtree(self.runtime_root)
+            except FileNotFoundError:
+                pass
             except OSError:
                 LOGGER.warning(
-                    "MCP socket directory cleanup deferred",
+                    "MCP runtime directory cleanup deferred",
                     extra={"mcp_server_id": self.config.id},
                 )
-            else:
-                self._socket_directory = None
-        try:
-            resolved = self.runtime_root.resolve(strict=False)
-            parent = self.runtime_root.parent.resolve(strict=False)
-            if parent in resolved.parents:
-                shutil.rmtree(resolved, ignore_errors=True)
-        except OSError:
-            pass
         resource = getattr(self, "resource", None)
         if resource is not None:
             resource.close()
@@ -478,8 +471,10 @@ class McpConnection:
                     self._callbacks_quiescent.set()
 
     def _prepare_parameters(self) -> StdioServerParameters:
-        self.runtime_root.mkdir(mode=0o700, parents=True)
-        os.chmod(self.runtime_root, 0o700)
+        try:
+            self._verify_runtime_directory()
+        except OSError:
+            raise McpUnavailable("mcp_temporary_directory_unavailable") from None
         executable = self.config.executable
         if "/" in executable and not Path(executable).is_absolute():
             executable = str(self.plugin_root / executable)
@@ -487,51 +482,19 @@ class McpConnection:
             executable = str(runtime_python_executable())
         arguments = list(self.config.argv)
         environment = {
+            "HOME": str(self.runtime_root / "home"),
+            "TMPDIR": str(self.runtime_root / "tmp"),
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
         }
-        inherited_tmp = os.environ.get("TMPDIR")
-        if inherited_tmp is not None:
-            environment["TMPDIR"] = inherited_tmp
+        Path(environment["HOME"]).mkdir(mode=0o700)
+        Path(environment["TMPDIR"]).mkdir(mode=0o700)
         for name in self.config.env_names:
             value = os.environ.get(name)
             if value is not None:
                 environment[name] = value
         environment.update(self.env_values)
-        try:
-            self.output_directory.verify()
-            if not environment.get("HOME"):
-                environment["HOME"] = str(self.output_directory.home_path())
-        except (OSError, ValueError):
-            self.error_code = "mcp_output_directory_unavailable"
-            raise McpUnavailable(self.error_code) from None
-        environment["EIDOS_MCP_OUTPUT_DIR"] = str(self.output_directory.path)
-        try:
-            if not environment.get("TMPDIR"):
-                environment["TMPDIR"] = tempfile.gettempdir()
-            temporary_path = Path(environment["TMPDIR"])
-            if not temporary_path.is_absolute():
-                temporary_path = self.plugin_root / temporary_path
-            sandbox_tmp = temporary_path.resolve(strict=False)
-        except (OSError, ValueError):
-            self.error_code = "mcp_temporary_directory_unavailable"
-            raise McpUnavailable(self.error_code) from None
-        # Inherited TMPDIR is shared and never owned or cleaned by a connection.
-        # AF_UNIX sockets still need a separate, bounded path.
-        try:
-            self._socket_directory = McpSocketDirectory.create()
-        except OSError:
-            self.error_code = "mcp_temporary_directory_unavailable"
-            raise McpUnavailable(self.error_code) from None
-        environment["EIDOS_MCP_SOCKET_DIR"] = str(self._socket_directory.path)
-        socket_root = environment["EIDOS_MCP_SOCKET_DIR"]
-        if self.playwright_server:
-            environment.setdefault("PLAYWRIGHT_MCP_OUTPUT_DIR", str(self.output_directory.path))
-            environment.setdefault("PLAYWRIGHT_MCP_FILE_PATHS", "absolute")
-            if not environment.get("PWTEST_SOCKETS_DIR"):
-                environment["PWTEST_SOCKETS_DIR"] = socket_root
-            socket_root = environment["PWTEST_SOCKETS_DIR"]
         if self.sandbox:
             if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
                 raise McpUnavailable("mcp_sandbox_unavailable")
@@ -545,9 +508,7 @@ class McpConnection:
                 f"-DPLUGIN_ROOT={self.plugin_root}",
                 f"-DWORKSPACE_ROOT={self.workspace_root}",
                 f"-DSANDBOX_HOME={environment['HOME']}",
-                f"-DSANDBOX_TMP={sandbox_tmp}",
-                f"-DMCP_OUTPUT_ROOT={self.output_directory.path}",
-                f"-DMCP_SOCKET_ROOT={socket_root}",
+                f"-DSANDBOX_TMP={environment['TMPDIR']}",
                 *python_runtime_policy_arguments(),
                 "--", executable, *arguments,
             ]
@@ -565,6 +526,14 @@ class McpConnection:
             encoding="utf-8",
             encoding_error_handler="strict",
         )
+
+    def _verify_runtime_directory(self) -> None:
+        current = self.runtime_root.lstat()
+        expected = self._runtime_identity
+        if not stat.S_ISDIR(current.st_mode) or (
+            current.st_dev, current.st_ino, current.st_uid
+        ) != (expected.st_dev, expected.st_ino, expected.st_uid):
+            raise OSError("mcp_runtime_directory_changed")
 
 
 class McpToolAdapter:
@@ -585,21 +554,6 @@ class McpToolAdapter:
     def execute(
         self, arguments: dict[str, object], cancel: threading.Event
     ) -> dict[str, object]:
-        directory = self.connection.output_directory
-        if directory is not None:
-            try:
-                directory.verify()
-            except (OSError, ValueError):
-                result = _result("error", "mcp_output_directory_unavailable", {})
-                result["toolName"] = self.local_name
-                return result
-            if self.connection.playwright_server:
-                try:
-                    arguments = directory.playwright_arguments(self.remote_name, arguments)
-                except ValueError:
-                    result = _result("error", "TOOL_ARGUMENT_CONTRACT_VIOLATION", {})
-                    result["toolName"] = self.local_name
-                    return result
         result = dict(self.connection.call(self.remote_name, arguments, cancel))
         result["toolName"] = self.local_name
         if self.output_validator is None or result.get("outcome") != "success":
@@ -642,7 +596,6 @@ class McpManager:
         async_kernel: RuntimeAsyncKernel | None = None,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
-        run_id: str | None = None,
     ) -> None:
         self.plugins = plugins
         self.snapshot = snapshot
@@ -650,7 +603,6 @@ class McpManager:
         self.async_kernel = async_kernel
         self.sandbox = sandbox
         self.resources = resource_registry
-        self.run_id = run_id or str(uuid.uuid4())
         self.connections: list[McpConnection] = []
         self._entries: tuple[ToolRegistryEntry, ...] = ()
         self._dirty = threading.Event()
@@ -697,34 +649,27 @@ class McpManager:
                     server, consented=True, error_code="mcp_connection_lost"
                 )
                 continue
+            connection = None
             try:
-                output_directory = McpOutputDirectory.create(plugin_id, config.id, self.run_id)
-            except (OSError, ValueError):
-                self.plugins.store.set_mcp_server_state(
-                    server, consented=True, error_code="mcp_output_directory_unavailable"
+                connection = McpConnection(
+                    plugin_root=plugin_root,
+                    workspace_root=self.workspace_root,
+                    config=config,
+                    env_values=env_values,
+                    async_kernel=self.async_kernel,
+                    on_list_changed=lambda plugin_id=plugin_id, server_id=config.id: self._list_changed(
+                        plugin_id, server_id
+                    ),
+                    sandbox=self.sandbox,
+                    resource_registry=self.resources,
                 )
-                continue
-            connection = McpConnection(
-                plugin_root=plugin_root,
-                runtime_root=self.plugins.store.data_directory / "extensions" / "mcp-runtime",
-                workspace_root=self.workspace_root,
-                config=config,
-                env_values=env_values,
-                async_kernel=self.async_kernel,
-                on_list_changed=lambda plugin_id=plugin_id, server_id=config.id: self._list_changed(
-                    plugin_id, server_id
-                ),
-                sandbox=self.sandbox,
-                resource_registry=self.resources,
-                output_directory=output_directory,
-            )
-            try:
                 tools = connection.start()
             except McpUnavailable as error:
                 self.plugins.store.set_mcp_server_state(
                     server, consented=True, error_code=str(error)
                 )
-                connection.close()
+                if connection is not None:
+                    connection.close()
                 continue
             self.connections.append(connection)
             entries.extend(_valid_tool_entries(connection, tools, server))
@@ -775,18 +720,6 @@ class McpManager:
         if failure is not None:
             raise failure
         return True
-
-    def output_roots(self) -> tuple[Path, ...]:
-        roots: list[Path] = []
-        for connection in self.connections:
-            directory = connection.output_directory
-            if directory is not None:
-                try:
-                    directory.verify()
-                except (OSError, ValueError):
-                    continue
-                roots.append(directory.path)
-        return tuple(roots)
 
     def _list_changed(self, plugin_id: str, server_id: str) -> None:
         self._dirty.set()
@@ -923,11 +856,7 @@ def _tool_entry(
     return ToolRegistryEntry(
         spec=ToolSpec.model_validate({
             "name": name,
-            "description": (tool.description or f"MCP tool {tool.name}") + (
-                f"\nMCP output directory: {connection.output_directory.path}. "
-                "Relative output filenames are saved here."
-                if connection.playwright_server and connection.output_directory is not None else ""
-            ),
+            "description": tool.description or f"MCP tool {tool.name}",
             "sideEffect": "external",
             "approvalRequired": True,
             "timeoutSeconds": connection.config.tool_timeout_seconds,

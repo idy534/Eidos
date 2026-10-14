@@ -117,6 +117,52 @@ describe("Run failure presentation", () => {
     expect(screen.queryByText("MODEL_PROTOCOL_ERROR")).not.toBeInTheDocument();
     expect(screen.queryByText("TOOL_ARGUMENT_CONTRACT_VIOLATION")).not.toBeInTheDocument();
   });
+
+  it("renders standalone turn results with proper standalone styling before run notice when canceled during editing", () => {
+    const run: Run = { ...baseRun, status: "canceled" };
+    const diff = "diff --git a/test.ts b/test.ts\n--- a/test.ts\n+++ b/test.ts\n@@ -1,1 +1,2 @@\n-old\n+new\n+added\n";
+    const editItem: Item = {
+      id: "edit-item",
+      sessionId: run.sessionId,
+      runId: run.id,
+      ordinal: 1,
+      kind: "file_change",
+      status: "completed",
+      createdAt: 1_000,
+      toolCall: {
+        id: "tool-edit-feed",
+        itemId: "edit-item",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "provider-edit-feed",
+        toolName: "apply_patch",
+        status: "completed",
+        startedAt: 1_000,
+        completedAt: 1_100,
+        changeDiff: diff,
+      },
+    };
+    const { container } = render(
+      <ExecutionFeed
+        items={[
+          { id: "user", ordinal: 0, sessionId: run.sessionId, runId: run.id, kind: "user_message", status: "completed", createdAt: 1_000, content: "请修改代码" },
+          editItem,
+        ]}
+        runs={[run]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+    const turnResultsSection = container.querySelector(".turn-results");
+    expect(turnResultsSection).toBeInTheDocument();
+    expect(turnResultsSection).toHaveClass("turn-results--standalone");
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("任务已取消。");
+    expect(notice).toHaveClass("run-notice", "run-notice--neutral");
+  });
 });
 
 describe("ExecutionFeed chat typography scope", () => {

@@ -1451,9 +1451,6 @@ class ExternalToolHandler:
             "timeoutSeconds": runtime.spec.timeout_seconds,
             "envNames": list(config.env_names),
         }
-        output_directory = getattr(connection, "output_directory", None)
-        if output_directory is not None:
-            details["outputDirectory"] = str(output_directory.path)
         prepared = PreparedToolExecution(
             approval_description={
                 "kind": "external_tool",
@@ -1468,7 +1465,6 @@ class ExternalToolHandler:
                 "provenance": details.get("provenance"),
                 "permissionProfile": details.get("permissionProfile"),
                 "timeoutSeconds": details.get("timeoutSeconds"),
-                "outputDirectory": details.get("outputDirectory"),
             },
         )
         approval, verified = self.dependencies.execute_side_effect(

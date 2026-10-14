@@ -48,7 +48,6 @@ class ViewImageRootAuthority:
 
     workspace_root: Path
     active_skill_roots: tuple[Path, ...] = ()
-    mcp_output_roots: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         canonical_workspace = _canonical_root(self.workspace_root)
@@ -61,14 +60,10 @@ class ViewImageRootAuthority:
                 seen.add(canonical)
         object.__setattr__(self, "workspace_root", canonical_workspace)
         object.__setattr__(self, "active_skill_roots", tuple(canonical_skills))
-        object.__setattr__(self, "mcp_output_roots", tuple(
-            _canonical_root(root) for root in self.mcp_output_roots
-        ))
 
     @classmethod
     def from_skill_access(
-        cls, workspace_root: Path, skill_access: object,
-        *, mcp_output_roots: tuple[Path, ...] = (),
+        cls, workspace_root: Path, skill_access: object
     ) -> ViewImageRootAuthority:
         records = getattr(skill_access, "records", None)
         if not callable(records):
@@ -76,11 +71,11 @@ class ViewImageRootAuthority:
         roots = tuple(
             Path(getattr(record, "canonical_root")) for record in records()
         )
-        return cls(workspace_root, roots, mcp_output_roots)
+        return cls(workspace_root, roots)
 
     @property
     def roots(self) -> tuple[Path, ...]:
-        return (self.workspace_root, *self.active_skill_roots, *self.mcp_output_roots)
+        return (self.workspace_root, *self.active_skill_roots)
 
 # These aliases make the authority seam discoverable to callers that describe
 # the same object as image roots rather than a view-image authority.

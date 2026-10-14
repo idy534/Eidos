@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import socket
 import subprocess
@@ -9,16 +8,12 @@ import sys
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
-from uuid import uuid4
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.mcp import McpManager  # noqa: E402
-from eidos_runtime.extensions.mcp_environment import McpSocketDirectory  # noqa: E402
-from eidos_runtime.extensions.mcp_outputs import McpOutputDirectory  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
@@ -55,9 +50,6 @@ class McpSeatbeltTests(unittest.TestCase):
         (self.plugin / "plugin.txt").write_text("plugin", encoding="utf-8")
         (self.workspace / "workspace.txt").write_text("workspace", encoding="utf-8")
         (self.state / "secret.txt").write_text("state-secret", encoding="utf-8")
-        environment_patch = patch.dict(os.environ, {"TMPDIR": str(self.sandbox_tmp)})
-        environment_patch.start()
-        self.addCleanup(environment_patch.stop)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -89,26 +81,6 @@ class McpSeatbeltTests(unittest.TestCase):
         ))
 
     def test_official_client_runs_fixture_through_workspace_read_profile(self) -> None:
-        with patch.dict(os.environ, {"TMPDIR": str(self.sandbox_tmp) + "/../sandbox-tmp/"}):
-            self._check_official_client("workspace_read")
-
-    def test_official_client_binds_socket_through_connector_profile(self) -> None:
-        self._check_official_client("connector")
-
-    def test_short_socket_directory_does_not_grant_neighbor_writes(self) -> None:
-        owned = McpSocketDirectory.create()
-        neighbor = McpSocketDirectory.create()
-        try:
-            for profile in ("connector", "workspace_read"):
-                with self.subTest(profile=profile):
-                    self.assertTrue(self._run(profile, "open(%r,'w').write('owned')" % str(owned.path / "allowed"), socket_root=owned.path))
-                    self.assertFalse(self._run(profile, "open(%r,'w').write('neighbor')" % str(neighbor.path / "denied"), socket_root=owned.path))
-            self.assertFalse((neighbor.path / "denied").exists())
-        finally:
-            owned.cleanup()
-            neighbor.cleanup()
-
-    def _check_official_client(self, profile: str) -> None:
         source = self.state.parent / "source-plugin"
         source.mkdir()
         fixture = Path(__file__).parent / "fixtures" / "mcp_fixture.py"
@@ -125,7 +97,7 @@ class McpSeatbeltTests(unittest.TestCase):
                 "executable": PYTHON,
                 "argv": ["server.py"],
                 "envNames": [],
-                "permissionProfile": profile,
+                "permissionProfile": "workspace_read",
                 "startupTimeoutSeconds": 15,
                 "toolTimeoutSeconds": 2,
                 "enabled": True,
@@ -153,71 +125,13 @@ class McpSeatbeltTests(unittest.TestCase):
             echo = next(value for value in entries if value.spec.name.endswith("__echo"))
             result = echo.adapter.execute({"message": "native"}, threading.Event())
             self.assertEqual(result["data"]["text"], "native")
-            environment_tool = next(value for value in entries if value.spec.name.endswith("__environment"))
-            environment_result = environment_tool.adapter.execute({}, threading.Event())
-            environment = json.loads(environment_result["data"]["text"])
-            socket_root = Path(environment["socketDir"])
-            output_root = Path(environment["outputDir"])
-            self.assertEqual(manager.output_roots(), (output_root,))
-            self.assertEqual(Path(environment["home"]), output_root.parent / "h")
-            self.assertEqual(environment["tmpdir"], os.environ["TMPDIR"])
-            self.assertEqual(Path(environment["tmpdir"]).resolve(), self.sandbox_tmp)
-            state_tool = next(value for value in entries if value.spec.name.endswith("__directory_state"))
-            state = state_tool.adapter.execute({}, threading.Event())
-            self.assertEqual(state["code"], "ok")
-            self.assertLessEqual(len(environment["socketDir"].encode("utf-8")), 48)
-            if profile == "connector":
-                probe = next(value for value in entries if value.spec.name.endswith("__socket_probe"))
-                result = probe.adapter.execute({}, threading.Event())
-                self.assertEqual(result["outcome"], "success")
-                self.assertLessEqual(json.loads(result["data"]["text"])["socketBytes"], 103)
         finally:
             manager.close()
             kernel.close()
             self.assertEqual(resources.active_resources(), ())
             store.close()
-        self.assertFalse(socket_root.exists())
-        self.assertTrue(output_root.is_dir())
-        self.assertTrue((output_root.parent / "h").is_dir())
-        self.assertFalse((output_root / "t").exists())
-        self.assertEqual((self.sandbox_tmp / "fixture-state.txt").read_text(), "fixture state")
 
-    def test_output_directory_writes_do_not_grant_neighbor_run_access(self) -> None:
-        current = McpOutputDirectory.create("manual", "browser", str(uuid4()))
-        neighbor = McpOutputDirectory.create("manual", "browser", str(uuid4()))
-        other_service = McpOutputDirectory.create("manual", "other", str(uuid4()))
-        self.sandbox_home = current.home_path()
-        other_home = other_service.home_path()
-        shared_temp = self.sandbox_tmp / "shared-temporary.txt"
-        for profile in ("connector", "workspace_read"):
-            with self.subTest(profile=profile):
-                self.assertTrue(self._run(
-                    profile, "open(%r,'w').write('state')" % str(self.sandbox_home / "cache.txt"),
-                    output_root=current.path,
-                ))
-                self.assertTrue(self._run(
-                    profile, "open(%r,'w').write('shared')" % str(shared_temp),
-                    output_root=current.path,
-                ))
-                self.assertTrue(self._run(
-                    profile, "open(%r,'w').write('output')" % str(current.path / "result.txt"),
-                    output_root=current.path,
-                ))
-                self.assertFalse(self._run(
-                    profile, "open(%r,'w').write('denied')" % str(neighbor.path / "result.txt"),
-                    output_root=current.path,
-                ))
-                self.assertFalse(self._run(
-                    profile, "open(%r,'w').write('denied')" % str(other_home / "state.txt"),
-                    output_root=current.path,
-                ))
-        self.assertEqual((current.path / "result.txt").read_text(), "output")
-        self.assertFalse((neighbor.path / "result.txt").exists())
-
-    def _run(
-        self, profile: str, code: str, *,
-        output_root: Path | None = None, socket_root: Path | None = None,
-    ) -> bool:
+    def _run(self, profile: str, code: str) -> bool:
         command = [
             SANDBOX_EXEC,
             "-f", str(SANDBOX_DIR / f"mcp_{profile}.sbpl"),
@@ -225,8 +139,6 @@ class McpSeatbeltTests(unittest.TestCase):
             f"-DWORKSPACE_ROOT={self.workspace}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
-            f"-DMCP_OUTPUT_ROOT={output_root or self.sandbox_tmp}",
-            f"-DMCP_SOCKET_ROOT={socket_root or self.sandbox_tmp}",
             *python_runtime_policy_arguments(),
             "--", PYTHON, "-c", code,
         ]

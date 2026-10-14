@@ -10,7 +10,6 @@ from pathlib import Path
 def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every Runtime test owns its workspace root, including child Runtime processes."""
     monkeypatch.setenv("EIDOS_PROJECTLESS_ROOT", str(tmp_path / "Eidos"))
-    monkeypatch.setenv("EIDOS_MCP_OUTPUT_ROOT", str(tmp_path / "eidos-mcp"))
 
 
 @pytest.fixture

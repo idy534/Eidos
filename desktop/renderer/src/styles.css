@@ -24,6 +24,7 @@
 @import "./components/InputPicker.css";
 @import "./components/WorkspaceDock.css";
 @import "./components/ArtifactPreview.css";
+@import "./components/PdfViewer.css";
 @import "./components/agents.css";
 @import "./components/settings/MemorySettings.css";
 @import "./components/response-actions.css";

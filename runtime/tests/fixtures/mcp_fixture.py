@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
-import socket
 import subprocess
 import sys
 import time
@@ -87,21 +84,6 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
-    {
-        "name": "environment",
-        "description": "Report the fixture's effective private directories",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "socket_probe",
-        "description": "Bind a Unix socket below the fixture's socket directory",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "directory_state",
-        "description": "Check and create state in the fixture's HOME and TMPDIR",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
 ]
 
 listed_once = False
@@ -142,32 +124,7 @@ for line in sys.stdin:
             send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
     elif method == "tools/call":
         name = message["params"]["name"]
-        if name == "directory_state":
-            state = {}
-            for key, variable in (("home", "HOME"), ("tmpdir", "TMPDIR")):
-                marker = Path(os.environ[variable]) / "fixture-state.txt"
-                state[key] = marker.exists()
-                marker.write_text("fixture state", encoding="utf-8")
-            content = [{"type": "text", "text": json.dumps(state)}]
-            is_error = False
-        elif name == "socket_probe":
-            directory = Path(os.environ["EIDOS_MCP_SOCKET_DIR"]) / "browser"
-            directory.mkdir(parents=True, exist_ok=True)
-            path = directory / "0123456789abcdef.sock"
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-                listener.bind(str(path))
-                listener.listen(1)
-            path.unlink()
-            content = [{"type": "text", "text": json.dumps({"socketBytes": len(os.fsencode(path))})}]
-            is_error = False
-        elif name == "environment":
-            content = [{"type": "text", "text": json.dumps({
-                "home": os.environ["HOME"], "tmpdir": os.environ["TMPDIR"],
-                "outputDir": os.environ.get("EIDOS_MCP_OUTPUT_DIR"),
-                "socketDir": os.environ.get("EIDOS_MCP_SOCKET_DIR"),
-            })}]
-            is_error = False
-        elif name == "crash":
+        if name == "crash":
             raise SystemExit(7)
         elif name == "spawn_child":
             child = subprocess.Popen(

@@ -61,6 +61,7 @@
     "katex": "^0.16.47",
     "mermaid": "^11.17.2",
     "node-pty": "1.1.0",
+    "pdfjs-dist": "^6.4.299",
     "react": "^19.2.0",
     "react-arborist": "3.16.0",
     "react-diff-view": "3.3.3",
