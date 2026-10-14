@@ -20,6 +20,7 @@ from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.mcp import (  # noqa: E402
     McpConnection,
     McpManager,
+    McpShutdownTimeout,
     McpUnavailable,
 )
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
@@ -119,6 +120,91 @@ class McpManagerTests(unittest.TestCase):
         self.assertEqual(async_tasks[0].owner_id, "mcp:fixture")
         self.assertIsNone(connection._service.deadline)
         self.assertIsNone(async_tasks[0].deadline)
+
+    def test_connection_uses_short_private_paths_and_cleans_only_its_tree(self) -> None:
+        with patch.dict(os.environ, {"TMPDIR": str(self.data / ("long-" * 30))}):
+            entries = self.manager.start()
+        environment = next(value for value in entries if value.spec.name.endswith("__environment"))
+        result = environment.adapter.execute({"bindSocket": True}, threading.Event())
+        self.assertEqual(result["outcome"], "success")
+        paths = json.loads(result["data"]["text"])
+        connection = self.manager.connections[0]
+        root = connection.runtime_root
+        self.assertEqual(root.parent, Path("/private/tmp" if sys.platform == "darwin" else "/tmp").resolve())
+        self.assertLessEqual(len(os.fsencode(root)), 48)
+        self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(paths["HOME"], str(root / "home"))
+        self.assertEqual(paths["TMPDIR"], str(root / "tmp"))
+        self.assertEqual(paths["cwd"], str(self.plugins.installed_root("demo")))
+        self.assertLessEqual(len(os.fsencode(paths["socketPath"])), 103)
+        self.assertTrue((root / "server.pid").is_file())
+        self.manager.close()
+        self.assertFalse(root.exists())
+        self.assertTrue(self.workspace.is_dir())
+
+    def test_short_directory_allocation_failure_does_not_launch_server(self) -> None:
+        with patch("eidos_runtime.extensions.mcp.tempfile.mkdtemp", side_effect=OSError):
+            self.assertEqual(self.manager.start(), ())
+        server = next(value for value in self.plugins.list_mcp_servers() if value["serverId"] == "fixture")
+        self.assertEqual(server["errorCode"], "mcp_temporary_directory_unavailable")
+        self._assert_startup_resources_released()
+
+    def test_changed_runtime_directory_is_not_followed_or_deleted(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        root = connection.runtime_root
+        saved = root.with_name(root.name + "-saved")
+        root.rename(saved)
+        root.symlink_to(self.workspace, target_is_directory=True)
+        try:
+            with self.assertRaisesRegex(McpUnavailable, "mcp_temporary_directory_unavailable"):
+                connection._prepare_parameters()
+            with self.assertRaises(McpShutdownTimeout):
+                connection.close()
+            self.assertTrue(root.is_symlink())
+            self.assertTrue(self.workspace.is_dir())
+        finally:
+            root.unlink()
+            saved.rename(root)
+            connection.close()
+
+    def test_explicit_home_and_tmpdir_keep_priority(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        connection.env_values = {"HOME": str(self.manual_root), "TMPDIR": str(self.workspace)}
+        try:
+            parameters = connection._prepare_parameters()
+            self.assertEqual(parameters.env["HOME"], str(self.manual_root))
+            self.assertEqual(parameters.env["TMPDIR"], str(self.workspace))
+        finally:
+            connection.close()
+
+    def test_blank_manual_cwd_controls_relative_output_without_changing_home(self) -> None:
+        home = self.manual_root.resolve()
+        with patch("eidos_runtime.extensions.plugins.Path.home", return_value=home):
+            created = self.plugins.create_manual_mcp(
+                server_id="manual_fixture", executable=sys.executable,
+                argv=[str(self.manual_root.resolve() / "server.py")],
+                env={}, env_names=[], cwd=None, permission_profile="connector",
+                startup_timeout_seconds=5, tool_timeout_seconds=1,
+            )
+        expected = home / "Eidos" / "eidos-mcp" / "manual_fixture"
+        self.assertEqual(created["cwd"], str(expected))
+        self.plugins.set_mcp_enabled("manual", "manual_fixture", True)
+        manager = McpManager(
+            self.plugins, self.plugins.extension_snapshot(), self.workspace,
+            sandbox=False, async_kernel=self.kernel, resource_registry=self.resources,
+        )
+        try:
+            entries = manager.start()
+            environment = next(value for value in entries if value.spec.name == "mcp__manual_fixture__environment")
+            result = environment.adapter.execute({"writeOutput": True}, threading.Event())
+            self.assertEqual(result["outcome"], "success")
+            paths = json.loads(result["data"]["text"])
+            self.assertEqual(paths["cwd"], str(expected))
+            self.assertNotEqual(paths["HOME"], paths["cwd"])
+            self.assertEqual((expected / "relative-output.txt").read_text(), "fixture-output")
+        finally:
+            manager.close()
+        self.assertEqual((expected / "relative-output.txt").read_text(), "fixture-output")
 
     def test_two_connections_share_the_runtime_kernel(self) -> None:
         second = McpManager(

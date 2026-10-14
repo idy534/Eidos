@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -52,6 +53,44 @@ class PluginCatalogTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         self.temporary.cleanup()
+
+    def test_blank_manual_cwd_creates_and_reuses_private_service_directory(self) -> None:
+        home = Path(self.temporary.name).resolve()
+        expected = home / "Eidos" / "eidos-mcp" / "local"
+        arguments = {
+            "server_id": "local", "executable": sys.executable, "argv": [],
+            "env": {}, "env_names": [], "permission_profile": "workspace_read",
+            "startup_timeout_seconds": 5, "tool_timeout_seconds": 10,
+        }
+        with patch("eidos_runtime.extensions.plugins.Path.home", return_value=home):
+            created = self.catalog.create_manual_mcp(**arguments, cwd=None)
+            self.assertEqual(created["cwd"], str(expected))
+            self.assertEqual(expected.stat().st_mode & 0o777, 0o700)
+            (expected / "keep.txt").write_text("keep")
+            identity = expected.stat().st_ino
+            updated = self.catalog.update_manual_mcp(**arguments, cwd=" ")
+            self.assertEqual(updated["cwd"], str(expected))
+            self.assertEqual(expected.stat().st_ino, identity)
+            self.assertEqual((expected / "keep.txt").read_text(), "keep")
+            self.catalog.create_manual_mcp(**{**arguments, "server_id": "other"}, cwd=None)
+            self.assertTrue((expected.parent / "other").is_dir())
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        self.catalog = PluginCatalog(self.store)
+        self.assertEqual(self.catalog.manual_mcp_server_config("local")["cwd"], expected)
+
+    def test_default_manual_cwd_rejects_symlink_ancestors(self) -> None:
+        home = Path(self.temporary.name).resolve()
+        (home / "Eidos").symlink_to(self.source, target_is_directory=True)
+        with patch("eidos_runtime.extensions.plugins.Path.home", return_value=home):
+            with self.assertRaisesRegex(PluginImportError, "mcp_cwd_invalid"):
+                self.catalog.create_manual_mcp(
+                    server_id="local", executable=sys.executable, argv=[], env={},
+                    env_names=[], cwd=None, permission_profile="workspace_read",
+                    startup_timeout_seconds=5, tool_timeout_seconds=10,
+                )
+        self.assertFalse((self.source / "eidos-mcp").exists())
 
     def test_import_is_private_atomic_and_idempotent(self) -> None:
         first = self.catalog.import_directory(self.source)

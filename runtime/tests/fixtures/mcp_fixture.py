@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import socket
 import subprocess
 import sys
 import time
 
 
 TOOLS = [
+    {
+        "name": "environment",
+        "description": "Inspect fixture paths and optionally bind a Unix socket",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bindSocket": {"type": "boolean"},
+                "writeOutput": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+    },
     {
         "name": "echo",
         "description": "Return one message",
@@ -124,7 +139,19 @@ for line in sys.stdin:
             send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
     elif method == "tools/call":
         name = message["params"]["name"]
-        if name == "crash":
+        if name == "environment":
+            paths = {"cwd": os.getcwd(), "HOME": os.environ["HOME"], "TMPDIR": os.environ["TMPDIR"]}
+            if message["params"]["arguments"].get("writeOutput"):
+                Path("relative-output.txt").write_text("fixture-output", encoding="utf-8")
+            if message["params"]["arguments"].get("bindSocket"):
+                socket_path = Path(paths["TMPDIR"]) / "pw-12345678" / "mcp" / ("a" * 16 + ".sock")
+                socket_path.parent.mkdir(parents=True)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                    listener.bind(str(socket_path))
+                paths["socketPath"] = str(socket_path)
+            content = [{"type": "text", "text": json.dumps(paths)}]
+            is_error = False
+        elif name == "crash":
             raise SystemExit(7)
         elif name == "spawn_child":
             child = subprocess.Popen(

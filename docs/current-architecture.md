@@ -558,6 +558,10 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
+每个 MCP Connection 在 macOS 的 canonical `/private/tmp` 下使用标准库创建私有短目录 `eidos-mcp-<随机值>/`，不再在 `~/.eidos/extensions/mcp-runtime/<uuid>/` 下分配运行目录。默认 HOME、TMPDIR 和启动器 PID 文件位于该连接目录内，服务显式配置和环境透传仍然优先。长数据目录、长主进程 TMPDIR 和服务工作目录不参与连接临时路径拼接。目录初始权限为 `0700`。启动前、进程组终止前和清理前核对目录类型及 device、inode、owner。连接关闭仍先等待进程组、Service 和 callback 停止，再删除自建目录。目录被替换时不跟随替代路径；Runtime 保留原有关闭失败和未知结果语义。
+
+手动 MCP 的空工作目录在创建或编辑时解析为 `~/Eidos/eidos-mcp/<serverId>/`。Runtime 复用 `ProjectlessDirectoryAllocator` 的 fd-relative 创建和身份核验，不新增目录分配基础设施。默认目录可复用，初始权限为 `0700`，拒绝符号链接路径。显式工作目录继续要求已存在、归属当前用户，并拒绝 Runtime 数据目录。选定的 canonical cwd 进入原有配置记录和内容 hash，不改变 Schema。已有记录保持原 cwd，读取配置不会静默迁移路径。HOME 仍由连接环境独立控制。相对文件由服务按 cwd 和自身规则处理，权限仍由原 Seatbelt profile 控制。Runtime 不改写产物参数、不追加工具描述，也不增加 Run 产物目录或跨 Run 锁。
+
 ## 15. Packaging & Distribution
 
 源码开发使用仓库 `.venv/bin/python`，Runtime root 是仓库 `runtime/`。打包开发路径从 `process.resourcesPath/runtime/` 解析 bundled Python 和 `runtime/app`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。

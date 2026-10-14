@@ -134,14 +134,14 @@ class McpConnection:
         self._callbacks_quiescent.set()
 
     def start(self) -> tuple[mcp_types.Tool, ...]:
-        if self.resources is not None:
-            self.resource = self.resources.register(
-                RuntimeResourceKind.MCP_CONNECTION,
-                owner_id=self.config.id,
-                cancel=self.closed.set,
-            )
-            self.resource.start()
         try:
+            if self.resources is not None:
+                self.resource = self.resources.register(
+                    RuntimeResourceKind.MCP_CONNECTION,
+                    owner_id=self.config.id,
+                    cancel=self.closed.set,
+                )
+                self.resource.start()
             service, started = self.async_kernel.start_service(
                 self._serve,
                 owner_id=f"mcp:{self.config.id}",
@@ -267,6 +267,13 @@ class McpConnection:
     def _terminate_process_group(self) -> bool:
         pid_path = self.runtime_root / "server.pid"
         try:
+            if getattr(self, "_runtime_identity", None) is not None:
+                try:
+                    self._verify_runtime_directory()
+                except FileNotFoundError:
+                    return True
+                except OSError:
+                    return False
             stat = pid_path.lstat()
             if not stat or not pid_path.is_file() or pid_path.is_symlink():
                 return True

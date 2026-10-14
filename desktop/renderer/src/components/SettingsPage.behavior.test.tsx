@@ -201,6 +201,9 @@ describe("Model settings", () => {
     await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
     await user.click(screen.getByRole("button", { name: "添加 MCP" }));
     await user.type(screen.getByLabelText("名称"), "filesystem");
+    expect(screen.getByLabelText("工作目录")).toHaveAttribute(
+      "placeholder", "留空使用 ~/Eidos/eidos-mcp/filesystem/",
+    );
     await user.type(screen.getByLabelText("启动命令"), "npx");
     await user.click(screen.getByRole("button", { name: "保存" }));
 

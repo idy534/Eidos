@@ -67,6 +67,10 @@ Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使�
 
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
+MCP Connection 使用标准库 `tempfile.mkdtemp()` 在 macOS 的 canonical `/private/tmp` 下创建 `eidos-mcp-<随机值>/`，不再使用数据目录下的长运行路径，也不从主进程继承临时目录根路径。连接的默认 HOME、TMPDIR 和 PID 文件分别位于短目录内的 `home/`、`tmp/` 和 `server.pid`。服务显式配置或透传的环境变量仍然优先。连接在进程组、异步 Service 和 callback 停止后核对目录身份并清理自身目录；系统临时目录和其他连接不受清理影响。
+
+创建或编辑手动 MCP 时，工作目录留空会创建并使用 `~/Eidos/eidos-mcp/<serverId>/`，初始权限为 `0700`。服务 ID 对应界面的服务名称，例如 `playwright/`。默认路径拒绝符号链接目录。填写的工作目录仍须已经存在，且继续使用原有权限校验。保存后的 cwd 会持久化，已有配置不自动迁移；编辑时清空工作目录即可选择新默认值。cwd 控制服务的相对参数和相对产物位置，但不会隐式改变 HOME，也不会增加沙盒写权限。MCP 工具描述继续保留服务原文，不追加输出目录提示，不改写工具文件名参数。
+
 Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=...`，以及 `Runtime initialized duration_ms=...`。存储阶段是 `storage` 的子阶段，开发者不能把父阶段与子阶段耗时相加。初始化总计时不包含 Python 模块导入、Desktop 构建和 Renderer 首屏请求。启动不执行 Blob 全量清理和仓库库全库扫描；现有受管后台任务会在任务创建至少 60 秒后且 Runtime 空闲时执行仓库库完整性检查、有界空闲页回收和 Blob 清理，之后每小时检查一次。Session 删除和隐私撤销仍保留即时清理。
 
 ## 4. Test

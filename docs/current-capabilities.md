@@ -271,6 +271,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型只能把 Catalog 给出的 canonical absolute root 用于已激活 Skill 的只读文件 Tool；任意 absolute path 不能扩大读写或 Shell 权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative 或 Workspace 内 canonical absolute cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
 - MCP 当前支持 stdio Tools。Settings 可以创建、编辑和卸载手动 MCP，并配置名称、启动命令、参数、环境变量、环境变量透传名、工作目录和 `connector`/`workspace_read` permission profile。保存或编辑后的 Server 默认未授权，用户需要通过现有审阅入口重新启用。环境变量值不会出现在 MCP 列表、事件或日志中，编辑时留空会保留已保存的环境变量值。Server consent、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
+- MCP Connection 的默认 HOME、TMPDIR 和 PID 文件使用 `/private/tmp/eidos-mcp-<随机值>/` 下的短路径，不随数据目录或服务工作目录变长。连接在进程和异步资源停止后核对身份并清理自身目录。显式 HOME、TMPDIR 配置继续优先。
+- 手动 MCP 的工作目录留空时，Runtime 创建并使用 `~/Eidos/eidos-mcp/<服务 ID>/`，不同服务分开保存，初始权限为 `0700`。已有配置不自动迁移。cwd 控制相对参数和产物路径，HOME 仍单独配置，原有沙盒权限继续生效。工具描述和文件名参数不追加或改写。
 
 ## Persistence
 
@@ -397,6 +399,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 有项目的 Session 会收到独立的文件引用提示词。提示词提供文件、行号、行列号的标准 Markdown 格式和示例，要求模型使用当前 execution root 内已经确认的绝对路径，并用尖括号包住链接目标。无项目的 Session 不加入这段提示词。标准示例为 `[app.ts (line 42)](</workspace/My Project/src/app.ts:42>)`；列号示例为 `[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)`。示例路径只说明格式，模型必须替换为实际路径。
 - Conversation 只把显式 Markdown 绝对路径链接作为文件跳转入口。系统从链接目标提取路径和位置，显示标签不参与寻址。裸文件名、行内代码和相对文件链接保持文字。文件链接复用现有图标和蓝色文字样式，不依赖扩展名白名单，也不按文件名搜索或猜测子目录。系统支持 `:line[:column]`，并兼容显式链接中的 `#Lline[Ccolumn]`；行列号从 1 开始。普通文本和代码预览会滚动到目标行，并选中该行或指定列的字符；同一文件再次点击不同位置时会重新定位。带位置的 HTML 链接会打开源码。渲染后的 Markdown 按源文本位置滚动到对应块，文档内相对链接仍按文档所在目录解析。目标行超出当前预览时，系统会显示提示。Renderer、Runtime 自动化测试和构建已通过；完整结果见 `current-limitations.md`。人工 Desktop 验收尚未执行。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
+- PDF 预览使用已打包的 PDF.js 和本地 worker 绘制页面。页面外侧沿用预览区的 `--surface-muted` 底色，不再显示 Chromium 内嵌查看器的黑色外框。加载和失败状态也沿用同一底色，系统「预览」打开入口保留。底部工具栏不显示“PDF 预览”文字；多页文件保留页码，页码和打开按钮始终单行显示。
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
 - Review 提供“最近一轮”范围，严格按 `runId` 过滤持久化 ToolCall 文件补丁，空轮保持空，不回退到全量；“整个任务”展示本 Session 全部 Run 的补丁历史。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
 - 最近一轮反馈包含 Run、ToolCall、文件、行位置和已有 Base SHA。

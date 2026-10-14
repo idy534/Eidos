@@ -81,6 +81,12 @@ class McpSeatbeltTests(unittest.TestCase):
         ))
 
     def test_official_client_runs_fixture_through_workspace_read_profile(self) -> None:
+        self._check_official_client("workspace_read")
+
+    def test_official_client_binds_short_socket_through_connector_profile(self) -> None:
+        self._check_official_client("connector")
+
+    def _check_official_client(self, profile: str) -> None:
         source = self.state.parent / "source-plugin"
         source.mkdir()
         fixture = Path(__file__).parent / "fixtures" / "mcp_fixture.py"
@@ -97,7 +103,7 @@ class McpSeatbeltTests(unittest.TestCase):
                 "executable": PYTHON,
                 "argv": ["server.py"],
                 "envNames": [],
-                "permissionProfile": "workspace_read",
+                "permissionProfile": profile,
                 "startupTimeoutSeconds": 15,
                 "toolTimeoutSeconds": 2,
                 "enabled": True,
@@ -125,6 +131,12 @@ class McpSeatbeltTests(unittest.TestCase):
             echo = next(value for value in entries if value.spec.name.endswith("__echo"))
             result = echo.adapter.execute({"message": "native"}, threading.Event())
             self.assertEqual(result["data"]["text"], "native")
+            if profile == "connector":
+                environment = next(value for value in entries if value.spec.name.endswith("__environment"))
+                result = environment.adapter.execute({"bindSocket": True}, threading.Event())
+                self.assertEqual(result["outcome"], "success")
+                paths = json.loads(result["data"]["text"])
+                self.assertLessEqual(len(paths["socketPath"].encode()), 103)
         finally:
             manager.close()
             kernel.close()
