@@ -10,6 +10,7 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 import anyio
 
@@ -20,9 +21,11 @@ from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.mcp import (  # noqa: E402
     McpConnection,
     McpManager,
+    McpShutdownTimeout,
     McpUnavailable,
 )
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.extensions.mcp_outputs import McpOutputDirectory  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.async_kernel import AsyncTaskState  # noqa: E402
 from eidos_runtime.runtime.async_kernel import AsyncKernelClosedError  # noqa: E402
@@ -120,6 +123,200 @@ class McpManagerTests(unittest.TestCase):
         self.assertIsNone(connection._service.deadline)
         self.assertIsNone(async_tasks[0].deadline)
 
+    def test_home_and_temp_use_run_directory_while_sockets_stay_short(self) -> None:
+        config = self.plugins.manifest("demo").mcp_servers[0]
+        connection = self._connection(
+            config, runtime_root=self.data / ("很深的数据目录" * 8) / "mcp-runtime"
+        )
+        try:
+            connection.start()
+            result = connection.call("environment", {}, threading.Event())
+            environment = json.loads(result["data"]["text"])
+            home = Path(environment["home"])
+            temporary = Path(environment["tmpdir"])
+            output = connection.output_directory.path
+            socket_root = Path(environment["socketDir"])
+            self.assertEqual(home, output / "h")
+            self.assertEqual(temporary, output / "t")
+            self.assertNotIn(str(self.data), str(output))
+            for path in (home, temporary):
+                self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(path, path.resolve(strict=True))
+            socket_path = socket_root / "browser" / ("a" * 16 + ".sock")
+            self.assertLessEqual(len(os.fsencode(socket_path)), 103)
+            (home / "keep").write_text("home data")
+            (temporary / "keep").write_text("temporary data")
+        finally:
+            connection.close()
+        self.assertFalse(socket_root.exists())
+        self.assertEqual((home / "keep").read_text(), "home data")
+        self.assertEqual((temporary / "keep").read_text(), "temporary data")
+
+    def test_manager_retains_run_scoped_output_directory_after_close(self) -> None:
+        self.manager.start()
+        connection = self.manager.connections[0]
+        assert connection.output_directory is not None
+        output = connection.output_directory.path
+        result = connection.call("environment", {}, threading.Event())
+        self.assertEqual(json.loads(result["data"]["text"])["outputDir"], str(output))
+        self.assertEqual(output.name, self.manager.run_id)
+        (output / "result.txt").write_text("retained")
+        self.manager.close()
+        self.assertEqual((output / "result.txt").read_text(), "retained")
+
+    def test_playwright_socket_default_stays_short_under_deep_run_directory(self) -> None:
+        config = self.plugins.manifest("demo").mcp_servers[0].model_copy(update={
+            "executable": "npx", "argv": ["-y", "@playwright/mcp@latest"],
+        })
+        deep_root = self.data.resolve() / ("较深的产物目录" * 8) / "eidos-mcp"
+        with patch.dict(os.environ, {"EIDOS_MCP_OUTPUT_ROOT": str(deep_root)}):
+            connection = self._connection(config)
+        try:
+            parameters = connection._prepare_parameters()
+            environment = parameters.env
+            assert environment is not None
+            self.assertEqual(environment["HOME"], str(connection.output_directory.path / "h"))
+            self.assertEqual(environment["TMPDIR"], str(connection.output_directory.path / "t"))
+            self.assertGreater(len(os.fsencode(environment["TMPDIR"])), 103)
+            self.assertEqual(environment["PWTEST_SOCKETS_DIR"], environment["EIDOS_MCP_SOCKET_DIR"])
+            socket = Path(environment["PWTEST_SOCKETS_DIR"]) / "browser" / ("a" * 16 + ".sock")
+            self.assertLessEqual(len(os.fsencode(socket)), 103)
+        finally:
+            connection.close()
+
+    def test_explicit_playwright_socket_directory_keeps_environment_precedence(self) -> None:
+        inherited = self.data / "inherited-sockets"
+        configured = self.data / "configured-sockets"
+        for explicit in (False, True):
+            config = self.plugins.manifest("demo").mcp_servers[0].model_copy(update={
+                "executable": "npx", "argv": ["@playwright/mcp"],
+                "env_names": ["PWTEST_SOCKETS_DIR"],
+            })
+            connection = self._connection(
+                config, env_values={"PWTEST_SOCKETS_DIR": str(configured)} if explicit else None,
+            )
+            try:
+                with patch.dict(os.environ, {"PWTEST_SOCKETS_DIR": str(inherited)}):
+                    environment = connection._prepare_parameters().env
+                assert environment is not None
+                self.assertEqual(environment["PWTEST_SOCKETS_DIR"], str(configured if explicit else inherited))
+            finally:
+                connection.close()
+
+    def test_environment_allocation_failure_is_reported_without_launch(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        with (
+            patch.object(McpOutputDirectory, "environment_path", side_effect=OSError("private path")),
+            patch("eidos_runtime.extensions.mcp.stdio_client") as transport,
+        ):
+            with self.assertRaisesRegex(McpUnavailable, "^mcp_output_directory_unavailable$"):
+                connection.start()
+        transport.assert_not_called()
+        self.assertIsNone(connection._socket_directory)
+        self._assert_startup_resources_released()
+
+    def test_configured_and_passed_through_directories_remain_user_owned(self) -> None:
+        configured = self.data / "configured"
+        inherited = self.data / "inherited"
+        for root in (configured, inherited):
+            root.mkdir()
+            (root / "keep").write_text("user data")
+        for names in (["HOME"], ["TMPDIR"], ["HOME", "TMPDIR"]):
+            config = self.plugins.manifest("demo").mcp_servers[0].model_copy(
+                update={"env_names": names}
+            )
+            for explicit in (False, True):
+                with self.subTest(names=names, explicit=explicit), patch.dict(
+                    os.environ, {"HOME": str(inherited), "TMPDIR": str(inherited)}
+                ):
+                    connection = self._connection(
+                        config, env_values={name: str(configured) for name in names}
+                        if explicit else None,
+                    )
+                    try:
+                        connection.start()
+                        result = connection.call("environment", {}, threading.Event())
+                        environment = json.loads(result["data"]["text"])
+                        for name in names:
+                            self.assertEqual(environment[name.lower()], str(configured if explicit else inherited))
+                        self.assertIsNotNone(connection._socket_directory)
+                        for name, leaf in (("HOME", "h"), ("TMPDIR", "t")):
+                            if name not in names:
+                                self.assertEqual(
+                                    environment[name.lower()],
+                                    str(connection.output_directory.path / leaf),
+                                )
+                            else:
+                                self.assertFalse((connection.output_directory.path / leaf).exists())
+                    finally:
+                        connection.close()
+                    self.assertEqual((configured / "keep").read_text(), "user data")
+                    self.assertEqual((inherited / "keep").read_text(), "user data")
+
+    def test_temporary_directory_allocation_failure_is_reported_without_launch(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        with (
+            patch(
+                "eidos_runtime.extensions.mcp.McpSocketDirectory.create",
+                side_effect=OSError("sensitive filesystem detail"),
+            ),
+            patch("eidos_runtime.extensions.mcp.stdio_client") as transport,
+        ):
+            with self.assertRaisesRegex(McpUnavailable, "^mcp_temporary_directory_unavailable$"):
+                connection.start()
+        transport.assert_not_called()
+        self.assertFalse(connection.runtime_root.exists())
+        self._assert_startup_resources_released()
+
+    def test_close_retains_temporary_directory_until_process_group_exits(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        connection.start()
+        assert connection._socket_directory is not None
+        owned_root = connection._socket_directory.path
+        try:
+            with patch.object(connection, "_terminate_process_group", return_value=False):
+                with self.assertRaises(McpShutdownTimeout):
+                    connection.close()
+            self.assertTrue(owned_root.is_dir())
+        finally:
+            connection.close()
+        self.assertFalse(owned_root.exists())
+
+    def test_restarted_connection_gets_fresh_private_directories(self) -> None:
+        config = self.plugins.manifest("demo").mcp_servers[0]
+        first = self._connection(config)
+        second = self._connection(config)
+        try:
+            first.start()
+            assert first._socket_directory is not None
+            previous = first._socket_directory.path
+            first.close()
+            second.start()
+            assert second._socket_directory is not None
+            self.assertNotEqual(previous, second._socket_directory.path)
+            self.assertFalse(previous.exists())
+            self.assertEqual(second.call("echo", {"message": "restarted"}, threading.Event())["code"], "ok")
+        finally:
+            first.close()
+            second.close()
+
+    def test_cleanup_failure_is_reported_and_can_be_retried_after_shutdown(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        connection.start()
+        owned = connection._socket_directory
+        assert owned is not None
+        try:
+            with patch.object(type(owned), "cleanup", side_effect=OSError("sensitive path")):
+                with self.assertLogs("eidos_runtime.extensions.mcp", level="WARNING") as logs:
+                    connection.close()
+            self.assertTrue(owned.path.is_dir())
+            self.assertIs(connection._socket_directory, owned)
+            self.assertNotIn("sensitive path", " ".join(logs.output))
+            self._assert_startup_resources_released()
+        finally:
+            connection.close()
+        self.assertFalse(owned.path.exists())
+
     def test_two_connections_share_the_runtime_kernel(self) -> None:
         second = McpManager(
             self.plugins,
@@ -137,6 +334,10 @@ class McpManagerTests(unittest.TestCase):
                 self.manager.connections[0].async_kernel,
                 second.connections[0].async_kernel,
             )
+            first_temporary = self.manager.connections[0]._socket_directory
+            second_temporary = second.connections[0]._socket_directory
+            assert first_temporary is not None and second_temporary is not None
+            self.assertNotEqual(first_temporary.path, second_temporary.path)
             self.assertEqual(
                 sum(
                     resource.kind is RuntimeResourceKind.ASYNC_TASK
@@ -163,6 +364,7 @@ class McpManagerTests(unittest.TestCase):
             async_kernel=self.kernel,
             sandbox=False,
             resource_registry=self.resources,
+            output_directory=McpOutputDirectory.create("demo", config.id, str(uuid4())),
         )
 
         with self.assertRaisesRegex(McpUnavailable, "mcp_startup_timeout"):
@@ -342,6 +544,8 @@ class McpManagerTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertIsNotNone(process_group)
         assert process_group is not None
+        assert connection._socket_directory is not None
+        temporary_path = connection._socket_directory.path
         starter.join(timeout=2)
         self.assertFalse(starter.is_alive())
         self.assertEqual(len(failure), 1)
@@ -349,22 +553,27 @@ class McpManagerTests(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.killpg(process_group, 0)
         self._assert_startup_resources_released()
+        self.assertFalse(temporary_path.exists())
 
     def _connection(
         self,
         config,
         *,
         on_list_changed=lambda: None,
+        runtime_root: Path | None = None,
+        env_values: dict[str, str] | None = None,
     ) -> McpConnection:
         return McpConnection(
             plugin_root=self.plugins.installed_root("demo"),
-            runtime_root=self.data / "extensions" / "mcp-runtime",
+            runtime_root=runtime_root or self.data / "extensions" / "mcp-runtime",
             workspace_root=self.workspace,
             config=config,
             on_list_changed=on_list_changed,
+            env_values=env_values,
             async_kernel=self.kernel,
             sandbox=False,
             resource_registry=self.resources,
+            output_directory=McpOutputDirectory.create("demo", config.id, str(uuid4())),
         )
 
     def _assert_startup_resources_released(self) -> None:
@@ -457,9 +666,12 @@ class McpManagerTests(unittest.TestCase):
         entries = self.manager.start()
         failed = next(value for value in entries if value.spec.name.endswith("__fail"))
         slow = next(value for value in entries if value.spec.name.endswith("__slow"))
+        temporary = self.manager.connections[0]._socket_directory
+        assert temporary is not None
 
         failed_result = failed.adapter.execute({}, threading.Event())
         timeout_result = slow.adapter.execute({}, threading.Event())
+        self.assertFalse(temporary.path.exists())
 
         self.assertEqual(failed_result["code"], "mcp_tool_error")
         self.assertTrue(failed_result["sideEffectsMayExist"])
@@ -577,6 +789,8 @@ class McpManagerTests(unittest.TestCase):
 
     def test_in_flight_cancel_is_prompt_and_dead_connection_is_unavailable(self) -> None:
         entries = self.manager.start()
+        temporary = self.manager.connections[0]._socket_directory
+        assert temporary is not None
         slow = next(value for value in entries if value.spec.name.endswith("__slow"))
         cancel = threading.Event()
         timer = threading.Timer(0.1, cancel.set)
@@ -594,6 +808,7 @@ class McpManagerTests(unittest.TestCase):
         self.assertTrue(canceled["reconciliationRequired"])
         self.assertEqual(unavailable["code"], "tool_unavailable")
         self.assertFalse(unavailable["sideEffectsMayExist"])
+        self.assertFalse(temporary.path.exists())
 
     def test_close_terminates_server_process_group_children(self) -> None:
         entries = self.manager.start()

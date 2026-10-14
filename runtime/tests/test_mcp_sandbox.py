@@ -8,12 +8,15 @@ import sys
 import tempfile
 import threading
 import unittest
+from uuid import uuid4
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.mcp import McpManager  # noqa: E402
+from eidos_runtime.extensions.mcp_environment import McpSocketDirectory  # noqa: E402
+from eidos_runtime.extensions.mcp_outputs import McpOutputDirectory  # noqa: E402
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.resource_registry import ResourceRegistry  # noqa: E402
@@ -81,6 +84,25 @@ class McpSeatbeltTests(unittest.TestCase):
         ))
 
     def test_official_client_runs_fixture_through_workspace_read_profile(self) -> None:
+        self._check_official_client("workspace_read")
+
+    def test_official_client_binds_socket_through_connector_profile(self) -> None:
+        self._check_official_client("connector")
+
+    def test_short_socket_directory_does_not_grant_neighbor_writes(self) -> None:
+        owned = McpSocketDirectory.create()
+        neighbor = McpSocketDirectory.create()
+        try:
+            for profile in ("connector", "workspace_read"):
+                with self.subTest(profile=profile):
+                    self.assertTrue(self._run(profile, "open(%r,'w').write('owned')" % str(owned.path / "allowed"), socket_root=owned.path))
+                    self.assertFalse(self._run(profile, "open(%r,'w').write('neighbor')" % str(neighbor.path / "denied"), socket_root=owned.path))
+            self.assertFalse((neighbor.path / "denied").exists())
+        finally:
+            owned.cleanup()
+            neighbor.cleanup()
+
+    def _check_official_client(self, profile: str) -> None:
         source = self.state.parent / "source-plugin"
         source.mkdir()
         fixture = Path(__file__).parent / "fixtures" / "mcp_fixture.py"
@@ -97,7 +119,7 @@ class McpSeatbeltTests(unittest.TestCase):
                 "executable": PYTHON,
                 "argv": ["server.py"],
                 "envNames": [],
-                "permissionProfile": "workspace_read",
+                "permissionProfile": profile,
                 "startupTimeoutSeconds": 15,
                 "toolTimeoutSeconds": 2,
                 "enabled": True,
@@ -125,13 +147,50 @@ class McpSeatbeltTests(unittest.TestCase):
             echo = next(value for value in entries if value.spec.name.endswith("__echo"))
             result = echo.adapter.execute({"message": "native"}, threading.Event())
             self.assertEqual(result["data"]["text"], "native")
+            environment_tool = next(value for value in entries if value.spec.name.endswith("__environment"))
+            environment_result = environment_tool.adapter.execute({}, threading.Event())
+            environment = json.loads(environment_result["data"]["text"])
+            socket_root = Path(environment["socketDir"])
+            output_root = Path(environment["outputDir"])
+            self.assertEqual(manager.output_roots(), (output_root,))
+            self.assertEqual(Path(environment["home"]), output_root / "h")
+            self.assertEqual(Path(environment["tmpdir"]), output_root / "t")
+            self.assertLessEqual(len(environment["socketDir"].encode("utf-8")), 48)
+            if profile == "connector":
+                probe = next(value for value in entries if value.spec.name.endswith("__socket_probe"))
+                result = probe.adapter.execute({}, threading.Event())
+                self.assertEqual(result["outcome"], "success")
+                self.assertLessEqual(json.loads(result["data"]["text"])["socketBytes"], 103)
         finally:
             manager.close()
             kernel.close()
             self.assertEqual(resources.active_resources(), ())
             store.close()
+        self.assertFalse(socket_root.exists())
+        self.assertTrue(output_root.is_dir())
+        self.assertTrue((output_root / "h").is_dir())
+        self.assertTrue((output_root / "t").is_dir())
 
-    def _run(self, profile: str, code: str) -> bool:
+    def test_output_directory_writes_do_not_grant_neighbor_run_access(self) -> None:
+        current = McpOutputDirectory.create("manual", "browser", str(uuid4()))
+        neighbor = McpOutputDirectory.create("manual", "browser", str(uuid4()))
+        for profile in ("connector", "workspace_read"):
+            with self.subTest(profile=profile):
+                self.assertTrue(self._run(
+                    profile, "open(%r,'w').write('output')" % str(current.path / "result.txt"),
+                    output_root=current.path,
+                ))
+                self.assertFalse(self._run(
+                    profile, "open(%r,'w').write('denied')" % str(neighbor.path / "result.txt"),
+                    output_root=current.path,
+                ))
+        self.assertEqual((current.path / "result.txt").read_text(), "output")
+        self.assertFalse((neighbor.path / "result.txt").exists())
+
+    def _run(
+        self, profile: str, code: str, *,
+        output_root: Path | None = None, socket_root: Path | None = None,
+    ) -> bool:
         command = [
             SANDBOX_EXEC,
             "-f", str(SANDBOX_DIR / f"mcp_{profile}.sbpl"),
@@ -139,6 +198,8 @@ class McpSeatbeltTests(unittest.TestCase):
             f"-DWORKSPACE_ROOT={self.workspace}",
             f"-DSANDBOX_HOME={self.sandbox_home}",
             f"-DSANDBOX_TMP={self.sandbox_tmp}",
+            f"-DMCP_OUTPUT_ROOT={output_root or self.sandbox_tmp}",
+            f"-DMCP_SOCKET_ROOT={socket_root or self.sandbox_tmp}",
             *python_runtime_policy_arguments(),
             "--", PYTHON, "-c", code,
         ]

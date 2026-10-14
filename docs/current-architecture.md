@@ -556,6 +556,18 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
+MCP 的默认 `HOME` 和 `TMPDIR` 分别位于当前服务、当前 Run 产物目录的 `h`、`t` 子目录中。Runtime 复用现有 fd-relative 目录分配器，以 `0700` 创建目录，并拒绝符号链接路径。连接关闭后，Runtime 保留 Run 目录及其 `h/t` 文件。显式配置或透传的非空 `HOME`、`TMPDIR` 保持现有优先级；Runtime 不删除这些用户目录。PID 文件仍位于原有 Runtime 数据目录。
+
+每个 MCP Connection 另外使用标准库 `tempfile.mkdtemp` 创建独立的私有短 socket 目录。macOS 的父目录固定为 canonical `/private/tmp`，其他测试平台使用 canonical `/tmp`。生成的根目录最多占 48 个文件系统字节，目录权限为 `0700`。路径不随产物目录、`EIDOS_DATA_DIR`、项目路径或主进程 `TMPDIR` 变长。Runtime 通过 `EIDOS_MCP_SOCKET_DIR` 提供该路径。已识别的 Playwright 启动入口使用该路径作为 `PWTEST_SOCKETS_DIR` 默认值，以免服务在较深 `TMPDIR` 下拼接子目录时再次超过 macOS 的 Unix socket 路径上限。显式配置或透传的非空 `PWTEST_SOCKETS_DIR` 保持优先级。其他 MCP 服务需要使用自己的 socket 目录配置或支持 `EIDOS_MCP_SOCKET_DIR`；通用 MCP 协议没有统一的 socket 目录选项。
+
+Seatbelt 的 `SANDBOX_HOME`、`SANDBOX_TMP` 使用最终传给 Server 的同一组环境值。`MCP_SOCKET_ROOT` 对 Playwright 使用最终 `PWTEST_SOCKETS_DIR`，对其他服务使用当前连接的短 socket 目录。策略不会开放整个系统临时目录。Connection 先确认进程组、异步 Service 和 callback 都已停止，再清理自建短 socket 目录。清理前检查 device、inode、owner 和目录类型，`shutil.rmtree` 不跟随目录内的符号链接。目录身份变化或清理失败会记录不含目录内容的本地警告，并保留对象供后续关闭重试。短目录无法创建时，Connection 在启动子进程前返回 `mcp_temporary_directory_unavailable`。异常强制退出可能留下目录；新连接使用新的随机目录，Runtime 不扫描或删除其他连接的临时目录。
+
+MCP 产物与短临时目录分开保存。默认目录是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/`，服务来源与 Run 占两层目录。服务 ID 不允许点号，所以来源名称没有分隔歧义。开发和测试可用绝对路径 `EIDOS_MCP_OUTPUT_ROOT` 覆盖根目录。Runtime 复用现有 fd-relative 目录分配器，拒绝符号链接路径，并在连接启动和调用前核对产物目录身份。产物目录保留在连接关闭之后；短临时目录的清理不会删除截图、快照或下载。目录分配失败使用 `mcp_output_directory_unavailable`，不回退到用户 HOME。
+
+Runtime 向每个 Server 提供 `EIDOS_MCP_OUTPUT_DIR`，但 MCP 协议没有统一的输出目录配置。Playwright 的已知启动入口使用官方 `PLAYWRIGHT_MCP_OUTPUT_DIR` 默认值和绝对路径展示选项。官方输出目录只影响自动命名文件，所以 Eidos 还会把已知 Playwright 输出 Tool 的相对 `filename` 转成当前产物目录下的绝对路径。输入文件参数不改写，显式绝对路径和显式 Server 输出配置继续保持用户选择。服务的启动 cwd 和相对配置参数保持原义。Approval 描述和 Durable Intent 保存产物目录，便于解释相对输出文件的实际位置。
+
+两种 MCP Seatbelt profile 只增加当前连接产物目录的读写权限，不授权服务根目录或其他 Run。RunResources 只把当前 Run 已验证的产物目录提供给内置只读文件工具和 `view_image`，不把产物目录作为 Skill 或 Workspace 写入授权。目录身份失效后，Runtime 不再提供对应读取权限。其他 MCP 服务需要使用自己的输出配置或支持 `EIDOS_MCP_OUTPUT_DIR`；Runtime 不猜测其工具参数的文件语义。
+
 ## 15. Packaging & Distribution
 
 源码开发使用仓库 `.venv/bin/python`，Runtime root 是仓库 `runtime/`。打包开发路径从 `process.resourcesPath/runtime/` 解析 bundled Python 和 `runtime/app`，不回退到系统 Python、PATH、`.venv` 或用户 `PYTHONHOME`。

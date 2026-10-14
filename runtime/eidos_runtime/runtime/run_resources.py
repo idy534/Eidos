@@ -127,8 +127,10 @@ class RunResources:
                 async_kernel=self.async_kernel,
                 sandbox=self.mcp_sandbox and not self.tool_executor.full_access,
                 resource_registry=self.resources,
+                run_id=self.run_id,
             )
             self._external_entries = self.mcp.start()
+            self.tool_executor.set_mcp_output_roots(self.mcp.output_roots)
             self.skill_catalog_snapshot = self.skills.catalog_snapshot(
                 self.extension_snapshot
             )
@@ -346,6 +348,7 @@ class RunResources:
         return ViewImageRootAuthority.from_skill_access(
             workspace.path,
             self.skill_access,
+            mcp_output_roots=self.mcp.output_roots() if self.mcp is not None else (),
         )
 
     def _refresh_skill_dependency_diagnostics(self) -> None:
