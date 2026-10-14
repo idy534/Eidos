@@ -572,6 +572,8 @@ MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Setting
 
 `build-macos-runtime.sh` 生成 macOS arm64 的 self-contained Runtime Bundle。Bundle 包含 managed CPython 3.12.13、锁定的 production dependencies、Eidos Runtime、Seatbelt 资源、`apply_patch.lark` grammar、受管 Ripgrep、Node CJS/ESM loader 和 Node package root。构建阶段会生成并校验 Bundle 根目录的 `runtime.json`，也会检查 grammar 和依赖资源存在，并通过 bundled smoke 验证 Bundle 内导入。Electron Builder 将 Bundle 放入 App resources，DMG 目标只配置 arm64。
 
+Renderer 构建前只清理 `dist/renderer/assets`，以移除上次构建遗留的 Vite 哈希资源。构建会保留同目录下由其他脚本生成的 `file-icons`。
+
 `package:mac` 生成未签名本地 DMG，并执行 packaged App、Runtime、SQLite、Seatbelt 和从 DMG 复制 App 的 smoke。Release 流程必须先完成 Bundle 文件复制和 `runtime.json` 生成，再进行嵌套文件签名。签名后要刷新并重新校验 manifest hash，之后才做最终 `codesign`、notarization 和 stapling。`package:mac:release` 要求 Developer ID 和 Apple notarization credentials，随后执行 hardened runtime、签名、notarization、stapling、`codesign`、`spctl` 和 `stapler` 验证。没有对应 credentials 时，仓库不能验证真实签名结果。
 
 ## 16. Runtime Recovery
