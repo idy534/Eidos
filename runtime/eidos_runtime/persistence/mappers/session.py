@@ -15,6 +15,7 @@ from eidos_runtime.domain.session import (
     SessionTaskStatus,
 )
 from eidos_runtime.domain.worktree import WorktreeState
+from eidos_runtime.domain.session_fork import SessionForkSource
 from eidos_runtime.persistence.conversion import (
     RowReader,
     RowValues,
@@ -77,6 +78,8 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
     try:
         return Session(
             id=session_id,
+            forked_from=(SessionForkSource.model_validate_json(values.text("fork_source_json"))
+                         if "fork_source_json" in row.keys() and row["fork_source_json"] is not None else None),
             workspace_root=workspace_root,
             execution_mode=execution_mode,
             worktree_id=worktree_id,

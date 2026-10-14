@@ -1,0 +1,148 @@
+.pdf-viewer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-muted);
+  user-select: text;
+}
+
+.pdf-viewer__scroll-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1.75rem 1.25rem 5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1.5rem;
+  background: var(--surface-muted);
+}
+
+.pdf-page-card {
+  position: relative;
+  background: #ffffff;
+  border-radius: var(--radius-xs, 4px);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.03),
+    0 8px 24px -4px rgba(0, 0, 0, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: box-shadow 180ms ease;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pdf-page-card:hover {
+  box-shadow:
+    0 3px 6px rgba(0, 0, 0, 0.04),
+    0 14px 32px -4px rgba(0, 0, 0, 0.12),
+    0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+.pdf-page-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pdf-viewer__status {
+  color: var(--muted);
+  font-size: var(--font-size-body);
+}
+
+/* 底部悬浮毛玻璃胶囊条 */
+.pdf-pill-toolbar {
+  position: absolute;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  width: max-content;
+  max-width: calc(100% - 1rem);
+  white-space: nowrap;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px) saturate(190%);
+  -webkit-backdrop-filter: blur(20px) saturate(190%);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-pill);
+  box-shadow:
+    0 10px 30px -5px rgba(0, 0, 0, 0.12),
+    0 4px 10px rgba(0, 0, 0, 0.04);
+  transition: opacity 220ms var(--apple-spring), transform 220ms var(--apple-spring);
+}
+
+.pdf-pill-toolbar--dimmed {
+  opacity: 0.32;
+}
+
+.pdf-pill-toolbar:hover,
+.pdf-pill-toolbar:focus-within {
+  opacity: 1 !important;
+}
+
+.pdf-pill-text {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  padding: 0 0.35rem;
+  user-select: none;
+  font-weight: 500;
+}
+
+.pdf-pill-divider {
+  width: 1px;
+  height: 1.1rem;
+  background: rgba(0, 0, 0, 0.08);
+  margin: 0 0.2rem;
+  flex-shrink: 0;
+}
+
+.pdf-pill-action-btn {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+  gap: 0.35rem;
+  border: 0;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.pdf-pill-action-btn:hover {
+  background: var(--surface-selected);
+  color: var(--text);
+}
+
+.pdf-pill-action-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pdf-pill-action-btn svg {
+  flex-shrink: 0;
+  width: 0.95rem;
+  height: 0.95rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

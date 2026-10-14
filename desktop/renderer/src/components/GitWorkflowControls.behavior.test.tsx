@@ -140,6 +140,52 @@ describe("GitWorkflowControls", () => {
     expect(dialog.closest(".modal-backdrop")?.parentElement).toBe(document.body);
   });
 
+  it("notifies onClose and closes when the close button is clicked", async () => {
+    const onClose = vi.fn();
+    renderControls({ dialogOnly: true, openRequest: 1, onClose });
+
+    const closeButton = await screen.findByRole("button", { name: "关闭提交和推送" });
+    fireEvent.click(closeButton);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
+  });
+
+  it("closes when openRequest is reset to 0 and ignores duplicate openRequest ID", async () => {
+    const onClose = vi.fn();
+    const { result } = renderControls({ dialogOnly: true, openRequest: 1, onClose });
+    expect(await screen.findByRole("dialog", { name: "提交和推送" })).toBeInTheDocument();
+
+    result.rerender(
+      <GitWorkflowControls
+        sessionId="session-a"
+        workspaceRoot="/workspace"
+        status={{
+          worktreeId: null,
+          branch: "main",
+          head: "a".repeat(40),
+          baseRef: null,
+          baseCommit: null,
+          dirty: true,
+          stagedCount: 1,
+          unstagedCount: 1,
+          untrackedCount: 1,
+          conflictCount: 0,
+          stagedFiles: ["staged.txt"],
+          unstagedFiles: ["unstaged.txt"],
+          untrackedFiles: ["untracked.txt"],
+          conflictFiles: [],
+          observedAt: 1,
+        }}
+        disabled={false}
+        onRefresh={vi.fn()}
+        dialogOnly
+        openRequest={0}
+      />,
+    );
+    expect(screen.queryByRole("dialog", { name: "提交和推送" })).not.toBeInTheDocument();
+  });
+
   it("includes unstaged files before committing and can push the new commit", async () => {
     const { stage, commit, push } = renderControls();
     openWorkflow();

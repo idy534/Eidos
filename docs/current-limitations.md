@@ -1,5 +1,32 @@
 # Eidos 当前限制
 
+## 历史图片预览缺失（2026-10-14）
+
+- Desktop 会把预览文件不存在处理为“暂无预览”，不会恢复被删除的文件。Runtime 仍返回 `WORKSPACE_FILE_NOT_FOUND`，并保留原有 Workspace、权限和版本校验。Desktop 的 `prepareWorkspacePreview` 现在可能返回 `null`；Main 和 Renderer 需要一起更新。
+- 本次 Renderer 定向测试通过 66 项，Main 预览边界测试通过 3 项，Runtime 工作区测试通过 10 项，共享契约测试通过 4 项。Main 和 Renderer 构建及 `git diff --check` 通过。Renderer 构建仍有 Chunk 超过 500 kB 的提示。本次没有执行 Full Suite、真实产品窗口人工验收、Electron smoke、Seatbelt 或打包验证，也没有修改数据库、依赖或锁文件。
+
+## Session 标题提示词（2026-10-14）
+
+- 标题请求现在把原始任务放在 `<task>` 中。系统和用户提示词都要求模型只命名，不回答或执行任务，并输出一行纯文本标题。提示词仍属于模型指令，不能保证模型永远遵循格式；当前标题清洗和非空结果验收没有变化。已有 Session 标题不会自动重新生成。
+- 本次标题相关定向测试通过 16 项，覆盖独立指令、关闭工具、多行与 JSON 原文保留、标题事件、人工标题保留和任务生命周期。Responses Adapter 的离线请求检查确认同一模板和空工具列表。相关 Ruff、Deptry、两份 Python 依赖审计和 `git diff --check` 均通过。本次没有执行 Full Suite、真实 Provider 回放、Desktop 构建或原生验收，不能据此确认偶发偏离的概率已经下降。
+
+## 回答级聊天分叉（2026-10-14）
+
+- 分叉创建后立即作为正常 Session 出现在侧栏。名称沿用来源名称，名称末尾的分叉图标在悬停和键盘焦点时显示。首次对话不覆盖该名称。v26→v27 会修复旧的未命名分叉；来源已删除且名称未保存时，旧分叉使用“新会话”。
+- 本次即时显示和命名修正通过 Runtime 定向测试 48 项、侧栏行为测试 24 项和 Main/Runtime 测试 1 项。真实 Electron 已验证无 Run 分叉的显示、图标悬停与移开行为。构建、契约检查、Ruff、Deptry、依赖审计和原生启动/退出 smoke 均通过。本次没有执行 Full Suite。
+- 分叉的悬停气泡显示直接来源会话的当前名称，并支持点击跳转。来源不在当前 Session 列表中时，气泡显示“来源会话不可用”。该显示不保存新的标题快照，也不修改分叉历史。
+- 本次图标和来源气泡修改通过 89 项 Renderer 定向行为测试、45 项 ExecutionFeed 静态测试和 Renderer 构建。测试覆盖普通侧栏与置顶分叉、嵌套来源、来源重命名、来源缺失、禁用导航和键盘焦点。真实 Electron 的隔离页面已验证新图标悬停、气泡停留和来源名称点击跳转；该结果不代表真实产品数据的人工验收。本次没有执行 Full Suite、Runtime/Main 套件、Seatbelt、启动/退出 smoke 或打包验证。
+
+- 分叉入口只接受已结束 Run 的完整最终回答。Runtime 拒绝进行中、未完成的回答和子 Agent Session。源 Session 存在待确认副作用时，Runtime 拒绝创建分叉。
+- 单次分叉最多保留 20,000 条历史记录。记录与独立引用资源的未压缩内容合计最多为 128 MiB。Runtime 超限时返回 `SESSION_FORK_HISTORY_LIMIT`，不会发布部分 Session。
+- 分叉保留完整聊天前缀，但模型上下文继续受既有预算约束。模型可以读取预算内的近期历史，或使用新 Session 自己生成的压缩摘要。Runtime 不复制截止点之后的旧摘要。
+- 共享目录分叉使用当前文件。独立 Worktree 保存分叉时的 HEAD、staged、unstaged 和 untracked 状态。该功能不恢复历史回答时的文件状态，也不复制 ignored 文件。Managed Session 只允许独立 Worktree 分叉。
+- 历史记录不授权新 Run。Runtime 不复制 Approval、Run Grant、写入证据、Worker 或子 Agent。Desktop 不从继承 Run 恢复权限模式。用户的新输入仍走现有 Run 创建流程。
+- Worktree 创建后、历史提交前的失败会保留 durable lifecycle 和快照。相同 `operationId` 的重试复用原目标身份与快照。Runtime 不发布半份历史。来源已删除或环境需要对账时，操作明确失败。
+- 来源回答定位最多自动读取 20,000 条展示记录。用户仍可以手动分页加载更早记录。
+- 本次 Runtime 定向测试通过 75 项。Renderer 行为测试通过 75 项，ExecutionFeed 静态测试通过 42 项。Main/Runtime 分叉与共享 Fixture 测试通过 2 项，现有 Desktop 契约检查通过。测试覆盖长历史、响应分组、工具回放、来源删除、重启、Worktree 重试、迁移回滚、界面分页与迟到响应。
+- 本次 `pnpm test` 全量通过：Runtime 2,404 项通过、2 项按配置排除；Desktop 合约 4 项、Renderer 状态 166 项、Main 84 项、Renderer 行为 533 项通过。首次运行中有 6 项 Schema 26 迁移夹具和固定版本断言失败。我更新了旧版数据库夹具并改为核对实际迁移版本；6 项定向复测、相关 Ruff 检查和第二次全量运行都通过。本次没有重新执行构建、Seatbelt 原生测试或打包测试，也没有做真实产品窗口的人工验收。
+
 ## 项目和 Session 置顶验证（2026-10-13）
 
 - 置顶功能已经接通右键菜单、typed IPC、Runtime 方法和 SQLite。项目与 Session 共用固定置顶顺序；首版不提供拖拽排序或排序设置。Runtime 最多保存 1000 个引用，未物化草稿和内部子会话不可置顶。
@@ -140,6 +167,7 @@
 - Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。`.git`、`.agents` 和 `.eidos` 等 hard discovery 目录默认隐藏，但显式只读路径仍可读取。Ignore 规则不是权限。
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
+- 延迟工具仍须先通过 `tool_search` 激活，再在后续 Step 使用。当前目录中的未激活工具会返回可恢复的 `tool_not_activated`，Runtime 不自动激活或重放该调用。同一批次内的搜索结果不会修改该 Step 已固定的可用工具集合。
 - Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，异常才建立未知副作用屏障。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
 - MCP 的有效响应表示调用已经返回，不证明外部业务目标已经达成。Runtime 在收到响应后做有界内容和固定输出 Schema 校验；校验失败仍报告工具错误，并保留可能已经发生的副作用。SDK 调用已进入但没有有效响应时，Runtime 仍按未知结果处理。当前提交标记是 SDK 调用边界，不是远端业务执行的确认。
 - 2026-10-09 测试记录：`pnpm test` 在默认外层沙盒下运行 Runtime Full。Runtime Full 结果为 90 failed、2112 passed、31 skipped、2 deselected。
@@ -315,7 +343,7 @@
 - 历史引用正文与图片受上下文预算限制。超出时，Context 会保留说明，原始快照仍在存储中。用户可以重新引用当前需要的内容。
 - 尚未创建 Session 的输入共用一个持久草稿槽。Session 草稿相互独立。保存失败时，界面保留当前文字并提示重试；应用异常退出前尚未完成持久化的编辑仍可能丢失。
 - Runtime 在添加新引用时清理超过 7 天、且没有被消息或草稿引用的记录。物理 Blob 回收沿用现有 GC 时机。界面暂未提供附件存储管理页。
-- MCP、Plugin 选择只使用已安装、已启用且已授权的扩展。安装、配置和授权继续在设置中完成。运行中消息追加、发送队列和网页引用不在本批范围内。
+- MCP、Plugin 选择只使用已安装、已启用且已授权的扩展。安装、配置和授权继续在设置中完成。Composer 使用现有 Run FIFO 接收下一轮输入，输入框上方的列表支持编辑排队消息文字和删除消息。队列编辑保留已有引用，目前没有修改引用或拖动排序的入口。运行中消息追加和网页引用不在本批范围内。
 
 ## Plan 模式验证状态
 

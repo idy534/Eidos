@@ -272,6 +272,13 @@
 
 .workspace-preview-bar + .workspace-preview { min-height: calc(100% - 2.5rem); }
 
+.workspace-preview:has(.pdf-viewer) {
+  height: calc(100% - 2.5rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .workspace-preview-placeholder,
 .workspace-preview-unavailable {
   display: grid;

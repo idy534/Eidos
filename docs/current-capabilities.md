@@ -4,6 +4,16 @@
 
 本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
+Eidos 提供回答级聊天分叉。用户可以在已结束 Run 的完整最终回答下点击“从这里分叉”。新 Session 保留截至该回答的消息、工具结果和输入引用，并等待用户输入。Local 和 Projectless 会话可以在当前目录继续；Git 会话也可以选择独立 Worktree。Managed 会话的分叉使用独立 Worktree。独立 Worktree 保存分叉时的 HEAD、staged、unstaged 和 untracked 状态。用户选择历史回答不会回退来源文件。
+
+Runtime 使用 `session/fork`、必填 `operationId` 和不可变历史清单完成分叉。相同请求重试返回同一个 Session。分叉可以再次从继承回答创建。来源删除、重启和 Blob GC 不会删除仍被分叉引用的历史、附件或私有模型回放。历史不会创建可执行 Run，也不会复制 Approval、Run Grant、Worker 或子 Agent。模型继续遵守现有上下文预算和压缩规则。
+
+用户可以点击“加载更早的记录”分页查看继承历史与真实记录。来源按钮会打开原 Session，并加载包含原回答的页面。界面保留当前消息与状态，不让迟到的历史页覆盖其他 Session。
+
+分叉创建时，Runtime 会保存原 Session 的名称。新 Session 会立即出现在侧栏，并保留该名称。首次对话不会触发新的自动命名。侧栏在名称末尾放置分叉图标；图标只在悬停或键盘焦点时显示。旧版未命名分叉会在 v26 → v27 升级时补齐名称，已有名称保持不变。
+
+侧栏、回答操作栏和分叉弹窗共用同一个分叉图标。分叉名称的悬停气泡会显示“来源会话”和直接来源 Session 的当前名称。用户可以点击这个名称打开来源 Session。嵌套分叉显示直接父会话；来源不在当前列表中时，气泡显示“来源会话不可用”，不提供跳转按钮。
+
 Runtime 已移除额外模型完成审查。普通工具任务的最终答复不会再因为内部评估失败或答复去重被停止；原生继续信号、输入、协作和最终事务检查继续生效。旧审查 Event 与 ModelProfile 仍可读取。
 
 执行屏障使用实际执行事实。准备失败和未启动命令不会产生未知副作用；已知结果后的输出过滤、格式校验和投影失败不会单独建立屏障。完全访问 Shell 可以使用已核验的 Workspace 外 cwd。已知文件操作的恢复只观察受影响目标，并在 SQLite 中核对 epoch 和目标集合，避免无关目录扫描阻断恢复。
@@ -23,7 +33,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - 用户展开或收起项目时，侧边栏不会重新滚到当前高亮会话。Desktop 切换到另一个 Session 时仍会定位目标；用户通过输入引用查看其他会话时，Desktop 也会展开目标项目并定位。目标已在可见范围内时，侧边栏不会主动滚动。
 - Session 首屏和历史分页的读取代码不再构建 Step Resolution Review。响应保留空的 `stepResolutions` 字段。Items、Runs 和事件游标继续使用原有读取路径。本项代码修订尚未进入测试和性能验收阶段。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
-- 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
+- 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。标题请求把原始任务放在 `<task>` 中。系统和用户提示词都要求模型只命名，不回答或执行任务，并输出一行无 Markdown 的标题。Chat Completions 和 Responses 使用同一模板。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
 - 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Workspace Dock 的 Review 只对 Git Project 展示，Terminal 和 Files 只对有 Project 的会话展示，Browser 对所有会话展示。Projectless Session 的 Runtime 仍使用当前 Session 的私有 Workspace。
 - Desktop 的“更改工作环境”弹窗使用中文展示“本地”和“新建本地工作树”。当前环境是本地时，用户也可以在弹窗中切换本地分支。切换到本地工作树时，Runtime 会创建或复用这个 Session 已关联的工作树；切换回本地时，Runtime 会安全迁移当前 Git 状态。整个过程不会创建新 Session。环境切换期间，Desktop 会禁用输入、创建分支、删除和 Session 导航；完成后只刷新当前 Session 的执行绑定和 Git 审阅状态。
 - Desktop 的 Review Dock 会按 Dock 自身宽度切换布局。窄 Dock 会把分支观察、Git 操作、Diff 范围和审阅操作分成稳定的行。分支与比较目标保持单行省略。空范围只显示一个可读空状态，不再显示零文件分组。
@@ -193,6 +203,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；受保护路径需要高危人工确认后才可扩权。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
+- 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立待核验状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - Runtime 可以在共同的工具结果提交边界保存已取得的文字和二进制内容。`view_image` 已使用该边界保存读取时的 PNG/JPEG；后续请求与重启恢复从保存的内容组装，源文件删除或替换不会触发重新读取或源文件 Hash 比对。内容快照没有新增 Hash 字段。公共 ToolResult 与 UI 契约保持不变，模型内容引用只进入内部持久投影。
@@ -261,10 +272,12 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型只能把 Catalog 给出的 canonical absolute root 用于已激活 Skill 的只读文件 Tool；任意 absolute path 不能扩大读写或 Shell 权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative 或 Workspace 内 canonical absolute cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
 - MCP 当前支持 stdio Tools。Settings 可以创建、编辑和卸载手动 MCP，并配置名称、启动命令、参数、环境变量、环境变量透传名、工作目录和 `connector`/`workspace_read` permission profile。保存或编辑后的 Server 默认未授权，用户需要通过现有审阅入口重新启用。环境变量值不会出现在 MCP 列表、事件或日志中，编辑时留空会保留已保存的环境变量值。Server consent、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
+- MCP Connection 的默认 HOME、TMPDIR 和 PID 文件使用 `/private/tmp/eidos-mcp-<随机值>/` 下的短路径，不随数据目录或服务工作目录变长。连接在进程和异步资源停止后核对身份并清理自身目录。显式 HOME、TMPDIR 配置继续优先。
+- 手动 MCP 的工作目录留空时，Runtime 创建并使用 `~/Eidos/eidos-mcp/<服务 ID>/`，不同服务分开保存，初始权限为 `0700`。已有配置不自动迁移。cwd 控制相对参数和产物路径，HOME 仍单独配置，原有沙盒权限继续生效。工具描述和文件名参数不追加或改写。
 
 ## Persistence
 
-- 当前 state schema 是 v13。新 `state.sqlite` 不包含可重建的 Repository Index 表。Runtime 包含旧版本逐级迁移到 v13 的代码；本次 v12 → v13 迁移尚待验证。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision会进入 `health_only`。
+- 当前 state schema 是 v27。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
@@ -387,6 +400,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 有项目的 Session 会收到独立的文件引用提示词。提示词提供文件、行号、行列号的标准 Markdown 格式和示例，要求模型使用当前 execution root 内已经确认的绝对路径，并用尖括号包住链接目标。无项目的 Session 不加入这段提示词。标准示例为 `[app.ts (line 42)](</workspace/My Project/src/app.ts:42>)`；列号示例为 `[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)`。示例路径只说明格式，模型必须替换为实际路径。
 - Conversation 只把显式 Markdown 绝对路径链接作为文件跳转入口。系统从链接目标提取路径和位置，显示标签不参与寻址。裸文件名、行内代码和相对文件链接保持文字。文件链接复用现有图标和蓝色文字样式，不依赖扩展名白名单，也不按文件名搜索或猜测子目录。系统支持 `:line[:column]`，并兼容显式链接中的 `#Lline[Ccolumn]`；行列号从 1 开始。普通文本和代码预览会滚动到目标行，并选中该行或指定列的字符；同一文件再次点击不同位置时会重新定位。带位置的 HTML 链接会打开源码。渲染后的 Markdown 按源文本位置滚动到对应块，文档内相对链接仍按文档所在目录解析。目标行超出当前预览时，系统会显示提示。Renderer、Runtime 自动化测试和构建已通过；完整结果见 `current-limitations.md`。人工 Desktop 验收尚未执行。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
+- Desktop 会把预览请求中的 `WORKSPACE_FILE_NOT_FOUND` 转成“暂无预览”，不再让该错误触发 Electron IPC handler 异常日志。其他错误仍按原有路径返回。`view_image` 卡片只对成功调用且位于当前 Workspace 内的路径请求预览；历史文件删除后，卡片不会恢复原文件。
+- PDF 预览使用已打包的 PDF.js 和本地 worker 绘制页面。页面外侧沿用预览区的 `--surface-muted` 底色，不再显示 Chromium 内嵌查看器的黑色外框。加载和失败状态也沿用同一底色，系统「预览」打开入口保留。底部工具栏不显示“PDF 预览”文字；多页文件保留页码，页码和打开按钮始终单行显示。总页数直接读取当前 PDF 文档，滚动条复用统一样式。主 Renderer 不再保留 PDF iframe 样式或 iframe 加载许可。
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
 - Review 提供“最近一轮”范围，严格按 `runId` 过滤持久化 ToolCall 文件补丁，空轮保持空，不回退到全量；“整个任务”展示本 Session 全部 Run 的补丁历史。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
 - 最近一轮反馈包含 Run、ToolCall、文件、行位置和已有 Base SHA。
@@ -468,6 +483,8 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 ### 交互与资源门禁细化（PR #103）
 
 - Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，专用面板继续替换普通输入框。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
+- Session 输入框上方显示待执行消息列表。列表按发送顺序排列，并独立于聊天记录分页读取。用户可以在列表中编辑消息文字、取消编辑或删除消息。编辑保留引用、模型、工作模式、审批模式和队列位置，也保留主输入框中的草稿。消息开始执行后会离开列表；后端拒绝对已开始或恢复中的 Run 进行队列编辑和删除。修改与删除会持久化，重启后继续生效。
+- 未保存的草稿 Session 不显示队列，也不调用队列接口。首次发送创建持久 Session 后，界面才读取该 Session 的队列。用户切回新草稿时，界面移除原 Session 的队列。
 - 连续安全的只读调用可在混合批次中并行。普通读取和协调不等待整库恢复扫描；冲突文件与未知副作用继续受保护。搜索执行槽位满时排队，取消和退出仍负责清理。
 - 延迟工具优先保留最新激活项，仍受工具定义大小预算约束。新 Run 的 Skill 删除保护基于实际使用租约和冻结元数据；旧 Run 继续保守保护目录引用。
 - CI 按改动范围选择 Runtime、Desktop 与原生检查，质量和安全检查独立执行；最终汇总保留必需检查，失败不会被其他成功结果掩盖。数据库升级至 Schema 17，Runtime 和 Desktop 应一起更新。

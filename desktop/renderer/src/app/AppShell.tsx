@@ -11,7 +11,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedbackValue, Run, Session } from "../contracts.js";
+import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedbackValue, Run, Session, Item } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
@@ -21,12 +21,14 @@ import { DropdownMenu } from "../components/DropdownMenu.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
+import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";
 import { ProjectPicker } from "../components/ProjectPicker.js";
 import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
 import { ComposerSlot } from "../components/ComposerSlot.js";
 import { Composer } from "../components/Composer.js";
+import { QueuedMessages } from "../components/QueuedMessages.js";
 import { TextReviewPanel } from "../components/TextReviewPanel.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import { GitWorkflowControls } from "../components/GitWorkflowControls.js";
@@ -55,7 +57,7 @@ import { useContextUsageController } from "./useContextUsageController.js";
 import { resolveSessionRun } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { useGitReviewController } from "./useGitReviewController.js";
-import { applyNotification, userFacingError } from "../session-state.js";
+import { applyNotification, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
 import { NavigationControls } from "../components/NavigationControls.js";
 import { useNavigationHistory } from "./useNavigationHistory.js";
@@ -125,10 +127,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const [responseActionState, responseActionActions] = useResponseActionController(
     sessionState.snapshot?.session.id,
   );
-  const latestRun = sessionState.snapshot?.runs.length
-    ? sessionState.snapshot.runs[sessionState.snapshot.runs.length - 1]
-    : undefined;
-  const sessionConfigRun = resolveSessionRun(sessionState.snapshot?.runs ?? []);
+  const latestRun = sessionState.snapshot?.runs.filter((run) => !run.inherited).at(-1);
+  const [forkSelection, setForkSelection] = useState<{ session: Session; item: Item } | null>(null);
+  const [forkTarget, setForkTarget] = useState<"same_workspace" | "new_worktree">("same_workspace");
+  const sessionConfigRun = resolveSessionRun(sessionState.snapshot?.runs.filter((run) => !run.inherited) ?? []);
   const [approvalModes, setApprovalModes] = useState<Record<string, ApprovalMode>>({});
   const approvalSessionId = sessionState.draft && !sessionState.snapshot?.runs.length
     ? sessionState.draft.session.id
@@ -451,6 +453,8 @@ export function AppShell({ runtime }: AppShellProps) {
       gitReviewActions.handleNotification(notification);
       if (notification.method === "sidebar/pinsChanged") {
         sidebarPins.handleChanged(notification.params.eventId);
+      } else if (notification.method === "run/queueChanged") {
+        void sessionActions.refreshCompletedSession(notification.params.change.sessionId);
       } else if (notification.method === "session/titleUpdated") {
         sessionActions.handleTitleNotification(notification.params);
       } else if (
@@ -918,6 +922,27 @@ export function AppShell({ runtime }: AppShellProps) {
     await reviseLatestRun(run);
   }, [reviseLatestRun]);
 
+  const createConversationFork = useCallback(async (source: Session, item: Item, kind: "same_workspace" | "new_worktree") => {
+    const loaded = await sessionActions.forkSession(source.id, item.id,
+      kind === "same_workspace" ? { kind } : { kind, state: "current_workspace" });
+    if (loaded) {
+      setForkSelection(null);
+      const inheritedCount = loaded.session.forkedFrom?.itemCount ?? 0;
+      showToast(`本会话从历史回答分叉，已继承 ${inheritedCount} 条记录。`, "info", 3500);
+      requestAnimationFrame(() => composerRef.current?.focus());
+    }
+  }, [sessionActions.forkSession, showToast]);
+  const handleFeedFork = useCallback((item: Item) => {
+    const source = sessionState.snapshot?.session;
+    if (!source || sessionState.pending.creatingSession) return;
+    if (!source.project?.gitAvailable) {
+      void createConversationFork(source, item, "same_workspace");
+      return;
+    }
+    setForkTarget(source.executionMode === "worktree" ? "new_worktree" : "same_workspace");
+    setForkSelection({ session: source, item });
+  }, [sessionState.snapshot?.session, sessionState.pending.creatingSession, createConversationFork]);
+
   const handleFeedEditResend = useCallback((run: Run, editedInput?: string, references?: string[]) => {
     return reviseLatestRun(run, editedInput, references);
   }, [reviseLatestRun]);
@@ -989,6 +1014,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   useEffect(() => {
     setReviewRequest(undefined);
+    setWorkflowOpenRequest(0);
   }, [currentSnapshot?.session.id]);
 
   function getDockResizeBounds(): { min: number; max: number } {
@@ -1519,13 +1545,12 @@ export function AppShell({ runtime }: AppShellProps) {
                     {responseActionState.error}
                   </p>
                 )}
-
                 <ExecutionFeed
                   key={currentSnapshot.session.id}
-                  items={currentSnapshot.items}
+                  items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
                   projectless={currentSnapshot.session.projectless === true}
-                  runs={currentSnapshot.runs}
+                  runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
                   models={feedModels}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
                   responseActionState={responseActionState.responseState}
@@ -1543,6 +1568,9 @@ export function AppShell({ runtime }: AppShellProps) {
                   onApprove={handleFeedApprove}
                   onReject={handleFeedReject}
                   onFeedback={handleFeedFeedback}
+                  onFork={handleFeedFork}
+                  onLoadOlder={currentSnapshot.previousItemId ? () => void sessionActions.loadOlderSession() : undefined}
+                  loadingOlder={sessionState.pending.loadingHistorySessionId === currentSnapshot.session.id}
                   onRegenerate={handleFeedRegenerate}
                   onEditResend={handleFeedEditResend}
                   onOpenFile={handleOpenFileInDock}
@@ -1551,6 +1579,16 @@ export function AppShell({ runtime }: AppShellProps) {
                   onOpenSubagent={handleOpenSubagent}
                 />
 
+                {!isDraft && <QueuedMessages
+                  key={`queue-${currentSnapshot.session.id}`}
+                  sessionId={currentSnapshot.session.id}
+                  ready={isStorageReady && runtimeStatus.state === "ready"}
+                  onChanged={(change) => {
+                    sessionActions.setSnapshot((previous) => applyQueuedRunChange(previous, change));
+                    void sessionActions.refreshCompletedSession(change.sessionId);
+                  }}
+                  onRefresh={() => void sessionActions.refreshCompletedSession(currentSnapshot.session.id)}
+                />}
                 <ComposerSlot
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}
@@ -1704,7 +1742,7 @@ export function AppShell({ runtime }: AppShellProps) {
                         sessionId={currentSnapshot.session.id}
                         workspaceRoot={currentSnapshot.session.project?.workspaceRoot ?? currentSnapshot.session.workspaceRoot}
                         items={completeSessionItems.items}
-                        latestRunId={currentSnapshot.runs.at(-1)?.id}
+                        latestRunId={currentSnapshot.runs.filter((run) => !run.inherited).at(-1)?.id}
                         previousItemId={currentSnapshot.previousItemId}
                         lastTurnRequest={reviewRequest}
                         scope={gitReviewState.scope}
@@ -1855,6 +1893,7 @@ export function AppShell({ runtime }: AppShellProps) {
           }
           onRefresh={gitReviewActions.refresh}
           openRequest={workflowOpenRequest}
+          onClose={() => setWorkflowOpenRequest(0)}
           dialogOnly
           onCreateBranch={
             sessionIsLocal || (sessionWorktree?.state === "active" && sessionWorktree.branch === null)
@@ -1906,6 +1945,16 @@ export function AppShell({ runtime }: AppShellProps) {
           setHandoffSessionId(undefined);
           sessionActions.setError(undefined);
         }}
+      />
+      <ForkConversationDialog
+        open={forkSelection !== null}
+        session={forkSelection?.session}
+        forkTarget={forkTarget}
+        busy={sessionState.pending.creatingSession === true}
+        error={sessionState.error}
+        onTargetChange={setForkTarget}
+        onCancel={() => setForkSelection(null)}
+        onConfirm={() => { if (forkSelection) void createConversationFork(forkSelection.session, forkSelection.item, forkTarget); }}
       />
       <ConfirmDialog
         open={Boolean(sessionToDelete)}

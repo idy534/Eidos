@@ -1,6 +1,8 @@
+import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
+import { isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
@@ -19,6 +21,7 @@ import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies
 import { shutdownRuntime } from "./runtime-shutdown.js";
 import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import { ArtifactPreviewManager } from "./artifact-preview.js";
+import { workspacePreviewUrl } from "./workspace-preview.js";
 import { TerminalManager } from "./terminal-manager.js";
 import type {
   ApprovalMode,
@@ -595,6 +598,18 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
 ipcMain.handle(IPC.SIDEBAR_LIST_PINS, () => clientOrThrow().listSidebarPins());
+ipcMain.handle(IPC.RUN_UPDATE_QUEUED, (_event, request: unknown) => {
+  if (!isQueuedRunUpdateRequest(request)) throw new Error("排队消息参数无效。");
+  return clientOrThrow().updateQueuedRun(request);
+});
+ipcMain.handle(IPC.RUN_LIST_QUEUED, (_event, request: unknown) => {
+  if (!isQueuedRunListRequest(request)) throw new Error("排队消息参数无效。");
+  return clientOrThrow().listQueuedRuns(request);
+});
+ipcMain.handle(IPC.RUN_DELETE_QUEUED, (_event, request: unknown) => {
+  if (!isQueuedRunDeleteRequest(request)) throw new Error("排队消息参数无效。");
+  return clientOrThrow().deleteQueuedRun(request);
+});
 ipcMain.handle(IPC.SIDEBAR_SET_PINNED, (_event, request: unknown) => {
   if (!isSidebarSetPinnedRequest(request)) throw new Error("置顶参数无效。");
   return clientOrThrow().setSidebarPinned(request);
@@ -653,6 +668,10 @@ ipcMain.handle(IPC.SESSION_CREATE, (_event, workspaceRoot: unknown, options: unk
     throw new Error("Workspace 参数无效。");
   }
   return clientOrThrow().createSession(workspaceRoot, validateSessionCreateOptions(options));
+});
+ipcMain.handle(IPC.SESSION_FORK, (_event, request: unknown) => {
+  if (!isSessionForkRequest(request)) throw new Error("分叉参数无效。");
+  return clientOrThrow().forkSession(request);
 });
 ipcMain.handle(IPC.SESSION_CREATE_BRANCH, (_event, sessionId: unknown, branch: unknown) => {
   if (
@@ -795,14 +814,14 @@ ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (
   if (version !== undefined && (typeof version !== "string" || !/^[a-f0-9]{64}$/.test(version))) throw new Error("文件版本无效。");
   if (workspaceRoot !== undefined && typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
   if (projectId !== undefined && typeof projectId !== "string") throw new Error("Project 参数无效。");
-  return artifactPreview.prepare(
+  return workspacePreviewUrl(() => artifactPreview.prepare(
     previewOwner(event),
     previewString(id),
     previewString(path),
     version as string | undefined,
     typeof workspaceRoot === "string" ? workspaceRoot : undefined,
     typeof projectId === "string" ? projectId : undefined,
-  );
+  ));
 });
 ipcMain.handle(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
 ipcMain.handle(IPC.BROWSER_OPEN, (

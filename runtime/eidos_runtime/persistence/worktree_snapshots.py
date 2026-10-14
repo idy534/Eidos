@@ -151,6 +151,13 @@ class WorktreeSnapshotRepository(Repository):
             ).fetchone()
         return row is not None
 
+    def referenced_by_lifecycle(self, snapshot_id: str) -> bool:
+        with self.lock:
+            return self._connection().execute(
+                "SELECT 1 FROM worktree_lifecycle_operations WHERE snapshot_id=? "
+                "AND state NOT IN ('completed','worktree_deleted') LIMIT 1", (snapshot_id,),
+            ).fetchone() is not None
+
 
 def _values(snapshot: WorktreeSnapshot) -> tuple[object, ...]:
     return (

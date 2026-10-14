@@ -7,11 +7,16 @@ import type { SidebarTarget } from "../../../shared/sidebar.js";
 import { ContextMenu } from "./DropdownMenu.js";
 import { FinderIcon, EditIcon, TrashIcon, PinIcon } from "./MenuIcons.js";
 import { EidosMark } from "./EidosMark.js";
+import { ForkIcon } from "./ForkIcon.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
 import { SidebarTooltip, type SidebarTooltipState, type SidebarTooltipTarget } from "./SidebarTooltip.js";
 import settingsIcon from "./settings.svg";
 
 export const COLLAPSED_PROJECTS_KEY = "eidos.sidebarCollapsedProjects";
+
+function tooltipHasFocus(): boolean {
+  return document.getElementById("sidebar-hover-tooltip")?.contains(document.activeElement) ?? false;
+}
 
 export function loadCollapsedProjects(): Set<string> {
   try {
@@ -87,7 +92,7 @@ export function SessionSidebar({
   navigationSlot,
 }: Props) {
   const visibleSessions = sessions.filter(
-    (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
+    (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
   );
   const projects = groupSessionsByProject(visibleSessions, catalogProjects);
   const sidebar = projectSidebarGroups(projects, pins);
@@ -195,7 +200,7 @@ export function SessionSidebar({
       clearTimeout(leaveTimeoutRef.current);
     }
     leaveTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringTooltipRef.current && !isHoveringTriggerRef.current) {
+      if (!isHoveringTooltipRef.current && !isHoveringTriggerRef.current && !tooltipHasFocus()) {
         setActiveTooltip(null);
       }
     }, 240);
@@ -215,7 +220,7 @@ export function SessionSidebar({
       clearTimeout(leaveTimeoutRef.current);
     }
     leaveTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringTooltipRef.current && !isHoveringTriggerRef.current) {
+      if (!isHoveringTooltipRef.current && !isHoveringTriggerRef.current && !tooltipHasFocus()) {
         setActiveTooltip(null);
       }
     }, 240);
@@ -705,6 +710,15 @@ export function SessionSidebar({
       )}
       <SidebarTooltip
         state={activeTooltip}
+        sourceSession={activeTooltip?.kind === "session"
+          ? sessions.find((session) => session.id === activeTooltip.session.forkedFrom?.sessionId)
+          : undefined}
+        onOpenSourceSession={(source) => {
+          if (disabled) return;
+          dismissTooltipImmediately();
+          onSelect(source);
+        }}
+        disabled={disabled}
         onMouseEnter={handleTooltipEnter}
         onMouseLeave={handleTooltipLeave}
       />
@@ -842,7 +856,12 @@ function ProjectSessionList({
                 }}
               >
                 <span className="session-labels">
-                  <span className="session-title">{session.title ?? "新任务"}</span>
+                  <span className="session-title-row">
+                    <span className="session-title">{session.title ?? "新任务"}</span>
+                    {session.forkedFrom && <span className="session-fork-indicator" role="img" aria-label="分叉会话" title="分叉会话">
+                      <ForkIcon />
+                    </span>}
+                  </span>
                   {project.gitAvailable && session.worktree && (
                     <span className="session-branch">
                       {session.worktree.branch ?? "Detached HEAD"}

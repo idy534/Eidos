@@ -1,3 +1,4 @@
+import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
 import type { ModelId } from "./constants.js";
 import type { RunTermination } from "./run-termination.generated.js";
 import { IPC } from "./ipc-channels.js";
@@ -47,6 +48,7 @@ export interface Project extends SessionProject {
 }
 
 export interface Session {
+  forkedFrom?: SessionForkSource;
   id: string;
   workspaceRoot: string;
   executionMode?: "local" | "worktree";
@@ -265,6 +267,7 @@ export interface TerminalExitEvent {
 export type ApprovalMode = "manual" | "auto_review" | "full_access";
 
 export interface Run {
+  inherited?: boolean;
   approvalMode?: ApprovalMode;
   workMode?: "execute" | "plan";
   id: string;
@@ -361,6 +364,7 @@ export interface ToolTextPage {
 }
 
 export interface Item {
+  inherited?: boolean;
   references?: import("./input-context.js").InputReference[];
   id: string;
   sessionId: string;
@@ -377,6 +381,7 @@ export interface Item {
 }
 
 export interface SessionSnapshot {
+  inheritedHistory?: InheritedHistoryEntry[];
   session: Session;
   runs: Run[];
   items: Item[];
@@ -680,6 +685,7 @@ export interface ExtensionSnapshot {
 
 export type RuntimeNotification =
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
+  | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }
   | { method: "workspace/changed"; params: { sessionId: string; paths: string[] } }
   | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }

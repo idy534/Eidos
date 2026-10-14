@@ -26,6 +26,7 @@ from eidos_runtime.protocol.schemas import (
     ContextUsageSnapshotDto,
     EventEnvelopeDto,
     ItemDto,
+    InheritedHistoryEntry,
     McpServerRecordDto,
     PluginRecordDto,
     ProjectDto,
@@ -706,6 +707,7 @@ class ToolTextReadResponseDto(MethodResultDto):
 
 
 class SessionReadResponseDto(MethodResultDto):
+    inherited_history: list[InheritedHistoryEntry] | None = Field(default=None, alias="inheritedHistory")
     session: SessionDto
     runs: list[RunDto]
     items: list[ItemDto]

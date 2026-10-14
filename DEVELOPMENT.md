@@ -67,6 +67,10 @@ Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使�
 
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
+MCP Connection 使用标准库 `tempfile.mkdtemp()` 在 macOS 的 canonical `/private/tmp` 下创建 `eidos-mcp-<随机值>/`，不再使用数据目录下的长运行路径，也不从主进程继承临时目录根路径。连接的默认 HOME、TMPDIR 和 PID 文件分别位于短目录内的 `home/`、`tmp/` 和 `server.pid`。服务显式配置或透传的环境变量仍然优先。连接在进程组、异步 Service 和 callback 停止后核对目录身份并清理自身目录；系统临时目录和其他连接不受清理影响。
+
+创建或编辑手动 MCP 时，工作目录留空会创建并使用 `~/Eidos/eidos-mcp/<serverId>/`，初始权限为 `0700`。服务 ID 对应界面的服务名称，例如 `playwright/`。默认路径拒绝符号链接目录。填写的工作目录仍须已经存在，且继续使用原有权限校验。保存后的 cwd 会持久化，已有配置不自动迁移；编辑时清空工作目录即可选择新默认值。cwd 控制服务的相对参数和相对产物位置，但不会隐式改变 HOME，也不会增加沙盒写权限。MCP 工具描述继续保留服务原文，不追加输出目录提示，不改写工具文件名参数。
+
 Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=...`，以及 `Runtime initialized duration_ms=...`。存储阶段是 `storage` 的子阶段，开发者不能把父阶段与子阶段耗时相加。初始化总计时不包含 Python 模块导入、Desktop 构建和 Renderer 首屏请求。启动不执行 Blob 全量清理和仓库库全库扫描；现有受管后台任务会在任务创建至少 60 秒后且 Runtime 空闲时执行仓库库完整性检查、有界空闲页回收和 Blob 清理，之后每小时检查一次。Session 删除和隐私撤销仍保留即时清理。
 
 ## 4. Test
@@ -141,7 +145,9 @@ pnpm build
 
 `pnpm test:composer-layout` 使用真实 Electron、隔离的临时 user-data 和本地 Vite 测试页面。该定向测试检查输入框自动高度和历史记录滚动位置，不启动 Runtime，也不读取真实 Session 数据。测试记录包含代码块和图片，预览上下文随草稿编辑更新。测试覆盖单行输入、全选删除、等高编辑、多行删除、组合输入事件、窄窗口换行、窗口宽度变化和输入框内部滚动。该入口不属于完整测试套件。
 
-`pnpm test:sidebar-pinning` 使用真实 Electron、隔离的临时 user-data 和生产侧栏组件。该定向测试检查项目右键置顶、Session 的 Shift+F10 置顶、混合显示、取消置顶、唯一高亮、状态图标、项目浏览时的滚动位置，以及 1100px 和 420px 窗口中的菜单边界。测试页沿用禁止 JavaScript eval 的 CSP。该页面使用测试 API，不启动 Runtime，也不读取真实 Project 或 Session。Main → Runtime 持久化验证使用 `pnpm build:main` 后的 `node --test dist/main/runtime-client-sidebar.test.js`。开发者可以通过 `EIDOS_SIDEBAR_SCREENSHOT` 指定截图输出路径。这两个入口不属于完整测试套件。
+`node_modules/.bin/electron scripts/test-queued-messages.cjs` 使用真实 Electron 和隔离页面检查输入框上方的消息队列。该定向测试覆盖 1100px、600px、420px 下的对齐、长消息、队列内部滚动、编辑、删除和主草稿保留，不读取真实 Session。`EIDOS_QUEUE_SCREENSHOT_DIR` 可以指定截图目录。Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_queued_runs.py`；Main → Runtime 验证在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-queued-runs.test.js`。这项跨进程测试使用临时工作区和测试模型，原生环境需要可用的 Seatbelt，测试不会放行等待中的网络 Shell。
+
+`pnpm test:sidebar-pinning` 使用真实 Electron、隔离的临时 user-data 和生产侧栏组件。该定向测试检查项目右键置顶、Session 的 Shift+F10 置顶、混合显示、无 Run 分叉的即时显示和悬停图标、分叉气泡的来源名称与点击跳转、取消置顶、唯一高亮、状态图标、项目浏览时的滚动位置，以及 1100px 和 420px 窗口中的菜单边界。测试页沿用禁止 JavaScript eval 的 CSP。该页面使用测试 API，不启动 Runtime，也不读取真实 Project 或 Session。Main → Runtime 持久化验证使用 `pnpm build:main` 后的 `node --test dist/main/runtime-client-sidebar.test.js`。开发者可以通过 `EIDOS_SIDEBAR_SCREENSHOT` 指定置顶截图输出路径，也可以通过 `EIDOS_FORK_HOVER_SCREENSHOT` 指定分叉来源气泡截图路径。这两个入口不属于完整测试套件。
 
 `pnpm test:renderer-styles` 使用真实 Electron 和隔离页面加载 Renderer 的统一样式入口。该定向测试检查公共按钮与审批、计划按钮的默认、悬停、按下、禁用和键盘焦点状态，检查列表选中项的悬停颜色与菜单外观，并覆盖 1100px、420px 下的侧栏和 Dock 组合。测试还检查聊天、代码和非聊天正文的字号，以及 Composer 的高度范围。测试不启动 Runtime，也不读取真实 Session 数据。开发者可以通过 `EIDOS_STYLE_BASELINE_CSS` 指定改动前的构建 CSS 文件，让测试对照正文排版和布局；该路径只用于本次测试。该入口不属于完整测试套件。
 

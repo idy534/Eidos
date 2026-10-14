@@ -211,6 +211,7 @@
 .process-content { padding-top: 0.75rem; color: #727772; }
 .process-text { max-width: 48rem; margin: 0 0 0.75rem; color: var(--text); }
 .process-text .markdown-body { color: var(--text); }
+.feed > .turn-results { margin-bottom: 1.25rem; }
 .run-notice { max-width: 48rem; margin: -0.25rem 0 1.25rem; color: var(--muted); font-size: var(--font-size-caption); }
 .run-notice--error { color: var(--danger); }
 .run-notice--warning { color: #6f5b38; }

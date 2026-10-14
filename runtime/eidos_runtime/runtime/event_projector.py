@@ -15,6 +15,8 @@ class EventProjector:
     ) -> tuple[dict[str, object], ...]:
         event_type = event.get("eventType")
         payload = event.get("payload")
+        if event_type == "run.queue_changed" and isinstance(payload, dict):
+            return (self._notification("run/queueChanged", payload),)
         if event_type == "sidebar.pins_changed" and isinstance(event.get("eventId"), int):
             return (self._notification("sidebar/pinsChanged", {
                 "eventId": event["eventId"],

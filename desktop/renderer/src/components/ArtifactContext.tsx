@@ -110,6 +110,10 @@ export function usePreviewUrl(path: string | undefined, version?: string) {
       actions.executionRoot,
       actions.projectId,
     ).then((url) => {
+      if (url === null) {
+        if (current) setState({ key, error: "暂无预览" });
+        return;
+      }
       created = url;
       if (current) setState({ key, url });
       else if (typeof window.eidosRuntime?.releaseWorkspacePreview === "function") void window.eidosRuntime.releaseWorkspacePreview(url).catch(() => {});

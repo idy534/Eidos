@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { RuntimeClient } from "./runtime-client.js";
 import type { BrowserAnnotation, BrowserBounds, BrowserPageState } from "../shared/index.js";
 
-protocol.registerSchemesAsPrivileged([{ scheme: "eidos-preview", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: "eidos-preview", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 
 interface WorkspacePreviewGrant {
   kind: "workspace";
@@ -97,6 +97,16 @@ export class ArtifactPreviewManager {
     try {
       const url = new URL(request.url);
       const grant = this.grants.get(url.hostname);
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+          },
+        });
+      }
       if (!grant || (allowedToken && allowedToken !== url.hostname) || request.method !== "GET") return new Response(null, { status: 403 });
       if (grant.kind === "input") {
         if (executable) return new Response(null, { status: 403 });
@@ -119,6 +129,7 @@ export class ArtifactPreviewManager {
           "Content-Type": chunk.mimeType,
           "Content-Length": String(chunk.sizeBytes),
           "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": "*",
           "X-Content-Type-Options": "nosniff",
           "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
         } });
@@ -164,6 +175,7 @@ export class ArtifactPreviewManager {
         "Content-Type": chunk.mimeType,
         "Content-Length": String(chunk.sizeBytes),
         "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": executable
           ? "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'"

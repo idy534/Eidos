@@ -88,6 +88,7 @@ interface GitChangesPanelProps {
   workflowDisabled?: boolean;
   workspaceMutationDisabled?: boolean;
   workflowOpenRequest?: number | undefined;
+  onWorkflowClose?: (() => void) | undefined;
   onCreateBranch?: (() => void) | undefined;
 }
 
@@ -212,6 +213,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
     workflowDisabled = false,
     workspaceMutationDisabled = false,
     workflowOpenRequest,
+    onWorkflowClose,
     onCreateBranch,
   } = props;
   const [loadedSummary, setLoadedSummary] = useState<SessionGitDiff>();
@@ -567,6 +569,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
               disabled={workflowDisabled}
               workspaceMutationDisabled={workspaceMutationDisabled}
               openRequest={workflowOpenRequest}
+              onClose={onWorkflowClose}
               onRefresh={onRefresh}
               onCreateBranch={onCreateBranch}
             />

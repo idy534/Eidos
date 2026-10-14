@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eidos_runtime.model.client import ModelResponse, ModelToolCall  # noqa: E402
+from eidos_runtime.model.client import CustomToolPayload, ModelResponse, ModelToolCall  # noqa: E402
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
 from eidos_runtime.tools.registry import (  # noqa: E402
     ToolProvenance,
@@ -120,7 +120,39 @@ class ToolRegistryTests(unittest.TestCase):
             ),)),
             first.available_names,
         )
-        self.assertEqual(hidden.error_code, "invalid_tool_call")
+        self.assertIsNone(hidden.error_code)
+        plan = dispatcher.plan(hidden.tool_calls[0], activation_required=True)
+        self.assertTrue(plan.activation_required)
+        self.assertEqual(plan.side_effect, "none")
+        self.assertNotIn("external_118", first.available_names)
+        self.assertFalse(dispatcher.is_parallel_read_call(hidden.tool_calls[0], first.available_names))
+        self.assertFalse(dispatcher.is_parallel_read_batch(
+            (hidden.tool_calls[0], hidden.tool_calls[0]), first.available_names,
+        ))
+
+    def test_undeclared_direct_and_unknown_tools_still_fail_validation(self) -> None:
+        dispatcher = ToolDispatcher(ToolRegistry((memory_entry(),)))
+        for name in ("memory_echo", "missing_tool"):
+            with self.subTest(name=name):
+                result = dispatcher.validate(ModelResponse(tool_calls=(
+                    ModelToolCall("call", name, {"value": "x"}),
+                )), ())
+                self.assertEqual(result.error_code, "invalid_tool_call")
+
+    def test_inactive_tools_do_not_relax_payload_and_call_id_checks(self) -> None:
+        direct = memory_entry("deferred_echo")
+        deferred = ToolRegistryEntry(
+            direct.spec.model_copy(update={"visibility": "deferred"}),
+            direct.provenance, direct.adapter,
+        )
+        dispatcher = ToolDispatcher(ToolRegistry((deferred,)))
+        for calls in (
+            (ModelToolCall("same", "deferred_echo", {}), ModelToolCall("same", "deferred_echo", {})),
+            (ModelToolCall("", "deferred_echo", {}),),
+            (ModelToolCall("bad-kind", "deferred_echo", CustomToolPayload(input="x")),),
+        ):
+            with self.subTest(calls=calls):
+                self.assertIsNotNone(dispatcher.validate(ModelResponse(tool_calls=calls), ()).error_code)
 
     def test_tool_search_description_routes_deferred_tools_without_semantic_claims(
         self,

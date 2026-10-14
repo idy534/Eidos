@@ -89,7 +89,7 @@ class WorktreeSnapshotService:
         for older in self.snapshots.list_for_worktree(worktree.id) if replace_older else ():
             if older.id == saved.id or older.state.value != "ready":
                 continue
-            if self.snapshots.referenced_by_checkpoint(older.id):
+            if self.snapshots.referenced_by_checkpoint(older.id) or self.snapshots.referenced_by_lifecycle(older.id):
                 continue
             try:
                 self.delete_anchor_if_expected(older)

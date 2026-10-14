@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.session_fork import SessionForkSource, SessionForkOrigin
+
 from eidos_runtime.domain.run_termination import RunTermination
 
 from typing import Annotated, Literal
@@ -88,6 +90,7 @@ class ProjectDto(ClosedModel):
 
 
 class SessionDto(ClosedModel):
+    forked_from: SessionForkSource | None = Field(default=None, alias="forkedFrom")
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
     execution_mode: Literal["local", "worktree"] | None = Field(
@@ -343,6 +346,12 @@ class ItemDto(ClosedModel):
     incomplete: bool = False
     completed_at: StrictInt | None = Field(default=None, alias="completedAt")
     tool_call: ToolCallDto | None = Field(default=None, alias="toolCall")
+
+
+class InheritedHistoryEntry(ClosedModel):
+    item: ItemDto
+    run: RunDto
+    origin: SessionForkOrigin
 
 
 class SearchMatchDto(ClosedModel):

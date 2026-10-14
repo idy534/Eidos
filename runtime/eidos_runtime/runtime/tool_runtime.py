@@ -1836,7 +1836,7 @@ class ToolCallRuntime:
         # neither lost on suspension nor replayed when that owner resumes.
         self.inline_control_wait = False
         if (
-            self.dispatcher.is_parallel_read_batch(tool_calls)
+            self.dispatcher.is_parallel_read_batch(tool_calls, step.tool_snapshot.available_names)
             and self._parallel_arguments_are_safe(tool_calls)
             and self.async_kernel is not None
         ):
@@ -1849,7 +1849,9 @@ class ToolCallRuntime:
         while batch_order < len(tool_calls):
             read_end = batch_order
             if self.async_kernel is not None:
-                while read_end < len(tool_calls) and self.dispatcher.is_parallel_read_call(tool_calls[read_end]):
+                while read_end < len(tool_calls) and self.dispatcher.is_parallel_read_call(
+                    tool_calls[read_end], step.tool_snapshot.available_names,
+                ):
                     read_end += 1
             reads = tool_calls[batch_order:read_end]
             if len(reads) > 1 and self._parallel_arguments_are_safe(reads):
@@ -1907,7 +1909,11 @@ class ToolCallRuntime:
                 call.provider_call_id, call.name, payload
             )
             plan = self.dispatcher.plan(
-                effective_call, step.tool_snapshot.binding(call.name)
+                effective_call, step.tool_snapshot.binding(call.name),
+                activation_required=(
+                    call.name in step.tool_snapshot.deferred_names
+                    and call.name not in step.tool_snapshot.available_names
+                ),
             )
             if plan.side_effect != 'none' and not isinstance(plan.descriptor.runtime if plan.descriptor else None, WorkspaceMutationRuntime):
                 # Reads, coordination and unrelated file targets do not wait

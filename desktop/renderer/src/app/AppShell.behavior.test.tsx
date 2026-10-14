@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Item, Run, SessionSnapshot } from "../contracts.js";
 import { deriveRuntimePresentation } from "../session-state.js";
 import { AppShell } from "./AppShell.js";
+import { isQueuedRunListRequest } from "../../../shared/queued-runs.js";
 
-const fixture = vi.hoisted(() => ({ snapshot: undefined as SessionSnapshot | undefined }));
+const fixture = vi.hoisted(() => ({ snapshot: undefined as SessionSnapshot | undefined, draft: undefined as SessionSnapshot | undefined, forkSession: vi.fn() }));
 vi.mock("./useSessionController.js", () => ({
   useSessionController: () => [{
-    snapshot: fixture.snapshot, projects: [], sessions: [], pending: {},
-  }, { loadProjects: vi.fn(), loadSessions: vi.fn() }],
+    snapshot: fixture.snapshot, draft: fixture.draft, projects: [], sessions: [], pending: {},
+  }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession }],
 }));
 vi.mock("./useRunController.js", () => ({
   useRunController: () => [{ composerMode: "idle", input: "", references: [], draftReady: false }, {}],
@@ -42,7 +43,9 @@ vi.mock("../components/InputContext.js", () => ({
 vi.mock("../components/ExecutionFeed.js", async () => {
   const { MarkdownContent } = await import("../components/MarkdownContent.js");
   const { TurnResults } = await import("../components/TurnResults.js");
-  return { ExecutionFeed: ({ runs, items }: { runs: Run[]; items: Item[] }) => <><MarkdownContent content={[
+  return { ExecutionFeed: ({ runs, items, onFork }: { runs: Run[]; items: Item[]; onFork?: (item: Item) => void }) => <>
+    {items.filter((item) => item.kind === "assistant_message").map((item) => <button key={item.id} onClick={() => onFork?.(item)}>从这里分叉</button>)}
+    <MarkdownContent content={[
     "[第一个文件](/workspace/one.txt)",
     "[第二个文件](/workspace/two.txt)",
     "[再次定位](/workspace/one.txt:2)",
@@ -112,6 +115,8 @@ describe("AppShell text change review", () => {
 });
 
 beforeEach(() => {
+  fixture.draft = undefined;
+  fixture.forkSession.mockReset().mockImplementation(async () => fixture.snapshot);
   fixture.snapshot = {
     session: {
       id: "session-a", workspaceRoot: "/workspace", executionMode: "local",
@@ -123,6 +128,7 @@ beforeEach(() => {
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
   window.eidosRuntime = {
     onNotification: vi.fn(() => () => undefined),
+    listSidebarPins: vi.fn(async () => ({ items: [], throughEventId: 0 })),
     listWorkspaceDirectory: vi.fn(async () => ({ path: ".", entries: [], truncated: false })),
     readWorkspaceFilePreview: vi.fn(async (_sessionId: string, path: string) => ({
       path, kind: "text", sizeBytes: 30, truncated: false,
@@ -131,16 +137,120 @@ beforeEach(() => {
   } as unknown as typeof window.eidosRuntime;
 });
 
-function renderShell() {
+function shell() {
   const status = {
     state: "ready", protocolVersion: 1, runtimeVersion: "test",
     runShell: true, modelConfigured: false, storageHealth: { state: "ready" },
   } as const;
-  return render(<AppShell runtime={{
+  return <AppShell runtime={{
     status, presentation: deriveRuntimePresentation(status), isStorageReady: true,
     restarting: false, restartRuntime: vi.fn(),
-  }} />);
+  }} />;
 }
+
+function renderShell() { return render(shell()); }
+
+describe("AppShell queued messages in draft Sessions", () => {
+  it.each(["projectless", "project"] as const)("reads the %s queue only after the draft becomes a persisted Session", async (kind) => {
+    const persisted = fixture.snapshot!;
+    persisted.session.id = "00000000-0000-0000-0000-000000000001";
+    const draft = { ...persisted, session: { ...persisted.session, id: "draft-00000000-0000-0000-0000-000000000002" } };
+    if (kind === "projectless") {
+      delete draft.session.project;
+      draft.session.projectless = true;
+    }
+    fixture.snapshot = undefined;
+    fixture.draft = draft;
+    const listQueuedRuns = vi.fn(async (request: Parameters<typeof window.eidosRuntime.listQueuedRuns>[0]) => {
+      if (!isQueuedRunListRequest(request)) throw new Error("排队消息参数无效。");
+      return { items: [{ sessionId: persisted.session.id, runId: "queued-follow-up", userInput: "下一轮消息", references: [] }] };
+    });
+    window.eidosRuntime.listQueuedRuns = listQueuedRuns;
+    const view = renderShell();
+    // Flush mount effects and rejected IPC promises before inspecting the draft UI.
+    await act(async () => {});
+    expect(listQueuedRuns).not.toHaveBeenCalled();
+    expect(screen.queryByRole("list", { name: "待发送消息" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // First send materializes a real Session; its queue must then become available.
+    fixture.snapshot = persisted;
+    fixture.draft = undefined;
+    view.rerender(shell());
+    await screen.findByRole("list", { name: "待发送消息" });
+    expect(listQueuedRuns).toHaveBeenCalledWith({ sessionId: persisted.session.id });
+    expect(listQueuedRuns).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Starting another draft must unmount the previous Session's queue.
+    fixture.snapshot = undefined;
+    fixture.draft = draft;
+    view.rerender(shell());
+    await act(async () => {});
+    expect(listQueuedRuns).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("list", { name: "待发送消息" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("AppShell conversation fork targets", () => {
+  function selectedAnswer() {
+    const snapshot = fixture.snapshot!;
+    snapshot.items = [{ id: "selected", runId: "ended", sessionId: snapshot.session.id,
+      kind: "assistant_message", ordinal: 2, status: "completed", content: "完成", createdAt: 1 }];
+    return snapshot;
+  }
+
+  it("forks a non-Git conversation into its current directory", async () => {
+    const snapshot = selectedAnswer();
+    fixture.forkSession.mockImplementationOnce(async () => ({
+      ...snapshot,
+      session: {
+        ...snapshot.session,
+        id: "session-forked",
+        forkedFrom: {
+          sessionId: snapshot.session.id,
+          runId: "ended",
+          itemId: "selected",
+          itemCount: 5,
+          createdAt: 1,
+        },
+      },
+    }));
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    await waitFor(() => expect(fixture.forkSession).toHaveBeenCalledWith(snapshot.session.id, "selected", { kind: "same_workspace" }));
+    expect(screen.queryByRole("alertdialog", { name: "从这里分叉" })).not.toBeInTheDocument();
+    expect(await screen.findByText("本会话从历史回答分叉，已继承 5 条记录。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开来源会话" })).not.toBeInTheDocument();
+  });
+
+  it("lets a Git conversation choose an independent Worktree", async () => {
+    const snapshot = selectedAnswer();
+    snapshot.session.project!.gitAvailable = true;
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "从这里分叉" });
+    const target = within(dialog).getByRole("radio", { name: "在独立工作树继续。" });
+    fireEvent.click(target);
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建分叉" }));
+    await waitFor(() => expect(fixture.forkSession).toHaveBeenCalledWith(snapshot.session.id, "selected", { kind: "new_worktree", state: "current_workspace" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "从这里分叉" })).not.toBeInTheDocument());
+  });
+
+  it("requires an independent Worktree for managed conversations", async () => {
+    const snapshot = selectedAnswer();
+    snapshot.session.project!.gitAvailable = true;
+    snapshot.session.executionMode = "worktree";
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "从这里分叉" });
+    expect(within(dialog).getAllByRole("radio")).toHaveLength(1);
+    expect(within(dialog).getByRole("radio")).toBeChecked();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(fixture.forkSession).not.toHaveBeenCalled();
+  });
+});
 
 function expectOneFilesPanel() {
   const tools = screen.getByRole("tablist", { name: "工作区窗口" });

@@ -27,6 +27,7 @@ interface GitWorkflowControlsProps {
   workspaceMutationDisabled?: boolean;
   onRefresh(): void;
   openRequest?: number | undefined;
+  onClose?: (() => void) | undefined;
   compact?: boolean | undefined;
   expanded?: boolean | undefined;
   dialogOnly?: boolean | undefined;
@@ -102,6 +103,7 @@ export function GitWorkflowControls({
   workspaceMutationDisabled = false,
   onRefresh,
   openRequest,
+  onClose,
   compact = false,
   expanded = false,
   dialogOnly = false,
@@ -132,9 +134,22 @@ export function GitWorkflowControls({
   const operationIdsRef = useRef(new Map<string, string>());
   const dialogRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLInputElement>(null);
+  const handledOpenRequestRef = useRef<number | undefined>(undefined);
+
+  const closeWorkflow = useCallback(() => {
+    setWorkflowOpen(false);
+    onClose?.();
+  }, [onClose]);
 
   useEffect(() => {
-    if (openRequest !== undefined && openRequest > 0) setWorkflowOpen(true);
+    if (openRequest !== undefined && openRequest > 0) {
+      if (handledOpenRequestRef.current === openRequest) return;
+      handledOpenRequestRef.current = openRequest;
+      setWorkflowOpen(true);
+    } else if (openRequest === 0) {
+      handledOpenRequestRef.current = 0;
+      setWorkflowOpen(false);
+    }
   }, [openRequest]);
 
   useDialogFocusLifecycle({ open: workflowOpen, initialFocusRef: messageRef });
@@ -144,12 +159,12 @@ export function GitWorkflowControls({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && busy === undefined) {
         event.preventDefault();
-        setWorkflowOpen(false);
+        closeWorkflow();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, workflowOpen]);
+  }, [busy, closeWorkflow, workflowOpen]);
 
   useEffect(() => {
     if (!workflowOpen) return;
@@ -319,7 +334,7 @@ export function GitWorkflowControls({
   const dialogNode = workflowOpen && (
     <div
       className="modal-backdrop git-workflow-modal-backdrop"
-      onClick={busy === undefined ? () => setWorkflowOpen(false) : undefined}
+      onClick={busy === undefined ? closeWorkflow : undefined}
     >
       <div
         ref={dialogRef}
@@ -339,7 +354,7 @@ export function GitWorkflowControls({
             className="git-workflow-dialog-close"
             aria-label="关闭提交和推送"
             disabled={busy !== undefined}
-            onClick={() => setWorkflowOpen(false)}
+            onClick={closeWorkflow}
           >
             ×
           </button>

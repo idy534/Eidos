@@ -2963,6 +2963,8 @@ class SessionApplication:
     def _project_session(self, projection: SessionProjection) -> dict[str, object]:
         session = projection.session
         value = session_to_legacy_dict(session)
+        if session.forked_from is not None:
+            value["forkedFrom"] = session.forked_from.to_wire_dict()
         value["executionMode"] = session.execution_mode.value
         if session.associated_worktree_id is not None:
             value["associatedWorktreeId"] = session.associated_worktree_id

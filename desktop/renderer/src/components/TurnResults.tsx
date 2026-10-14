@@ -606,11 +606,21 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
   );
 }
 
-export function TurnResults({ run, items, showTextChanges = true }: { run: Run; items: Item[]; showTextChanges?: boolean }) {
+export function TurnResults({
+  run,
+  items,
+  showTextChanges = true,
+  className,
+}: {
+  run: Run;
+  items: Item[];
+  showTextChanges?: boolean;
+  className?: string;
+}) {
   const projection = useMemo(() => projectTurnResults(items, run.id), [items, run.id]);
   if (!projection.artifacts.length && (!showTextChanges || !projection.textChanges.length)) return null;
   return (
-    <section className="turn-results" aria-label="本轮结果">
+    <section className={`turn-results${className ? ` ${className}` : ""}`} aria-label="本轮结果">
       {projection.artifacts.map((artifact) => <ArtifactCard artifact={artifact} key={artifactKey(artifact)} />)}
       {showTextChanges && projection.textChanges.length > 0 && <TextChangeCard projection={projection} />}
     </section>

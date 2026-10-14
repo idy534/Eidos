@@ -9,10 +9,11 @@ import os
 from pathlib import Path
 import signal
 import shutil
+import stat
 import sys
+import tempfile
 import threading
 import time
-import uuid
 from typing import Callable, cast
 
 import anyio
@@ -95,7 +96,6 @@ class McpConnection:
         self,
         *,
         plugin_root: Path,
-        runtime_root: Path,
         workspace_root: Path,
         config: McpServerConfigV1,
         env_values: dict[str, str] | None = None,
@@ -114,7 +114,14 @@ class McpConnection:
         self.closed = threading.Event()
         self.tools: tuple[mcp_types.Tool, ...] = ()
         self.error_code: str | None = None
-        self.runtime_root = runtime_root / uuid.uuid4().hex
+        # Keep the whole connection tree short, including TMPDIR and the
+        # server's own socket subdirectories. Never inherit a deep temp root.
+        try:
+            parent = Path("/private/tmp" if sys.platform == "darwin" else "/tmp").resolve(strict=True)
+            self.runtime_root = Path(tempfile.mkdtemp(prefix="eidos-mcp-", dir=parent))
+            self._runtime_identity = self.runtime_root.lstat()
+        except OSError:
+            raise McpUnavailable("mcp_temporary_directory_unavailable") from None
         self.resources = resource_registry
         self.resource: RuntimeResource | None = None
         self._service: RuntimeAsyncTask[None] | None = None
@@ -127,14 +134,14 @@ class McpConnection:
         self._callbacks_quiescent.set()
 
     def start(self) -> tuple[mcp_types.Tool, ...]:
-        if self.resources is not None:
-            self.resource = self.resources.register(
-                RuntimeResourceKind.MCP_CONNECTION,
-                owner_id=self.config.id,
-                cancel=self.closed.set,
-            )
-            self.resource.start()
         try:
+            if self.resources is not None:
+                self.resource = self.resources.register(
+                    RuntimeResourceKind.MCP_CONNECTION,
+                    owner_id=self.config.id,
+                    cancel=self.closed.set,
+                )
+                self.resource.start()
             service, started = self.async_kernel.start_service(
                 self._serve,
                 owner_id=f"mcp:{self.config.id}",
@@ -241,13 +248,17 @@ class McpConnection:
                     else "MCP_CANCEL_TIMEOUT"
                 )
             raise McpShutdownTimeout("MCP_SHUTDOWN_TIMEOUT")
-        try:
-            resolved = self.runtime_root.resolve(strict=False)
-            parent = self.runtime_root.parent.resolve(strict=False)
-            if parent in resolved.parents:
-                shutil.rmtree(resolved, ignore_errors=True)
-        except OSError:
-            pass
+        if getattr(self, "_runtime_identity", None) is not None:
+            try:
+                self._verify_runtime_directory()
+                shutil.rmtree(self.runtime_root)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                LOGGER.warning(
+                    "MCP runtime directory cleanup deferred",
+                    extra={"mcp_server_id": self.config.id},
+                )
         resource = getattr(self, "resource", None)
         if resource is not None:
             resource.close()
@@ -256,6 +267,13 @@ class McpConnection:
     def _terminate_process_group(self) -> bool:
         pid_path = self.runtime_root / "server.pid"
         try:
+            if getattr(self, "_runtime_identity", None) is not None:
+                try:
+                    self._verify_runtime_directory()
+                except FileNotFoundError:
+                    return True
+                except OSError:
+                    return False
             stat = pid_path.lstat()
             if not stat or not pid_path.is_file() or pid_path.is_symlink():
                 return True
@@ -460,8 +478,10 @@ class McpConnection:
                     self._callbacks_quiescent.set()
 
     def _prepare_parameters(self) -> StdioServerParameters:
-        self.runtime_root.mkdir(mode=0o700, parents=True)
-        os.chmod(self.runtime_root, 0o700)
+        try:
+            self._verify_runtime_directory()
+        except OSError:
+            raise McpUnavailable("mcp_temporary_directory_unavailable") from None
         executable = self.config.executable
         if "/" in executable and not Path(executable).is_absolute():
             executable = str(self.plugin_root / executable)
@@ -513,6 +533,14 @@ class McpConnection:
             encoding="utf-8",
             encoding_error_handler="strict",
         )
+
+    def _verify_runtime_directory(self) -> None:
+        current = self.runtime_root.lstat()
+        expected = self._runtime_identity
+        if not stat.S_ISDIR(current.st_mode) or (
+            current.st_dev, current.st_ino, current.st_uid
+        ) != (expected.st_dev, expected.st_ino, expected.st_uid):
+            raise OSError("mcp_runtime_directory_changed")
 
 
 class McpToolAdapter:
@@ -628,26 +656,27 @@ class McpManager:
                     server, consented=True, error_code="mcp_connection_lost"
                 )
                 continue
-            connection = McpConnection(
-                plugin_root=plugin_root,
-                runtime_root=self.plugins.store.data_directory / "extensions" / "mcp-runtime",
-                workspace_root=self.workspace_root,
-                config=config,
-                env_values=env_values,
-                async_kernel=self.async_kernel,
-                on_list_changed=lambda plugin_id=plugin_id, server_id=config.id: self._list_changed(
-                    plugin_id, server_id
-                ),
-                sandbox=self.sandbox,
-                resource_registry=self.resources,
-            )
+            connection = None
             try:
+                connection = McpConnection(
+                    plugin_root=plugin_root,
+                    workspace_root=self.workspace_root,
+                    config=config,
+                    env_values=env_values,
+                    async_kernel=self.async_kernel,
+                    on_list_changed=lambda plugin_id=plugin_id, server_id=config.id: self._list_changed(
+                        plugin_id, server_id
+                    ),
+                    sandbox=self.sandbox,
+                    resource_registry=self.resources,
+                )
                 tools = connection.start()
             except McpUnavailable as error:
                 self.plugins.store.set_mcp_server_state(
                     server, consented=True, error_code=str(error)
                 )
-                connection.close()
+                if connection is not None:
+                    connection.close()
                 continue
             self.connections.append(connection)
             entries.extend(_valid_tool_entries(connection, tools, server))

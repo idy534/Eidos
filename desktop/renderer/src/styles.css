@@ -19,10 +19,12 @@
 @import "./components/MermaidBlock.css";
 @import "./components/ApprovalComposer.css";
 @import "./components/Composer.css";
+@import "./components/QueuedMessages.css";
 @import "./components/InputContext.css";
 @import "./components/InputPicker.css";
 @import "./components/WorkspaceDock.css";
 @import "./components/ArtifactPreview.css";
+@import "./components/PdfViewer.css";
 @import "./components/agents.css";
 @import "./components/settings/MemorySettings.css";
 @import "./components/response-actions.css";

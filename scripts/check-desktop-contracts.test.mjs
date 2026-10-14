@@ -93,7 +93,9 @@ test("Python DTOs, TypeScript interfaces, and validators share key fields", () =
     const validatorKeys = validatorFields(validators, validator);
     assert.equal(new Set(interfaceKeys).size, interfaceKeys.length, `${contract} has duplicate fields`);
     assert.equal(new Set(validatorKeys).size, validatorKeys.length, `${validator} has duplicate fields`);
-    assert.deepEqual([...interfaceKeys].sort(), expected, `${contract} drifted from ${dto}`);
+    // Main adds this view flag after validating the separate inheritedHistory wire records.
+    const viewFields = contract === "Run" || contract === "Item" ? ["inherited"] : [];
+    assert.deepEqual(interfaceKeys.filter((key) => !viewFields.includes(key)).sort(), expected, `${contract} drifted from ${dto}`);
     assert.deepEqual([...validatorKeys].sort(), expected, `${validator} drifted from ${dto}`);
   }
 

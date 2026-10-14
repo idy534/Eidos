@@ -536,11 +536,6 @@
   object-fit: contain;
 }
 
-.model-provider-control { display: flex; align-items: center; gap: 0.65rem; }
-
-.model-provider-control__logo { width: 28px; height: 28px; flex: none; object-fit: contain; }
-
-.model-provider-control select { width: auto; min-width: 0; flex: 1; }
 
 .saved-model-copy { display: flex; min-width: 0; align-items: baseline; gap: 0.45rem; white-space: nowrap; }
 
@@ -554,14 +549,137 @@
 
 .model-dialog-header p { margin: 5px 0 0; color: var(--muted); font-size: var(--font-size-caption); }
 
-.model-dialog-fields { display: flex; flex-direction: column; gap: 16px; }
+.model-dialog-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
-.model-dialog-fields label { display: flex; flex-direction: column; gap: 7px; }
+.model-dialog-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
 
-.model-dialog-fields label > span { color: var(--text); font-size: 12.5px; font-weight: 600; }
+.model-dialog-fields label > span {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
 
+/* Unified input & custom select container styling */
 .model-dialog-fields input,
-.model-dialog-fields select { width: 100%; box-sizing: border-box; }
+.model-select-control {
+  width: 100%;
+  height: 2.375rem;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background-color: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.model-dialog-fields input {
+  font: inherit;
+  font-size: 13.5px;
+  padding: 0 0.85rem;
+}
+
+.model-dialog-fields input::placeholder {
+  color: var(--muted);
+  opacity: 0.65;
+}
+
+.model-dialog-fields input:hover:not(:disabled),
+.model-select-control:hover:not(:has(select:disabled)) {
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+.model-dialog-fields input:focus,
+.model-select-control:focus-within {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.model-dialog-fields input:disabled,
+.model-select-control:has(select:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background-color: var(--surface-muted);
+}
+
+/* Custom Select Container */
+.model-select-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.model-select-control select {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 0 2.2rem 0 0.85rem;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.model-select-control select:disabled {
+  cursor: not-allowed;
+}
+
+/* Prefix Logo Container */
+.model-select-control__prefix {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.model-provider-control__logo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex: none;
+}
+
+.model-select-control--with-prefix select {
+  padding-left: 2.35rem;
+}
+
+/* Chevron Indicator */
+.model-select-control__chevron {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--muted);
+  transition: color 140ms ease;
+}
+
+.model-select-control:hover .model-select-control__chevron {
+  color: var(--text);
+}
 
 .mcp-create-dialog {
   display: flex;
@@ -589,8 +707,21 @@
 
 .mcp-create-body input,
 .mcp-create-body select {
-  padding: 0.4rem 0.6rem;
+  padding: 0.45rem 0.65rem;
   font-size: var(--font-size-sidebar);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-sizing: border-box;
+  transition: border-color 140ms ease;
+}
+
+.mcp-create-body input:focus,
+.mcp-create-body select:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: none;
 }
 
 .mcp-create-body label > span,
@@ -616,11 +747,28 @@
   color: var(--muted);
   background: var(--surface-muted);
   font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.mcp-create-type-button:hover:not(:disabled) {
+  border-color: rgba(49, 95, 74, 0.45);
 }
 
 .mcp-create-type-button.is-active,
 .mcp-create-type-button.is-active:hover:not(:disabled),
-.mcp-create-type-button.is-active:active:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--surface-selected); }
+.mcp-create-type-button.is-active:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface-selected);
+  outline: none;
+  box-shadow: none;
+}
+
+.mcp-create-type-button:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
 
 .mcp-row-actions { display: flex; align-items: center; gap: 0.4rem; }
 

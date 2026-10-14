@@ -34,6 +34,7 @@ class ToolValidationResult:
 @dataclass(frozen=True)
 class ToolDispatchPlan:
     binding: StepToolBinding | None
+    activation_required: bool = False
 
     @property
     def descriptor(self) -> ToolDescriptor | None:
@@ -58,6 +59,8 @@ class ToolDispatchPlan:
 
     @property
     def side_effect(self) -> str:
+        if self.activation_required:
+            return "none"
         return (
             self.descriptor.execution_policy.side_effect
             if self.descriptor is not None
@@ -146,6 +149,7 @@ class ToolDispatcher:
                 available_names is not None
                 and isinstance(call, ModelToolCall)
                 and call.name not in available_names
+                and (entry is None or entry.spec.visibility != "deferred")
             ):
                 entry = None
             if (
@@ -243,8 +247,10 @@ class ToolDispatcher:
         self,
         call: ModelToolCall,
         expected_binding: StepToolBinding | str | None = None,
+        *,
+        activation_required: bool = False,
     ) -> ToolDispatchPlan:
-        """Bind the call to the exact immutable descriptor advertised for its Step."""
+        """Bind execution to its Step; inactive descriptors only format feedback."""
         if isinstance(expected_binding, StepToolBinding):
             binding = (
                 expected_binding
@@ -265,7 +271,7 @@ class ToolDispatcher:
                 )
                 else None
             )
-        return ToolDispatchPlan(binding)
+        return ToolDispatchPlan(binding, activation_required=activation_required)
 
     def argument_validation(
         self, call: ModelToolCall, plan: ToolDispatchPlan
@@ -341,12 +347,17 @@ class ToolDispatcher:
         assert entry.projector is not None
         return entry.projector.project(entry, result)
 
-    def is_parallel_read_batch(self, calls: tuple[ModelToolCall, ...]) -> bool:
-        return len(calls) > 1 and all(self.is_parallel_read_call(call) for call in calls)
+    def is_parallel_read_batch(
+        self, calls: tuple[ModelToolCall, ...], available_names: tuple[str, ...] | None = None,
+    ) -> bool:
+        return len(calls) > 1 and all(self.is_parallel_read_call(call, available_names) for call in calls)
 
-    def is_parallel_read_call(self, call: ModelToolCall) -> bool:
+    def is_parallel_read_call(
+        self, call: ModelToolCall, available_names: tuple[str, ...] | None = None,
+    ) -> bool:
         return (
-            (entry := self._registry.get(call.name)) is not None
+            (available_names is None or call.name in available_names)
+            and (entry := self._registry.get(call.name)) is not None
             and isinstance(call.payload, FunctionToolPayload)
             and entry.spec.batch_policy == "parallel"
             and entry.execution_policy is not None

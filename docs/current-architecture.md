@@ -4,6 +4,16 @@
 
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。
 
+回答级分叉经过 Renderer → typed preload IPC → Main → `session/fork` → `SessionForkApplication` → `SessionHistoryRepository`。Application 复用现有 Supervisor 托管任务，历史捕获和 Git IO 不占用协议输入循环。Repository 使用 SQLite WAL 只读视图捕获历史前缀。JsonBlobStore 保存严格类型的不可变记录。Runtime 在短事务中创建目标 Session，提交历史清单、资源引用、来源、Event/Outbox 和幂等结果。Runtime 在提交前重新检查回答、来源、引用与 Reconciliation。
+
+`session/read` 将继承记录放在 `inheritedHistory` 中，并与真实 Item 共用分页游标。Main 在验证协议后把历史记录加入展示列表，并添加仅供界面使用的 `inherited` 标记。历史 Run 不进入 `runs` 表、调度、恢复和授权。Context Repository 将继承事实与自有事实合并，继续使用现有预算和压缩校验。模型响应回放只进入模型上下文。界面看不到私有回放。
+
+Local 与 Projectless 分叉可以共享当前目录。独立 Worktree 分叉复用 Git Backend、WorktreeManager、WorktreeSnapshotService 和 durable lifecycle。快照固定分叉时的 Git 状态，并在新 Worktree 中恢复和核验。该流程不改变来源目录。来源删除不会删除目标持有的历史资源。原 `checkpoint/fork` 继续保留自己的 Checkpoint、Run 和重放语义。
+
+分叉是已持久化的正常 Session。创建事务同时保存来源标题和 Session created Event。分叉没有自己的 Run 时，侧栏也会展示它，空 Session 清理也不会删除它。v26→v27 是数据迁移。迁移按创建顺序补齐未命名分叉的标题，并在同一事务中提交 Title updated Event/Outbox。嵌套分叉会使用已补齐的父标题。来源已删除时，迁移使用“新会话”。现有非空标题不变。
+
+Renderer 的 `ForkIcon` 统一侧栏、回答操作栏和分叉弹窗的图标。侧栏根据 `forkedFrom.sessionId` 从已有 Session 列表读取直接来源的当前名称。气泡通过既有 `onSelect` 跳转到来源，并关闭气泡。来源缺失时，气泡不提供跳转。该显示和导航变化不修改 RPC、SQLite Schema 或历史记录。
+
 ## 1. System Boundary
 
 Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。
@@ -235,6 +245,8 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
+Session 标题生成继续走独立的 Managed Task 和 Model Lease。Chat Completions 与 Responses 都使用 `TITLE_SYSTEM_INSTRUCTIONS` 和同一用户消息模板。模板把首条任务原文放在 `<task>` 中，并在任务前后要求模型只生成标题。系统提示将任务内的指令视为命名材料，要求模型不回答、不执行任务，也不描述工具或环境。标题请求继续关闭工具，不加入正常 Run 的聊天上下文。此处只调整提示词，不改变输出预算、标题清洗、失败回退、事件或持久化规则。
+
 Schema v22 为 ModelAttempt 增加内部 `response_replay_json`。Runtime 在完成 Attempt 的同一次条件更新中保存有界的思考回放记录；该列引用现有 gzip Blob，并参与 Blob 清理时的引用保留。记录保存原始思考内容、Provider 字段身份、签名、元数据和该响应声明的 ToolCall IDs。Responses 路径还保存返回的原生 reasoning item，包括已返回的 encrypted content。记录不成为 Session Item，也不进入普通 Feed 或公共 ModelAttempt DTO。Eidos 不把“隐藏思考 UI”当作“不保存思考”。
 
 ContextBuilder 从 SQLite 的已完成 Attempt 读取回放记录。Model Adapter 将同一响应的思考、正文和全部保留的 ToolCall 合并，再交给 SDK 转换；工具结果跟在完整的调用声明之后。回放元数据进入现有 Context/Step Resolution 快照与预算。快照保存 Eidos 模型请求表示，不等同于 SDK 最终 HTTP payload。上下文只保留部分响应、切换不兼容 wire API，或旧记录缺少思考且当前模型启用了思考时，Adapter 将这组历史正文、调用和结果转换成明确标注的低权限历史资料。Adapter 不伪造丢失的思考，不重新执行工具。Schema v21→v22 只新增 nullable 列；旧数据保留 NULL。
@@ -258,7 +270,9 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 `search_text` 在 Run 内把 Ripgrep 进程寿命和 ToolCall 等待窗口分开。首次调用默认等待 10 秒，`search_text_wait` 默认等待 30 秒。等待窗口结束只返回 `search_running` 和 `sessionId`。后台搜索继续使用原来的受管 Ripgrep、授权根、ignore 规则、文件验证、输出边界和结果解析。搜索完成后，续接调用读取同一个有界结构化结果。Run 关闭时，`ToolExecutor` 会取消并回收未完成的搜索。搜索会话不持久化，也不能跨 Run 使用。
 
-已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
+已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、当前目录中不存在的 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
+
+当前目录中存在但尚未进入 Step 激活集合的 deferred Tool 返回普通 `tool_not_activated` Tool Error。结果明确说明没有执行工具，并要求模型使用工具完整名称调用 `tool_search`，收到搜索结果后在后续 Step 重试。结果复用既有校验、投影、SQLite/Event 提交和下一轮 Context 路径，不计入协议修复次数，也不单独结束 Run。该分支不执行 Tool Runtime、不调用 cleanup、不触发 Approval 或 Durable Intent，也不建立 reconciliation。未激活调用不会进入并行读取批次。Step 的工具可用集合仍固定；同一批次先搜索也不能立即执行新激活工具。未知、禁用或未授权而未进入目录的工具不被描述为“激活后可用”。等价重复仍由既有 LoopGuard 收敛。
 
 `list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。结果投影也遵循这个 authority：Workspace 结果保持 Workspace-relative，active Skill 结果返回 canonical absolute path，目录结果保留末尾 `/`，因此只读 Tool 结果可以直接 round-trip 到下一次只读 Tool。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 使用 Workspace-relative 路径；`run_shell.cwd` 还接受 Workspace 内的 canonical absolute path，并在 shell launch boundary 归一化为 Workspace-relative 路径。active Skill root 和 Workspace 外路径不能成为 Shell cwd。
 
@@ -388,7 +402,7 @@ Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建�
 
 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，其中每条模型上下文项与工具定义各自按内容哈希存为共享 Blob。读取时 Runtime 按顺序重组完整请求并验证原有快照哈希；旧版完整 ContextSnapshot 仍可读取。`state.sqlite` 只保存顶层 Blob 的版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Blob GC 在删除前解析新清单并保留其共享块。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
-当前 `SCHEMA_VERSION` 是 17。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 27。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
 
@@ -545,6 +559,10 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 `SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
+
+每个 MCP Connection 在 macOS 的 canonical `/private/tmp` 下使用标准库创建私有短目录 `eidos-mcp-<随机值>/`，不再在 `~/.eidos/extensions/mcp-runtime/<uuid>/` 下分配运行目录。默认 HOME、TMPDIR 和启动器 PID 文件位于该连接目录内，服务显式配置和环境透传仍然优先。长数据目录、长主进程 TMPDIR 和服务工作目录不参与连接临时路径拼接。目录初始权限为 `0700`。启动前、进程组终止前和清理前核对目录类型及 device、inode、owner。连接关闭仍先等待进程组、Service 和 callback 停止，再删除自建目录。目录被替换时不跟随替代路径；Runtime 保留原有关闭失败和未知结果语义。
+
+手动 MCP 的空工作目录在创建或编辑时解析为 `~/Eidos/eidos-mcp/<serverId>/`。Runtime 复用 `ProjectlessDirectoryAllocator` 的 fd-relative 创建和身份核验，不新增目录分配基础设施。默认目录可复用，初始权限为 `0700`，拒绝符号链接路径。显式工作目录继续要求已存在、归属当前用户，并拒绝 Runtime 数据目录。选定的 canonical cwd 进入原有配置记录和内容 hash，不改变 Schema。已有记录保持原 cwd，读取配置不会静默迁移路径。HOME 仍由连接环境独立控制。相对文件由服务按 cwd 和自身规则处理，权限仍由原 Seatbelt profile 控制。Runtime 不改写产物参数、不追加工具描述，也不增加 Run 产物目录或跨 Run 锁。
 
 ## 15. Packaging & Distribution
 
@@ -797,5 +815,11 @@ v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，�
 ### 交互与资源门禁细化（PR #103）
 
 Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，ApprovalComposer 或 ClarificationComposer 替换普通输入框，Session 草稿会在等待结束后继续显示。工作模式、模型、思考强度和审批模式用于下一轮草稿，当前 Run 快照保持不可变。安全的连续只读调用可以在混合批次中并行，副作用仍按顺序执行。搜索保留每 Run 四个实际执行者和十六个会话边界，超出执行槽位的请求进入可取消队列。延迟工具按最近激活顺序保留，再按稳定名称排序冻结。
+
+`QueuedMessages → typed IPC → run/listQueued、run/updateQueued、run/deleteQueued → QueuedRunApplication → QueuedRunRepository → SQLite` 是队列列表的调用链。列表直接投影尚未开始的 queued Run 和关联用户消息，不依赖聊天记录的分页窗口。每页最多读取 100 条，并按 512 KiB 预算分页。Renderer 只保存当前投影和临时编辑内容。队列变化通过同事务的 `run.queue_changed` Event / Outbox 投影为 `run/queueChanged`，执行状态通知也会刷新队列。
+
+AppShell 只在已持久化的 Session 中挂载 QueuedMessages。`draft-…` 是未保存草稿的 ID，不能传入只接受 Session UUID 的队列接口。首次发送沿用现有草稿物化流程；Session 创建成功后，队列组件才开始读取。切回草稿会卸载队列组件，并使旧读取结果失效。
+
+队列修改和 FIFO claim 使用同一数据库锁与短事务。修改先检查 Session 归属、未开始状态和原消息文字；文字冲突返回 `QUEUED_RUN_INPUT_CONFLICT`，已经开始、取消或恢复的消息返回 `QUEUED_RUN_ALREADY_STARTED`。编辑同时更新 Run 输入和用户 Item，并保留引用及执行快照。删除移除未执行 Run、用户 Item、执行前快照及其旧 Run 事件，记录新的队列删除事件；删除消息不会作为用户输入进入后续 Run。两种写操作复用现有 Operation 幂等记录，不新增数据库表或第二套调度器。
 
 新 Run 持久保存内部 Skill 元数据快照，公共 Run DTO 不发送该快照；内部恢复读取保持完整。只有实际选择、读取或激活的 Skill 建立租约，其他 Skill 可删除；旧 Run 继续按目录引用保护。资源激活重新检查冻结身份和内容版本，已移除且未使用的 Skill 以普通工具错误反馈，不破坏整个 Run 的恢复。

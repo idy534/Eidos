@@ -293,6 +293,17 @@ class RunRepository(Repository):
                 session_id=session_id,
                 run_id=run_id,
             )
+            if queued and connection.execute(
+                "SELECT 1 FROM runs WHERE session_id = ? AND id != ? "
+                "AND status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing')",
+                (session_id, run_id),
+            ).fetchone() is not None:
+                append_event(connection, EventType.RUN_QUEUE_CHANGED, now, {
+                    "change": {
+                        "kind": "updated", "sessionId": session_id, "runId": run_id,
+                        "userInput": user_input, "updatedAt": now,
+                    },
+                }, session_id=session_id)
             item_row = connection.execute(
                 "SELECT * FROM items WHERE id = ?", (item_id,)
             ).fetchone()

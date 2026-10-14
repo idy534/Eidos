@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -216,6 +217,36 @@ class ToolExecutionControllerTests(unittest.TestCase):
             RuntimeEvents(lambda _message: None),
             default_scanner(),
         )
+
+    def test_inactive_tool_returns_feedback_without_invoking_handler_or_intent(self) -> None:
+        handler = _Handler()
+        controller = self._controller({"external": handler})
+        plan = replace(_plan("external", 5, "external", True), activation_required=True)
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item(), call=self.call, plan=plan,
+            cancel=threading.Event(), deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "tool_not_activated")
+        self.assertIn('query="read_file"', outcome.result["summary"])
+        self.assertEqual(handler.calls, 0)
+        self.assertFalse(outcome.result["sideEffectsMayExist"])
+        self.assertFalse(outcome.result["reconciliationRequired"])
+        self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 0)
+        self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM durable_intents").fetchone()[0], 0)
+
+    def test_cancel_wins_before_inactive_tool_feedback(self) -> None:
+        handler = _Handler()
+        controller = self._controller({"external": handler})
+        plan = replace(_plan("external", 5, "external", True), activation_required=True)
+        cancel = threading.Event()
+        cancel.set()
+        outcome = controller.execute(
+            run_id=self.run["id"], item=self._item(), call=self.call, plan=plan,
+            cancel=cancel, deadline=None,
+        )
+        self.assertEqual(outcome.result["code"], "TOOL_CANCELED")
+        self.assertEqual(handler.calls, 0)
+        self.assertFalse(outcome.result["reconciliationRequired"])
 
     def test_approval_wait_does_not_consume_tool_timeout(self) -> None:
         now = [0.0]

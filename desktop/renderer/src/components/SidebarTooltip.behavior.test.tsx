@@ -158,6 +158,37 @@ describe("SidebarTooltip rendering", () => {
     expect(screen.getByText("临时快速任务")).toBeInTheDocument();
     expect(screen.getByText("最近会话")).toBeInTheDocument();
     expect(screen.queryByText("所属项目")).not.toBeInTheDocument();
+    expect(screen.queryByText("来源会话")).not.toBeInTheDocument();
+  });
+
+  it("opens the source Session by clicking its current name", () => {
+    const source: Session = {
+      id: "source-session", title: "原会话的新名称", workspaceRoot: "/workspace/source",
+      taskStatus: "completed", createdAt: 1, updatedAt: 2,
+    };
+    const session: Session = {
+      ...source, id: "fork-session", title: "分叉会话",
+      forkedFrom: { sessionId: source.id, runId: "run", itemId: "answer", itemCount: 2, createdAt: 3 },
+    };
+    const onOpenSourceSession = vi.fn();
+    render(<SidebarTooltip state={{ kind: "session", session, rect: dummyRect }}
+      sourceSession={source} onOpenSourceSession={onOpenSourceSession} />);
+
+    expect(screen.getByText("来源会话")).toBeInTheDocument();
+    const link = screen.getByRole("button", { name: "打开来源会话：原会话的新名称" });
+    fireEvent.click(link);
+    expect(onOpenSourceSession).toHaveBeenCalledWith(source);
+  });
+
+  it("shows an unavailable source without a broken navigation button", () => {
+    const session: Session = {
+      id: "fork-session", title: "分叉会话", workspaceRoot: "/workspace/fork",
+      taskStatus: "completed", createdAt: 1, updatedAt: 2,
+      forkedFrom: { sessionId: "missing-source", runId: "run", itemId: "answer", itemCount: 2, createdAt: 3 },
+    };
+    render(<SidebarTooltip state={{ kind: "session", session, rect: dummyRect }} />);
+    expect(screen.getByText("来源会话不可用")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /打开来源会话/ })).not.toBeInTheDocument();
   });
 
   it("fires onMouseEnter and onMouseLeave on the tooltip card", () => {

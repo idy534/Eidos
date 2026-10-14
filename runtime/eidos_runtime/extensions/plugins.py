@@ -17,6 +17,8 @@ from eidos_runtime.extensions.contracts import (
     PluginManifestV1,
     validate_env_values,
 )
+from eidos_runtime.workspace.projectless import ProjectlessDirectoryAllocator
+from eidos_runtime.workspace.reader import capture_workspace_identity
 
 
 MAX_PLUGIN_FILES = 512
@@ -291,7 +293,7 @@ class PluginCatalog:
                 "toolTimeoutSeconds": tool_timeout_seconds,
                 "enabled": True,
             })
-            canonical_cwd = _manual_cwd(cwd, self.store.data_directory)
+            canonical_cwd = _manual_cwd(cwd, self.store.data_directory, config.id)
         except ValueError as error:
             raise PluginImportError(
                 "mcp_cwd_invalid" if str(error) == "mcp_cwd_invalid" else "mcp_config_invalid"
@@ -347,7 +349,7 @@ class PluginCatalog:
                 "toolTimeoutSeconds": tool_timeout_seconds,
                 "enabled": True,
             })
-            canonical_cwd = _manual_cwd(cwd, self.store.data_directory)
+            canonical_cwd = _manual_cwd(cwd, self.store.data_directory, config.id)
         except ResourceNotFoundError:
             raise PluginImportError("mcp_server_not_found") from None
         except ValueError as error:
@@ -387,7 +389,7 @@ class PluginCatalog:
             record = self.store.manual_mcp_server_config(server_id)
             env_values = validate_env_values(record["env"])
             canonical_cwd = _manual_cwd(
-                str(record["cwd"]), self.store.data_directory
+                str(record["cwd"]), self.store.data_directory, server_id
             )
             config = McpServerConfigV1.model_validate({
                 "id": record["serverId"],
@@ -565,9 +567,19 @@ def _json_hash(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _manual_cwd(value: str | None, data_directory: Path | None) -> Path:
+def _manual_cwd(value: str | None, data_directory: Path | None, server_id: str) -> Path:
     try:
-        candidate = Path(value).expanduser() if value else Path.home()
+        if value and value.strip():
+            candidate = Path(value).expanduser()
+        else:
+            candidate = Path.home().resolve(strict=True) / "Eidos" / "eidos-mcp" / server_id
+            if data_directory is not None and candidate.is_relative_to(data_directory.resolve()):
+                raise ValueError("mcp_cwd_invalid")
+            allocator = ProjectlessDirectoryAllocator()
+            try:
+                allocator.create(candidate)
+            except FileExistsError:
+                allocator.verify(capture_workspace_identity(candidate))
         if not candidate.is_absolute() or candidate.is_symlink():
             raise ValueError("mcp_cwd_invalid")
         resolved = candidate.resolve(strict=True)

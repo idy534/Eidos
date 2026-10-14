@@ -35,10 +35,16 @@ CONTEXT_PROJECTION_FACT_OVERHEAD_BYTES = 448
 
 class ContextRepository(Repository):
     def context_projection_facts(self, run_id: str) -> ContextFacts:
-        return self._bounded_context_facts(run_id, newest=True)
+        from eidos_runtime.persistence.session_history import SessionHistoryRepository
+        return SessionHistoryRepository(self.database).with_history(
+            self._bounded_context_facts(run_id, newest=True), newest=True,
+        )
 
     def compaction_candidate_facts(self, run_id: str) -> ContextFacts:
-        return self._bounded_context_facts(run_id, newest=False)
+        from eidos_runtime.persistence.session_history import SessionHistoryRepository
+        return SessionHistoryRepository(self.database).with_history(
+            self._bounded_context_facts(run_id, newest=False), newest=False,
+        )
 
     def _bounded_context_facts(
         self, run_id: str, *, newest: bool

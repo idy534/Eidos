@@ -90,7 +90,9 @@ def test_messages_over_one_page_are_delivered_before_completion(state, monkeypat
     assert store.connection.execute('SELECT COUNT(*) FROM agent_message_receipts').fetchone()[0] == 33
 
 
-def test_v16_migration_preserves_delegation_and_defaults_to_required(state):
+def test_v16_migration_preserves_delegation_and_defaults_to_required(
+    state, downgrade_session_fork_schema,
+):
     store, _session, run = state
     child = spawn(store, run, 0)
     connection = store.connection
@@ -102,6 +104,7 @@ def test_v16_migration_preserves_delegation_and_defaults_to_required(state):
         'DROP TABLE agent_delegations; ALTER TABLE agent_delegations_v16 RENAME TO agent_delegations; '
         'CREATE INDEX agent_delegations_parent ON agent_delegations(parent_run_id);'
     )
+    downgrade_session_fork_schema(connection)
     connection.executescript(
         'DROP TABLE IF EXISTS memory_fts_word; '
         'DROP TABLE IF EXISTS memory_usage; DROP TABLE IF EXISTS memory_snapshot_refs; '

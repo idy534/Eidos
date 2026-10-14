@@ -1103,7 +1103,9 @@ def test_backup_excludes_revoked_source_action_body(setup, tmp_path):
         assert not connection.execute("SELECT 1 FROM memory_actions WHERE request_json LIKE '%private source preference%'").fetchone()
 
 
-def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
+def test_v18_backup_restores_with_session_use_migration(
+    setup, tmp_path, downgrade_session_fork_schema,
+):
     import sqlite3
     from eidos_runtime.db.collaboration_migration import COLLABORATION_SCHEMA_SQL
 
@@ -1128,6 +1130,7 @@ def test_v18_backup_restores_with_session_use_migration(setup, tmp_path):
         connection.execute("DROP INDEX IF EXISTS sidebar_pins_event_revision")
         connection.execute("DROP TABLE IF EXISTS projectless_workspace_creations")
         connection.execute("ALTER TABLE runs DROP COLUMN termination_json")
+        downgrade_session_fork_schema(connection)
         connection.execute("PRAGMA user_version=18")
     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     connection.close()

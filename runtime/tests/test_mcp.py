@@ -20,9 +20,14 @@ from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.extensions.mcp import (  # noqa: E402
     McpConnection,
     McpManager,
+    McpShutdownTimeout,
     McpUnavailable,
 )
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
+from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel  # noqa: E402
+from eidos_runtime.runtime.engine import RuntimeEngine  # noqa: E402
+from eidos_runtime.runtime.approval import ApprovalDecision  # noqa: E402
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel  # noqa: E402
 from eidos_runtime.runtime.async_kernel import AsyncTaskState  # noqa: E402
 from eidos_runtime.runtime.async_kernel import AsyncKernelClosedError  # noqa: E402
@@ -91,6 +96,133 @@ class McpManagerTests(unittest.TestCase):
         self.store.close()
         self.temporary.cleanup()
 
+    def test_inactive_mcp_tool_is_reported_then_model_searches_and_recovers(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"], "Use the echo tool", extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("inactive", "mcp__fixture__echo", {"message": "before"}),)),
+            ModelResponse(tool_calls=(ModelToolCall("search", "tool_search", {"query": "mcp__fixture__echo", "limit": 1}),)),
+            ModelResponse(tool_calls=(ModelToolCall("active", "mcp__fixture__echo", {"message": "after"}),)),
+            ModelResponse(text="Done."),
+        ])
+        approvals = []
+        sdk_calls = []
+        original_call = McpConnection.call
+
+        def record_call(connection, name, arguments, cancel):
+            sdk_calls.append((name, arguments))
+            return original_call(connection, name, arguments, cancel)
+
+        with patch.object(McpConnection, "call", record_call):
+            RuntimeEngine(
+                self.store, model, lambda _message: None,
+                request_approval=lambda request, _cancel: approvals.append(request) or ApprovalDecision("approve"),
+                async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+            ).run(run["id"], threading.Event())
+
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(sdk_calls, [("echo", {"message": "after"})])
+        self.assertEqual(len(approvals), 1)
+        self.assertNotIn("mcp__fixture__echo", [definition.name for definition in model.tool_definitions_history[0]])
+        self.assertIn("mcp__fixture__echo", [definition.name for definition in model.tool_definitions_history[2]])
+        self.assertIn("tool_not_activated", json.dumps(model.contexts[1]))
+        feedback = next(item for item in model.contexts[1] if item.get("type") == "tool_result")
+        self.assertIn('query="mcp__fixture__echo"', json.loads(feedback["result"])["summary"])
+        self.assertFalse(any(item.get("type") == "protocol_error" for context in model.contexts for item in context))
+        self.assertTrue(all(attempt["status"] == "completed" for attempt in self.store.read_model_attempts(run["id"])))
+        saved = self.store.connection.execute(
+            "SELECT id,result_json FROM tool_calls WHERE provider_call_id = 'inactive'",
+        ).fetchone()
+        result = json.loads(saved["result_json"])
+        self.assertEqual(result["code"], "tool_not_activated")
+        self.assertFalse(result["sideEffectsMayExist"])
+        self.assertFalse(result["reconciliationRequired"])
+        self.assertEqual(self.store.connection.execute(
+            "SELECT COUNT(*) FROM durable_intents WHERE tool_call_id = ?", (saved["id"],),
+        ).fetchone()[0], 0)
+        self.assertEqual(self.store.connection.execute(
+            "SELECT consecutive_protocol_errors FROM runs WHERE id = ?", (run["id"],),
+        ).fetchone()[0], 0)
+
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        followup, _ = self.store.create_run(session["id"], "Review the previous tool feedback")
+        replay = ScriptedModel([ModelResponse(text="The earlier inactive call did not execute.")])
+        RuntimeEngine(
+            self.store, replay, lambda _message: None,
+            async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+        ).run(followup["id"], threading.Event())
+        self.assertEqual(self.store.read_run(followup["id"])["status"], "succeeded")
+        self.assertIn("tool_not_activated", json.dumps(replay.contexts[0]))
+
+    def test_search_and_inactive_tool_in_same_batch_require_a_subsequent_step(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"], "Search then echo", extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(
+                ModelToolCall("search", "tool_search", {"query": "mcp__fixture__echo", "limit": 1}),
+                ModelToolCall("too-early", "mcp__fixture__echo", {"message": "early"}),
+            )),
+            ModelResponse(tool_calls=(ModelToolCall("active", "mcp__fixture__echo", {"message": "later"}),)),
+            ModelResponse(text="Done."),
+        ])
+        RuntimeEngine(
+            self.store, model, lambda _message: None,
+            request_approval=lambda _request, _cancel: ApprovalDecision("approve"),
+            async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+        ).run(run["id"], threading.Event())
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        results = self.store.connection.execute(
+            "SELECT provider_call_id,result_json FROM tool_calls ORDER BY creation_seq",
+        ).fetchall()
+        self.assertEqual([(row[0], json.loads(row[1])["code"]) for row in results], [
+            ("search", "ok"), ("too-early", "tool_not_activated"), ("active", "ok"),
+        ])
+
+    def test_disabled_mcp_tool_is_not_misreported_as_needing_activation(self) -> None:
+        self.plugins.set_mcp_enabled("demo", "fixture", False)
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"], "Call a disabled tool", extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("disabled-1", "mcp__fixture__echo", {"message": "x"}),)),
+            ModelResponse(tool_calls=(ModelToolCall("disabled-2", "mcp__fixture__echo", {"message": "x"}),)),
+        ])
+        RuntimeEngine(
+            self.store, model, lambda _message: None,
+            async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+        ).run(run["id"], threading.Event())
+        self.assertEqual(self.store.read_run(run["id"])["errorCode"], "MODEL_PROTOCOL_ERROR")
+        self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0], 0)
+
+    def test_multiple_inactive_calls_do_not_exhaust_protocol_repair(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session["id"], "Inspect two deferred tools", extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("inactive-echo", "mcp__fixture__echo", {"message": "x"}),)),
+            ModelResponse(tool_calls=(ModelToolCall("inactive-fail", "mcp__fixture__fail", {}),)),
+            ModelResponse(text="Both tools need activation first."),
+        ])
+        with patch.object(McpConnection, "call", side_effect=AssertionError("Inactive tools must not execute")) as call:
+            RuntimeEngine(
+                self.store, model, lambda _message: None,
+                async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+            ).run(run["id"], threading.Event())
+            call.assert_not_called()
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        codes = [json.loads(row[0])["code"] for row in self.store.connection.execute("SELECT result_json FROM tool_calls")]
+        self.assertEqual(codes, ["tool_not_activated", "tool_not_activated"])
+        self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM approvals").fetchone()[0], 0)
+        self.assertEqual(self.store.connection.execute("SELECT COUNT(*) FROM durable_intents").fetchone()[0], 0)
+
     def test_connection_is_a_service_on_the_shared_kernel(self) -> None:
         self.manager.start()
 
@@ -119,6 +251,91 @@ class McpManagerTests(unittest.TestCase):
         self.assertEqual(async_tasks[0].owner_id, "mcp:fixture")
         self.assertIsNone(connection._service.deadline)
         self.assertIsNone(async_tasks[0].deadline)
+
+    def test_connection_uses_short_private_paths_and_cleans_only_its_tree(self) -> None:
+        with patch.dict(os.environ, {"TMPDIR": str(self.data / ("long-" * 30))}):
+            entries = self.manager.start()
+        environment = next(value for value in entries if value.spec.name.endswith("__environment"))
+        result = environment.adapter.execute({"bindSocket": True}, threading.Event())
+        self.assertEqual(result["outcome"], "success")
+        paths = json.loads(result["data"]["text"])
+        connection = self.manager.connections[0]
+        root = connection.runtime_root
+        self.assertEqual(root.parent, Path("/private/tmp" if sys.platform == "darwin" else "/tmp").resolve())
+        self.assertLessEqual(len(os.fsencode(root)), 48)
+        self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(paths["HOME"], str(root / "home"))
+        self.assertEqual(paths["TMPDIR"], str(root / "tmp"))
+        self.assertEqual(paths["cwd"], str(self.plugins.installed_root("demo")))
+        self.assertLessEqual(len(os.fsencode(paths["socketPath"])), 103)
+        self.assertTrue((root / "server.pid").is_file())
+        self.manager.close()
+        self.assertFalse(root.exists())
+        self.assertTrue(self.workspace.is_dir())
+
+    def test_short_directory_allocation_failure_does_not_launch_server(self) -> None:
+        with patch("eidos_runtime.extensions.mcp.tempfile.mkdtemp", side_effect=OSError):
+            self.assertEqual(self.manager.start(), ())
+        server = next(value for value in self.plugins.list_mcp_servers() if value["serverId"] == "fixture")
+        self.assertEqual(server["errorCode"], "mcp_temporary_directory_unavailable")
+        self._assert_startup_resources_released()
+
+    def test_changed_runtime_directory_is_not_followed_or_deleted(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        root = connection.runtime_root
+        saved = root.with_name(root.name + "-saved")
+        root.rename(saved)
+        root.symlink_to(self.workspace, target_is_directory=True)
+        try:
+            with self.assertRaisesRegex(McpUnavailable, "mcp_temporary_directory_unavailable"):
+                connection._prepare_parameters()
+            with self.assertRaises(McpShutdownTimeout):
+                connection.close()
+            self.assertTrue(root.is_symlink())
+            self.assertTrue(self.workspace.is_dir())
+        finally:
+            root.unlink()
+            saved.rename(root)
+            connection.close()
+
+    def test_explicit_home_and_tmpdir_keep_priority(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        connection.env_values = {"HOME": str(self.manual_root), "TMPDIR": str(self.workspace)}
+        try:
+            parameters = connection._prepare_parameters()
+            self.assertEqual(parameters.env["HOME"], str(self.manual_root))
+            self.assertEqual(parameters.env["TMPDIR"], str(self.workspace))
+        finally:
+            connection.close()
+
+    def test_blank_manual_cwd_controls_relative_output_without_changing_home(self) -> None:
+        home = self.manual_root.resolve()
+        with patch("eidos_runtime.extensions.plugins.Path.home", return_value=home):
+            created = self.plugins.create_manual_mcp(
+                server_id="manual_fixture", executable=sys.executable,
+                argv=[str(self.manual_root.resolve() / "server.py")],
+                env={}, env_names=[], cwd=None, permission_profile="connector",
+                startup_timeout_seconds=5, tool_timeout_seconds=1,
+            )
+        expected = home / "Eidos" / "eidos-mcp" / "manual_fixture"
+        self.assertEqual(created["cwd"], str(expected))
+        self.plugins.set_mcp_enabled("manual", "manual_fixture", True)
+        manager = McpManager(
+            self.plugins, self.plugins.extension_snapshot(), self.workspace,
+            sandbox=False, async_kernel=self.kernel, resource_registry=self.resources,
+        )
+        try:
+            entries = manager.start()
+            environment = next(value for value in entries if value.spec.name == "mcp__manual_fixture__environment")
+            result = environment.adapter.execute({"writeOutput": True}, threading.Event())
+            self.assertEqual(result["outcome"], "success")
+            paths = json.loads(result["data"]["text"])
+            self.assertEqual(paths["cwd"], str(expected))
+            self.assertNotEqual(paths["HOME"], paths["cwd"])
+            self.assertEqual((expected / "relative-output.txt").read_text(), "fixture-output")
+        finally:
+            manager.close()
+        self.assertEqual((expected / "relative-output.txt").read_text(), "fixture-output")
 
     def test_two_connections_share_the_runtime_kernel(self) -> None:
         second = McpManager(
@@ -156,7 +373,6 @@ class McpManagerTests(unittest.TestCase):
         )
         connection = McpConnection(
             plugin_root=self.plugins.installed_root("demo"),
-            runtime_root=self.data / "extensions" / "mcp-runtime",
             workspace_root=self.workspace,
             config=config,
             on_list_changed=lambda: None,
@@ -358,7 +574,6 @@ class McpManagerTests(unittest.TestCase):
     ) -> McpConnection:
         return McpConnection(
             plugin_root=self.plugins.installed_root("demo"),
-            runtime_root=self.data / "extensions" / "mcp-runtime",
             workspace_root=self.workspace,
             config=config,
             on_list_changed=on_list_changed,

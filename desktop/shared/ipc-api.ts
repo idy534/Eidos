@@ -1,3 +1,4 @@
+import type { SessionForkRequest } from "./session-fork.generated.js";
 import type { MemoryMethods } from "./memory.js";
 import type { CollaborationState } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
@@ -73,6 +74,7 @@ import type {
 export type Unsubscribe = () => void;
 
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
   backupMemory(): Promise<void>;
@@ -98,7 +100,7 @@ export interface EidosRuntimeAPI {
     version?: string,
     workspaceRoot?: string,
     projectId?: string,
-  ): Promise<string>;
+  ): Promise<string | null>;
   releaseWorkspacePreview(url: string): Promise<void>;
   openBrowser(
     sessionId: string,
@@ -129,6 +131,9 @@ export interface EidosRuntimeAPI {
 
   // Sessions
   listSidebarPins(): Promise<SidebarPinsResponse>;
+  updateQueuedRun(request: QueuedRunUpdateRequest): Promise<QueuedRunChangeResponse>;
+  listQueuedRuns(request: QueuedRunListRequest): Promise<QueuedRunListResponse>;
+  deleteQueuedRun(request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse>;
   setSidebarPinned(request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse>;
   createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
   listProjects(): Promise<ProjectListResult>;
@@ -146,6 +151,7 @@ export interface EidosRuntimeAPI {
       includeLocalChanges?: boolean;
     },
   ): Promise<Session>;
+  forkSession(request: SessionForkRequest): Promise<Session>;
   createSessionBranch(sessionId: string, branch: string): Promise<CreateBranchResult>;
   handoffSession(
     sessionId: string,

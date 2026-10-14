@@ -140,11 +140,14 @@ def test_tool_input_kind_failure_preserves_tool_and_actual_terminal_attempt(stor
     assert cause["modelAttemptId"] == value.read_model_attempts(run["id"])[-1]["id"]
 
 
-def test_v23_upgrade_preserves_state_and_adds_no_invented_causes(store):
+def test_v23_upgrade_preserves_state_and_adds_no_invented_causes(
+    store, downgrade_session_fork_schema,
+):
     value, session, data = store
     run, _ = value.create_run(session["id"], "keep this run")
     value.close()
     connection = sqlite3.connect(data / DATABASE_NAME)
+    downgrade_session_fork_schema(connection)
     connection.execute("DROP TABLE sidebar_pins")
     connection.execute("DROP INDEX sidebar_pins_event_revision")
     connection.execute("ALTER TABLE runs DROP COLUMN termination_json")

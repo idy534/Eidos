@@ -55,6 +55,53 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("conversation fork actions", () => {
+  it("lets the user request an earlier page and disables repeated clicks during loading", () => {
+    const onLoadOlder = vi.fn();
+    const items: Item[] = [{ id: "recent", runId: baseRun.id, sessionId: baseRun.sessionId,
+      kind: "user_message", ordinal: 1, status: "completed", content: "最近输入", createdAt: 1 }];
+    const { rerender } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} />);
+    fireEvent.click(screen.getByRole("button", { name: "加载更早的记录" }));
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+    rerender(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} loadingOlder />);
+    expect(screen.getByRole("button", { name: "正在读取历史…" })).toBeDisabled();
+  });
+  const answer = (run: Run, overrides: Partial<Item> = {}): Item => ({
+    id: "answer", sessionId: run.sessionId, runId: run.id, ordinal: 2,
+    kind: "assistant_message", status: "completed", createdAt: 1_000, content: "回答内容", ...overrides,
+  });
+
+  it("forks an older ended answer even when a later Run is active", () => {
+    const oldRun = { ...baseRun, id: "old", status: "succeeded" as const };
+    const selected = answer(oldRun);
+    const onFork = vi.fn();
+    render(<ExecutionFeed items={[selected, answer(baseRun, { id: "stream", status: "in_progress" })]}
+      runs={[oldRun, baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} onFork={onFork} />);
+    expect(screen.getAllByRole("button", { name: "从这里分叉" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
+    expect(onFork).toHaveBeenCalledWith(selected);
+  });
+
+  it("keeps inherited answers forkable without exposing execution revision or feedback", () => {
+    const historical = { ...baseRun, status: "succeeded" as const, inherited: true };
+    const selected = answer(historical, { inherited: true });
+    render(<ExecutionFeed items={[selected]} runs={[historical]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onFork={() => {}} allowRegenerate allowEditResend allowFeedback />);
+    expect(screen.getByRole("button", { name: "从这里分叉" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "重新生成" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "点赞" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer a fork for incomplete answers or progress inside a tool round", () => {
+    const ended = { ...baseRun, status: "stopped" as const };
+    render(<ExecutionFeed items={[answer(ended, { incomplete: true })]} runs={[ended]} approvals={[]}
+      onApprove={() => {}} onReject={() => {}} onFork={() => {}} />);
+    expect(screen.queryByRole("button", { name: "从这里分叉" })).not.toBeInTheDocument();
+  });
+});
+
 describe("Run failure presentation", () => {
   it("shows a concrete cause without technical diagnostics in the Session body", () => {
     const run: Run = { ...baseRun, status: "failed", errorCode: "MODEL_PROTOCOL_ERROR",
@@ -69,6 +116,52 @@ describe("Run failure presentation", () => {
     expect(screen.queryByText("错误码")).not.toBeInTheDocument();
     expect(screen.queryByText("MODEL_PROTOCOL_ERROR")).not.toBeInTheDocument();
     expect(screen.queryByText("TOOL_ARGUMENT_CONTRACT_VIOLATION")).not.toBeInTheDocument();
+  });
+
+  it("renders standalone turn results with proper standalone styling before run notice when canceled during editing", () => {
+    const run: Run = { ...baseRun, status: "canceled" };
+    const diff = "diff --git a/test.ts b/test.ts\n--- a/test.ts\n+++ b/test.ts\n@@ -1,1 +1,2 @@\n-old\n+new\n+added\n";
+    const editItem: Item = {
+      id: "edit-item",
+      sessionId: run.sessionId,
+      runId: run.id,
+      ordinal: 1,
+      kind: "file_change",
+      status: "completed",
+      createdAt: 1_000,
+      toolCall: {
+        id: "tool-edit-feed",
+        itemId: "edit-item",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "provider-edit-feed",
+        toolName: "apply_patch",
+        status: "completed",
+        startedAt: 1_000,
+        completedAt: 1_100,
+        changeDiff: diff,
+      },
+    };
+    const { container } = render(
+      <ExecutionFeed
+        items={[
+          { id: "user", ordinal: 0, sessionId: run.sessionId, runId: run.id, kind: "user_message", status: "completed", createdAt: 1_000, content: "请修改代码" },
+          editItem,
+        ]}
+        runs={[run]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+    const turnResultsSection = container.querySelector(".turn-results");
+    expect(turnResultsSection).toBeInTheDocument();
+    expect(turnResultsSection).toHaveClass("turn-results--standalone");
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("任务已取消。");
+    expect(notice).toHaveClass("run-notice", "run-notice--neutral");
   });
 });
 
@@ -1054,6 +1147,39 @@ describe("ExecutionFeed regenerate confirmation", () => {
 });
 
 describe("ExecutionFeed view_image tool rendering and lightbox", () => {
+  it.each([
+    { status: "failed" as const, path: "missing.png" },
+    { status: "completed" as const, path: "/tmp/outside.png" },
+  ])("does not request a preview for $status image at $path", async ({ status, path }) => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const prepare = vi.fn().mockResolvedValue("eidos-preview://unexpected");
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { prepareWorkspacePreview: prepare } });
+    const imageItem: Item = {
+      id: "image-item", sessionId: baseRun.sessionId, runId: baseRun.id, ordinal: 1,
+      kind: "tool_call", status: status === "failed" ? "failed" : "completed", createdAt: 1000,
+      toolCall: {
+        id: "image-tool", itemId: "image-item", modelStepIndex: 1, batchOrder: 0,
+        providerCallId: "image-call", toolName: "view_image", status,
+        argumentsJson: JSON.stringify({ path }),
+        resultJson: JSON.stringify({ outcome: status === "failed" ? "error" : "success", code: status === "failed" ? "file_not_found" : "ok", summary: "Image", data: { path, mime: "image/png" } }),
+      },
+    };
+    try {
+      const { container } = render(<ArtifactProvider value={{ sessionId: baseRun.sessionId, executionRoot: "/workspace", openFile: vi.fn(), openBrowser: vi.fn() }}>
+        <ExecutionFeed items={[imageItem]} runs={[baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} />
+      </ArtifactProvider>);
+      const details = container.querySelector("details")!;
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      if (status === "completed") expect(await screen.findByText("暂无预览")).toBeInTheDocument();
+      else await waitFor(() => expect(container.querySelector(".tool-image-error")).not.toBeNull());
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
   it("renders view_image and opens fullscreen preview when thumbnail is clicked", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
     Object.defineProperty(window, "eidosRuntime", {
@@ -1324,6 +1450,123 @@ describe("ExecutionFeed memory tools static rendering", () => {
     // Verify they are rendered inside .tool-item--read-done
     expect(searchRow.closest(".tool-item--read-done")).not.toBeNull();
     expect(readRow.closest(".tool-item--read-done")).not.toBeNull();
+  });
+});
+
+describe("ExecutionFeed skill and read_tool_output rendering", () => {
+  it("renders read_tool_output as static row with 正在查看工具输出 and no details toggle", () => {
+    const item: Item = {
+      id: "tool-rto",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-rto",
+        itemId: "tool-rto",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-rto",
+        toolName: "read_tool_output",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ callId: "c1" }),
+        resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+      },
+    };
+
+    render(
+      <ExecutionFeed
+        items={[item]}
+        runs={[baseRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    const row = screen.getByText("正在查看工具输出");
+    expect(row).toBeInTheDocument();
+    expect(row.closest("details.tool-item")).toBeNull();
+    expect(row.closest(".tool-item--read-done")).not.toBeNull();
+  });
+
+  it("renders skill_read and opens skill detail dialog when skill name button is clicked", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const readSkillDetail = vi.fn().mockResolvedValue({
+      qualifiedId: "system:code-review",
+      name: "code-review",
+      description: "Review your code",
+      content: "# Code Review Skill",
+      directory: "/skills/code-review",
+      resources: [],
+    });
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readSkillDetail,
+        listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+      },
+    });
+
+    try {
+      const item: Item = {
+        id: "tool-sr",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 1,
+        kind: "tool_call",
+        status: "completed",
+        createdAt: 1000,
+        toolCall: {
+          id: "tc-sr",
+          itemId: "tool-sr",
+          modelStepIndex: 1,
+          batchOrder: 0,
+          providerCallId: "p-sr",
+          toolName: "skill_read",
+          status: "completed",
+          startedAt: 1000,
+          completedAt: 1100,
+          argumentsJson: JSON.stringify({ qualifiedId: "system:code-review" }),
+          resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+        },
+      };
+
+      render(
+        <ExecutionFeed
+          items={[item]}
+          runs={[baseRun]}
+          approvals={[]}
+          onApprove={() => {}}
+          onReject={() => {}}
+        />,
+      );
+
+      // Verify static row
+      const button = screen.getByRole("button", { name: "code-review" });
+      expect(button).toBeInTheDocument();
+      expect(button.closest("details.tool-item")).toBeNull();
+      expect(button.closest(".tool-item--read-done")).not.toBeNull();
+      expect(screen.getByText(/已读取.*技能 SKILL\.md/)).toBeInTheDocument();
+
+      // Click skill name button to open detail dialog
+      fireEvent.click(button);
+
+      const heading = await screen.findByRole("heading", { name: "code-review" });
+      expect(heading).toBeInTheDocument();
+
+      // Close dialog
+      const closeBtn = screen.getByRole("button", { name: "关闭技能详情" });
+      fireEvent.click(closeBtn);
+      expect(screen.queryByRole("heading", { name: "code-review" })).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
   });
 });
 

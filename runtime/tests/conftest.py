@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from pathlib import Path
 
@@ -8,6 +10,31 @@ from pathlib import Path
 def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every Runtime test owns its workspace root, including child Runtime processes."""
     monkeypatch.setenv("EIDOS_PROJECTLESS_ROOT", str(tmp_path / "Eidos"))
+
+
+@pytest.fixture
+def downgrade_session_fork_schema():
+    """Remove the v26 additions when a test rebuilds an older schema fixture."""
+    def downgrade(connection: sqlite3.Connection) -> None:
+        for table in (
+            "session_history_resources",
+            "session_history_entries",
+            "session_forks",
+        ):
+            connection.execute(f"DROP TABLE IF EXISTS {table}")
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(worktree_lifecycle_operations)"
+            )
+        }
+        if "request_hash" in columns:
+            connection.execute(
+                "ALTER TABLE worktree_lifecycle_operations DROP COLUMN request_hash"
+            )
+
+    return downgrade
+
 
 # Test layers are assigned at collection time so product tests stay focused on
 # behavior instead of repeating infrastructure markers in every file. Keep this

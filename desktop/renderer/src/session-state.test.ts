@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Item, Run, RuntimeNotification, SessionSnapshot } from "./contracts.js";
 import {
   applyNotification,
+  applyQueuedRunChange,
   findActiveRun,
   groupSessionsByProject,
   SnapshotReadCoordinator,
@@ -11,6 +12,7 @@ import {
   taskStatusPresentation,
   terminalRunPresentation,
   userFacingError,
+  isQueuedMessage,
 } from "./session-state.js";
 
 
@@ -59,6 +61,26 @@ function snapshot(status: Run["status"], content: string): SessionSnapshot {
     stepResolutions: [],
   };
 }
+
+test("queue changes keep Session ownership and never overwrite a started or newer Run", () => {
+  const queued = run("queued");
+  delete queued.startedAt;
+  delete queued.completedAt;
+  const value: SessionSnapshot = { session, runs: [queued], items: [{ ...assistant("old", "completed"), kind: "user_message" }], stepResolutions: [] };
+  assert.equal(isQueuedMessage(queued), true);
+  assert.equal(isQueuedMessage({ ...queued, startedAt: 1 }), false);
+  const change = { kind: "updated" as const, sessionId: session.id, runId: queued.id, userInput: "new", updatedAt: 3 };
+  const updated = applyQueuedRunChange(value, change)!;
+  assert.equal(updated.runs[0]?.userInput, "new");
+  assert.equal(updated.items[0]?.content, "new");
+  assert.equal(applyQueuedRunChange(updated, { ...change, updatedAt: 1 }), updated);
+  assert.equal(applyQueuedRunChange(value, { ...change, sessionId: "other-session" }), value);
+  const running = { ...value, runs: [{ ...queued, status: "running" as const, startedAt: 2 }] };
+  assert.equal(applyQueuedRunChange(running, change), running);
+  const deleted = applyNotification(value, { method: "run/queueChanged", params: { change: { kind: "deleted", sessionId: session.id, runId: queued.id } } })!;
+  assert.deepEqual(deleted.runs, []);
+  assert.deepEqual(deleted.items, []);
+});
 
 test("a completion refresh supersedes an older in-flight snapshot read", () => {
   const reads = new SnapshotReadCoordinator();

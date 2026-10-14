@@ -35,6 +35,17 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     assert.equal(await evaluate("window.sidebarTestState?.loaded"), true, "Fixture must load the authoritative pins");
+    const forkRow = '[data-session-id="44444444-4444-4444-4444-444444444444"]';
+    assert.equal(await evaluate(`document.querySelector(${JSON.stringify(forkRow)} + ' .session-title')?.textContent`), "排查模型错误", "A fork appears before its first Run with its source title");
+    const forkOpacity = () => evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(forkRow)} + ' .session-fork-indicator')).opacity`);
+    assert.equal(await forkOpacity(), "0", "Fork marker is hidden before hover");
+    const forkPoint = await evaluate(`(() => { const bounds = document.querySelector(${JSON.stringify(forkRow)} + ' button').getBoundingClientRect(); return { x: Math.round(bounds.left + 10), y: Math.round(bounds.top + bounds.height / 2) }; })()`);
+    win.webContents.sendInputEvent({ type: "mouseMove", ...forkPoint });
+    await settle();
+    assert.equal(await forkOpacity(), "1", "Native hover reveals the fork marker");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });
+    await settle();
+    assert.equal(await forkOpacity(), "0", "Leaving the row hides the marker again");
     const click = async (selector, button = "left") => {
       const point = await evaluate(`(() => {
         const element = document.querySelector(${JSON.stringify(selector)});
@@ -47,6 +58,30 @@ app.whenReady().then(async () => {
       win.webContents.sendInputEvent({ type: "mouseUp", button, ...point, clickCount: 1 });
       await settle();
     };
+    await click(`${forkRow} button`);
+    assert.equal(await evaluate("window.sidebarTestState.selectedId"), "44444444-4444-4444-4444-444444444444");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await settle();
+    win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });
+    await settle();
+    const selectedForkPoint = await evaluate(`(() => { const bounds = document.querySelector(${JSON.stringify(forkRow)} + ' button').getBoundingClientRect(); return { x: Math.round(bounds.left + 10), y: Math.round(bounds.top + bounds.height / 2) }; })()`);
+    win.webContents.sendInputEvent({ type: "mouseMove", ...selectedForkPoint });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await settle();
+    const sourceLink = '[role="tooltip"] [data-source-session-id="22222222-2222-2222-2222-222222222222"]';
+    assert.equal(await evaluate(`document.querySelector(${JSON.stringify(sourceLink)})?.textContent`), "排查模型错误", "Fork tooltip names the immediate source Session");
+    assert.equal(await evaluate(`document.querySelectorAll(${JSON.stringify(forkRow)} + ' .session-fork-indicator circle').length`), 3, "Sidebar uses the new three-node fork icon");
+    const sourcePoint = await evaluate(`(() => { const bounds = document.querySelector(${JSON.stringify(sourceLink)}).getBoundingClientRect(); return { x: Math.round(bounds.left + bounds.width / 2), y: Math.round(bounds.top + bounds.height / 2) }; })()`);
+    win.webContents.sendInputEvent({ type: "mouseMove", ...sourcePoint });
+    await new Promise(resolve => setTimeout(resolve, 350));
+    await settle();
+    assert.equal(await evaluate(`document.querySelector(${JSON.stringify(sourceLink)}) !== null`), true, "Moving into the tooltip keeps the source link clickable");
+    if (process.env.EIDOS_FORK_HOVER_SCREENSHOT) {
+      await writeFile(process.env.EIDOS_FORK_HOVER_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+    }
+    await click(sourceLink);
+    assert.equal(await evaluate("window.sidebarTestState.selectedId"), "22222222-2222-2222-2222-222222222222", "Native source click navigates from the fork to its source Session");
+    assert.equal(await evaluate("document.querySelector('[role=tooltip]')"), null, "Source navigation dismisses the hover card");
     const project = '[aria-label="Eidos"] .workspace-toggle';
     await click(project, "right");
     assert.equal(await evaluate("document.querySelector('[role=menu]')?.closest('.sidebar') === null"), true, "Context menu must float outside the sidebar");
@@ -104,7 +139,7 @@ app.whenReady().then(async () => {
       await click('[role="menuitem"]');
       await writeFile(process.env.EIDOS_SIDEBAR_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
     }
-    console.log("Sidebar native right-click, keyboard, mixed placement, status, scroll and narrow-window checks passed.");
+    console.log("Sidebar native fork hover/source navigation, right-click, keyboard, mixed placement, status, scroll and narrow-window checks passed.");
   } catch (error) {
     console.error(error);
     exitCode = 1;

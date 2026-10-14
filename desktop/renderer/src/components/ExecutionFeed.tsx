@@ -24,9 +24,12 @@ import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
 import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
+import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { SparklesIcon } from "./InputPicker.js";
+import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 
 type FeedbackHandler = (
@@ -58,6 +61,9 @@ interface Props {
   onApprove: (request: ApprovalRequest) => void;
   onReject: (request: ApprovalRequest) => void;
   onFeedback?: FeedbackHandler;
+  onFork?: ((item: Item) => void) | undefined;
+  onLoadOlder?: (() => void) | undefined;
+  loadingOlder?: boolean;
   onRegenerate?: RegenerateHandler;
   onEditResend?: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
@@ -115,6 +121,9 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   onApprove,
   onReject,
   onFeedback = NOOP_FEEDBACK,
+  onFork,
+  onLoadOlder,
+  loadingOlder = false,
   onRegenerate = NOOP_REGENERATE,
   onEditResend = NOOP_EDIT_RESEND,
   onOpenFile,
@@ -220,11 +229,14 @@ export const ExecutionFeed = memo(function ExecutionFeed({
         aria-live="polite"
         onScroll={handleScroll}
       >
+        {onLoadOlder && <button type="button" className="btn btn--ghost" disabled={loadingOlder} onClick={onLoadOlder}>
+          {loadingOlder ? "正在读取历史…" : "加载更早的记录"}
+        </button>}
         {itemGroups.map(({ runId, items: runItems }) => {
           const run = runsById.get(runId);
           if (!run) return null;
           const segments = splitRunIntoSegments(runItems);
-          const canReviseRun = latestVisibleRun?.id === run.id
+          const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
             && TERMINAL_RUN_STATUSES.has(run.status)
             && !hasActiveRun
             && !revisionSubmitting;
@@ -253,6 +265,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                   onApprove={onApprove}
                   onReject={onReject}
                   onFeedback={onFeedback}
+                  onFork={onFork}
                   onRegenerate={onRegenerate}
                   onEditResend={onEditResend}
                   onOpenFile={onOpenFile}
@@ -312,6 +325,7 @@ const RunSegment = memo(function RunSegment({
   onApprove,
   onReject,
   onFeedback,
+  onFork,
   onRegenerate,
   onEditResend,
   onOpenFile,
@@ -341,6 +355,7 @@ const RunSegment = memo(function RunSegment({
   onApprove: Props["onApprove"];
   onReject: Props["onReject"];
   onFeedback: FeedbackHandler;
+  onFork?: ((item: Item) => void) | undefined;
   onRegenerate: RegenerateHandler;
   onEditResend: EditResendHandler;
   onOpenFile?: ((path: string) => void) | undefined;
@@ -417,7 +432,7 @@ const RunSegment = memo(function RunSegment({
             feedback={feedbackByItemId.get(item.id)}
             feedbackPending={pendingFeedbackItemIds.has(item.id)}
             canRegenerate={allowRegenerate && isLast && index === segment.response.length - 1 && canReviseRun}
-            allowFeedback={allowFeedback}
+            allowFeedback={allowFeedback && !item.inherited}
             isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
             showTurnResults={isLast
               && index === segment.response.length - 1
@@ -427,6 +442,7 @@ const RunSegment = memo(function RunSegment({
             showTextChanges={true}
             revisionSubmitting={revisionSubmitting}
             onFeedback={onFeedback}
+            onFork={onFork}
             onRegenerate={onRegenerate}
           />
         );
@@ -434,7 +450,7 @@ const RunSegment = memo(function RunSegment({
       {isLast
         && segment.response.length === 0
         && TERMINAL_RUN_STATUSES.has(run.status)
-        && <TurnResults run={run} items={resultItems} showTextChanges={true} />}
+        && <TurnResults run={run} items={resultItems} showTextChanges={true} className="turn-results--standalone" />}
     </>
   );
 });
@@ -676,6 +692,7 @@ function AssistantMessage({
   showTextChanges,
   revisionSubmitting = false,
   onFeedback,
+  onFork,
   onRegenerate,
 }: {
   item: Item;
@@ -692,6 +709,7 @@ function AssistantMessage({
   showTextChanges: boolean;
   revisionSubmitting?: boolean | undefined;
   onFeedback: FeedbackHandler;
+  onFork?: ((item: Item) => void) | undefined;
   onRegenerate: RegenerateHandler;
 }) {
   const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
@@ -708,7 +726,7 @@ function AssistantMessage({
   }, [canRegenerate]);
 
   return (
-    <article className="feed-item feed-item--assistant" ref={contentRef}>
+    <article id={`item-${item.id}`} className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent className="eidos-chat-prose" content={item.content || ""} isStreaming={isStreaming} />
       {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
@@ -716,6 +734,11 @@ function AssistantMessage({
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
             <CopyButton content={item.content} />
+            {onFork && item.status === "completed" && !item.incomplete && (
+              <ActionButton label="从这里分叉" onClick={() => onFork(item)}>
+                <ForkIcon />
+              </ActionButton>
+            )}
             {allowFeedback && (
               <>
                 <ActionButton
@@ -761,14 +784,14 @@ function AssistantMessage({
                 />
               </>
             )}
-            <MoreActionsDropdown
+            {!item.inherited && <MoreActionsDropdown
               session={run.sessionId}
               run={run.id}
               item={item.id}
               step={item.modelStepIndex ?? run.modelStepCount ?? 1}
               model={run.modelId}
               workspace={workspaceRoot}
-            />
+            />}
           </div>
           <div className="response-meta">
             <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
@@ -1010,7 +1033,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
   const data = objectField(result, "data");
-  const running = item.status === "in_progress" || stringField(data, "executionStatus") === "running";
+  const running = !item.inherited && (item.status === "in_progress" || stringField(data, "executionStatus") === "running");
   const command = stringField(args, "command") || stringArrayField(args, "argv").join(" ") || "Shell 命令";
   const stdout = stringField(data, "stdout");
   const stderr = stringField(data, "stderr");
@@ -1228,8 +1251,10 @@ function ViewImageViewer({
   const size = numberField(data, "size");
   const displayName = rawPath ? pathBasename(rawPath) : "图像";
 
-  const targetPath = (actions?.executionRoot && rawPath && artifactPath(rawPath, actions.executionRoot)) || rawPath;
-  const { url: previewUrl, error: previewError } = usePreviewUrl(targetPath || undefined);
+  const targetPath = actions?.executionRoot && rawPath
+    ? artifactPath(rawPath, actions.executionRoot, undefined, true)
+    : undefined;
+  const { url: previewUrl, error: previewError } = usePreviewUrl(isError ? undefined : targetPath);
 
   if (isError) {
     return (
@@ -1277,7 +1302,7 @@ function ViewImageViewer({
           >
             <img src={previewUrl} alt={displayName} loading="lazy" />
           </button>
-        ) : previewError ? (
+        ) : previewError || !targetPath ? (
           <p className="tool-image-empty" role="status">暂无预览</p>
         ) : (
           <div className="tool-image-loading">
@@ -1314,6 +1339,94 @@ function ViewImageViewer({
         document.body,
       )}
     </div>
+  );
+}
+
+function SkillReadToolItem({
+  item,
+  toolCall,
+  agents,
+}: {
+  item: Item;
+  toolCall: ToolCall;
+  agents?: AgentSummary[] | undefined;
+}) {
+  const [previewSkill, setPreviewSkill] = useState<{ qualifiedId: string; name: string } | null>(null);
+  const { qualifiedId, name: skillName } = extractSkillInfo(toolCall);
+  const running = item.status === "in_progress";
+  const resultObj = parseObject(toolCall.resultJson);
+  const isError = Boolean(
+    resultObj.outcome === "error"
+    || (typeof resultObj.code === "string" && resultObj.code && resultObj.code !== "ok")
+    || item.status === "failed"
+    || item.status === "declined"
+    || item.status === "canceled"
+    || toolCall.status === "failed"
+    || toolCall.status === "canceled",
+  );
+
+  if (isReconciliationGate(resultObj)) {
+    const summaryText = toolSummary(toolCall, item.status, agents);
+    return (
+      <div className="tool-item tool-item--read-done" title={summaryText}>
+        <span className="tool-icon" aria-hidden="true">
+          <SparklesIcon />
+        </span>
+        <span>{summaryText}</span>
+      </div>
+    );
+  }
+
+  const errSummary = safeToolSummary(toolCall.resultJson, item.status);
+  const titleText = isError && errSummary ? errSummary : undefined;
+  const isResource = toolCall.toolName === "skill_read_resource";
+  const suffix = isResource ? "整个技能包" : "技能 SKILL.md";
+  const actionPrefix = running
+    ? "正在读取"
+    : (item.status === "completed" ? "已读取" : `${statusLabel(item.status)} 读取`);
+
+  const handleOpenPreview = () => {
+    if (!qualifiedId && !skillName) return;
+    setPreviewSkill({
+      qualifiedId: qualifiedId || skillName,
+      name: skillName || qualifiedId,
+    });
+  };
+
+  return (
+    <>
+      <div className="tool-item tool-item--read-done" title={titleText}>
+        <span className="tool-icon" aria-hidden="true">
+          <SparklesIcon />
+        </span>
+        <span>
+          {actionPrefix}
+          {skillName ? (
+            <button
+              type="button"
+              className="tool-file-link"
+              title={`查看技能详情：${skillName}`}
+              onClick={handleOpenPreview}
+            >
+              {skillName}
+            </button>
+          ) : null}
+          {suffix}
+        </span>
+      </div>
+      {previewSkill && (
+        <SkillDetailDialog
+          skill={{
+            qualifiedId: previewSkill.qualifiedId,
+            name: previewSkill.name,
+            enabled: true,
+            available: true,
+          }}
+          readOnly
+          onClose={() => setPreviewSkill(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -1481,6 +1594,36 @@ function ToolItem({
       <div className="tool-item tool-item--read-done" title={titleText}>
         <span className="tool-icon" aria-hidden="true">
           <MemoryIcon />
+        </span>
+        <span>{summaryText}</span>
+      </div>
+    );
+  }
+
+  if (isSkillReadTool(toolCall.toolName)) {
+    return <SkillReadToolItem item={item} toolCall={toolCall} agents={agents} />;
+  }
+
+  if (toolCall.toolName === "read_tool_output") {
+    const resultObj = parseObject(toolCall.resultJson);
+    const isError = Boolean(
+      resultObj.outcome === "error"
+      || (typeof resultObj.code === "string" && resultObj.code && resultObj.code !== "ok")
+      || item.status === "failed"
+      || item.status === "declined"
+      || item.status === "canceled"
+      || toolCall.status === "failed"
+      || toolCall.status === "canceled"
+      || isReconciliationGate(resultObj),
+    );
+    const errSummary = safeToolSummary(toolCall.resultJson, item.status);
+    const summaryText = toolSummary(toolCall, item.status, agents);
+    const titleText = isError && errSummary ? errSummary : summaryText;
+
+    return (
+      <div className="tool-item tool-item--read-done" title={titleText}>
+        <span className="tool-icon" aria-hidden="true">
+          <ShellIcon />
         </span>
         <span>{summaryText}</span>
       </div>
@@ -1758,6 +1901,24 @@ function formatMemorySearchTerms(args: Record<string, unknown>): string {
   return "";
 }
 
+function isSkillReadTool(name: string): boolean {
+  return name === "skill_read" || name === "skill_read_resource";
+}
+
+function extractSkillInfo(toolCall: ToolCall): { qualifiedId: string; name: string } {
+  const args = parseObject(toolCall.argumentsJson);
+  const result = parseObject(toolCall.resultJson);
+  const data = objectField(result, "data");
+  const qualifiedId = stringField(args, "qualifiedId")
+    || stringField(result, "qualifiedId")
+    || stringField(data, "qualifiedId")
+    || stringField(args, "name")
+    || "";
+  const rawName = stringField(args, "name") || stringField(args, "skillName") || "";
+  const name = rawName || (qualifiedId.includes(":") ? qualifiedId.split(":").slice(1).join(":") : qualifiedId);
+  return { qualifiedId, name };
+}
+
 function extractSubagentInfo(
   toolCall: ToolCall,
   agents?: AgentSummary[],
@@ -1850,6 +2011,9 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const subagentName = subagentInfo?.name;
   const isMemory = isMemoryTool(toolCall.toolName);
   const memoryQuery = isMemory ? formatMemorySearchTerms(args) : "";
+  const isSkillRead = isSkillReadTool(toolCall.toolName);
+  const skillInfo = isSkillRead ? extractSkillInfo(toolCall) : undefined;
+  const skillName = skillInfo?.name || "";
 
   const baseLabels: Record<string, string> = {
     spawn_agent: subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体",
@@ -1863,8 +2027,13 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     memory_read: "读取记忆",
     memory_record: "修订记忆",
     memory_manage: "优化记忆",
+    read_tool_output: "查看工具输出",
+    skill_read: skillName ? `${skillName}技能 SKILL.md` : "技能 SKILL.md",
+    skill_read_resource: skillName ? `${skillName}整个技能包` : "整个技能包",
   };
   const targetLabel = isMemory
+    ? baseLabels[toolCall.toolName]
+    : isSkillRead
     ? baseLabels[toolCall.toolName]
     : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
@@ -1885,6 +2054,13 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
     declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
+    read_tool_output: "正在查看工具输出",
+    skill_read: running
+      ? (skillName ? `正在读取${skillName}技能 SKILL.md` : "正在读取技能 SKILL.md")
+      : (skillName ? `已读取${skillName}技能 SKILL.md` : "已读取技能 SKILL.md"),
+    skill_read_resource: running
+      ? (skillName ? `正在读取${skillName}整个技能包` : "正在读取整个技能包")
+      : (skillName ? `已读取${skillName}整个技能包` : "已读取整个技能包"),
     memory_search: running
       ? (memoryQuery ? `正在搜索记忆 "${memoryQuery}"` : "正在搜索记忆")
       : (memoryQuery ? `已搜索记忆 "${memoryQuery}"` : "已搜索记忆"),
@@ -1963,10 +2139,13 @@ function SearchIcon() {
   );
 }
 
-function SkillIcon() {
+function DeclareOutputsIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 1.5C8 5 11 8 14.5 8C11 8 8 11 8 14.5C8 11 5 8 1.5 8C5 8 8 5 8 1.5Z" />
+      <path d="M8 2L13.5 5L8 8L2.5 5Z" fill="currentColor" fillOpacity=".12" />
+      <path d="M8 2L13.5 5V11L8 14L2.5 11V5Z" />
+      <path d="M8 8V14" />
+      <path d="M5.25 3.5L10.75 6.5" />
     </svg>
   );
 }
@@ -2033,6 +2212,8 @@ function DefaultToolIcon() {
 }
 
 function toolIcon(name: string): ReactNode {
+  if (name === "declare_outputs") return <DeclareOutputsIcon />;
+  if (name === "run_shell" || name === "read_tool_output") return <ShellIcon />;
   if (name === "list_files") return <FileListIcon />;
   if (["read_file", "read_file_range"].includes(name)) return <FileReadIcon />;
   if (name === "view_image") return <ImageIcon />;
@@ -2043,7 +2224,7 @@ function toolIcon(name: string): ReactNode {
   if (["spawn_agent", "wait_agents", "list_agents", "stop_agent", "send_message", "followup_task"].includes(name)) {
     return <SubagentToolIcon />;
   }
-  if (name.startsWith("skill_")) return <SkillIcon />;
+  if (name.startsWith("skill_")) return <SparklesIcon />;
   if (name.startsWith("mcp") || name.includes("__")) return <McpIcon />;
   return <DefaultToolIcon />;
 }

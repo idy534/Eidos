@@ -14,6 +14,7 @@ import { ContextMenu } from "./DropdownMenu.js";
 import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 import { MarkdownContent } from "./MarkdownContent.js";
+import { PdfViewer } from "./PdfViewer.js";
 
 
 interface WorkspaceTreeNode extends WorkspaceDirectoryEntry {
@@ -896,7 +897,18 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
       {(error || loadError) && <p role="alert">{error || loadError}</p>}
       {preview.kind === "html" && <div className="artifact-toolbar"><button onClick={() => setSource(!source)}>{source ? "查看预览入口" : "查看源码"}</button><button disabled={!url || preview.truncated} onClick={() => { if (url) actions?.openBrowser(url); }}>打开交互预览</button></div>}
       {preview.kind === "image" ? (url ? <img className="artifact-preview-image" src={url} alt={preview.path} onError={() => setLoadError("图片无法加载，请刷新或检查文件格式。")} /> : <p role="status">正在加载图片…</p>)
-      : preview.kind === "pdf" ? (url ? <iframe className="artifact-pdf" title={preview.path} src={url} onError={() => setLoadError("PDF 无法加载，请刷新或检查文件格式。")} /> : <p role="status">正在加载 PDF…</p>)
+      : preview.kind === "pdf" ? (
+        url ? (
+          <PdfViewer
+            url={url}
+            title={preview.path}
+            onOpenExternal={actions?.sessionId ? () => {
+              void window.eidosRuntime?.openWorkspacePathInEditor?.(actions.sessionId, preview.path);
+            } : undefined}
+            onError={(msg) => setLoadError(msg)}
+          />
+        ) : <p role="status">正在加载 PDF…</p>
+      )
       : preview.kind === "html" && !source ? <p>你可以在网页面板中操作页面并检查效果。</p>
       : preview.kind === "unavailable" ? (
         <div className="workspace-preview-unavailable">

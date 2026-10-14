@@ -19,6 +19,9 @@ const sessions: Session[] = [
     project: projects[0]!, taskStatus: "in_progress", activeRunStatus: "waiting_approval", createdAt: 2, updatedAt: 2 },
   { id: "33333333-3333-3333-3333-333333333333", title: "调整输入框布局", workspaceRoot: "/workspace/0",
     project: projects[0]!, taskStatus: "completed", createdAt: 1, updatedAt: 1 },
+  { id: "44444444-4444-4444-4444-444444444444", title: "排查模型错误", workspaceRoot: "/workspace/0",
+    project: projects[0]!, taskStatus: "new", createdAt: 3, updatedAt: 3,
+    forkedFrom: { sessionId: "22222222-2222-2222-2222-222222222222", runId: "source-run", itemId: "source-answer", itemCount: 2, createdAt: 3 } },
 ];
 let saved: SidebarPinsResponse = { items: [], throughEventId: 0 };
 window.eidosRuntime = {

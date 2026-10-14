@@ -104,7 +104,7 @@
 
 .memory-budget-input-group:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: none;
 }
 
 .memory-budget-input-group input {
@@ -151,7 +151,7 @@
 
 .memory-textarea-wrapper:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: none;
 }
 
 .memory-add-textarea {
@@ -242,7 +242,7 @@
 .memory-search-input:focus {
   background: var(--surface-raised);
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: none;
 }
 
 .memory-search-clear {
@@ -581,5 +581,5 @@
 
 .memory-edit-textarea:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: none;
 }

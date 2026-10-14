@@ -528,7 +528,7 @@ class ToolExecutionController:
         )
         runtime = (
             plan.descriptor.runtime
-            if plan.descriptor is not None else None
+            if plan.descriptor is not None and not plan.activation_required else None
         )
         self._execution_state.intent_started = self.store.side_effect_authorized(str(item["id"]))
         self._execution_state.authorized_effects = int(self._execution_state.intent_started)
@@ -551,6 +551,17 @@ class ToolExecutionController:
             if reason is not None:
                 outcome = self._interrupted(
                     call, plan, reason, uncertain=False
+                )
+            elif plan.activation_required:
+                outcome = HandlerOutcome(
+                    tool_error(
+                        call.name,
+                        "tool_not_activated",
+                        f"Tool {call.name} is not activated. No tool was executed. "
+                        f'Call tool_search with query="{call.name}" to activate it, '
+                        "then retry the tool in a subsequent step after receiving the search result.",
+                    ),
+                    "completed",
                 )
             elif (
                 plan.side_effect != "none"

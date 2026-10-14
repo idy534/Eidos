@@ -52,6 +52,9 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
 
 EXPECTED_TABLES = {
     "sessions",
+    "session_forks",
+    "session_history_entries",
+    "session_history_resources",
     "runs",
     "items",
     "tool_calls",
@@ -175,7 +178,7 @@ EXPECTED_COLUMNS = {
         "review_json",
     },
     "worktree_lifecycle_operations": {
-        "expected_head", "snapshot_id", "snapshot_head", "snapshot_fingerprint"
+        "expected_head", "snapshot_id", "snapshot_head", "snapshot_fingerprint", "request_hash"
     },
     "worktree_snapshots": {
         "id", "worktree_id", "workspace_root", "session_id", "project_id", "base_ref",
@@ -542,8 +545,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 25)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 24)
+        self.assertEqual(SCHEMA_VERSION, 27)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 26)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

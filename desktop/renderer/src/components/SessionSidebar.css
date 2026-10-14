@@ -338,6 +338,7 @@
 }
 
 .session-title {
+  min-width: 0;
   display: block;
   overflow: hidden;
   font-size: var(--font-size-body);
@@ -345,6 +346,33 @@
   line-height: var(--line-height-body);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.session-fork-indicator {
+  display: inline-flex;
+  flex: 0 0 0.85rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-fork-indicator svg {
+  width: 100%;
+  height: 100%;
+}
+
+.session-item > button:hover .session-fork-indicator,
+.session-item > button:focus-visible .session-fork-indicator {
+  opacity: 1;
 }
 
 .session-labels {
@@ -611,6 +639,7 @@
 }
 
 .sidebar-hover-card__value {
+  display: block;
   min-width: 0;
   font-size: var(--font-size-caption);
   font-weight: 500;
@@ -626,6 +655,38 @@
 
 .sidebar-hover-card__value--project {
   max-width: 180px;
+}
+
+.sidebar-hover-card__source-link {
+  display: block;
+  appearance: none;
+  max-width: 200px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  text-align: right;
+  cursor: pointer;
+}
+
+.sidebar-hover-card__source-link:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sidebar-hover-card__source-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.sidebar-hover-card__source-link:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 1;
 }
 
 .sidebar-hover-card__time-wrapper {

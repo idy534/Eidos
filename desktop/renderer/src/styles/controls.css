@@ -31,12 +31,15 @@ button:active:not(:disabled) {
   box-shadow: none;
 }
 
-button:focus-visible,
+button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: 2px;
+  outline: none;
 }
 
 button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity); }
@@ -393,20 +396,35 @@ button:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity);
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 0.65rem 0.85rem;
   color: var(--text);
   background: var(--surface-raised);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  font: inherit;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+select {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23707572' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
+  outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  box-shadow: none;
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
