@@ -24,9 +24,12 @@ import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
 import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
+import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { SparklesIcon } from "./InputPicker.js";
+import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 
 type FeedbackHandler = (
@@ -733,7 +736,7 @@ function AssistantMessage({
             <CopyButton content={item.content} />
             {onFork && item.status === "completed" && !item.incomplete && (
               <ActionButton label="从这里分叉" onClick={() => onFork(item)}>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12m0-6h8a4 4 0 0 1 4 4v2" fill="none" stroke="currentColor" strokeWidth="1.7"/><circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="1.7"/><circle cx="18" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="1.7"/></svg>
+                <ForkIcon />
               </ActionButton>
             )}
             {allowFeedback && (
@@ -1337,6 +1340,94 @@ function ViewImageViewer({
   );
 }
 
+function SkillReadToolItem({
+  item,
+  toolCall,
+  agents,
+}: {
+  item: Item;
+  toolCall: ToolCall;
+  agents?: AgentSummary[] | undefined;
+}) {
+  const [previewSkill, setPreviewSkill] = useState<{ qualifiedId: string; name: string } | null>(null);
+  const { qualifiedId, name: skillName } = extractSkillInfo(toolCall);
+  const running = item.status === "in_progress";
+  const resultObj = parseObject(toolCall.resultJson);
+  const isError = Boolean(
+    resultObj.outcome === "error"
+    || (typeof resultObj.code === "string" && resultObj.code && resultObj.code !== "ok")
+    || item.status === "failed"
+    || item.status === "declined"
+    || item.status === "canceled"
+    || toolCall.status === "failed"
+    || toolCall.status === "canceled",
+  );
+
+  if (isReconciliationGate(resultObj)) {
+    const summaryText = toolSummary(toolCall, item.status, agents);
+    return (
+      <div className="tool-item tool-item--read-done" title={summaryText}>
+        <span className="tool-icon" aria-hidden="true">
+          <SparklesIcon />
+        </span>
+        <span>{summaryText}</span>
+      </div>
+    );
+  }
+
+  const errSummary = safeToolSummary(toolCall.resultJson, item.status);
+  const titleText = isError && errSummary ? errSummary : undefined;
+  const isResource = toolCall.toolName === "skill_read_resource";
+  const suffix = isResource ? "整个技能包" : "技能 SKILL.md";
+  const actionPrefix = running
+    ? "正在读取"
+    : (item.status === "completed" ? "已读取" : `${statusLabel(item.status)} 读取`);
+
+  const handleOpenPreview = () => {
+    if (!qualifiedId && !skillName) return;
+    setPreviewSkill({
+      qualifiedId: qualifiedId || skillName,
+      name: skillName || qualifiedId,
+    });
+  };
+
+  return (
+    <>
+      <div className="tool-item tool-item--read-done" title={titleText}>
+        <span className="tool-icon" aria-hidden="true">
+          <SparklesIcon />
+        </span>
+        <span>
+          {actionPrefix}
+          {skillName ? (
+            <button
+              type="button"
+              className="tool-file-link"
+              title={`查看技能详情：${skillName}`}
+              onClick={handleOpenPreview}
+            >
+              {skillName}
+            </button>
+          ) : null}
+          {suffix}
+        </span>
+      </div>
+      {previewSkill && (
+        <SkillDetailDialog
+          skill={{
+            qualifiedId: previewSkill.qualifiedId,
+            name: previewSkill.name,
+            enabled: true,
+            available: true,
+          }}
+          readOnly
+          onClose={() => setPreviewSkill(null)}
+        />
+      )}
+    </>
+  );
+}
+
 function ToolItem({
   item,
   toolCall,
@@ -1501,6 +1592,36 @@ function ToolItem({
       <div className="tool-item tool-item--read-done" title={titleText}>
         <span className="tool-icon" aria-hidden="true">
           <MemoryIcon />
+        </span>
+        <span>{summaryText}</span>
+      </div>
+    );
+  }
+
+  if (isSkillReadTool(toolCall.toolName)) {
+    return <SkillReadToolItem item={item} toolCall={toolCall} agents={agents} />;
+  }
+
+  if (toolCall.toolName === "read_tool_output") {
+    const resultObj = parseObject(toolCall.resultJson);
+    const isError = Boolean(
+      resultObj.outcome === "error"
+      || (typeof resultObj.code === "string" && resultObj.code && resultObj.code !== "ok")
+      || item.status === "failed"
+      || item.status === "declined"
+      || item.status === "canceled"
+      || toolCall.status === "failed"
+      || toolCall.status === "canceled"
+      || isReconciliationGate(resultObj),
+    );
+    const errSummary = safeToolSummary(toolCall.resultJson, item.status);
+    const summaryText = toolSummary(toolCall, item.status, agents);
+    const titleText = isError && errSummary ? errSummary : summaryText;
+
+    return (
+      <div className="tool-item tool-item--read-done" title={titleText}>
+        <span className="tool-icon" aria-hidden="true">
+          <ShellIcon />
         </span>
         <span>{summaryText}</span>
       </div>
@@ -1778,6 +1899,24 @@ function formatMemorySearchTerms(args: Record<string, unknown>): string {
   return "";
 }
 
+function isSkillReadTool(name: string): boolean {
+  return name === "skill_read" || name === "skill_read_resource";
+}
+
+function extractSkillInfo(toolCall: ToolCall): { qualifiedId: string; name: string } {
+  const args = parseObject(toolCall.argumentsJson);
+  const result = parseObject(toolCall.resultJson);
+  const data = objectField(result, "data");
+  const qualifiedId = stringField(args, "qualifiedId")
+    || stringField(result, "qualifiedId")
+    || stringField(data, "qualifiedId")
+    || stringField(args, "name")
+    || "";
+  const rawName = stringField(args, "name") || stringField(args, "skillName") || "";
+  const name = rawName || (qualifiedId.includes(":") ? qualifiedId.split(":").slice(1).join(":") : qualifiedId);
+  return { qualifiedId, name };
+}
+
 function extractSubagentInfo(
   toolCall: ToolCall,
   agents?: AgentSummary[],
@@ -1870,6 +2009,9 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const subagentName = subagentInfo?.name;
   const isMemory = isMemoryTool(toolCall.toolName);
   const memoryQuery = isMemory ? formatMemorySearchTerms(args) : "";
+  const isSkillRead = isSkillReadTool(toolCall.toolName);
+  const skillInfo = isSkillRead ? extractSkillInfo(toolCall) : undefined;
+  const skillName = skillInfo?.name || "";
 
   const baseLabels: Record<string, string> = {
     spawn_agent: subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体",
@@ -1883,8 +2025,13 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     memory_read: "读取记忆",
     memory_record: "修订记忆",
     memory_manage: "优化记忆",
+    read_tool_output: "查看工具输出",
+    skill_read: skillName ? `${skillName}技能 SKILL.md` : "技能 SKILL.md",
+    skill_read_resource: skillName ? `${skillName}整个技能包` : "整个技能包",
   };
   const targetLabel = isMemory
+    ? baseLabels[toolCall.toolName]
+    : isSkillRead
     ? baseLabels[toolCall.toolName]
     : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
@@ -1905,6 +2052,13 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
     declare_outputs: running ? "正在声明产物" : result.outcome === "success" ? "已声明产物" : "产物声明未完成",
+    read_tool_output: "正在查看工具输出",
+    skill_read: running
+      ? (skillName ? `正在读取${skillName}技能 SKILL.md` : "正在读取技能 SKILL.md")
+      : (skillName ? `已读取${skillName}技能 SKILL.md` : "已读取技能 SKILL.md"),
+    skill_read_resource: running
+      ? (skillName ? `正在读取${skillName}整个技能包` : "正在读取整个技能包")
+      : (skillName ? `已读取${skillName}整个技能包` : "已读取整个技能包"),
     memory_search: running
       ? (memoryQuery ? `正在搜索记忆 "${memoryQuery}"` : "正在搜索记忆")
       : (memoryQuery ? `已搜索记忆 "${memoryQuery}"` : "已搜索记忆"),
@@ -1983,10 +2137,13 @@ function SearchIcon() {
   );
 }
 
-function SkillIcon() {
+function DeclareOutputsIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 1.5C8 5 11 8 14.5 8C11 8 8 11 8 14.5C8 11 5 8 1.5 8C5 8 8 5 8 1.5Z" />
+      <path d="M8 2L13.5 5L8 8L2.5 5Z" fill="currentColor" fillOpacity=".12" />
+      <path d="M8 2L13.5 5V11L8 14L2.5 11V5Z" />
+      <path d="M8 8V14" />
+      <path d="M5.25 3.5L10.75 6.5" />
     </svg>
   );
 }
@@ -2053,6 +2210,8 @@ function DefaultToolIcon() {
 }
 
 function toolIcon(name: string): ReactNode {
+  if (name === "declare_outputs") return <DeclareOutputsIcon />;
+  if (name === "run_shell" || name === "read_tool_output") return <ShellIcon />;
   if (name === "list_files") return <FileListIcon />;
   if (["read_file", "read_file_range"].includes(name)) return <FileReadIcon />;
   if (name === "view_image") return <ImageIcon />;
@@ -2063,7 +2222,7 @@ function toolIcon(name: string): ReactNode {
   if (["spawn_agent", "wait_agents", "list_agents", "stop_agent", "send_message", "followup_task"].includes(name)) {
     return <SubagentToolIcon />;
   }
-  if (name.startsWith("skill_")) return <SkillIcon />;
+  if (name.startsWith("skill_")) return <SparklesIcon />;
   if (name.startsWith("mcp") || name.includes("__")) return <McpIcon />;
   return <DefaultToolIcon />;
 }

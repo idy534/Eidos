@@ -980,7 +980,7 @@ test("renders minimalist SVG icons for file operations, skills, and shell calls"
 
   assert.match(html, /<span class="tool-icon" aria-hidden="true"><svg/);
   assert.match(html, /已列出文件/);
-  assert.match(html, /已运行 skill_read/);
+  assert.match(html, /已读取技能 SKILL.md/);
 });
 
 test("renders subagent collaboration tools with custom label, subagent name, and direct jump button", () => {
@@ -1645,6 +1645,223 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
   // Verify memory tools are rendered as static rows (tool-item--read-done) without details tags
   const memoryStaticRows = (html.match(/class="tool-item tool-item--read-done"/g) ?? []).length;
   assert.equal(memoryStaticRows, 8);
+});
+
+test("renders declare_outputs with custom isometric artifact icon", () => {
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "dec-1",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-dec-1",
+            itemId: "dec-1",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-dec-1",
+            toolName: "declare_outputs",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({ paths: ["dist/app.js"] }),
+            resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // Contains isometric cube paths with fillOpacity .12
+  assert.match(html, /M8 2L13\.5 5L8 8L2\.5 5Z/);
+  assert.match(html, /fill-opacity="0?\.12"/);
+  assert.match(html, /已声明产物/);
+});
+
+test("renders read_tool_output as static row with run_shell icon and 正在查看工具输出 text", () => {
+  const runningHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "read-out-run",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "in_progress",
+          toolCall: {
+            id: "tc-ro-1",
+            itemId: "read-out-run",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-ro-1",
+            toolName: "read_tool_output",
+            status: "running",
+            startedAt: 1000,
+            argumentsJson: JSON.stringify({ callId: "c1" }),
+          },
+        }),
+      ]}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(runningHtml, /正在查看工具输出/);
+  assert.match(runningHtml, /class="tool-item tool-item--read-done"/);
+  // ShellIcon path
+  assert.match(runningHtml, /M3\.5 4\.5L7 8l-3\.5 3\.5/);
+
+  const completedHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "read-out-done",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-ro-2",
+            itemId: "read-out-done",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-ro-2",
+            toolName: "read_tool_output",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({ callId: "c1" }),
+            resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // Still 正在查看工具输出, NOT 已查看
+  assert.match(completedHtml, /正在查看工具输出/);
+  assert.doesNotMatch(completedHtml, /已查看工具输出|已运行 read_tool_output/);
+  assert.match(completedHtml, /class="tool-item tool-item--read-done"/);
+});
+
+test("renders skill_read and skill_read_resource as static rows with SparklesIcon and clickable skill name", () => {
+  const items = [
+    item({
+      id: "sr-1",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-sr-1",
+        itemId: "sr-1",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-sr-1",
+        toolName: "skill_read",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ qualifiedId: "system:code-review" }),
+      },
+    }),
+    item({
+      id: "sr-2",
+      ordinal: 2,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-sr-2",
+        itemId: "sr-2",
+        modelStepIndex: 1,
+        batchOrder: 1,
+        providerCallId: "p-sr-2",
+        toolName: "skill_read",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ qualifiedId: "system:code-review" }),
+        resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+      },
+    }),
+    item({
+      id: "srr-1",
+      ordinal: 3,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-srr-1",
+        itemId: "srr-1",
+        modelStepIndex: 1,
+        batchOrder: 2,
+        providerCallId: "p-srr-1",
+        toolName: "skill_read_resource",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ qualifiedId: "user:translator", resourcePath: "prompt.md" }),
+      },
+    }),
+    item({
+      id: "srr-2",
+      ordinal: 4,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-srr-2",
+        itemId: "srr-2",
+        modelStepIndex: 1,
+        batchOrder: 3,
+        providerCallId: "p-srr-2",
+        toolName: "skill_read_resource",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ qualifiedId: "user:translator", resourcePath: "prompt.md" }),
+        resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+      },
+    }),
+  ];
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={items}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // skill_read copy
+  assert.match(html, /正在读取<button[^>]*>code-review<\/button>技能 SKILL\.md/);
+  assert.match(html, /已读取<button[^>]*>code-review<\/button>技能 SKILL\.md/);
+
+  // skill_read_resource copy
+  assert.match(html, /正在读取<button[^>]*>translator<\/button>整个技能包/);
+  assert.match(html, /已读取<button[^>]*>translator<\/button>整个技能包/);
+
+  // Static rows
+  const staticRows = (html.match(/class="tool-item tool-item--read-done"/g) ?? []).length;
+  assert.equal(staticRows, 4);
+
+  // SparklesIcon path check
+  assert.match(html, /M8 2c\.3 2\.2 1\.8 3\.7 4 4/);
 });
 
 

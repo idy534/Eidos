@@ -656,6 +656,33 @@
   max-width: 180px;
 }
 
+.sidebar-hover-card__source-link {
+  appearance: none;
+  max-width: 200px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.sidebar-hover-card__source-link:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sidebar-hover-card__source-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.sidebar-hover-card__source-link:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
 .sidebar-hover-card__time-wrapper {
   display: flex;
   align-items: baseline;

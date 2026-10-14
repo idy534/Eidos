@@ -1374,4 +1374,121 @@ describe("ExecutionFeed memory tools static rendering", () => {
   });
 });
 
+describe("ExecutionFeed skill and read_tool_output rendering", () => {
+  it("renders read_tool_output as static row with 正在查看工具输出 and no details toggle", () => {
+    const item: Item = {
+      id: "tool-rto",
+      sessionId: baseRun.sessionId,
+      runId: baseRun.id,
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      createdAt: 1000,
+      toolCall: {
+        id: "tc-rto",
+        itemId: "tool-rto",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-rto",
+        toolName: "read_tool_output",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1100,
+        argumentsJson: JSON.stringify({ callId: "c1" }),
+        resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+      },
+    };
+
+    render(
+      <ExecutionFeed
+        items={[item]}
+        runs={[baseRun]}
+        approvals={[]}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+
+    const row = screen.getByText("正在查看工具输出");
+    expect(row).toBeInTheDocument();
+    expect(row.closest("details.tool-item")).toBeNull();
+    expect(row.closest(".tool-item--read-done")).not.toBeNull();
+  });
+
+  it("renders skill_read and opens skill detail dialog when skill name button is clicked", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const readSkillDetail = vi.fn().mockResolvedValue({
+      qualifiedId: "system:code-review",
+      name: "code-review",
+      description: "Review your code",
+      content: "# Code Review Skill",
+      directory: "/skills/code-review",
+      resources: [],
+    });
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readSkillDetail,
+        listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+      },
+    });
+
+    try {
+      const item: Item = {
+        id: "tool-sr",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 1,
+        kind: "tool_call",
+        status: "completed",
+        createdAt: 1000,
+        toolCall: {
+          id: "tc-sr",
+          itemId: "tool-sr",
+          modelStepIndex: 1,
+          batchOrder: 0,
+          providerCallId: "p-sr",
+          toolName: "skill_read",
+          status: "completed",
+          startedAt: 1000,
+          completedAt: 1100,
+          argumentsJson: JSON.stringify({ qualifiedId: "system:code-review" }),
+          resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+        },
+      };
+
+      render(
+        <ExecutionFeed
+          items={[item]}
+          runs={[baseRun]}
+          approvals={[]}
+          onApprove={() => {}}
+          onReject={() => {}}
+        />,
+      );
+
+      // Verify static row
+      const button = screen.getByRole("button", { name: "code-review" });
+      expect(button).toBeInTheDocument();
+      expect(button.closest("details.tool-item")).toBeNull();
+      expect(button.closest(".tool-item--read-done")).not.toBeNull();
+      expect(screen.getByText(/已读取.*技能 SKILL\.md/)).toBeInTheDocument();
+
+      // Click skill name button to open detail dialog
+      fireEvent.click(button);
+
+      const heading = await screen.findByRole("heading", { name: "code-review" });
+      expect(heading).toBeInTheDocument();
+
+      // Close dialog
+      const closeBtn = screen.getByRole("button", { name: "关闭技能详情" });
+      fireEvent.click(closeBtn);
+      expect(screen.queryByRole("heading", { name: "code-review" })).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+});
+
 

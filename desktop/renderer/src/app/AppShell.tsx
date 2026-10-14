@@ -21,6 +21,7 @@ import { DropdownMenu } from "../components/DropdownMenu.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
 import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
+import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";
 import { ProjectPicker } from "../components/ProjectPicker.js";
@@ -923,9 +924,11 @@ export function AppShell({ runtime }: AppShellProps) {
       kind === "same_workspace" ? { kind } : { kind, state: "current_workspace" });
     if (loaded) {
       setForkSelection(null);
+      const inheritedCount = loaded.session.forkedFrom?.itemCount ?? 0;
+      showToast(`本会话从历史回答分叉，已继承 ${inheritedCount} 条记录。`, "info", 3500);
       requestAnimationFrame(() => composerRef.current?.focus());
     }
-  }, [sessionActions.forkSession]);
+  }, [sessionActions.forkSession, showToast]);
   const handleFeedFork = useCallback((item: Item) => {
     const source = sessionState.snapshot?.session;
     if (!source || sessionState.pending.creatingSession) return;
@@ -1538,20 +1541,6 @@ export function AppShell({ runtime }: AppShellProps) {
                     {responseActionState.error}
                   </p>
                 )}
-
-                {currentSnapshot.session.forkedFrom && (
-                  <p className="feed-label">
-                    本会话从历史回答分叉，已继承 {currentSnapshot.session.forkedFrom.itemCount} 条记录。
-                    {sessionState.sessions.find((session) => session.id === currentSnapshot.session.forkedFrom?.sessionId)
-                      ? <button type="button" onClick={() => {
-                        const source = sessionState.sessions.find((session) => session.id === currentSnapshot.session.forkedFrom?.sessionId);
-                        if (source) void sessionActions.selectSession(source, currentSnapshot.session.forkedFrom?.itemId).then((loaded) => {
-                          if (loaded) requestAnimationFrame(() => document.getElementById(`item-${currentSnapshot.session.forkedFrom?.itemId}`)?.scrollIntoView({ block: "center" }));
-                        });
-                      }}>打开来源会话</button>
-                      : " 来源会话已删除。"}
-                  </p>
-                )}
                 <ExecutionFeed
                   key={currentSnapshot.session.id}
                   items={currentSnapshot.items}
@@ -1942,25 +1931,13 @@ export function AppShell({ runtime }: AppShellProps) {
           sessionActions.setError(undefined);
         }}
       />
-      <ConfirmDialog
+      <ForkConversationDialog
         open={forkSelection !== null}
-        title="从这里分叉"
-        description={<>
-          <p>新会话会保留截至这次回答的聊天。工作区使用当前文件状态。</p>
-          <fieldset disabled={sessionState.pending.creatingSession}>
-            {forkSelection?.session.executionMode !== "worktree" && <label>
-              <input type="radio" name="fork-target" checked={forkTarget === "same_workspace"} onChange={() => setForkTarget("same_workspace")} />
-              在当前目录继续，两条会话共享文件。
-            </label>}
-            <label>
-              <input type="radio" name="fork-target" checked={forkTarget === "new_worktree"} onChange={() => setForkTarget("new_worktree")} />
-              在独立工作树继续。
-            </label>
-          </fieldset>
-        </>}
-        confirmLabel="创建分叉"
+        session={forkSelection?.session}
+        forkTarget={forkTarget}
         busy={sessionState.pending.creatingSession === true}
         error={sessionState.error}
+        onTargetChange={setForkTarget}
         onCancel={() => setForkSelection(null)}
         onConfirm={() => { if (forkSelection) void createConversationFork(forkSelection.session, forkSelection.item, forkTarget); }}
       />

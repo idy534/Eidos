@@ -119,11 +119,14 @@ function BranchIconSvg() {
 
 export interface SidebarTooltipProps {
   state: SidebarTooltipState | null;
+  sourceSession?: Session | undefined;
+  onOpenSourceSession?: (session: Session) => void;
+  disabled?: boolean;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 }
 
-export function SidebarTooltip({ state, onMouseEnter, onMouseLeave }: SidebarTooltipProps) {
+export function SidebarTooltip({ state, sourceSession, onOpenSourceSession, disabled = false, onMouseEnter, onMouseLeave }: SidebarTooltipProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [coords, setCoords] = useState<{
     left: number;
@@ -193,6 +196,10 @@ export function SidebarTooltip({ state, onMouseEnter, onMouseLeave }: SidebarToo
       style={tooltipStyle}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onFocusCapture={onMouseEnter}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) onMouseLeave?.();
+      }}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="sidebar-hover-card__arrow" aria-hidden="true" />
@@ -236,6 +243,26 @@ export function SidebarTooltip({ state, onMouseEnter, onMouseLeave }: SidebarToo
             </span>
           </div>
           <div className="sidebar-hover-card__body">
+            {state.session.forkedFrom && (
+              <div className="sidebar-hover-card__row">
+                <span className="sidebar-hover-card__label">来源会话</span>
+                {sourceSession ? (
+                  <button
+                    type="button"
+                    className="sidebar-hover-card__value sidebar-hover-card__source-link"
+                    data-source-session-id={sourceSession.id}
+                    title={sourceSession.title?.trim() || "新任务"}
+                    aria-label={`打开来源会话：${sourceSession.title?.trim() || "新任务"}`}
+                    disabled={disabled || !onOpenSourceSession}
+                    onClick={() => onOpenSourceSession?.(sourceSession)}
+                  >
+                    {sourceSession.title?.trim() || "新任务"}
+                  </button>
+                ) : (
+                  <span className="sidebar-hover-card__value">来源会话不可用</span>
+                )}
+              </div>
+            )}
             {!state.projectless && state.session.projectless !== true && state.projectDisplayName && (
               <div className="sidebar-hover-card__row">
                 <span className="sidebar-hover-card__label">所属项目</span>

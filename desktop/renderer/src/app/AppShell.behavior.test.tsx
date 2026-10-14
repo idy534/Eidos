@@ -155,10 +155,26 @@ describe("AppShell conversation fork targets", () => {
 
   it("forks a non-Git conversation into its current directory", async () => {
     const snapshot = selectedAnswer();
+    fixture.forkSession.mockImplementationOnce(async () => ({
+      ...snapshot,
+      session: {
+        ...snapshot.session,
+        id: "session-forked",
+        forkedFrom: {
+          sessionId: snapshot.session.id,
+          runId: "ended",
+          itemId: "selected",
+          itemCount: 5,
+          createdAt: 1,
+        },
+      },
+    }));
     renderShell();
     fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
     await waitFor(() => expect(fixture.forkSession).toHaveBeenCalledWith(snapshot.session.id, "selected", { kind: "same_workspace" }));
     expect(screen.queryByRole("alertdialog", { name: "从这里分叉" })).not.toBeInTheDocument();
+    expect(await screen.findByText("本会话从历史回答分叉，已继承 5 条记录。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开来源会话" })).not.toBeInTheDocument();
   });
 
   it("lets a Git conversation choose an independent Worktree", async () => {

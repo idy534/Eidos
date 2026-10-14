@@ -210,26 +210,24 @@
   gap: 0.65rem;
   min-height: 4.6rem;
   padding: 0.85rem 0.95rem;
-  border: 1.5px solid var(--line);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-raised);
   cursor: pointer;
   user-select: none;
   box-sizing: border-box;
-  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 
 .handoff-mode-card:hover:not(.is-disabled) {
   border-color: rgba(49, 95, 74, 0.45);
   background: var(--surface-hover);
-  box-shadow: var(--apple-shadow-sm);
 }
 
 .handoff-mode-card.is-selected,
 .handoff-mode-card.is-selected:hover:not(.is-disabled) {
   border-color: var(--accent);
   background: var(--surface-selected);
-  box-shadow: 0 0 0 1px var(--accent), var(--apple-shadow-sm);
 }
 
 .handoff-mode-card.is-disabled {
@@ -238,8 +236,7 @@
 }
 
 .handoff-mode-card:focus-within {
-  outline: var(--focus-ring);
-  outline-offset: 2px;
+  outline: none;
 }
 
 .handoff-radio-input {
@@ -586,3 +583,236 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Fork Conversation Dialog (从这里分叉)
+ * --------------------------------------------------------------------------- */
+
+.fork-dialog {
+  width: min(100%, 30rem);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--apple-shadow-lg);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.fork-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 1.15rem 1.35rem 0.9rem;
+  border-bottom: 1px solid var(--surface-muted);
+}
+
+.fork-dialog-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-sm);
+  background: rgba(49, 95, 74, 0.08);
+  border: 1px solid rgba(49, 95, 74, 0.16);
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.fork-dialog-header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.fork-dialog-header-text h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.fork-dialog-header-text p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.fork-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.15rem 1.35rem;
+}
+
+.fork-dialog-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.fork-dialog-legend {
+  margin-bottom: 0.55rem;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.fork-dialog-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.fork-mode-card {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  cursor: pointer;
+  user-select: none;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.fork-mode-card:hover:not(.is-disabled) {
+  border-color: rgba(49, 95, 74, 0.45);
+  background: var(--surface-hover);
+}
+
+.fork-mode-card.is-selected,
+.fork-mode-card.is-selected:hover:not(.is-disabled) {
+  border-color: var(--accent);
+  background: var(--surface-selected);
+}
+
+.fork-mode-card.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.fork-mode-card:focus-within {
+  outline: none;
+}
+
+.fork-radio-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.fork-radio-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: var(--surface-raised);
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.fork-mode-card:hover:not(.is-disabled) .fork-radio-indicator {
+  border-color: rgba(49, 95, 74, 0.5);
+}
+
+.fork-mode-card.is-selected .fork-radio-indicator {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.fork-radio-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  transform: scale(0);
+  transition: transform 140ms var(--apple-spring);
+}
+
+.fork-mode-card.is-selected .fork-radio-dot {
+  transform: scale(1);
+}
+
+.fork-card-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.fork-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.fork-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: color 140ms ease;
+}
+
+.fork-mode-card.is-selected .fork-card-icon {
+  color: var(--accent);
+}
+
+.fork-card-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.fork-card-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 0.1rem 0.45rem;
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 0.7rem;
+  font-weight: 550;
+  line-height: 1.2;
+}
+
+.fork-card-badge--accent {
+  color: var(--accent);
+  background: rgba(49, 95, 74, 0.08);
+  border: 1px solid rgba(49, 95, 74, 0.16);
+}
+
+.fork-card-desc {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.fork-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.85rem 1.35rem;
+  border-top: 1px solid var(--surface-muted);
+  background: rgba(246, 246, 248, 0.7);
+}
+

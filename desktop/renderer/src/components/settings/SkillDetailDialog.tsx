@@ -94,10 +94,12 @@ export function SkillDetailDialog({
     setConfirmRemove(false);
     if (!id) return;
     let active = true;
-    void window.eidosRuntime.readSkillDetail(id).then(
-      (result) => { if (active) setDetail(result); },
-      (cause: unknown) => { if (active) setLoadError(userFacingError(cause)); },
-    );
+    if (typeof window !== "undefined" && window.eidosRuntime?.readSkillDetail) {
+      void window.eidosRuntime.readSkillDetail(id).then(
+        (result) => { if (active) setDetail(result); },
+        (cause: unknown) => { if (active) setLoadError(userFacingError(cause)); },
+      );
+    }
     return () => { active = false; };
   }, [id, reload]);
 
