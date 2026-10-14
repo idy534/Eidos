@@ -10,7 +10,7 @@
 - Worktree 创建后、历史提交前的失败会保留 durable lifecycle 和快照。相同 `operationId` 的重试复用原目标身份与快照。Runtime 不发布半份历史。来源已删除或环境需要对账时，操作明确失败。
 - 来源回答定位最多自动读取 20,000 条展示记录。用户仍可以手动分页加载更早记录。
 - 本次 Runtime 定向测试通过 75 项。Renderer 行为测试通过 75 项，ExecutionFeed 静态测试通过 42 项。Main/Runtime 分叉与共享 Fixture 测试通过 2 项，现有 Desktop 契约检查通过。测试覆盖长历史、响应分组、工具回放、来源删除、重启、Worktree 重试、迁移回滚、界面分页与迟到响应。
-- Ruff、Deptry、Python 依赖审计、构建和原生 Electron smoke 均通过。构建保留现有 Chunk 体积提示。本次没有新增依赖或修改锁文件。本次没有执行 Full Suite 或真实产品窗口的人工验收。
+- 本次 `pnpm test` 全量通过：Runtime 2,404 项通过、2 项按配置排除；Desktop 合约 4 项、Renderer 状态 166 项、Main 84 项、Renderer 行为 533 项通过。首次运行中有 6 项 Schema 26 迁移夹具和固定版本断言失败。我更新了旧版数据库夹具并改为核对实际迁移版本；6 项定向复测、相关 Ruff 检查和第二次全量运行都通过。本次没有重新执行构建、Seatbelt 原生测试或打包测试，也没有做真实产品窗口的人工验收。
 
 ## 项目和 Session 置顶验证（2026-10-13）
 

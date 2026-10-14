@@ -167,9 +167,12 @@ def test_internal_child_session_is_not_a_sidebar_target(store):
         _set(SidebarRepository(value.database), SessionSidebarTarget(kind="session", id=child["id"]))
 
 
-def test_v24_upgrade_preserves_sessions_and_starts_with_empty_pins(store):
+def test_v24_upgrade_preserves_sessions_and_starts_with_empty_pins(
+    store, downgrade_session_fork_schema,
+):
     value, session = store
     data = value.database.data_directory
+    downgrade_session_fork_schema(value.connection)
     value.connection.execute("DROP TABLE sidebar_pins")
     value.connection.execute("DROP INDEX sidebar_pins_event_revision")
     value.connection.execute("PRAGMA user_version = 24")
