@@ -142,6 +142,7 @@ class SessionRepository(Repository):
         associated_worktree_id: str | None = None,
         projectless: bool = False,
         projectless_creation_id: str | None = None,
+        title: str | None = None,
         transaction_connection: sqlite3.Connection | None = None,
     ) -> CommittedMutation[Session]:
         workspace = _canonical_workspace(workspace_root)
@@ -154,6 +155,8 @@ class SessionRepository(Repository):
         metadata = workspace.stat()
         session_id = session_id or str(uuid.uuid4())
         now = _now_ms()
+        if title is not None and (not title or len(title) > 60 or len(title.encode("utf-8")) > 120):
+            raise ValueError("session title is invalid")
         try:
             execution_mode = SessionExecutionMode(execution_mode)
         except ValueError as error:
@@ -178,7 +181,7 @@ class SessionRepository(Repository):
             "worktree_id": worktree_id,
             "associated_worktree_id": associated_worktree_id,
             "execution_mode": execution_mode.value,
-            "title": None,
+            "title": title,
             "task_status": "new",
             "created_at": now,
             "updated_at": now,
@@ -247,8 +250,8 @@ class SessionRepository(Repository):
                 INSERT INTO sessions (
                     id, workspace_root, workspace_dev, workspace_inode,
                     workspace_uid, worktree_id, execution_mode,
-                    associated_worktree_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    associated_worktree_id, title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -259,6 +262,7 @@ class SessionRepository(Repository):
                     worktree_id,
                     execution_mode.value,
                     associated_worktree_id,
+                    title,
                     now,
                     now,
                 ),
@@ -286,6 +290,7 @@ class SessionRepository(Repository):
             operation_request={
                 "workspaceRoot": str(workspace),
                 "projectless": projectless,
+                **({"title": title} if title is not None else {}),
             },
             serialize_value=session_to_operation_dict,
             deserialize_value=session_from_legacy_dict,
@@ -548,6 +553,9 @@ class SessionRepository(Repository):
                 WHERE COALESCE(TRIM(s.title), '') = ''
                   AND NOT EXISTS (
                       SELECT 1 FROM runs r WHERE r.session_id = s.id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM session_forks f WHERE f.session_id = s.id
                   )
                   AND (
                       direct_p.id = ?

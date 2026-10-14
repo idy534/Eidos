@@ -87,7 +87,7 @@ export function SessionSidebar({
   navigationSlot,
 }: Props) {
   const visibleSessions = sessions.filter(
-    (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()),
+    (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
   );
   const projects = groupSessionsByProject(visibleSessions, catalogProjects);
   const sidebar = projectSidebarGroups(projects, pins);
@@ -842,7 +842,16 @@ function ProjectSessionList({
                 }}
               >
                 <span className="session-labels">
-                  <span className="session-title">{session.title ?? "新任务"}</span>
+                  <span className="session-title-row">
+                    <span className="session-title">{session.title ?? "新任务"}</span>
+                    {session.forkedFrom && <span className="session-fork-indicator" role="img" aria-label="分叉会话" title="分叉会话">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 3v12m0-6h8a4 4 0 0 1 4 4v2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                        <circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                        <circle cx="18" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                      </svg>
+                    </span>}
+                  </span>
                   {project.gitAvailable && session.worktree && (
                     <span className="session-branch">
                       {session.worktree.branch ?? "Detached HEAD"}

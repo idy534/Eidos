@@ -10,6 +10,8 @@ Runtime 使用 `session/fork`、必填 `operationId` 和不可变历史清单完
 
 用户可以点击“加载更早的记录”分页查看继承历史与真实记录。来源按钮会打开原 Session，并加载包含原回答的页面。界面保留当前消息与状态，不让迟到的历史页覆盖其他 Session。
 
+分叉创建时，Runtime 会保存原 Session 的名称。新 Session 会立即出现在侧栏，并保留该名称。首次对话不会触发新的自动命名。侧栏在名称末尾放置分叉图标；图标只在悬停或键盘焦点时显示。旧版未命名分叉会在 v26 → v27 升级时补齐名称，已有名称保持不变。
+
 Runtime 已移除额外模型完成审查。普通工具任务的最终答复不会再因为内部评估失败或答复去重被停止；原生继续信号、输入、协作和最终事务检查继续生效。旧审查 Event 与 ModelProfile 仍可读取。
 
 执行屏障使用实际执行事实。准备失败和未启动命令不会产生未知副作用；已知结果后的输出过滤、格式校验和投影失败不会单独建立屏障。完全访问 Shell 可以使用已核验的 Workspace 外 cwd。已知文件操作的恢复只观察受影响目标，并在 SQLite 中核对 epoch 和目标集合，避免无关目录扫描阻断恢复。
@@ -270,7 +272,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v26。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v27。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。

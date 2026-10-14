@@ -38,3 +38,39 @@ def migrate_session_forks(connection: sqlite3.Connection) -> None:
     except BaseException:
         connection.rollback()
         raise
+
+
+def migrate_session_fork_titles(connection: sqlite3.Connection) -> None:
+    from eidos_runtime.db.database import now_ms
+    from eidos_runtime.db.events import append_event
+    from eidos_runtime.runtime.state_machine import EventType
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        targets = connection.execute(
+            "SELECT s.id, json_extract(f.source_json, '$.sessionId') "
+            "FROM session_forks f JOIN sessions s ON s.id=f.session_id "
+            "WHERE s.title IS NULL ORDER BY s.creation_seq"
+        )
+        for session_id, source_id in targets:
+            source = connection.execute(
+                "SELECT title FROM sessions WHERE id=?", (source_id,)
+            ).fetchone()
+            title = source[0] if source and source[0] else "新会话"
+            now = now_ms()
+            connection.execute(
+                "UPDATE sessions SET title=?, updated_at=? WHERE id=? AND title IS NULL",
+                (title, now, session_id),
+            )
+            append_event(
+                connection,
+                EventType.SESSION_TITLE_UPDATED,
+                now,
+                {"title": title},
+                session_id=session_id,
+            )
+        connection.execute("PRAGMA user_version=27")
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise

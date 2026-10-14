@@ -21,6 +21,7 @@ test("conversation fork crosses Main and Runtime, survives deletion and restart,
   try {
     await client.initialize();
     const source = await client.createSession(workspace);
+    await client.renameSession(source.id, "原会话名称");
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
     const itemId = randomUUID();
@@ -45,6 +46,8 @@ store.close()
     const request = { operationId: randomUUID(), sourceSessionId: source.id, sourceItemId: itemId, target: { kind: "same_workspace" } } as const;
     const target = await client.forkSession(request);
     assert.notEqual(target.id, source.id);
+    assert.equal(target.title, "原会话名称");
+    assert.equal((await client.listSessions()).items.find((session) => session.id === target.id)?.title, "原会话名称");
     assert.equal(target.forkedFrom?.itemCount, 2);
     assert.equal((await client.forkSession(request)).id, target.id);
     await assert.rejects(client.forkSession({ ...request, sourceItemId: randomUUID() }),

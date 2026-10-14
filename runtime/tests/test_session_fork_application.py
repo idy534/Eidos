@@ -176,6 +176,199 @@ def test_fork_request_rejects_unknown_target_fields_and_unfinished_answers(tmp_p
         store.close()
 
 
+def test_fork_is_named_and_listed_before_its_first_run_and_keeps_its_title(tmp_path):
+    from eidos_runtime.protocol.methods import (
+        SessionRenameRequestDto,
+        SessionListRequestDto,
+    )
+    from eidos_runtime.db.repositories.sessions import SessionRepository
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    store, sessions, forks = applications(tmp_path)
+    try:
+        source = sessions.create(SessionCreateRequestDto(workspaceRoot=str(root))).root
+        sessions.rename(
+            SessionRenameRequestDto(sessionId=source["id"], title="原来的任务")
+        )
+        item = completed_answer(store, source["id"])
+        target = forks.fork(
+            SessionForkRequest(
+                operationId=str(uuid4()),
+                sourceSessionId=source["id"],
+                sourceItemId=item,
+                target={"kind": "same_workspace"},
+            )
+        ).session
+        assert target.title == "原来的任务"
+        assert target.task_status == "new"
+        assert (
+            next(
+                session
+                for session in sessions.list(SessionListRequestDto()).items
+                if session.id == target.id
+            ).title
+            == target.title
+        )
+        assert store.read_session_snapshot(target.id)["runs"] == []
+        assert target.id not in SessionRepository(
+            store.database
+        ).list_empty_session_ids_for_project(target.project.id)
+        store.enqueue_run(target.id, "new question")
+        SessionRepository(store.database).finish_title_generation_committed(
+            target.id, "自动生成的新名称"
+        )
+        assert store.read_session(target.id)["title"] == "原来的任务"
+        created = store.connection.execute(
+            "SELECT payload_json FROM events WHERE session_id=? AND event_type='session.created'",
+            (target.id,),
+        ).fetchone()
+        import json
+
+        assert json.loads(created[0])["session"]["title"] == "原来的任务"
+    finally:
+        store.close()
+
+
+def test_v26_fork_titles_are_backfilled_on_restart_without_renaming_existing_titles(
+    tmp_path,
+):
+    import json
+    from eidos_runtime.db.repositories.sessions import SessionRepository
+
+    store, sessions, forks = applications(tmp_path)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    try:
+        source = sessions.create(SessionCreateRequestDto(workspaceRoot=str(root))).root
+        store.rename_session(source["id"], "原标题")
+        item = completed_answer(store, source["id"])
+        parent = forks.fork(
+            SessionForkRequest(
+                operationId=str(uuid4()),
+                sourceSessionId=source["id"],
+                sourceItemId=item,
+                target={"kind": "same_workspace"},
+            )
+        ).session
+        inherited_answer = store.read_session_snapshot(parent.id)["inheritedHistory"][
+            -1
+        ]["item"]["id"]
+        child = forks.fork(
+            SessionForkRequest(
+                operationId=str(uuid4()),
+                sourceSessionId=parent.id,
+                sourceItemId=inherited_answer,
+                target={"kind": "same_workspace"},
+            )
+        ).session
+        renamed = forks.fork(
+            SessionForkRequest(
+                operationId=str(uuid4()),
+                sourceSessionId=source["id"],
+                sourceItemId=item,
+                target={"kind": "same_workspace"},
+            )
+        ).session
+        with store.database.transaction() as connection:
+            connection.execute(
+                "UPDATE sessions SET title=NULL WHERE id IN (?,?)",
+                (parent.id, child.id),
+            )
+            connection.execute(
+                "UPDATE sessions SET title='用户改名' WHERE id=?", (renamed.id,)
+            )
+            connection.execute("PRAGMA user_version=26")
+        assert parent.id not in SessionRepository(
+            store.database
+        ).list_empty_session_ids_for_project(parent.project.id)
+        data = store.database.data_directory
+        store.close()
+        store = SessionStore(data)
+        store.initialize()
+        assert store.health_state == "ready"
+        assert store.read_session(parent.id)["title"] == "原标题"
+        assert store.read_session(child.id)["title"] == "原标题"
+        assert store.read_session(renamed.id)["title"] == "用户改名"
+        changed = store.connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='session.title_updated' AND session_id=?",
+            (child.id,),
+        ).fetchall()
+        assert [json.loads(row[0])["title"] for row in changed] == ["原标题"]
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 27
+    finally:
+        store.close()
+
+
+def test_v26_fork_title_migration_rolls_back_title_events_and_version_on_failure(
+    tmp_path,
+):
+    from eidos_runtime.db.session_fork_migration import migrate_session_fork_titles
+    from eidos_runtime.runtime.fault_injection import injected_faults
+
+    store, sessions, forks = applications(tmp_path)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    try:
+        source = sessions.create(SessionCreateRequestDto(workspaceRoot=str(root))).root
+        target = forks.fork(
+            SessionForkRequest(
+                operationId=str(uuid4()),
+                sourceSessionId=source["id"],
+                sourceItemId=completed_answer(store, source["id"]),
+                target={"kind": "same_workspace"},
+            )
+        ).session
+        with store.database.transaction() as connection:
+            connection.execute(
+                "UPDATE sessions SET title=NULL WHERE id=?", (target.id,)
+            )
+            connection.execute("PRAGMA user_version=26")
+        before = store.pending_outbox_count()
+
+        class Failure:
+            def hit(self, point):
+                if point == "sqlite_append_event_failure":
+                    raise sqlite3.OperationalError("fixture event failure")
+
+        with injected_faults(Failure()), pytest.raises(sqlite3.OperationalError):
+            migrate_session_fork_titles(store.connection)
+        assert store.read_session(target.id).get("title") is None
+        assert store.pending_outbox_count() == before
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 26
+    finally:
+        store.close()
+
+
+def test_v26_untitled_fork_with_deleted_source_gets_a_durable_fallback_title(tmp_path):
+    from eidos_runtime.db.session_fork_migration import migrate_session_fork_titles
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    store, sessions, forks = applications(tmp_path)
+    try:
+        source = sessions.create(SessionCreateRequestDto(workspaceRoot=str(root))).root
+        target = forks.fork(
+            SessionForkRequest(
+                operationId=str(uuid4()),
+                sourceSessionId=source["id"],
+                sourceItemId=completed_answer(store, source["id"]),
+                target={"kind": "same_workspace"},
+            )
+        ).session
+        store.delete_session(source["id"])
+        with store.database.transaction() as connection:
+            connection.execute(
+                "UPDATE sessions SET title=NULL WHERE id=?", (target.id,)
+            )
+            connection.execute("PRAGMA user_version=26")
+        migrate_session_fork_titles(store.connection)
+        assert store.read_session(target.id)["title"] == "新会话"
+        assert len(store.read_session_snapshot(target.id)["inheritedHistory"]) == 2
+    finally:
+        store.close()
+
+
 @pytest.mark.integration
 def test_pending_worktree_fork_reuses_its_identity_and_snapshot_after_restart(
     tmp_path, monkeypatch

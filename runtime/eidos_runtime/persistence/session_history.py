@@ -456,6 +456,7 @@ class SessionHistoryRepository(Repository):
                 else SessionExecutionMode.LOCAL,
                 project_id=projection.project.id if projection.project else None,
                 projectless=projection.project is None,
+                title=projection.session.title or "新会话",
                 transaction_connection=connection,
             )
             connection.executemany(

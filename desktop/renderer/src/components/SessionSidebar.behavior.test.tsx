@@ -53,6 +53,32 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     window.localStorage.clear();
   });
 
+  it("shows a newly forked Session immediately with the original title and a fork marker", () => {
+    const fork: Session = { ...managedSession, id: "forked-session", taskStatus: "new",
+      forkedFrom: { sessionId: managedSession.id, runId: "source-run", itemId: "answer", itemCount: 2, createdAt: 3 } };
+    render(<SessionSidebar sessions={[fork]} projects={[]} selectedId={fork.id} disabled={false}
+      readCompletedSessions={new Set()} runtimePresentation={{ tone: "success", label: "Ready" }}
+      onCreate={vi.fn()} onCreateInProject={vi.fn()} onSelect={vi.fn()} onRename={vi.fn()}
+      onDelete={vi.fn()} onDeleteProject={vi.fn()} onOpenSettings={vi.fn()} />);
+    const button = screen.getByRole("button", { name: /Managed Thread.*分叉会话/ });
+    expect(button.querySelector(".session-title")).toHaveTextContent("Managed Thread");
+    expect(within(button).getByRole("img", { name: "分叉会话" })).toHaveClass("session-fork-indicator");
+  });
+
+  it("keeps legacy untitled forks visible while omitting ordinary unstarted drafts", () => {
+    const fork: Session = { ...managedSession, id: "old-fork", taskStatus: "new",
+      forkedFrom: { sessionId: managedSession.id, runId: "source-run", itemId: "answer", itemCount: 2, createdAt: 3 } };
+    delete fork.title;
+    const draft: Session = { ...fork, id: "draft-placeholder" };
+    delete draft.forkedFrom;
+    const { container } = render(<SessionSidebar sessions={[fork, draft]} projects={[]} selectedId={fork.id} disabled={false}
+      readCompletedSessions={new Set()} runtimePresentation={{ tone: "success", label: "Ready" }}
+      onCreate={vi.fn()} onCreateInProject={vi.fn()} onSelect={vi.fn()} onRename={vi.fn()}
+      onDelete={vi.fn()} onDeleteProject={vi.fn()} onOpenSettings={vi.fn()} />);
+    expect(container.querySelector('[data-session-id="old-fork"]')).not.toBeNull();
+    expect(container.querySelector('[data-session-id="draft-placeholder"]')).toBeNull();
+  });
+
   it("creates another Thread from the Project repository root", async () => {
     const user = userEvent.setup();
     const onCreateInProject = vi.fn();

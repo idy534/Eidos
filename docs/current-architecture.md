@@ -10,6 +10,8 @@
 
 Local 与 Projectless 分叉可以共享当前目录。独立 Worktree 分叉复用 Git Backend、WorktreeManager、WorktreeSnapshotService 和 durable lifecycle。快照固定分叉时的 Git 状态，并在新 Worktree 中恢复和核验。该流程不改变来源目录。来源删除不会删除目标持有的历史资源。原 `checkpoint/fork` 继续保留自己的 Checkpoint、Run 和重放语义。
 
+分叉是已持久化的正常 Session。创建事务同时保存来源标题和 Session created Event。分叉没有自己的 Run 时，侧栏也会展示它，空 Session 清理也不会删除它。v26→v27 是数据迁移。迁移按创建顺序补齐未命名分叉的标题，并在同一事务中提交 Title updated Event/Outbox。嵌套分叉会使用已补齐的父标题。来源已删除时，迁移使用“新会话”。现有非空标题不变。
+
 ## 1. System Boundary
 
 Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。
@@ -394,7 +396,7 @@ Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建�
 
 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，其中每条模型上下文项与工具定义各自按内容哈希存为共享 Blob。读取时 Runtime 按顺序重组完整请求并验证原有快照哈希；旧版完整 ContextSnapshot 仍可读取。`state.sqlite` 只保存顶层 Blob 的版本、kind、相对路径、SHA-256 和大小。Runtime 对 owner、mode、路径、压缩数据、大小、JSON 和 checksum 执行 fail-closed 校验。Blob GC 在删除前解析新清单并保留其共享块。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
-当前 `SCHEMA_VERSION` 是 26。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 27。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
 

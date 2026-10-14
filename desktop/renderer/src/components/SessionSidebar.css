@@ -338,6 +338,7 @@
 }
 
 .session-title {
+  min-width: 0;
   display: block;
   overflow: hidden;
   font-size: var(--font-size-body);
@@ -345,6 +346,33 @@
   line-height: var(--line-height-body);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.session-fork-indicator {
+  display: inline-flex;
+  flex: 0 0 0.85rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-fork-indicator svg {
+  width: 100%;
+  height: 100%;
+}
+
+.session-item > button:hover .session-fork-indicator,
+.session-item > button:focus-visible .session-fork-indicator {
+  opacity: 1;
 }
 
 .session-labels {

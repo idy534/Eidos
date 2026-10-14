@@ -51,6 +51,7 @@ from eidos_runtime.db.schema import (
     V23_SCHEMA_VERSION,
     V24_SCHEMA_VERSION,
     V25_SCHEMA_VERSION,
+    V26_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -175,6 +176,7 @@ class Database:
                     V23_SCHEMA_VERSION,
                     V24_SCHEMA_VERSION,
                     V25_SCHEMA_VERSION,
+                    V26_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -361,6 +363,12 @@ class Database:
                 from eidos_runtime.db.session_fork_migration import migrate_session_forks
                 try:
                     migrate_session_forks(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V26_SCHEMA_VERSION:
+                from eidos_runtime.db.session_fork_migration import migrate_session_fork_titles
+                try:
+                    migrate_session_fork_titles(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)
