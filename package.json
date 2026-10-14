@@ -14,7 +14,7 @@
     "build": "pnpm build:preload && pnpm build:main && pnpm build:renderer",
     "build:preload": "vite build --config vite.preload.config.ts",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:renderer": "tsc -p tsconfig.renderer.json --noEmit && vite build",
+    "build:renderer": "tsc -p tsconfig.renderer.json --noEmit && node scripts/clean-renderer-assets.mjs && vite build",
     "postinstall": "node scripts/prepare-node-pty.mjs",
     "start": "pnpm build && electron .",
     "python:sync": "uv sync --locked",
@@ -52,7 +52,7 @@
     "package:mac": "bash scripts/package-macos.sh local",
     "package:mac:release": "bash scripts/package-macos.sh release",
     "test:electron-packaged": "node scripts/packaged-electron-smoke.mjs",
-    "test:packaging": "node --test scripts/ci-scope.test.mjs scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/macos-sign.test.mjs scripts/runtime-dependency-packaging.test.mjs scripts/test-affected.test.mjs"
+    "test:packaging": "node --test scripts/ci-scope.test.mjs scripts/clean-renderer-assets.test.mjs scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/macos-sign.test.mjs scripts/runtime-dependency-packaging.test.mjs scripts/test-affected.test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

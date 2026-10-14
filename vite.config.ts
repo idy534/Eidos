@@ -10,6 +10,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: fileURLToPath(new URL("./dist/renderer", import.meta.url)),
+    // dist/renderer also contains generated file-icons outside Vite's assets directory.
     emptyOutDir: false,
   },
 });
