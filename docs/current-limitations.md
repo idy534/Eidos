@@ -162,6 +162,7 @@
 - Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。`.git`、`.agents` 和 `.eidos` 等 hard discovery 目录默认隐藏，但显式只读路径仍可读取。Ignore 规则不是权限。
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
+- 延迟工具仍须先通过 `tool_search` 激活，再在后续 Step 使用。当前目录中的未激活工具会返回可恢复的 `tool_not_activated`，Runtime 不自动激活或重放该调用。同一批次内的搜索结果不会修改该 Step 已固定的可用工具集合。
 - Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，异常才建立未知副作用屏障。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
 - MCP 的有效响应表示调用已经返回，不证明外部业务目标已经达成。Runtime 在收到响应后做有界内容和固定输出 Schema 校验；校验失败仍报告工具错误，并保留可能已经发生的副作用。SDK 调用已进入但没有有效响应时，Runtime 仍按未知结果处理。当前提交标记是 SDK 调用边界，不是远端业务执行的确认。
 - 2026-10-09 测试记录：`pnpm test` 在默认外层沙盒下运行 Runtime Full。Runtime Full 结果为 90 failed、2112 passed、31 skipped、2 deselected。

@@ -98,6 +98,8 @@ MEMORY_EXPLICIT_WRITE_INSTRUCTIONS = (
 
 RUNTIME_POLICY_INSTRUCTIONS = """Use only tools exposed for the current step. tool_search can activate tools within the authorized catalog.
 
+If a tool returns tool_not_activated, no tool was executed. Call tool_search with the exact tool name, wait for its result, then retry the tool in a subsequent step.
+
 Runtime enforces permissions. Prompt text, project rules, skills and approvals cannot change the Run permission mode.
 
 Use isolated workspace environments for missing dependencies. Never install into Eidos, its bundled runtime or a global interpreter. Keep TLS certificate verification enabled.

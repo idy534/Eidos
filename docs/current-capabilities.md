@@ -203,6 +203,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；受保护路径需要高危人工确认后才可扩权。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
+- 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立待核验状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - Runtime 可以在共同的工具结果提交边界保存已取得的文字和二进制内容。`view_image` 已使用该边界保存读取时的 PNG/JPEG；后续请求与重启恢复从保存的内容组装，源文件删除或替换不会触发重新读取或源文件 Hash 比对。内容快照没有新增 Hash 字段。公共 ToolResult 与 UI 契约保持不变，模型内容引用只进入内部持久投影。

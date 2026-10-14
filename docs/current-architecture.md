@@ -270,7 +270,9 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 `search_text` 在 Run 内把 Ripgrep 进程寿命和 ToolCall 等待窗口分开。首次调用默认等待 10 秒，`search_text_wait` 默认等待 30 秒。等待窗口结束只返回 `search_running` 和 `sessionId`。后台搜索继续使用原来的受管 Ripgrep、授权根、ignore 规则、文件验证、输出边界和结果解析。搜索完成后，续接调用读取同一个有界结构化结果。Run 关闭时，`ToolExecutor` 会取消并回收未完成的搜索。搜索会话不持久化，也不能跨 Run 使用。
 
-已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、未声明 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
+已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、当前目录中不存在的 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
+
+当前目录中存在但尚未进入 Step 激活集合的 deferred Tool 返回普通 `tool_not_activated` Tool Error。结果明确说明没有执行工具，并要求模型使用工具完整名称调用 `tool_search`，收到搜索结果后在后续 Step 重试。结果复用既有校验、投影、SQLite/Event 提交和下一轮 Context 路径，不计入协议修复次数，也不单独结束 Run。该分支不执行 Tool Runtime、不调用 cleanup、不触发 Approval 或 Durable Intent，也不建立 reconciliation。未激活调用不会进入并行读取批次。Step 的工具可用集合仍固定；同一批次先搜索也不能立即执行新激活工具。未知、禁用或未授权而未进入目录的工具不被描述为“激活后可用”。等价重复仍由既有 LoopGuard 收敛。
 
 `list_files`、`read_file`、`read_file_range` 和 `search_text` 的 Contract 只校验参数类型、大小和明显非法语法。ToolExecutor 的只读 Path Authority 再把相对路径绑定到 Workspace，把 canonical absolute path 绑定到 Workspace 或当前 Run 的 active Skill root。结果投影也遵循这个 authority：Workspace 结果保持 Workspace-relative，active Skill 结果返回 canonical absolute path，目录结果保留末尾 `/`，因此只读 Tool 结果可以直接 round-trip 到下一次只读 Tool。active Skill root 只读。未授权的 absolute path 返回普通 Tool Error，不进入 Tool 参数契约错误或协议修复。写入 Tool 使用 Workspace-relative 路径；`run_shell.cwd` 还接受 Workspace 内的 canonical absolute path，并在 shell launch boundary 归一化为 Workspace-relative 路径。active Skill root 和 Workspace 外路径不能成为 Shell cwd。
 
