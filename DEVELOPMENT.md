@@ -67,11 +67,13 @@ Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使�
 
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
-MCP Server 的默认 `HOME`、`TMPDIR` 分别是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/h` 和同目录下的 `t`。Runtime 使用 `0700` 创建目录，并在连接关闭后保留其中的文件。用户通过 MCP 配置显式设置或透传的非空目录值仍然优先。Runtime 不继承未配置透传的主进程 `HOME`、`TMPDIR`。修复升级后，新 Run 才会创建新的 MCP 环境。
+MCP Server 的默认 `HOME` 是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/h`。同一服务的不同 Run 和重启后的连接复用这个目录，服务可以在其中长期保存配置、缓存和登录状态。默认 `TMPDIR` 是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/t`，任务产物保存在同一 Run 目录下。Runtime 使用 `0700` 创建目录，并在连接关闭后保留其中的文件。用户通过 MCP 配置显式设置或透传的非空目录值仍然优先。Runtime 不继承未配置透传的主进程 `HOME`、`TMPDIR`。服务的启动 cwd 和相对参数继续保持配置原义。
+
+修复升级后，新 Run 使用服务级 HOME。旧 Run 下的 `h` 及其中的文件原地保留，Runtime 不自动选择、合并或删除旧配置和登录状态。需要继续使用旧状态时，用户可以把对应服务的 `HOME` 显式配置为旧目录。同一服务的并发 Run 共享 HOME，服务需要支持自身缓存、状态文件和浏览器配置的并发访问；Runtime 不为共享 HOME 增加跨 Run 等待队列。
 
 本地 socket 另用连接独占的短目录。macOS 使用 `/private/tmp/eidos-mcp-<随机值>`，Runtime 通过 `EIDOS_MCP_SOCKET_DIR` 提供该路径。已识别的 Playwright 启动入口还会使用这个路径作为 `PWTEST_SOCKETS_DIR` 默认值。普通 `TMPDIR` 加上服务自己的子目录和 socket 文件名，仍可能超过 macOS 的 Unix socket 长度限制。其他服务需要使用自己的 socket 目录配置或支持 `EIDOS_MCP_SOCKET_DIR`。用户显式配置或透传的非空 `PWTEST_SOCKETS_DIR` 优先，用户需管理其长度。Runtime 仅在连接资源停止后清理自建短目录，不删除 Run 目录。`mcp_temporary_directory_unavailable` 表示 Runtime 无法分配合规短目录，Server 此时尚未启动。
 
-MCP 产物默认保存在 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/`，不会随连接关闭而删除。开发者需要隔离产物和 `h/t` 时，应设置 `EIDOS_MCP_OUTPUT_ROOT=/private/tmp/eidos-dev-mcp`；Runtime 定向测试会自动设置隔离根目录。`EIDOS_DATA_DIR`、`EIDOS_PROJECTLESS_ROOT` 不控制这个位置。Playwright 的自动输出通过官方环境变量指定目录；已知输出工具的相对文件名也会落入该目录。显式绝对路径和显式 Server 输出配置保持原义。其他服务需要支持 `EIDOS_MCP_OUTPUT_DIR` 或提供自身输出配置。Runtime 不会改写任意 MCP 工具的文件参数，也不会把短 socket 目录改成较深的产物目录。
+MCP 产物默认保存在 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/`，不会随连接关闭而删除。开发者需要隔离服务 HOME、Run 临时文件和产物时，应设置 `EIDOS_MCP_OUTPUT_ROOT=/private/tmp/eidos-dev-mcp`；Runtime 定向测试会自动设置隔离根目录。`EIDOS_DATA_DIR`、`EIDOS_PROJECTLESS_ROOT` 不控制这个位置。Playwright 的自动输出通过官方环境变量指定目录；已知输出工具的相对文件名也会落入该目录。显式绝对路径和显式 Server 输出配置保持原义。其他服务需要支持 `EIDOS_MCP_OUTPUT_DIR` 或提供自身输出配置。Runtime 不会改写任意 MCP 工具的文件参数，也不会把短 socket 目录改成较深的产物目录。
 
 Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=...`，以及 `Runtime initialized duration_ms=...`。存储阶段是 `storage` 的子阶段，开发者不能把父阶段与子阶段耗时相加。初始化总计时不包含 Python 模块导入、Desktop 构建和 Renderer 首屏请求。启动不执行 Blob 全量清理和仓库库全库扫描；现有受管后台任务会在任务创建至少 60 秒后且 Runtime 空闲时执行仓库库完整性检查、有界空闲页回收和 Blob 清理，之后每小时检查一次。Session 删除和隐私撤销仍保留即时清理。
 

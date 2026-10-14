@@ -153,7 +153,7 @@ class McpSeatbeltTests(unittest.TestCase):
             socket_root = Path(environment["socketDir"])
             output_root = Path(environment["outputDir"])
             self.assertEqual(manager.output_roots(), (output_root,))
-            self.assertEqual(Path(environment["home"]), output_root / "h")
+            self.assertEqual(Path(environment["home"]), output_root.parent / "h")
             self.assertEqual(Path(environment["tmpdir"]), output_root / "t")
             self.assertLessEqual(len(environment["socketDir"].encode("utf-8")), 48)
             if profile == "connector":
@@ -168,14 +168,22 @@ class McpSeatbeltTests(unittest.TestCase):
             store.close()
         self.assertFalse(socket_root.exists())
         self.assertTrue(output_root.is_dir())
-        self.assertTrue((output_root / "h").is_dir())
+        self.assertTrue((output_root.parent / "h").is_dir())
         self.assertTrue((output_root / "t").is_dir())
 
     def test_output_directory_writes_do_not_grant_neighbor_run_access(self) -> None:
         current = McpOutputDirectory.create("manual", "browser", str(uuid4()))
         neighbor = McpOutputDirectory.create("manual", "browser", str(uuid4()))
+        other_service = McpOutputDirectory.create("manual", "other", str(uuid4()))
+        self.sandbox_home = current.environment_path("h")
+        other_home = other_service.environment_path("h")
+        neighbor_temp = neighbor.environment_path("t")
         for profile in ("connector", "workspace_read"):
             with self.subTest(profile=profile):
+                self.assertTrue(self._run(
+                    profile, "open(%r,'w').write('state')" % str(self.sandbox_home / "cache.txt"),
+                    output_root=current.path,
+                ))
                 self.assertTrue(self._run(
                     profile, "open(%r,'w').write('output')" % str(current.path / "result.txt"),
                     output_root=current.path,
@@ -184,6 +192,11 @@ class McpSeatbeltTests(unittest.TestCase):
                     profile, "open(%r,'w').write('denied')" % str(neighbor.path / "result.txt"),
                     output_root=current.path,
                 ))
+                for denied in (other_home / "state.txt", neighbor_temp / "temporary.txt"):
+                    self.assertFalse(self._run(
+                        profile, "open(%r,'w').write('denied')" % str(denied),
+                        output_root=current.path,
+                    ))
         self.assertEqual((current.path / "result.txt").read_text(), "output")
         self.assertFalse((neighbor.path / "result.txt").exists())
 

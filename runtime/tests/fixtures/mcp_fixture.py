@@ -97,6 +97,11 @@ TOOLS = [
         "description": "Bind a Unix socket below the fixture's socket directory",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
+    {
+        "name": "directory_state",
+        "description": "Check and create state in the fixture's HOME and TMPDIR",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
 ]
 
 listed_once = False
@@ -137,7 +142,15 @@ for line in sys.stdin:
             send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
     elif method == "tools/call":
         name = message["params"]["name"]
-        if name == "socket_probe":
+        if name == "directory_state":
+            state = {}
+            for key, variable in (("home", "HOME"), ("tmpdir", "TMPDIR")):
+                marker = Path(os.environ[variable]) / "fixture-state.txt"
+                state[key] = marker.exists()
+                marker.write_text("fixture state", encoding="utf-8")
+            content = [{"type": "text", "text": json.dumps(state)}]
+            is_error = False
+        elif name == "socket_probe":
             directory = Path(os.environ["EIDOS_MCP_SOCKET_DIR"]) / "browser"
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / "0123456789abcdef.sock"

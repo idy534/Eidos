@@ -46,6 +46,26 @@ def test_outputs_use_two_levels_and_remain_after_connection_lifetime(tmp_path: P
     assert McpOutputDirectory.create("plugin", "playwright", run_id).path != directory.path
 
 
+def test_home_is_shared_by_service_while_run_files_and_legacy_home_stay_separate() -> None:
+    first = McpOutputDirectory.create("manual", "browser", str(uuid4()))
+    second = McpOutputDirectory.create("manual", "browser", str(uuid4()))
+    legacy_home = first.path / "h"
+    legacy_home.mkdir()
+    (legacy_home / "config").write_text("legacy state")
+    home = first.environment_path("h")
+    assert home == first.path.parent / "h"
+    assert list(home.iterdir()) == []
+    (home / "config").write_text("service state")
+    assert second.environment_path("h") == home
+    assert (second.environment_path("h") / "config").read_text() == "service state"
+    assert first.environment_path("t") != second.environment_path("t")
+    assert (legacy_home / "config").read_text() == "legacy state"
+    for plugin, server in (("plugin", "browser"), ("manual", "other")):
+        other = McpOutputDirectory.create(plugin, server, str(uuid4()))
+        assert other.environment_path("h") != home
+        assert list(other.environment_path("h").iterdir()) == []
+
+
 def test_output_root_rejects_symlink_and_replaced_run_directory(tmp_path: Path) -> None:
     root = Path(os.environ["EIDOS_MCP_OUTPUT_ROOT"])
     outside = tmp_path / "outside"
@@ -66,7 +86,8 @@ def test_output_root_rejects_symlink_and_replaced_run_directory(tmp_path: Path) 
 def test_environment_directory_is_private_reusable_and_rejects_symlinks(tmp_path: Path, leaf: str) -> None:
     directory = McpOutputDirectory.create("manual", "browser", str(uuid4()))
     path = directory.environment_path(leaf)
-    assert path == directory.path / leaf
+    parent = directory.path.parent if leaf == "h" else directory.path
+    assert path == parent / leaf
     assert path.stat().st_mode & 0o777 == 0o700
     (path / "keep").write_text("run data")
     assert directory.environment_path(leaf) == path
@@ -132,6 +153,9 @@ def test_current_run_outputs_are_readable_but_neighbor_runs_are_not(tmp_path: Pa
     neighbor_image = neighbor.path / "screen.png"
     Image.new("RGB", (1, 1)).save(current_image)
     Image.new("RGB", (1, 1)).save(neighbor_image)
+    home = current.environment_path("h")
+    home_image = home / "private.png"
+    Image.new("RGB", (1, 1)).save(home_image)
     authority = ViewImageRootAuthority(workspace, mcp_output_roots=(current.path,))
     tool = ViewImageTool(authority)
     result = tool.execute({"path": str(current_image)}, threading.Event())
@@ -139,10 +163,14 @@ def test_current_run_outputs_are_readable_but_neighbor_runs_are_not(tmp_path: Pa
     assert result.result["code"] == "ok"
     rejected = tool.execute({"path": str(neighbor_image)}, threading.Event())
     assert isinstance(rejected, dict) and rejected["code"] == "path_outside_authority"
+    rejected = tool.execute({"path": str(home_image)}, threading.Event())
+    assert isinstance(rejected, dict) and rejected["code"] == "path_outside_authority"
     resolved = resolve_read_path(str(current.path / "snapshot.yml"), workspace, (), (current.path,))
     assert resolved.authority == "mcp_output" and not resolved.writable
     with pytest.raises(ValueError):
         resolve_read_path(str(neighbor_image), workspace, (), (current.path,))
+    with pytest.raises(ValueError):
+        resolve_read_path(str(home_image), workspace, (), (current.path,))
     (current.path / "snapshot.yml").write_text("page: managed")
     executor = ToolExecutor(workspace)
     executor.set_mcp_output_roots(lambda: (current.path,))
@@ -151,6 +179,8 @@ def test_current_run_outputs_are_readable_but_neighbor_runs_are_not(tmp_path: Pa
         assert result["code"] == "ok"
         assert "page: managed" in str(result["data"])
         rejected = executor.execute("read_file", {"path": str(neighbor_image)}, threading.Event())
+        assert rejected["code"] != "ok"
+        rejected = executor.execute("read_file", {"path": str(home_image)}, threading.Event())
         assert rejected["code"] != "ok"
     finally:
         executor.close()

@@ -123,7 +123,7 @@ class McpManagerTests(unittest.TestCase):
         self.assertIsNone(connection._service.deadline)
         self.assertIsNone(async_tasks[0].deadline)
 
-    def test_home_and_temp_use_run_directory_while_sockets_stay_short(self) -> None:
+    def test_service_home_and_run_temp_keep_sockets_short(self) -> None:
         config = self.plugins.manifest("demo").mcp_servers[0]
         connection = self._connection(
             config, runtime_root=self.data / ("很深的数据目录" * 8) / "mcp-runtime"
@@ -136,7 +136,7 @@ class McpManagerTests(unittest.TestCase):
             temporary = Path(environment["tmpdir"])
             output = connection.output_directory.path
             socket_root = Path(environment["socketDir"])
-            self.assertEqual(home, output / "h")
+            self.assertEqual(home, output.parent / "h")
             self.assertEqual(temporary, output / "t")
             self.assertNotIn(str(self.data), str(output))
             for path in (home, temporary):
@@ -175,7 +175,7 @@ class McpManagerTests(unittest.TestCase):
             parameters = connection._prepare_parameters()
             environment = parameters.env
             assert environment is not None
-            self.assertEqual(environment["HOME"], str(connection.output_directory.path / "h"))
+            self.assertEqual(environment["HOME"], str(connection.output_directory.path.parent / "h"))
             self.assertEqual(environment["TMPDIR"], str(connection.output_directory.path / "t"))
             self.assertGreater(len(os.fsencode(environment["TMPDIR"])), 103)
             self.assertEqual(environment["PWTEST_SOCKETS_DIR"], environment["EIDOS_MCP_SOCKET_DIR"])
@@ -223,7 +223,7 @@ class McpManagerTests(unittest.TestCase):
             (root / "keep").write_text("user data")
         for names in (["HOME"], ["TMPDIR"], ["HOME", "TMPDIR"]):
             config = self.plugins.manifest("demo").mcp_servers[0].model_copy(
-                update={"env_names": names}
+                update={"id": "fixture-" + "-".join(name.lower() for name in names), "env_names": names}
             )
             for explicit in (False, True):
                 with self.subTest(names=names, explicit=explicit), patch.dict(
@@ -241,13 +241,14 @@ class McpManagerTests(unittest.TestCase):
                             self.assertEqual(environment[name.lower()], str(configured if explicit else inherited))
                         self.assertIsNotNone(connection._socket_directory)
                         for name, leaf in (("HOME", "h"), ("TMPDIR", "t")):
+                            parent = connection.output_directory.path.parent if leaf == "h" else connection.output_directory.path
                             if name not in names:
                                 self.assertEqual(
                                     environment[name.lower()],
-                                    str(connection.output_directory.path / leaf),
+                                    str(parent / leaf),
                                 )
                             else:
-                                self.assertFalse((connection.output_directory.path / leaf).exists())
+                                self.assertFalse((parent / leaf).exists())
                     finally:
                         connection.close()
                     self.assertEqual((configured / "keep").read_text(), "user data")
@@ -288,10 +289,14 @@ class McpManagerTests(unittest.TestCase):
         second = self._connection(config)
         try:
             first.start()
+            before = first.call("directory_state", {}, threading.Event())
+            self.assertEqual(json.loads(before["data"]["text"]), {"home": False, "tmpdir": False})
             assert first._socket_directory is not None
             previous = first._socket_directory.path
             first.close()
             second.start()
+            after = second.call("directory_state", {}, threading.Event())
+            self.assertEqual(json.loads(after["data"]["text"]), {"home": True, "tmpdir": False})
             assert second._socket_directory is not None
             self.assertNotEqual(previous, second._socket_directory.path)
             self.assertFalse(previous.exists())
@@ -338,6 +343,11 @@ class McpManagerTests(unittest.TestCase):
             second_temporary = second.connections[0]._socket_directory
             assert first_temporary is not None and second_temporary is not None
             self.assertNotEqual(first_temporary.path, second_temporary.path)
+            self.assertNotEqual(self.manager.output_roots(), second.output_roots())
+            first_state = self.manager.connections[0].call("directory_state", {}, threading.Event())
+            second_state = second.connections[0].call("directory_state", {}, threading.Event())
+            self.assertEqual(json.loads(first_state["data"]["text"]), {"home": False, "tmpdir": False})
+            self.assertEqual(json.loads(second_state["data"]["text"]), {"home": True, "tmpdir": False})
             self.assertEqual(
                 sum(
                     resource.kind is RuntimeResourceKind.ASYNC_TASK
@@ -345,8 +355,30 @@ class McpManagerTests(unittest.TestCase):
                 ),
                 2,
             )
+            self.manager.close()
+            state = second.connections[0].call("directory_state", {}, threading.Event())
+            self.assertEqual(json.loads(state["data"]["text"]), {"home": True, "tmpdir": True})
         finally:
             second.close()
+
+    def test_runtime_kernel_restart_preserves_home_and_uses_fresh_run_temp(self) -> None:
+        self.manager.start()
+        before = self.manager.connections[0].call("directory_state", {}, threading.Event())
+        self.assertEqual(json.loads(before["data"]["text"]), {"home": False, "tmpdir": False})
+        previous_outputs = self.manager.output_roots()
+        self.manager.close()
+        self.kernel.close()
+        self.assertEqual(self.resources.active_resources(), ())
+        self.kernel = RuntimeAsyncKernel(resource_registry=self.resources)
+        self.kernel.start()
+        self.manager = McpManager(
+            self.plugins, self.plugins.extension_snapshot(), self.workspace,
+            sandbox=False, async_kernel=self.kernel, resource_registry=self.resources,
+        )
+        self.manager.start()
+        after = self.manager.connections[0].call("directory_state", {}, threading.Event())
+        self.assertEqual(json.loads(after["data"]["text"]), {"home": True, "tmpdir": False})
+        self.assertNotEqual(previous_outputs, self.manager.output_roots())
 
     def test_startup_timeout_is_closed_and_releases_async_task(self) -> None:
         config = self.plugins.manifest("demo").mcp_servers[0].model_copy(

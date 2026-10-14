@@ -62,7 +62,10 @@ class McpOutputDirectory:
         self.verify()
         if leaf not in {"h", "t"}:
             raise ValueError("invalid_mcp_environment_directory")
-        directory = self._create_or_open(self.path / leaf)
+        # Configuration, credentials and caches outlive a Run. Temporary files
+        # remain inside the Run so another Run cannot overwrite them by default.
+        parent = self.path.parent if leaf == "h" else self.path
+        directory = self._create_or_open(parent / leaf)
         self.verify()
         return directory.path
 
