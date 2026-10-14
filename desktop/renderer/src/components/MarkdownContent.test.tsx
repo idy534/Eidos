@@ -81,6 +81,24 @@ test("renders inline math formula via KaTeX", () => {
   assert.match(html, /<annotation encoding="application\/x-tex">E = mc\^2<\/annotation>/);
 });
 
+test("does not inherit KaTeX trust from Object.prototype", () => {
+  const objectPrototype = Object.prototype as typeof Object.prototype & { trust?: unknown };
+  Object.defineProperty(objectPrototype, "trust", {
+    configurable: true,
+    writable: true,
+    value: true,
+  });
+  try {
+    const html = renderToStaticMarkup(
+      <MarkdownContent content={"受控链接：$\\href{https://example.com}{打开}$"} />,
+    );
+
+    assert.doesNotMatch(html, /<a href="https:\/\/example\.com">/);
+  } finally {
+    delete objectPrototype.trust;
+  }
+});
+
 test("renders multiline display math formula via KaTeX block layout", () => {
   const formula = "$$\n\\int_{-\\infty}^{+\\infty} e^{-x^2} \\, dx = \\sqrt{\\pi}\n$$";
   const html = renderToStaticMarkup(
