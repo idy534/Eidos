@@ -245,6 +245,8 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
+Session 标题生成继续走独立的 Managed Task 和 Model Lease。Chat Completions 与 Responses 都使用 `TITLE_SYSTEM_INSTRUCTIONS` 和同一用户消息模板。模板把首条任务原文放在 `<task>` 中，并在任务前后要求模型只生成标题。系统提示将任务内的指令视为命名材料，要求模型不回答、不执行任务，也不描述工具或环境。标题请求继续关闭工具，不加入正常 Run 的聊天上下文。此处只调整提示词，不改变输出预算、标题清洗、失败回退、事件或持久化规则。
+
 Schema v22 为 ModelAttempt 增加内部 `response_replay_json`。Runtime 在完成 Attempt 的同一次条件更新中保存有界的思考回放记录；该列引用现有 gzip Blob，并参与 Blob 清理时的引用保留。记录保存原始思考内容、Provider 字段身份、签名、元数据和该响应声明的 ToolCall IDs。Responses 路径还保存返回的原生 reasoning item，包括已返回的 encrypted content。记录不成为 Session Item，也不进入普通 Feed 或公共 ModelAttempt DTO。Eidos 不把“隐藏思考 UI”当作“不保存思考”。
 
 ContextBuilder 从 SQLite 的已完成 Attempt 读取回放记录。Model Adapter 将同一响应的思考、正文和全部保留的 ToolCall 合并，再交给 SDK 转换；工具结果跟在完整的调用声明之后。回放元数据进入现有 Context/Step Resolution 快照与预算。快照保存 Eidos 模型请求表示，不等同于 SDK 最终 HTTP payload。上下文只保留部分响应、切换不兼容 wire API，或旧记录缺少思考且当前模型启用了思考时，Adapter 将这组历史正文、调用和结果转换成明确标注的低权限历史资料。Adapter 不伪造丢失的思考，不重新执行工具。Schema v21→v22 只新增 nullable 列；旧数据保留 NULL。
@@ -556,19 +558,19 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
-MCP 的默认 `HOME` 位于 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/h`。它由同一服务的不同 Run 共享，连接和 Runtime 重启不会改变该默认位置。服务可以在这里保留配置、凭据和缓存。默认 `TMPDIR` 位于当前 Run 产物目录的 `t` 子目录中，任务产物继续按 Run 隔离。Runtime 复用现有 fd-relative 目录分配器，以 `0700` 创建目录，并拒绝符号链接路径。连接关闭后，Runtime 保留服务 HOME、Run 目录及其临时文件。显式配置或透传的非空 `HOME`、`TMPDIR` 保持现有优先级；Runtime 不删除这些用户目录。PID 文件仍位于原有 Runtime 数据目录。
+MCP 的默认 `HOME` 位于 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/h`。它由同一服务的不同 Run 共享，连接和 Runtime 重启不会改变该默认位置。服务可以在这里保留配置、凭据和缓存。默认 `TMPDIR` 继承 Runtime 进程的值；环境值缺失或为空时，Runtime 使用标准库 `tempfile.gettempdir()` 的系统临时目录。MCP 的显式环境配置优先于默认继承。Runtime 不再创建 Run 下的 `t`，也不取得共享临时目录的清理所有权。任务产物继续按 Run 隔离。Runtime 复用现有 fd-relative 目录分配器，以 `0700` 创建 HOME 和产物目录，并拒绝符号链接路径。连接关闭后，Runtime 保留服务 HOME 和 Run 产物，不清空或删除继承及配置的 TMPDIR。PID 文件仍位于原有 Runtime 数据目录。
 
-旧 Run 目录下的 `h` 不会被自动迁移、合并或删除。默认服务 HOME 在首次使用时创建，Runtime 不猜测哪个旧 Run 的配置或凭据应成为共享状态。用户可以显式配置 `HOME` 来继续使用某个旧目录。不同服务和不同 Plugin 来源不共享 HOME。同一服务的并发连接共享 HOME，但仍使用各自的 Run 临时文件、产物和短 socket 目录。服务负责自身共享状态的并发访问，Runtime 不增加跨 Run 锁或等待队列。
+旧 Run 目录下的 `h/t` 不会被自动迁移、合并或删除。默认服务 HOME 在首次使用时创建，Runtime 不猜测哪个旧 Run 的配置或凭据应成为共享状态。用户可以显式配置 HOME 或 TMPDIR 来继续使用某个旧目录。不同服务和不同 Plugin 来源不共享默认 HOME，但不同服务和不同 Run 可能继承同一 TMPDIR。服务负责临时文件的命名、并发访问与清理。Runtime 继续按 Run 保存产物，按连接管理短 socket 目录，不增加跨 Run 锁或等待队列。
 
 每个 MCP Connection 另外使用标准库 `tempfile.mkdtemp` 创建独立的私有短 socket 目录。macOS 的父目录固定为 canonical `/private/tmp`，其他测试平台使用 canonical `/tmp`。生成的根目录最多占 48 个文件系统字节，目录权限为 `0700`。路径不随产物目录、`EIDOS_DATA_DIR`、项目路径或主进程 `TMPDIR` 变长。Runtime 通过 `EIDOS_MCP_SOCKET_DIR` 提供该路径。已识别的 Playwright 启动入口使用该路径作为 `PWTEST_SOCKETS_DIR` 默认值，以免服务在较深 `TMPDIR` 下拼接子目录时再次超过 macOS 的 Unix socket 路径上限。显式配置或透传的非空 `PWTEST_SOCKETS_DIR` 保持优先级。其他 MCP 服务需要使用自己的 socket 目录配置或支持 `EIDOS_MCP_SOCKET_DIR`；通用 MCP 协议没有统一的 socket 目录选项。
 
-Seatbelt 的 `SANDBOX_HOME`、`SANDBOX_TMP` 使用最终传给 Server 的同一组环境值。`MCP_SOCKET_ROOT` 对 Playwright 使用最终 `PWTEST_SOCKETS_DIR`，对其他服务使用当前连接的短 socket 目录。策略不会开放整个系统临时目录。Connection 先确认进程组、异步 Service 和 callback 都已停止，再清理自建短 socket 目录。清理前检查 device、inode、owner 和目录类型，`shutil.rmtree` 不跟随目录内的符号链接。目录身份变化或清理失败会记录不含目录内容的本地警告，并保留对象供后续关闭重试。短目录无法创建时，Connection 在启动子进程前返回 `mcp_temporary_directory_unavailable`。异常强制退出可能留下目录；新连接使用新的随机目录，Runtime 不扫描或删除其他连接的临时目录。
+Seatbelt 的 `SANDBOX_HOME` 使用最终传给 Server 的 HOME。`SANDBOX_TMP` 使用最终 TMPDIR 对应的 canonical 路径；环境值本身保持原字符串，显式相对路径按服务启动 cwd 解析。`MCP_SOCKET_ROOT` 对 Playwright 使用最终 `PWTEST_SOCKETS_DIR`，对其他服务使用当前连接的短 socket 目录。TMPDIR 为共享系统临时目录时，策略允许服务读写这个目录，并不承诺临时文件按 Run 隔离。Connection 先确认进程组、异步 Service 和 callback 都已停止，再清理自建短 socket 目录。清理前检查 device、inode、owner 和目录类型，`shutil.rmtree` 不跟随目录内的符号链接。目录身份变化或清理失败会记录不含目录内容的本地警告，并保留对象供后续关闭重试。系统临时目录无法解析或短目录无法创建时，Connection 在启动子进程前返回 `mcp_temporary_directory_unavailable`。异常强制退出可能留下短目录；新连接使用新的随机目录，Runtime 不扫描或删除其他连接的临时目录。
 
 MCP 产物与短临时目录分开保存。默认目录是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/`，服务来源与 Run 占两层目录。服务 ID 不允许点号，所以来源名称没有分隔歧义。开发和测试可用绝对路径 `EIDOS_MCP_OUTPUT_ROOT` 覆盖根目录。Runtime 复用现有 fd-relative 目录分配器，拒绝符号链接路径，并在连接启动和调用前核对产物目录身份。产物目录保留在连接关闭之后；短临时目录的清理不会删除截图、快照或下载。目录分配失败使用 `mcp_output_directory_unavailable`，不回退到用户 HOME。
 
 Runtime 向每个 Server 提供 `EIDOS_MCP_OUTPUT_DIR`，但 MCP 协议没有统一的输出目录配置。Playwright 的已知启动入口使用官方 `PLAYWRIGHT_MCP_OUTPUT_DIR` 默认值和绝对路径展示选项。官方输出目录只影响自动命名文件，所以 Eidos 还会把已知 Playwright 输出 Tool 的相对 `filename` 转成当前产物目录下的绝对路径。输入文件参数不改写，显式绝对路径和显式 Server 输出配置继续保持用户选择。服务的启动 cwd 和相对配置参数保持原义。Approval 描述和 Durable Intent 保存产物目录，便于解释相对输出文件的实际位置。
 
-两种 MCP Seatbelt profile 分别授权最终服务 HOME、当前 Run 临时目录、产物目录和当前连接短 socket 目录，不开放整个服务根目录、其他服务 HOME 或其他 Run 的临时文件和产物。RunResources 只把当前 Run 已验证的产物目录提供给内置只读文件工具和 `view_image`，不因此开放服务 HOME，也不把产物目录作为 Skill 或 Workspace 写入授权。目录身份失效后，Runtime 不再提供对应读取权限。其他 MCP 服务需要使用自己的输出配置或支持 `EIDOS_MCP_OUTPUT_DIR`；Runtime 不猜测其工具参数的文件语义。
+两种 MCP Seatbelt profile 分别授权最终服务 HOME、最终 TMPDIR、当前 Run 产物目录和当前连接短 socket 目录，不额外授权整个服务根目录或其他 Run 产物。若开发者把 HOME、产物或其他文件放在共享 TMPDIR 内，这些文件也会受 TMPDIR 的读写授权覆盖。默认长期产物根目录位于用户 Eidos 目录下，与系统临时目录分开。RunResources 只把当前 Run 已验证的产物目录提供给内置只读文件工具和 `view_image`，不因此开放服务 HOME 或共享 TMPDIR，也不把产物目录作为 Skill 或 Workspace 写入授权。目录身份失效后，Runtime 不再提供对应读取权限。其他 MCP 服务需要使用自己的输出配置或支持 `EIDOS_MCP_OUTPUT_DIR`；Runtime 不猜测其工具参数的文件语义。
 
 ## 15. Packaging & Distribution
 
@@ -821,5 +823,11 @@ v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，�
 ### 交互与资源门禁细化（PR #103）
 
 Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，ApprovalComposer 或 ClarificationComposer 替换普通输入框，Session 草稿会在等待结束后继续显示。工作模式、模型、思考强度和审批模式用于下一轮草稿，当前 Run 快照保持不可变。安全的连续只读调用可以在混合批次中并行，副作用仍按顺序执行。搜索保留每 Run 四个实际执行者和十六个会话边界，超出执行槽位的请求进入可取消队列。延迟工具按最近激活顺序保留，再按稳定名称排序冻结。
+
+`QueuedMessages → typed IPC → run/listQueued、run/updateQueued、run/deleteQueued → QueuedRunApplication → QueuedRunRepository → SQLite` 是队列列表的调用链。列表直接投影尚未开始的 queued Run 和关联用户消息，不依赖聊天记录的分页窗口。每页最多读取 100 条，并按 512 KiB 预算分页。Renderer 只保存当前投影和临时编辑内容。队列变化通过同事务的 `run.queue_changed` Event / Outbox 投影为 `run/queueChanged`，执行状态通知也会刷新队列。
+
+AppShell 只在已持久化的 Session 中挂载 QueuedMessages。`draft-…` 是未保存草稿的 ID，不能传入只接受 Session UUID 的队列接口。首次发送沿用现有草稿物化流程；Session 创建成功后，队列组件才开始读取。切回草稿会卸载队列组件，并使旧读取结果失效。
+
+队列修改和 FIFO claim 使用同一数据库锁与短事务。修改先检查 Session 归属、未开始状态和原消息文字；文字冲突返回 `QUEUED_RUN_INPUT_CONFLICT`，已经开始、取消或恢复的消息返回 `QUEUED_RUN_ALREADY_STARTED`。编辑同时更新 Run 输入和用户 Item，并保留引用及执行快照。删除移除未执行 Run、用户 Item、执行前快照及其旧 Run 事件，记录新的队列删除事件；删除消息不会作为用户输入进入后续 Run。两种写操作复用现有 Operation 幂等记录，不新增数据库表或第二套调度器。
 
 新 Run 持久保存内部 Skill 元数据快照，公共 Run DTO 不发送该快照；内部恢复读取保持完整。只有实际选择、读取或激活的 Skill 建立租约，其他 Skill 可删除；旧 Run 继续按目录引用保护。资源激活重新检查冻结身份和内容版本，已移除且未使用的 Skill 以普通工具错误反馈，不破坏整个 Run 的恢复。

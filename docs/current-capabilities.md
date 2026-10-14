@@ -33,7 +33,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - 用户展开或收起项目时，侧边栏不会重新滚到当前高亮会话。Desktop 切换到另一个 Session 时仍会定位目标；用户通过输入引用查看其他会话时，Desktop 也会展开目标项目并定位。目标已在可见范围内时，侧边栏不会主动滚动。
 - Session 首屏和历史分页的读取代码不再构建 Step Resolution Review。响应保留空的 `stepResolutions` 字段。Items、Runs 和事件游标继续使用原有读取路径。本项代码修订尚未进入测试和性能验收阶段。
 - Desktop 可以通过 `project/create` 显式创建并保存 Project 名称和 Workspace。名称可以省略，Runtime 会使用 Workspace 文件夹名。项目选择器支持搜索、选择和“新建项目”。Desktop 可以列出已创建的 Project。用户可以手动删除没有正式 Session 的 Project。Project 删除只删除 Eidos 的 Project、Worktree 元数据，不删除 Workspace 文件或 Git 仓库。
-- 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
+- 点击“新建会话”或项目下的新增按钮时，Desktop 只创建本地草稿，不写入 Session。用户第一次提交输入时，Desktop 才调用 `session/create`，然后调用 `run/start` 创建正式 Session、Run 和任务标题。Runtime 会根据首条任务请求异步生成标题，优先使用“动作 + 主要实体 + 目标或次要实体”的格式，并保留关键技术实体。标题请求把原始任务放在 `<task>` 中。系统和用户提示词都要求模型只命名，不回答或执行任务，并输出一行无 Markdown 的标题。Chat Completions 和 Responses 使用同一模板。Run 启动失败时，Desktop 会删除本次物化的空 Session。没有标题且没有 Run 的历史 Session 会在删除所属 Project 前清理。
 - 新建 Session 时，用户通过侧边栏、首页入口或项目选择器选择 Project 或无 Project。草稿状态的 Composer 输入框上方显示 Project/无 Project 上下文、execution mode 和 branch，并允许选择或移除 Project。非 Git 项目只显示 Project。用户第一次提交后，Composer 隐藏整条上下文栏，不再允许调整 Project 或 execution mode。Workspace Dock 的 Review 只对 Git Project 展示，Terminal 和 Files 只对有 Project 的会话展示，Browser 对所有会话展示。Projectless Session 的 Runtime 仍使用当前 Session 的私有 Workspace。
 - Desktop 的“更改工作环境”弹窗使用中文展示“本地”和“新建本地工作树”。当前环境是本地时，用户也可以在弹窗中切换本地分支。切换到本地工作树时，Runtime 会创建或复用这个 Session 已关联的工作树；切换回本地时，Runtime 会安全迁移当前 Git 状态。整个过程不会创建新 Session。环境切换期间，Desktop 会禁用输入、创建分支、删除和 Session 导航；完成后只刷新当前 Session 的执行绑定和 Git 审阅状态。
 - Desktop 的 Review Dock 会按 Dock 自身宽度切换布局。窄 Dock 会把分支观察、Git 操作、Diff 范围和审阅操作分成稳定的行。分支与比较目标保持单行省略。空范围只显示一个可读空状态，不再显示零文件分组。
@@ -271,7 +271,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型只能把 Catalog 给出的 canonical absolute root 用于已激活 Skill 的只读文件 Tool；任意 absolute path 不能扩大读写或 Shell 权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative 或 Workspace 内 canonical absolute cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
 - MCP 当前支持 stdio Tools。Settings 可以创建、编辑和卸载手动 MCP，并配置名称、启动命令、参数、环境变量、环境变量透传名、工作目录和 `connector`/`workspace_read` permission profile。保存或编辑后的 Server 默认未授权，用户需要通过现有审阅入口重新启用。环境变量值不会出现在 MCP 列表、事件或日志中，编辑时留空会保留已保存的环境变量值。Server consent、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
-- MCP Connection 的默认 `HOME` 使用 `~/Eidos/eidos-mcp/<来源>.<服务>/h`，同一服务的不同 Run 和重启后的连接可以复用配置、缓存和登录状态。默认 `TMPDIR` 使用 `<来源>.<服务>/<Run ID>/t`，任务产物继续按 Run 隔离。目录初始权限为 `0700`。Runtime 在连接关闭后保留服务 HOME 和 Run 文件，也不会自动合并或删除旧 Run 下的 HOME。连接另外拥有独立的短 socket 目录，并通过 `EIDOS_MCP_SOCKET_DIR` 提供路径。已识别的 Playwright 入口使用它作为 `PWTEST_SOCKETS_DIR` 默认值，避免较深的 `TMPDIR` 再次触发 Unix socket 长度错误。其他服务需要支持这个约定或配置自身的 socket 路径。连接在进程组和异步资源停止后核对身份并清理自建短目录。显式配置或透传的非空用户目录保持原有优先级，Runtime 不删除这些目录。
+- MCP Connection 的默认 `HOME` 使用 `~/Eidos/eidos-mcp/<来源>.<服务>/h`，同一服务的不同 Run 和重启后的连接可以复用配置、缓存和登录状态。默认 `TMPDIR` 继承 Runtime 进程；环境值缺失或为空时，Runtime 使用标准库的系统临时目录。Runtime 不再创建 Run 下的 `t`，也不会在连接或 Run 结束时回收共享 TMPDIR。不同 Run 和不同服务可能使用同一临时目录，服务负责自身临时文件的命名与清理。任务产物继续按 Run 隔离。Runtime 在连接关闭后保留服务 HOME 和产物，也不会自动合并或删除旧 Run 下的 `h/t`。自建目录的初始权限为 `0700`。连接另外拥有独立的短 socket 目录，并通过 `EIDOS_MCP_SOCKET_DIR` 提供路径。已识别的 Playwright 入口使用它作为 `PWTEST_SOCKETS_DIR` 默认值，避免较深的 `TMPDIR` 再次触发 Unix socket 长度错误。其他服务需要支持这个约定或配置自身的 socket 路径。连接在进程组和异步资源停止后核对身份并清理自建短目录。显式配置或透传的非空用户目录保持原有优先级，Runtime 不删除这些目录。
 - MCP 产物默认按 `~/Eidos/eidos-mcp/<来源>.<服务>/<Run ID>/` 保留。Playwright 的自动文件和已知输出工具的相对文件名都使用该目录。Runtime 保留服务启动 cwd、输入文件参数和用户指定的绝对路径。当前 Run 可以通过只读工具和 `view_image` 查看自己的产物；沙盒不因此获得其他 Run 的产物写权限。其他 MCP 服务可以读取 `EIDOS_MCP_OUTPUT_DIR`，或通过服务自己的输出设置接入。
 
 ## Persistence
@@ -480,6 +480,8 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 ### 交互与资源门禁细化（PR #103）
 
 - Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，专用面板继续替换普通输入框。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
+- Session 输入框上方显示待执行消息列表。列表按发送顺序排列，并独立于聊天记录分页读取。用户可以在列表中编辑消息文字、取消编辑或删除消息。编辑保留引用、模型、工作模式、审批模式和队列位置，也保留主输入框中的草稿。消息开始执行后会离开列表；后端拒绝对已开始或恢复中的 Run 进行队列编辑和删除。修改与删除会持久化，重启后继续生效。
+- 未保存的草稿 Session 不显示队列，也不调用队列接口。首次发送创建持久 Session 后，界面才读取该 Session 的队列。用户切回新草稿时，界面移除原 Session 的队列。
 - 连续安全的只读调用可在混合批次中并行。普通读取和协调不等待整库恢复扫描；冲突文件与未知副作用继续受保护。搜索执行槽位满时排队，取消和退出仍负责清理。
 - 延迟工具优先保留最新激活项，仍受工具定义大小预算约束。新 Run 的 Skill 删除保护基于实际使用租约和冻结元数据；旧 Run 继续保守保护目录引用。
 - CI 按改动范围选择 Runtime、Desktop 与原生检查，质量和安全检查独立执行；最终汇总保留必需检查，失败不会被其他成功结果掩盖。数据库升级至 Schema 17，Runtime 和 Desktop 应一起更新。

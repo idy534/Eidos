@@ -67,13 +67,13 @@ Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使�
 
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
 
-MCP Server 的默认 `HOME` 是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/h`。同一服务的不同 Run 和重启后的连接复用这个目录，服务可以在其中长期保存配置、缓存和登录状态。默认 `TMPDIR` 是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/t`，任务产物保存在同一 Run 目录下。Runtime 使用 `0700` 创建目录，并在连接关闭后保留其中的文件。用户通过 MCP 配置显式设置或透传的非空目录值仍然优先。Runtime 不继承未配置透传的主进程 `HOME`、`TMPDIR`。服务的启动 cwd 和相对参数继续保持配置原义。
+MCP Server 的默认 `HOME` 是 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/h`。同一服务的不同 Run 和重启后的连接复用这个目录，服务可以在其中长期保存配置、缓存和登录状态。默认 `TMPDIR` 继承 Runtime 进程的环境值；环境值缺失或为空时，Runtime 使用标准库 `tempfile.gettempdir()` 的系统临时目录。MCP 配置显式设置或透传的非空目录值仍然优先。Runtime 不再创建 Run 下的 `t`，也不会在连接或 Run 结束时清空、删除继承或配置的 TMPDIR。任务产物继续按 Run 保存在 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/`。Runtime 使用 `0700` 创建自建目录，并在连接关闭后保留 HOME 和产物。Runtime 不继承未配置透传的主进程 `HOME`。服务的启动 cwd 和相对参数继续保持配置原义。
 
-修复升级后，新 Run 使用服务级 HOME。旧 Run 下的 `h` 及其中的文件原地保留，Runtime 不自动选择、合并或删除旧配置和登录状态。需要继续使用旧状态时，用户可以把对应服务的 `HOME` 显式配置为旧目录。同一服务的并发 Run 共享 HOME，服务需要支持自身缓存、状态文件和浏览器配置的并发访问；Runtime 不为共享 HOME 增加跨 Run 等待队列。
+修复升级后，新 Run 使用服务级 HOME 和继承的 TMPDIR。旧 Run 下的 `h/t` 及其中的文件原地保留，Runtime 不自动选择、合并或删除旧配置、登录状态和临时文件。需要继续使用旧状态时，用户可以把对应服务的 `HOME` 或 `TMPDIR` 显式配置为旧目录。同一服务的并发 Run 共享 HOME；不同服务也可能继承同一个 TMPDIR。服务需要管理自身缓存、状态文件、临时文件和浏览器配置的并发访问与清理；Runtime 不增加跨 Run 等待队列。
 
 本地 socket 另用连接独占的短目录。macOS 使用 `/private/tmp/eidos-mcp-<随机值>`，Runtime 通过 `EIDOS_MCP_SOCKET_DIR` 提供该路径。已识别的 Playwright 启动入口还会使用这个路径作为 `PWTEST_SOCKETS_DIR` 默认值。普通 `TMPDIR` 加上服务自己的子目录和 socket 文件名，仍可能超过 macOS 的 Unix socket 长度限制。其他服务需要使用自己的 socket 目录配置或支持 `EIDOS_MCP_SOCKET_DIR`。用户显式配置或透传的非空 `PWTEST_SOCKETS_DIR` 优先，用户需管理其长度。Runtime 仅在连接资源停止后清理自建短目录，不删除 Run 目录。`mcp_temporary_directory_unavailable` 表示 Runtime 无法分配合规短目录，Server 此时尚未启动。
 
-MCP 产物默认保存在 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/`，不会随连接关闭而删除。开发者需要隔离服务 HOME、Run 临时文件和产物时，应设置 `EIDOS_MCP_OUTPUT_ROOT=/private/tmp/eidos-dev-mcp`；Runtime 定向测试会自动设置隔离根目录。`EIDOS_DATA_DIR`、`EIDOS_PROJECTLESS_ROOT` 不控制这个位置。Playwright 的自动输出通过官方环境变量指定目录；已知输出工具的相对文件名也会落入该目录。显式绝对路径和显式 Server 输出配置保持原义。其他服务需要支持 `EIDOS_MCP_OUTPUT_DIR` 或提供自身输出配置。Runtime 不会改写任意 MCP 工具的文件参数，也不会把短 socket 目录改成较深的产物目录。
+MCP 产物默认保存在 `~/Eidos/eidos-mcp/<pluginId>.<serverId>/<runId>/`，不会随连接关闭而删除。开发者需要隔离服务 HOME 和产物时，应设置 `EIDOS_MCP_OUTPUT_ROOT=/private/tmp/eidos-dev-mcp`；需要隔离临时文件时，应另外设置 Runtime 的 `TMPDIR` 或对应服务的 TMPDIR。MCP 定向测试会设置独立的临时目录，不向用户的共享 TMPDIR 写入测试状态。`EIDOS_DATA_DIR`、`EIDOS_PROJECTLESS_ROOT` 不控制产物位置。Playwright 的自动输出通过官方环境变量指定目录；已知输出工具的相对文件名也会落入该目录。显式绝对路径和显式 Server 输出配置保持原义。其他服务需要支持 `EIDOS_MCP_OUTPUT_DIR` 或提供自身输出配置。Runtime 不会改写任意 MCP 工具的文件参数，也不会把短 socket 目录改成较深的产物目录。
 
 Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=...`，以及 `Runtime initialized duration_ms=...`。存储阶段是 `storage` 的子阶段，开发者不能把父阶段与子阶段耗时相加。初始化总计时不包含 Python 模块导入、Desktop 构建和 Renderer 首屏请求。启动不执行 Blob 全量清理和仓库库全库扫描；现有受管后台任务会在任务创建至少 60 秒后且 Runtime 空闲时执行仓库库完整性检查、有界空闲页回收和 Blob 清理，之后每小时检查一次。Session 删除和隐私撤销仍保留即时清理。
 
@@ -148,6 +148,8 @@ pnpm build
 `pnpm test:desktop` 和 `pnpm test:main` 会运行完整 Desktop 或 Main 测试层。用户明确要求 Full Suite 或要求执行完整套件命令时，执行者才运行完整层级。普通 Desktop 修改优先运行相关测试文件；没有合适的定向入口时，执行者再运行 Fast。
 
 `pnpm test:composer-layout` 使用真实 Electron、隔离的临时 user-data 和本地 Vite 测试页面。该定向测试检查输入框自动高度和历史记录滚动位置，不启动 Runtime，也不读取真实 Session 数据。测试记录包含代码块和图片，预览上下文随草稿编辑更新。测试覆盖单行输入、全选删除、等高编辑、多行删除、组合输入事件、窄窗口换行、窗口宽度变化和输入框内部滚动。该入口不属于完整测试套件。
+
+`node_modules/.bin/electron scripts/test-queued-messages.cjs` 使用真实 Electron 和隔离页面检查输入框上方的消息队列。该定向测试覆盖 1100px、600px、420px 下的对齐、长消息、队列内部滚动、编辑、删除和主草稿保留，不读取真实 Session。`EIDOS_QUEUE_SCREENSHOT_DIR` 可以指定截图目录。Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_queued_runs.py`；Main → Runtime 验证在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-queued-runs.test.js`。这项跨进程测试使用临时工作区和测试模型，原生环境需要可用的 Seatbelt，测试不会放行等待中的网络 Shell。
 
 `pnpm test:sidebar-pinning` 使用真实 Electron、隔离的临时 user-data 和生产侧栏组件。该定向测试检查项目右键置顶、Session 的 Shift+F10 置顶、混合显示、无 Run 分叉的即时显示和悬停图标、分叉气泡的来源名称与点击跳转、取消置顶、唯一高亮、状态图标、项目浏览时的滚动位置，以及 1100px 和 420px 窗口中的菜单边界。测试页沿用禁止 JavaScript eval 的 CSP。该页面使用测试 API，不启动 Runtime，也不读取真实 Project 或 Session。Main → Runtime 持久化验证使用 `pnpm build:main` 后的 `node --test dist/main/runtime-client-sidebar.test.js`。开发者可以通过 `EIDOS_SIDEBAR_SCREENSHOT` 指定置顶截图输出路径，也可以通过 `EIDOS_FORK_HOVER_SCREENSHOT` 指定分叉来源气泡截图路径。这两个入口不属于完整测试套件。
 

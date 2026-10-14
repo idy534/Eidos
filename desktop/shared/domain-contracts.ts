@@ -685,6 +685,7 @@ export interface ExtensionSnapshot {
 
 export type RuntimeNotification =
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
+  | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }
   | { method: "workspace/changed"; params: { sessionId: string; paths: string[] } }
   | { method: "session/titleUpdated"; params: { sessionId: string; title: string } }
   | { method: "run/started"; params: { sessionId: string; run: Run } }

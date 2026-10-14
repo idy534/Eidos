@@ -52,18 +52,20 @@ def test_home_is_shared_by_service_while_run_files_and_legacy_home_stay_separate
     legacy_home = first.path / "h"
     legacy_home.mkdir()
     (legacy_home / "config").write_text("legacy state")
-    home = first.environment_path("h")
+    home = first.home_path()
     assert home == first.path.parent / "h"
     assert list(home.iterdir()) == []
     (home / "config").write_text("service state")
-    assert second.environment_path("h") == home
-    assert (second.environment_path("h") / "config").read_text() == "service state"
-    assert first.environment_path("t") != second.environment_path("t")
+    assert second.home_path() == home
+    assert (second.home_path() / "config").read_text() == "service state"
+    assert first.path != second.path
+    assert not (first.path / "t").exists()
+    assert not (second.path / "t").exists()
     assert (legacy_home / "config").read_text() == "legacy state"
     for plugin, server in (("plugin", "browser"), ("manual", "other")):
         other = McpOutputDirectory.create(plugin, server, str(uuid4()))
-        assert other.environment_path("h") != home
-        assert list(other.environment_path("h").iterdir()) == []
+        assert other.home_path() != home
+        assert list(other.home_path().iterdir()) == []
 
 
 def test_output_root_rejects_symlink_and_replaced_run_directory(tmp_path: Path) -> None:
@@ -82,22 +84,20 @@ def test_output_root_rejects_symlink_and_replaced_run_directory(tmp_path: Path) 
         directory.verify()
 
 
-@pytest.mark.parametrize("leaf", ["h", "t"])
-def test_environment_directory_is_private_reusable_and_rejects_symlinks(tmp_path: Path, leaf: str) -> None:
+def test_home_directory_is_private_reusable_and_rejects_symlinks(tmp_path: Path) -> None:
     directory = McpOutputDirectory.create("manual", "browser", str(uuid4()))
-    path = directory.environment_path(leaf)
-    parent = directory.path.parent if leaf == "h" else directory.path
-    assert path == parent / leaf
+    path = directory.home_path()
+    assert path == directory.path.parent / "h"
     assert path.stat().st_mode & 0o777 == 0o700
     (path / "keep").write_text("run data")
-    assert directory.environment_path(leaf) == path
+    assert directory.home_path() == path
     assert (path / "keep").read_text() == "run data"
-    path.rename(directory.path / f"{leaf}-original")
+    path.rename(directory.path / "home-original")
     outside = tmp_path / "outside-environment"
     outside.mkdir()
     path.symlink_to(outside, target_is_directory=True)
     with pytest.raises((OSError, ValueError)):
-        directory.environment_path(leaf)
+        directory.home_path()
     assert list(outside.iterdir()) == []
 
 
@@ -153,7 +153,7 @@ def test_current_run_outputs_are_readable_but_neighbor_runs_are_not(tmp_path: Pa
     neighbor_image = neighbor.path / "screen.png"
     Image.new("RGB", (1, 1)).save(current_image)
     Image.new("RGB", (1, 1)).save(neighbor_image)
-    home = current.environment_path("h")
+    home = current.home_path()
     home_image = home / "private.png"
     Image.new("RGB", (1, 1)).save(home_image)
     authority = ViewImageRootAuthority(workspace, mcp_output_roots=(current.path,))

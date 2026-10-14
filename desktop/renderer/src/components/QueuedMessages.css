@@ -1,0 +1,51 @@
+.queued-messages {
+  flex: none;
+  width: min(calc(100% - 3.5rem), var(--session-content-width));
+  max-height: min(16rem, 30vh);
+  margin: 0 auto -0.75rem;
+  padding: 0 0 0.75rem;
+  list-style: none;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 1rem 1rem 0 0;
+  background: var(--surface);
+}
+
+.queued-message + .queued-message { border-top: 1px solid var(--line); }
+.queued-messages:has(.queued-message-editor) { max-height: min(26rem, 45vh); }
+.queued-message-row { display: flex; align-items: center; gap: 0.625rem; min-height: 2.75rem; padding: 0.25rem 0.875rem; }
+.queued-message-row svg { width: 1rem; height: 1rem; flex: none; }
+.queued-message-position { display: flex; flex: none; color: var(--muted); }
+.queued-message-preview {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+}
+.queued-message-actions { display: flex; flex: none; gap: 0.375rem; }
+.queued-message-actions button { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.375rem; border: 0; background: transparent; color: var(--muted); font-size: var(--font-size-caption); white-space: nowrap; }
+.queued-message-actions button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.queued-message-editor { padding: 0 0.875rem 0.75rem 2.5rem; }
+.queued-message-editor textarea { field-sizing: content; width: 100%; min-height: 3.5rem; max-height: 8rem; resize: none; font-size: var(--font-size-body); line-height: var(--line-height-body); }
+.queued-message-editor-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem; }
+.queued-message-more { padding: 0.5rem 0.875rem; }
+.queued-message-references, .queued-message-error { margin: 0.375rem 0 0; font-size: var(--font-size-caption); overflow-wrap: anywhere; }
+.queued-message-references { color: var(--muted); }
+.queued-message-error { padding: 0 0.875rem 0.75rem; color: var(--danger); }
+
+@media (max-width: 760px) {
+  .queued-messages { width: calc(100% - 2rem); }
+}
+@media (max-width: 520px) {
+  .queued-message-actions span { display: none; }
+}

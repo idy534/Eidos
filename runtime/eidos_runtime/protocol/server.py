@@ -33,6 +33,9 @@ from eidos_runtime.application.extensions import (
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.sidebar import SidebarApplication
+from eidos_runtime.application.queued_runs import QueuedRunApplication
+from eidos_runtime.persistence.queued_runs import QueuedRunRepository
+from eidos_runtime.protocol import queued_runs as queued_run_dtos
 from eidos_runtime.persistence.sidebar import SidebarRepository
 from eidos_runtime.protocol import sidebar as sidebar_dtos
 from eidos_runtime.application.runs import RunApplication, RunStartOutcome
@@ -549,6 +552,7 @@ class _DeferredSessionForkAdapter:
 
 @dataclass(frozen=True)
 class _RuntimeApplications:
+    queued_runs: QueuedRunApplication
     sidebar: SidebarApplication
     projects: ProjectApplication
     sessions: SessionApplication
@@ -813,6 +817,24 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            (
+                "run/listQueued",
+                queued_run_dtos.QueuedRunListRequest,
+                queued_run_dtos.QueuedRunListResponse,
+                lambda _id, request: self._applications_or_error().queued_runs.list(request),
+            ),
+            (
+                "run/updateQueued",
+                queued_run_dtos.QueuedRunUpdateRequest,
+                queued_run_dtos.QueuedRunChangeResponse,
+                lambda _id, request: self._applications_or_error().queued_runs.update(request),
+            ),
+            (
+                "run/deleteQueued",
+                queued_run_dtos.QueuedRunDeleteRequest,
+                queued_run_dtos.QueuedRunChangeResponse,
+                lambda _id, request: self._applications_or_error().queued_runs.delete(request),
+            ),
             (
                 "sidebar/listPins",
                 sidebar_dtos.SidebarListPinsRequest,
@@ -1349,6 +1371,8 @@ class RuntimeServer:
             ),
         )
         draining_blocked = {
+            "run/updateQueued",
+            "run/deleteQueued",
             "sidebar/setPinned",
             "run/start",
             "input/prepare",
@@ -1524,6 +1548,10 @@ class RuntimeServer:
             repository_runtime=self.repository_runtime,
         )
         return _RuntimeApplications(
+            queued_runs=QueuedRunApplication(
+                QueuedRunRepository(self.store.database), self.supervisor.events,
+                self._scan_text, self._discard_model_config,
+            ),
             sidebar=SidebarApplication(SidebarRepository(self.store.database), self.supervisor.events),
             projects=ProjectApplication(
                 self.worktree_manager.repository,

@@ -28,6 +28,7 @@ import { ProjectPicker } from "../components/ProjectPicker.js";
 import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
 import { ComposerSlot } from "../components/ComposerSlot.js";
 import { Composer } from "../components/Composer.js";
+import { QueuedMessages } from "../components/QueuedMessages.js";
 import { TextReviewPanel } from "../components/TextReviewPanel.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
 import { GitWorkflowControls } from "../components/GitWorkflowControls.js";
@@ -56,7 +57,7 @@ import { useContextUsageController } from "./useContextUsageController.js";
 import { resolveSessionRun } from "./session-model-resolver.js";
 import { useExtensionController } from "./useExtensionController.js";
 import { useGitReviewController } from "./useGitReviewController.js";
-import { applyNotification, userFacingError } from "../session-state.js";
+import { applyNotification, applyQueuedRunChange, isQueuedMessage, userFacingError } from "../session-state.js";
 import { IPC } from "../../../shared/ipc-channels.js";
 import { NavigationControls } from "../components/NavigationControls.js";
 import { useNavigationHistory } from "./useNavigationHistory.js";
@@ -452,6 +453,8 @@ export function AppShell({ runtime }: AppShellProps) {
       gitReviewActions.handleNotification(notification);
       if (notification.method === "sidebar/pinsChanged") {
         sidebarPins.handleChanged(notification.params.eventId);
+      } else if (notification.method === "run/queueChanged") {
+        void sessionActions.refreshCompletedSession(notification.params.change.sessionId);
       } else if (notification.method === "session/titleUpdated") {
         sessionActions.handleTitleNotification(notification.params);
       } else if (
@@ -1543,10 +1546,10 @@ export function AppShell({ runtime }: AppShellProps) {
                 )}
                 <ExecutionFeed
                   key={currentSnapshot.session.id}
-                  items={currentSnapshot.items}
+                  items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
                   projectless={currentSnapshot.session.projectless === true}
-                  runs={currentSnapshot.runs}
+                  runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
                   models={feedModels}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
                   responseActionState={responseActionState.responseState}
@@ -1575,6 +1578,16 @@ export function AppShell({ runtime }: AppShellProps) {
                   onOpenSubagent={handleOpenSubagent}
                 />
 
+                {!isDraft && <QueuedMessages
+                  key={`queue-${currentSnapshot.session.id}`}
+                  sessionId={currentSnapshot.session.id}
+                  ready={isStorageReady && runtimeStatus.state === "ready"}
+                  onChanged={(change) => {
+                    sessionActions.setSnapshot((previous) => applyQueuedRunChange(previous, change));
+                    void sessionActions.refreshCompletedSession(change.sessionId);
+                  }}
+                  onRefresh={() => void sessionActions.refreshCompletedSession(currentSnapshot.session.id)}
+                />}
                 <ComposerSlot
                   run={activeRun}
                   approval={approvals.find((a) => a.runId === activeRun?.id)}

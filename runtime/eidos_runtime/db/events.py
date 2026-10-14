@@ -19,6 +19,7 @@ from eidos_runtime.runtime.state_machine import EventType, RunStatus
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.domain.completion import CompletionCheckRecord
 from eidos_runtime.domain.run_termination import RunTermination
+from eidos_runtime.domain.queued_runs import QueuedRunChange
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -60,6 +61,10 @@ class SessionHandoffCompletedPayload(ClosedModel):
 
 class RunCreatedPayload(ClosedModel):
     run: RunDto
+
+
+class RunQueueChangedPayload(ClosedModel):
+    change: QueuedRunChange
 
 
 class RunStatusChangedPayload(ClosedModel):
@@ -166,6 +171,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SESSION_TITLE_GENERATION_FAILED: SessionTitleGenerationFailedPayload,
     EventType.SESSION_HANDOFF_COMPLETED: SessionHandoffCompletedPayload,
     EventType.RUN_CREATED: RunCreatedPayload,
+    EventType.RUN_QUEUE_CHANGED: RunQueueChangedPayload,
     EventType.RUN_UPDATED: RunUpdatedPayload,
     EventType.RUN_STATUS_CHANGED: RunStatusChangedPayload,
     EventType.SEGMENT_CREATED: EntityStatusChangedPayload,

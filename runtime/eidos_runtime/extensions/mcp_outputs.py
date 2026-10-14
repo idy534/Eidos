@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
-from typing import Literal
 from uuid import UUID
 
 from eidos_runtime.db.database import WorkspaceIdentity
@@ -58,14 +57,10 @@ class McpOutputDirectory:
     def verify(self) -> None:
         ProjectlessDirectoryAllocator().verify(self.identity)
 
-    def environment_path(self, leaf: Literal["h", "t"]) -> Path:
+    def home_path(self) -> Path:
         self.verify()
-        if leaf not in {"h", "t"}:
-            raise ValueError("invalid_mcp_environment_directory")
-        # Configuration, credentials and caches outlive a Run. Temporary files
-        # remain inside the Run so another Run cannot overwrite them by default.
-        parent = self.path.parent if leaf == "h" else self.path
-        directory = self._create_or_open(parent / leaf)
+        # Configuration, credentials and caches outlive a Run.
+        directory = self._create_or_open(self.path.parent / "h")
         self.verify()
         return directory.path
 

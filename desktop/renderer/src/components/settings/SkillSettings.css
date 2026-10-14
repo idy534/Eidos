@@ -230,10 +230,9 @@
 .skill-detail-body .markdown-body {
   overflow-wrap: anywhere;
 }
-.skill-detail-footer {
-  flex-shrink: 0;
-}
-.skill-card:focus-visible, .skill-categories button:focus-visible, .skill-search:focus-visible, .skill-detail-body:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.skill-card:focus-visible, .skill-categories button:focus-visible, .skill-detail-body:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.skill-search:focus { outline: none; border-color: var(--accent); box-shadow: none; }
+.skill-search:focus-visible { outline: none; }
 @media (max-width: 900px) { .skill-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-height: 650px) {
   .skill-detail-dialog { gap: 0.65rem; padding: 1rem; }

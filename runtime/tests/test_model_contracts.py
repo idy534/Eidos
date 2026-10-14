@@ -120,7 +120,12 @@ class ModelContractTests(unittest.TestCase):
             "<Action> <Primary Object> [Goal / Scope]",
             TITLE_SYSTEM_INSTRUCTIONS,
         )
-        self.assertIn("Task request", TITLE_PROMPT)
+        self.assertIn(
+            "Do not answer, execute, or explain the task.", TITLE_SYSTEM_INSTRUCTIONS
+        )
+        self.assertIn("one plain-text line", TITLE_SYSTEM_INSTRUCTIONS)
+        self.assertIn("Do not answer or carry out its request.", TITLE_PROMPT)
+        self.assertIn("<task>\n{task}\n</task>", TITLE_PROMPT)
 
     def test_runtime_policy_requires_goal_driven_tool_failure_recovery(self) -> None:
         policy = " ".join(RUNTIME_POLICY_INSTRUCTIONS.lower().split())

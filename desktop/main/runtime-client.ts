@@ -6,6 +6,8 @@ import { isRunTermination } from "../shared/run-termination.js";
 import type { CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
+import { isQueuedRunChangeResponse, isQueuedRunListResponse } from "../shared/queued-runs.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import { isInputReference, isInputDraft, isInputPreview, isInputAssetChunk, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference, type InputAssetChunk } from "../shared/input-context.js";
@@ -26,6 +28,8 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "INVALID_CURSOR",
   "INVALID_EVENT_CURSOR",
   "RUN_ALREADY_ACTIVE",
+  "QUEUED_RUN_ALREADY_STARTED",
+  "QUEUED_RUN_INPUT_CONFLICT",
   "RESOURCE_NOT_FOUND",
   "SIDEBAR_PIN_LIMIT_REACHED",
   "SIDEBAR_PERSISTENCE_FAILED",
@@ -896,6 +900,17 @@ export class RuntimeClient {
     return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
   }
 
+  updateQueuedRun(request: QueuedRunUpdateRequest): Promise<QueuedRunChangeResponse> {
+    return this.validatedRequest("run/updateQueued", { ...request, operationId: request.operationId ?? randomUUID() }, isQueuedRunChangeResponse);
+  }
+  listQueuedRuns(request: QueuedRunListRequest): Promise<QueuedRunListResponse> {
+    return this.validatedRequest("run/listQueued", { ...request }, isQueuedRunListResponse);
+  }
+
+  deleteQueuedRun(request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse> {
+    return this.validatedRequest("run/deleteQueued", { ...request, operationId: request.operationId ?? randomUUID() }, isQueuedRunChangeResponse);
+  }
+
   async readContextUsage(runId: string): Promise<ContextUsage | null> {
     const result = await this.validatedRequest(
       "context/usage",
@@ -1276,6 +1291,9 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "run/queueChanged") {
+    return isQueuedRunChangeResponse(params);
+  }
   if (value.method === "sidebar/pinsChanged") {
     return hasOnlyKeys(params, ["eventId"])
       && Number.isSafeInteger(params.eventId) && Number(params.eventId) > 0;

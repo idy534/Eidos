@@ -239,6 +239,9 @@ export function applyNotification(
   snapshot: SessionSnapshot | undefined,
   notification: RuntimeNotification,
 ): SessionSnapshot | undefined {
+  if (notification.method === "run/queueChanged") {
+    return applyQueuedRunChange(snapshot, notification.params.change);
+  }
   if (!snapshot || !("sessionId" in notification.params) || notification.params.sessionId !== snapshot.session.id) {
     return snapshot;
   }
@@ -301,6 +304,33 @@ export function applyNotification(
   return { ...snapshot, items: upsertItem(snapshot.items, merged) };
 }
 
+export function isQueuedMessage(run: Run): boolean {
+  return run.status === "queued" && run.startedAt === undefined && !run.inherited;
+}
+
+export function applyQueuedRunChange(
+  snapshot: SessionSnapshot | undefined,
+  change: import("../../shared/queued-runs.js").QueuedRunChange,
+): SessionSnapshot | undefined {
+  if (!snapshot || snapshot.session.id !== change.sessionId) return snapshot;
+  if (change.kind === "deleted") {
+    return {
+      ...snapshot,
+      runs: snapshot.runs.filter((run) => run.id !== change.runId),
+      items: snapshot.items.filter((item) => item.runId !== change.runId),
+    };
+  }
+  const run = snapshot.runs.find((run) => run.id === change.runId);
+  if (!run || !isQueuedMessage(run) || run.updatedAt > change.updatedAt) return snapshot;
+  return {
+    ...snapshot,
+    runs: snapshot.runs.map((run) => run.id === change.runId && isQueuedMessage(run) && run.updatedAt <= change.updatedAt
+      ? { ...run, userInput: change.userInput, updatedAt: change.updatedAt } : run),
+    items: snapshot.items.map((item) => item.runId === change.runId && item.kind === "user_message"
+      ? { ...item, content: change.userInput } : item),
+  };
+}
+
 export type RunStatusTone = "success" | "error" | "neutral" | "warning";
 
 const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
@@ -312,6 +342,8 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   RUN_ALREADY_ACTIVE: "当前已有一个 Run 正在执行，请先等待完成或取消。",
   RESOURCE_NOT_FOUND: "请求的 Session、Project 或 Run 已不存在，请刷新后重试。",
   INVALID_STATE: "当前状态不允许执行这个操作，请刷新后重试。",
+  QUEUED_RUN_ALREADY_STARTED: "这条消息已开始执行，无法继续编辑或删除。",
+  QUEUED_RUN_INPUT_CONFLICT: "这条排队消息已被修改，请重新打开后编辑。",
   APPROVAL_NO_LONGER_PENDING: "这个审批已经失效，无需再次处理。",
   WORKSPACE_BOUNDARY_VIOLATION: "所选路径超出 Workspace 安全边界，操作已拒绝。",
   SANDBOX_UNAVAILABLE: "Shell 沙箱当前不可用，命令未执行。",

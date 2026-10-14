@@ -255,8 +255,10 @@ function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }
         <div className="modal-body model-dialog-fields">
           <label>
             <span>提供商</span>
-            <div className="model-provider-control">
-              <ProviderLogo provider={draft.provider} className="model-provider-control__logo" />
+            <div className="model-select-control model-select-control--with-prefix model-provider-control">
+              <span className="model-select-control__prefix" aria-hidden="true">
+                <ProviderLogo provider={draft.provider} className="model-provider-control__logo" />
+              </span>
               <select
                 ref={providerSelectRef}
                 aria-label="提供商"
@@ -269,6 +271,11 @@ function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }
               >
                 {presets.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
+              <span className="model-select-control__chevron" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </span>
             </div>
           </label>
           <label>
@@ -285,14 +292,21 @@ function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }
           </label>
           <label>
             <span>模型名称</span>
-            <select
-              aria-label="模型名称"
-              value={draft.modelId}
-              disabled={busy}
-              onChange={(event) => onChange({ ...draft, modelId: event.target.value })}
-            >
-              {provider?.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-            </select>
+            <div className="model-select-control">
+              <select
+                aria-label="模型名称"
+                value={draft.modelId}
+                disabled={busy}
+                onChange={(event) => onChange({ ...draft, modelId: event.target.value })}
+              >
+                {provider?.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+              </select>
+              <span className="model-select-control__chevron" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </span>
+            </div>
           </label>
           {error && <p className="setting-field-error" role="alert">{error}</p>}
         </div>

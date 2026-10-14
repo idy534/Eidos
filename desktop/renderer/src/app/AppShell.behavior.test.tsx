@@ -3,11 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Item, Run, SessionSnapshot } from "../contracts.js";
 import { deriveRuntimePresentation } from "../session-state.js";
 import { AppShell } from "./AppShell.js";
+import { isQueuedRunListRequest } from "../../../shared/queued-runs.js";
 
-const fixture = vi.hoisted(() => ({ snapshot: undefined as SessionSnapshot | undefined, forkSession: vi.fn() }));
+const fixture = vi.hoisted(() => ({ snapshot: undefined as SessionSnapshot | undefined, draft: undefined as SessionSnapshot | undefined, forkSession: vi.fn() }));
 vi.mock("./useSessionController.js", () => ({
   useSessionController: () => [{
-    snapshot: fixture.snapshot, projects: [], sessions: [], pending: {},
+    snapshot: fixture.snapshot, draft: fixture.draft, projects: [], sessions: [], pending: {},
   }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession }],
 }));
 vi.mock("./useRunController.js", () => ({
@@ -114,6 +115,7 @@ describe("AppShell text change review", () => {
 });
 
 beforeEach(() => {
+  fixture.draft = undefined;
   fixture.forkSession.mockReset().mockImplementation(async () => fixture.snapshot);
   fixture.snapshot = {
     session: {
@@ -126,6 +128,7 @@ beforeEach(() => {
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
   window.eidosRuntime = {
     onNotification: vi.fn(() => () => undefined),
+    listSidebarPins: vi.fn(async () => ({ items: [], throughEventId: 0 })),
     listWorkspaceDirectory: vi.fn(async () => ({ path: ".", entries: [], truncated: false })),
     readWorkspaceFilePreview: vi.fn(async (_sessionId: string, path: string) => ({
       path, kind: "text", sizeBytes: 30, truncated: false,
@@ -134,16 +137,61 @@ beforeEach(() => {
   } as unknown as typeof window.eidosRuntime;
 });
 
-function renderShell() {
+function shell() {
   const status = {
     state: "ready", protocolVersion: 1, runtimeVersion: "test",
     runShell: true, modelConfigured: false, storageHealth: { state: "ready" },
   } as const;
-  return render(<AppShell runtime={{
+  return <AppShell runtime={{
     status, presentation: deriveRuntimePresentation(status), isStorageReady: true,
     restarting: false, restartRuntime: vi.fn(),
-  }} />);
+  }} />;
 }
+
+function renderShell() { return render(shell()); }
+
+describe("AppShell queued messages in draft Sessions", () => {
+  it.each(["projectless", "project"] as const)("reads the %s queue only after the draft becomes a persisted Session", async (kind) => {
+    const persisted = fixture.snapshot!;
+    persisted.session.id = "00000000-0000-0000-0000-000000000001";
+    const draft = { ...persisted, session: { ...persisted.session, id: "draft-00000000-0000-0000-0000-000000000002" } };
+    if (kind === "projectless") {
+      delete draft.session.project;
+      draft.session.projectless = true;
+    }
+    fixture.snapshot = undefined;
+    fixture.draft = draft;
+    const listQueuedRuns = vi.fn(async (request: Parameters<typeof window.eidosRuntime.listQueuedRuns>[0]) => {
+      if (!isQueuedRunListRequest(request)) throw new Error("排队消息参数无效。");
+      return { items: [{ sessionId: persisted.session.id, runId: "queued-follow-up", userInput: "下一轮消息", references: [] }] };
+    });
+    window.eidosRuntime.listQueuedRuns = listQueuedRuns;
+    const view = renderShell();
+    // Flush mount effects and rejected IPC promises before inspecting the draft UI.
+    await act(async () => {});
+    expect(listQueuedRuns).not.toHaveBeenCalled();
+    expect(screen.queryByRole("list", { name: "待发送消息" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // First send materializes a real Session; its queue must then become available.
+    fixture.snapshot = persisted;
+    fixture.draft = undefined;
+    view.rerender(shell());
+    await screen.findByRole("list", { name: "待发送消息" });
+    expect(listQueuedRuns).toHaveBeenCalledWith({ sessionId: persisted.session.id });
+    expect(listQueuedRuns).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Starting another draft must unmount the previous Session's queue.
+    fixture.snapshot = undefined;
+    fixture.draft = draft;
+    view.rerender(shell());
+    await act(async () => {});
+    expect(listQueuedRuns).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("list", { name: "待发送消息" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
 
 describe("AppShell conversation fork targets", () => {
   function selectedAnswer() {

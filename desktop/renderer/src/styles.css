@@ -19,6 +19,7 @@
 @import "./components/MermaidBlock.css";
 @import "./components/ApprovalComposer.css";
 @import "./components/Composer.css";
+@import "./components/QueuedMessages.css";
 @import "./components/InputContext.css";
 @import "./components/InputPicker.css";
 @import "./components/WorkspaceDock.css";

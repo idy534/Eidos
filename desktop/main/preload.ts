@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/index.js";
 import type { EidosRuntimeAPI, Unsubscribe } from "../shared/ipc-api.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type {
   RuntimeStatus,
   RuntimeHealth,
@@ -153,6 +154,12 @@ const api: EidosRuntimeAPI = {
 
   // Sessions
   listSidebarPins: (): Promise<SidebarPinsResponse> => ipcRenderer.invoke(IPC.SIDEBAR_LIST_PINS),
+  updateQueuedRun: (request: QueuedRunUpdateRequest): Promise<QueuedRunChangeResponse> =>
+    ipcRenderer.invoke(IPC.RUN_UPDATE_QUEUED, request),
+  listQueuedRuns: (request: QueuedRunListRequest): Promise<QueuedRunListResponse> =>
+    ipcRenderer.invoke(IPC.RUN_LIST_QUEUED, request),
+  deleteQueuedRun: (request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse> =>
+    ipcRenderer.invoke(IPC.RUN_DELETE_QUEUED, request),
   setSidebarPinned: (request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse> =>
     ipcRenderer.invoke(IPC.SIDEBAR_SET_PINNED, request),
   createProject: (name: string | undefined, workspaceRoot: string): Promise<Project> =>

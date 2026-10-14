@@ -98,6 +98,9 @@ export const IPC = {
   PLAN_OPEN: "plan:open",
   RUN_START: "run:start",
   RUN_CANCEL: "run:cancel",
+  RUN_UPDATE_QUEUED: "run:update-queued",
+  RUN_LIST_QUEUED: "run:list-queued",
+  RUN_DELETE_QUEUED: "run:delete-queued",
   RUN_REVISE: "run:revise",
   CONTEXT_USAGE: "context:usage",
 

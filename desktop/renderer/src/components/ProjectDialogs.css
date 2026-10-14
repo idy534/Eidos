@@ -45,10 +45,18 @@
   align-items: center;
   gap: 0.6rem;
   min-height: 2.75rem;
-  border: 1.5px solid #2c91ff;
-  border-radius: 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 0 0.8rem;
-  box-shadow: 0 0 0 1px rgba(44, 145, 255, 0.08);
+  background: var(--surface-raised);
+  box-sizing: border-box;
+  transition: border-color 140ms ease;
+}
+
+.create-project-name-field:focus-within {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: none;
 }
 
 .create-project-icon { width: 1.1rem; height: 1.1rem; flex: none; color: var(--text); }
@@ -73,28 +81,42 @@
 .create-project-folder-button {
   display: flex;
   width: 100%;
-  min-height: 5rem;
+  min-height: 4.8rem;
   align-items: center;
   justify-content: center;
   gap: 0.6rem;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 0.65rem;
+  border-radius: var(--radius);
   padding: 0.75rem;
   color: var(--text);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--surface-raised);
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-.create-project-folder-button:hover:not(:disabled) { background: var(--surface-muted); border-color: var(--accent); }
+.create-project-folder-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: rgba(49, 95, 74, 0.45);
+}
 
-.create-project-folder-button--selected {
+.create-project-folder-button--selected,
+.create-project-folder-button--selected:hover:not(:disabled) {
   justify-content: flex-start;
   min-height: 2.75rem;
   color: var(--accent);
+  border-color: var(--accent);
   background: var(--surface-selected);
+  outline: none;
+  box-shadow: none;
+}
+
+.create-project-folder-button:focus-visible {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .create-project-folder-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -412,7 +434,7 @@
 .handoff-branch-select-wrap select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-glow);
+  box-shadow: none;
 }
 
 .handoff-select-chevron {
@@ -499,14 +521,23 @@
   padding: 0.8rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--surface-raised);
   cursor: pointer;
+  box-sizing: border-box;
   transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-.create-session-mode-card.selected {
+.create-session-mode-card:hover:not(.disabled) {
+  border-color: rgba(49, 95, 74, 0.45);
+  background: var(--surface-hover);
+}
+
+.create-session-mode-card.selected,
+.create-session-mode-card.selected:hover:not(.disabled) {
   border-color: var(--accent);
   background: var(--surface-selected);
+  outline: none;
+  box-shadow: none;
 }
 
 .create-session-mode-card.disabled {
@@ -514,9 +545,17 @@
   opacity: 0.55;
 }
 
+.create-session-mode-card:focus-within {
+  outline: none;
+}
+
 .create-session-mode-card input {
   margin-top: 0.15rem;
   accent-color: var(--accent);
+}
+
+.create-session-mode-card input:focus-visible {
+  outline: none;
 }
 
 .create-session-mode-card span {

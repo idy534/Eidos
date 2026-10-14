@@ -248,7 +248,7 @@ class PydanticAIModelClient:
 
     def generate_title(self, user_input: str, cancel: threading.Event) -> str:
         return self.complete(
-            ({"type": "user", "content": TITLE_PROMPT + user_input},),
+            ({"type": "user", "content": TITLE_PROMPT.format(task=user_input)},),
             cancel,
             lambda _delta: None,
             instructions=TITLE_SYSTEM_INSTRUCTIONS,

@@ -10,6 +10,7 @@ from pathlib import Path
 import signal
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -490,6 +491,9 @@ class McpConnection:
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
         }
+        inherited_tmp = os.environ.get("TMPDIR")
+        if inherited_tmp is not None:
+            environment["TMPDIR"] = inherited_tmp
         for name in self.config.env_names:
             value = os.environ.get(name)
             if value is not None:
@@ -497,15 +501,24 @@ class McpConnection:
         environment.update(self.env_values)
         try:
             self.output_directory.verify()
-            for name, leaf in (("HOME", "h"), ("TMPDIR", "t")):
-                if not environment.get(name):
-                    environment[name] = str(self.output_directory.environment_path(leaf))
+            if not environment.get("HOME"):
+                environment["HOME"] = str(self.output_directory.home_path())
         except (OSError, ValueError):
             self.error_code = "mcp_output_directory_unavailable"
             raise McpUnavailable(self.error_code) from None
         environment["EIDOS_MCP_OUTPUT_DIR"] = str(self.output_directory.path)
-        # General files live under the Run directory. AF_UNIX sockets need a
-        # separate short path even when that directory has a readable name.
+        try:
+            if not environment.get("TMPDIR"):
+                environment["TMPDIR"] = tempfile.gettempdir()
+            temporary_path = Path(environment["TMPDIR"])
+            if not temporary_path.is_absolute():
+                temporary_path = self.plugin_root / temporary_path
+            sandbox_tmp = temporary_path.resolve(strict=False)
+        except (OSError, ValueError):
+            self.error_code = "mcp_temporary_directory_unavailable"
+            raise McpUnavailable(self.error_code) from None
+        # Inherited TMPDIR is shared and never owned or cleaned by a connection.
+        # AF_UNIX sockets still need a separate, bounded path.
         try:
             self._socket_directory = McpSocketDirectory.create()
         except OSError:
@@ -532,7 +545,7 @@ class McpConnection:
                 f"-DPLUGIN_ROOT={self.plugin_root}",
                 f"-DWORKSPACE_ROOT={self.workspace_root}",
                 f"-DSANDBOX_HOME={environment['HOME']}",
-                f"-DSANDBOX_TMP={environment['TMPDIR']}",
+                f"-DSANDBOX_TMP={sandbox_tmp}",
                 f"-DMCP_OUTPUT_ROOT={self.output_directory.path}",
                 f"-DMCP_SOCKET_ROOT={socket_root}",
                 *python_runtime_policy_arguments(),

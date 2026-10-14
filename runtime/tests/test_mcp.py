@@ -48,6 +48,11 @@ class McpManagerTests(unittest.TestCase):
         self.workspace.mkdir()
         source.mkdir()
         self.manual_root.mkdir()
+        self.inherited_tmp = (root / "shared-tmp").resolve()
+        self.inherited_tmp.mkdir(mode=0o700)
+        environment_patch = patch.dict(os.environ, {"TMPDIR": str(self.inherited_tmp)})
+        environment_patch.start()
+        self.addCleanup(environment_patch.stop)
         fixture = Path(__file__).parent / "fixtures" / "mcp_fixture.py"
         (source / "server.py").write_bytes(fixture.read_bytes())
         (self.manual_root / "server.py").write_bytes(fixture.read_bytes())
@@ -123,7 +128,7 @@ class McpManagerTests(unittest.TestCase):
         self.assertIsNone(connection._service.deadline)
         self.assertIsNone(async_tasks[0].deadline)
 
-    def test_service_home_and_run_temp_keep_sockets_short(self) -> None:
+    def test_service_home_and_inherited_temp_keep_sockets_short(self) -> None:
         config = self.plugins.manifest("demo").mcp_servers[0]
         connection = self._connection(
             config, runtime_root=self.data / ("很深的数据目录" * 8) / "mcp-runtime"
@@ -137,7 +142,8 @@ class McpManagerTests(unittest.TestCase):
             output = connection.output_directory.path
             socket_root = Path(environment["socketDir"])
             self.assertEqual(home, output.parent / "h")
-            self.assertEqual(temporary, output / "t")
+            self.assertEqual(temporary, self.inherited_tmp)
+            self.assertFalse((output / "t").exists())
             self.assertNotIn(str(self.data), str(output))
             for path in (home, temporary):
                 self.assertEqual(path.stat().st_mode & 0o777, 0o700)
@@ -169,14 +175,17 @@ class McpManagerTests(unittest.TestCase):
             "executable": "npx", "argv": ["-y", "@playwright/mcp@latest"],
         })
         deep_root = self.data.resolve() / ("较深的产物目录" * 8) / "eidos-mcp"
+        inherited_tmp = deep_root / "shared-tmp"
+        inherited_tmp.mkdir(parents=True)
         with patch.dict(os.environ, {"EIDOS_MCP_OUTPUT_ROOT": str(deep_root)}):
             connection = self._connection(config)
         try:
-            parameters = connection._prepare_parameters()
+            with patch.dict(os.environ, {"TMPDIR": str(inherited_tmp)}):
+                parameters = connection._prepare_parameters()
             environment = parameters.env
             assert environment is not None
             self.assertEqual(environment["HOME"], str(connection.output_directory.path.parent / "h"))
-            self.assertEqual(environment["TMPDIR"], str(connection.output_directory.path / "t"))
+            self.assertEqual(environment["TMPDIR"], str(inherited_tmp))
             self.assertGreater(len(os.fsencode(environment["TMPDIR"])), 103)
             self.assertEqual(environment["PWTEST_SOCKETS_DIR"], environment["EIDOS_MCP_SOCKET_DIR"])
             socket = Path(environment["PWTEST_SOCKETS_DIR"]) / "browser" / ("a" * 16 + ".sock")
@@ -206,10 +215,43 @@ class McpManagerTests(unittest.TestCase):
     def test_environment_allocation_failure_is_reported_without_launch(self) -> None:
         connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
         with (
-            patch.object(McpOutputDirectory, "environment_path", side_effect=OSError("private path")),
+            patch.object(McpOutputDirectory, "home_path", side_effect=OSError("private path")),
             patch("eidos_runtime.extensions.mcp.stdio_client") as transport,
         ):
             with self.assertRaisesRegex(McpUnavailable, "^mcp_output_directory_unavailable$"):
+                connection.start()
+        transport.assert_not_called()
+        self.assertIsNone(connection._socket_directory)
+        self._assert_startup_resources_released()
+
+    def test_missing_or_empty_tmpdir_uses_system_default_without_creating_run_temp(self) -> None:
+        for inherited in (None, ""):
+            connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+            try:
+                with (
+                    patch.dict(os.environ),
+                    patch("eidos_runtime.extensions.mcp.tempfile.gettempdir", return_value=str(self.inherited_tmp)),
+                ):
+                    if inherited is None:
+                        os.environ.pop("TMPDIR", None)
+                    else:
+                        os.environ["TMPDIR"] = inherited
+                    environment = connection._prepare_parameters().env
+                assert environment is not None
+                self.assertEqual(environment["TMPDIR"], str(self.inherited_tmp))
+                self.assertFalse((connection.output_directory.path / "t").exists())
+            finally:
+                connection.close()
+            self.assertTrue(self.inherited_tmp.is_dir())
+
+    def test_system_temp_resolution_failure_is_reported_before_launch(self) -> None:
+        connection = self._connection(self.plugins.manifest("demo").mcp_servers[0])
+        with (
+            patch.dict(os.environ, {"TMPDIR": ""}),
+            patch("eidos_runtime.extensions.mcp.tempfile.gettempdir", side_effect=OSError("private path")),
+            patch("eidos_runtime.extensions.mcp.stdio_client") as transport,
+        ):
+            with self.assertRaisesRegex(McpUnavailable, "^mcp_temporary_directory_unavailable$"):
                 connection.start()
         transport.assert_not_called()
         self.assertIsNone(connection._socket_directory)
@@ -245,10 +287,11 @@ class McpManagerTests(unittest.TestCase):
                             if name not in names:
                                 self.assertEqual(
                                     environment[name.lower()],
-                                    str(parent / leaf),
+                                    str(parent / leaf) if name == "HOME" else str(inherited),
                                 )
                             else:
                                 self.assertFalse((parent / leaf).exists())
+                        self.assertFalse((connection.output_directory.path / "t").exists())
                     finally:
                         connection.close()
                     self.assertEqual((configured / "keep").read_text(), "user data")
@@ -296,7 +339,7 @@ class McpManagerTests(unittest.TestCase):
             first.close()
             second.start()
             after = second.call("directory_state", {}, threading.Event())
-            self.assertEqual(json.loads(after["data"]["text"]), {"home": True, "tmpdir": False})
+            self.assertEqual(json.loads(after["data"]["text"]), {"home": True, "tmpdir": True})
             assert second._socket_directory is not None
             self.assertNotEqual(previous, second._socket_directory.path)
             self.assertFalse(previous.exists())
@@ -347,7 +390,7 @@ class McpManagerTests(unittest.TestCase):
             first_state = self.manager.connections[0].call("directory_state", {}, threading.Event())
             second_state = second.connections[0].call("directory_state", {}, threading.Event())
             self.assertEqual(json.loads(first_state["data"]["text"]), {"home": False, "tmpdir": False})
-            self.assertEqual(json.loads(second_state["data"]["text"]), {"home": True, "tmpdir": False})
+            self.assertEqual(json.loads(second_state["data"]["text"]), {"home": True, "tmpdir": True})
             self.assertEqual(
                 sum(
                     resource.kind is RuntimeResourceKind.ASYNC_TASK
@@ -361,7 +404,7 @@ class McpManagerTests(unittest.TestCase):
         finally:
             second.close()
 
-    def test_runtime_kernel_restart_preserves_home_and_uses_fresh_run_temp(self) -> None:
+    def test_runtime_kernel_restart_preserves_home_and_inherited_temp(self) -> None:
         self.manager.start()
         before = self.manager.connections[0].call("directory_state", {}, threading.Event())
         self.assertEqual(json.loads(before["data"]["text"]), {"home": False, "tmpdir": False})
@@ -377,7 +420,7 @@ class McpManagerTests(unittest.TestCase):
         )
         self.manager.start()
         after = self.manager.connections[0].call("directory_state", {}, threading.Event())
-        self.assertEqual(json.loads(after["data"]["text"]), {"home": True, "tmpdir": False})
+        self.assertEqual(json.loads(after["data"]["text"]), {"home": True, "tmpdir": True})
         self.assertNotEqual(previous_outputs, self.manager.output_roots())
 
     def test_startup_timeout_is_closed_and_releases_async_task(self) -> None:

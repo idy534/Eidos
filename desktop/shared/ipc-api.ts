@@ -74,6 +74,7 @@ import type {
 export type Unsubscribe = () => void;
 
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
   backupMemory(): Promise<void>;
@@ -130,6 +131,9 @@ export interface EidosRuntimeAPI {
 
   // Sessions
   listSidebarPins(): Promise<SidebarPinsResponse>;
+  updateQueuedRun(request: QueuedRunUpdateRequest): Promise<QueuedRunChangeResponse>;
+  listQueuedRuns(request: QueuedRunListRequest): Promise<QueuedRunListResponse>;
+  deleteQueuedRun(request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse>;
   setSidebarPinned(request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse>;
   createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
   listProjects(): Promise<ProjectListResult>;
