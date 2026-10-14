@@ -100,7 +100,7 @@ export interface EidosRuntimeAPI {
     version?: string,
     workspaceRoot?: string,
     projectId?: string,
-  ): Promise<string>;
+  ): Promise<string | null>;
   releaseWorkspacePreview(url: string): Promise<void>;
   openBrowser(
     sessionId: string,

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EidosRuntimeAPI, Item, WorkspaceFilePreview } from "../contracts.js";
-import { ArtifactProvider } from "./ArtifactContext.js";
+import { ArtifactImage, ArtifactProvider } from "./ArtifactContext.js";
 import { BrowserPanel, resolveBrowserTarget } from "./BrowserPanel.js";
 import { LastTurnChanges } from "./LastTurnChanges.js";
 import { MarkdownContent } from "./MarkdownContent.js";
@@ -73,6 +73,18 @@ function artifactValue() {
 
 describe("artifact previews and feedback", () => {
   let api: Partial<EidosRuntimeAPI>;
+
+  it("shows an empty preview for a removed file and retries after the file changes", async () => {
+    vi.mocked(api.prepareWorkspacePreview!).mockResolvedValueOnce(null).mockResolvedValueOnce("eidos-preview://restored/image.png");
+    const { unmount } = render(<ArtifactProvider value={artifactValue()}><ArtifactImage path="image.png" alt="Image" /></ArtifactProvider>);
+    expect(await screen.findByText("暂无预览")).toBeInTheDocument();
+    expect(api.releaseWorkspacePreview).not.toHaveBeenCalled();
+    const notify = vi.mocked(api.onNotification!).mock.calls[0]![0];
+    act(() => notify({ method: "workspace/changed", params: { sessionId: "session-a", paths: ["image.png"] } }));
+    expect(await screen.findByRole("img", { name: "Image" })).toHaveAttribute("src", "eidos-preview://restored/image.png");
+    unmount();
+    expect(api.releaseWorkspacePreview).toHaveBeenCalledWith("eidos-preview://restored/image.png");
+  });
 
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", class {

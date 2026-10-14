@@ -137,7 +137,6 @@ export function PdfViewer({
 }: PdfViewerProps) {
   const [dimToolbar, setDimToolbar] = useState(false);
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
-  const [totalPages, setTotalPages] = useState<number>(1);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [loadFailed, setLoadFailed] = useState(false);
   const [containerWidth, setContainerWidth] = useState<number>(860);
@@ -190,14 +189,12 @@ export function PdfViewer({
 
         const task = pdfjsLib.getDocument({
           data: new Uint8Array(buffer),
-          cMapPacked: true,
         });
         loadingTask = task;
         const doc = await task.promise;
         if (cancelled) return;
 
         setPdfDoc(doc);
-        setTotalPages(doc.numPages);
       } catch {
         if (cancelled) return;
         setLoadFailed(true);
@@ -215,6 +212,7 @@ export function PdfViewer({
     };
   }, [url]);
 
+  const totalPages = pdfDoc?.numPages ?? 0;
   const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
   const showPageCount = pdfDoc !== null && totalPages > 1;
 

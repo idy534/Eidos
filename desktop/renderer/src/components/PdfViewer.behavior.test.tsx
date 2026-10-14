@@ -72,6 +72,21 @@ describe("PdfViewer behavior", () => {
     expect(screen.getByRole("button", { name: "在系统「预览」中打开" })).toBeInTheDocument();
   });
 
+  it("uses the new document page count when switching from a multipage PDF to a single page", async () => {
+    const singlePageTask = getDocument();
+    const doc = await singlePageTask.promise;
+    getDocument.mockClear();
+    getDocument.mockReturnValue({ ...singlePageTask, promise: Promise.resolve({ ...doc, numPages: 5 }) });
+    const { container, rerender } = render(<PdfViewer url="eidos-preview://test/pages.pdf" title="pages.pdf" onOpenExternal={vi.fn()} />);
+    expect(await screen.findByText(/第 \d+ \/ 5 页/)).toBeInTheDocument();
+    getDocument.mockReturnValue(singlePageTask);
+    rerender(<PdfViewer url="eidos-preview://test/single.pdf" title="single.pdf" onOpenExternal={vi.fn()} />);
+    await waitFor(() => expect(container.querySelectorAll(".pdf-page-card")).toHaveLength(1));
+    expect(container.querySelector(".pdf-pill-text")).toBeNull();
+    expect(container.querySelector(".pdf-pill-divider")).toBeNull();
+    expect(screen.getByRole("button", { name: "在系统「预览」中打开" })).toBeInTheDocument();
+  });
+
   it("keeps loading and failed previews outside the Chromium embed frame", async () => {
     const onError = vi.fn();
     vi.mocked(fetch).mockRejectedValue(new Error("Unable to read PDF"));

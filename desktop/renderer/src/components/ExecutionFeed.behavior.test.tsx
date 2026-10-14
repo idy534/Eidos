@@ -1147,6 +1147,39 @@ describe("ExecutionFeed regenerate confirmation", () => {
 });
 
 describe("ExecutionFeed view_image tool rendering and lightbox", () => {
+  it.each([
+    { status: "failed" as const, path: "missing.png" },
+    { status: "completed" as const, path: "/tmp/outside.png" },
+  ])("does not request a preview for $status image at $path", async ({ status, path }) => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const prepare = vi.fn().mockResolvedValue("eidos-preview://unexpected");
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { prepareWorkspacePreview: prepare } });
+    const imageItem: Item = {
+      id: "image-item", sessionId: baseRun.sessionId, runId: baseRun.id, ordinal: 1,
+      kind: "tool_call", status: status === "failed" ? "failed" : "completed", createdAt: 1000,
+      toolCall: {
+        id: "image-tool", itemId: "image-item", modelStepIndex: 1, batchOrder: 0,
+        providerCallId: "image-call", toolName: "view_image", status,
+        argumentsJson: JSON.stringify({ path }),
+        resultJson: JSON.stringify({ outcome: status === "failed" ? "error" : "success", code: status === "failed" ? "file_not_found" : "ok", summary: "Image", data: { path, mime: "image/png" } }),
+      },
+    };
+    try {
+      const { container } = render(<ArtifactProvider value={{ sessionId: baseRun.sessionId, executionRoot: "/workspace", openFile: vi.fn(), openBrowser: vi.fn() }}>
+        <ExecutionFeed items={[imageItem]} runs={[baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} />
+      </ArtifactProvider>);
+      const details = container.querySelector("details")!;
+      details.open = true;
+      fireEvent(details, new Event("toggle"));
+      if (status === "completed") expect(await screen.findByText("暂无预览")).toBeInTheDocument();
+      else await waitFor(() => expect(container.querySelector(".tool-image-error")).not.toBeNull());
+      expect(prepare).not.toHaveBeenCalled();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
   it("renders view_image and opens fullscreen preview when thumbnail is clicked", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
     Object.defineProperty(window, "eidosRuntime", {

@@ -1,5 +1,10 @@
 # Eidos 当前限制
 
+## 历史图片预览缺失（2026-10-14）
+
+- Desktop 会把预览文件不存在处理为“暂无预览”，不会恢复被删除的文件。Runtime 仍返回 `WORKSPACE_FILE_NOT_FOUND`，并保留原有 Workspace、权限和版本校验。Desktop 的 `prepareWorkspacePreview` 现在可能返回 `null`；Main 和 Renderer 需要一起更新。
+- 本次 Renderer 定向测试通过 66 项，Main 预览边界测试通过 3 项，Runtime 工作区测试通过 10 项，共享契约测试通过 4 项。Main 和 Renderer 构建及 `git diff --check` 通过。Renderer 构建仍有 Chunk 超过 500 kB 的提示。本次没有执行 Full Suite、真实产品窗口人工验收、Electron smoke、Seatbelt 或打包验证，也没有修改数据库、依赖或锁文件。
+
 ## Session 标题提示词（2026-10-14）
 
 - 标题请求现在把原始任务放在 `<task>` 中。系统和用户提示词都要求模型只命名，不回答或执行任务，并输出一行纯文本标题。提示词仍属于模型指令，不能保证模型永远遵循格式；当前标题清洗和非空结果验收没有变化。已有 Session 标题不会自动重新生成。

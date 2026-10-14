@@ -22,8 +22,6 @@
   justify-content: flex-start;
   gap: 1.5rem;
   background: var(--surface-muted);
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-subtle) transparent;
 }
 
 .pdf-page-card {

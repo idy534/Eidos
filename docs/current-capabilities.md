@@ -400,7 +400,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 有项目的 Session 会收到独立的文件引用提示词。提示词提供文件、行号、行列号的标准 Markdown 格式和示例，要求模型使用当前 execution root 内已经确认的绝对路径，并用尖括号包住链接目标。无项目的 Session 不加入这段提示词。标准示例为 `[app.ts (line 42)](</workspace/My Project/src/app.ts:42>)`；列号示例为 `[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)`。示例路径只说明格式，模型必须替换为实际路径。
 - Conversation 只把显式 Markdown 绝对路径链接作为文件跳转入口。系统从链接目标提取路径和位置，显示标签不参与寻址。裸文件名、行内代码和相对文件链接保持文字。文件链接复用现有图标和蓝色文字样式，不依赖扩展名白名单，也不按文件名搜索或猜测子目录。系统支持 `:line[:column]`，并兼容显式链接中的 `#Lline[Ccolumn]`；行列号从 1 开始。普通文本和代码预览会滚动到目标行，并选中该行或指定列的字符；同一文件再次点击不同位置时会重新定位。带位置的 HTML 链接会打开源码。渲染后的 Markdown 按源文本位置滚动到对应块，文档内相对链接仍按文档所在目录解析。目标行超出当前预览时，系统会显示提示。Renderer、Runtime 自动化测试和构建已通过；完整结果见 `current-limitations.md`。人工 Desktop 验收尚未执行。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
-- PDF 预览使用已打包的 PDF.js 和本地 worker 绘制页面。页面外侧沿用预览区的 `--surface-muted` 底色，不再显示 Chromium 内嵌查看器的黑色外框。加载和失败状态也沿用同一底色，系统「预览」打开入口保留。底部工具栏不显示“PDF 预览”文字；多页文件保留页码，页码和打开按钮始终单行显示。
+- Desktop 会把预览请求中的 `WORKSPACE_FILE_NOT_FOUND` 转成“暂无预览”，不再让该错误触发 Electron IPC handler 异常日志。其他错误仍按原有路径返回。`view_image` 卡片只对成功调用且位于当前 Workspace 内的路径请求预览；历史文件删除后，卡片不会恢复原文件。
+- PDF 预览使用已打包的 PDF.js 和本地 worker 绘制页面。页面外侧沿用预览区的 `--surface-muted` 底色，不再显示 Chromium 内嵌查看器的黑色外框。加载和失败状态也沿用同一底色，系统「预览」打开入口保留。底部工具栏不显示“PDF 预览”文字；多页文件保留页码，页码和打开按钮始终单行显示。总页数直接读取当前 PDF 文档，滚动条复用统一样式。主 Renderer 不再保留 PDF iframe 样式或 iframe 加载许可。
 - `workspace/readAsset` 每次最多读取 192 KiB，总文件上限是 32 MiB。文本资源必须完整通过敏感扫描，文本上限是 2 MiB。Main 通过短期 `eidos-preview` 授权地址提供资源，Runtime 在每次读取时重新核验 Workspace 和文件版本。
 - Review 提供“最近一轮”范围，严格按 `runId` 过滤持久化 ToolCall 文件补丁，空轮保持空，不回退到全量；“整个任务”展示本 Session 全部 Run 的补丁历史。长任务可以分页加载更早记录。文件工具在 Prepare 后提交 `item.updated` Event，并通过 Outbox 推送 `item/updated`。界面不会把准备中的补丁标记为已写入。
 - 最近一轮反馈包含 Run、ToolCall、文件、行位置和已有 Base SHA。

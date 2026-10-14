@@ -21,6 +21,7 @@ import { QuitFlowController, type ActiveRunProjection, type QuitFlowDependencies
 import { shutdownRuntime } from "./runtime-shutdown.js";
 import { resolveWorkspaceFileForOpen } from "./workspace-open.js";
 import { ArtifactPreviewManager } from "./artifact-preview.js";
+import { workspacePreviewUrl } from "./workspace-preview.js";
 import { TerminalManager } from "./terminal-manager.js";
 import type {
   ApprovalMode,
@@ -813,14 +814,14 @@ ipcMain.handle(IPC.WORKSPACE_PREVIEW_URL, (
   if (version !== undefined && (typeof version !== "string" || !/^[a-f0-9]{64}$/.test(version))) throw new Error("文件版本无效。");
   if (workspaceRoot !== undefined && typeof workspaceRoot !== "string") throw new Error("Workspace 参数无效。");
   if (projectId !== undefined && typeof projectId !== "string") throw new Error("Project 参数无效。");
-  return artifactPreview.prepare(
+  return workspacePreviewUrl(() => artifactPreview.prepare(
     previewOwner(event),
     previewString(id),
     previewString(path),
     version as string | undefined,
     typeof workspaceRoot === "string" ? workspaceRoot : undefined,
     typeof projectId === "string" ? projectId : undefined,
-  );
+  ));
 });
 ipcMain.handle(IPC.WORKSPACE_RELEASE_PREVIEW, (event, url: unknown) => artifactPreview.release(previewOwner(event), previewString(url)));
 ipcMain.handle(IPC.BROWSER_OPEN, (

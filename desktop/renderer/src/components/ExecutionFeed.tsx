@@ -1251,8 +1251,10 @@ function ViewImageViewer({
   const size = numberField(data, "size");
   const displayName = rawPath ? pathBasename(rawPath) : "图像";
 
-  const targetPath = (actions?.executionRoot && rawPath && artifactPath(rawPath, actions.executionRoot)) || rawPath;
-  const { url: previewUrl, error: previewError } = usePreviewUrl(targetPath || undefined);
+  const targetPath = actions?.executionRoot && rawPath
+    ? artifactPath(rawPath, actions.executionRoot, undefined, true)
+    : undefined;
+  const { url: previewUrl, error: previewError } = usePreviewUrl(isError ? undefined : targetPath);
 
   if (isError) {
     return (
@@ -1300,7 +1302,7 @@ function ViewImageViewer({
           >
             <img src={previewUrl} alt={displayName} loading="lazy" />
           </button>
-        ) : previewError ? (
+        ) : previewError || !targetPath ? (
           <p className="tool-image-empty" role="status">暂无预览</p>
         ) : (
           <div className="tool-image-loading">
