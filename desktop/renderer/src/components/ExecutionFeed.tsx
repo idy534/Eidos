@@ -1351,8 +1351,8 @@ function SkillReadToolItem({
   toolCall: ToolCall;
   agents?: AgentSummary[] | undefined;
 }) {
-  const [previewSkill, setPreviewSkill] = useState<{ qualifiedId: string; name: string } | null>(null);
-  const { qualifiedId, name: skillName } = extractSkillInfo(toolCall);
+  const [previewSkill, setPreviewSkill] = useState<{ qualifiedId: string; name: string; description?: string | undefined } | null>(null);
+  const { qualifiedId, name: skillName, description: skillDesc } = extractSkillInfo(toolCall);
   const running = item.status === "in_progress";
   const resultObj = parseObject(toolCall.resultJson);
   const isError = Boolean(
@@ -1390,6 +1390,7 @@ function SkillReadToolItem({
     setPreviewSkill({
       qualifiedId: qualifiedId || skillName,
       name: skillName || qualifiedId,
+      description: skillDesc,
     });
   };
 
@@ -1419,6 +1420,7 @@ function SkillReadToolItem({
           skill={{
             qualifiedId: previewSkill.qualifiedId,
             name: previewSkill.name,
+            description: previewSkill.description,
             enabled: true,
             available: true,
           }}
@@ -1683,6 +1685,8 @@ function ToolItem({
   );
   const showSummary = (!isDeclareOutputs || isError) && !isRedundantFileSummary;
   const filePaths = toolFilePaths(toolCall);
+  const patchFileHeader = toolCall.toolName === "apply_patch" && item.kind === "file_change"
+    && Boolean(toolCall.changeDiff || toolCall.changeDiffHash);
 
   return (
     <details className="tool-item" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -1703,7 +1707,7 @@ function ToolItem({
             {showSummary && summary && (
               <p className={isError ? "tool-summary--error" : undefined}>{summary}</p>
             )}
-            {filePaths.length > 0 && (
+            {filePaths.length > 0 && !patchFileHeader && (
               <div className="tool-file-list">
                 {filePaths.map((path) => (
                   <div key={path} className="tool-file-entry">
@@ -1731,8 +1735,8 @@ function ToolItem({
                   </p>
                 )}
                 {toolCall.changeDiffHash
-                  ? <ToolTextView key={toolCall.changeDiffHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="diff" sha256={toolCall.changeDiffHash} totalBytes={toolCall.changeDiffBytes!} />
-                  : <DiffViewer diff={toolCall.changeDiff} title="代码变更" />}
+                  ? <ToolTextView key={toolCall.changeDiffHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="diff" sha256={toolCall.changeDiffHash} totalBytes={toolCall.changeDiffBytes!} onOpenFile={patchFileHeader ? onOpenFile : undefined} />
+                  : <DiffViewer diff={toolCall.changeDiff} title="代码变更" onOpenFile={patchFileHeader ? onOpenFile : undefined} />}
               </>
             )}
             {toolCall.resultHash && <ToolTextView key={toolCall.resultHash} sessionId={item.sessionId} toolCallId={toolCall.id} field="result" sha256={toolCall.resultHash} totalBytes={toolCall.resultBytes!} />}
@@ -1905,7 +1909,7 @@ function isSkillReadTool(name: string): boolean {
   return name === "skill_read" || name === "skill_read_resource";
 }
 
-function extractSkillInfo(toolCall: ToolCall): { qualifiedId: string; name: string } {
+function extractSkillInfo(toolCall: ToolCall): { qualifiedId: string; name: string; description?: string | undefined } {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
   const data = objectField(result, "data");
@@ -1916,7 +1920,11 @@ function extractSkillInfo(toolCall: ToolCall): { qualifiedId: string; name: stri
     || "";
   const rawName = stringField(args, "name") || stringField(args, "skillName") || "";
   const name = rawName || (qualifiedId.includes(":") ? qualifiedId.split(":").slice(1).join(":") : qualifiedId);
-  return { qualifiedId, name };
+  const description = stringField(args, "description")
+    || stringField(result, "description")
+    || stringField(data, "description")
+    || undefined;
+  return { qualifiedId, name, description };
 }
 
 function extractSubagentInfo(

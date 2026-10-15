@@ -1,9 +1,11 @@
 import { memo, useMemo, useState } from "react";
+import { parsePatch } from "diff";
 import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
 
 export interface DiffViewerProps {
   diff?: string | undefined;
   title?: string | undefined;
+  onOpenFile?: ((path: string) => void) | undefined;
 }
 
 interface DiffLine {
@@ -23,6 +25,13 @@ interface ParsedDiffFile {
 export function parseMultiFileDiff(raw: string, defaultTitle = "代码差异"): ParsedDiffFile[] {
   if (!raw || !raw.trim()) return [];
 
+  let filenames: string[] = [];
+  try {
+    filenames = parsePatch(raw).map((file) => {
+      const path = file.newFileName === "/dev/null" ? file.oldFileName : file.newFileName;
+      return path?.replace(/^[ab]\//, "") ?? "";
+    });
+  } catch { /* Partial pages and non-unified formats retain their existing display. */ }
   const rawLines = raw.split("\n");
   const files: ParsedDiffFile[] = [];
   let currentFile: ParsedDiffFile | null = null;
@@ -39,7 +48,7 @@ export function parseMultiFileDiff(raw: string, defaultTitle = "代码差异"): 
 
   function startNewFile(filename: string): ParsedDiffFile {
     flushCurrentFile();
-    const cleanFn = filename ? filename.replace(/^[ab]\//, "").trim() : "";
+    const cleanFn = filenames[files.length] || (filename ? filename.replace(/^[ab]\//, "").trim() : "");
     const created: ParsedDiffFile = {
       filename: cleanFn || defaultTitle,
       additions: 0,
@@ -197,7 +206,7 @@ export function parseMultiFileDiff(raw: string, defaultTitle = "代码差异"): 
   return files;
 }
 
-export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码差异" }: DiffViewerProps) {
+export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码差异", onOpenFile }: DiffViewerProps) {
   const [copiedFileIndex, setCopiedFileIndex] = useState<number | null>(null);
 
   const parsedFiles = useMemo(() => {
@@ -233,7 +242,10 @@ export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码�
           >
             <div className="diff-file-header diff-viewer-header">
               <div className="diff-file-meta">
-                <span className="diff-file-name">{file.filename}</span>
+                <span className="diff-file-name">{onOpenFile && file.filename !== title ? (
+                  <button type="button" className="diff-file-name-link" title={`打开当前文件：${file.filename}`}
+                    onClick={() => onOpenFile(file.filename)}>{file.filename}</button>
+                ) : file.filename}</span>
                 <span className="diff-stat-add">+{file.additions}</span>
                 <span className="diff-stat-del">-{file.deletions}</span>
               </div>

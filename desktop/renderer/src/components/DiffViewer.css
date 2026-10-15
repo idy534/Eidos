@@ -56,6 +56,21 @@
   font-weight: 500;
   color: var(--muted, #475569);
 }
+.diff-file-name-link,
+.diff-file-name-link:hover:not(:disabled),
+.diff-file-name-link:active:not(:disabled) {
+  display: inline;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  text-align: inherit;
+  vertical-align: baseline;
+}
 .diff-stat-add {
   color: var(--status-success);
   font-weight: 600;

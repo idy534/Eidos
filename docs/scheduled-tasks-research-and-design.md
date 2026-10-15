@@ -1,280 +1,298 @@
-# Eidos 定时任务：竞品调研与推荐方案
+# Eidos 本地定时任务：修订方案 V3
 
-调研日期：2026-10-15。本文是设计建议，不表示功能已经实现。竞品结论来自本次读取的官方文档。Eidos 结论来自当前工作区源码，并参考 `docs/current-*`。本次没有操作竞品账户、创建计划或做真实 UI 验收。
+修订日期：2026-10-15。本文替代上一版方案。本文只定义待实现设计，不表示功能已经完成。本轮只修改方案文档。
 
-**我建议 Eidos 增加由 Runtime 管理的定时任务。产品同时支持“每次新建会话”和“回到原会话跟进”。两种方式共用计划、触发记录、权限检查和结果列表，实际执行继续使用现有 Run。第一版在本机执行。**
+Session 工具的参数、绑定、幂等、权限和失败处理见 [automation 详细设计](automation-tool-design.md)。本文中的 schedule/* 是 Desktop 与 Runtime 的协议接口；模型只使用一个内置工具 automation，通过 mode 处理管理操作。
 
-## 1. 竞品已经确认的能力
+工具延迟加载和实现前的来源、触发竞争及恢复缺口见 [方案复核](scheduled-tasks-gap-review.md)。automation 默认 deferred，模型通过 tool_search 激活后在后续 Step 使用。
 
-### Codex / ChatGPT 桌面端
+**本版采用本地 Runtime 调度。周期任务使用受限的五段 Cron，一次性任务使用明确时间戳。固定间隔只提供 10 分钟、30 分钟和 1 小时。模型提出规则，Runtime 校验并计算时间。产品不实现漏跑检测、补跑或云端执行。**
 
-OpenAI 当前把相关文档统一到 Scheduled tasks。旧 Codex Automations 文档地址已返回这一页面。桌面端支持以下行为：
+## 1. 对本轮想法的判断
 
-- 用户可以用自然语言创建、修改计划，也可以使用自定义时间规则和 RRULE。
-- 独立计划每次创建新聊天。会话内计划回到同一聊天，继续使用已有上下文。
-- 本地项目可以直接运行，也可以使用独立 Git Worktree。非 Git 项目直接使用项目目录。一个计划可以选择多个项目。
-- Scheduled 页面集中展示计划和执行结果，并通过未读标记提示用户处理。
-- 任务可以使用 Skill、Plugin、模型和思考强度设置。本地文件任务要求电脑开机、应用运行、项目目录可用。
-- 无人值守任务使用沙箱设置。组织允许时，任务采用 `approval_policy = "never"`；组织不允许时，任务退回所选权限模式的审批行为。
-
-来源：[OpenAI Scheduled tasks](https://learn.chatgpt.com/docs/automations)。该页面也介绍 Web 的云端任务和事件触发，但这些能力不能直接等同于桌面本地项目任务。官方页面没有明确说明本地任务的补跑窗口和同一计划重叠规则。本文不推定这些细节。
-
-### Claude Code 桌面端
-
-Claude Code 的 Routines 页面区分 Local 和 Cloud。Local 每次创建新 Session，支持选择目录、模型、权限模式和独立 Worktree。Local 最短间隔为一分钟，应用和电脑必须保持运行。应用启动或电脑唤醒后，系统检查最近七天的漏跑，并只补最近一次。历史列表会说明跳过原因，包括上次任务仍在运行。任务可以保存后续运行使用的工具批准。
-
-来源：[Claude Code Desktop scheduled tasks](https://code.claude.com/docs/en/desktop-scheduled-tasks)。该页面还说明本地任务会有固定的数分钟错峰延迟，因此“计划时间”不等于精确启动时间。
-
-### Claude Cowork 与云端 Routines
-
-Claude Cowork 的新计划可以远程执行，电脑休眠或桌面应用关闭时也能运行。每次执行拥有独立 Session。官方同时说明，需要本地文件或应用的计划只在本地运行；Pro、Max 在 10 月 6 日前创建的旧本地计划继续留在本机。
-
-来源：[Claude Cowork scheduled tasks](https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork)。所以，“Claude 定时任务必须一直开着电脑”已经不是适用于所有任务的结论。
-
-Claude Code Cloud Routines 支持时间、API 和 GitHub 事件触发。用户从桌面、Web 或 CLI 管理同一云端账户中的计划。每次执行重新克隆所选仓库。云端环境与连接器决定任务能访问的内容。
-
-来源：[Claude Code Routines](https://code.claude.com/docs/en/routines)。Claude Code 的 `/loop` 则属于会话内跟进工具，不能代替桌面持久计划。来源：[Claude Code scheduled prompts](https://code.claude.com/docs/en/scheduled-tasks)。
-
-### Eidos 应采用的部分
-
-| 产品需求 | 我建议 Eidos 采用的做法 |
+| 想法 | 判断与采用方式 |
 | --- | --- |
-| 日报、代码巡检、定期整理 | Eidos 每次创建新 Session，保留独立结果 |
-| 等部署结束、跟进 PR、继续研究 | Eidos 回到原 Session，并提供停止条件与到期时间 |
-| 用户管理后台工作 | Eidos 提供单独的“定时任务”入口和待处理结果 |
-| 用户隔离代码修改 | Eidos 为 Git 独立任务默认推荐 Worktree，并明确起始分支 |
-| 用户需要关机后执行 | Eidos 将远程执行作为后续产品能力，第一版明确本机边界 |
-| 系统遇到漏跑或重叠 | Eidos 使用明确的产品规则，并保存跳过原因 |
+| 本版不考虑漏跑检测和补跑 | 该范围合理。系统启动、唤醒或恢复计划时，只计算当前之后的下一次时间，不检查历史时刻 |
+| Eidos 只作为本地工具 | 该定位明确。本方案只使用当前 Electron Main、Python Runtime 和本地 SQLite |
+| 固定间隔只允许 1 小时、半小时、10 分钟 | 该限制合理。界面、模型工具和 Runtime 使用相同限制 |
+| 模型使用 Cron 设置执行时间 | 该方向适合周期任务。模型提交表达式，Runtime 返回实际时间；模型不自行计算后直接持久化 |
+| 所有任务都用 Cron | 一次性任务需要例外。标准五段 Cron 没有年份，也不表示“执行一次后结束” |
+| 模型只使用一个管理工具 | 本版采用 automation，mode 区分 view / create / update / delete / preview |
+| sessionId 可选 | 创建时提供则复用已有 Session，不提供则每次新建；更新省略目标时保留原绑定 |
+| 计划默认使用替我审批 | create 省略 approvalMode 时固定 auto_review，不继承当前对话的模式；用户可以显式选择 manual |
 
-以上是设计取舍，不是对竞品内部架构的判断。
+这里将“corn”按 Cron 理解。本方案将“测例执行时间”理解为设置规则，并预览未来执行时间。时间预览不运行任务正文。
 
-## 2. Eidos 当前已经有什么
+本版还需要明确一个产品含义：Cron 的“每十分钟”默认按钟表刻度对齐。用户在 09:07 创建 `*/10 * * * *` 时，下一次是 09:10，后面是 09:20、09:30。该规则不表示从创建时刻开始每隔十分钟。
 
-| 当前事实 | 对方案的影响 | 源码入口 |
+如果用户说“十分钟后只检查一次”，模型创建一次性任务。如果用户说“每十分钟检查”，模型创建按钟表对齐的周期任务。本版不额外增加“从任意起点持续计时”的第三套时间规则。
+
+## 2. 竞品参考与 Eidos 现状
+
+上一轮已经读取的 OpenAI 官方文档确认，桌面端任务既可以每次新建聊天，也可以回到原聊天；本地项目可以使用原目录或独立 Worktree。该信息属于上一轮调研快照。Eidos 按本轮用户要求定义两种会话方式。[OpenAI Scheduled tasks](https://learn.chatgpt.com/docs/automations)
+
+Claude Code 桌面端支持本地计划、目录、模型、权限模式、Worktree 和执行历史。Eidos 可以参考这些本地能力。本版时间行为按用户本轮范围重新定义，不沿用上一版的历史时刻处理设计。[Claude Code Desktop scheduled tasks](https://code.claude.com/docs/en/desktop-scheduled-tasks)
+
+当前源码提供以下可复用能力：
+
+| 当前事实 | 本版采用方式 | 源码入口 |
 | --- | --- | --- |
-| Runtime 已有持久 queued Run 和同 Session FIFO，不同 Session 可以并行 | 定时服务只需要产生普通 Run，无需再做 Agent 执行器 | `db/repositories/runs.py:122`、`:375`；`runtime/supervisor.py:240` |
-| Runtime 已有一个 AnyIO Kernel、资源登记、受管任务和关闭流程 | 一个进程级定时服务可以接入现有所有权与取消机制 | `runtime/async_kernel.py`；`runtime/supervisor.py:688` |
-| MemoryJobs 已有持久领域任务，但其处理依赖前台空闲 | 该实现可以提供生命周期参考，用户定时任务不应受记忆空闲条件限制 | `memory/jobs.py:40`、`:65`；`protocol/server.py:1679` |
-| `RunApplication.start()` 校验输入、模型、工作区、扩展，并创建 Run | 新入口应复用这些检查，不能直接写裸 Run 行 | `application/runs.py:305` |
-| 手动 Run 的 Worker 等待 RPC 回包成功才放行 | 定时触发需要内部提交入口，不能伪造 RPC 成功回调 | `application/runs.py:190`、`:447` |
-| `create_run()` 支持指定 Run ID 和外部事务连接 | 触发记录与 Run 的原子绑定已有可复用的底层接口 | `db/repositories/runs.py:122` |
-| Session 已支持 Local、Managed Worktree 和 Projectless | 定时任务可以覆盖编码与普通文件工作，但三者需要分别规定目录策略 | `application/sessions.py:569`、`:646`、`:936` |
-| Run Grant 从审批记录按 Run 读取，子任务继承也受父 Run 活跃期限制 | 上一次执行的授权不会自动成为下次执行的授权 | `db/repositories/runs.py:606` |
-| `full_access` 请求需要 Desktop 确认标记 | 自动触发不能自行填写标记来制造用户确认 | `protocol/methods.py:423`；`desktop/main/main.ts:1284` |
-| macOS 关闭最后一个窗口不会调用 `app.quit()`，真正退出会停止 Runtime | 第一版可以在窗口关闭后继续本机调度，但完全退出后不能执行 | `desktop/main/main.ts:1492`、`:1502` |
-| 业务事实与 Event/Outbox 保存在 SQLite | 计划和触发记录应进入同一个业务主库 | `runtime/event_delivery.py`；`db/schema.py` |
+| Run 已经持久排队，同一 Session 使用 FIFO，不同 Session 可以并行 | 调度器创建普通 Run，现有 Supervisor 继续执行 | `db/repositories/runs.py:375`；`runtime/supervisor.py:240` |
+| Runtime 已有 AnyIO Kernel、受管任务、取消和资源关闭 | 一个进程级调度模块使用现有生命周期 | `runtime/async_kernel.py`；`runtime/supervisor.py:688` |
+| RunApplication 已有输入、模型、扩展与工作区校验 | 手动和定时入口共用这些检查 | `application/runs.py:305` |
+| 手动 Run 需要 RPC 回包成功后放行 Worker | 定时入口使用“事务提交成功后放行”，保留手动入口原规则 | `application/runs.py:190` |
+| create_run 支持外部事务连接和指定 Run ID | 触发记录、Run、用户 Item 和 Event/Outbox 可以原子关联 | `db/repositories/runs.py:122` |
+| Session 已支持 Local、Worktree 和 Projectless | 任务沿用现有执行环境创建与身份校验 | `application/sessions.py:569` |
+| Run Grant 绑定单次 Run，完全访问需要 Desktop 确认 | 定时触发不继承历史授权，也不生成虚假的确认标记 | `db/repositories/runs.py:606`；`protocol/methods.py:423` |
+| macOS 关闭最后一个窗口不会退出应用，真正退出会关闭 Runtime | 应用仍运行时可以调度；完全退出后停止调度 | `desktop/main/main.ts:1492`、`:1502` |
 
-当前应用方法、协议和 Desktop 契约中没有用户定时任务的管理入口。本次搜索也没有发现 Main 接入 `powerMonitor`、`powerSaveBlocker` 或系统通知的实现。已有内部定时维护不等于用户定时任务已经存在。
+当前 Schema 版本是 27。当前依赖没有声明 Cron 计算库。当前源码没有用户定时任务的管理接口。本方案需要新增迁移和协议，不改变现有控制通道，也不迁移整个 Runtime 的异步结构。
 
-当前 Schema 版本是 27。当前依赖没有直接声明 `python-dateutil` 或 APScheduler。方案落地需要新增协议、Schema 迁移和界面，但不需要目录重组、整个 Runtime 的异步迁移或第二套 Agent Loop。
+## 3. 用户可以创建什么任务
 
-## 3. 第一版产品范围
+### 两种会话方式
 
-### 两种会话方式，共用一个计划模型
+| 方式 | 执行方式 | 例子 |
+| --- | --- | --- |
+| 独立任务 | 创建时不传 sessionId，Eidos 每次触发创建新 Session 和普通 Run | 用户要求每天早上检查项目并生成报告 |
+| 原会话任务 | 创建时传入真实 sessionId，Eidos 在该 Session 创建普通 Run | 用户要求每十分钟继续检查当前部署 |
 
-| 方式 | 每次执行 | 典型任务 | 默认限制 |
-| --- | --- | --- | --- |
-| 独立任务 | Eidos 创建新 Session 和普通 Run | 每天生成日报、每周检查依赖 | 同一计划不重叠执行 |
-| 原会话跟进 | Eidos 在目标 Session 创建普通 Run | 每十分钟检查部署进度 | Eidos 合并等待中的触发，并建议设置到期时间 |
+用户可以在侧栏“定时任务”页面创建任务。用户也可以在对话中直接要求创建任务。用户说“在这里继续”时，模型显式传入当前真实 sessionId；Runtime 不把缺省 sessionId 解释成复用当前 Session。
 
-用户可以从侧栏“定时任务 → 新建”创建计划，也可以在聊天中说“明天九点继续”或“每周一检查这个项目”。自然语言先形成可编辑草案。用户能核对任务内容、时间、时区、目标目录和权限，再启用计划。明确授权后的常规修改无需反复增加确认步骤。
+有 sessionId 时，项目归属从目标 Session 解析，额外 projectId 必须与它一致。无 sessionId 时，projectId 字符串表示指定项目，projectId=null 表示无项目，两者都省略时继承调用 Session 的项目或无项目归属。Runtime 在保存结果中返回明确绑定，不让模型和用户猜测。
 
-模型输出只负责提出任务配置。Runtime 必须校验时间和目标。模型不能用自然语言自行解释下一次执行时间，也不能通过工具参数提升审批模式。
+Git 独立任务可以选择 Local 或新 Worktree。Worktree 每次使用已选择的 ref 解析真实 commit，不默认复制未提交改动或联网 fetch。Non-Git 项目使用 Local。无项目独立任务复用现有 Projectless 私有目录创建流程。
 
-第一版支持一次性、固定间隔、每天、工作日、每周和每月。最短间隔建议为一分钟。界面提供常用选项，并展示未来五次执行时间。高级设置可以使用受限 RRULE。一次性任务使用明确时间戳，固定间隔使用明确锚点和时长。
+原会话任务沿用目标 Session 的执行绑定。目标被删除或目录身份校验失败时，系统暂停该计划并给出原因。系统不静默换一个目录执行。
 
-“工作日”第一版表示周一到周五，不包含中国法定节假日与调休。界面需要直接说明这一点。
+### 两种时间数据
 
-### 工作环境
+周期任务保存 kind 与 schedule，工具请求也使用相同结构：
 
-- Git 独立任务默认推荐“每次新建 Worktree”。用户选择起始分支或 ref，系统每次解析并记录真实 commit。系统不自动复制主目录中的未提交改动，也不默认联网 fetch。用户需要最新远端代码时，任务必须获得相应网络权限。
-- Local 任务直接使用当前目录。界面需要说明任务能看到未提交改动。系统保留现有文件身份、版本和结果核验。
-- Non-Git 项目使用 Local，第一版不承诺文件快照隔离。
-- 无项目独立任务每次通过现有 Projectless 创建流程分配私有目录。系统不能把整个 Projectless 根目录开放给某一次 Run。
-- 原会话跟进沿用该 Session 的执行绑定。系统遇到目录替换、Worktree 被清理或 Session 被删除时，显示“需要处理”，不自动换一个目录执行。
-
-### 结果与通知
-
-侧栏提供“定时任务”，页面提供计划列表、待处理结果和执行历史。计划列表显示下次执行、最近结果、目标环境和是否暂停。历史显示计划时间、实际开始时间、触发来源、跳过原因及对应 Session。
-
-用户点击结果后打开现有 Session。回答、Diff、产物、审批和恢复继续使用现有界面。系统不再复制一套聊天历史。未读和已处理标记进入 SQLite，因此重新打开窗口仍能看到。
-
-失败、待审批和待回答必须进入待处理列表。成功结果默认进入结果列表；系统通知由用户配置。第一版不依赖模型判断“有没有价值”来隐藏执行事实。Main 根据 Runtime 的持久事件发送系统通知，通知点击后恢复窗口并打开目标 Session。
-
-## 4. 时间、补跑和重叠规则
-
-以下数值是建议默认值，属于产品决定，不是竞品事实。
-
-| 情况 | 推荐行为 |
-| --- | --- |
-| 正常到点 | Runtime 提交触发；电脑清醒且无阻塞时，调度检查间隔不超过 30 秒。系统不承诺模型或网络在 30 秒内响应 |
-| 电脑休眠、应用退出或 Runtime 暂时不可用 | Runtime 在恢复后重新计算，不依赖长时间内存定时器 |
-| 周期计划错过多次 | 默认只补最近一次，且只补过去一小时内的触发。用户可以选择不补跑，或将窗口扩大到七天 |
-| 一次性计划已过期 | 系统使用创建时展示的补跑窗口。窗口外只报告错过，用户可以点击立即执行 |
-| 同一计划上次仍在准备、排队、执行、待审批或待回答 | 系统不创建新的并行 Run。默认记录跳过；原会话跟进最多保留一个待触发项，并在时效窗口内合并 |
-| 原会话还有用户 Run 或用户排队消息 | 跟进任务等待该 Session 空闲，再原子检查并入队。过期时记录跳过。系统保留现有 FIFO |
-| 用户点击立即执行 | 系统创建独立的手动触发记录，不消耗下一次定时触发；同一计划仍遵守重叠规则 |
-| 用户暂停计划 | 系统停止后续触发。已经入队的 Run 不受影响。停止当前 Run 使用现有取消操作 |
-| 用户恢复计划 | 系统从恢复时间计算未来触发，不补暂停期间的历史 |
-| 用户编辑计划 | 变更影响之后认领的触发。已认领触发保留自己的配置快照；权限撤销、暂停和删除仍在提交 Run 前复核 |
-| 用户删除计划 | 系统停止未来触发，并保留历史 Session、产物和执行记录。用户另行使用现有删除流程清理历史 |
-| 一次性任务已提交 Run | 系统将计划标为已触发。Run 失败不自动制造第二次定时执行 |
-
-所有计划保存 IANA 时区，例如 `Asia/Shanghai`。日历规则保持该时区中的本地时间。用户旅行或修改系统时区后，计划不会静默改成另一个执行时刻。界面同时显示计划时区和本机对应时间。
-
-系统按 UTC 保存实际触发时刻。日历规则保存本地起点和时区。夏令时不存在的本地时刻默认跳过；重复的本地时刻默认只执行第一次。每月 31 日在没有 31 日的月份默认跳过。预览和真实调度必须采用同一计算器。
-
-模型上下文需要包含计划时间、实际触发时间、是否补跑和上次成功执行的信息。任务可以据此处理日报窗口。系统不能把“错过六天只补一次”误写成“过去六天的业务数据已经处理完整”。数据游标仍属于具体工作流。
-
-## 5. 推荐架构
-
-```mermaid
-flowchart TD
-    UI[定时任务页面或聊天中的任务草案] --> IPC[typed IPC / JSON-RPC]
-    IPC --> APP[ScheduledTaskApplication]
-    APP --> DB[(state.sqlite：计划与触发记录)]
-    TIMER[RuntimeAsyncKernel 中的单一定时服务] --> APP
-    APP --> PREP[现有 Session 与 Worktree 准备流程]
-    PREP --> ADMIT[Run 的内部校验与入队入口]
-    ADMIT --> DB
-    DB --> SUP[现有 RunSupervisor 与 Session FIFO]
-    SUP --> ENGINE[现有 RuntimeEngine 与工具链]
-    ENGINE --> DB
-    DB --> OUTBOX[现有 Event / Outbox]
-    OUTBOX --> DESKTOP[结果列表、Session 和系统通知]
+```json
+{
+  "kind": "cron",
+  "schedule": {
+    "expression": "*/10 * * * *",
+    "timezone": "Asia/Shanghai"
+  }
+}
 ```
 
-Runtime 维护唯一的触发服务。AnyIO 的可取消等待负责唤醒，成熟时间库负责日期计算。SQLite 决定任务是否有效、某个时刻是否已经消费，以及触发是否已经关联 Run。
+一次性任务保存：
 
-定时服务只处理短事务和调度，不等待模型、Shell、审批或完整任务结束。Worktree 准备等慢操作通过现有受管任务执行。服务不能在 AnyIO 事件循环里持有同步锁等待 BlockingPortal，也不能把同步 SQLite 或 Git 操作直接放进事件循环。
+```json
+{
+  "kind": "at",
+  "schedule": {
+    "runAt": "2026-10-16T09:00:00+08:00",
+    "timezone": "Asia/Shanghai"
+  }
+}
+```
 
-系统不按计划创建常驻线程，不使用 Renderer `setInterval` 作为执行来源，不新增跨 Session 的 Run 总量上限，也不增加跨 Run 的共享 Workspace 锁。同一计划不重叠属于该计划的产品规则，不是全局执行配额。
+上例只说明数据形式。实际时间由用户请求与 Runtime 当前时间决定。Runtime 在创建时拒绝已经过去的一次性时间。系统在持久化时保存对应 UTC 时刻，并保留展示时区。
 
-### 最小数据模型
+周期任务只有规范化后的 Cron 是时间规则权威。界面可以用“10 分钟”等选项生成表达式，但系统不再同时保存一份可独立修改的 intervalMinutes 或 RRULE。
 
-| 对象 | 建议保存的内容 | 状态权威 |
+### 固定间隔只接受三档
+
+| 用户选项 | 规范 Cron | 执行时刻 |
 | --- | --- | --- |
-| `scheduled_tasks` | 名称、指令、配置版本、启用状态、会话方式、目标、模型、思考强度、审批模式、时间规则、时区、起点、下次执行、补跑与重叠策略、可选到期时间和次数 | 该表决定计划是否继续产生触发 |
-| `scheduled_occurrences` | task ID、计划时刻、触发来源、配置快照、准备阶段、Session/Run ID、跳过或失败原因、实际提交时间、未读与已处理标记 | 该表决定一次触发是否已准备或提交 |
-| 现有 `runs/items/tool_calls/approvals` | 模型、工具、审批、取消、终态、Diff 和产物 | 原有表继续决定执行事实 |
+| 每 1 小时 | `0 * * * *` | 系统在每小时的 00 分触发 |
+| 每 30 分钟 | `*/30 * * * *` | 系统在每小时的 00、30 分触发 |
+| 每 10 分钟 | `*/10 * * * *` | 系统在每小时的 00、10、20、30、40、50 分触发 |
 
-触发记录只保存准备、已提交、跳过、准备失败等调度事实。界面通过关联 Run 展示执行中、成功、失败或待审批。系统不在两张表中分别维护同一套 Run 状态机。
+Runtime 必须执行三档限制。模型不能通过 `*/5 * * * *`、`*/15 * * * *`、`0 */2 * * *` 或多组分钟列表绕过产品限制。系统不能只把界面下拉框限制为三个选项。
 
-定时触发使用唯一键 `(task_id, scheduled_for_utc)`。手动触发使用独立 `operationId` 去重。配置版本进入触发快照，但普通指令编辑不会使已消费时刻再次执行。系统保存漏跑合并范围和原因，对很长的离线区间使用有界范围记录，不能为了每分钟计划无界补写历史。
+### 日历时间使用受限 Cron
 
-### 协议与模型工具
-
-新增方法通过现有 Method Registry 注册，建议使用以下边界：
-
-| 方法 | 作用 |
+| 用户请求 | 规范 Cron |
 | --- | --- |
-| `schedule/preview` | Runtime 校验规则，返回可读说明和未来五次时间 |
-| `schedule/list`、`schedule/read` | Runtime 分页返回计划与详情 |
-| `schedule/create`、`schedule/update` | Runtime 保存或修改计划；修改请求必须携带预期配置版本 |
-| `schedule/pause`、`schedule/resume`、`schedule/delete` | Runtime 管理未来触发，不隐式取消已接受的 Run |
-| `schedule/runNow` | Runtime 幂等创建手动触发 |
-| `schedule/listOccurrences`、`schedule/markRead` | Runtime 分页返回执行历史，并保存已读状态 |
+| 用户要求每天 09:00 执行 | `0 9 * * *` |
+| 用户要求周一至周五 09:00 执行 | `0 9 * * 1-5` |
+| 用户要求每周一 09:00 执行 | `0 9 * * 1` |
+| 用户要求每月 1 日 09:00 执行 | `0 9 1 * *` |
 
-所有写请求使用现有 operation ID 规则。Python Pydantic 定义 DTO，Desktop 类型由同一 Schema 生成或校验。列表和历史遵循有界分页。执行中的停止仍使用 `run/cancel`，审批和回答仍使用现有接口。
+本版只开放三档固定间隔，以及每天、每周指定日、每月指定日的单个日内时刻。每周可以选择多个星期。月份字段保持 `*`。系统只接收标准五段形式，不开放秒、年份、随机值、哈希值或非标准扩展。
 
-聊天中的模型工具调用同一个应用边界，不创建独立的调度文件。工具需要区分“提出草案”和“提交已授权计划”。系统不能把模型提出的计划当作用户已经批准的计划。原会话跟进可以在停止条件满足后请求暂停自己；模型不能顺带修改其他计划或扩大自己的权限。
+Runtime 按标准 Cron 使用星期编号：0 表示周日，1 表示周一。Runtime 不允许同时限制日期和星期，以免用户遇到 Cron 中“日期或星期满足其一”的含义。
 
-### 一次触发的提交过程
+成熟解析器负责解析表达式。Eidos 只判断解析后的规则是否属于本版允许的形态。Eidos 不实现第二个通用 Cron 解析器。“工作日”表示周一至周五，不处理法定节假日和调休。
 
-1. Runtime 在短事务中检查计划、配置版本、时效与重叠条件。Runtime 创建唯一触发记录，并推进 `next_fire_at`，同时提交 Event/Outbox。
-2. Runtime 在事务外准备 Session 或 Worktree。该步骤使用从 occurrence ID 派生的稳定 operation ID，并复用已有持久生命周期记录。Runtime 不在 SQLite 事务中等待 Git 或文件复制。
-3. Runtime 重新检查暂停、删除、权限和目录身份，并固定当前模型与扩展快照。
-4. Repository 在同一短事务中写入 queued Run、用户 Item、occurrence 与 Run 的关联、Event 和 Outbox。现有 `create_run(transaction_connection=...)` 是可复用接口。
-5. 事务提交后，Runtime 通过现有 Supervisor 放行调度。桌面结果投递失败不撤销已经接受的定时触发。
+## 4. 模型如何在对话中创建任务
 
-`RunApplication.start()` 当前混合了校验、持久入队和 RPC 回包确认。实施时需要提取共用的校验与入队部分。手动入口保留“回包成功后放行”的现有规则。定时入口在自己的持久事务成功后放行。系统不能直接调用 `mark_response_delivered()` 假装发出了一个不存在的 RPC response。
+推荐调用链为：
 
-系统崩溃在 Worktree 准备期间时，恢复流程继续使用同一个 operation ID。系统崩溃在 Run 入队之后、Supervisor 被唤醒之前时，恢复流程找到原 Run 并继续现有恢复检查。系统不能再创建一个相同触发的 Run。
+```text
+用户提出任务与时间
+  → 模型通过 tool_search 精确搜索 automation
+  → 下一 Step 提供完整定义与参数结构
+  → 模型通过 sessionId 是否存在选择会话方式，并生成 at / Cron
+  → 模型按需要调用 automation(view / preview) 查找计划或预览时间
+  → automation(create / update) 校验并保存已获授权的任务
+  → Runtime 返回实际计算的执行时间和配置版本
+  → 模型回显任务名称、时间、时区与下一次执行
+```
 
-这能保证一次已记录触发不会重复创建执行任务。它不能保证任意外部副作用恰好发生一次。Shell、MCP 或外部服务结果不确定时，原有 Durable Intent 和 Reconciliation 继续生效。调度器不得通过“重试整次计划”绕开这些边界。
+Runtime 负责解析时区和计算下一次时间。模型负责将用户要求转换成规则，不能把自己口算的 nextFireAt 当作持久事实。预览、创建、更新和实际调度必须使用同一时间模块。简单请求可以直接创建；create / update 本身会返回未来时间，系统不强制额外调用 preview。
 
-## 6. 无人值守权限
+例如，用户说“每十分钟在这个会话里检查部署，成功后停止”。模型通过 automation 提交 `*/10 * * * *` 和当前真实 sessionId，并把检查内容与停止条件写入任务指令。Runtime 返回真实任务 ID、revision 和接下来的五个时刻。任务执行确认部署成功后，只能使用该工具的受限 update 暂停自身计划。
 
-第一版沿用 `manual` 和 `auto_review`。普通 Workspace 操作继续按现有规则执行。需要人工批准、回答或风险确认时，Run 进入现有等待状态，结果页显示具体原因。等待中的计划不反复创建新 Run，也不影响其他 Session 执行。
+automation 使用 view、create、update、delete、preview 五种 mode。view 有 id 时取详情，无 id 时分页列出。暂停与恢复通过 update 的 status 表示。update 必须携带真实 ID 和 expectedRevision，并只提交 changes；省略 target 始终保留原绑定。工具默认隐藏完整定义，仅在当前 Run 通过 tool_search 激活后进入下一 Step；系统不为 Session 永久保存激活状态。
 
-**我不建议把 Codex 的 `approval_policy = never` 或 Claude 的永久工具批准直接搬进 Eidos。** Eidos 当前的授权范围、受保护路径和高危审批已有明确规则。定时触发本身不会扩大这些范围。
+create 允许 model={modelId, reasoningSelection}；省略时固定当前 Run 的有效选择。目标 Session 只决定上下文和执行位置，计划模型不改写该 Session 的用户下一轮选择。每次触发重新验证配置并固定快照，系统不静默更换已失效的模型。
 
-用户创建计划后可以“立即执行一次”。这次执行用于验证输出、依赖、目录和实际审批需要。产品不能声称一次试跑的批准天然覆盖未来所有执行。
+create 同时接受 approvalMode，默认 auto_review（替我审批），可选 manual（请求审批）。update 使用 changes.approvalMode 修改，省略则保留原值。Runtime 将该值保存在计划中，并在每次接受 Run 时固定本次快照，不改变已入队执行或用户对话的审批选择。
 
-完整产品后续应增加“仅对本计划生效”的持久授权。授权需要明确普通附加路径、网络范围、有效期和撤销入口。每次 Run 重新物化权限，并记录来源。计划变更目录、权限模式或扩大操作范围时，旧授权失效。普通授权不能解除现有高危边界。
+如果用户已经明确要求创建任务，系统可以直接创建并回显结果。系统不为每次创建额外强制弹出确认框。用户只在时间、目标或执行内容存在歧义时需要补充说明。完全访问仍遵守原有人工确认规则。
 
-`full_access` 的定时运行还需要独立的产品和规则决定：用户在 Desktop 明确批准“本计划未来的自动运行使用完全访问”，系统保存授权范围、警告版本和撤销记录，然后每次核验。当前 `full-access-v1` 是请求确认标记，并不是这套持久授权。
+如果用户要求每五分钟执行，Runtime 返回允许的三个间隔。模型不能静默把五分钟改为十分钟。模型只能在用户接受一个受支持选项后创建该周期任务。
 
-根 `AGENTS.md` 当前限定只有用户通过 Desktop 确认并创建的 `full_access` Run 才能使用完全访问。第一版因此不开放自动触发的 `full_access`。后续只有在任务级授权规则明确更新后，产品才开放这一选项。该边界不影响 `manual`、`auto_review` 或现有手动 Run。
+## 5. 本版触发行为
 
-## 7. 时间库与依赖取舍
-
-| 方案 | 判断 |
+| 情况 | 本版行为 |
 | --- | --- |
-| 标准库 `datetime` / `zoneinfo` | 方案使用它们表达 UTC、时区、一次性时间和固定间隔 |
-| `python-dateutil.rrule` | 方案优先评估它作为受限 RRULE 的计算器，避免自己实现通用日历规则 |
-| APScheduler 完整 Scheduler / JobStore / Executor | 方案不采用这套组合。其任务存储与执行管理会与 Eidos 已有 Run、恢复及 Outbox 重叠 |
-| APScheduler Trigger 单独使用 | 该方案可以作为备选，不等于引入完整 Scheduler。只有在规则选择改成 Cron 时再具体比较 |
-| 系统 cron、每计划一个 launchd Job | 方案不采用。它们不能替代 Eidos 的事务、审批和资源所有权 |
-| Temporal、Celery 等外部系统 | 当前单机产品不需要它们，也不应由它们接管 Eidos Runtime Core |
+| Eidos 持续运行并到达计划时间 | Runtime 认领本次时刻，准备环境并提交普通 Run |
+| Eidos 启动、系统唤醒、Runtime 重启或用户恢复计划 | Runtime 只计算严格晚于当前时间的下次触发 |
+| 周期任务曾经过了若干计划时间 | 系统不扫描这些时刻，不补写历史，不计算错过次数 |
+| 一次性任务的时间已经过去，且尚未提交 Run | 系统停用该计划，不自动执行，不创建漏跑历史 |
+| 同一计划上次仍在准备、排队、执行、待审批或待回答 | 系统跳过当前触发，历史仅记录“上次执行未结束” |
+| 同一计划上次执行仍有 reconciliationRequired | 系统暂停本计划并保留原执行的核验入口，不创建新 Run 绕开原状态 |
+| 原会话还有活动 Run 或已排队的用户消息 | 系统跳过当前触发，历史记录“会话忙碌”；系统不新增等待项 |
+| 用户点击立即执行 | 系统幂等创建手动触发，不改变周期时间；同计划仍不重叠 |
+| 用户暂停或删除计划 | 系统停止后续触发；已经提交的 Run 继续使用现有取消入口 |
+| 用户编辑计划 | 系统重新计算未来时刻；已认领但未提交 Run 的旧版本触发作废；已提交 Run 保留原快照 |
+| 一次性任务已经提交 Run | 系统停用该计划；Run 失败不会让计划再次触发 |
 
-dateutil 官方文档提供 RRULE 解析与前后时间计算，也明确提醒无效日期的跳过规则。[dateutil 文档](https://dateutil.readthedocs.io/en/stable/rrule.html)。PyPI 元数据列出 Python 3.11/3.12 和 Apache/BSD 双许可。[PyPI](https://pypi.org/project/python-dateutil/)。这些信息支持把它作为候选，不能代替维护状态检查、依赖审计和 macOS Bundle 验证。
+调度模块正常运行时可以每 30 秒以内检查一次当前时间。本版 Cron 使用分钟精度。正常检查在计划分钟内到达时，可以认领该分钟的触发。检查若已经跨过计划分钟，模块直接从当前时间计算下次时刻，不再执行旧时刻。
 
-APScheduler 官方区分 Trigger、JobStore、Executor 和 Scheduler。[APScheduler 3.x 文档](https://apscheduler.readthedocs.io/en/3.x/userguide.html)。因此，本文不把“使用 APScheduler”描述成必然产生第二套状态；本文拒绝的是让完整 JobStore 和执行器同时管理 Eidos 的同一批业务任务。
+启动与唤醒的处理必须先更新未来时间，再恢复调度。这样，09:05 启动 Eidos 时，`*/10 * * * *` 的下一次是 09:10，`0 * * * *` 的下一次是 10:00。系统不会先处理内存或数据库中残留的 09:00 时间。
 
-第一版限制规则长度、频率、字段组合、预览数量和计算耗时。RRULE 原始文本只表示时间，不允许夹带执行函数或 Python 对象。实现必须覆盖长期存在的分钟级规则，避免查找下一次时间时扫描多年历史。维护者需要在小样中验证 dateutil 的时区行为与计算上限，再锁定依赖。新增依赖时同步 `pyproject.toml`、`uv.lock`、最小集成测试、Deptry 和 pip-audit。
+本版不增加补跑窗口、历史时间游标、唤醒扫描、等待触发合并或时效队列。系统在清醒运行时因为忙碌而跳过当前触发，属于当前调度判断，不属于漏跑检测。
 
-Eidos 新增的自研范围是“计划是否可执行、触发去重、Run 原子关联、权限和恢复”。这些规则依赖 Eidos 领域事实，通用 Scheduler 不能直接代替。日历计算、等待和重试退避仍交给成熟实现。新增维护成本集中在两张表、一个应用边界、一个受管服务和对应测试。
+周期计划保存明确的 IANA 时区。Runtime 使用带时区的时间计算，并按 UTC 识别触发时刻。创建、编辑和预览始终使用相同计算规则。系统不因本机展示时区变化静默修改计划时区。
 
-## 8. macOS 生命周期
+## 6. 推荐实现
 
-第一版明确说明：Eidos 完全退出、电脑关机或休眠期间，本机任务不会执行。关闭窗口后，只要应用和 Runtime 仍运行，任务可以继续。锁屏不等于退出，但需要用户桌面交互的能力不能承诺在锁屏时工作。
+```mermaid
+flowchart LR
+    A[页面或模型工具] --> B[定时任务应用模块]
+    B --> C[统一时间模块：校验与预览]
+    B --> D[(SQLite 计划与触发记录)]
+    E[Runtime 受管调度] --> B
+    B --> F[现有 Session / Worktree]
+    F --> G[普通 Run]
+    G --> H[现有 Supervisor 与工具链]
+    H --> I[现有 Session 与结果页面]
+```
 
-Main 接收系统唤醒事件后，只通知 Runtime 重新检查到期任务。Runtime 仍是时间与执行状态的唯一权威。Electron 提供 `powerMonitor` 的 suspend/resume 事件。[官方文档](https://www.electronjs.org/docs/latest/api/power-monitor)。
+时间模块的 Interface 接收时间规则、基准时间和受限预览数量，返回规范规则及未来时刻。它将 Cron 库、允许的规则形态、时区和错误处理放在同一个 Implementation 中。页面、模型工具和调度器共用这一 Interface。
 
-用户可以选择“任务运行时防止自动休眠”。Main 使用 `powerSaveBlocker` 的 `prevent-app-suspension`，并在任务结束或退出时释放。该设置不需要保持屏幕常亮，也不能宣传成可以唤醒关机电脑或保证合盖执行。[官方文档](https://www.electronjs.org/docs/latest/api/power-save-blocker)。该能力可以后于核心计划闭环交付。
+Runtime 只维护一个调度模块。AnyIO 负责可取消等待，SQLite 决定计划是否启用，以及某次触发是否已经提交。下一次时间可以作为可重建内存缓存，不作为持久化历史时间游标。
 
-退出流程需要先停止接收新触发，再统计和处理活动 Run，最后关闭定时服务和 Runtime。用户选择返回应用后，系统恢复接收触发。定时服务本身不应被计为需要用户取消的业务 Run。
+调度模块不等待完整 Run。Git 与环境准备使用现有受管任务。系统不为每个计划创建常驻线程，不新增全局 Run 上限，也不增加跨 Run 的共享 Workspace 锁。当前计划不重叠和当前 Session FIFO 分别保留各自的作用范围。
 
-系统时间前拨、回拨和夏令时变化都需要重新计算。AnyIO 等待只负责唤醒；Runtime 最迟每 30 秒重新读取真实时间，并通过唯一触发键防止时间回拨造成重复。
+### 最小持久数据
 
-如果用户以后要求“完全退出 Eidos 后仍执行”，团队需要单独设计常驻进程的安装、单实例所有权、更新和 Desktop 连接方式。如果用户要求“电脑关闭仍执行”，团队还需要远程执行环境。这两者都不是增加一个 cron 文件就能可靠完成的功能。第一版不引入常驻守护进程，不改变现有 stdio 控制面。
-
-## 9. 实施顺序与验收
-
-### 第一轮：交付完整的本机闭环
-
-相关提交围绕一个用户目标，可以放在同一分支和一个 PR 中。建议按四个可审查的 Commit 组织：
-
-1. 维护者增加计划 DTO、时间计算、两张业务表和迁移，并完成时间预览。
-2. 维护者接入触发服务、Run 内部提交、原子去重、补跑、恢复和权限校验。
-3. 维护者接入 typed IPC、定时任务页面、聊天草案、两种会话方式和执行历史。
-4. 维护者补齐唤醒、退出、通知和跨层验证，并同步 `docs/current-*`、协议 Fixture 与 `DEVELOPMENT.md`。
-
-第一轮同时包含“新会话任务”和“原会话跟进”，因为两者复用同一调度与持久化模型。第一轮不包含云端、Webhook、多项目扇出、任务之间的依赖图、自动发消息或完整通用工作流编辑器。
-
-### 第二轮：减少重复人工接管
-
-团队增加有明确范围、可以撤销的计划级持久授权。团队在规则确认后增加定时 `full_access`。团队也可以增加运行费用汇总、失败次数通知和更细的停止条件。
-
-当前 Eidos 没有统一的用户可配置 Run 成本或有效时长上限。方案不能把该能力写成现成机制。第一版先用最短间隔、同计划不重叠、到期时间和最大触发次数控制重复启动。后续单次 Run 预算需要单独接入执行与取消链路，不能只靠提示词限制。
-
-### 验收条件
-
-| 边界 | 必须证明的行为 |
+| 对象 | 本版字段 |
 | --- | --- |
-| 时间 | 预览与真实计算一致；时区、夏令时、月末、时间前拨和回拨都有明确结果 |
-| 原子性 | 触发落库、Session 准备、Run 入队、Outbox 投递各阶段崩溃后不重复创建 Run |
-| 并发 | 同计划不重叠；不同计划和普通 Session 可并行；待审批不阻塞其他任务 |
-| 跟进 | 原 Session 的用户输入优先按现有 FIFO 处理；跟进合并、过期和停止均可见 |
-| 权限 | 旧 Run Grant 不跨执行复用；模型不能开启 full_access；受保护路径继续走现有高危人工审批 |
-| 副作用 | 不确定 Shell/MCP 结果不因补跑或重试被重放；取消不被迟到结果覆盖 |
-| 环境 | 目录丢失、身份替换、模型删除、扩展失效和 Worktree 清理都给出具体原因 |
-| 生命周期 | 无窗口时仍能查看待处理通知；唤醒后补跑有界；退出不会新建 Run；资源能够静止 |
-| 历史 | 暂停、恢复、删除、手动触发和跳过都有持久记录；删除计划不会删除用户产物 |
+| scheduled_tasks | 名称、任务正文、配置版本、启用状态、会话方式、目标 Session 或项目、执行环境、模型设置、审批模式、at / Cron 与时区 |
+| scheduled_occurrences | 计划 ID、计划时刻或手动 operation ID、配置快照、准备状态、Run / Session ID、准备失败或忙碌原因、创建与提交时间 |
+| 现有 Run / Item / Approval | 系统保存明确执行来源，以及原有执行、回答、工具、权限、取消和终态事实 |
 
-实施验证优先使用相关 Runtime、迁移、协议、Main 和 Renderer 定向测试。启动与退出变化需要 Electron smoke；权限物化变化需要真实 Seatbelt；新增依赖需要审计和 Bundle 检查。Full Suite 只在用户明确要求时运行。
+系统不增加补跑策略、补跑窗口、漏跑计数、离线历史范围或触发合并字段。
 
-## 10. 本次交付与证据范围
+定时触发通过 `(task_id, scheduled_for_utc)` 唯一约束去重。手动触发使用 operation ID 去重。触发记录只表示准备、已提交、忙碌跳过或准备失败。Run 继续决定执行中、待审批、成功和失败。界面不依赖第二套执行状态机。
 
-本次只新增本文。生产代码、Schema、协议、依赖和 `docs/current-*` 均未修改。本次读取了官方资料、Eidos 源码、当前文档及相关测试入口。本次没有运行测试、构建、原生验证或 Full Suite。文中的建议数值、类名、表名和 RPC 组织方式都属于待实现设计。
+### 一次触发的事务与恢复
+
+1. Runtime 检查计划是否启用、当前触发是否有效、计划是否已有未完成执行。Runtime 在短事务中认领唯一触发，并提交 Event/Outbox。
+2. Runtime 在事务外准备 Session 或 Worktree。准备操作复用现有持久生命周期，并使用稳定的 occurrence operation ID。
+3. Runtime 在事务外核验工作区身份并准备权限。Runtime 在提交 Run 的同一短事务内重新检查启用状态、认领版本、同计划占用、目标 Session 忙碌条件、原执行核验状态及持久目标绑定。版本已改变的旧准备触发不再入队。事务中不运行 Git 或其他长时间 I/O；工具执行仍保留原有身份和权限核验。
+4. Repository 在同一短事务中写入 queued Run、用户 Item、触发与 Run 的关联、Event 和 Outbox。
+5. Runtime 在事务成功后唤醒现有 Supervisor。
+
+当前 `RunApplication.start()` 把校验、入队和 RPC 回包确认放在同一用例中。实施时需要提取共用校验与入队逻辑。手动入口继续在回包成功后放行。定时入口在自己的持久事务提交后放行，不能调用虚假的 `mark_response_delivered()`。
+
+“本版不补跑”不改变已经接受的 Run 的恢复语义。已经提交的 Run 继续按现有恢复与 Reconciliation 规则处理。只有准备记录、尚未提交 Run 的旧触发，在重启后标为中断；系统只收敛已开始的 Worktree 生命周期，不自动重新提交这个触发。用户需要时可以点击立即执行。
+
+Run 的唯一关联只能防止重复创建，不能证明任意外部副作用只发生一次。已有 Durable Intent、文件版本校验、取消和 Reconciliation 继续保留。
+
+### 建议协议
+
+| 方法 | 用途 |
+| --- | --- |
+| schedule/preview | Runtime 校验规则，返回规范形式和未来五次时间；一次性任务只返回一个时刻 |
+| schedule/list、schedule/read | Runtime 分页返回计划和详情 |
+| schedule/create、schedule/update | Runtime 幂等保存计划；更新使用预期配置版本检查 |
+| schedule/pause、schedule/resume、schedule/delete | Runtime 管理未来触发 |
+| schedule/runNow | Runtime 幂等创建手动执行 |
+| schedule/listOccurrences | Runtime 分页返回实际触发历史 |
+
+automation 与页面调用同一应用模块。首版所有 mode 顺序执行。可信内置 Runtime 对已校验命令区分只读与写入：view / preview 不提交 Durable Intent，创建、更新与删除继续经过现有 Validate、Permission、Durable Intent、Execute、Verify 和 Commit 流程。实际调用类别需要在屏障和取消处理前固定；该分类属于待实现的小范围契约改动，不是当前已有能力。模型不能通过 Shell 写调度文件绕过流程。Python DTO 与 Desktop 契约继续使用同一 Schema 源。用户取消 Run 和处理审批继续使用现有协议。
+
+自动输入需要在接受 Run 时保存持久来源，并与普通用户输入区分。它不授予计划管理权限，也不进入自动记忆学习。重新生成通过原逻辑请求复用已经发生的计划变更，不因新 Run / Item ID 再创建计划。模型、扩展变化与目标删除等具体处理见方案复核。
+
+## 7. 权限与结果
+
+本版计划审批模式默认 auto_review（替我审批），用户可明确选择 manual（请求审批）。该默认值独立于创建对话和目标 Session。替我审批复用现有审查与人工回退规则；高危请求仍由用户决定。任务需要人工处理时进入现有等待状态，并在页面展示具体原因，同计划后续时刻按忙碌规则跳过。旧 Run Grant 不自动复制到下一次执行。
+
+根 AGENTS.md 当前要求 full_access Run 由用户在 Desktop 确认并创建。自动触发不得自行填入 full-access-v1 来冒充确认。本版不新增跨 Run 的持久授权，也不开放自动触发的 full_access。该限制不改变现有手动 Run。
+
+侧栏增加“定时任务”。列表显示名称、是否启用、规则说明、下次执行和最近结果。详情提供编辑、暂停、恢复、立即执行、删除和实际触发历史。用户点击历史后打开现有 Session，继续查看回答、Diff、产物与审批。
+
+失败、待审批和待回答进入待处理结果。首版先使用应用内结果提示。系统通知可以作为同一目标内的后续提交，不承担计划状态权威。计划删除默认保留历史 Session 和文件。
+
+## 8. Cron 依赖取舍
+
+本版优先评估 croniter，仅使用它的 Cron 解析与未来时间计算。项目官方文档提供 `get_next()`、带时区计算和查找跨度限制。[croniter 官方仓库](https://github.com/pallets-eco/croniter)
+
+PyPI 当前元数据显示，croniter 使用 MIT 许可，支持 Python 3.11/3.12。该信息支持把它列为候选，但不等于已经通过 Eidos 的依赖审计或 macOS Bundle 验证。[croniter PyPI](https://pypi.org/project/croniter/)
+
+| 方案 | 本版取舍 |
+| --- | --- |
+| datetime / zoneinfo | 系统使用标准库处理一次性时间、UTC 和时区 |
+| croniter | 系统优先评估其五段 Cron 解析与 next-time 计算 |
+| APScheduler 完整 Scheduler | 系统已有 SQLite、Run 执行和恢复，本版不增加另一套任务存储与执行器 |
+| APScheduler 3.x CronTrigger | 该工具可以单独使用，但其星期数字与标准 Cron 存在差异，本版优先使用符合所选规则含义的 Cron 计算库 |
+| python-dateutil / RRULE | 本版不再使用 RRULE，方案不为此增加依赖 |
+| 系统 crontab 或每任务一个 launchd Job | 本版不使用它们存储或执行 Eidos 计划 |
+
+APScheduler 3.x 官方文档说明，星期编号 0 表示周一。它与本版采用的标准 Cron 编号不同。[官方 CronTrigger 文档](https://apscheduler.readthedocs.io/en/3.x/modules/triggers/cron.html)
+
+Runtime 只接收本版支持的表达式形态，并限制表达式长度、计算跨度和预览数量。维护者必须用候选版本验证日历日期、时区和异常表达式。通用 Cron 解析交给依赖；三档固定间隔和允许的日历形态由 Eidos 决定。
+
+实施时新增依赖需要同步 pyproject.toml、uv.lock、最小集成测试、Deptry、pip-audit 和 Bundle 验证。本次不安装依赖，也不预先声称验证通过。
+
+## 9. 本地生命周期与实施顺序
+
+Eidos 完全退出、电脑关机或休眠时，计划不会执行。macOS 关闭窗口后，只要 Main 和 Runtime 仍在运行，调度可以继续。本版不增加常驻守护进程、系统唤醒或持续防休眠设置。
+
+系统唤醒时只重置未来时间计算，不触发历史扫描。退出时，系统先停止新触发，再按现有流程取消或关闭 Run 和 Runtime。用户返回应用时，系统重新启用未来调度。
+
+本版建议围绕同一目标分成四个可审查的提交：
+
+1. 维护者增加受限 Cron / at DTO、统一时间模块、预览与规则校验。
+2. 维护者增加两张表、迁移、唯一触发与普通 Run 原子关联。
+3. 维护者接入受管调度、两种会话方式、忙碌跳过和本地退出流程。
+4. 维护者接入页面、模型工具和执行历史，并同步当前文档与协议 Fixture。
+
+本轮不增加通用工作流编辑器、多项目扇出、任务依赖图、持久权限或费用预算模块。
+
+| 验收范围 | 必须证明的结果 |
+| --- | --- |
+| 规则限制 | Runtime 只接受三档固定间隔与允许的日历规则；模型无法绕过限制 |
+| 时间预览 | 预览与真实计算一致；09:07 创建每十分钟任务后，下次为 09:10 |
+| 一次性任务 | 系统只提交一次；系统拒绝创建过去时间的任务 |
+| 本地重启与唤醒 | 系统只计算未来时刻，不补写或执行旧触发 |
+| 忙碌情况 | 同计划和原会话忙碌时跳过当前触发；系统不积累等待项 |
+| 原子性 | 认领、准备和入队发生竞争或崩溃时，系统不重复创建 Run |
+| 已接受 Run 的恢复 | 已提交 Run 保留原恢复规则；未入队旧触发不会自动重新执行 |
+| 权限与副作用 | 历史授权不跨执行复用；未知副作用不被重试；取消不被迟到结果覆盖 |
+| 产品操作 | 暂停、恢复、编辑、删除和立即执行的含义与页面一致 |
+| 生命周期 | 调度在退出前停止接收新触发，资源能够正常关闭 |
+
+实施验证优先使用时间模块、Runtime、迁移、协议、Main 和 Renderer 的定向测试。生命周期变化需要 Electron smoke；权限物化变化需要真实 Seatbelt。Full Suite 只在用户明确要求时执行。
+
+本次只修订总方案、automation 工具设计和源码复核三份文档。生产代码、依赖、Schema 和协议均未修改。相关定向测试、构建、原生验证和 Full Suite 均未运行。工作区已有的其他修改不属于本次修订。

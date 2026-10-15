@@ -31,7 +31,15 @@ export function SkillIcon({ name, icon }: { name: string; icon?: string | null |
 }
 
 export interface SkillDetailDialogProps {
-  skill: SkillMetadata | { qualifiedId: string; name: string; description?: string; sourceKind?: "system" | "user" | "plugin"; enabled?: boolean; available?: boolean; icon?: string | null | undefined } | undefined;
+  skill: SkillMetadata | {
+    qualifiedId: string;
+    name: string;
+    description?: string | undefined;
+    sourceKind?: "system" | "user" | "plugin" | undefined;
+    enabled?: boolean | undefined;
+    available?: boolean | undefined;
+    icon?: string | null | undefined;
+  } | undefined;
   pendingAction?: SettingsPendingAction | undefined;
   storageReady?: boolean | undefined;
   onToggleSkill?: ((id: string, enabled: boolean) => Promise<void>) | undefined;
@@ -40,6 +48,47 @@ export interface SkillDetailDialogProps {
   onClose: () => void;
   getFallbackFocus?: (() => HTMLElement | null) | undefined;
   readOnly?: boolean | undefined;
+}
+
+export function extractFrontmatterDescription(content?: string): string | undefined {
+  if (!content) return undefined;
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)/);
+  if (!match || !match[1]) return undefined;
+  const frontmatter = match[1];
+  const lines = frontmatter.split(/\r?\n/);
+  let inDesc = false;
+  let isFolded = false;
+  const descLines: string[] = [];
+  for (const line of lines) {
+    if (!inDesc) {
+      const descMatch = line.match(/^description:\s*(.*)$/);
+      if (descMatch && descMatch[1] !== undefined) {
+        const rest = descMatch[1].trim();
+        if (rest === ">" || rest === "|") {
+          inDesc = true;
+          isFolded = true;
+        } else if (rest) {
+          let val = rest;
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          return val.trim();
+        } else {
+          inDesc = true;
+        }
+      }
+    } else {
+      if (/^\s+/.test(line)) {
+        descLines.push(line.trim());
+      } else {
+        break;
+      }
+    }
+  }
+  if (descLines.length > 0) {
+    return descLines.join(isFolded ? " " : "\n").trim();
+  }
+  return undefined;
 }
 
 export function SkillDetailDialog({
@@ -54,6 +103,7 @@ export function SkillDetailDialog({
   readOnly = false,
 }: SkillDetailDialogProps) {
   const [detail, setDetail] = useState<SkillDetail>();
+  const [matchedMetadata, setMatchedMetadata] = useState<SkillMetadata>();
   const [icon, setIcon] = useState<string | null | undefined>(skill?.icon);
   const [error, setError] = useState<string>();
   const [loadError, setLoadError] = useState<string>();
@@ -63,20 +113,30 @@ export function SkillDetailDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const busy = Boolean(pendingAction);
   const id = skill?.qualifiedId;
-  const currentDetail = detail?.qualifiedId === id ? detail : undefined;
+  const effectiveId = matchedMetadata?.qualifiedId || id;
+  const currentDetail =
+    detail && (detail.qualifiedId === id || (effectiveId && detail.qualifiedId === effectiveId))
+      ? detail
+      : undefined;
   useDialogFocusLifecycle({ open: Boolean(skill), initialFocusRef: closeRef, getFallbackFocus });
 
   useEffect(() => {
     setIcon(skill?.icon);
-    if (!id || skill?.icon) return;
+    setMatchedMetadata(undefined);
+    if (!id) return;
     if (typeof window !== "undefined" && window.eidosRuntime?.listSkills) {
       let active = true;
       void window.eidosRuntime.listSkills().then(
         (result) => {
           if (!active) return;
-          const match = result?.skills?.find((s) => s.qualifiedId === id);
-          if (match?.icon) {
-            setIcon(match.icon);
+          const match = result?.skills?.find(
+            (s) => s.qualifiedId === id || s.name === id || s.qualifiedId.endsWith(`:${id}`)
+          );
+          if (match) {
+            setMatchedMetadata(match);
+            if (!skill?.icon && match.icon) {
+              setIcon(match.icon);
+            }
           }
         },
         () => {},
@@ -92,16 +152,17 @@ export function SkillDetailDialog({
     setError(undefined);
     setLoadError(undefined);
     setConfirmRemove(false);
-    if (!id) return;
+    const targetId = effectiveId || id;
+    if (!targetId) return;
     let active = true;
     if (typeof window !== "undefined" && window.eidosRuntime?.readSkillDetail) {
-      void window.eidosRuntime.readSkillDetail(id).then(
+      void window.eidosRuntime.readSkillDetail(targetId).then(
         (result) => { if (active) setDetail(result); },
         (cause: unknown) => { if (active) setLoadError(userFacingError(cause)); },
       );
     }
     return () => { active = false; };
-  }, [id, reload]);
+  }, [effectiveId, id, reload]);
 
   useEffect(() => {
     if (!id) return;
@@ -129,19 +190,21 @@ export function SkillDetailDialog({
   }, [id, confirmRemove, busy, onClose]);
 
   async function toggle(enabled: boolean) {
-    if (!skill || busy || !onToggleSkill) return;
+    const targetId = effectiveId || skill?.qualifiedId;
+    if (!targetId || busy || !onToggleSkill) return;
     setError(undefined);
     try {
-      await onToggleSkill(skill.qualifiedId, enabled);
+      await onToggleSkill(targetId, enabled);
       onShowToast(enabled ? "技能已启用，将从下一次任务生效" : "技能已禁用，将从下一次任务生效", "success");
     } catch (cause) { setError(userFacingError(cause)); }
   }
 
   async function remove() {
-    if (!skill || busy || !onRemoveSkill) return;
+    const targetId = effectiveId || skill?.qualifiedId;
+    if (!targetId || busy || !onRemoveSkill) return;
     setError(undefined);
     try {
-      const result = await onRemoveSkill(skill.qualifiedId);
+      const result = await onRemoveSkill(targetId);
       setConfirmRemove(false);
       onClose();
       onShowToast(result.cleanupPending ? "技能已卸载，文件清理已延后" : "技能已卸载", "success");
@@ -164,6 +227,17 @@ export function SkillDetailDialog({
   }
 
   if (!skill) return null;
+  const effectiveName = skill.name || matchedMetadata?.name || id || "";
+  const effectiveIcon = icon ?? skill.icon ?? matchedMetadata?.icon;
+  const effectiveDescription =
+    skill.description
+    || matchedMetadata?.description
+    || (currentDetail as { description?: string } | undefined)?.description
+    || extractFrontmatterDescription(currentDetail?.content);
+  const effectiveAvailable = skill.available ?? matchedMetadata?.available ?? true;
+  const effectiveSourceKind = skill.sourceKind ?? matchedMetadata?.sourceKind;
+  const effectiveEnabled = skill.enabled ?? matchedMetadata?.enabled ?? true;
+
   return (
     <>
       <div className="modal-backdrop skill-detail-backdrop" inert={confirmRemove} onClick={() => { if (!busy) onClose(); }}>
@@ -177,18 +251,18 @@ export function SkillDetailDialog({
         >
           <div className="skill-detail-header">
             <div className="skill-detail-header-left">
-              <SkillIcon name={skill.name} icon={icon ?? skill.icon} />
+              <SkillIcon name={effectiveName} icon={effectiveIcon} />
               <div className="skill-detail-title-group">
-                <h2 id="skill-detail-title">{skill.name}</h2>
+                <h2 id="skill-detail-title">{effectiveName}</h2>
                 <span className="skill-type-label">Skill</span>
               </div>
             </div>
             <div className="skill-detail-header-right">
               {!readOnly && onToggleSkill && (
                 <Toggle
-                  checked={Boolean(skill.enabled)}
+                  checked={Boolean(effectiveEnabled)}
                   disabled={busy || !storageReady}
-                  label={`启用或禁用 ${skill.name}`}
+                  label={`启用或禁用 ${effectiveName}`}
                   onChange={(enabled) => void toggle(enabled)}
                 />
               )}
@@ -216,8 +290,8 @@ export function SkillDetailDialog({
               </div>
             </div>
           </div>
-          <p className="skill-detail-description">{skill.description || "未提供技能说明"}</p>
-          {!skill.available && <p className="skill-availability" role="status">所属插件尚未启用。你可以保存技能开关状态，插件启用后才会生效。</p>}
+          <p className="skill-detail-description">{effectiveDescription || "未提供技能说明"}</p>
+          {!effectiveAvailable && <p className="skill-availability" role="status">所属插件尚未启用。你可以保存技能开关状态，插件启用后才会生效。</p>}
           {error && !confirmRemove && <p className="setting-field-error" role="alert">{error}</p>}
           <div className="skill-detail-body" tabIndex={0} aria-label="技能说明" aria-busy={!currentDetail && !loadError}>
             {currentDetail ? (
@@ -226,7 +300,7 @@ export function SkillDetailDialog({
               <div role="alert"><p>{loadError}</p><Button variant="secondary" size="small" onClick={() => setReload((value) => value + 1)}>重试</Button></div>
             ) : <p role="status">正在读取技能说明…</p>}
           </div>
-          {!readOnly && skill.sourceKind !== "system" && onRemoveSkill && (
+          {!readOnly && effectiveSourceKind !== "system" && onRemoveSkill && (
             <div className="skill-detail-footer">
               <Button variant="danger" size="small" disabled={busy || !storageReady} onClick={() => { setError(undefined); setConfirmRemove(true); }}>卸载</Button>
             </div>
@@ -236,8 +310,8 @@ export function SkillDetailDialog({
       {!readOnly && onRemoveSkill && (
         <ConfirmDialog
           open={confirmRemove}
-          title={`卸载“${skill.name}”？`}
-          description={skill.sourceKind === "plugin"
+          title={`卸载“${effectiveName}”？`}
+          description={effectiveSourceKind === "plugin"
             ? "该技能将从列表和后续任务中移除。插件包文件会保留，插件的其他技能和 MCP 不受影响。"
             : "该技能将从列表和后续任务中移除，技能目录也会删除。如果任务仍在运行，文件清理会延后。"}
           confirmLabel="卸载"

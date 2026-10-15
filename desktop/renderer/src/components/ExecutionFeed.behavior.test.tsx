@@ -1558,11 +1558,162 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
 
       const heading = await screen.findByRole("heading", { name: "code-review" });
       expect(heading).toBeInTheDocument();
+      expect(await screen.findByText("Review your code")).toBeInTheDocument();
+      expect(screen.queryByText("未提供技能说明")).not.toBeInTheDocument();
 
       // Close dialog
       const closeBtn = screen.getByRole("button", { name: "关闭技能详情" });
       fireEvent.click(closeBtn);
       expect(screen.queryByRole("heading", { name: "code-review" })).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("renders skill_read_resource and displays skill description from listSkills when previewed", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const readSkillDetail = vi.fn().mockResolvedValue({
+      qualifiedId: "user:translator",
+      content: "---\nname: translator\ndescription: Translate text between languages.\n---\n# Translator\n\nPrompt details.\n",
+      body: "# Translator\n\nPrompt details.\n",
+      directory: "/skills/translator",
+    });
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readSkillDetail,
+        listSkills: vi.fn().mockResolvedValue({
+          skills: [
+            {
+              qualifiedId: "user:translator",
+              name: "translator",
+              description: "Translate text between languages.",
+              sourceKind: "user",
+              enabled: true,
+              available: true,
+              schemaVersion: 1,
+              pluginId: "",
+              pluginVersion: "",
+              pluginHash: "",
+              contentHash: "hash123",
+            },
+          ],
+        }),
+      },
+    });
+
+    try {
+      const item: Item = {
+        id: "tool-srr",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 2,
+        kind: "tool_call",
+        status: "completed",
+        createdAt: 1000,
+        toolCall: {
+          id: "tc-srr",
+          itemId: "tool-srr",
+          modelStepIndex: 1,
+          batchOrder: 0,
+          providerCallId: "p-srr",
+          toolName: "skill_read_resource",
+          status: "completed",
+          startedAt: 1000,
+          completedAt: 1100,
+          argumentsJson: JSON.stringify({ qualifiedId: "user:translator", resourcePath: "prompt.md" }),
+          resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+        },
+      };
+
+      render(
+        <ExecutionFeed
+          items={[item]}
+          runs={[baseRun]}
+          approvals={[]}
+          onApprove={() => {}}
+          onReject={() => {}}
+        />,
+      );
+
+      const button = screen.getByRole("button", { name: "translator" });
+      expect(button).toBeInTheDocument();
+      expect(screen.getByText(/已读取.*整个技能包/)).toBeInTheDocument();
+
+      fireEvent.click(button);
+
+      expect(await screen.findByRole("heading", { name: "translator" })).toBeInTheDocument();
+      expect(await screen.findByText("Translate text between languages.")).toBeInTheDocument();
+      expect(screen.queryByText("未提供技能说明")).not.toBeInTheDocument();
+      expect(await screen.findByText("Prompt details.")).toBeInTheDocument();
+
+      const closeBtn = screen.getByRole("button", { name: "关闭技能详情" });
+      fireEvent.click(closeBtn);
+      expect(screen.queryByRole("heading", { name: "translator" })).not.toBeInTheDocument();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("extracts frontmatter description from SKILL.md content when listSkills has no match", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const readSkillDetail = vi.fn().mockResolvedValue({
+      qualifiedId: "user:helper",
+      content: "---\nname: helper\ndescription: Frontmatter extracted description.\n---\n# Helper\n\nHelper body.\n",
+      body: "# Helper\n\nHelper body.\n",
+      directory: "/skills/helper",
+    });
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        readSkillDetail,
+        listSkills: vi.fn().mockResolvedValue({ skills: [] }),
+      },
+    });
+
+    try {
+      const item: Item = {
+        id: "tool-sr-fm",
+        sessionId: baseRun.sessionId,
+        runId: baseRun.id,
+        ordinal: 3,
+        kind: "tool_call",
+        status: "completed",
+        createdAt: 1000,
+        toolCall: {
+          id: "tc-sr-fm",
+          itemId: "tool-sr-fm",
+          modelStepIndex: 1,
+          batchOrder: 0,
+          providerCallId: "p-sr-fm",
+          toolName: "skill_read",
+          status: "completed",
+          startedAt: 1000,
+          completedAt: 1100,
+          argumentsJson: JSON.stringify({ qualifiedId: "user:helper" }),
+          resultJson: JSON.stringify({ outcome: "success", code: "ok" }),
+        },
+      };
+
+      render(
+        <ExecutionFeed
+          items={[item]}
+          runs={[baseRun]}
+          approvals={[]}
+          onApprove={() => {}}
+          onReject={() => {}}
+        />,
+      );
+
+      const button = screen.getByRole("button", { name: "helper" });
+      fireEvent.click(button);
+
+      expect(await screen.findByRole("heading", { name: "helper" })).toBeInTheDocument();
+      expect(await screen.findByText("Frontmatter extracted description.")).toBeInTheDocument();
+      expect(screen.queryByText("未提供技能说明")).not.toBeInTheDocument();
+      expect(await screen.findByText("Helper body.")).toBeInTheDocument();
     } finally {
       if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
       else delete (window as Partial<Window>).eidosRuntime;
