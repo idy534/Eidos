@@ -53,16 +53,36 @@ describe("InputPicker behavior", () => {
     onCommand: vi.fn(),
   };
 
-  it("shows command candidates and dispatches the selected command", async () => {
-    setupRuntime();
+  it("shows commands and skills in commands mode, without /skills, and dispatches selection", async () => {
+    setupRuntime({
+      listSkills: vi.fn().mockResolvedValue({
+        skills: [{
+          qualifiedId: "system:plugin-creator",
+          name: "plugin-creator",
+          description: "Create plugins",
+          sourceKind: "system",
+          pluginId: "",
+          available: true,
+          enabled: true,
+        }],
+      }),
+    });
     const onCommand = vi.fn();
+    const onChoose = vi.fn();
 
-    render(<InputPicker {...pickerProps} mode="commands" onCommand={onCommand} />);
+    render(<InputPicker {...pickerProps} mode="commands" onCommand={onCommand} onChoose={onChoose} />);
 
-    const option = await screen.findByRole("option", { name: /\/skills/ });
-    fireEvent.click(option);
+    const planOption = await screen.findByRole("option", { name: /\/plan/ });
+    expect(screen.queryByRole("option", { name: /\/skills/ })).not.toBeInTheDocument();
 
-    expect(onCommand).toHaveBeenCalledWith("skills");
+    expect(await screen.findByText("技能")).toBeInTheDocument();
+    const skillOption = screen.getByRole("option", { name: /plugin-creator/ });
+
+    fireEvent.click(planOption);
+    expect(onCommand).toHaveBeenCalledWith("plan");
+
+    fireEvent.click(skillOption);
+    expect(onChoose).toHaveBeenCalledWith({ kind: "skill", source: "system:plugin-creator" });
   });
 
   it("prepares a file selected by the quick action and adds it to the current draft", async () => {

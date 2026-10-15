@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, Fragment } from "react";
 import type { InputPrepareRequest } from "../../../shared/input-context.js";
 import { useInputContext } from "./InputContext.js";
 import { userFacingError } from "../session-state.js";
@@ -7,7 +7,6 @@ export type InputPickerMode = "all" | "skill" | "commands";
 interface Candidate { id: string; label: string; detail: string; request?: InputPrepareRequest; action?: string; unavailable?: boolean }
 const commands: Candidate[] = [
   { id: "plan", label: "/plan", detail: "开始 Plan 模式", action: "plan" },
-  { id: "skills", label: "/skills", detail: "选择 Skill", action: "skills" },
   { id: "mcp", label: "/mcp", detail: "查看与管理 MCP", action: "mcp" },
   { id: "plugins", label: "/plugins", detail: "管理 Plugin", action: "plugins" },
 ];
@@ -50,7 +49,30 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
   useEffect(() => {
     let active = true;
     setLoading(true);
-    if (mode === "commands") { setCatalog(commands); setLoading(false); return; }
+    if (mode === "commands") {
+      setCatalog(commands);
+      void window.eidosRuntime.listSkills().then(
+        (skills) => {
+          if (!active) return;
+          const rows: Candidate[] = [...commands];
+          for (const value of skills.skills) {
+            const source = value.sourceKind === "system" ? "系统" : value.sourceKind === "user" ? "个人" : value.pluginId || "插件";
+            rows.push({
+              id: `skill:${value.qualifiedId}`, label: value.name, detail: `skill · ${source}`,
+              request: { kind: "skill", source: value.qualifiedId }, unavailable: !value.available || !value.enabled,
+            });
+          }
+          setCatalog(rows);
+          setLoading(false);
+        },
+        () => {
+          if (!active) return;
+          setCatalog(commands);
+          setLoading(false);
+        },
+      );
+      return () => { active = false; };
+    }
     void Promise.allSettled([
       window.eidosRuntime.listSkills(), window.eidosRuntime.listPlugins(),
       window.eidosRuntime.listMcpServers(), window.eidosRuntime.listSessions(),
@@ -103,10 +125,12 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
   }, [mode, context?.sessionId, context?.workspaceRoot]);
 
   const needle = query.toLocaleLowerCase();
+  const cleanNeedle = (mode === "commands" && needle.startsWith("/")) ? needle.slice(1) : needle;
   const candidates = (history ?? [...files, ...catalog]).filter((value) =>
     (mode !== "skill" || value.request?.kind === "skill")
     && (category === "all" || value.request?.kind === category || (category === "file" && ["file", "directory"].includes(value.request?.kind ?? "")))
-    && `${value.label} ${value.detail} ${value.request?.source ?? ""}`.toLocaleLowerCase().includes(needle),
+    && (`${value.label} ${value.detail} ${value.request?.source ?? ""}`.toLocaleLowerCase().includes(needle)
+      || (cleanNeedle ? `${value.label} ${value.detail} ${value.request?.source ?? ""}`.toLocaleLowerCase().includes(cleanNeedle) : false)),
   ).slice(0, 80);
   const choose = (candidate: Candidate | undefined) => {
     if (!candidate || candidate.unavailable) return;
@@ -341,68 +365,77 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
       )}
 
       <div id={listId} role="listbox" aria-label="引用候选" className="input-picker__list">
-        {candidates.map((candidate, row) => (
-          <div
-            key={candidate.id}
-            className={`input-picker__item-row${index === row ? " is-selected" : ""}`}
-            onPointerMove={() => setIndex(row)}
-          >
-            <button
-              type="button"
-              id={`${listId}-${row}`}
-              role="option"
-              aria-selected={index === row}
-              aria-disabled={candidate.unavailable}
-              className={`input-picker__item${index === row ? " is-selected" : ""}${candidate.unavailable ? " is-disabled" : ""}`}
-              onPointerMove={() => setIndex(row)}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => choose(candidate)}
-            >
-              <span className={`input-picker__item-icon input-picker__item-icon--${candidate.action ? "command" : candidate.request?.kind ?? "default"}`}>
-                {renderItemIcon(candidate)}
-              </span>
-              <span className="input-picker__item-label">{candidate.label}</span>
-              <span className="input-picker__item-detail">{candidate.detail}</span>
-              {candidate.unavailable && (
-                <span className="input-picker__badge">不可用</span>
+        {candidates.map((candidate, row) => {
+          const isFirstSkill = mode === "commands" && candidate.request?.kind === "skill" && (row === 0 || candidates[row - 1]?.request?.kind !== "skill");
+          return (
+            <Fragment key={candidate.id}>
+              {isFirstSkill && (
+                <div className="input-picker__section-title" aria-hidden="true">
+                  技能
+                </div>
               )}
-            </button>
-            {candidate.request?.kind === "history" && !candidate.request.itemIds && history === null && (
-              <button
-                type="button"
-                className="input-picker__drilldown-btn"
-                title="选择消息"
-                aria-label="选择消息"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const source = candidate.request!.source;
-                  void window.eidosRuntime.readSession(source, { itemLimit: 100 }).then((snapshot) => {
-                    setCategory("all");
-                    onQuery("");
-                    setHistory([
-                      { ...candidate, label: "引用最近 20 条消息" },
-                      ...snapshot.items
-                        .filter((item) => ["user_message", "assistant_message"].includes(item.kind) && item.content)
-                        .map((item) => ({
-                          id: item.id,
-                          label: (item.content ?? "").slice(0, 100),
-                          detail: item.kind === "user_message" ? "用户" : "Eidos",
-                          request: {
-                            kind: "history" as const,
-                            source,
-                            itemIds: [item.id],
-                            label: `${candidate.label} · 消息摘录`,
-                          },
-                        })),
-                    ]);
-                  }, (cause) => setError(userFacingError(cause)));
-                }}
+              <div
+                className={`input-picker__item-row${index === row ? " is-selected" : ""}`}
+                onPointerMove={() => setIndex(row)}
               >
-                <ChevronRightIcon />
-              </button>
-            )}
-          </div>
-        ))}
+                <button
+                  type="button"
+                  id={`${listId}-${row}`}
+                  role="option"
+                  aria-selected={index === row}
+                  aria-disabled={candidate.unavailable}
+                  className={`input-picker__item${index === row ? " is-selected" : ""}${candidate.unavailable ? " is-disabled" : ""}`}
+                  onPointerMove={() => setIndex(row)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => choose(candidate)}
+                >
+                  <span className={`input-picker__item-icon input-picker__item-icon--${candidate.action ? "command" : candidate.request?.kind ?? "default"}`}>
+                    {renderItemIcon(candidate)}
+                  </span>
+                  <span className="input-picker__item-label">{candidate.label}</span>
+                  <span className="input-picker__item-detail">{candidate.detail}</span>
+                  {candidate.unavailable && (
+                    <span className="input-picker__badge">不可用</span>
+                  )}
+                </button>
+                {candidate.request?.kind === "history" && !candidate.request.itemIds && history === null && (
+                  <button
+                    type="button"
+                    className="input-picker__drilldown-btn"
+                    title="选择消息"
+                    aria-label="选择消息"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const source = candidate.request!.source;
+                      void window.eidosRuntime.readSession(source, { itemLimit: 100 }).then((snapshot) => {
+                        setCategory("all");
+                        onQuery("");
+                        setHistory([
+                          { ...candidate, label: "引用最近 20 条消息" },
+                          ...snapshot.items
+                            .filter((item) => ["user_message", "assistant_message"].includes(item.kind) && item.content)
+                            .map((item) => ({
+                              id: item.id,
+                              label: (item.content ?? "").slice(0, 100),
+                              detail: item.kind === "user_message" ? "用户" : "Eidos",
+                              request: {
+                                kind: "history" as const,
+                                source,
+                                itemIds: [item.id],
+                                label: `${candidate.label} · 消息摘录`,
+                              },
+                            })),
+                        ]);
+                      }, (cause) => setError(userFacingError(cause)));
+                    }}
+                  >
+                    <ChevronRightIcon />
+                  </button>
+                )}
+              </div>
+            </Fragment>
+          );
+        })}
         {!loading && candidates.length === 0 && (
           <div className="input-picker__empty">
             <SearchEmptyIcon />

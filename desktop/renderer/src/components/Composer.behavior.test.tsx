@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Composer, type ComposerProps } from "./Composer.js";
 import { InputContextProvider } from "./InputContext.js";
 import type { ModelListResult, Run } from "../contracts.js";
@@ -427,6 +428,78 @@ describe("Composer DOM interaction & state behavior", () => {
     });
 
     expect(await screen.findByText(title)).toBeInTheDocument();
+  });
+
+  it("allows selecting a skill candidate directly from / shortcut and consumes the mention", async () => {
+    const onAdd = vi.fn();
+    const onInputChange = vi.fn();
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      writable: true,
+      value: {
+        listSkills: vi.fn().mockResolvedValue({
+          skills: [{
+            qualifiedId: "system:plugin-creator",
+            name: "plugin-creator",
+            description: "Create plugins",
+            sourceKind: "system",
+            pluginId: "",
+            available: true,
+            enabled: true,
+          }],
+        }),
+        listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+        listMcpServers: vi.fn().mockResolvedValue({ servers: [] }),
+        listSessions: vi.fn().mockResolvedValue({ items: [] }),
+        listWorkspaceDirectory: vi.fn().mockResolvedValue({ path: ".", entries: [], truncated: false }),
+        prepareInput: vi.fn().mockResolvedValue({
+          id: "skill-1",
+          kind: "skill",
+          label: "plugin-creator",
+          source: "system:plugin-creator",
+          status: "content",
+        }),
+        onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+      },
+    });
+
+    function Wrapper() {
+      const [input, setInput] = useState("");
+      return (
+        <InputContextProvider
+          sessionId="session-1"
+          workspaceRoot="/workspace"
+          ready
+          onAdd={onAdd}
+          onSettings={vi.fn()}
+        >
+          <Composer
+            {...defaultProps}
+            input={input}
+            onInputChange={(value) => {
+              setInput(value);
+              onInputChange(value);
+            }}
+          />
+        </InputContextProvider>
+      );
+    }
+    render(<Wrapper />);
+
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "/plug", selectionStart: 5 },
+    });
+
+    const skillOption = await screen.findByRole("option", { name: /plugin-creator/ });
+    fireEvent.click(skillOption);
+
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith("session-1", expect.objectContaining({
+        kind: "skill",
+        source: "system:plugin-creator",
+      }));
+    });
+    expect(onInputChange).toHaveBeenCalledWith("");
   });
 
   it("allows a reference-only draft to submit", () => {

@@ -301,7 +301,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         onCommand={(command) => {
           consumeMention();
           if (command === "plan") onWorkModeChange?.("plan");
-          else if (command === "skills") setPicker({ mode: "skill", query: "" });
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
             textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".reasoning-selector > button")?.click();
