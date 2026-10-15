@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.application.agent_catalog import AgentCatalog
+
 import base64
 import hashlib
 import io
@@ -29,12 +31,15 @@ MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TEXT_CHARS = 65536
 
 
+
+
 class InputContextApplication:
-    def __init__(self, store: SessionStore, extensions: ExtensionApplication, scan_text: Callable[[str], str]):
+    def __init__(self, store: SessionStore, extensions: ExtensionApplication, scan_text: Callable[[str], str], agents: AgentCatalog | None = None):
         self.store = store
         self.repository = InputContextRepository(store.database)
         self.extensions = extensions
         self.scan_text = scan_text
+        self.agents = agents or AgentCatalog(store.database.data_directory)
 
     def prepare(self, request: InputPrepareRequest) -> InputReferenceResponse:
         try:
@@ -53,6 +58,7 @@ class InputContextApplication:
         image_tokens = 0
         status = 'content'
         raw = b''
+        agent_definition = None
         if kind in {'file', 'directory', 'image'}:
             path = Path(source).expanduser().resolve(strict=True)
             data = self.store.database.data_directory
@@ -130,7 +136,18 @@ class InputContextApplication:
             raw = text.encode()
         else:
             status, selection_id = 'selection', source
-            if kind == 'skill':
+            if kind == 'agent':
+                catalog, diagnostics = self.agents.scan()
+                agent_definition = next((value for value in catalog.definitions if value.name == source), None)
+                if agent_definition is None:
+                    reason = next((value.reason for value in diagnostics.agents if value.name == source), None)
+                    raise ApplicationError('INVALID_PARAMS', reason or diagnostics.error or 'Agent 不存在或不可用。')
+                label = agent_definition.name
+                text = (f'名称：{agent_definition.name}\n说明：{agent_definition.description}\n基础职责：{agent_definition.base_role}\n'
+                        f'模型设置：{agent_definition.model.model_dump_json(by_alias=False) if agent_definition.model else "继承父 Run"}\n\n'
+                        + agent_definition.instructions)
+                raw = agent_definition.model_dump_json().encode()
+            elif kind == 'skill':
                 selected = next((item for item in self.extensions.list_skills().skills if item.qualified_id == source and item.available and item.enabled), None)
                 if selected is None:
                     raise ValueError('skill_unavailable')
@@ -155,7 +172,7 @@ class InputContextApplication:
         digest = hashlib.sha256(raw).hexdigest()
         identifier = hashlib.sha256(json.dumps([kind, source, label, text, digest, plugin_id], ensure_ascii=False).encode()).hexdigest()
         reference = InputReference(id=identifier, kind=kind, label=label, source=source, sha256=digest, status=status, size=len(raw))
-        return InputSnapshot(reference=reference, text=text, image=image, mime=mime, image_token_estimate=image_tokens, selection_id=selection_id, plugin_id=plugin_id)
+        return InputSnapshot(reference=reference, text=text, image=image, mime=mime, image_token_estimate=image_tokens, selection_id=selection_id, plugin_id=plugin_id, agent_definition=agent_definition)
 
     def read(self, request: InputReadRequest) -> InputPreviewResponse:
         try:

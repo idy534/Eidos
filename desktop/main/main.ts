@@ -1229,6 +1229,10 @@ ipcMain.handle(IPC.INPUT_PASTE_IMAGE, async (event) => {
   }
 });
 
+ipcMain.handle(IPC.AGENT_CATALOG, (event) => {
+  inputOwner(event);
+  return clientOrThrow().listAgentTypes();
+});
 ipcMain.handle(IPC.AGENT_READ, (event, sessionId: unknown) => {
   inputOwner(event);
   return clientOrThrow().readAgents(inputKey(sessionId));

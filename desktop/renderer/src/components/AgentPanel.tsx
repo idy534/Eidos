@@ -29,18 +29,6 @@ const labels: Record<AgentSummary["status"], string> = {
   interrupted: "已中断",
 };
 
-const roleLabels: Record<AgentSummary["role"], string> = {
-  default: "default",
-  explorer: "explorer",
-  worker: "worker",
-};
-
-const roleDescriptions: Record<AgentSummary["role"], string> = {
-  default: "default",
-  explorer: "explorer",
-  worker: "worker",
-};
-
 export function useAgentState(sessionId: string | undefined, ready: boolean) {
   const [state, setState] = useState<CollaborationState>();
   const [error, setError] = useState("");
@@ -121,10 +109,11 @@ export function statusBadgeTone(status: AgentSummary["status"]): "success" | "wa
 }
 
 export function formatAgentTooltip(agent: AgentSummary): string {
-  const roleName = roleLabels[agent.role] ?? agent.role;
+  const roleName = agent.role;
   const parts: string[] = [
     `${agent.taskName} (${roleName} · ${labels[agent.status]})`,
   ];
+  if (agent.modelId) parts.push(`模型：${agent.providerId ? `${agent.providerId} / ` : ""}${agent.modelId}`);
   if (agent.task?.trim()) {
     parts.push(`任务描述：${agent.task.trim()}`);
   }
@@ -167,13 +156,13 @@ export function AgentList({
               className={`environment-popover__row agent-list__row agent-list__row--compact${isSelected ? " agent-list__row--selected" : ""}${isRunning ? " agent-list__row--running" : ""}`}
               onClick={() => onOpen(agent)}
               title={tooltip}
-              aria-label={`${agent.taskName} · ${roleLabels[agent.role]} · ${labels[agent.status]}${pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}`}
+              aria-label={`${agent.taskName} · ${agent.role} · ${labels[agent.status]}${pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}`}
             >
               <div className="agent-list__row-main">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <span className="agent-list__row-name">{agent.taskName}</span>
-                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
-                  {roleLabels[agent.role]}
+                <span className={`agent-role-pill agent-role-pill--${agent.baseRole ?? agent.role}`}>
+                  {agent.role}
                 </span>
               </div>
               <div className="agent-list__row-status">
@@ -202,8 +191,8 @@ export function AgentList({
               <div className="agent-card__identity">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <span className="agent-card__name">{agent.taskName}</span>
-                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
-                  {roleLabels[agent.role]}
+                <span className={`agent-role-pill agent-role-pill--${agent.baseRole ?? agent.role}`}>
+                  {agent.role}
                 </span>
               </div>
               <div className="agent-card__status-wrap">
@@ -599,8 +588,9 @@ export function AgentWorkspacePanel({
               <div className="agent-heading__name-wrap">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <strong>{agent.taskName}</strong>
-                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
-                  {roleDescriptions[agent.role]}
+                <span className={`agent-role-pill agent-role-pill--${agent.baseRole ?? agent.role}`}>
+                  {agent.role}
+                  {agent.modelId && ` · ${agent.providerId ? `${agent.providerId} / ` : ""}${agent.modelId}`}
                 </span>
               </div>
             </div>

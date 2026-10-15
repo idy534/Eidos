@@ -9,8 +9,10 @@ const schema = JSON.parse(execFileSync(path.join(root, '.venv/bin/python'), ['-c
 import json
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.domain.collaboration import CollaborationState
+from eidos_runtime.domain.agents import AgentCatalogResponse
 from eidos_runtime.protocol.collaboration import AgentStopRequest
 class CollaborationContract(EidosFrozenStrictModel):
+    catalog: AgentCatalogResponse
     state: CollaborationState
     stop: AgentStopRequest
 print(json.dumps(CollaborationContract.model_json_schema(by_alias=True)))

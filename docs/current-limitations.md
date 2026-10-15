@@ -402,3 +402,13 @@ Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用�
 新建在排他 mkdir 后、身份提交前崩溃时，磁盘可能留下未被接管的目录。Runtime 会保留该目录并分配数字后缀，不会根据目录为空猜测它属于本次操作。数据库提交失败时，Runtime 只删除已核验且仍为空的本次目录；非空目录保留，已有身份记录可以继续创建。
 
 2026-10-13 的定向验证通过：Runtime 63 个用例、Renderer 30 个用例、Main/JSON-RPC 重启创建用例、两端协议检查、真实 macOS Seatbelt 定向用例、Desktop 构建和 Electron smoke。Ruff、Deptry、两组锁定 Python 依赖的 pip-audit 与 `git diff --check` 通过。原生 Seatbelt、Electron smoke 和依赖联网审计在工具沙箱外完成。验证只使用临时数据，没有执行真实数据清理、Full Suite 或安装包验收。
+
+
+## 自定义子 Agent 验证边界（2026-10-15）
+
+- 自定义类型使用数据目录下的 TOML，指令直接写入 `instructions`。Runtime 继续由父 Agent 调用 `spawn_agent`，没有新增自动派发流程。
+- 自定义模型选择包含提供商与配置 ID，但全局模型配置仍以 ID 唯一索引。同名模型跨提供商同时保存不由本次扩展解决。
+- 子任务不会自动继承父输入中的文件、图片或 Skill 引用。父模型仍先接收最多 2,000 字符的子任务结果摘要。项目级定义、独立编辑器和多层委派尚未实现。
+- 本地测试和脚本模型不代表真实 Provider 已验证。真实 Electron 的选择、预览和子任务交互仍需人工验收。定向验证结果见 [方案实施记录](custom-subagents-design.md#154-验证记录)。
+
+- 本分支的 Runtime 定向验证通过 129 项，9 项原生平台用例未选择；Renderer 行为通过 34 项，Main 跨进程通过 2 项。构建、Ruff、Deptry、两组 Python 依赖审计和原生 Electron smoke 通过。本次未执行 Full Suite、完整 Seatbelt、DMG 或真实 Provider 验证。

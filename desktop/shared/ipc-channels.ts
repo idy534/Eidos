@@ -90,6 +90,7 @@ export const IPC = {
   INPUT_PASTE_IMAGE: "input:pasteImage",
   INPUT_DRAFT_READ: "input:draftRead",
   INPUT_DRAFT_WRITE: "input:draftWrite",
+  AGENT_CATALOG: "agent:catalog",
   AGENT_READ: "agent:read",
   AGENT_STOP: "agent:stop",
   MEMORY_BACKUP: "memory:backup",

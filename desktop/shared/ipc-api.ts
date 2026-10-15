@@ -1,7 +1,7 @@
 import type { SessionForkRequest } from "./session-fork.generated.js";
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "./automation.js";
 import type { MemoryMethods } from "./memory.js";
-import type { CollaborationState } from "./collaboration.generated.js";
+import type { AgentCatalogResponse, CollaborationState } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
 import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
 import type {
@@ -258,6 +258,7 @@ export interface EidosRuntimeAPI {
   readInputDraft(key: string): Promise<InputDraft>;
   writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;
 
+  listAgentTypes(): Promise<AgentCatalogResponse>;
   readAgents(sessionId: string): Promise<CollaborationState>;
   stopAgent(parentRunId: string, agentId: string): Promise<CollaborationState>;
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from eidos_runtime.persistence.input_context import InputContextRepository
+from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
+from eidos_runtime.application.agent_catalog import AgentCatalog
+from eidos_runtime.domain.agents import AgentCatalogSnapshot
 from eidos_runtime.domain.input_reference import InputSnapshot
 from eidos_runtime.domain.automation import AutomationModel, AutomationError
 
@@ -97,6 +100,7 @@ class RunStorePort(Protocol):
         plan_id: str | None = None,
         plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        agent_catalog: AgentCatalogSnapshot | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]: ...
 
@@ -265,10 +269,12 @@ class RunApplication:
         session_repository: RunSessionRepositoryPort | None = None,
         lifecycle_coordinator: SessionLifecycleCoordinator | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
+        agent_catalog: AgentCatalog | None = None,
     ) -> None:
         self._typed_repository = (
             TypedRuntimeRepository(database) if database is not None else None
         )
+        self._agent_catalog = agent_catalog
         self._store = store
         self._runtime = runtime
         self._environment = environment
@@ -314,7 +320,7 @@ class RunApplication:
         model_id, profile, _config = self._select_model(request, store=store, environment=environment)
         return AutomationModel(model_id=model_id, reasoning_selection=profile.reasoning_selection)
 
-    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None) -> RunStartOutcome:
+    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None) -> RunStartOutcome:
         store, runtime, environment, scan_text = self._start_dependencies()
         if not environment.model_is_configured():
             raise ApplicationError("INVALID_STATE", "no model is configured")
@@ -393,8 +399,16 @@ class RunApplication:
                     _environment=environment,
                 )
 
+        agent_snapshot = AgentCatalogSnapshot()
+        if self._agent_catalog is not None:
+            previous = AgentSnapshotRepository(store.database).read(agent_source_run_id) if agent_source_run_id else None
+            retained = set(self.input_reference_ids(agent_source_run_id)) if agent_source_run_id else None
+            try:
+                agent_snapshot = self._agent_catalog.freeze(input_snapshots, previous=previous, retained_ids=retained)
+            except ValueError as error:
+                raise ApplicationError("INVALID_STATE", str(error)) from error
         if input_snapshots:
-            environment.validate_input_selections(input_snapshots)
+            environment.validate_input_selections([value for value in input_snapshots if value.reference.kind != "agent"])
 
         try:
             if self._session_repository is not None:
@@ -441,7 +455,7 @@ class RunApplication:
                                 request.session_id, user_input, queued=True,
                                 references=[value.reference for value in input_snapshots],
                                 model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
-                                work_mode=request.work_mode, extension_snapshot=extension_snapshot,
+                                work_mode=request.work_mode, extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
                                 expected_workspace_identity=expected_workspace_identity,
                                 transaction_connection=connection,
                             ), request.session_id)
@@ -451,7 +465,7 @@ class RunApplication:
                             request.session_id, user_input, queued=True,
                             references=[value.reference for value in input_snapshots], operation_id=request.operation_id,
                             model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
-                            work_mode=request.work_mode, extension_snapshot=extension_snapshot,
+                            work_mode=request.work_mode, extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
                             expected_workspace_identity=expected_workspace_identity,
                             regenerate_source_run_id=regenerate_source_run_id,
                         )
@@ -462,7 +476,7 @@ class RunApplication:
                             operation_id=request.operation_id, session_title=None,
                             model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
                             work_mode=request.work_mode, plan_id=request.plan_id, plan_revision=request.plan_revision,
-                            extension_snapshot=extension_snapshot,
+                            extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
                             expected_workspace_identity=expected_workspace_identity,
                         )
         except AutomationError:

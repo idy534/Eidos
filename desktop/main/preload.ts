@@ -1,5 +1,5 @@
 import type { MemoryMethods } from "../shared/memory.js";
-import type { CollaborationState } from "../shared/collaboration.generated.js";
+import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
@@ -319,6 +319,7 @@ const api: EidosRuntimeAPI = {
   pasteInputImage: () => ipcRenderer.invoke(IPC.INPUT_PASTE_IMAGE),
   readInputDraft: (key: string) => ipcRenderer.invoke(IPC.INPUT_DRAFT_READ, key),
   writeInputDraft: (key: string, draft: InputDraft) => ipcRenderer.invoke(IPC.INPUT_DRAFT_WRITE, key, draft),
+  listAgentTypes: (): Promise<AgentCatalogResponse> => ipcRenderer.invoke(IPC.AGENT_CATALOG),
   readAgents: (sessionId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_READ, sessionId),
   stopAgent: (parentRunId: string, agentId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_STOP, parentRunId, agentId),
   backupMemory: (): Promise<void> => ipcRenderer.invoke(IPC.MEMORY_BACKUP),

@@ -88,7 +88,7 @@ class ResponseActionApplication:
             "reasoningSelection": source_profile.reasoning_selection,
             "approvalMode": "auto_review" if source.get("approvalMode") == "auto_review" else "manual",
         })
-        outcome = self._runs.start(start_request, regenerate_source_run_id=request.source_run_id if revision_kind == "regenerate" else None)
+        outcome = self._runs.start(start_request, regenerate_source_run_id=request.source_run_id if revision_kind == "regenerate" else None, agent_source_run_id=request.source_run_id)
         run_id = str(outcome.response.root["id"])
         try:
             self._repository.record_revision(

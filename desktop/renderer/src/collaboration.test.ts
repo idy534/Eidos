@@ -14,8 +14,10 @@ test("the shared Python/Desktop fixture accepts all three built-in agent roles",
   assert.deepEqual(state.agents.map((agent) => agent.role), ["default", "explorer", "worker"]);
 });
 
-test("the collaboration boundary rejects unsupported custom roles", () => {
+test("the collaboration boundary accepts custom types and rejects invalid names", () => {
   const state = structuredClone(fixture.result);
   state.agents[0].role = "reviewer";
+  assert.equal(isCollaborationState(state), true);
+  state.agents[0].role = "../reviewer";
   assert.equal(isCollaborationState(state), false);
 });

@@ -666,4 +666,15 @@ describe("AgentWorkspacePanel", () => {
     );
     expect(scrollbarCss).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*var\(--scrollbar-size\);/s);
   });
+  it("shows custom type names and the actual model provider", () => {
+    const agent = { ...historyAgent(), role: "luna-work", baseRole: "worker" as const,
+      providerId: "volcengine", modelId: "deepseek-v4.1-flash" };
+    const onOpen = vi.fn();
+    render(<AgentList agents={[agent]} onOpen={onOpen} />);
+    expect(screen.getByText("luna-work")).toBeInTheDocument();
+    expect(formatAgentTooltip(agent)).toContain("volcengine / deepseek-v4.1-flash");
+    fireEvent.click(screen.getByRole("button"));
+    expect(onOpen).toHaveBeenCalledWith(agent);
+  });
+
 });

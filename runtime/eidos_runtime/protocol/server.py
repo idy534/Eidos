@@ -138,9 +138,11 @@ from eidos_runtime.db.storage import (
 )
 from eidos_runtime.domain.input_reference import InputSnapshot
 from eidos_runtime.application.input_context import InputContextApplication
+from eidos_runtime.application.agent_catalog import AgentCatalog
+from eidos_runtime.domain.agents import AgentCatalogResponse
 from eidos_runtime.application.planning import PlanningApplication
 from eidos_runtime.protocol import planning as planning_dtos
-from eidos_runtime.protocol.collaboration import AgentReadRequest, AgentStopRequest
+from eidos_runtime.protocol.collaboration import AgentCatalogRequest, AgentReadRequest, AgentStopRequest
 from eidos_runtime.domain.collaboration import CollaborationState
 from eidos_runtime.protocol import input_context as input_dtos
 from eidos_runtime.extensions.plugins import PluginCatalog
@@ -1120,6 +1122,8 @@ class RuntimeServer:
             *((method, request, response,
                lambda _id, payload, method=method: MemoryApplication(self.store, self.memory_jobs).dispatch(method, payload))
               for method, request, response in MEMORY_METHODS),
+            ("agent/catalog", AgentCatalogRequest, AgentCatalogResponse,
+             lambda _id, _request: AgentCatalog(self.store.database.data_directory, self.model_config).list()),
             ("agent/read", AgentReadRequest, CollaborationState,
              lambda _id, request: self.supervisor.collaboration.read_session(request.session_id)),
             ("agent/stop", AgentStopRequest, CollaborationState,
@@ -1631,7 +1635,7 @@ class RuntimeServer:
             application.repository.finish(occurrence_id, "应用正在关闭或重新配置。")
 
     def _input_application(self) -> InputContextApplication:
-        return InputContextApplication(self.store, self._applications_or_error().extensions, self._scan_text)
+        return InputContextApplication(self.store, self._applications_or_error().extensions, self._scan_text, AgentCatalog(self.store.database.data_directory, self.model_config))
 
     def _applications_or_error(self) -> _RuntimeApplications:
         """Return initialized use cases, retaining no second state authority."""
@@ -1676,6 +1680,7 @@ class RuntimeServer:
                 self.worktree_retention.snapshot_service if self.worktree_retention else None,
             ),
             runs=RunApplication(
+                agent_catalog=AgentCatalog(self.store.database.data_directory, self.model_config),
                 store=self.store,
                 runtime=self.supervisor,
                 environment=_ServerRunEnvironment(self),

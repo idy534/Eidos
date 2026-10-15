@@ -1,0 +1,71 @@
+{
+  "definition": {
+    "schema_version": 1,
+    "name": "luna-work",
+    "description": "负责实现和验证",
+    "enabled": true,
+    "base_role": "worker",
+    "instructions": "你需要报告事实和未完成事项。",
+    "model": {
+      "provider_id": "volcengine",
+      "config_id": "deepseek-v4.1-flash",
+      "reasoning_selection": "high"
+    }
+  },
+  "catalog": {
+    "agents": [
+      {
+        "name": "luna-work",
+        "description": "负责实现和验证",
+        "source": "/data/agents/luna-work.toml",
+        "baseRole": "worker",
+        "providerId": "volcengine",
+        "modelId": "deepseek-v4.1-flash",
+        "enabled": true,
+        "available": true,
+        "reason": null,
+        "definitionVersion": "a854e59820c3b4029cc3366de46e69d88344c894789cd7a6d3143554e0ac7077"
+      }
+    ],
+    "error": null
+  },
+  "state": {
+    "parentRunId": "parent-run",
+    "agents": [
+      {
+        "id": "agent-default",
+        "taskName": "general",
+        "role": "luna-work",
+        "requiredForCompletion": true,
+        "parentRunId": "parent-run",
+        "sessionId": "default-session",
+        "runId": "default-run",
+        "status": "running",
+        "task": "Handle the assigned task.",
+        "createdAt": 1,
+        "baseRole": "worker",
+        "modelId": "deepseek-v4.1-flash",
+        "providerId": "volcengine",
+        "definitionVersion": "a854e59820c3b4029cc3366de46e69d88344c894789cd7a6d3143554e0ac7077"
+      }
+    ],
+    "messages": []
+  },
+  "invalidCatalog": {
+    "agents": [
+      {
+        "name": "luna-work",
+        "description": "负责实现和验证",
+        "source": "/data/agents/luna-work.toml",
+        "baseRole": "worker",
+        "providerId": "volcengine",
+        "modelId": "deepseek-v4.1-flash",
+        "enabled": true,
+        "available": "yes",
+        "reason": null,
+        "definitionVersion": "a854e59820c3b4029cc3366de46e69d88344c894789cd7a6d3143554e0ac7077"
+      }
+    ],
+    "error": null
+  }
+}

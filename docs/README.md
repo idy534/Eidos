@@ -28,6 +28,7 @@ architecture-overview.html
 ## Development
 
 - [本地开发与验证](../DEVELOPMENT.md)：说明安装、启动、测试、Runtime Bundle 和 DMG 打包。
+- [自定义子 Agent 设计与实施记录](custom-subagents-design.md)：说明 TOML 配置、模型提供商、引用流程和后续范围。
 
 ## Archive
 

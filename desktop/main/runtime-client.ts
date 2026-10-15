@@ -1,9 +1,9 @@
 import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
 import type { SessionForkRequest } from "../shared/session-fork.generated.js";
 import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
-import { isCollaborationState } from "../shared/collaboration.js";
+import { isAgentCatalog, isCollaborationState } from "../shared/collaboration.js";
 import { isRunTermination } from "../shared/run-termination.js";
-import type { CollaborationState } from "../shared/collaboration.generated.js";
+import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
 import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
@@ -866,6 +866,9 @@ export class RuntimeClient {
     return this.validatedRequest("input/draftWrite", { key, text: draft.text, references: draft.references.map((value) => value.id) }, isInputDraft);
   }
 
+  listAgentTypes(): Promise<AgentCatalogResponse> {
+    return this.validatedRequest("agent/catalog", {}, isAgentCatalog);
+  }
   readAgents(sessionId: string): Promise<CollaborationState> {
     return this.validatedRequest("agent/read", { sessionId }, isCollaborationState);
   }

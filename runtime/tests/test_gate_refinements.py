@@ -98,7 +98,7 @@ def test_v16_migration_preserves_delegation_and_defaults_to_required(
     connection = store.connection
     legacy_roles = connection.execute("SELECT sql FROM sqlite_master WHERE name='agent_delegations'").fetchone()[0].replace(
         'CREATE TABLE agent_delegations', 'CREATE TABLE agent_delegations_v16', 1,
-    ).replace("role IN ('default', 'explorer', 'worker')", "role IN ('explorer', 'worker')", 1)
+    ).replace("length(role) BETWEEN 1 AND 64", "role IN ('explorer', 'worker')", 1)
     connection.executescript(
         legacy_roles + '; INSERT INTO agent_delegations_v16 SELECT * FROM agent_delegations; '
         'DROP TABLE agent_delegations; ALTER TABLE agent_delegations_v16 RENAME TO agent_delegations; '

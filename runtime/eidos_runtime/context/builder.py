@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 from eidos_runtime.persistence.collaboration import CollaborationRepository
+from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
 
 from eidos_runtime.persistence.planning import PlanningRepository
 
@@ -98,6 +99,7 @@ class ContextBuilder:
             memory_access=memory_access if memory_advertised or memory_access.temporary else None,
             work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
             agent_role=collaboration.child_role_for_run(run_id),
+            agent_definition=collaboration.child_definition_for_run(run_id),
             has_project=has_project,
         )
         source_ids = set(
@@ -107,6 +109,17 @@ class ContextBuilder:
         # These are injected as user messages BEFORE workspace-environment so that
         # the current user request (which comes later in history) has higher priority.
         user_context_messages: list[ModelContextItem] = []
+        if not collaboration.child_for_run(run_id):
+            catalog = AgentSnapshotRepository(self.store.database).read(run_id)
+            if catalog.definitions:
+                summaries = [dict(name=value.name, description=value.description, baseRole=value.base_role,
+                                  model=value.model.to_wire_dict() if value.model else None) for value in catalog.definitions]
+                user_context_messages.append({"type": "user", "sectionId": "agent-catalog",
+                    "content": "Available custom subagent types, frozen for this Run. Use spawn_agent(role=name) for suitable delegated work. Their instructions apply only inside the child. Permissions are inherited.\n" + json.dumps(summaries, ensure_ascii=False)})
+            selected = [value.selection_id for value in InputContextRepository(self.store.database).for_run(run_id) if value.reference.kind == "agent"]
+            if selected:
+                user_context_messages.append({"type": "user", "sectionId": "selected-agents",
+                    "content": "The user explicitly selected these subagent types for this Run. Delegate suitable tasks to them through spawn_agent; retain normal parent coordination. No automatic dispatch or special completion rule is implied.\n" + json.dumps(selected)})
         agent_state = collaboration.model_state(run_id)
         if agent_state.parent_run_id is not None:
             # A distinct source-labelled section keeps agent findings out of
@@ -218,7 +231,7 @@ class ContextBuilder:
                     identifier = selected_reference.id
                     snapshot = input_repository.read(identifier)
                     reference = snapshot.reference
-                    body = snapshot.text
+                    body = ("子 Agent 选择：" + (snapshot.selection_id or reference.label) + "。父任务通过 spawn_agent 调用；定义正文只用于子任务。") if reference.kind == "agent" else snapshot.text
                     if item.run_id != run_id and reference_characters + len(body) > 256 * 1024:
                         body = "[历史引用正文超出本次预算；原始快照仍保留。]"
                     reference_characters += len(body)
@@ -399,6 +412,8 @@ class ContextBuilder:
                     selected_skill_context=selected_skill_context, step_policy=step_policy,
                     work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
                     memory_tools=memory_tools, memory_access=memory_access,
+                    agent_role=collaboration.child_role_for_run(run_id),
+                    agent_definition=collaboration.child_definition_for_run(run_id),
                     has_project=has_project,
                 )
             context.insert(0, {"type": "user", "sectionId": "memory-evidence",

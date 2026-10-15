@@ -8,6 +8,8 @@ import time
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
 
+from eidos_runtime.application.agent_catalog import AgentCatalog
+from eidos_runtime.model.config import ModelConfigError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.collaboration import (
     CollaborationRejected, AgentMessageRequest, AgentSummary, AgentSuspended, CollaborationState,
@@ -25,6 +27,7 @@ class CollaborationApplication:
 
     def __init__(self, store: SessionStore, schedule: Callable[[], None],
                  cancel: Callable[[str], object], publish: Callable[[], object]):
+        self.store = store
         self.repository = CollaborationRepository(store.database)
         self.schedule = schedule
         self.cancel = cancel
@@ -51,7 +54,20 @@ class CollaborationApplication:
             raise ApplicationError('INVALID_STATE', str(error)) from error
 
     def spawn(self, run_id: str, item_id: str, request: SpawnAgent) -> AgentSummary:
-        result = self.repository.spawn(run_id, item_id, request)
+        replay = self.repository.replay_spawn(run_id, item_id, request)
+        if replay is not None:
+            return replay
+        definition = self.repository.definition_for_spawn(run_id, request.role)
+        profile = None
+        if definition is not None:
+            try:
+                directory = self.store.database.data_directory
+                if directory is None:
+                    raise CollaborationRejected("agent_run_not_active")
+                profile = AgentCatalog(directory).resolve_model(definition, self.store.read_model_profile(run_id))
+            except (ValueError, ModelConfigError) as error:
+                raise CollaborationRejected('agent_model_unavailable') from error
+        result = self.repository.spawn(run_id, item_id, request, model_profile=profile)
         self._remember_trace_context(result.run_id)
         self.publish()
         self.schedule()

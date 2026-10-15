@@ -5,7 +5,7 @@ export type InputPreview = InputPreviewResponse;
 export type InputDraft = DraftResponse;
 export type InputAssetChunk = InputReadAssetResponse;
 
-export const INPUT_KINDS: readonly string[] = ["file", "directory", "image", "skill", "mcp", "plugin", "history", "excerpt"];
+export const INPUT_KINDS: readonly string[] = ["file", "directory", "image", "skill", "mcp", "plugin", "history", "excerpt", "agent"];
 export function isInputAssetChunk(value: unknown): value is InputReadAssetResponse {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;

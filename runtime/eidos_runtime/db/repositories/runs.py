@@ -4,6 +4,8 @@ from eidos_runtime.domain.run_termination import RunTermination
 
 from eidos_runtime.domain.collaboration import MAX_ACTIVE_AGENTS
 
+from eidos_runtime.domain.agents import AgentCatalogSnapshot
+from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
 from eidos_runtime.domain.input_reference import InputReference
 
 import json
@@ -135,6 +137,7 @@ class RunRepository(Repository):
         plan_id: str | None = None,
         plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        agent_catalog: AgentCatalogSnapshot | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
         item_id: str | None = None,
@@ -232,6 +235,9 @@ class RunRepository(Repository):
                 if "one_active_run" in str(error) or "UNIQUE constraint failed" in str(error):
                     raise ActiveRunError("another run is active") from None
                 raise
+            if agent_catalog is not None:
+                snapshots = AgentSnapshotRepository(self.database)
+                snapshots.insert(connection, run_id, snapshots.encode(agent_catalog))
             connection.execute('UPDATE runs SET work_mode = ? WHERE id = ?', (work_mode, run_id))
             if regenerate_source_run_id is not None:
                 connection.execute(
@@ -363,6 +369,7 @@ class RunRepository(Repository):
         plan_id: str | None = None,
         plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        agent_catalog: AgentCatalogSnapshot | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
         item_id: str | None = None,
@@ -381,6 +388,7 @@ class RunRepository(Repository):
             plan_id=plan_id,
             plan_revision=plan_revision,
             extension_snapshot=extension_snapshot,
+            agent_catalog=agent_catalog,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
             item_id=item_id,

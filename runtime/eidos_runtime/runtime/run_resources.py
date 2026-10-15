@@ -271,7 +271,7 @@ class RunResources:
             # Coordination and direct permission expansion stay with the parent.
             base = ToolRegistry(tuple(
                 entry for entry in base.entries
-                if entry.spec.name not in {"request_permissions", "request_user_input"}
+                if entry.spec.name not in {"request_permissions", "request_user_input", "write_plan"}
                 and (entry.provenance.source_id != "eidos.collaboration" or entry.spec.name == "send_message")
             ))
         deferred = tuple(

@@ -791,13 +791,19 @@ Renderer 的计划状态按 Session 隔离，切换会话时不展示旧问题�
 
 `request_user_input` 的字段说明提供完整嵌套示例、题型约束和自定义输入说明，工具名称与原始描述保持不变。Pydantic 校验最多保留八项字段路径与错误原因，不回传参数值；参数错误反馈说明问题尚未提交，并给出修正方式。Runtime 的参数错误指纹区分首项字段路径和原因，不包含参数值、错误文案或问题措辞。连续相同校验错误仍受原有 LoopGuard 限制。失败或取消的澄清调用沿用普通工具结果展示，只有成功的回答结果进入澄清历史。
 
-## 子 Agent 委派（Schema v21）
+## 子 Agent 委派（Schema v29）
 
-本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文、父 Run 的模型、审批模式和扩展快照；父 Run 活跃时可使用它已批准的 Run 范围 Grant。子任务不继承父任务的完整对话。
+本阶段采用父任务负责分工和汇总的模式。父 Run 通过 `spawn_agent` 创建内部子 Session 和 queued Run。Runtime 复用 `RunSupervisor → RuntimeEngine → ToolCallRuntime`，不增加第二套 Agent Loop、调度服务或数据库。子 Session 复用父任务的 Workspace 身份或 Worktree 绑定，但不拥有 Worktree。子任务使用独立上下文。内置类型继承父模型，自定义类型可以使用已配置的其他模型。子任务继承父 Run 的审批模式和扩展快照；父 Run 活跃时可使用它已批准的 Run 范围 Grant。子任务不继承父任务的完整对话。
 
-本期支持三个固定内置角色。省略 `role` 时，Runtime 使用 `default` 处理通用任务。`explorer` 专注具体的代码调查、调用链、命令统计和证据整理。`worker` 负责分配范围内的实现和验证，并保留其他 Agent 的修改。角色记录来自 SQLite；ContextBuilder 根据该记录注入独立的 developer 指令层，续派时保持原角色。本期不支持自定义角色，也不按角色自动切换模型。
+Runtime 保留三个内置角色，并支持用户 TOML 定义的自定义类型。省略 `role` 时，Runtime 使用 `default` 处理通用任务。`explorer` 专注具体的代码调查、调用链、命令统计和证据整理。`worker` 负责分配范围内的实现和验证，并保留其他 Agent 的修改。角色记录来自 SQLite；ContextBuilder 根据该记录注入独立的 developer 指令层，续派时保持原角色。自定义定义由 `AgentCatalog` 解析。`model.provider_id` 与 `model.config_id` 成对校验，省略模型设置时仍继承父模型。`instructions` 以来源明确的用户配置层进入子任务，不改变 Runtime 权限。
 
 三个角色共用普通文件、Shell、Skill、图片、只读记忆、产物声明和已启用扩展工具的执行链。MCP 按父 Run 固定扩展快照启动，延迟工具仍通过 `tool_search` 发现。三个角色继承父 Run 的审批模式和权限；`explorer` 是任务分工，不提供强制只读保证。所有操作仍受自身权限快照、审批、Seatbelt、Durable Intent 和结果核验约束，`full_access` 继续使用既有例外。子任务只暴露父消息通道 `send_message`，不暴露委派工具、`request_permissions` 或 `request_user_input`；父任务负责用户交互和直接扩权。子 Session 不能通过普通 `run/start` 独立启动，也不能拥有 Checkpoint。内部子会话不进入普通 Session 列表。父会话删除只清理其事实，不删除借用的目录。
+
+Schema v29 增加 `run_agent_catalogs`，它关联父 Run 与现有 Blob 存储中的冻结目录。`agent_delegations` 增加实际定义和原始创建请求，角色 CHECK 改为有界名称；名称仍由严格 DTO 和固定目录校验。子任务创建与定义关联在同一事务提交。续派更新当前任务，但创建重放继续比较独立的原请求。v28 升级保留原有数据、索引、触发器，并在提交前检查外键；新库和离线恢复接入同一版本链。
+
+输入链路沿用 `input/prepare → run/start.references`。新引用类型为 `agent`，Runtime 保存完整定义供预览，并在 Run 接纳时复核版本。父模型只看到目录摘要与本轮选择；历史引用不会自动激活新一轮。编辑重发和重新生成通过已验证的源 Run 复用原定义。目录修改只影响新 Run，已有实例续派不重读 TOML。
+
+Desktop 通过 `agent/catalog`、typed IPC 和现有 `+` 选择类型，子任务面板展示实际类型、提供商与模型。Blob GC 和现有明文备份保留目录快照，备份同时保存用户 TOML，模型凭证继续排除。子 Run 保留父工作模式，Plan 子任务不暴露 `write_plan`。详细规范和后续范围见 [自定义子 Agent 方案](custom-subagents-design.md)。
 
 v20→v21 重建 `agent_delegations` 的角色 CHECK，允许三个内置角色。迁移保留原角色、任务、完成依赖、索引和触发器，以及其他表中的消息与等待；迁移执行外键检查，失败时回滚。历史任务不改名。旧版本不能打开 v21 数据，回退需要升级前的备份。
 

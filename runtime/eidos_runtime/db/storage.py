@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.agents import AgentCatalogSnapshot
+
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
 
 from eidos_runtime.domain.run_termination import RunTermination
@@ -638,6 +640,7 @@ class SessionStore:
         plan_id: str | None = None,
         plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        agent_catalog: AgentCatalogSnapshot | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
         item_id: str | None = None,
@@ -655,6 +658,7 @@ class SessionStore:
             plan_id=plan_id,
             plan_revision=plan_revision,
             extension_snapshot=extension_snapshot,
+            agent_catalog=agent_catalog,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
             item_id=item_id,

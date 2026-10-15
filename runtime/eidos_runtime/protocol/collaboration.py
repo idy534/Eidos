@@ -9,3 +9,7 @@ class AgentReadRequest(EidosFrozenStrictModel):
 class AgentStopRequest(EidosFrozenStrictModel):
     parent_run_id: str = Field(min_length=1, max_length=128)
     agent_id: str = Field(min_length=1, max_length=128)
+
+
+class AgentCatalogRequest(EidosFrozenStrictModel):
+    pass

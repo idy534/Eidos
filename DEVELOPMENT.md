@@ -414,7 +414,7 @@ Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦�
 
 运行、审批和收尾期间可提交下一轮请求，由同 Session FIFO 队列执行。模型、推理、权限和 Plan 设置属于下一轮草稿；当前 Run 保留创建时的固定配置。取消与排队提交可同时使用。普通 Execute Run 也能请求澄清，计划写入和确认仍属于 Plan 模式。
 
-子任务支持 `default`、`explorer`、`worker`，省略角色时使用 `default`。三个角色继承父 Run 的普通工具和权限，`explorer` 能执行 Shell，不提供强制只读保证。本期不支持自定义角色。Schema 20→21 迁移只扩展角色 CHECK，保留历史委派、消息与等待。定向验证需要覆盖三种角色在三种审批模式下执行真实 Shell、续派保持角色、取消、等待恢复、迁移失败回滚，以及 Desktop 角色与审批显示。
+子任务支持 `default`、`explorer`、`worker`，省略角色时使用 `default`。三个角色继承父 Run 的普通工具和权限，`explorer` 能执行 Shell，不提供强制只读保证。自定义类型使用数据目录下的 `agents/*.toml`，其中 `instructions` 保存指令，模型选择包含 `provider_id` 和 `config_id`。Schema 20→21 迁移只扩展角色 CHECK，保留历史委派、消息与等待。定向验证需要覆盖三种角色在三种审批模式下执行真实 Shell、续派保持角色、取消、等待恢复、迁移失败回滚，以及 Desktop 角色与审批显示。
 
 子任务默认是必要依赖；明确设置 `requiredForCompletion=false` 的补充任务在父任务完成时取消，并等待进程和资源清理。必要依赖仍等待真实结果。协作消息优先投递最早未读的 16 条；只有已完成模型请求的固定上下文会建立投递回执，失败、重启和上下文预览不消费消息。Schema 17 事务迁移增加投递回执、Skill 使用租约及必要依赖标记，Schema 16 及更旧数据可升级。
 
@@ -462,3 +462,21 @@ EIDOS_DATA_DIR=/absolute/path/new-eidos-data pnpm start
 ZIP 含私有聊天、记忆和执行状态，可能含 MCP 环境配置，未加密。Provider 配置和 Workspace 不包含在内，需另行配置/恢复路径。旧备份可能恢复之后被遗忘资料；恢复默认取消旧作业与回填授权、关闭生成，需要明确确认后重新启用。不要仅复制 `state.sqlite` 当作完整备份。
 
 审批模式定向回归增加 `runtime/tests/test_dangerous_approvals.py`，覆盖高危人工批准、拒绝、取消、重启恢复、版本冲突、完全访问直接执行和真实 Seatbelt 的精确路径例外。完全访问不得创建新的 Approval 或进入 waiting_approval；旧版待审批记录只恢复完成原操作。
+
+
+## 自定义子 Agent 配置与定向验证
+
+用户在 `<EIDOS_DATA_DIR>/agents/` 放置独立 TOML。默认目录是 `~/.eidos/agents/`。完整字段与示例见 [自定义子 Agent 设计](docs/custom-subagents-design.md)。用户需要先通过现有模型设置保存目标模型；TOML 不保存 API Key。用户省略模型表时，子任务继承父模型。
+
+相关定向验证入口：
+
+```bash
+uv run --locked pytest runtime/tests/test_custom_agents.py runtime/tests/test_collaboration.py runtime/tests/test_input_context.py -m "not platform"
+node scripts/generate-collaboration-contracts.mjs
+node scripts/generate-input-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-agents.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/InputPicker.behavior.test.tsx desktop/renderer/src/components/InputContext.behavior.test.tsx desktop/renderer/src/components/AgentPanel.behavior.test.tsx
+```
+
+人工验收应使用隔离的数据目录。用户在目录中创建定义后，可以在 `+ → Agent` 选择并查看冻结预览，再检查父模型是否通过现有工具调用对应类型。验收需要覆盖实际提供商、续派、取消、定义编辑和重启恢复。模型参数校验与脚本模型测试不能替代真实 Provider 验收。

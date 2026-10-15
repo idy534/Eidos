@@ -9,8 +9,9 @@ import stat
 import tempfile
 import zipfile
 
+from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.db.layout import collect_unreferenced_blobs
-from eidos_runtime.db.schema import SCHEMA_VERSION, V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION, V20_SCHEMA_VERSION
+from eidos_runtime.db.schema import SCHEMA_VERSION, V28_SCHEMA_VERSION, V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION, V20_SCHEMA_VERSION
 from eidos_runtime.memory.contracts import MemorySettings
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
@@ -97,6 +98,11 @@ def backup(service: MemoryService, destination: Path) -> None:
                             "blobs/" + path.relative_to(blobs.root).as_posix(),
                             stream.read(),
                         )
+                try:
+                    for name, raw in AgentCatalog(database.data_directory).backup_files():
+                        archive.writestr("agents/" + name, raw)
+                except (OSError, ValueError) as error:
+                    raise MemoryRejected("memory_backup_agents_invalid") from error
                 archive.writestr(
                     "manifest.json", json.dumps(manifest, ensure_ascii=False)
                 )
@@ -119,23 +125,27 @@ def restore(archive_path: Path, destination: Path) -> None:
             manifest = json.loads(archive.read("manifest.json"))
             if (
                 manifest.get("format") != "eidos-memory-backup-v1"
-                or manifest.get("schemaVersion") not in {V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION, V20_SCHEMA_VERSION, SCHEMA_VERSION}
+                or manifest.get("schemaVersion") not in {V17_SCHEMA_VERSION, V18_SCHEMA_VERSION, V19_SCHEMA_VERSION, V20_SCHEMA_VERSION, V28_SCHEMA_VERSION, SCHEMA_VERSION}
             ):
                 raise MemoryRejected("memory_backup_incompatible")
             seen: set[str] = set()
             total = 0
+            agent_files = 0
             for item in archive.infolist():
                 parts = PurePosixPath(item.filename).parts
                 total += item.file_size
+                agent_files += int(bool(parts) and parts[0] == "agents")
                 if (
                     not parts
+                    or agent_files > 128
                     or item.filename in seen
                     or item.filename.startswith("/")
                     or ".." in parts
                     or "\\" in item.filename
+                    or (parts[0] == "agents" and (len(parts) != 2 or not parts[1].endswith(".toml") or item.file_size > 64 * 1024))
                     or total > 1024 * 1024 * 1024
                     or (
-                        parts[0] not in {"memory", "blobs"}
+                        parts[0] not in {"memory", "blobs", "agents"}
                         and item.filename not in {"manifest.json", "state.sqlite"}
                     )
                     or stat.S_ISLNK(item.external_attr >> 16)

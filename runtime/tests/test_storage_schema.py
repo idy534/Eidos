@@ -57,6 +57,7 @@ EXPECTED_TABLES = {
     "session_history_entries",
     "session_history_resources",
     "runs",
+    "run_agent_catalogs",
     "items",
     "tool_calls",
     "approvals",
@@ -547,8 +548,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 28)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 27)
+        self.assertEqual(SCHEMA_VERSION, 29)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 28)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
