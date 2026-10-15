@@ -411,4 +411,4 @@ Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用�
 - 子任务不会自动继承父输入中的文件、图片或 Skill 引用。父模型仍先接收最多 2,000 字符的子任务结果摘要。项目级定义、独立编辑器和多层委派尚未实现。
 - 本地测试和脚本模型不代表真实 Provider 已验证。真实 Electron 的选择、预览和子任务交互仍需人工验收。定向验证结果见 [方案实施记录](custom-subagents-design.md#154-验证记录)。
 
-- 本分支的 Runtime 定向验证通过 129 项，9 项原生平台用例未选择；Renderer 行为通过 34 项，Main 跨进程通过 2 项。构建、Ruff、Deptry、两组 Python 依赖审计和原生 Electron smoke 通过。本次未执行 Full Suite、完整 Seatbelt、DMG 或真实 Provider 验证。
+- 2026-10-16 完整验证通过：Runtime 2,552 项通过、2 项按配置跳过；协议检查通过；Renderer 状态测试 173 项通过；Main 测试 92 项通过；Renderer 行为测试 624 项通过。`pnpm build`、契约生成脚本、Ruff 和 Deptry 通过。Python 依赖审计因环境无法解析 `pypi.org` 而未完成，Node 依赖审计没有运行。Full Suite 不包含 `large_repository`；本次没有运行原生 Seatbelt、DMG、真实 Provider 或真实产品窗口验收。
