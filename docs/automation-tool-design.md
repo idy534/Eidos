@@ -1,6 +1,6 @@
 # automation：Session 内定时任务工具详细设计 V3
 
-修订日期：2026-10-15。本文补充 [本地定时任务方案 V3](scheduled-tasks-research-and-design.md) 和 [源码与缺口复核](scheduled-tasks-gap-review.md)。本文是待实现设计，不表示工具、协议或迁移已经完成。
+修订日期：2026-10-15。本文保留实现前的设计依据，并补充 [本地定时任务方案 V3](scheduled-tasks-research-and-design.md) 和 [源码与缺口复核](scheduled-tasks-gap-review.md)。当前实现、协议和验证边界以 [当前本地定时任务](current-automations.md)、生产代码与测试为准。
 
 **模型只使用一个定时任务工具 `automation`。工具通过 mode 处理查看、创建、更新、删除和时间预览。工具默认 deferred，模型通过 tool_search 激活后使用。创建时传 sessionId 表示复用已有 Session；不传表示每次触发新建 Session。**
 

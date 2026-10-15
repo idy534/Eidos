@@ -31,6 +31,8 @@ dependencies = [
     "lark>=1.3,<2",
     "packaging>=26.3,<27",
     "semantic-version>=2.10,<3",
+    "croniter>=6,<7",
+    "tzdata>=2026.2",
 ]
 
 [dependency-groups]

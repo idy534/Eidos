@@ -18,6 +18,10 @@ from pathlib import Path
 import sqlite3
 import threading
 from typing import Callable, Literal, TypeVar
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.automations import AutomationApplication
 
 from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.models.skill_settings import SkillState
@@ -117,6 +121,7 @@ def _legacy_session_mutation(
 
 class SessionStore:
     def __init__(self, data_directory: Path | None = None) -> None:
+        self.automations: AutomationApplication | None = None
         self._database = Database(data_directory)
         self._persistence_layout: PersistenceLayout | None = None
         self._sessions: SessionRepository | None = None

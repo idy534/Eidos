@@ -840,6 +840,8 @@ class SessionRepository(Repository):
             from eidos_runtime.persistence.sidebar import remove_sidebar_pin
 
             pin_events = remove_sidebar_pin(connection, "session", session_id)
+            from eidos_runtime.persistence.automations import AutomationRepository
+            AutomationRepository.pause_targets(connection, session_id=session_id)
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return CommittedMutation(
                 DeletedSession(deleted_session_id=session_id), pin_events
@@ -993,13 +995,15 @@ class SessionRepository(Repository):
                 (session_id,),
             ).fetchone()[0]
         session = session_to_legacy_dict(session_from_row(session_row))
+        from eidos_runtime.persistence.automations import AutomationRepository
+        automation_origins = AutomationRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
         selected_runs = [
-            _run_from_row(row, include_user_input=False)
+            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]))
             for row in reversed(run_rows)
             if row["id"] in known_run_ids
         ]
         remaining_runs = {
-            row["id"]: _run_from_row(row, include_user_input=False)
+            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]))
             for row in run_rows
             if row["id"] not in known_run_ids
         }

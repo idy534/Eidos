@@ -75,6 +75,10 @@ Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=..
 
 ## 4. Test
 
+定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py`。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx`。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置。
+
+Runtime 随现有启动运行受管调度服务，并随 Supervisor 关闭，无需系统 cron、launchd 或额外守护进程。v27→v28 升级新增任务、触发和来源表。croniter 与 tzdata 已进入 pyproject.toml 和 uv.lock，打包沿用现有流程。
+
 Agent 在 Eidos Shell 内执行本仓库测试时，应先核对实际执行权限。部分集成测试需要启动原生 Seatbelt，外层沙箱可能阻止嵌套启动。测试者不能仅凭 `sandbox_unavailable` 排除代码回归。需要原生执行时，Agent 应使用系统提供的明确审批入口；文件路径授权不等于 unsandboxed 授权。
 
 uv 缓存写入失败时，Agent 应选择已有可写缓存或临时目录，或申请具体路径权限。Agent 不应默认放开整个 HOME。缓存清理不能解除未知 Shell Intent。测试报告应记录退出码、实际完成的阶段和最终汇总；输出不完整时，测试者必须把总数和未核验结论标为未验证。

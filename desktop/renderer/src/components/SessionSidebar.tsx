@@ -63,6 +63,7 @@ interface Props {
   onDeleteProject: (project: Project) => void;
   onShowInFinder?: (project: Project) => void;
   onOpenSettings: () => void;
+  onOpenAutomations?: () => void;
   navigationSlot?: React.ReactNode;
 }
 
@@ -89,7 +90,7 @@ export function SessionSidebar({
   pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
-  navigationSlot,
+  navigationSlot, onOpenAutomations,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
@@ -612,6 +613,7 @@ export function SessionSidebar({
         )}
       </nav>
       <div className="sidebar-footer">
+        {onOpenAutomations && <button className="settings-entry" onClick={onOpenAutomations} aria-label="打开定时任务"><span aria-hidden="true">◷</span><span>定时任务</span></button>}
         <button className="settings-entry" onClick={onOpenSettings} aria-label="打开设置">
           <img src={settingsIcon} alt="" className="settings-icon" />
           <span>设置</span>

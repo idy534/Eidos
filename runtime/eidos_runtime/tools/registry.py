@@ -323,6 +323,7 @@ class ToolRegistryEntry:
     runtime: ToolRuntime | None = None
     projector: ToolResultProjector | None = None
     execution_policy: ToolExecutionPolicy | None = None
+    preserve_omitted_arguments: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -413,7 +414,7 @@ class ToolRegistryEntry:
             if self.input_model is not None:
                 normalized = self.input_model.model_validate_json(
                     encoded_value.decode("utf-8")
-                ).model_dump(mode="json", by_alias=True)
+                ).model_dump(mode="json", by_alias=True, exclude_unset=self.preserve_omitted_arguments)
             elif self.input_schema_validator is not None:
                 validated = self.input_schema_validator.validate(
                     value, apply_defaults=True
@@ -504,6 +505,7 @@ class ToolRegistryEntry:
         assert self.execution_policy is not None
         output_schema = getattr(self.output_schema_validator, "schema", None)
         return _hash_json({
+            **({"preserveOmittedArguments": True} if self.preserve_omitted_arguments else {}),
             "contractVersion": self.spec.contract_version,
             "model": {
                 "name": self.spec.name,

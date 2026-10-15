@@ -1,5 +1,7 @@
 # Eidos 当前架构
 
+本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](current-automations.md)。
+
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。

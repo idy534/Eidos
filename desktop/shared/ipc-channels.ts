@@ -6,6 +6,9 @@
  */
 
 export const IPC = {
+  AUTOMATION_EXECUTE: "automation:execute",
+  AUTOMATION_HISTORY: "automation:history",
+  AUTOMATION_RUN_NOW: "automation:run-now",
   // Runtime
   RUNTIME_GET_STATUS: "runtime:get-status",
   RUNTIME_HEALTH: "runtime:health",

@@ -17,6 +17,8 @@ class EventProjector:
         payload = event.get("payload")
         if event_type == "run.queue_changed" and isinstance(payload, dict):
             return (self._notification("run/queueChanged", payload),)
+        if event_type == "automation.changed" and isinstance(payload, dict) and isinstance(payload.get("id"), str):
+            return (self._notification("automation/changed", {"id": payload["id"]}),)
         if event_type == "sidebar.pins_changed" and isinstance(event.get("eventId"), int):
             return (self._notification("sidebar/pinsChanged", {
                 "eventId": event["eventId"],

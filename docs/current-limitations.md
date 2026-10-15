@@ -1,5 +1,12 @@
 # Eidos 当前限制
 
+## 本地定时任务（2026-10-15）
+
+- Eidos 完全退出或电脑休眠时，任务不会执行。当前版本不检测漏跑，不补跑，也没有云端执行或额外守护进程。固定间隔只允许 10 分钟、30 分钟和 1 小时。当前实现见 [当前本地定时任务](current-automations.md)。
+- 任务默认使用 auto_review，仍可能等待人工审批。当前版本不提供计划 full_access 模式，也不复制旧 Run Grant。原执行及其重新生成存在未核验副作用时，所属计划会暂停。同计划仍有执行时，系统跳过新时刻；原 Session 忙碌时，系统也跳过本次执行。
+- Schema v28 新增计划、触发和来源三张表。Desktop 与 Runtime 需要一起升级。旧版本不能读取 v28；回退时需要恢复升级前的数据库备份。删除计划不会删除会话、Workspace 或历史。
+- Runtime 定向测试通过 106 项。Renderer 定向行为测试通过 53 项，模型默认值纯测试通过 6 项，Main 与真实 Runtime 的跨进程及共享 Fixture 测试通过 2 项。隔离的真实 Electron 页面验证了创建、默认审批、会话省略、键盘和四种窗口宽度。Desktop 构建、原生启动退出 smoke、macOS arm64 Runtime Bundle 与其 smoke、Ruff、Deptry 和两份 Python 依赖审计通过。Renderer 仍有大于 500 kB 的 Chunk 提示。本次没有运行 Full Suite、DMG 打包或真实 Provider 的长期无人值守验收。
+
 ## 历史图片预览缺失（2026-10-14）
 
 - Desktop 会把预览文件不存在处理为“暂无预览”，不会恢复被删除的文件。Runtime 仍返回 `WORKSPACE_FILE_NOT_FOUND`，并保留原有 Workspace、权限和版本校验。Desktop 的 `prepareWorkspacePreview` 现在可能返回 `null`；Main 和 Renderer 需要一起更新。

@@ -1,5 +1,7 @@
 # Eidos 当前能力
 
+本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](current-automations.md)。
+
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。

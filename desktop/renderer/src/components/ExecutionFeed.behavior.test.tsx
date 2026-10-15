@@ -55,6 +55,29 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("automation source and tool results", () => {
+  it("identifies scheduled input in the conversation", () => {
+    const run = { ...baseRun, automationOrigin: { automationId: "task", revision: 1, occurrenceId: "occurrence", scheduledFor: "2026-10-15T01:00:00Z" } };
+    renderFeed(shellItem({ kind: "user_message", content: "检查状态。", toolCall: undefined }), run);
+    expect(screen.getByText("定时任务自动执行")).toBeInTheDocument();
+    expect(screen.getByText("检查状态。")).toBeInTheDocument();
+  });
+
+  it("renders the automation card only for the trusted builtin tool", () => {
+    const item = shellItem({ kind: "tool_call", status: "completed", toolCall: {
+      ...shellItem().toolCall!, toolName: "automation", status: "completed",
+      argumentsJson: JSON.stringify({ mode: "preview" }),
+      provenance: { kind: "builtin", sourceId: "eidos.automation", sourceVersion: "v1", contentHash: "hash" },
+      resultJson: JSON.stringify({ outcome: "success", code: "ok", data: { response: { kind: "preview", nextRuns: ["2026-10-16T01:00:00Z"] } } }),
+    } });
+    const { rerender } = renderFeed(item);
+    expect(screen.getByText("执行时间预览")).toBeInTheDocument();
+    rerender(<ExecutionFeed items={[{ ...item, toolCall: { ...item.toolCall!, provenance: { kind: "mcp", sourceId: "external", sourceVersion: "v1", contentHash: "hash" } } }]}
+      runs={[baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} />);
+    expect(screen.queryByText("执行时间预览")).not.toBeInTheDocument();
+  });
+});
+
 describe("conversation fork actions", () => {
   it("lets the user request an earlier page and disables repeated clicks during loading", () => {
     const onLoadOlder = vi.fn();

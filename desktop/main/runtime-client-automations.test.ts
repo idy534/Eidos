@@ -1,0 +1,71 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
+import { isAutomationRequest, isAutomationResponse } from "../shared/automation.js";
+import type { RuntimeNotification } from "../shared/domain-contracts.js";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+void test("automation Python schema fixtures validate at the Desktop boundary", async () => {
+  const fixture = JSON.parse(await readFile(path.join(root, "protocol/fixtures/automations-v1.json"), "utf8"));
+  for (const request of fixture.validRequests) assert.equal(isAutomationRequest(request), true, JSON.stringify(request));
+  for (const request of fixture.invalidRequests) assert.equal(isAutomationRequest(request), false, JSON.stringify(request));
+  for (const response of fixture.validResponses) assert.equal(isAutomationResponse(response), true);
+  for (const response of fixture.invalidResponses) assert.equal(isAutomationResponse(response), false);
+});
+
+void test("automations persist across Runtime restart with typed reads and revision conflicts", { timeout: 30000 }, async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "eidos-automation-contract-"));
+  const workspace = path.join(temporary, "workspace"); await mkdir(workspace);
+  const notifications: string[] = [];
+  const scheduledNotices = new Set<string>();
+  const options = { pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory: path.join(temporary, "data"),
+    environment: { EIDOS_FAKE_MODEL: "write", EIDOS_PROJECTLESS_ROOT: path.join(temporary, "workspaces") },
+    onNotification: (notice: RuntimeNotification) => {
+      notifications.push(notice.method);
+      if ((notice.method === "run/started" || notice.method === "run/updated" || notice.method === "run/completed") && notice.params.run.automationOrigin) {
+        scheduledNotices.add(notice.params.run.automationOrigin.automationId);
+      }
+    } };
+  let client = new RuntimeClient(options);
+  try {
+    await client.initialize();
+    const session = await client.createSession(workspace);
+    const response = await client.automation({ contextSessionId: session.id, operationId: crypto.randomUUID(), command: {
+      mode: "create", kind: "cron", name: "状态检查", prompt: "检查状态。", schedule: { expression: "*/10 * * * *", timezone: "Asia/Shanghai" },
+      sessionId: session.id, model: { modelId: "deepseek-v4-flash" },
+    } });
+    assert.equal(response.automation?.approvalMode, "auto_review");
+    assert.equal(response.automation?.target.sessionId, session.id);
+    const id = response.automation!.id;
+    await client.automationRunNow({ id, operationId: crypto.randomUUID() });
+    const until = Date.now() + 10000;
+    let history = await client.automationHistory({ id });
+    while (history.occurrences?.[0]?.runStatus !== "succeeded" && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      history = await client.automationHistory({ id });
+    }
+    assert.equal(history.occurrences?.[0]?.runStatus, "succeeded");
+    assert.ok(scheduledNotices.has(id), "live Run events must preserve scheduled execution origin");
+    await assert.rejects(client.automationHistory({ id, cursor: "invalid" }),
+      (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
+    const snapshot = await client.readSession(session.id);
+    assert.equal(snapshot.runs.find((run) => run.id === history.occurrences?.[0]?.runId)?.automationOrigin?.automationId, id);
+    await client.automation({ operationId: crypto.randomUUID(), command: { mode: "update", id, expectedRevision: 1, changes: { name: "修改后的任务" } } });
+    await assert.rejects(client.automation({ operationId: crypto.randomUUID(), command: { mode: "update", id, expectedRevision: 1, changes: { status: "PAUSED" } } }),
+      (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "AUTOMATION_REVISION_CONFLICT");
+    assert.ok(notifications.includes("automation/changed"));
+    await client.shutdown(); assert.equal(await client.waitForExit(), 0);
+    client = new RuntimeClient(options); await client.initialize();
+    const restored = await client.automation({ command: { mode: "view", id } });
+    assert.equal(restored.automation?.name, "修改后的任务");
+    assert.equal(restored.automation?.approvalMode, "auto_review");
+    assert.equal(restored.automation?.revision, 2);
+    assert.equal((await client.automationHistory({ id })).occurrences?.length, 1);
+    await client.shutdown(); assert.equal(await client.waitForExit(), 0);
+  } finally { client.terminate(); await client.waitForExit().catch(() => undefined); await rm(temporary, { recursive: true, force: true }); }
+});

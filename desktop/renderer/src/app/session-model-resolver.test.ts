@@ -17,6 +17,14 @@ test("resolveSessionModelId returns undefined for empty run list", () => {
   assert.equal(resolveSessionModelId([]), undefined);
 });
 
+test("scheduled runs keep the user's model and approval defaults unchanged", () => {
+  const user = makeRun({ id: "user", sessionId: "s", status: "succeeded", modelId: "deepseek-v4-pro" });
+  const automatic = makeRun({ id: "automatic", sessionId: "s", status: "running", modelId: "deepseek-v4-flash", updatedAt: 2000,
+    automationOrigin: { automationId: "task", occurrenceId: "occurrence", revision: 1, scheduledFor: "2026-10-15T09:00:00Z" } });
+  assert.equal(resolveSessionModelId([user, automatic]), user.modelId);
+  assert.equal(resolveSessionModelId([automatic]), undefined);
+});
+
 test("resolveSessionModelId returns modelId for single run", () => {
   const run = makeRun({ id: "run-1", sessionId: "s-1", status: "succeeded", modelId: "deepseek-v4-pro" });
   assert.equal(resolveSessionModelId([run]), "deepseek-v4-pro");

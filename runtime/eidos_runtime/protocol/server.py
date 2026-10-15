@@ -34,6 +34,10 @@ from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.sidebar import SidebarApplication
 from eidos_runtime.application.queued_runs import QueuedRunApplication
+from eidos_runtime.application.automations import AutomationApplication
+from eidos_runtime.domain.automation import AutomationError, AutomationResponse
+from eidos_runtime.protocol.automations import AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationRefreshRequest
+from eidos_runtime.runtime.automation_scheduler import AutomationScheduler
 from eidos_runtime.persistence.queued_runs import QueuedRunRepository
 from eidos_runtime.protocol import queued_runs as queued_run_dtos
 from eidos_runtime.persistence.sidebar import SidebarRepository
@@ -229,6 +233,10 @@ def valid_initialize_params(params: object) -> bool:
 
 def _application_error_mapping(error: Exception) -> MethodErrorMapping | None:
     """Map only stable application failures at the protocol boundary."""
+    if isinstance(error, AutomationError):
+        if error.code == "invalid_arguments":
+            return MethodErrorMapping("INVALID_PARAMS")
+        return MethodErrorMapping(error.code.upper())
 
     if isinstance(error, ApplicationInvalidParamsError):
         return MethodErrorMapping(error.code, invalid_params=True)
@@ -685,6 +693,7 @@ class RuntimeServer:
         self.model = model
         self.model_gateway: ModelGateway | None = None
         self.memory_jobs: MemoryJobs | None = None
+        self.automation_scheduler: AutomationScheduler | None = None
         self._frozen_model_configs: dict[str, ModelConfig] = {}
         self._frozen_model_configs_lock = threading.RLock()
         self.async_kernel: RuntimeAsyncKernel | None = None
@@ -817,6 +826,23 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            (
+                "schedule/execute", AutomationExecuteRequest, AutomationResponse,
+                lambda _id, request: self._automation_application().execute(request.command,
+                    context_session_id=request.context_session_id, operation_id=request.operation_id),
+            ),
+            (
+                "schedule/history", AutomationHistoryRequest, AutomationResponse,
+                lambda _id, request: self._automation_history(request),
+            ),
+            (
+                "schedule/runNow", AutomationRunNowRequest, AutomationResponse,
+                lambda _id, request: self._automation_application().run_now(request.id, request.operation_id or _id),
+            ),
+            (
+                "schedule/refresh", AutomationRefreshRequest, AutomationResponse,
+                lambda _id, _request: self._refresh_automation_schedule(),
+            ),
             (
                 "run/listQueued",
                 queued_run_dtos.QueuedRunListRequest,
@@ -1371,6 +1397,7 @@ class RuntimeServer:
             ),
         )
         draining_blocked = {
+            "schedule/execute", "schedule/runNow",
             "run/updateQueued",
             "run/deleteQueued",
             "sidebar/setPinned",
@@ -1392,7 +1419,7 @@ class RuntimeServer:
             "mcp/remove",
         }
         draining_blocked.update(method for method, _request, _response in MEMORY_METHODS if method not in {"memory/list", "memory/get", "memory/export"})
-        reconfiguration_blocked = {"run/start"}
+        reconfiguration_blocked = {"run/start", "schedule/execute", "schedule/runNow"}
         for name, request_type, response_type, handler in handlers:
             registry.register(
                 MethodRegistration(
@@ -1519,6 +1546,89 @@ class RuntimeServer:
     def _planning_application(self) -> PlanningApplication:
         return PlanningApplication(self.store, self.supervisor.schedule_next,
                                    self.supervisor.events.deliver_pending, self._scan_text)
+
+    def _automation_application(self) -> AutomationApplication:
+        if self.store.automations is None:
+            applications = self._applications_or_error()
+            self.store.automations = AutomationApplication(self.store,
+                resolve_model=applications.runs.select_automation_model,
+                publish=self.supervisor.events.deliver_pending, launch=self._launch_automation,
+                scan_text=self._scan_text)
+        return self.store.automations
+
+    def _automation_history(self, request: AutomationHistoryRequest) -> AutomationResponse:
+        repository = self._automation_application().repository
+        repository.read(request.id)
+        try:
+            after = int(request.cursor or "0")
+            if after < 0:
+                raise ValueError
+        except ValueError:
+            raise AutomationError("invalid_arguments", "分页游标无效。") from None
+        items, cursor = repository.history(request.id, after)
+        return AutomationResponse(kind="history", occurrences=items, next_cursor=cursor)
+
+    def _refresh_automation_schedule(self) -> AutomationResponse:
+        if self.automation_scheduler is not None:
+            self.automation_scheduler.refresh()
+        return AutomationResponse(kind="list")
+
+    def _launch_automation(self, occurrence_id: str) -> None:
+        application = self._automation_application()
+        def execute(cancel: threading.Event) -> None:
+            occurrence = application.repository.occurrence(occurrence_id)
+            task = occurrence.snapshot
+            try:
+                if cancel.is_set():
+                    raise AutomationError("automation_canceled", "执行准备已停止。")
+                applications = self._applications_or_error()
+                application.resolve_model(task.model)
+                session_id = task.target.session_id
+                if session_id is None:
+                    from uuid import uuid5, NAMESPACE_URL
+                    root = application.repository.project_root(task.target.project_id) if task.target.project_id else None
+                    session = applications.sessions.create(method_dtos.SessionCreateRequestDto(
+                        operationId=str(uuid5(NAMESPACE_URL, "automation/session/" + occurrence.id)),
+                        workspaceRoot=root, executionMode=task.target.execution.execution_mode,
+                        baseRef=task.target.execution.base_ref,
+                        workspaceNameHint=task.name if root is None else None,
+                    ))
+                    session_id = session.id
+                    application.repository.prepared_session(occurrence.id, session_id)
+                    title = (task.name + " " + occurrence.scheduled_for[:16])[:40]
+                    while len(title.encode()) > 120:
+                        title = title[:-1]
+                    self.store.rename_session(session_id, title)
+                if cancel.is_set() or self.supervisor.control_state is not RuntimeControlState.RUNNING:
+                    raise AutomationError("automation_canceled", "执行准备已停止。")
+                outcome = applications.runs.start(method_dtos.RunStartRequestDto(
+                    sessionId=session_id, userInput=task.prompt, modelId=task.model.model_id,
+                    reasoningSelection=task.model.reasoning_selection, approvalMode=task.approval_mode,
+                ), automation_occurrence_id=occurrence.id)
+                outcome.release_after_commit()
+                self.supervisor.events.deliver_pending()
+            except Exception as error:
+                logger.exception("Scheduled task preparation failed: %s", task.id)
+                code = error.code if isinstance(error, (ApplicationError, AutomationError)) else ""
+                reasons = {
+                    "MODEL_NOT_AVAILABLE": "任务模型已不可用，请重新选择模型。",
+                    "INVALID_PARAMS": "任务的思考配置已不适用于当前模型，请重新选择。",
+                    "RESOURCE_NOT_FOUND": "目标会话或项目已不存在。",
+                    "WORKSPACE_IDENTITY_CHANGED": "工作区身份已改变，请检查执行目录。",
+                    "WORKSPACE_BOUNDARY_VIOLATION": "执行目录不符合工作区要求，请重新选择。",
+                    "GIT_WORKTREE_MISSING": "本地工作树已清理，请先恢复工作树。",
+                    "WORKTREE_RESTORE_REQUIRED": "本地工作树需要恢复，请先处理原会话。",
+                    "GIT_WORKTREE_INVALID": "工作树或起始分支不可用，请检查执行配置。",
+                }
+                reason = str(error) if isinstance(error, AutomationError) else reasons.get(code, "任务准备失败，请检查执行位置和 Runtime 日志。")
+                application.repository.finish(occurrence_id, reason, pause=code in {
+                    "MODEL_NOT_AVAILABLE", "INVALID_PARAMS", "RESOURCE_NOT_FOUND", "WORKSPACE_IDENTITY_CHANGED", "WORKSPACE_BOUNDARY_VIOLATION",
+                    "GIT_WORKTREE_MISSING", "WORKTREE_RESTORE_REQUIRED", "GIT_WORKTREE_INVALID",
+                    "automation_target_unavailable", "automation_verification_required",
+                }, skipped=code in {"automation_revision_conflict", "automation_session_busy", "automation_canceled"})
+                self.supervisor.events.deliver_pending()
+        if not self.supervisor.start_managed_task("automation-prepare", execute):
+            application.repository.finish(occurrence_id, "应用正在关闭或重新配置。")
 
     def _input_application(self) -> InputContextApplication:
         return InputContextApplication(self.store, self._applications_or_error().extensions, self._scan_text)
@@ -1675,6 +1785,11 @@ class RuntimeServer:
                 with startup_phase("applications_and_handoffs"):
                     self._applications = self._build_applications()
                     self._applications.sessions.recover_handoffs()
+                application = self._automation_application()
+                self.automation_scheduler = AutomationScheduler(application.repository, self._launch_automation,
+                    lambda: self.initialized and self.supervisor.control_state is RuntimeControlState.RUNNING,
+                    self.supervisor.events.deliver_pending)
+                self.supervisor.start_automation_service(self.automation_scheduler.run)
                 self.store.database.memory.on_cleanup = self.store.collect_unreferenced_blobs
                 self.memory_jobs = MemoryJobs(
                     self.store.database.memory, self.model_config, self.model_gateway,

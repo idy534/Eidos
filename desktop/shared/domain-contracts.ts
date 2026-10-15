@@ -267,6 +267,7 @@ export interface TerminalExitEvent {
 export type ApprovalMode = "manual" | "auto_review" | "full_access";
 
 export interface Run {
+  automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   inherited?: boolean;
   approvalMode?: ApprovalMode;
   workMode?: "execute" | "plan";
@@ -684,6 +685,7 @@ export interface ExtensionSnapshot {
 }
 
 export type RuntimeNotification =
+  | { method: "automation/changed"; params: { id: string } }
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
   | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }
   | { method: "workspace/changed"; params: { sessionId: string; paths: string[] } }

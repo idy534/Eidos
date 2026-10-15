@@ -6,6 +6,7 @@ import { isRunTermination } from "../shared/run-termination.js";
 import type { CollaborationState } from "../shared/collaboration.generated.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
+import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
 import { isQueuedRunChangeResponse, isQueuedRunListResponse } from "../shared/queued-runs.js";
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
@@ -19,6 +20,10 @@ import readline from "node:readline";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const RUNTIME_BUSINESS_CODES = new Set([
+  "AUTOMATION_SCHEDULE_NOT_SUPPORTED", "AUTOMATION_TIME_IN_PAST", "AUTOMATION_NOT_FOUND",
+  "AUTOMATION_REVISION_CONFLICT", "AUTOMATION_TARGET_UNAVAILABLE", "AUTOMATION_MODEL_UNAVAILABLE",
+  "AUTOMATION_SOURCE_NOT_ALLOWED", "AUTOMATION_OPERATION_CONFLICT", "AUTOMATION_VERIFICATION_REQUIRED",
+  "AUTOMATION_CANCELED", "AUTOMATION_SESSION_BUSY",
   "RUNTIME_NOT_INITIALIZED",
   "RUNTIME_DRAINING",
   "RUNTIME_RECONFIGURING",
@@ -467,6 +472,22 @@ export class RuntimeClient {
 
   listProjects(): Promise<ProjectListResult> {
     return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  automation(request: AutomationExecuteRequest): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/execute", { ...request }, isAutomationResponse);
+  }
+
+  automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/history", { ...request }, isAutomationResponse);
+  }
+
+  automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/runNow", { ...request }, isAutomationResponse);
+  }
+
+  refreshAutomationSchedule(): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/refresh", {}, isAutomationResponse);
   }
 
   listSidebarPins(): Promise<SidebarPinsResponse> {
@@ -1291,6 +1312,9 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "automation/changed") {
+    return typeof value.params.id === "string";
+  }
   if (value.method === "run/queueChanged") {
     return isQueuedRunChangeResponse(params);
   }
@@ -2005,6 +2029,7 @@ function isRun(value: unknown): value is Run {
       "reconciliationRequired",
       "extensionSnapshot",
       "activatedTools",
+      "automationOrigin",
     ])
   ) {
     return false;
@@ -2026,6 +2051,7 @@ function isRun(value: unknown): value is Run {
     )
     && (value.workMode === undefined || ["execute", "plan"].includes(String(value.workMode)))
     && (value.approvalMode === undefined || ["manual", "auto_review", "full_access"].includes(String(value.approvalMode)))
+    && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (

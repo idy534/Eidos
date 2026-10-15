@@ -4,7 +4,7 @@ import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from ".
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
 import { isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell as electronShell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
 import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -13,6 +13,7 @@ import path from "node:path";
 import * as nodePty from "node-pty";
 
 import { RuntimeClient } from "./runtime-client.js";
+import { isAutomationRequest, isAutomationHistoryRequest, isAutomationRunNowRequest } from "../shared/automation.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
 import { redactLogLine, sanitizeLogValue } from "./log-redaction.js";
@@ -597,6 +598,18 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.AUTOMATION_EXECUTE, (_event, request: unknown) => {
+  if (!isAutomationRequest(request)) throw new Error("定时任务参数无效。");
+  return clientOrThrow().automation(request);
+});
+ipcMain.handle(IPC.AUTOMATION_HISTORY, (_event, request: unknown) => {
+  if (!isAutomationHistoryRequest(request)) throw new Error("定时任务历史参数无效。");
+  return clientOrThrow().automationHistory(request);
+});
+ipcMain.handle(IPC.AUTOMATION_RUN_NOW, (_event, request: unknown) => {
+  if (!isAutomationRunNowRequest(request)) throw new Error("立即执行参数无效。");
+  return clientOrThrow().automationRunNow(request);
+});
 ipcMain.handle(IPC.SIDEBAR_LIST_PINS, () => clientOrThrow().listSidebarPins());
 ipcMain.handle(IPC.RUN_UPDATE_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunUpdateRequest(request)) throw new Error("排队消息参数无效。");
@@ -1472,6 +1485,9 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    powerMonitor.on("resume", () => {
+      void runtimeClient?.refreshAutomationSchedule().catch(() => undefined);
+    });
     artifactPreview.install();
     buildMenu();
     createWindow();

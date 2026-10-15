@@ -28,6 +28,7 @@ import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { SparklesIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
@@ -614,6 +615,7 @@ function UserMessage({
 
   return (
     <div className="feed-item feed-item--user">
+      {run.automationOrigin && <p className="feed-label">定时任务自动执行</p>}
       <div className="user-message-bubble">
         {(editing ? draftReferences : item.references)?.length ? (
           <InputReferenceCards
@@ -1505,6 +1507,10 @@ function ToolItem({
   }
 
   const toolResult = parseObject(toolCall.resultJson);
+  if (toolCall.toolName === "automation" && toolCall.provenance?.kind === "builtin" && toolCall.provenance.sourceId === "eidos.automation" && toolResult.outcome === "success") {
+    const data = toolResult.data && typeof toolResult.data === "object" ? toolResult.data as Record<string, unknown> : {};
+    return <AutomationToolCard response={data.response} mode={parseObject(toolCall.argumentsJson).mode} />;
+  }
   if (toolCall.toolName === "request_user_input"
     && (item.status === "in_progress" || (item.status === "completed" && toolResult.outcome === "success"))) {
     const args = parseObject(toolCall.argumentsJson);

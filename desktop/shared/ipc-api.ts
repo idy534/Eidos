@@ -1,4 +1,5 @@
 import type { SessionForkRequest } from "./session-fork.generated.js";
+import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "./automation.js";
 import type { MemoryMethods } from "./memory.js";
 import type { CollaborationState } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
@@ -77,6 +78,9 @@ import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js"
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
+  automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;
+  automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;
+  automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse>;
   backupMemory(): Promise<void>;
   memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]>;
 

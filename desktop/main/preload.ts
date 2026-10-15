@@ -152,6 +152,10 @@ const api: EidosRuntimeAPI = {
     return () => ipcRenderer.removeListener(IPC.TERMINAL_EXIT_EVENT, listener);
   },
 
+  automation: (request: AutomationExecuteRequest): Promise<AutomationResponse> => ipcRenderer.invoke(IPC.AUTOMATION_EXECUTE, request),
+  automationHistory: (request: AutomationHistoryRequest): Promise<AutomationResponse> => ipcRenderer.invoke(IPC.AUTOMATION_HISTORY, request),
+  automationRunNow: (request: AutomationRunNowRequest): Promise<AutomationResponse> => ipcRenderer.invoke(IPC.AUTOMATION_RUN_NOW, request),
+
   // Sessions
   listSidebarPins: (): Promise<SidebarPinsResponse> => ipcRenderer.invoke(IPC.SIDEBAR_LIST_PINS),
   updateQueuedRun: (request: QueuedRunUpdateRequest): Promise<QueuedRunChangeResponse> =>
@@ -423,3 +427,4 @@ const api: EidosRuntimeAPI = {
 };
 
 contextBridge.exposeInMainWorld("eidosRuntime", api);
+import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "../shared/automation.js";

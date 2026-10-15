@@ -1,5 +1,7 @@
 # 执行门控清单
 
+定时任务保留同计划不重叠、原 Session 忙碌跳过、最终入队版本检查和所属计划核验暂停，不增加全局配额或共享 Workspace 锁。automation 的 view / preview 使用只读类别；写模式继续经过 Durable Intent。默认 auto_review 只配置未来 Run，不切换当前 Run。具体规则见 [当前本地定时任务](current-automations.md)。
+
 本文列出基于 main 的整体整改决策。移除只约束调用形式、输入编辑或无关任务的门控；不能证明结果、授权、版本或所有权的操作继续受约束。检查尽量由 Runtime 处理，不把内部恢复步骤强加给模型或用户。
 
 ## 输入与审批

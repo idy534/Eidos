@@ -13,9 +13,28 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def downgrade_session_fork_schema():
-    """Remove the v26 additions when a test rebuilds an older schema fixture."""
+def downgrade_automation_schema():
+    """Remove the v28 additions when a test rebuilds an older schema fixture."""
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TRIGGER IF EXISTS automation_memory_insert")
+        connection.execute("DROP TRIGGER IF EXISTS automation_origin_memory")
+        for table in (
+            "automation_run_origins",
+            "scheduled_occurrences",
+            "scheduled_tasks",
+        ):
+            connection.execute(f"DROP TABLE IF EXISTS {table}")
+
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_session_fork_schema(downgrade_automation_schema):
+    """Remove v26 and newer additions when rebuilding a legacy fixture."""
+    def downgrade(connection: sqlite3.Connection) -> None:
+        # Remove the latest feature objects first. Their triggers refer to
+        # memory tables that older-schema fixtures remove below.
+        downgrade_automation_schema(connection)
         for table in (
             "session_history_resources",
             "session_history_entries",

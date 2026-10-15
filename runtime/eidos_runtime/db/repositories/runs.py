@@ -139,6 +139,7 @@ class RunRepository(Repository):
         run_id: str | None = None,
         item_id: str | None = None,
         transaction_connection: sqlite3.Connection | None = None,
+        regenerate_source_run_id: str | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
         references = references or []
         references_json = json.dumps([value.to_wire_dict() for value in references], ensure_ascii=False)
@@ -205,6 +206,11 @@ class RunRepository(Repository):
                 )
             status = "queued" if queued else "running"
             started_at = None if queued else now
+            if regenerate_source_run_id is not None:
+                from eidos_runtime.persistence.response_actions import ResponseActionRepository
+                source = ResponseActionRepository.validate_revision_source_in(connection, regenerate_source_run_id)
+                if source["sessionId"] != session_id:
+                    raise InvalidRunStateError("revision runs must share a session")
             try:
                 connection.execute(
                     """
@@ -227,6 +233,17 @@ class RunRepository(Repository):
                     raise ActiveRunError("another run is active") from None
                 raise
             connection.execute('UPDATE runs SET work_mode = ? WHERE id = ?', (work_mode, run_id))
+            if regenerate_source_run_id is not None:
+                connection.execute(
+                    "INSERT INTO run_revisions(run_id,source_run_id,revision_kind,created_at) VALUES(?,?,'regenerate',?)",
+                    (run_id, regenerate_source_run_id, now),
+                )
+                connection.execute(
+                    "INSERT INTO automation_run_origins(run_id,origin_json) SELECT ?,origin_json FROM automation_run_origins WHERE run_id=?",
+                    (run_id, regenerate_source_run_id),
+                )
+                from eidos_runtime.memory.lifecycle import invalidate_source
+                invalidate_source(connection, session_id, reason="revision", run_id=regenerate_source_run_id)
             from eidos_runtime.persistence.planning import PlanningRepository
             PlanningRepository.bind_run(connection, run_id=run_id, session_id=session_id,
                 work_mode=work_mode, plan_id=plan_id, plan_revision=plan_revision)
@@ -316,6 +333,7 @@ class RunRepository(Repository):
             operation_id=operation_id,
             operation_scope="run/start",
             operation_request={
+                **({"regenerateSourceRunId": regenerate_source_run_id} if regenerate_source_run_id is not None else {}),
                 "sessionId": session_id,
                 "userInput": user_input,
                 "workMode": work_mode,
@@ -454,7 +472,8 @@ class RunRepository(Repository):
             ).fetchone()
         if row is None:
             raise ResourceNotFoundError("run not found")
-        return _run_from_row(row)
+        from eidos_runtime.persistence.automations import AutomationRepository
+        return _run_from_row(row, automation_origin=AutomationRepository(self.database).origin(run_id))
 
     def read_run_extension_snapshot(self, run_id: str) -> dict[str, object]:
         """Internal immutable snapshot, including restart-only Skill metadata."""
@@ -473,6 +492,7 @@ class RunRepository(Repository):
                    JOIN runs current ON current.id = ?
                    JOIN runs source ON source.id = i.run_id
                    WHERE i.session_id = current.session_id AND i.kind = 'user_message'
+                     AND NOT EXISTS (SELECT 1 FROM automation_run_origins a WHERE a.run_id=source.id)
                      AND source.creation_seq <= current.creation_seq
                    ORDER BY i.creation_seq DESC LIMIT 32""", (run_id,),
             ).fetchall()

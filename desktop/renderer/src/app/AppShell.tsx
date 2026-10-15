@@ -16,6 +16,7 @@ import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
 import { SessionSidebar } from "../components/SessionSidebar.js";
+import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
@@ -141,7 +142,8 @@ export function AppShell({ runtime }: AppShellProps) {
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
     ?? sessionApprovalMode;
   const [workModes, setWorkModes] = useState<Record<string, "execute" | "plan">>({});
-  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestRun?.workMode ?? "execute";
+  const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin).at(-1);
+  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestUserRun?.workMode ?? "execute";
   const contextRun = runState.activeRun ?? latestRun;
   const contextRunId = contextRun && contextRun.modelId === modelState.selectedModelId
     ? contextRun.id
@@ -165,6 +167,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("model");
   const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
   const [titleDraft, setTitleDraft] = useState("");
@@ -555,6 +558,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   // Session Selection & Creation with Model re-eval
   const handleNavigateToSession = useCallback((target: string) => {
+    setAutomationsOpen(false);
     if (target === "draft") {
       sessionActions.startDraft();
       return;
@@ -603,11 +607,13 @@ export function AppShell({ runtime }: AppShellProps) {
   }, [settingsOpen, navHistoryActions]);
 
   async function handleSelectSession(session: Session) {
+    setAutomationsOpen(false);
     navHistoryActions.navigateTo(session.id);
     return sessionActions.selectSession(session);
   }
 
   function handleCreateSession(project?: Project | null): void {
+    setAutomationsOpen(false);
     navHistoryActions.navigateTo("draft");
     sessionActions.startDraft(project);
   }
@@ -1385,9 +1391,9 @@ export function AppShell({ runtime }: AppShellProps) {
         runtimePresentation={runtimePresentation}
         isSelectingSessionId={sessionState.pending.selectingSessionId}
         gitStatusBySessionId={gitReviewState.statusBySessionId}
-        onCreate={() => handleCreateSession()}
+        onCreate={() => { setAutomationsOpen(false); handleCreateSession(); }}
         onCreateInProject={handleCreateInProject}
-        onSelect={(session) => void handleSelectSession(session)}
+        onSelect={(session) => { setAutomationsOpen(false); void handleSelectSession(session); }}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
         onDeleteProject={(project) => requestDeleteProject(project)}
@@ -1395,11 +1401,13 @@ export function AppShell({ runtime }: AppShellProps) {
           void window.eidosRuntime.showItemInFolder(project.workspaceRoot).catch(() => undefined);
         }}
         onOpenSettings={() => {
+          setAutomationsOpen(false);
           setSettingsOpen(true);
           setDockOpen(false);
           setDockExpanded(false);
           setRenamingSessionId(undefined);
         }}
+        onOpenAutomations={() => { setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
         navigationSlot={
           <NavigationControls
             sidebarOpen={sidebarOpen}
@@ -1429,7 +1437,13 @@ export function AppShell({ runtime }: AppShellProps) {
           </div>
         )}
 
-        {settingsOpen ? (
+        {automationsOpen ? (
+          <AutomationPage projects={sessionState.projects} sessions={sessionState.sessions} models={modelState.list?.models ?? []}
+            currentSessionId={isDraft ? undefined : currentSnapshot?.session.id}
+            currentProjectId={currentSnapshot?.session.project?.id}
+            onClose={() => setAutomationsOpen(false)}
+            onOpenSession={(id) => { setAutomationsOpen(false); handleNavigateToSession(id); }} />
+        ) : settingsOpen ? (
           <SettingsPage
             initialCategory={settingsCategory}
             sessionId={activeSnapshot?.session.id}
