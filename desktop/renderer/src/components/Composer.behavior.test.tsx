@@ -69,7 +69,7 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(await screen.findByRole("dialog", { name: "创建智能体" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "new-agent" } });
     fireEvent.change(screen.getByLabelText("用途说明"), { target: { value: "负责调查" } });
-    fireEvent.change(screen.getByLabelText("指令"), { target: { value: "报告源码证据。" } });
+    fireEvent.change(screen.getByLabelText(/Agent\.md|指令/), { target: { value: "报告源码证据。" } });
     fireEvent.click(screen.getByRole("button", { name: "创建并引用" }));
     await waitFor(() => expect(add).toHaveBeenCalledWith("session-1", agentReference));
     expect(api.prepareInput).toHaveBeenCalledWith({ kind: "agent", source: "new-agent", sessionId: "session-1" });
