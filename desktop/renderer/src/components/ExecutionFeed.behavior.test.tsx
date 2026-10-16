@@ -1031,7 +1031,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     const btn = container.querySelector("button.tool-file-link");
     expect(btn).not.toBeNull();
     expect(btn?.textContent).toBe("reviewer");
-    expect(container.textContent).toContain("创建子智能体 · reviewer");
+    expect(container.textContent).toContain("创建智能体 · reviewer");
     expect(container.querySelector("details.tool-item")).toBeNull();
 
     fireEvent.click(btn!);

@@ -1,6 +1,7 @@
 import type { ChannelResponse, ChannelSaveRequest } from "../shared/channels.js";
 import type { MemoryMethods } from "../shared/memory.js";
 import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
+import type { AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "../shared/collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import type { InputDraft, InputPrepareRequest } from "../shared/input-context.js";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
@@ -323,6 +324,9 @@ const api: EidosRuntimeAPI = {
   readInputDraft: (key: string) => ipcRenderer.invoke(IPC.INPUT_DRAFT_READ, key),
   writeInputDraft: (key: string, draft: InputDraft) => ipcRenderer.invoke(IPC.INPUT_DRAFT_WRITE, key, draft),
   listAgentTypes: (): Promise<AgentCatalogResponse> => ipcRenderer.invoke(IPC.AGENT_CATALOG),
+  readAgentDefinition: (source: string) => ipcRenderer.invoke(IPC.AGENT_DEFINITION_READ, source),
+  saveAgentDefinition: (request: AgentDefinitionSaveRequest) => ipcRenderer.invoke(IPC.AGENT_DEFINITION_SAVE, request),
+  removeAgentDefinition: (request: AgentDefinitionRemoveRequest) => ipcRenderer.invoke(IPC.AGENT_DEFINITION_REMOVE, request),
   readAgents: (sessionId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_READ, sessionId),
   stopAgent: (parentRunId: string, agentId: string): Promise<CollaborationState> => ipcRenderer.invoke(IPC.AGENT_STOP, parentRunId, agentId),
   backupMemory: (): Promise<void> => ipcRenderer.invoke(IPC.MEMORY_BACKUP),

@@ -1118,7 +1118,7 @@ export function AppShell({ runtime }: AppShellProps) {
     if (!currentSnapshot) return;
     const existing = openTabs.find((tab) => tab.id === "agent");
     if (!existing) {
-      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "子智能体" }]);
+      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "智能体" }]);
     }
     setActiveTabId("agent");
     setDockOpen(true);
@@ -1150,7 +1150,7 @@ export function AppShell({ runtime }: AppShellProps) {
       openAgent(matched);
     } else if (target?.id) {
       const id = `agent-${target.id}`;
-      const title = target.taskName || "子智能体";
+      const title = target.taskName || "智能体";
       setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title }]);
       setActiveTabId(id);
       setDockOpen(true);
@@ -1306,7 +1306,7 @@ export function AppShell({ runtime }: AppShellProps) {
               )}
               {agents.state?.agents && agents.state.agents.length > 0 && (
                 <div className="environment-popover__section">
-                  <div className="environment-popover__section-title">子智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
+                  <div className="environment-popover__section-title">智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
                   <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
                 </div>
               )}
@@ -1372,7 +1372,7 @@ export function AppShell({ runtime }: AppShellProps) {
       showToast,
     } : undefined}>
     <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
-      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
+      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
       onNavigateToSession={(target) => {
         if (settingsOpen) setSettingsOpen(false);
         navHistoryActions.navigateTo(target);

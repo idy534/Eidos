@@ -68,11 +68,32 @@ export type Createdat1 = number;
 export type Messages = AgentMessage[];
 export type Parentrunid2 = string;
 export type Agentid = string;
+export type Source1 = string;
+export type Version = string;
+export type Schemaversion = 1;
+export type Name1 = string;
+export type Description1 = string;
+export type Enabled1 = boolean;
+export type Baserole2 = "default" | "explorer" | "worker";
+export type Instructions = string;
+export type Providerid2 = string | null;
+export type Configid = string | null;
+export type Reasoningselection = ("none" | "thinking" | "low" | "medium" | "high" | "max") | null;
+export type Text = string;
+export type Source2 = string;
+export type Source3 = string | null;
+export type Expectedversion = string | null;
+export type Source4 = string;
+export type Expectedversion1 = string;
 
 export interface CollaborationContract {
   catalog: AgentCatalogResponse;
   state: CollaborationState;
   stop: AgentStopRequest;
+  definition: AgentDefinitionDocument;
+  definitionRead: AgentDefinitionReadRequest;
+  definitionSave: AgentDefinitionSaveRequest;
+  definitionRemove: AgentDefinitionRemoveRequest;
 }
 export interface AgentCatalogResponse {
   agents?: Agents;
@@ -139,4 +160,36 @@ export interface AgentMessage {
 export interface AgentStopRequest {
   parentRunId: Parentrunid2;
   agentId: Agentid;
+}
+export interface AgentDefinitionDocument {
+  source: Source1;
+  version: Version;
+  definition: AgentDefinition;
+  text: Text;
+}
+export interface AgentDefinition {
+  schemaVersion: Schemaversion;
+  name: Name1;
+  description: Description1;
+  enabled?: Enabled1;
+  baseRole?: Baserole2;
+  instructions: Instructions;
+  model?: AgentModelSelection | null;
+}
+export interface AgentModelSelection {
+  providerId?: Providerid2;
+  configId?: Configid;
+  reasoningSelection?: Reasoningselection;
+}
+export interface AgentDefinitionReadRequest {
+  source: Source2;
+}
+export interface AgentDefinitionSaveRequest {
+  definition: AgentDefinition;
+  source?: Source3;
+  expectedVersion?: Expectedversion;
+}
+export interface AgentDefinitionRemoveRequest {
+  source: Source4;
+  expectedVersion: Expectedversion1;
 }

@@ -30,7 +30,7 @@ export function AgentDefinitionDialog({ preview, onClose }: { preview: InputPrev
             </span>
             <div className="skill-detail-title-group">
               <h2 id={titleId}>{preview.reference.label}</h2>
-              <span className="skill-type-label">Agent</span>
+              <span className="skill-type-label">智能体</span>
             </div>
           </div>
           <div className="skill-detail-header-right">
@@ -39,7 +39,7 @@ export function AgentDefinitionDialog({ preview, onClose }: { preview: InputPrev
                 ref={closeRef}
                 type="button"
                 className="skill-detail-close-btn"
-                aria-label="关闭 Agent 定义"
+                aria-label="关闭智能体定义"
                 onClick={onClose}
               >
                 ×
@@ -47,9 +47,9 @@ export function AgentDefinitionDialog({ preview, onClose }: { preview: InputPrev
             </div>
           </div>
         </div>
-        <p className="skill-detail-description">本次引用保存的定义。父任务通过现有子 Agent 工具调用它。</p>
+        <p className="skill-detail-description">本次引用保存的智能体定义。父任务通过现有协作工具调用它。</p>
         <div className="skill-detail-body">
-          <pre ref={bodyRef} tabIndex={0} className="agent-definition-content" aria-label="Agent 配置和指令">{preview.text}</pre>
+          <pre ref={bodyRef} tabIndex={0} className="agent-definition-content" aria-label="智能体配置和指令">{preview.text}</pre>
         </div>
       </div>
     </div>, document.body,

@@ -334,6 +334,15 @@ export function applyQueuedRunChange(
 export type RunStatusTone = "success" | "error" | "neutral" | "warning";
 
 const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
+  AGENT_DEFINITION_INVALID: "智能体配置无效，请检查名称、用途说明、指令和 TOML 格式。",
+  AGENT_DEFINITION_EXISTS: "智能体名称或配置文件已经存在，请使用其他名称。",
+  AGENT_DEFINITION_CONFLICT: "智能体配置已经变化，请刷新并重新打开后再修改。",
+  AGENT_DEFINITION_IO_ERROR: "智能体配置不可读写，请检查文件和目录权限。",
+  AGENT_DEFINITION_BUSY: "智能体配置正在被修改，请稍后重试。",
+  AGENT_DEFINITION_WRITE_UNCERTAIN: "操作未能确认，智能体配置可能已经变化。请刷新列表并检查文件。",
+  AGENT_MODEL_NOT_AVAILABLE: "智能体模型不可用，请选择已配置且支持工具调用的模型。",
+  AGENT_MODEL_PROVIDER_MISMATCH: "智能体的提供商与模型配置不匹配，请重新选择。",
+  AGENT_MODEL_REASONING_INVALID: "智能体模型不支持所选思考强度，请重新选择。",
   AUTOMATION_SCHEDULE_NOT_SUPPORTED: "时间规则不受支持。固定间隔请选择 10 分钟、30 分钟或 1 小时。",
   AUTOMATION_TIME_IN_PAST: "执行时间已过去，请设置未来时间。",
   AUTOMATION_NOT_FOUND: "这个定时任务已不存在，请刷新列表。",

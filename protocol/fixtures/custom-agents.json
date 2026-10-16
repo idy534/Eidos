@@ -67,5 +67,56 @@
       }
     ],
     "error": null
+  },
+  "management": {
+    "save": {
+      "definition": {
+        "schemaVersion": 1,
+        "name": "luna-work",
+        "description": "负责实现和验证",
+        "enabled": true,
+        "baseRole": "worker",
+        "instructions": "你需要报告事实和未完成事项。",
+        "model": {
+          "providerId": "volcengine",
+          "configId": "deepseek-v4.1-flash",
+          "reasoningSelection": "high"
+        }
+      }
+    },
+    "document": {
+      "definition": {
+        "schemaVersion": 1,
+        "name": "luna-work",
+        "description": "负责实现和验证",
+        "enabled": true,
+        "baseRole": "worker",
+        "instructions": "你需要报告事实和未完成事项。",
+        "model": {
+          "providerId": "volcengine",
+          "configId": "deepseek-v4.1-flash",
+          "reasoningSelection": "high"
+        }
+      },
+      "source": "/data/agents/luna-work.toml",
+      "version": "953859662927201c1907b75dfe3befbf928797b2bca01a32491690e8d5e5f068",
+      "text": "schema_version = 1\nname = \"luna-work\"\ndescription = \"负责实现和验证\"\nenabled = true\nbase_role = \"worker\"\ninstructions = \"你需要报告事实和未完成事项。\"\n\n[model]\nprovider_id = \"volcengine\"\nconfig_id = \"deepseek-v4.1-flash\"\nreasoning_selection = \"high\"\n"
+    },
+    "invalidSave": {
+      "definition": {
+        "schemaVersion": 1,
+        "name": "luna-work",
+        "description": "负责实现和验证",
+        "enabled": true,
+        "baseRole": "worker",
+        "instructions": "你需要报告事实和未完成事项。",
+        "model": {
+          "providerId": "volcengine",
+          "configId": "deepseek-v4.1-flash",
+          "reasoningSelection": "high"
+        },
+        "unexpected": true
+      }
+    }
   }
 }

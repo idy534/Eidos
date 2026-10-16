@@ -60,9 +60,9 @@ it("loads connection state, navigates to dingtalk details, masks credentials and
   expect(screen.getByText("网络中断，结果未知。")).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "完全访问" })).toBeInTheDocument();
 
-  // 点击返回按钮回到接入渠道列表页
-  await user.click(screen.getByRole("button", { name: "接入渠道" }));
-  expect(screen.getByRole("heading", { name: "接入渠道" })).toBeInTheDocument();
+  // 点击返回按钮回到接入助理列表页
+  await user.click(screen.getByRole("button", { name: "接入助理" }));
+  expect(screen.getByRole("heading", { name: "接入助理" })).toBeInTheDocument();
 });
 
 it("renders channel list with DingTalk at the top and disabled buttons for Feishu and WeChat", async () => {
@@ -73,7 +73,7 @@ it("renders channel list with DingTalk at the top and disabled buttons for Feish
   } as unknown as EidosRuntimeAPI;
 
   render(<ChannelSettings modelList={{ models: [model] }} />);
-  expect(await screen.findByRole("heading", { name: "接入渠道" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "接入助理" })).toBeInTheDocument();
   expect(screen.getByText("钉钉")).toBeInTheDocument();
   expect(screen.getByText("飞书")).toBeInTheDocument();
   expect(screen.getByText("企业微信")).toBeInTheDocument();
@@ -92,7 +92,7 @@ it("renders channel list with DingTalk at the top and disabled buttons for Feish
   // 钉钉未配置时点击接入进入钉钉详情页
   await user.click(dingTalkButton);
   expect(await screen.findByRole("heading", { name: "应用凭证" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "保存渠道配置" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "保存助理配置" })).toBeInTheDocument();
 });
 
 it("shows floating toast on refresh and supports manual close", async () => {
@@ -103,17 +103,17 @@ it("shows floating toast on refresh and supports manual close", async () => {
   } as unknown as EidosRuntimeAPI;
 
   render(<ChannelSettings modelList={{ models: [model] }} />);
-  expect(await screen.findByRole("heading", { name: "接入渠道" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "接入助理" })).toBeInTheDocument();
 
   // 点击刷新状态
-  await user.click(screen.getByRole("button", { name: "刷新渠道状态" }));
-  expect(await screen.findByText("渠道状态已刷新")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "刷新助理状态" }));
+  expect(await screen.findByText("助理状态已刷新")).toBeInTheDocument();
 
   // 手动关闭
   const closeBtn = screen.getByRole("button", { name: "关闭提示" });
   await user.click(closeBtn);
   await waitFor(() => {
-    expect(screen.queryByText("渠道状态已刷新")).not.toBeInTheDocument();
+    expect(screen.queryByText("助理状态已刷新")).not.toBeInTheDocument();
   });
 });
 
@@ -129,20 +129,20 @@ it("automatically dismisses toast notification after 3.5 seconds", async () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  const refreshBtn = screen.getByRole("button", { name: "刷新渠道状态" });
+  const refreshBtn = screen.getByRole("button", { name: "刷新助理状态" });
   await act(async () => {
     fireEvent.click(refreshBtn);
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  expect(screen.getByText("渠道状态已刷新")).toBeInTheDocument();
+  expect(screen.getByText("助理状态已刷新")).toBeInTheDocument();
 
   // 推进 3500 毫秒后自动关闭
   await act(async () => {
     await vi.advanceTimersByTimeAsync(3500);
   });
 
-  expect(screen.queryByText("渠道状态已刷新")).not.toBeInTheDocument();
+  expect(screen.queryByText("助理状态已刷新")).not.toBeInTheDocument();
   vi.useRealTimers();
 });
 
@@ -156,7 +156,7 @@ it("saves only current options and retains an existing secret without resending 
   expect(screen.queryByLabelText("允许的群 ConversationID")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("机器人 RobotCode")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("组织 CorpID")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   expect(save).toHaveBeenCalledOnce();
   const request = save.mock.calls[0]![0];
   expect(request.expectedRevision).toBe(2);
@@ -170,8 +170,8 @@ it("creates a connection with just app credentials and the default model and per
   render(<DingTalkForm connection={null} models={[model]} projects={[]} busy={false} onSave={save} />);
   await user.type(screen.getByLabelText("Client ID"), "new-app");
   await user.type(screen.getByLabelText("Client Secret"), "new-secret");
-  await user.click(screen.getByLabelText("启用钉钉渠道"));
-  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await user.click(screen.getByLabelText("启用钉钉助理"));
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledWith({
     expectedRevision: 0,
@@ -188,11 +188,11 @@ it("requires a danger confirmation before selecting full access and saves its co
   const approval = screen.getByRole("combobox", { name: "审批模式" });
   await user.selectOptions(approval, "full_access");
   expect(screen.getByRole("alertdialog", { name: "开启完全访问？" })).toBeInTheDocument();
-  expect(screen.getByText(/此渠道今后收到的消息/)).toBeInTheDocument();
+  expect(screen.getByText(/此助理今后收到的消息/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "开启完全访问" })).toHaveClass("btn--danger");
   await waitFor(() => expect(screen.getByRole("button", { name: "取消" })).toHaveFocus());
   expect(approval).toHaveValue("manual");
-  fireEvent.submit(screen.getByRole("button", { name: "保存渠道配置" }).closest("form")!);
+  fireEvent.submit(screen.getByRole("button", { name: "保存助理配置" }).closest("form")!);
   expect(save).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "取消" }));
   expect(approval).toHaveValue("manual");
@@ -201,11 +201,11 @@ it("requires a danger confirmation before selecting full access and saves its co
   await user.click(screen.getByRole("button", { name: "开启完全访问" }));
   expect(approval).toHaveValue("full_access");
   expect(save).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ fullAccessConfirmation: "full-access-v1",
     config: expect.objectContaining({ approvalMode: "full_access" }) }));
   await user.selectOptions(approval, "auto_review");
-  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   expect(save.mock.calls[1]![0]).not.toHaveProperty("fullAccessConfirmation");
 });
 
@@ -215,7 +215,7 @@ it("retains saved full access and requires confirmation again after changing to 
   render(<DingTalkForm connection={{ ...connection, config: { ...connection.config, approvalMode: "full_access" } }}
     models={[model]} projects={[]} busy={false} onSave={save} />);
   const approval = screen.getByRole("combobox", { name: "审批模式" });
-  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   expect(save.mock.calls[0]![0]).not.toHaveProperty("fullAccessConfirmation");
   await user.selectOptions(approval, "auto_review");
@@ -232,11 +232,11 @@ it("requires a fresh secret when changing the app and preserves it after failure
   render(<DingTalkForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
   await user.clear(screen.getByLabelText("Client ID"));
   await user.type(screen.getByLabelText("Client ID"), "other");
-  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Client Secret");
   expect(save).not.toHaveBeenCalled();
   await user.type(screen.getByLabelText("Client Secret"), "new-secret");
-  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenCalledOnce());
   expect(screen.getByLabelText("Client Secret")).toHaveValue("new-secret");
 });
@@ -247,8 +247,8 @@ it("shows read errors and does not fabricate a disconnected configuration", asyn
     listProjects: vi.fn().mockResolvedValue({ items: [] }),
   } as unknown as EidosRuntimeAPI;
   render(<ChannelSettings modelList={{ models: [model] }} />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("无法读取渠道状态");
-  expect(screen.queryByRole("button", { name: "保存渠道配置" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("无法读取助理状态");
+  expect(screen.queryByRole("button", { name: "保存助理配置" })).not.toBeInTheDocument();
 });
 
 it("renders unified single topbar in detail view with back button, identity, toggle, and square refresh button", async () => {
@@ -269,15 +269,15 @@ it("renders unified single topbar in detail view with back button, identity, tog
   // 顶栏元素验证
   expect(await screen.findByRole("heading", { name: "钉钉" })).toBeInTheDocument();
   expect(screen.getByText("已连接")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "接入渠道" })).toBeInTheDocument();
-  expect(screen.getByLabelText("启用钉钉渠道")).toBeChecked();
+  expect(screen.getByRole("button", { name: "接入助理" })).toBeInTheDocument();
+  expect(screen.getByLabelText("启用钉钉助理")).toBeChecked();
 
   // 顶栏小方块刷新按钮
   const refreshBtn = screen.getByRole("button", { name: "刷新状态" });
   expect(refreshBtn).toBeInTheDocument();
   await user.click(refreshBtn);
   expect(readChannel).toHaveBeenCalled();
-  expect(await screen.findByText("渠道状态已刷新")).toBeInTheDocument();
+  expect(await screen.findByText("助理状态已刷新")).toBeInTheDocument();
 
   // 旧的冗余描述卡片已被移除
   expect(screen.queryByText(/Eidos 运行时可以接收并回复钉钉消息/)).not.toBeInTheDocument();
@@ -346,13 +346,13 @@ it("saves reasoning, switches provider logos and clears the old model reasoning"
   expect(trigger.querySelector("img")).toBeInTheDocument();
   fireEvent.click(trigger);
   fireEvent.change(screen.getByRole("slider", { name: "DeepSeek 思考强度" }), { target: { value: "0" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ reasoningSelection: "none" }) })));
   fireEvent.click(screen.getByRole("button", { name: /切换模型/ }));
   fireEvent.click(screen.getByRole("radio", { name: "MiniMax，MiniMax" }));
   expect(screen.getByRole("slider", { name: "MiniMax 思考强度" })).toHaveAttribute("aria-valuetext", "启用思考");
   const nextTrigger = screen.getByRole("button", { name: /MiniMax，MiniMax.*思考强度/ });
   expect(nextTrigger.querySelector("img")?.getAttribute("src")).toBe(minimaxLogo);
-  fireEvent.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ config: expect.objectContaining({ modelId: "minimax", reasoningSelection: null }) })));
 });

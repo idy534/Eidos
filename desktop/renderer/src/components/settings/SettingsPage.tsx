@@ -19,6 +19,7 @@ import { RuntimeSettings } from "./RuntimeSettings.js";
 import { MemorySettings } from "./MemorySettings.js";
 import { ChannelSettings } from "./ChannelSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
+import { AgentSettings } from "./AgentSettings.js";
 import { Button } from "../Button.js";
 
 interface SettingsPageProps {
@@ -76,6 +77,7 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
   const [toasts, setToasts] = useState<SettingsToast[]>([]);
+  const [agentCount, setAgentCount] = useState<number>();
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -105,10 +107,11 @@ export function SettingsPage({
   const mcpHasError = mcpServers.some((s) => Boolean(s.errorCode));
   const categories: SettingsCategoryItem[] = [
     { id: "model", label: "模型" },
-    { id: "channels", label: "渠道" },
+    { id: "channels", label: "助理" },
     { id: "memory", label: "记忆" },
     { id: "plugins", label: "Plugins", count: plugins.length },
     { id: "skills", label: "技能", count: skills.length },
+    { id: "agents", label: "智能体", count: agentCount },
     {
       id: "mcp",
       label: "MCP Servers",
@@ -190,6 +193,8 @@ export function SettingsPage({
                 onShowToast={showToast}
               />
             )}
+
+            {activeCategory === "agents" && <AgentSettings ready={storageReady} onCountChange={setAgentCount} onShowToast={showToast} />}
 
             {activeCategory === "mcp" && (
               <McpSettings

@@ -145,6 +145,8 @@ from eidos_runtime.db.storage import (
 from eidos_runtime.domain.input_reference import InputSnapshot
 from eidos_runtime.application.input_context import InputContextApplication
 from eidos_runtime.application.agent_catalog import AgentCatalog
+from eidos_runtime.application.agent_definitions import AgentDefinitionsApplication
+from eidos_runtime.protocol.collaboration import (AgentDefinitionReadRequest, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest, AgentDefinitionDocument)
 from eidos_runtime.domain.agents import AgentCatalogResponse
 from eidos_runtime.application.planning import PlanningApplication
 from eidos_runtime.protocol import planning as planning_dtos
@@ -1134,6 +1136,12 @@ class RuntimeServer:
               for method, request, response in MEMORY_METHODS),
             ("agent/catalog", AgentCatalogRequest, AgentCatalogResponse,
              lambda _id, _request: AgentCatalog(self.store.database.data_directory, self.model_config).list()),
+            ("agent/definitionRead", AgentDefinitionReadRequest, AgentDefinitionDocument,
+             lambda _id, request: self._agent_definitions().read(request)),
+            ("agent/definitionSave", AgentDefinitionSaveRequest, AgentDefinitionDocument,
+             lambda _id, request: self._agent_definitions().save(request)),
+            ("agent/definitionRemove", AgentDefinitionRemoveRequest, AgentCatalogResponse,
+             lambda _id, request: self._agent_definitions().remove(request)),
             ("agent/read", AgentReadRequest, CollaborationState,
              lambda _id, request: self.supervisor.collaboration.read_session(request.session_id)),
             ("agent/stop", AgentStopRequest, CollaborationState,
@@ -1421,6 +1429,8 @@ class RuntimeServer:
             "input/draftWrite",
             "planning/answer",
             "agent/stop",
+            "agent/definitionSave",
+            "agent/definitionRemove",
             "plan/edit",
             "model/create",
             "model/update",
@@ -1656,6 +1666,9 @@ class RuntimeServer:
                 self.supervisor.events.deliver_pending()
         if not self.supervisor.start_managed_task("automation-prepare", execute):
             application.repository.finish(occurrence_id, "应用正在关闭或重新配置。")
+
+    def _agent_definitions(self) -> AgentDefinitionsApplication:
+        return AgentDefinitionsApplication(AgentCatalog(self.store.database.data_directory, self.model_config))
 
     def _input_application(self) -> InputContextApplication:
         return InputContextApplication(self.store, self._applications_or_error().extensions, self._scan_text, AgentCatalog(self.store.database.data_directory, self.model_config))

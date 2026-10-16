@@ -91,10 +91,10 @@ export function DingTalkForm({
                 type="button"
                 className="channel-back-link-btn"
                 onClick={onBack}
-                aria-label="接入渠道"
+                aria-label="接入助理"
               >
                 <BackArrowIcon />
-                <span>接入渠道</span>
+                <span>接入助理</span>
               </button>
               <div className="channel-topbar-divider" />
             </>
@@ -115,11 +115,11 @@ export function DingTalkForm({
         <div className="channel-topbar-right">
           <div
             className="channel-topbar-toggle-wrapper"
-            title={config.enabled ? "点击停用钉钉渠道" : "点击启用钉钉渠道"}
+            title={config.enabled ? "点击停用钉钉助理" : "点击启用钉钉助理"}
           >
             <Toggle
               id="field-channel-enabled"
-              label="启用钉钉渠道"
+              label="启用钉钉助理"
               checked={config.enabled ?? false}
               disabled={busy}
               onChange={(checked) => change("enabled", checked)}
@@ -264,7 +264,7 @@ export function DingTalkForm({
 
         <div className="channel-form-actions">
           <Button type="submit" variant="primary" size="medium" loading={busy} disabled={busy}>
-            {busy ? "正在保存…" : "保存渠道配置"}
+            {busy ? "正在保存…" : "保存助理配置"}
           </Button>
         </div>
       </fieldset>
@@ -272,7 +272,7 @@ export function DingTalkForm({
         confirmLabel="开启完全访问" cancelLabel="取消"
         description={<div className="channel-full-access-warning">
           <p>Eidos 将不再逐项请求批准</p>
-          <p>此渠道今后收到的消息都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任此渠道及可向机器人发送消息的用户时开启。</p>
+          <p>此助理今后收到的消息都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任此助理及可向机器人发送消息的用户时开启。</p>
         </div>}
         onConfirm={() => { change("approvalMode", "full_access"); setFullAccessConfirmed(true); setShowFullAccessDialog(false); }}
         onCancel={() => setShowFullAccessDialog(false)} />

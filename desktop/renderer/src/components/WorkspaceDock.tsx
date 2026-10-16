@@ -27,7 +27,7 @@ interface WorkspaceDockProps {
 const TOOL_LABELS: Record<WorkspaceToolKind, string> = {
   "text-review": "文本审查",
   plan: "计划",
-  agent: "子智能体",
+  agent: "智能体",
   review: "审查",
   terminal: "终端",
   files: "文件",

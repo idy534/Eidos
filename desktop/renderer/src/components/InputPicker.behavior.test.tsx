@@ -233,7 +233,7 @@ describe("InputPicker behavior", () => {
     }] }) });
     const onChoose = vi.fn();
     render(<InputPicker {...pickerProps} mode="all" onChoose={onChoose} />);
-    fireEvent.click(screen.getByRole("tab", { name: "Agent" }));
+    fireEvent.click(screen.getByRole("tab", { name: "智能体" }));
     const option = await screen.findByRole("option", { name: /luna-work/ });
     expect(option).toHaveTextContent("volcengine / deepseek-v4.1-flash");
     fireEvent.click(option);

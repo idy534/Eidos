@@ -5,6 +5,8 @@ import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared
 import { isAgentCatalog, isCollaborationState } from "../shared/collaboration.js";
 import { isRunTermination } from "../shared/run-termination.js";
 import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
+import type { AgentDefinitionDocument, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "../shared/collaboration.generated.js";
+import { isAgentDefinitionDocument } from "../shared/agent-definitions.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
 import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
@@ -21,6 +23,15 @@ import readline from "node:readline";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const RUNTIME_BUSINESS_CODES = new Set([
+  "AGENT_DEFINITION_INVALID",
+  "AGENT_DEFINITION_EXISTS",
+  "AGENT_DEFINITION_CONFLICT",
+  "AGENT_DEFINITION_IO_ERROR",
+  "AGENT_DEFINITION_BUSY",
+  "AGENT_DEFINITION_WRITE_UNCERTAIN",
+  "AGENT_MODEL_NOT_AVAILABLE",
+  "AGENT_MODEL_PROVIDER_MISMATCH",
+  "AGENT_MODEL_REASONING_INVALID",
   "AUTOMATION_SCHEDULE_NOT_SUPPORTED", "AUTOMATION_TIME_IN_PAST", "AUTOMATION_NOT_FOUND",
   "AUTOMATION_REVISION_CONFLICT", "AUTOMATION_TARGET_UNAVAILABLE", "AUTOMATION_MODEL_UNAVAILABLE",
   "AUTOMATION_SOURCE_NOT_ALLOWED", "AUTOMATION_OPERATION_CONFLICT", "AUTOMATION_VERIFICATION_REQUIRED",
@@ -878,6 +889,15 @@ export class RuntimeClient {
 
   listAgentTypes(): Promise<AgentCatalogResponse> {
     return this.validatedRequest("agent/catalog", {}, isAgentCatalog);
+  }
+  readAgentDefinition(source: string): Promise<AgentDefinitionDocument> {
+    return this.validatedRequest("agent/definitionRead", { source }, isAgentDefinitionDocument);
+  }
+  saveAgentDefinition(request: AgentDefinitionSaveRequest): Promise<AgentDefinitionDocument> {
+    return this.validatedRequest("agent/definitionSave", { ...request }, isAgentDefinitionDocument);
+  }
+  removeAgentDefinition(request: AgentDefinitionRemoveRequest): Promise<AgentCatalogResponse> {
+    return this.validatedRequest("agent/definitionRemove", { ...request }, isAgentCatalog);
   }
   readAgents(sessionId: string): Promise<CollaborationState> {
     return this.validatedRequest("agent/read", { sessionId }, isCollaborationState);

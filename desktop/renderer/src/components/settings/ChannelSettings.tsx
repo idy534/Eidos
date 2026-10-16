@@ -78,11 +78,11 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
       setResponse(value);
       setError("");
       if (showNotice) {
-        showToast("渠道状态已刷新", "success");
+        showToast("助理状态已刷新", "success");
       }
     } catch {
-      setError("无法读取渠道状态，请检查 Runtime 后刷新。 ");
-      showToast("无法读取渠道状态，请检查 Runtime 后刷新。", "error");
+      setError("无法读取助理状态，请检查 Runtime 后刷新。 ");
+      showToast("无法读取助理状态，请检查 Runtime 后刷新。", "error");
     } finally {
       setRefreshing(false);
     }
@@ -97,7 +97,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
         const value = await window.eidosRuntime.readChannel();
         if (active) setResponse(value);
       } catch {
-        if (active) setError("无法读取渠道状态，请检查 Runtime 后刷新。 ");
+        if (active) setError("无法读取助理状态，请检查 Runtime 后刷新。 ");
       }
       if (active) {
         timer = setTimeout(() => {
@@ -129,10 +129,10 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
     try {
       const value = await window.eidosRuntime.saveChannel(request);
       setResponse(value);
-      showToast(request.config.enabled ? "配置已保存，Eidos 正在连接钉钉。" : "渠道已停用。", "success");
+      showToast(request.config.enabled ? "配置已保存，Eidos 正在连接钉钉。" : "助理已停用。", "success");
       return true;
     } catch {
-      const errMsg = "渠道保存失败。请检查配置、模型和项目；配置有冲突时请刷新后重试。 ";
+      const errMsg = "助理保存失败。请检查配置、模型和项目；配置有冲突时请刷新后重试。 ";
       setError(errMsg);
       showToast(errMsg, "error");
       return false;
@@ -154,7 +154,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
   };
 
   const handleUnsupported = (channelName: string) => {
-    showToast(`${channelName}渠道接入功能正在研发中，敬请期待。`, "info");
+    showToast(`${channelName}助理接入功能正在研发中，敬请期待。`, "info");
   };
 
   const isDingTalkConfigured = Boolean(response?.connection?.config?.clientId);
@@ -172,14 +172,14 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
         </div>
       )}
 
-      {/* 视图 1：接入渠道列表页（对应草图图 2） */}
+      {/* 视图 1：接入助理列表页（对应草图图 2） */}
       {currentView === "list" && (
         <div className="channel-list-view">
           <div className="channel-list-header">
             <div className="channel-header-title-group">
-              <h1 className="channel-main-title">接入渠道</h1>
+              <h1 className="channel-main-title">接入助理</h1>
               <p className="channel-main-desc">
-                连接外部协作工具，让 Eidos 在不同渠道中接收群聊指令并协同回复
+                连接外部协作工具，让 Eidos 在不同平台中作为助理接收群聊指令并协同回复
               </p>
             </div>
             <div className="channel-header-actions">
@@ -189,7 +189,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                 disabled={refreshing || busy}
                 onClick={() => void refreshStatus(true)}
                 icon={<RefreshIcon spinning={refreshing} />}
-                aria-label="刷新渠道状态"
+                aria-label="刷新助理状态"
               >
                 刷新状态
               </Button>
@@ -243,7 +243,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                     </Button>
                     <Toggle
                       id="channel-list-dingtalk-toggle"
-                      label="启用或停用钉钉渠道"
+                      label="启用或停用钉钉助理"
                       checked={Boolean(response?.connection?.config?.enabled)}
                       disabled={busy}
                       onChange={(checked) => void handleToggleDingTalk(checked)}
@@ -320,7 +320,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
         </div>
       )}
 
-      {/* 视图 2：钉钉渠道配置详情页（单行顶栏重构） */}
+      {/* 视图 2：钉钉助理配置详情页（单行顶栏重构） */}
       {currentView === "dingtalk" && (
         <div className="channel-detail-view">
           {!response && !error ? (
@@ -331,16 +331,16 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                     type="button"
                     className="channel-back-link-btn"
                     onClick={() => setCurrentView("list")}
-                    aria-label="接入渠道"
+                    aria-label="接入助理"
                   >
                     <BackArrowIcon />
-                    <span>接入渠道</span>
+                    <span>接入助理</span>
                   </button>
                 </div>
               </div>
               <div className="channel-loading-card" role="status">
                 <RefreshIcon spinning className="channel-spinner-large" />
-                <span>正在读取渠道配置…</span>
+                <span>正在读取助理配置…</span>
               </div>
             </>
           ) : (
@@ -382,7 +382,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                   </ol>
                   <div className="channel-guide-notice">
                     <p>
-                      机器人默认支持单聊，群消息需要 @ 机器人。电脑休眠或退出 Eidos 时机器人无法接收消息；同一应用凭证请只在一台 Eidos 客户端上启用。
+                       机器人默认支持单聊，群消息需要 @ 机器人。电脑休眠或退出 Eidos 时机器人无法接收消息；同一应用凭证请只在一台 Eidos 客户端上启用。
                     </p>
                   </div>
                 </div>
@@ -392,12 +392,12 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
               <div className="channel-form-card channel-deliveries-card">
                 <div className="channel-form-card-header">
                   <h3 className="channel-card-heading">最近回复</h3>
-                  <p className="channel-card-subheading">钉钉渠道近期的消息处理与发送记录</p>
+                  <p className="channel-card-subheading">钉钉助理近期的消息处理与发送记录</p>
                 </div>
                 <div className="channel-form-card-body">
                   {!response?.deliveries?.length ? (
                     <div className="channel-empty-deliveries">
-                      <p>渠道还没有回复记录。</p>
+                      <p>助理还没有回复记录。</p>
                     </div>
                   ) : (
                     <ul className="channel-deliveries-list">

@@ -14,16 +14,17 @@ const CATEGORIES = [
   { id: "all", label: "全部" },
   { id: "file", label: "文件" },
   { id: "skill", label: "Skill" },
-  { id: "agent", label: "Agent" },
+  { id: "agent", label: "智能体" },
   { id: "mcp", label: "MCP" },
   { id: "plugin", label: "插件" },
   { id: "history", label: "会话" },
 ] as const;
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode }: {
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onCreateAgent }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
   onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
   onSelectPlanMode?(): void;
+  onCreateAgent?: (() => void) | undefined;
 }) {
   const context = useInputContext();
   const [catalog, setCatalog] = useState<Candidate[]>([]);
@@ -225,7 +226,7 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
               ref={searchInputRef}
               autoFocus
               aria-label="搜索引用"
-              placeholder="搜索名称、Agent、Skill、扩展…"
+              placeholder="搜索名称、智能体、Skill、扩展…"
               value={query}
               onChange={(event) => onQuery(event.target.value)}
               onKeyDown={handleSearchKeyDown}
@@ -450,10 +451,14 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
           <div className="input-picker__empty">
             <SearchEmptyIcon />
             <p className="input-picker__empty-title">没有匹配项</p>
-            <p className="input-picker__empty-desc">可以通过上方按钮添加本地文件，或直接拖拽文件到输入框。</p>
+            <p className="input-picker__empty-desc">{category === "agent" ? "你可以创建智能体，也可以在设置中管理已有配置。" : "可以通过上方按钮添加本地文件，或直接拖拽文件到输入框。"}</p>
           </div>
         )}
       </div>
+      {mode === "all" && !inline && category === "agent" && <div className="input-picker__agent-actions">
+        <button type="button" className="btn btn--ghost btn--small" disabled={!onCreateAgent} onClick={onCreateAgent}>+ 创建智能体</button>
+        <button type="button" className="btn btn--ghost btn--small" onClick={() => onCommand("agents")}>管理智能体</button>
+      </div>}
     </div>
   );
 }

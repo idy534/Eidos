@@ -1986,10 +1986,10 @@ function subagentActionLabel(
   resultObj: Record<string, unknown>,
 ): string {
   const baseLabels: Record<string, string> = {
-    spawn_agent: "创建子智能体",
-    wait_agents: "等待子智能体",
-    list_agents: "查询子智能体",
-    stop_agent: "停止子智能体",
+    spawn_agent: "创建智能体",
+    wait_agents: "等待智能体",
+    list_agents: "查询智能体",
+    stop_agent: "停止智能体",
     send_message: "发送智能体消息",
     followup_task: "追加智能体任务",
   };
@@ -2001,10 +2001,10 @@ function subagentActionLabel(
     return `${statusLabel(status)} ${base}`;
   }
   const runningLabels: Record<string, string> = {
-    spawn_agent: "正在创建子智能体",
-    wait_agents: "正在等待子智能体",
-    list_agents: "正在查询子智能体",
-    stop_agent: "正在停止子智能体",
+    spawn_agent: "正在创建智能体",
+    wait_agents: "正在等待智能体",
+    list_agents: "正在查询智能体",
+    stop_agent: "正在停止智能体",
     send_message: "正在发送智能体消息",
     followup_task: "正在追加智能体任务",
   };
@@ -2033,10 +2033,10 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
 
   const baseLabels: Record<string, string> = {
     automation: "定时任务",
-    spawn_agent: subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体",
-    wait_agents: subagentName ? `等待子智能体 · ${subagentName}` : "等待子智能体",
-    list_agents: subagentName ? `查询子智能体 · ${subagentName}` : "查询子智能体",
-    stop_agent: subagentName ? `停止子智能体 · ${subagentName}` : "停止子智能体",
+    spawn_agent: subagentName ? `创建智能体 · ${subagentName}` : "创建智能体",
+    wait_agents: subagentName ? `等待智能体 · ${subagentName}` : "等待智能体",
+    list_agents: subagentName ? `查询智能体 · ${subagentName}` : "查询智能体",
+    stop_agent: subagentName ? `停止智能体 · ${subagentName}` : "停止智能体",
     send_message: subagentName ? `发送智能体消息 · ${subagentName}` : "发送智能体消息",
     followup_task: subagentName ? `追加智能体任务 · ${subagentName}` : "追加智能体任务",
     view_image: imageFileName ? `查看图像 · ${imageFileName}` : "查看图像",
@@ -2085,17 +2085,17 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     memory_record: running ? "正在修订记忆" : "已修订记忆",
     memory_manage: running ? "正在优化记忆" : "已优化记忆",
     spawn_agent: running
-      ? (subagentName ? `正在创建子智能体 · ${subagentName}` : "正在创建子智能体")
-      : (subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体"),
+      ? (subagentName ? `正在创建智能体 · ${subagentName}` : "正在创建智能体")
+      : (subagentName ? `创建智能体 · ${subagentName}` : "创建智能体"),
     wait_agents: running
-      ? (subagentName ? `正在等待子智能体 · ${subagentName}` : "正在等待子智能体")
-      : (subagentName ? `等待子智能体 · ${subagentName}` : "等待子智能体"),
+      ? (subagentName ? `正在等待智能体 · ${subagentName}` : "正在等待智能体")
+      : (subagentName ? `等待智能体 · ${subagentName}` : "等待智能体"),
     list_agents: running
-      ? (subagentName ? `正在查询子智能体 · ${subagentName}` : "正在查询子智能体")
-      : (subagentName ? `查询子智能体 · ${subagentName}` : "查询子智能体"),
+      ? (subagentName ? `正在查询智能体 · ${subagentName}` : "正在查询智能体")
+      : (subagentName ? `查询智能体 · ${subagentName}` : "查询智能体"),
     stop_agent: running
-      ? (subagentName ? `正在停止子智能体 · ${subagentName}` : "正在停止子智能体")
-      : (subagentName ? `停止子智能体 · ${subagentName}` : "停止子智能体"),
+      ? (subagentName ? `正在停止智能体 · ${subagentName}` : "正在停止智能体")
+      : (subagentName ? `停止智能体 · ${subagentName}` : "停止智能体"),
     send_message: running
       ? (subagentName ? `正在发送智能体消息 · ${subagentName}` : "正在发送智能体消息")
       : (subagentName ? `发送智能体消息 · ${subagentName}` : "发送智能体消息"),

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import Counter
 import os
 from pathlib import Path
-import stat
 import tomllib
 
 from pydantic import ValidationError
@@ -14,7 +13,6 @@ from eidos_runtime.domain.agents import (
     AgentCatalogSnapshot,
     AgentDefinition,
     MAX_AGENT_FILES,
-    MAX_AGENT_FILE_BYTES,
     definition_version,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
@@ -25,37 +23,9 @@ from eidos_runtime.model.config import (
     ModelReasoningSelectionError,
 )
 from eidos_runtime.domain.input_reference import InputSnapshot
+from eidos_runtime.infrastructure.agent_definition_files import read_definition_bytes as _definition_bytes
 
 
-def _definition_bytes(directory: int, name: str) -> bytes:
-    descriptor = os.open(
-        name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory
-    )
-    with os.fdopen(descriptor, "rb") as stream:
-        before = os.fstat(stream.fileno())
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_nlink != 1
-            or before.st_uid != os.getuid()
-            or before.st_size > MAX_AGENT_FILE_BYTES
-        ):
-            raise ValueError("unsafe_file")
-        raw = stream.read(MAX_AGENT_FILE_BYTES + 1)
-        after = os.fstat(stream.fileno())
-    if len(raw) > MAX_AGENT_FILE_BYTES or any(
-        getattr(before, key) != getattr(after, key)
-        for key in (
-            "st_dev",
-            "st_ino",
-            "st_uid",
-            "st_nlink",
-            "st_size",
-            "st_mtime_ns",
-            "st_ctime_ns",
-        )
-    ):
-        raise ValueError("changed_file")
-    return raw
 
 
 class AgentCatalog:
@@ -130,12 +100,12 @@ class AgentCatalog:
             return AgentCatalogSnapshot(), AgentCatalogResponse()
         except OSError:
             return AgentCatalogSnapshot(), AgentCatalogResponse(
-                error="Agent 定义目录不可读取。"
+                error="智能体定义目录不可读取。"
             )
         try:
             if os.fstat(directory).st_uid != os.getuid():
                 return AgentCatalogSnapshot(), AgentCatalogResponse(
-                    error="Agent 定义目录的所有者不匹配。"
+                    error="智能体定义目录的所有者不匹配。"
                 )
             names: list[str] = []
             with os.scandir(directory) as entries:
@@ -144,7 +114,7 @@ class AgentCatalog:
                         names.append(entry.name)
                         if len(names) > MAX_AGENT_FILES:
                             return AgentCatalogSnapshot(), AgentCatalogResponse(
-                                error="Agent 定义超过 128 个，请减少文件数量。"
+                                error="智能体定义超过 128 个，请减少文件数量。"
                             )
             for name in sorted(names):
                 source = str(self.root / name)
@@ -261,7 +231,7 @@ class AgentCatalog:
             if retained_ids and snapshot.reference.id in retained_ids:
                 original = frozen.get(definition.name)
                 if original != definition:
-                    raise ValueError("历史 Agent 定义不匹配。")
+                    raise ValueError("历史 智能体定义不匹配。")
             elif available.get(definition.name) != definition:
                 raise ValueError("Agent 已变化或不可用，请移除引用后重新选择。")
             frozen[definition.name] = definition

@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { realpath, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import { isInputPrepareRequest, isInputDraft } from "../shared/input-context.js";
+import { isAgentDefinitionSaveRequest, isAgentDefinitionRemoveRequest } from "../shared/agent-definitions.js";
 import path from "node:path";
 import * as nodePty from "node-pty";
 
@@ -1239,6 +1240,24 @@ ipcMain.handle(IPC.AGENT_CATALOG, (event) => {
   inputOwner(event);
   return clientOrThrow().listAgentTypes();
 });
+ipcMain.handle(IPC.AGENT_DEFINITION_READ, (event, source: unknown) => {
+  inputOwner(event);
+  return clientOrThrow().readAgentDefinition(boundedAgentSource(source));
+});
+ipcMain.handle(IPC.AGENT_DEFINITION_SAVE, (event, request: unknown) => {
+  inputOwner(event);
+  if (!isAgentDefinitionSaveRequest(request)) throw new Error("智能体配置无效，请检查填写内容。");
+  return clientOrThrow().saveAgentDefinition(request);
+});
+ipcMain.handle(IPC.AGENT_DEFINITION_REMOVE, (event, request: unknown) => {
+  inputOwner(event);
+  if (!isAgentDefinitionRemoveRequest(request)) throw new Error("智能体配置版本无效，请刷新后重试。");
+  return clientOrThrow().removeAgentDefinition(request);
+});
+function boundedAgentSource(source: unknown): string {
+  if (typeof source !== "string" || !source || source.length > 4096) throw new Error("智能体配置路径无效。");
+  return source;
+}
 ipcMain.handle(IPC.AGENT_READ, (event, sessionId: unknown) => {
   inputOwner(event);
   return clientOrThrow().readAgents(inputKey(sessionId));

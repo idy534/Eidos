@@ -25,6 +25,9 @@ from eidos_runtime.protocol.server import RuntimeServer
 from eidos_runtime.protocol.sidebar import SidebarPinsResponse
 from eidos_runtime.protocol.queued_runs import QueuedRunChangeResponse
 from eidos_runtime.domain.automation import AutomationResponse
+from eidos_runtime.domain.agents import AgentCatalogResponse
+from eidos_runtime.protocol.collaboration import AgentDefinitionDocument
+from eidos_runtime.protocol.channels import ChannelResponse
 
 
 class Params(RootModel[dict[str, object]]):
@@ -216,6 +219,9 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         SidebarPinsResponse,
         QueuedRunChangeResponse,
         AutomationResponse,
+        AgentCatalogResponse,
+        AgentDefinitionDocument,
+        ChannelResponse,
     }
     assert all(
         not registration.response_type.__pydantic_root_model__

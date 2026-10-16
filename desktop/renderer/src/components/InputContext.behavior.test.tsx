@@ -217,13 +217,13 @@ describe("InputContext behavior", () => {
     const dialog = await screen.findByRole("dialog", { name: "luna-work" });
     expect(dialog).toHaveTextContent("提供商：volcengine");
     expect(dialog).toHaveTextContent("你需要保留其他 Agent 的修改。");
-    expect(dialog.querySelector(".skill-type-label")).toHaveTextContent("Agent");
+    expect(dialog.querySelector(".skill-type-label")).toHaveTextContent("智能体");
     expect(dialog.querySelector(".skill-icon.agent-icon svg")?.querySelectorAll("circle")).toHaveLength(3);
     expect(dialog.querySelector(".skill-detail-actions .skill-detail-close-btn")).not.toBeNull();
-    const close = screen.getByRole("button", { name: "关闭 Agent 定义" });
+    const close = screen.getByRole("button", { name: "关闭智能体定义" });
     expect(close).toHaveFocus();
     fireEvent.keyDown(close, { key: "Tab" });
-    expect(screen.getByLabelText("Agent 配置和指令")).toHaveFocus();
+    expect(screen.getByLabelText("智能体配置和指令")).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();

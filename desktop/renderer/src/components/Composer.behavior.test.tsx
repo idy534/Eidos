@@ -48,6 +48,38 @@ const composerReference: InputReference = {
 };
 
 describe("Composer DOM interaction & state behavior", () => {
+  it("creates and references an agent without sending or discarding the existing draft", async () => {
+    const saved = { source: "/data/agents/new-agent.toml", version: "b".repeat(64), text: "", definition: { schemaVersion: 1, name: "new-agent", description: "负责调查", instructions: "报告源码证据。" } };
+    const add = vi.fn(); const settings = vi.fn(); const submit = vi.fn();
+    const agentReference = { ...composerReference, kind: "agent", label: "new-agent", source: "new-agent" };
+    const api = {
+      listSkills: vi.fn().mockResolvedValue({ skills: [] }), listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+      listMcpServers: vi.fn().mockResolvedValue({ servers: [] }), listSessions: vi.fn().mockResolvedValue({ items: [] }),
+      listAgentTypes: vi.fn().mockResolvedValue({ agents: [] }), listModels: vi.fn().mockResolvedValue(mockModelList),
+      listWorkspaceDirectory: vi.fn().mockResolvedValue({ entries: [], truncated: false }), onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+      saveAgentDefinition: vi.fn().mockResolvedValue(saved), prepareInput: vi.fn().mockResolvedValue(agentReference),
+    };
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, writable: true, value: api });
+    render(<InputContextProvider sessionId="session-1" workspaceRoot="/workspace" ready onAdd={add} onSettings={settings}>
+      <Composer {...defaultProps} input="保留已有草稿" onSubmit={submit} />
+    </InputContextProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "智能体" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ 创建智能体" }));
+    expect(await screen.findByRole("dialog", { name: "创建智能体" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("名称"), { target: { value: "new-agent" } });
+    fireEvent.change(screen.getByLabelText("用途说明"), { target: { value: "负责调查" } });
+    fireEvent.change(screen.getByLabelText("指令"), { target: { value: "报告源码证据。" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建并引用" }));
+    await waitFor(() => expect(add).toHaveBeenCalledWith("session-1", agentReference));
+    expect(api.prepareInput).toHaveBeenCalledWith({ kind: "agent", source: "new-agent", sessionId: "session-1" });
+    expect(screen.getByRole("textbox")).toHaveValue("保留已有草稿");
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "智能体" }));
+    fireEvent.click(screen.getByRole("button", { name: "管理智能体" }));
+    expect(settings).toHaveBeenCalledWith("agents");
+  });
   beforeEach(() => {
     vi.restoreAllMocks();
   });

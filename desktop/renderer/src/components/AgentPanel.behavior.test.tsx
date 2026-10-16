@@ -282,7 +282,7 @@ describe("AgentWorkspacePanel", () => {
     expect((await screen.findAllByText("Write API documentation for auth module")).length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("I have updated the auth documentation.")).toBeInTheDocument();
 
-    const backButton = screen.getByRole("button", { name: "返回子智能体列表" });
+    const backButton = screen.getByRole("button", { name: "返回智能体列表" });
     fireEvent.click(backButton);
     expect(onBackToList).toHaveBeenCalled();
   });
@@ -426,7 +426,7 @@ describe("AgentWorkspacePanel", () => {
     );
 
     expect(await screen.findByText("Current answer")).toBeInTheDocument();
-    expect(await screen.findByRole("alert")).toHaveTextContent("子智能体执行记录未能全部加载。");
+    expect(await screen.findByRole("alert")).toHaveTextContent("智能体执行记录未能全部加载。");
     expect(screen.getByText("Current answer")).toBeInTheDocument();
     expect(api.readSession).toHaveBeenCalledTimes(2);
   });
@@ -446,7 +446,7 @@ describe("AgentWorkspacePanel", () => {
       />,
     );
 
-    expect(screen.getByText("暂无子智能体任务")).toBeInTheDocument();
+    expect(screen.getByText("暂无智能体任务")).toBeInTheDocument();
     expect(screen.getByText("0 个任务")).toBeInTheDocument();
   });
 
@@ -778,7 +778,7 @@ describe("AgentWorkspacePanel", () => {
     const stopButton = screen.getByRole("button", { name: "停止" });
     expect(stopButton).toBeInTheDocument();
     expect(stopButton).toHaveClass("agent-stop-button");
-    expect(stopButton).toHaveAttribute("title", "停止子智能体");
+    expect(stopButton).toHaveAttribute("title", "停止智能体");
     expect(stopButton.querySelector(".agent-stop-button__icon")).toBeInTheDocument();
     expect(stopButton.querySelector("rect")).toBeInTheDocument();
 

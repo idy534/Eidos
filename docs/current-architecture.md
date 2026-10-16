@@ -807,6 +807,8 @@ Schema v29 增加 `run_agent_catalogs`，它关联父 Run 与现有 Blob 存储�
 
 Desktop 通过 `agent/catalog`、typed IPC 和现有 `+` 选择类型，子任务面板展示实际类型、提供商与模型。Blob GC 和现有明文备份保留目录快照，备份同时保存用户 TOML，模型凭证继续排除。子 Run 保留父工作模式，Plan 子任务不暴露 `write_plan`。详细规范和后续范围见 [自定义子 Agent 方案](custom-subagents-design.md)。
 
+Desktop 的设置页和输入框共用智能体编辑表单。模型与思考强度直接使用公共 `ModelSelector`，所选配置提供实际 `provider_id` 与 `config_id`。配置管理沿用 `Renderer → preload → Main → RuntimeClient → Method Registry → AgentDefinitionsApplication`，增加 `agent/definitionRead`、`agent/definitionSave` 和 `agent/definitionRemove`。`AgentDefinitionFiles` 复用 Catalog 的有界安全读取，负责固定目录、文件身份、原始内容版本与非阻塞目录锁。新文件排他创建；已有文件在版本核验后通过受控 fd 原地写入并 fsync，结果再次读取核验。失败不自动重试；写入或删除后无法确认持久化时，接口返回明确的不确定结果。配置仍以 TOML 为来源，没有新增业务数据库或执行循环。DTO 与 Ajv Schema 从 Python 生成，Main 同时校验请求和响应。凭证仍由已有模型配置管理。
+
 v20→v21 重建 `agent_delegations` 的角色 CHECK，允许三个内置角色。迁移保留原角色、任务、完成依赖、索引和触发器，以及其他表中的消息与等待；迁移执行外键检查，失败时回滚。历史任务不改名。旧版本不能打开 v21 数据，回退需要升级前的备份。
 
 SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、角色、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
