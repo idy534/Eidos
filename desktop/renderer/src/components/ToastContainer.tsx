@@ -24,11 +24,13 @@ function SingleToast({ toast, onDismiss }: SingleToastProps) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remainingRef = useRef<number>(duration);
   const startTimeRef = useRef<number>(Date.now());
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
 
   useEffect(() => {
     startTimeRef.current = Date.now();
     timerRef.current = setTimeout(() => {
-      onDismiss(toast.id);
+      onDismissRef.current(toast.id);
     }, remainingRef.current);
 
     return () => {
@@ -36,7 +38,7 @@ function SingleToast({ toast, onDismiss }: SingleToastProps) {
         clearTimeout(timerRef.current);
       }
     };
-  }, [toast.id, onDismiss]);
+  }, [toast.id]);
 
   const handleMouseEnter = () => {
     if (timerRef.current) {
@@ -51,7 +53,7 @@ function SingleToast({ toast, onDismiss }: SingleToastProps) {
     if (!timerRef.current) {
       startTimeRef.current = Date.now();
       timerRef.current = setTimeout(() => {
-        onDismiss(toast.id);
+        onDismissRef.current(toast.id);
       }, remainingRef.current);
     }
   };

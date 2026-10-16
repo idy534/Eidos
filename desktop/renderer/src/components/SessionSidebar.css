@@ -798,6 +798,56 @@
   font-style: italic;
 }
 
+/* Sidebar Automation Entry (inside scrollable nav) */
+
+.sidebar-automation-section {
+  margin: 0 0 0.85rem;
+}
+
+.sidebar-automation-entry {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.42rem 0.65rem;
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+  justify-content: flex-start;
+  transition: background-color 150ms ease;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.sidebar-automation-entry:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.sidebar-automation-entry:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.sidebar-automation-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: none;
+  color: var(--muted);
+  transition: transform 240ms var(--apple-spring), color 150ms ease;
+}
+
+.sidebar-automation-entry:hover .sidebar-automation-icon {
+  color: var(--accent);
+  transform: rotate(20deg);
+}
+
+.sidebar-automation-label {
+  font-size: var(--font-size-sidebar);
+  font-weight: 500;
+  color: var(--text);
+}
+
 /* Sidebar Footer & Settings Entry */
 
 .sidebar-footer {

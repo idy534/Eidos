@@ -124,12 +124,12 @@ describe("local automation management", () => {
     expect(screen.getByText("安排任务")).toBeInTheDocument();
     expect(screen.getByText("Eidos 可以帮你处理持续性任务，让你不必亲自动手。")).toBeInTheDocument();
 
-    const templateBtn = screen.getByRole("button", { name: /Agent 长期记忆研究速览/ });
+    const templateBtn = screen.getByRole("button", { name: /每日一个为什么/ });
     fireEvent.click(templateBtn);
 
-    expect(screen.getByRole("textbox", { name: "名称" })).toHaveValue("Agent 长期记忆研究速览");
+    expect(screen.getByRole("textbox", { name: "名称" })).toHaveValue("每日一个为什么");
     expect(screen.getByRole("textbox", { name: "任务内容" })).toHaveValue(
-      "筛选本周影响桌面 Agent 记忆架构、会话持久化和经验检索的新论文与工程实践，输出重点速览与选型建议。",
+      "随机挑选一个有趣的冷知识或生活百科问题，并给出详细、有趣、通俗易懂的解答。每次问题尽量不重复，覆盖科学、生活、历史、自然、食物、文化、动物、人体等多个领域；先抛出问题再揭晓答案；语气轻松有趣；答案控制在 200-300 字。",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "取消" }));

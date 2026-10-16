@@ -5,7 +5,7 @@ import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.
 import { groupSessionsByProject, projectSidebarGroups, sidebarTargetKey, taskStatusPresentation } from "../session-state.js";
 import type { SidebarTarget } from "../../../shared/sidebar.js";
 import { ContextMenu } from "./DropdownMenu.js";
-import { FinderIcon, EditIcon, TrashIcon, PinIcon } from "./MenuIcons.js";
+import { FinderIcon, EditIcon, TrashIcon, PinIcon, AutomationsIcon } from "./MenuIcons.js";
 import { EidosMark } from "./EidosMark.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
@@ -587,6 +587,19 @@ export function SessionSidebar({
         }}
       />
       <nav ref={navRef} aria-label="项目与最近" onScroll={dismissTooltipImmediately}>
+        {onOpenAutomations && (
+          <div className="sidebar-automation-section">
+            <button
+              type="button"
+              className="sidebar-automation-entry"
+              onClick={onOpenAutomations}
+              aria-label="打开定时任务"
+            >
+              <AutomationsIcon className="sidebar-automation-icon" />
+              <span className="sidebar-automation-label">定时任务</span>
+            </button>
+          </div>
+        )}
         {sidebar.pinned.length > 0 && (
           <section className="sidebar-pinned" aria-label="置顶">
             <p className="nav-label">置顶</p>
@@ -613,7 +626,6 @@ export function SessionSidebar({
         )}
       </nav>
       <div className="sidebar-footer">
-        {onOpenAutomations && <button className="settings-entry" onClick={onOpenAutomations} aria-label="打开定时任务"><span aria-hidden="true">◷</span><span>定时任务</span></button>}
         <button className="settings-entry" onClick={onOpenSettings} aria-label="打开设置">
           <img src={settingsIcon} alt="" className="settings-icon" />
           <span>设置</span>

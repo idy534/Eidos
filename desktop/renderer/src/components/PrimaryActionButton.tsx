@@ -74,9 +74,9 @@ export function PrimaryActionButton({
   );
 }
 
-function PlusIcon() {
+export function PlusIcon({ size = 14 }: { size?: number } = {}) {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className="primary-action-icon">
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" aria-hidden="true" className="primary-action-icon">
       <path d="M8 3.5V12.5M3.5 8H12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );

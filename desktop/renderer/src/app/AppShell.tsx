@@ -20,7 +20,7 @@ import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
-import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
+import { PlusIcon, PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
@@ -1856,19 +1856,14 @@ export function AppShell({ runtime }: AppShellProps) {
             <div className="empty-actions">
               <PrimaryActionButton
                 size="large"
-                label="开始对话"
-                subtitle="不选择项目也可以开始"
+                label="新建会话"
+                icon={<PlusIcon size={18} />}
                 showArrow={true}
                 disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => handleCreateSession()}
-              />
-              <PrimaryActionButton
-                size="large"
-                label="选择项目"
-                subtitle="选择一个项目开始使用 Eidos"
-                showArrow={true}
-                disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => void handleSelectProject()}
+                onClick={() => {
+                  setAutomationsOpen(false);
+                  handleCreateSession();
+                }}
               />
             </div>
           </div>
