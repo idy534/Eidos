@@ -326,12 +326,52 @@ def test_manual_trigger_launches_real_run_with_origin_and_default_review(tmp_pat
         run = server.store.read_run(record.run_id)
         assert run["approvalMode"] == "auto_review"
         assert app.repository.origin(run["id"]).automation_id == task.id
+        displayed = server.store.read_session(record.session_id)
+        if existing:
+            assert "automationOrigin" not in displayed
+        else:
+            assert displayed["title"] == task.name
+            assert displayed["automationOrigin"]["automationId"] == task.id
         while server.store.read_run(run["id"])["status"] in {"queued", "running", "finalizing"} and time.monotonic() < until:
             time.sleep(.01)
         assert server.store.read_run(run["id"])["status"] == "succeeded"
         assert server.store.approval_user_evidence(run["id"]) == ()
     finally:
         server.close()
+
+
+@pytest.mark.parametrize("scheduled_for", ["2026-10-16T09:30:00+00:00", "manual:33333333-3333-3333-3333-333333333333"])
+def test_automation_session_projection_cleans_legacy_titles_and_preserves_renames(automation, scheduled_for):
+    store, session, app, _ = automation
+    task = create(automation)
+    occurrence = app.repository.claim(task.id, scheduled_for)
+    run, _ = app.repository.accept(occurrence.id, lambda connection, _origin:
+        RunRepository(store.database).create_run(session, "scheduled", queued=True, transaction_connection=connection), session)
+    store.cancel_run(run["id"])
+    legacy = (task.name + " " + scheduled_for[:16])[:40]
+    store.rename_session(session, legacy)
+    assert store.read_session(session)["title"] == task.name
+    snapshot = store.read_session_snapshot(session)
+    assert snapshot["session"]["title"] == task.name
+    assert snapshot["session"]["automationOrigin"]["automationId"] == task.id
+    listed = next(value for value in store.list_sessions()["items"] if value["id"] == session)
+    assert listed["title"] == task.name and listed["automationOrigin"]["automationId"] == task.id
+    store.rename_session(session, "用户保留的 2026-10-16T manual:123")
+    assert store.read_session(session)["title"] == "用户保留的 2026-10-16T manual:123"
+    directory = store.database.data_directory
+    store.close()
+    reopened = SessionStore(directory)
+    try:
+        reopened.initialize()
+        assert reopened.read_session(session)["title"] == "用户保留的 2026-10-16T manual:123"
+        assert reopened.read_session(session)["automationOrigin"]["automationId"] == task.id
+    finally:
+        reopened.close()
+
+
+def test_automation_session_title_respects_session_text_bounds(automation):
+    task = create(automation, name="每" * 80)
+    assert task.session_title() == "每" * 40
 
 
 @pytest.mark.parametrize("committed", [True, False])
@@ -442,7 +482,9 @@ def test_automation_protocol_fixture_matches_python_models():
     from pathlib import Path
     from eidos_runtime.protocol.automations import AutomationExecuteRequest
     from eidos_runtime.domain.automation import AutomationResponse
+    from eidos_runtime.protocol.schemas import SessionDto
     fixture = json.loads((Path(__file__).parents[2] / "protocol/fixtures/automations-v1.json").read_text())
+    SessionDto.model_validate(fixture["automationSession"])
     for request in fixture["validRequests"]:
         AutomationExecuteRequest.model_validate(request)
     for request in fixture["invalidRequests"]:

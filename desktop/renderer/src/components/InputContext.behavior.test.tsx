@@ -209,11 +209,17 @@ describe("InputContext behavior", () => {
     setupRuntime({ readInput: vi.fn().mockResolvedValue({ reference, text: "提供商：volcengine\n你需要保留其他 Agent 的修改。" }) });
     render(<InputReferenceCards references={[reference]} />);
     const trigger = screen.getByRole("button", { name: "luna-work" });
+    const triggerIcon = trigger.querySelector(".input-reference__icon--agent svg");
+    expect(triggerIcon).not.toBeNull();
+    expect(triggerIcon?.querySelectorAll("circle")).toHaveLength(3);
     trigger.focus();
     fireEvent.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "luna-work" });
     expect(dialog).toHaveTextContent("提供商：volcengine");
     expect(dialog).toHaveTextContent("你需要保留其他 Agent 的修改。");
+    expect(dialog.querySelector(".skill-type-label")).toHaveTextContent("Agent");
+    expect(dialog.querySelector(".skill-icon.agent-icon svg")?.querySelectorAll("circle")).toHaveLength(3);
+    expect(dialog.querySelector(".skill-detail-actions .skill-detail-close-btn")).not.toBeNull();
     const close = screen.getByRole("button", { name: "关闭 Agent 定义" });
     expect(close).toHaveFocus();
     fireEvent.keyDown(close, { key: "Tab" });

@@ -111,6 +111,14 @@
   height: 1.35rem;
   object-fit: contain;
 }
+.skill-detail-header-left .skill-icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+}
+.skill-detail-header-left .skill-icon.agent-icon {
+  color: var(--text);
+}
 .skill-detail-title-group {
   display: flex;
   align-items: center;
@@ -175,7 +183,8 @@
   justify-content: center;
 }
 .skill-detail-actions .dropdown-trigger,
-.skill-detail-actions .skill-detail-close-btn {
+.skill-detail-actions .skill-detail-close-btn,
+.skill-detail-close-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -194,11 +203,13 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 .skill-detail-actions .dropdown-trigger:hover,
-.skill-detail-actions .skill-detail-close-btn:hover {
+.skill-detail-actions .skill-detail-close-btn:hover,
+.skill-detail-close-btn:hover {
   background: var(--surface-muted);
   color: var(--text);
 }
-.skill-detail-actions .skill-detail-close-btn:disabled {
+.skill-detail-actions .skill-detail-close-btn:disabled,
+.skill-detail-close-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

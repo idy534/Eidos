@@ -43,6 +43,11 @@
   padding-left: 5.5rem;
 }
 
+.automation-toast-container {
+  top: 3.5rem;
+  z-index: 1300;
+}
+
 .automation-page-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -179,6 +184,7 @@
 }
 
 .automation-section-title {
+  margin: 0;
   font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 600;
@@ -191,6 +197,10 @@
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
+}
+
+.automation-task-group + .automation-task-group {
+  margin-top: 1.25rem;
 }
 
 .automation-task-item {

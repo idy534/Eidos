@@ -180,6 +180,23 @@ describe("SidebarTooltip rendering", () => {
     expect(onOpenSourceSession).toHaveBeenCalledWith(source);
   });
 
+  it("opens the scheduled task from its source label without showing internal metadata", () => {
+    const origin = { automationId: "task-id", revision: 1, occurrenceId: "occurrence-id", scheduledFor: "manual:opaque-id" };
+    const session: Session = { id: "scheduled-session", title: "每日一个为什么", workspaceRoot: "/workspace/scheduled",
+      taskStatus: "completed", createdAt: 1, updatedAt: 2, automationOrigin: origin };
+    const open = vi.fn();
+    const { rerender } = render(<SidebarTooltip state={{ kind: "session", session, rect: dummyRect }} onOpenAutomation={open} />);
+    expect(screen.getByText("会话来源")).toBeInTheDocument();
+    const link = screen.getByRole("button", { name: "打开来源定时任务" });
+    expect(link).toHaveTextContent("定时任务");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("manual:");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("task-id");
+    fireEvent.click(link);
+    expect(open).toHaveBeenCalledExactlyOnceWith(origin.automationId);
+    rerender(<SidebarTooltip state={{ kind: "session", session, rect: dummyRect }} onOpenAutomation={open} disabled />);
+    expect(screen.getByRole("button", { name: "打开来源定时任务" })).toBeDisabled();
+  });
+
   it("shows an unavailable source without a broken navigation button", () => {
     const session: Session = {
       id: "fork-session", title: "分叉会话", workspaceRoot: "/workspace/fork",

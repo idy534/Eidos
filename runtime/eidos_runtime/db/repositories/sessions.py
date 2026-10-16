@@ -58,6 +58,8 @@ SESSION_SELECT = """
            s.associated_worktree_id,
            s.execution_mode, s.title,
            (SELECT source_json FROM session_forks WHERE session_id=s.id) AS fork_source_json,
+           CASE WHEN automation_creation.id IS NOT NULL THEN automation_source.origin_json END AS automation_origin_json,
+           automation_creation.config_json AS automation_config_json,
            s.created_at, s.updated_at,
            CASE
              WHEN EXISTS (
@@ -104,6 +106,14 @@ SESSION_SELECT = """
     LEFT JOIN worktrees w ON w.id = s.worktree_id
     LEFT JOIN projects p ON p.id = w.project_id
     LEFT JOIN projects direct_p ON direct_p.workspace_root = s.workspace_root
+    LEFT JOIN automation_run_origins automation_source ON automation_source.run_id = (
+        SELECT r.id FROM runs r JOIN automation_run_origins a ON a.run_id=r.id
+        WHERE r.session_id=s.id ORDER BY r.creation_seq LIMIT 1
+    )
+    LEFT JOIN scheduled_occurrences automation_creation
+        ON automation_creation.id=json_extract(automation_source.origin_json,'$.occurrenceId')
+        AND automation_creation.session_id=s.id
+        AND json_extract(automation_creation.config_json,'$.target.kind')='new_session'
 """
 
 class SessionRepository(Repository):

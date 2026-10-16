@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Automation, AutomationOccurrence, AutomationRequest, AutomationSummary } from "../../../../shared/automation.js";
 import type { ModelOption, Project, Session } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { AutomationForm, type InitialAutomationValues } from "./AutomationForm.js";
+import { AutomationTaskList } from "./AutomationTaskList.js";
 import { userFacingError } from "../../session-state.js";
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
   currentSessionId?: string | undefined;
   currentProjectId?: string | undefined;
   runtimeVersion?: string | undefined;
+  initialAutomationId?: string | undefined;
   onClose: () => void;
   onOpenSession: (id: string) => void;
 }
@@ -127,56 +129,12 @@ function SearchIcon() {
   );
 }
 
-function FilterIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true">
-      <path d="M2.5 4h11" />
-      <path d="M4.5 8h7" />
-      <path d="M6.5 12h3" />
-    </svg>
-  );
-}
-
 function PlusIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
       <path d="M8 3.5v9M3.5 8h9" />
     </svg>
   );
-}
-
-function formatScheduleSummary(task: AutomationSummary): string {
-  let datePart = "";
-  if (task.nextRunAt) {
-    const d = new Date(task.nextRunAt);
-    const month = d.getMonth() + 1;
-    const date = d.getDate();
-    datePart = `${month}月${date}日`;
-  } else if (task.status === "PAUSED") {
-    datePart = "已暂停";
-  } else if (task.pauseReason === "one_shot_fired") {
-    datePart = "已结束";
-  } else {
-    datePart = "暂无执行";
-  }
-
-  let freqPart = "";
-  if (task.kind === "cron" && task.schedule?.expression) {
-    const expr = task.schedule.expression.trim();
-    if (expr === "0 9 * * *") freqPart = "每天";
-    else if (expr.endsWith("* * 1-5") || expr.endsWith("* * 1,2,3,4,5")) freqPart = "工作日";
-    else if (expr.includes("* * 0") || expr.includes("* * 1") || expr.includes("* * 5")) freqPart = "每周";
-    else if (expr.startsWith("*/10")) freqPart = "每10分钟";
-    else if (expr.startsWith("*/30")) freqPart = "每30分钟";
-    else if (expr.startsWith("0 *")) freqPart = "每小时";
-    else freqPart = "周期";
-  } else if (task.kind === "at") {
-    freqPart = "一次性";
-  } else {
-    freqPart = "定时";
-  }
-
-  return `${datePart} · ${freqPart}`;
 }
 
 export function AutomationPage({
@@ -186,6 +144,7 @@ export function AutomationPage({
   currentSessionId,
   currentProjectId,
   runtimeVersion,
+  initialAutomationId,
   onClose,
   onOpenSession,
 }: Props) {
@@ -202,7 +161,6 @@ export function AutomationPage({
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
-  const [filterMode, setFilterMode] = useState<"all" | "active" | "paused">("active");
 
   const selection = useRef(0);
   const listVersion = useRef(0);
@@ -221,6 +179,44 @@ export function AutomationPage({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
+
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remainingRef = useRef<number>(3500);
+  const startTimeRef = useRef<number>(Date.now());
+
+  useEffect(() => {
+    if (!error) return;
+    remainingRef.current = 3500;
+    startTimeRef.current = Date.now();
+    timerRef.current = setTimeout(() => {
+      setError("");
+    }, 3500);
+
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [error]);
+
+  const handleToastMouseEnter = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+      const elapsed = Date.now() - startTimeRef.current;
+      remainingRef.current = Math.max(1000, remainingRef.current - elapsed);
+    }
+  };
+
+  const handleToastMouseLeave = () => {
+    if (!timerRef.current && error) {
+      startTimeRef.current = Date.now();
+      timerRef.current = setTimeout(() => {
+        setError("");
+      }, remainingRef.current);
+    }
+  };
 
   const refresh = useCallback(async (after?: string) => {
     const version = ++listVersion.current;
@@ -289,7 +285,7 @@ export function AutomationPage({
     };
   }, [selected?.id, editing]);
 
-  const read = async (id: string) => {
+  const read = useCallback(async (id: string) => {
     const version = ++selection.current;
     setError("");
     setCreating(false);
@@ -310,7 +306,11 @@ export function AutomationPage({
     } finally {
       if (version === selection.current) setBusy(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (initialAutomationId) void read(initialAutomationId);
+  }, [initialAutomationId, read]);
 
   const save = async (command: AutomationRequest) => {
     setBusy(true);
@@ -392,30 +392,33 @@ export function AutomationPage({
     setCreating(true);
   };
 
-  const filteredItems = useMemo(() => {
-    let list = items;
-    if (filterMode === "active") {
-      list = list.filter((t) => t.status === "ACTIVE");
-    } else if (filterMode === "paused") {
-      list = list.filter((t) => t.status === "PAUSED" || t.pauseReason === "one_shot_fired");
-    }
-    if (searchQuery.trim()) {
-      const query = searchQuery.trim().toLowerCase();
-      list = list.filter((t) => t.name.toLowerCase().includes(query));
-    }
-    return list;
-  }, [items, filterMode, searchQuery]);
-
-  const handleToggleFilter = () => {
-    setFilterMode((curr) => {
-      if (curr === "active") return "all";
-      if (curr === "all") return "paused";
-      return "active";
-    });
-  };
-
   return (
     <div className="automation-page-wrapper">
+      {error && (
+        <div className="app-toast-container automation-toast-container" aria-live="polite">
+          <div
+            className="app-toast app-toast--error"
+            role="alert"
+            onMouseEnter={handleToastMouseEnter}
+            onMouseLeave={handleToastMouseLeave}
+          >
+            <span className="app-toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                <path d="M8 1a7 7 0 1 0 7 7A7.008 7.008 0 0 0 8 1zm3.2 9.5l-.7.7L8 8.7l-2.5 2.5-.7-.7L7.3 8 4.8 5.5l.7-.7L8 7.3l2.5-2.5.7.7L8.7 8z" />
+              </svg>
+            </span>
+            <span className="app-toast-message">{error}</span>
+            <button
+              type="button"
+              className="app-toast-close"
+              onClick={() => setError("")}
+              aria-label="关闭提示"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       <header className="automation-page-header">
         <div className="header-left">
           <Button
@@ -460,6 +463,7 @@ export function AutomationPage({
                   type="search"
                   className="automation-search-input"
                   placeholder="搜索任务..."
+                  aria-label="搜索定时任务"
                   value={searchQuery}
                   autoFocus
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -485,47 +489,13 @@ export function AutomationPage({
               <span>新建任务</span>
             </button>
 
-            <div className="automation-section-header">
-              <span className="automation-section-title">
-                {filterMode === "active" ? "即将执行" : filterMode === "paused" ? "已暂停" : "全部任务"}
-              </span>
-              <button
-                type="button"
-                className="automation-icon-btn"
-                aria-label="筛选任务"
-                title={`当前筛选: ${filterMode === "active" ? "即将执行" : filterMode === "paused" ? "已暂停" : "全部任务"}，点击切换`}
-                onClick={handleToggleFilter}
-              >
-                <FilterIcon />
-              </button>
-            </div>
-
             <div className="automation-list-scroll">
               {loading ? (
                 <p className="automation-status-text" role="status">正在读取任务…</p>
-              ) : !items.length ? (
-                <p className="automation-empty-hint">还没有定时任务。你可以在这里创建，也可以在对话中提出要求。</p>
-              ) : !filteredItems.length ? (
-                <p className="automation-empty-hint">无匹配的定时任务。</p>
               ) : (
-                filteredItems.map((task) => {
-                  const isSelected = selected?.id === task.id && !creating;
-                  return (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      className={`automation-task-item${isSelected ? " selected" : ""}`}
-                      key={task.id}
-                      onClick={() => void read(task.id)}
-                    >
-                      <div className="automation-task-item-main">
-                        <strong className="automation-task-name">{task.name}</strong>
-                        <span className="automation-task-schedule">{formatScheduleSummary(task)}</span>
-                      </div>
-                      {task.status === "ACTIVE" && <span className="automation-active-dot" aria-hidden="true" />}
-                    </button>
-                  );
-                })
+                <AutomationTaskList items={items} searchQuery={searchQuery}
+                  selectedId={creating ? undefined : selected?.id} busy={busy} hasMore={Boolean(cursor)}
+                  onSelect={(id) => void read(id)} />
               )}
               {cursor && (
                 <div className="automation-more-wrap">
@@ -538,12 +508,6 @@ export function AutomationPage({
           </aside>
 
           <section className="automation-content-col" aria-label="任务详情">
-            {error && (
-              <div className="approval-error" role="alert">
-                {error} <Button size="small" onClick={() => void refresh()}>刷新列表</Button>
-              </div>
-            )}
-
             {creating || (editing && selected) ? (
               <div className="automation-form-view">
                 <AutomationForm

@@ -121,12 +121,13 @@ export interface SidebarTooltipProps {
   state: SidebarTooltipState | null;
   sourceSession?: Session | undefined;
   onOpenSourceSession?: (session: Session) => void;
+  onOpenAutomation?: ((id: string) => void) | undefined;
   disabled?: boolean;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 }
 
-export function SidebarTooltip({ state, sourceSession, onOpenSourceSession, disabled = false, onMouseEnter, onMouseLeave }: SidebarTooltipProps) {
+export function SidebarTooltip({ state, sourceSession, onOpenSourceSession, onOpenAutomation, disabled = false, onMouseEnter, onMouseLeave }: SidebarTooltipProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [coords, setCoords] = useState<{
     left: number;
@@ -243,6 +244,17 @@ export function SidebarTooltip({ state, sourceSession, onOpenSourceSession, disa
             </span>
           </div>
           <div className="sidebar-hover-card__body">
+            {state.session.automationOrigin && (
+              <div className="sidebar-hover-card__row">
+                <span className="sidebar-hover-card__label">会话来源</span>
+                <button type="button" className="sidebar-hover-card__value sidebar-hover-card__source-link"
+                  aria-label="打开来源定时任务" data-source-automation-id={state.session.automationOrigin.automationId}
+                  disabled={disabled || !onOpenAutomation}
+                  onClick={() => onOpenAutomation?.(state.session.automationOrigin!.automationId)}>
+                  定时任务
+                </button>
+              </div>
+            )}
             {state.session.forkedFrom && (
               <div className="sidebar-hover-card__row">
                 <span className="sidebar-hover-card__label">来源会话</span>

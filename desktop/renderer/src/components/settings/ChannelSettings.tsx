@@ -1,10 +1,17 @@
 import React, { useCallback, useEffect, useState } from "react";
-import type { ChannelPublicConnection, ChannelResponse, ChannelSaveRequest, State } from "../../../../shared/channels.js";
+import type {
+  ChannelDelivery,
+  ChannelPublicConnection,
+  ChannelResponse,
+  ChannelSaveRequest,
+  State,
+} from "../../../../shared/channels.js";
 import type { ModelListResult, Project } from "../../contracts.js";
 import { ToastContainer, type ToastItem, type ToastType } from "../ToastContainer.js";
 import { Button } from "../Button.js";
 import { StatusBadge, type StatusTone } from "./StatusBadge.js";
 import { Toggle } from "./Toggle.js";
+import { DeliveryDetailModal } from "./DeliveryDetailModal.js";
 import {
   DingTalkForm,
   channelStateLabels as stateLabels,
@@ -35,6 +42,8 @@ const deliveryStateTones: Record<string, StatusTone> = {
   unknown: "warning",
 };
 
+const previewText = (text: string) => text.replace(/\r\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
+
 interface ChannelSettingsProps {
   modelList?: ModelListResult | undefined;
   initialChannel?: "list" | "dingtalk";
@@ -48,6 +57,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [activeModalDelivery, setActiveModalDelivery] = useState<ChannelDelivery | null>(null);
 
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -392,7 +402,21 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                   ) : (
                     <ul className="channel-deliveries-list">
                       {response.deliveries.map((delivery) => (
-                        <li key={delivery.id} className="channel-delivery-item">
+                        <li
+                          key={delivery.id}
+                          className="channel-delivery-item channel-delivery-item--interactive"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setActiveModalDelivery(delivery)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setActiveModalDelivery(delivery);
+                            }
+                          }}
+                          title="点击查看完整回复"
+                          aria-label={`查看回复详情，状态：${deliveryStateLabels[delivery.status] ?? delivery.status}`}
+                        >
                           <div className="channel-delivery-item-header">
                             <StatusBadge
                               tone={deliveryStateTones[delivery.status] ?? "neutral"}
@@ -409,7 +433,11 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                               </span>
                             )}
                           </div>
-                          <p className="channel-delivery-text">{delivery.text}</p>
+
+                          <p className="channel-delivery-text channel-delivery-text--collapsed">
+                            {previewText(delivery.text)}
+                          </p>
+
                           {delivery.reason && (
                             <div className="channel-delivery-reason">
                               <span>{delivery.reason}</span>
@@ -424,6 +452,20 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
             </>
           )}
         </div>
+      )}
+
+      {/* 回复详情弹窗 */}
+      {activeModalDelivery && (
+        <DeliveryDetailModal
+          delivery={activeModalDelivery}
+          stateLabel={deliveryStateLabels[activeModalDelivery.status] ?? activeModalDelivery.status}
+          stateTone={deliveryStateTones[activeModalDelivery.status] ?? "neutral"}
+          onClose={() => setActiveModalDelivery(null)}
+          onCopy={() => {
+            void navigator.clipboard.writeText(activeModalDelivery.text);
+            showToast("回复内容已复制到剪贴板", "success");
+          }}
+        />
       )}
     </div>
   );

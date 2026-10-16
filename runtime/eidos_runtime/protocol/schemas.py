@@ -93,6 +93,7 @@ class ProjectDto(ClosedModel):
 
 class SessionDto(ClosedModel):
     forked_from: SessionForkSource | None = Field(default=None, alias="forkedFrom")
+    automation_origin: AutomationOrigin | None = Field(default=None, alias="automationOrigin")
     id: StrictStr
     workspace_root: StrictStr = Field(alias="workspaceRoot")
     execution_mode: Literal["local", "worktree"] | None = Field(

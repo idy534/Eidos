@@ -381,6 +381,26 @@
   gap: 0.05rem;
 }
 
+.session-automation-indicator {
+  display: inline-flex;
+  flex: 0 0 0.8rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-automation-indicator svg {
+  width: 100%;
+  height: 100%;
+}
+
+.session-item > button:hover .session-automation-indicator,
+.session-item > button:focus-visible .session-automation-indicator {
+  opacity: 1;
+}
+
 .session-branch {
   overflow: hidden;
   color: var(--muted);
@@ -800,18 +820,23 @@
 
 /* Sidebar Automation Entry (inside scrollable nav) */
 
+.sidebar .primary-action-btn--compact {
+  margin-bottom: 0.35rem;
+}
+
 .sidebar-automation-section {
-  margin: 0 0 0.85rem;
+  margin: 0 0 0.45rem;
 }
 
 .sidebar-automation-entry {
   display: flex;
-  gap: 0.55rem;
+  gap: 0.5rem;
   align-items: center;
   width: 100%;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 0.42rem 0.65rem;
+  padding: 0.28rem 0.55rem;
+  min-height: 1.75rem;
   color: var(--text);
   background: transparent;
   box-shadow: none;
@@ -830,8 +855,8 @@
 }
 
 .sidebar-automation-icon {
-  width: 1.15rem;
-  height: 1.15rem;
+  width: 1.05rem;
+  height: 1.05rem;
   flex: none;
   color: var(--muted);
   transition: transform 240ms var(--apple-spring), color 150ms ease;
@@ -846,6 +871,7 @@
   font-size: var(--font-size-sidebar);
   font-weight: 500;
   color: var(--text);
+  line-height: var(--line-height-body);
 }
 
 /* Sidebar Footer & Settings Entry */

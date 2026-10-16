@@ -1545,12 +1545,13 @@ function isSession(value: unknown): value is Session {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
-      "worktreeRestoreAvailable", "forkedFrom", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
+      "worktreeRestoreAvailable", "forkedFrom", "automationOrigin", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
       "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
     && (value.forkedFrom === undefined || isSessionForkSource(value.forkedFrom))
+    && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && (value.projectless === undefined || typeof value.projectless === "boolean")
     && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
     && (value.associatedWorktreeId === undefined || typeof value.associatedWorktreeId === "string")

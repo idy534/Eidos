@@ -175,6 +175,12 @@ class Automation(EidosFrozenStrictModel):
     created_at: int
     updated_at: int
 
+    def session_title(self) -> str:
+        title = self.name[:60]
+        while len(title.encode("utf-8")) > 120:
+            title = title[:-1]
+        return title
+
 
 class AutomationOccurrence(EidosFrozenStrictModel):
     id: str

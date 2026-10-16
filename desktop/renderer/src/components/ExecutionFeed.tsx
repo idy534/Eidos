@@ -29,7 +29,7 @@ import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
-import { SparklesIcon } from "./InputPicker.js";
+import { SparklesIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 
@@ -2180,19 +2180,6 @@ function McpIcon() {
       <path d="M5.5 2v3M10.5 2v3" />
       <path d="M3.5 5h9v3.5a4.5 4.5 0 0 1-9 0V5z" />
       <path d="M8 13v1.5" />
-    </svg>
-  );
-}
-
-function SubagentToolIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="8" cy="3.5" r="1.5" />
-      <circle cx="3.5" cy="11.5" r="1.5" />
-      <circle cx="12.5" cy="11.5" r="1.5" />
-      <path d="M2.6 9.8C1.8 6.2 4.6 3.2 6.5 2.5" />
-      <path d="M9.5 2.5C11.4 3.2 14.2 6.2 13.4 9.8" />
-      <path d="M5.2 13C7 14.2 9 14.2 10.8 13" />
     </svg>
   );
 }

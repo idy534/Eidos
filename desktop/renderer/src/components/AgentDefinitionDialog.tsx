@@ -24,8 +24,28 @@ export function AgentDefinitionDialog({ preview, onClose }: { preview: InputPrev
           }
         }}>
         <div className="skill-detail-header">
-          <div className="skill-detail-header-left"><AgentIcon /><h2 id={titleId}>{preview.reference.label}</h2></div>
-          <button ref={closeRef} type="button" className="skill-detail-close-btn" aria-label="关闭 Agent 定义" onClick={onClose}>×</button>
+          <div className="skill-detail-header-left">
+            <span className="skill-icon agent-icon" aria-hidden="true">
+              <AgentIcon width={18} height={18} />
+            </span>
+            <div className="skill-detail-title-group">
+              <h2 id={titleId}>{preview.reference.label}</h2>
+              <span className="skill-type-label">Agent</span>
+            </div>
+          </div>
+          <div className="skill-detail-header-right">
+            <div className="skill-detail-actions">
+              <button
+                ref={closeRef}
+                type="button"
+                className="skill-detail-close-btn"
+                aria-label="关闭 Agent 定义"
+                onClick={onClose}
+              >
+                ×
+              </button>
+            </div>
+          </div>
         </div>
         <p className="skill-detail-description">本次引用保存的定义。父任务通过现有子 Agent 工具调用它。</p>
         <div className="skill-detail-body">

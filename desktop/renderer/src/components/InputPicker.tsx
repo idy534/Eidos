@@ -641,9 +641,34 @@ function SearchEmptyIcon() {
   );
 }
 
-export function AgentIcon() {
-  return <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-    <rect x="2.5" y="4.5" width="11" height="9" rx="2" stroke="currentColor" strokeWidth="1.3" />
-    <path d="M8 2v2.5M5 10.5h6M5.5 7.5h.01M10.5 7.5h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-  </svg>;
+export function AgentIcon({
+  width = 14,
+  height = 14,
+  className,
+}: {
+  width?: number | string;
+  height?: number | string;
+  className?: string;
+} = {}) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={width}
+      height={height}
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="3.5" r="1.5" />
+      <circle cx="3.5" cy="11.5" r="1.5" />
+      <circle cx="12.5" cy="11.5" r="1.5" />
+      <path d="M2.6 9.8C1.8 6.2 4.6 3.2 6.5 2.5" />
+      <path d="M9.5 2.5C11.4 3.2 14.2 6.2 13.4 9.8" />
+      <path d="M5.2 13C7 14.2 9 14.2 10.8 13" />
+    </svg>
+  );
 }

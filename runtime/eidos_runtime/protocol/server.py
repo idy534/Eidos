@@ -1623,10 +1623,7 @@ class RuntimeServer:
                     ))
                     session_id = session.id
                     application.repository.prepared_session(occurrence.id, session_id)
-                    title = (task.name + " " + occurrence.scheduled_for[:16])[:40]
-                    while len(title.encode()) > 120:
-                        title = title[:-1]
-                    self.store.rename_session(session_id, title)
+                    self.store.rename_session(session_id, task.session_title())
                 if cancel.is_set() or self.supervisor.control_state is not RuntimeControlState.RUNNING:
                     raise AutomationError("automation_canceled", "执行准备已停止。")
                 outcome = applications.runs.start(method_dtos.RunStartRequestDto(

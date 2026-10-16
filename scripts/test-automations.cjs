@@ -22,17 +22,36 @@ app.whenReady().then(async () => {
     await win.loadURL(`${server.resolvedUrls.local[0]}test/automations.html`);
     const evaluate = code => win.webContents.executeJavaScript(code);
     const settle = () => evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
-    for (let i = 0; i < 100 && !await evaluate("Boolean(document.querySelector('.automation-list-item'))"); i++) await new Promise(resolve => setTimeout(resolve, 50));
-    assert.equal(await evaluate("Boolean(document.querySelector('.automation-list-item'))"), true);
-    await evaluate("document.querySelector('.automation-list-item').click()"); await settle();
-    assert.equal(await evaluate("document.querySelector('.automation-detail').textContent.includes('替我审批')"), true);
+    for (let i = 0; i < 100 && !await evaluate("Boolean(document.querySelector('.automation-task-item'))"); i++) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('.automation-task-group')].map(group => ({title:group.querySelector('h3').textContent,count:group.querySelectorAll('.automation-task-item').length}))"),
+      [{ title: "即将执行", count: 2 }, { title: "已完成与暂停", count: 2 }]);
+    await evaluate("document.querySelector('.automation-task-item').click()"); await settle();
+    assert.equal(await evaluate("document.querySelector('.automation-detail-view').textContent.includes('替我审批')"), true);
+    const firedTask = "[...document.querySelectorAll('.automation-task-item')].find(button=>button.textContent.includes('一次性提醒'))";
+    assert.equal(await evaluate(`${firedTask}.textContent.includes('已结束 · 一次性')`), true);
+    win.webContents.focus();
+    await evaluate(`${firedTask}.focus()`);
+    assert.equal(await evaluate("document.activeElement.textContent.includes('一次性提醒')"), true);
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+    win.webContents.sendInputEvent({ type: "char", keyCode: "Enter" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" }); await settle();
+    assert.equal(await evaluate("document.querySelector('.automation-detail-view h2').textContent"), "一次性提醒");
     if (process.env.EIDOS_AUTOMATION_SCREENSHOT) await writeFile(process.env.EIDOS_AUTOMATION_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+    await evaluate("document.querySelector('[aria-label=搜索任务]').click()"); await settle();
+    await evaluate(`(() => {
+      const input=document.querySelector('input[type=search]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'检查');
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    })()`); await settle();
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('.automation-task-group')].map(group=>group.querySelectorAll('.automation-task-item').length)"), [1, 1]);
+    await evaluate("document.querySelector('[aria-label=搜索任务]').click()"); await settle();
     await evaluate("[...document.querySelectorAll('button')].find(button => button.textContent==='新建任务').click()"); await settle();
     assert.equal(await evaluate("[...document.querySelectorAll('label')].find(label=>label.textContent.startsWith('审批模式')).querySelector('select').value"), "auto_review");
     for (const width of [1440, 1024, 768, 320]) {
       win.setSize(width, 900); await settle();
-      const dimensions = await evaluate("({width:document.querySelector('.automation-page').clientWidth,scroll:document.querySelector('.automation-page').scrollWidth})");
+      const dimensions = await evaluate("({width:document.querySelector('.automation-sidebar-col').clientWidth,scroll:document.querySelector('.automation-sidebar-col').scrollWidth})");
       assert.ok(dimensions.scroll <= dimensions.width + 1, `No horizontal overflow at ${width}px: ${JSON.stringify(dimensions)}`);
+      assert.equal(await evaluate("document.querySelectorAll('.automation-task-group').length"), 2);
     }
     win.setSize(1100, 850); await settle();
     await evaluate(`(() => {
@@ -51,8 +70,28 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
     win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" }); await settle();
     assert.equal(await evaluate("document.activeElement.tagName==='BUTTON' || document.activeElement.tagName==='SELECT' || document.activeElement.tagName==='INPUT'"), true);
+    await win.loadURL(`${server.resolvedUrls.local[0]}test/automations.html?source`);
+    await settle();
+    const sourceRow = '[data-session-id="66666666-6666-6666-6666-666666666666"]';
+    assert.equal(await evaluate(`document.querySelector('${sourceRow} .session-title').textContent`), "检查部署");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.session-automation-indicator')).opacity"), "0");
+    const hoverPoint = await evaluate(`(() => { const rect=document.querySelector('${sourceRow} button').getBoundingClientRect(); return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)}; })()`);
+    win.webContents.sendInputEvent({ type: "mouseMove", ...hoverPoint });
+    await new Promise(resolve => setTimeout(resolve, 400)); await settle();
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.session-automation-indicator')).opacity"), "1");
+    const iconSize = await evaluate("document.querySelector('.session-automation-indicator svg').getBoundingClientRect().width");
+    assert.ok(iconSize >= 10 && iconSize <= 16, `Session automation icon has a compact size: ${iconSize}`);
+    assert.equal(await evaluate("document.querySelector('[role=tooltip]').textContent.includes('会话来源')"), true);
+    assert.equal(await evaluate("document.querySelector('[role=tooltip]').textContent.includes('manual:')"), false);
+    if (process.env.EIDOS_AUTOMATION_SOURCE_SCREENSHOT) await writeFile(process.env.EIDOS_AUTOMATION_SOURCE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+    const sourcePoint = await evaluate("(() => { const rect=document.querySelector('[data-source-automation-id]').getBoundingClientRect(); return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)}; })()");
+    win.webContents.sendInputEvent({ type: "mouseMove", ...sourcePoint });
+    win.webContents.sendInputEvent({ type: "mouseDown", button: "left", ...sourcePoint, clickCount: 1 });
+    win.webContents.sendInputEvent({ type: "mouseUp", button: "left", ...sourcePoint, clickCount: 1 });
+    await settle();
+    assert.equal(await evaluate("document.querySelector('.automation-detail-view h2')?.textContent"), "检查部署");
     assert.deepEqual(errors, []);
-    console.log("Automation UI passed: create, default approval, Session omission, keyboard and 4 viewport sizes");
+    console.log("Automation UI passed: task groups, search, create, keyboard, 4 viewport sizes and Session source icon/tooltip/detail navigation");
   } catch (error) { exitCode = 1; console.error(error); }
   finally { clearTimeout(timeout); win?.destroy(); await server?.close(); await rm(temporaryRoot, { recursive: true, force: true }); app.exit(exitCode); }
 });

@@ -241,3 +241,54 @@ it("renders unified single topbar in detail view with back button, identity, tog
   expect(screen.getByRole("heading", { name: "应用凭证" })).toBeInTheDocument();
 });
 
+it("clamps long deliveries to 2 lines and opens modal with rich markdown on clicking anywhere on the item", async () => {
+  const user = userEvent.setup();
+  const longDeliveryText = `工作区目前的内容：\n\n**成品文档 (8 个)**\n- 第一项\n- 第二项\n\n\`build_maldives_pdf.py\``;
+
+  window.eidosRuntime = {
+    readChannel: vi.fn().mockResolvedValue({
+      connection,
+      state: "connected",
+      deliveries: [
+        {
+          id: "delivery-1",
+          status: "sent",
+          text: longDeliveryText,
+          createdAt: "2026-10-16T15:05:00Z",
+        },
+      ],
+    }),
+    listProjects: vi.fn().mockResolvedValue({ items: [] }),
+  } as unknown as EidosRuntimeAPI;
+
+  render(<ChannelSettings modelList={{ models: [model] }} initialChannel="dingtalk" />);
+  expect(await screen.findByText("已发送")).toBeInTheDocument();
+
+  // 默认两行折叠态：两行截断样式
+  const collapsedText = screen.getByText(/工作区目前的内容/);
+  expect(collapsedText).toHaveClass("channel-delivery-text--collapsed");
+
+  // 不存在“查看全文 ▾”、“收起 ▴”或“弹窗查看 ↗”等多余内联按钮
+  expect(screen.queryByRole("button", { name: /查看全文/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /收起/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /弹窗查看/ })).not.toBeInTheDocument();
+
+  // 点击整个会话卡片任意处：直接弹出全文对话框
+  const deliveryCard = screen.getByRole("button", { name: /查看回复详情/ });
+  await user.click(deliveryCard);
+
+  // 弹窗展开，包含正文风格的 MarkdownContent 与复制按钮
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "回复详情" })).toBeInTheDocument();
+  expect(screen.getByText("成品文档 (8 个)")).toBeInTheDocument();
+  expect(screen.getByText("第一项")).toBeInTheDocument();
+  expect(screen.getByText("build_maldives_pdf.py")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "复制内容" })).toBeInTheDocument();
+
+  // 关闭弹窗
+  await user.click(screen.getByRole("button", { name: "关闭回复详情" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+

@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
-import { isAutomationRequest, isAutomationResponse } from "../shared/automation.js";
+import { isAutomationRequest, isAutomationResponse, isAutomationOrigin } from "../shared/automation.js";
 import type { RuntimeNotification } from "../shared/domain-contracts.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -17,6 +17,7 @@ void test("automation Python schema fixtures validate at the Desktop boundary", 
   for (const request of fixture.invalidRequests) assert.equal(isAutomationRequest(request), false, JSON.stringify(request));
   for (const response of fixture.validResponses) assert.equal(isAutomationResponse(response), true);
   for (const response of fixture.invalidResponses) assert.equal(isAutomationResponse(response), false);
+  assert.equal(isAutomationOrigin(fixture.automationSession.automationOrigin), true);
 });
 
 void test("automation validators load and reject invalid data when dynamic code generation is disabled", () => {
@@ -83,12 +84,30 @@ void test("automations persist across Runtime restart with typed reads and revis
       (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
     const snapshot = await client.readSession(session.id);
     assert.equal(snapshot.runs.find((run) => run.id === history.occurrences?.[0]?.runId)?.automationOrigin?.automationId, id);
+    assert.equal(snapshot.session.automationOrigin, undefined, "reusing a Session must preserve its original source");
+    const created = await client.automation({ operationId: crypto.randomUUID(), command: {
+      mode: "create", kind: "cron", name: "自动任务来源", prompt: "检查状态。", projectId: null,
+      schedule: { expression: "*/10 * * * *", timezone: "Asia/Shanghai" }, model: { modelId: "deepseek-v4-flash" },
+    } });
+    await client.automationRunNow({ id: created.automation!.id, operationId: crypto.randomUUID() });
+    let sourceHistory = await client.automationHistory({ id: created.automation!.id });
+    const sourceDeadline = Date.now() + 10000;
+    while (!sourceHistory.occurrences?.[0]?.runId && Date.now() < sourceDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      sourceHistory = await client.automationHistory({ id: created.automation!.id });
+    }
+    const generatedSessionId = sourceHistory.occurrences![0]!.sessionId!;
+    const generated = await client.readSession(generatedSessionId);
+    assert.equal(generated.session.title, "自动任务来源");
+    assert.equal(generated.session.automationOrigin?.automationId, created.automation!.id);
+    assert.equal((await client.listSessions()).items.find((item) => item.id === generatedSessionId)?.automationOrigin?.automationId, created.automation!.id);
     await client.automation({ operationId: crypto.randomUUID(), command: { mode: "update", id, expectedRevision: 1, changes: { name: "修改后的任务" } } });
     await assert.rejects(client.automation({ operationId: crypto.randomUUID(), command: { mode: "update", id, expectedRevision: 1, changes: { status: "PAUSED" } } }),
       (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "AUTOMATION_REVISION_CONFLICT");
     assert.ok(notifications.includes("automation/changed"));
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
     client = new RuntimeClient(options); await client.initialize();
+    assert.equal((await client.readSession(generatedSessionId)).session.automationOrigin?.automationId, created.automation!.id);
     const restored = await client.automation({ command: { mode: "view", id } });
     assert.equal(restored.automation?.name, "修改后的任务");
     assert.equal(restored.automation?.approvalMode, "auto_review");

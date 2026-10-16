@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Automation, AutomationResponse } from "../../../../shared/automation.js";
+import type { RuntimeNotification } from "../../../../shared/domain-contracts.js";
 import type { ModelOption, Session } from "../../contracts.js";
 import { AutomationPage } from "./AutomationPage.js";
 import { AutomationForm } from "./AutomationForm.js";
@@ -26,6 +27,109 @@ beforeEach(() => {
 });
 
 describe("local automation management", () => {
+  it("opens a source task directly even when it is outside the loaded task page", async () => {
+    vi.mocked(window.eidosRuntime.automation).mockImplementation(async ({ command }) => command.id
+      ? { kind: "detail", automation: task } : { kind: "list", items: [] });
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} initialAutomationId={task.id}
+      onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    expect(await screen.findByRole("heading", { name: task.name })).toBeInTheDocument();
+    expect(window.eidosRuntime.automation).toHaveBeenCalledWith({ command: { mode: "view", id: task.id } });
+    expect(window.eidosRuntime.automationHistory).toHaveBeenCalledWith({ id: task.id });
+  });
+  it("keeps upcoming tasks separate from paused and fired one-time tasks", async () => {
+    const waiting = { ...task, id: "33333333-3333-3333-3333-333333333333", name: "稍后提醒", kind: "at" as const,
+      schedule: { runAt: "2026-10-17T09:00:00+08:00", timezone: "Asia/Shanghai" } };
+    const paused = { ...task, id: "44444444-4444-4444-4444-444444444444", name: "暂停检查", status: "PAUSED" as const };
+    const pausedOnce = { ...waiting, id: "55555555-5555-5555-5555-555555555555", name: "暂停提醒", status: "PAUSED" as const };
+    const fired = { ...waiting, id: "66666666-6666-6666-6666-666666666666", name: "提醒收尾", status: "PAUSED" as const, pauseReason: "one_shot_fired" };
+    const tasks = [task, waiting, paused, pausedOnce, fired];
+    vi.mocked(window.eidosRuntime.automation).mockImplementation(async ({ command }) => command.id
+      ? { kind: "detail", automation: tasks.find((item) => item.id === command.id)! }
+      : { kind: "list", items: tasks });
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    const upcoming = within(await screen.findByRole("region", { name: "即将执行" }));
+    const inactive = within(screen.getByRole("region", { name: "已完成与暂停" }));
+    expect(upcoming.getAllByRole("button")).toHaveLength(2);
+    expect(upcoming.getByRole("button", { name: /稍后提醒/ })).toBeInTheDocument();
+    expect(inactive.getAllByRole("button")).toHaveLength(3);
+    expect(inactive.getByRole("button", { name: /暂停检查/ })).toBeInTheDocument();
+    expect(inactive.getByRole("button", { name: /暂停提醒/ })).toHaveTextContent("已暂停 · 一次性");
+    expect(inactive.getByRole("button", { name: /提醒收尾/ })).toHaveTextContent("已结束 · 一次性");
+    fireEvent.click(inactive.getByRole("button", { name: /提醒收尾/ }));
+    expect(await screen.findByRole("heading", { name: "提醒收尾" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "编辑" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "删除计划" })).toBeEnabled();
+  });
+
+  it("moves a selected task between groups when paused and resumed", async () => {
+    let saved = task;
+    vi.mocked(window.eidosRuntime.automation).mockImplementation(async ({ command }) => {
+      if (command.mode === "update") saved = { ...saved, status: command.changes!.status!, revision: saved.revision + 1 };
+      return command.mode === "view" && !command.id ? { kind: "list", items: [saved] } : { kind: "mutation", automation: saved };
+    });
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: /检查部署/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "暂停" }));
+    const inactive = within(screen.getByRole("region", { name: "已完成与暂停" }));
+    expect(await inactive.findByRole("button", { name: /检查部署/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "恢复" }));
+    const upcoming = within(screen.getByRole("region", { name: "即将执行" }));
+    expect(await upcoming.findByRole("button", { name: /检查部署/ })).toHaveAttribute("aria-pressed", "true");
+    expect(inactive.queryByRole("button", { name: /检查部署/ })).not.toBeInTheDocument();
+  });
+
+  it("moves a one-time task after a scheduled execution notification", async () => {
+    let saved: Automation = { ...task, kind: "at", name: "稍后提醒",
+      schedule: { runAt: "2026-10-17T09:00:00+08:00", timezone: "Asia/Shanghai" } };
+    const listeners = new Set<(notification: RuntimeNotification) => void>();
+    vi.mocked(window.eidosRuntime.onNotification).mockImplementation((listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    });
+    vi.mocked(window.eidosRuntime.automation).mockImplementation(async () => ({ kind: "list", items: [saved] }));
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    const upcoming = within(await screen.findByRole("region", { name: "即将执行" }));
+    expect(upcoming.getByRole("button", { name: /稍后提醒/ })).toBeInTheDocument();
+    saved = { ...saved, status: "PAUSED", pauseReason: "one_shot_fired", revision: saved.revision + 1 };
+    await act(async () => {
+      for (const listener of listeners) listener({ method: "automation/changed", params: { id: saved.id } });
+    });
+    const inactive = within(screen.getByRole("region", { name: "已完成与暂停" }));
+    expect(await inactive.findByRole("button", { name: /稍后提醒/ })).toHaveTextContent("已结束 · 一次性");
+    expect(upcoming.queryByRole("button", { name: /稍后提醒/ })).not.toBeInTheDocument();
+  });
+
+  it("searches both groups and retains both empty states", async () => {
+    const paused = { ...task, id: "44444444-4444-4444-4444-444444444444", name: "暂停检查", status: "PAUSED" as const };
+    const fired = { ...task, id: "55555555-5555-5555-5555-555555555555", name: "提醒收尾", kind: "at" as const,
+      schedule: { runAt: "2026-10-17T09:00:00+08:00", timezone: "Asia/Shanghai" }, status: "PAUSED" as const, pauseReason: "one_shot_fired" };
+    vi.mocked(window.eidosRuntime.automation).mockResolvedValue({ kind: "list", items: [task, paused, fired] });
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    await screen.findByRole("region", { name: "即将执行" });
+    fireEvent.click(screen.getByRole("button", { name: "搜索任务" }));
+    const search = screen.getByRole("searchbox", { name: "搜索定时任务" });
+    fireEvent.change(search, { target: { value: "检查" } });
+    expect(screen.getByRole("button", { name: /检查部署/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /暂停检查/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /提醒收尾/ })).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "没有这个任务" } });
+    expect(screen.getAllByText("没有匹配的任务。")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "搜索任务" }));
+    expect(screen.getByRole("button", { name: /提醒收尾/ })).toBeInTheDocument();
+  });
+
+  it("loads paused tasks from later pages into the inactive group", async () => {
+    const paused = { ...task, id: "44444444-4444-4444-4444-444444444444", name: "旧的暂停任务", status: "PAUSED" as const };
+    vi.mocked(window.eidosRuntime.automation).mockImplementation(async ({ command }) => command.cursor
+      ? { kind: "list", items: [paused] } : { kind: "list", items: [task], nextCursor: "next" });
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "加载更多任务" }));
+    const inactive = within(screen.getByRole("region", { name: "已完成与暂停" }));
+    expect(await inactive.findByRole("button", { name: /旧的暂停任务/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "即将执行" })).getByRole("button", { name: /检查部署/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "加载更多任务" })).not.toBeInTheDocument();
+  });
+
   it("defaults new tasks to auto review and a new projectless Session", async () => {
     const save = vi.fn(async () => {});
     render(<AutomationForm projects={[]} sessions={[session]} models={[model]} currentSessionId={session.id} busy={false} onSave={save} />);
@@ -96,14 +200,52 @@ describe("local automation management", () => {
     await waitFor(() => expect(window.eidosRuntime.automation).toHaveBeenCalledWith(expect.objectContaining({ command: { mode: "update", id: task.id, expectedRevision: 2, changes: { status: "PAUSED" } } })));
   });
 
-  it("shows a concrete revision conflict and preserves the saved selection", async () => {
+  it("shows a concrete revision conflict in floating toast and supports manual/auto dismissal", async () => {
     render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: /检查部署/ }));
     await screen.findByRole("button", { name: "暂停" });
     vi.mocked(window.eidosRuntime.automation).mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:AUTOMATION_REVISION_CONFLICT"));
     fireEvent.click(screen.getByRole("button", { name: "暂停" }));
+
+    // Floating alert displays message without the old inline refresh button
     expect(await screen.findByRole("alert")).toHaveTextContent("任务已被修改，请重新打开后再编辑");
+    expect(screen.queryByRole("button", { name: "刷新列表" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "暂停" })).toBeInTheDocument();
+
+    // Supports manual close
+    const closeBtn = screen.getByRole("button", { name: "关闭提示" });
+    fireEvent.click(closeBtn);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("automatically dismisses floating toast after 3.5 seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(screen.getByRole("button", { name: /检查部署/ }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      vi.mocked(window.eidosRuntime.automation).mockRejectedValueOnce(new Error("EIDOS_RUNTIME_ERROR:AUTOMATION_REVISION_CONFLICT"));
+      fireEvent.click(screen.getByRole("button", { name: "暂停" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+
+      // 推进 3500 毫秒后自动关闭
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3500);
+      });
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("calls onClose on '返回 Eidos' button click and Escape key", async () => {

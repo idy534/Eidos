@@ -49,6 +49,7 @@ export interface Project extends SessionProject {
 
 export interface Session {
   forkedFrom?: SessionForkSource;
+  automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   id: string;
   workspaceRoot: string;
   executionMode?: "local" | "worktree";

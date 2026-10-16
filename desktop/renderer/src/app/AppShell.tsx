@@ -168,6 +168,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [automationDetailId, setAutomationDetailId] = useState<string | undefined>();
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("model");
   const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
   const [titleDraft, setTitleDraft] = useState("");
@@ -1409,7 +1410,8 @@ export function AppShell({ runtime }: AppShellProps) {
           setDockExpanded(false);
           setRenamingSessionId(undefined);
         }}
-        onOpenAutomations={() => { setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
+        onOpenAutomations={() => { setAutomationDetailId(undefined); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
+        onOpenAutomation={(id) => { setAutomationDetailId(id); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
         navigationSlot={
           <NavigationControls
             sidebarOpen={sidebarOpen}
@@ -1441,6 +1443,7 @@ export function AppShell({ runtime }: AppShellProps) {
 
         {automationsOpen ? (
           <AutomationPage
+            initialAutomationId={automationDetailId}
             projects={sessionState.projects}
             sessions={sessionState.sessions}
             models={modelState.list?.models ?? []}
