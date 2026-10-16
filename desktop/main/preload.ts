@@ -1,3 +1,4 @@
+import type { ChannelResponse, ChannelSaveRequest } from "../shared/channels.js";
 import type { MemoryMethods } from "../shared/memory.js";
 import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
@@ -152,6 +153,8 @@ const api: EidosRuntimeAPI = {
     return () => ipcRenderer.removeListener(IPC.TERMINAL_EXIT_EVENT, listener);
   },
 
+  readChannel: (): Promise<ChannelResponse> => ipcRenderer.invoke(IPC.CHANNEL_READ),
+  saveChannel: (request: ChannelSaveRequest): Promise<ChannelResponse> => ipcRenderer.invoke(IPC.CHANNEL_SAVE, request),
   automation: (request: AutomationExecuteRequest): Promise<AutomationResponse> => ipcRenderer.invoke(IPC.AUTOMATION_EXECUTE, request),
   automationHistory: (request: AutomationHistoryRequest): Promise<AutomationResponse> => ipcRenderer.invoke(IPC.AUTOMATION_HISTORY, request),
   automationRunNow: (request: AutomationRunNowRequest): Promise<AutomationResponse> => ipcRenderer.invoke(IPC.AUTOMATION_RUN_NOW, request),

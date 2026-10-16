@@ -3,6 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { compile } from "json-schema-to-typescript";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import standaloneCode from "ajv/dist/standalone/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
@@ -24,3 +26,26 @@ await writeFile(path.join(root, "desktop/shared/automation.generated.ts"), await
 }));
 await writeFile(path.join(root, "desktop/shared/automation-schema.generated.ts"),
   `${banner}\nexport const automationSchema = ${JSON.stringify(schema, null, 2)};\n`);
+
+const ajv = new Ajv2020({
+  strict: false, coerceTypes: false, inlineRefs: false,
+  code: { source: true, esm: true, lines: true },
+});
+ajv.addSchema(schema, "eidos:automation");
+const validators = {
+  isAutomationRequest: "AutomationExecuteRequest",
+  isAutomationResponse: "AutomationResponse",
+  isAutomationHistoryRequest: "AutomationHistoryRequest",
+  isAutomationRunNowRequest: "AutomationRunNowRequest",
+  isAutomationOrigin: "AutomationOrigin",
+};
+const generated = standaloneCode(ajv, Object.fromEntries(Object.entries(validators)
+  .map(([name, definition]) => [name, `eidos:automation#/$defs/${definition}`])));
+// Ajv standalone emits this CommonJS helper reference even in ESM mode.
+// A static import lets both Node and the Renderer use the same Unicode rules.
+const browserCode = generated.replaceAll('require("ajv/dist/runtime/ucs2length").default', "ucs2length");
+if (/\brequire\(/u.test(browserCode)) {
+  throw new Error("Automation validators contain an unsupported CommonJS helper. Add a static ESM import before generating them.");
+}
+await writeFile(path.join(root, "desktop/shared/automation-validators.generated.ts"),
+  `// @ts-nocheck -- Ajv standalone output; public types are declared in automation.ts.\n${banner}\nimport ucs2lengthRuntime from "ajv/dist/runtime/ucs2length.js";\n// Node exposes the CommonJS exports object; browser bundlers unwrap its default.\nconst ucs2length = typeof ucs2lengthRuntime === "function" ? ucs2lengthRuntime : ucs2lengthRuntime.default;\n${browserCode.trimEnd()}\n`);

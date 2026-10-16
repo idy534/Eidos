@@ -30,6 +30,8 @@ Schema v28 新增 scheduled_tasks、scheduled_occurrences 和 automation_run_ori
 
 Renderer 经过 preload typed IPC 和 Main 调用 schedule/execute。command.mode 处理模型工具相同的管理用例，contextSessionId 只提供创建上下文。schedule/history、schedule/runNow 和 schedule/refresh 分别读取历史、手动触发和唤醒重算。Python Schema 通过 scripts/generate-automation-contracts.mjs 生成 Desktop DTO 与验证 Schema。
 
+同一生成脚本使用已锁定的 Ajv standalone 生成静态校验器。Main 和 Renderer 共用这组校验器，保留字段限制、Unicode 字符长度、未知字段拒绝和禁止类型转换的规则。Renderer 加载定时任务工具卡片时不再动态编译 Schema，页面 CSP 继续禁止 JavaScript `unsafe-eval`。生产页面启动定向验证加载实际构建 HTML、CSP、bundle 和 sandboxed preload，并检查 React 启动页与控制台错误。
+
 ToolSpec 保留 eidos_state 最大声明与 single 批次策略。可信内置 AutomationToolRuntime 在严格校验后解析本次实际类别；view / preview 使用 none，不提交 Intent，其余使用原写入流程。分类进入 DispatchPlan，不修改冻结 Registry。preserve_omitted_arguments 只对该工具开启并进入契约指纹，其他工具保留原默认参数行为。
 
 写模式先准备候选配置，再通过 Controller 保存 Durable Intent。计划、操作回执和领域 Event / Outbox 原子提交，最终 ToolResult 仍由 Controller 提交。重启先检查可信内置来源与回执，恢复已知 SQLite 结果，不重新写入。取消后的已保存计划仍回显真实 ID、版本和副作用。未知外部操作继续使用原 Reconciliation。

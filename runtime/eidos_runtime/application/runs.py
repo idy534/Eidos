@@ -320,7 +320,9 @@ class RunApplication:
         model_id, profile, _config = self._select_model(request, store=store, environment=environment)
         return AutomationModel(model_id=model_id, reasoning_selection=profile.reasoning_selection)
 
-    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None) -> RunStartOutcome:
+    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None) -> RunStartOutcome:
+        if channel_message_id is not None and request.approval_mode == "full_access":
+            raise ApplicationError("INVALID_PARAMS", "渠道任务不支持完全访问模式。")
         store, runtime, environment, scan_text = self._start_dependencies()
         if not environment.model_is_configured():
             raise ApplicationError("INVALID_STATE", "no model is configured")
@@ -459,6 +461,17 @@ class RunApplication:
                                 expected_workspace_identity=expected_workspace_identity,
                                 transaction_connection=connection,
                             ), request.session_id)
+                    elif channel_message_id is not None:
+                        from eidos_runtime.persistence.channels import ChannelRepository
+                        from eidos_runtime.db.repositories.runs import RunRepository
+                        channel_run_id = ChannelRepository(store.database).accept(channel_message_id, request.session_id,
+                            lambda connection: str(RunRepository(store.database).create_run(
+                                request.session_id, user_input, queued=True,
+                                model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                                extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                                expected_workspace_identity=expected_workspace_identity, transaction_connection=connection,
+                            )[0]["id"]))
+                        created = store.read_run(channel_run_id)
                     elif regenerate_source_run_id is not None:
                         from eidos_runtime.db.repositories.runs import RunRepository
                         created, _user_item = RunRepository(store.database).create_run(

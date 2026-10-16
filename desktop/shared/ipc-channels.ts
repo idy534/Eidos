@@ -6,6 +6,8 @@
  */
 
 export const IPC = {
+  CHANNEL_READ: "channel:read",
+  CHANNEL_SAVE: "channel:save",
   AUTOMATION_EXECUTE: "automation:execute",
   AUTOMATION_HISTORY: "automation:history",
   AUTOMATION_RUN_NOW: "automation:run-now",

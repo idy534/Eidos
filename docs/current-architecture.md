@@ -1,5 +1,7 @@
 # Eidos 当前架构
 
+钉钉渠道使用 `Stream SDK → ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复 → HTTPS OpenAPI`。配置沿用 typed IPC 和 stdio JSON-RPC。渠道服务由现有 AnyIO Kernel 与 Supervisor 管理，准备使用现有 managed task。Schema v30 保存渠道配置、映射、来源和投递事实。具体边界见 [当前渠道接入](current-channels.md)。
+
 本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](current-automations.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。

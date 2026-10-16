@@ -4,8 +4,17 @@ import type { ModelOption, ModelReasoningSelection, Project, Session } from "../
 import { Button } from "../Button.js";
 import { userFacingError } from "../../session-state.js";
 
+export interface InitialAutomationValues {
+  name?: string | undefined;
+  prompt?: string | undefined;
+  expression?: string | undefined;
+  kind?: "cron" | "at" | undefined;
+  approvalMode?: "manual" | "auto_review" | undefined;
+}
+
 interface Props {
   task?: Automation | undefined;
+  initialValues?: InitialAutomationValues | undefined;
   projects: Project[];
   sessions: Session[];
   models: ModelOption[];
@@ -13,14 +22,15 @@ interface Props {
   currentProjectId?: string | undefined;
   busy: boolean;
   onSave: (request: AutomationRequest) => Promise<void>;
+  onCancel?: (() => void) | undefined;
 }
 
-export function AutomationForm({ task, projects, sessions, models, currentSessionId, currentProjectId, busy, onSave }: Props) {
+export function AutomationForm({ task, initialValues, projects, sessions, models, currentSessionId, currentProjectId, busy, onSave, onCancel }: Props) {
   const current = sessions.find((session) => session.id === currentSessionId);
-  const [name, setName] = useState(task?.name ?? "");
-  const [prompt, setPrompt] = useState(task?.prompt ?? "");
-  const [kind, setKind] = useState<"cron" | "at">(task?.kind ?? "cron");
-  const [expression, setExpression] = useState(task?.schedule.expression ?? "0 9 * * *");
+  const [name, setName] = useState(task?.name ?? initialValues?.name ?? "");
+  const [prompt, setPrompt] = useState(task?.prompt ?? initialValues?.prompt ?? "");
+  const [kind, setKind] = useState<"cron" | "at">(task?.kind ?? initialValues?.kind ?? "cron");
+  const [expression, setExpression] = useState(task?.schedule.expression ?? initialValues?.expression ?? "0 9 * * *");
   const [runAt, setRunAt] = useState(task?.schedule.runAt ? new Date(task.schedule.runAt).toLocaleString("sv-SE").replace(" ", "T").slice(0, 16) : "");
   const [timezone, setTimezone] = useState(task?.schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [target, setTarget] = useState(task?.target.kind === "existing_session" ? "session" : "new");
@@ -30,7 +40,7 @@ export function AutomationForm({ task, projects, sessions, models, currentSessio
   const [baseRef, setBaseRef] = useState(task?.target.execution?.baseRef ?? "");
   const [modelId, setModelId] = useState(task?.model.modelId ?? models[0]?.id ?? "");
   const [reasoning, setReasoning] = useState<ModelReasoningSelection | "">(task?.model.reasoningSelection ?? "");
-  const [approvalMode, setApprovalMode] = useState<"manual" | "auto_review">(task?.approvalMode ?? "auto_review");
+  const [approvalMode, setApprovalMode] = useState<"manual" | "auto_review">(task?.approvalMode ?? initialValues?.approvalMode ?? "auto_review");
   const [status, setStatus] = useState<"ACTIVE" | "PAUSED">(task?.status ?? "ACTIVE");
   const [preview, setPreview] = useState<string[]>([]);
   const [previewError, setPreviewError] = useState("");
@@ -78,31 +88,62 @@ export function AutomationForm({ task, projects, sessions, models, currentSessio
     finally { setPreviewing(false); }
   };
   return <form className="automation-form" onSubmit={(event) => void submit(event)}>
-    <h2>{task ? "编辑任务" : "新建任务"}</h2>
-    <fieldset disabled={busy} className="automation-form-controls">
-    <label>名称<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
-    <label>任务内容<textarea required rows={5} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="说明每次要完成的工作，以及何时停止。" /></label>
-    <div className="automation-fields">
-      <label>时间类型<select value={kind} onChange={(event) => { setKind(event.target.value as "at" | "cron"); setPreview([]); }}><option value="cron">周期执行</option><option value="at">执行一次</option></select></label>
-      <label>时区<input required value={timezone} onChange={(event) => { setTimezone(event.target.value); setPreview([]); }} /></label>
+    <div className="automation-form-header">
+      <div>
+        <h2>{task ? "编辑任务" : "新建任务"}</h2>
+        <p className="automation-form-subtitle">{task ? `修改定时任务配置与执行策略` : "配置并创建一个新的定时自动化任务"}</p>
+      </div>
     </div>
-    {kind === "cron" ? <label>执行规则<select value={["*/10 * * * *", "*/30 * * * *", "0 * * * *", "0 9 * * *", "0 9 * * 1-5"].includes(expression) ? expression : "custom"} onChange={(event) => { setExpression(event.target.value === "custom" ? "0 9 * * 1" : event.target.value); setPreview([]); }}>
-      <option value="*/10 * * * *">每 10 分钟</option><option value="*/30 * * * *">每 30 分钟</option><option value="0 * * * *">每 1 小时</option><option value="0 9 * * *">每天 09:00</option><option value="0 9 * * 1-5">周一至周五 09:00</option><option value="custom">自定义日历时间</option>
-    </select><input aria-label="Cron 表达式" required value={expression} onChange={(event) => { setExpression(event.target.value); setPreview([]); }} /></label>
-      : <label>执行时间（本机时间）<input type="datetime-local" required value={runAt} onChange={(event) => { setRunAt(event.target.value); setPreview([]); }} /></label>}
-    <div><Button size="small" disabled={previewing || busy} onClick={() => void showPreview()}>预览执行时间</Button>
-      {preview.length > 0 && <ol className="automation-preview">{preview.map((time) => <li key={time}>{new Date(time).toLocaleString(undefined, { timeZone: timezone })}</li>)}</ol>}</div>
-    <label>执行会话<select value={target} onChange={(event) => setTarget(event.target.value)}><option value="new">每次新建会话</option><option value="session">已有会话</option></select></label>
-    {target === "session" ? <label>目标会话<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">选择会话</option>{sessionId && !sessions.some((session) => session.id === sessionId) && <option value={sessionId}>当前绑定的会话</option>}{sessions.map((session) => <option key={session.id} value={session.id}>{session.title ?? "未命名会话"}</option>)}</select></label>
-      : <><label>所属项目<select value={projectId} onChange={(event) => { setProjectId(event.target.value); setExecutionMode("local"); }}><option value="">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
-        {projectId && <label>执行环境<select value={executionMode} onChange={(event) => setExecutionMode(event.target.value as "local" | "worktree")}><option value="local">本地目录</option><option value="worktree">新建工作树（Git 项目）</option></select></label>}
-        {executionMode === "worktree" && <label>起始分支<input value={baseRef} onChange={(event) => setBaseRef(event.target.value)} placeholder="默认分支" /></label>}</>}
-    <div className="automation-fields"><label>模型<select required value={modelId} onChange={(event) => { setModelId(event.target.value); setReasoning(""); }}><option value="">选择模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
-      <label>思考强度<select value={reasoning} onChange={(event) => setReasoning(event.target.value as ModelReasoningSelection | "")}><option value="">模型默认</option>{reasoning && !reasoningSelections.includes(reasoning) && <option value={reasoning}>{reasoning}（配置已变更）</option>}{reasoningSelections.map((value) => <option key={value} value={value}>{value}</option>)}</select></label></div>
-    <div className="automation-fields"><label>审批模式<select value={approvalMode} onChange={(event) => setApprovalMode(event.target.value as "manual" | "auto_review")}><option value="auto_review">替我审批</option><option value="manual">请求审批</option></select></label>
-      <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as "ACTIVE" | "PAUSED")}><option value="ACTIVE">启用</option><option value="PAUSED">暂停</option></select></label></div>
-    {previewError && <p role="alert" className="approval-error">{previewError}</p>}
-    <Button type="submit" variant="primary" disabled={busy}>{busy ? "正在保存…" : "保存任务"}</Button>
+
+    <fieldset disabled={busy} className="automation-form-controls">
+      <div className="automation-form-card">
+        <h3 className="automation-card-title">基本信息</h3>
+        <label>名称<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label>任务内容<textarea required rows={5} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="说明每次要完成的工作，以及何时停止。" /></label>
+      </div>
+
+      <div className="automation-form-card">
+        <h3 className="automation-card-title">执行计划</h3>
+        <div className="automation-fields">
+          <label>时间类型<select value={kind} onChange={(event) => { setKind(event.target.value as "at" | "cron"); setPreview([]); }}><option value="cron">周期执行</option><option value="at">执行一次</option></select></label>
+          <label>时区<input required value={timezone} onChange={(event) => { setTimezone(event.target.value); setPreview([]); }} /></label>
+        </div>
+        {kind === "cron" ? <label>执行规则<select value={["*/10 * * * *", "*/30 * * * *", "0 * * * *", "0 9 * * *", "0 9 * * 1-5"].includes(expression) ? expression : "custom"} onChange={(event) => { setExpression(event.target.value === "custom" ? "0 9 * * 1" : event.target.value); setPreview([]); }}>
+          <option value="*/10 * * * *">每 10 分钟</option><option value="*/30 * * * *">每 30 分钟</option><option value="0 * * * *">每 1 小时</option><option value="0 9 * * *">每天 09:00</option><option value="0 9 * * 1-5">周一至周五 09:00</option><option value="custom">自定义日历时间</option>
+        </select><input aria-label="Cron 表达式" required value={expression} onChange={(event) => { setExpression(event.target.value); setPreview([]); }} /></label>
+          : <label>执行时间（本机时间）<input type="datetime-local" required value={runAt} onChange={(event) => { setRunAt(event.target.value); setPreview([]); }} /></label>}
+        <div className="automation-preview-block">
+          <Button type="button" size="small" variant="secondary" disabled={previewing || busy} onClick={() => void showPreview()}>预览执行时间</Button>
+          {preview.length > 0 && <ol className="automation-preview">{preview.map((time) => <li key={time}>{new Date(time).toLocaleString(undefined, { timeZone: timezone })}</li>)}</ol>}
+        </div>
+      </div>
+
+      <div className="automation-form-card">
+        <h3 className="automation-card-title">执行会话与环境</h3>
+        <label>执行会话<select value={target} onChange={(event) => setTarget(event.target.value)}><option value="new">每次新建会话</option><option value="session">已有会话</option></select></label>
+        {target === "session" ? <label>目标会话<select required value={sessionId} onChange={(event) => setSessionId(event.target.value)}><option value="">选择会话</option>{sessionId && !sessions.some((session) => session.id === sessionId) && <option value={sessionId}>当前绑定的会话</option>}{sessions.map((session) => <option key={session.id} value={session.id}>{session.title ?? "未命名会话"}</option>)}</select></label>
+          : <><label>所属项目<select value={projectId} onChange={(event) => { setProjectId(event.target.value); setExecutionMode("local"); }}><option value="">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+            {projectId && <label>执行环境<select value={executionMode} onChange={(event) => setExecutionMode(event.target.value as "local" | "worktree")}><option value="local">本地目录</option><option value="worktree">新建工作树（Git 项目）</option></select></label>}
+            {executionMode === "worktree" && <label>起始分支<input value={baseRef} onChange={(event) => setBaseRef(event.target.value)} placeholder="默认分支" /></label>}</>}
+      </div>
+
+      <div className="automation-form-card">
+        <h3 className="automation-card-title">模型与权限</h3>
+        <div className="automation-fields"><label>模型<select required value={modelId} onChange={(event) => { setModelId(event.target.value); setReasoning(""); }}><option value="">选择模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
+          <label>思考强度<select value={reasoning} onChange={(event) => setReasoning(event.target.value as ModelReasoningSelection | "")}><option value="">模型默认</option>{reasoning && !reasoningSelections.includes(reasoning) && <option value={reasoning}>{reasoning}（配置已变更）</option>}{reasoningSelections.map((value) => <option key={value} value={value}>{value}</option>)}</select></label></div>
+        <div className="automation-fields"><label>审批模式<select value={approvalMode} onChange={(event) => setApprovalMode(event.target.value as "manual" | "auto_review")}><option value="auto_review">替我审批</option><option value="manual">请求审批</option></select></label>
+          <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as "ACTIVE" | "PAUSED")}><option value="ACTIVE">启用</option><option value="PAUSED">暂停</option></select></label></div>
+      </div>
+
+      {previewError && <p role="alert" className="approval-error">{previewError}</p>}
+      <div className="automation-form-actions">
+        <Button type="submit" variant="primary" disabled={busy}>{busy ? "正在保存…" : "保存任务"}</Button>
+        {onCancel && (
+          <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
+            取消
+          </Button>
+        )}
+      </div>
     </fieldset>
   </form>;
 }

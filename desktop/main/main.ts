@@ -1,3 +1,4 @@
+import { isChannelSaveRequest } from "../shared/channels.js";
 import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
@@ -598,6 +599,11 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.CHANNEL_READ, () => clientOrThrow().readChannel());
+ipcMain.handle(IPC.CHANNEL_SAVE, (_event, request: unknown) => {
+  if (!isChannelSaveRequest(request)) throw new Error("渠道配置无效，请检查必填项。 ");
+  return clientOrThrow().saveChannel(request);
+});
 ipcMain.handle(IPC.AUTOMATION_EXECUTE, (_event, request: unknown) => {
   if (!isAutomationRequest(request)) throw new Error("定时任务参数无效。");
   return clientOrThrow().automation(request);

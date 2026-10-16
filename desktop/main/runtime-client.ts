@@ -1,3 +1,4 @@
+import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest } from "../shared/channels.js";
 import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
 import type { SessionForkRequest } from "../shared/session-fork.generated.js";
 import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
@@ -472,6 +473,14 @@ export class RuntimeClient {
 
   listProjects(): Promise<ProjectListResult> {
     return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  readChannel(): Promise<ChannelResponse> {
+    return this.validatedRequest("channel/read", {}, isChannelResponse);
+  }
+
+  saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse> {
+    return this.validatedRequest("channel/save", { ...request }, isChannelResponse);
   }
 
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse> {
@@ -2033,6 +2042,7 @@ function isRun(value: unknown): value is Run {
       "extensionSnapshot",
       "activatedTools",
       "automationOrigin",
+      "channelOrigin",
     ])
   ) {
     return false;
@@ -2054,6 +2064,7 @@ function isRun(value: unknown): value is Run {
     )
     && (value.workMode === undefined || ["execute", "plan"].includes(String(value.workMode)))
     && (value.approvalMode === undefined || ["manual", "auto_review", "full_access"].includes(String(value.approvalMode)))
+    && (value.channelOrigin === undefined || isChannelOrigin(value.channelOrigin))
     && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)

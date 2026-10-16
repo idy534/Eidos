@@ -997,13 +997,15 @@ class SessionRepository(Repository):
         session = session_to_legacy_dict(session_from_row(session_row))
         from eidos_runtime.persistence.automations import AutomationRepository
         automation_origins = AutomationRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
+        from eidos_runtime.persistence.channels import ChannelRepository
+        channel_origins = ChannelRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
         selected_runs = [
-            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]))
+            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]))
             for row in reversed(run_rows)
             if row["id"] in known_run_ids
         ]
         remaining_runs = {
-            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]))
+            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]))
             for row in run_rows
             if row["id"] not in known_run_ids
         }

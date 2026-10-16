@@ -1,4 +1,5 @@
 from __future__ import annotations
+from eidos_runtime.domain.channels import ChannelOrigin
 from eidos_runtime.domain.automation import AutomationOrigin
 
 from eidos_runtime.domain.session_fork import SessionForkSource, SessionForkOrigin
@@ -249,6 +250,7 @@ class McpServerRecordDto(ClosedModel):
 
 
 class RunDto(ClosedModel):
+    channel_origin: ChannelOrigin | None = Field(default=None, alias="channelOrigin")
     automation_origin: AutomationOrigin | None = Field(default=None, alias="automationOrigin")
     work_mode: Literal["execute", "plan"] = Field(default="execute", alias="workMode")
     approval_mode: Literal["manual", "auto_review", "full_access"] = Field(default="manual", alias="approvalMode")

@@ -14,6 +14,12 @@ from typing import Any, BinaryIO, TextIO
 from pydantic import BaseModel, ValidationError
 
 from eidos_runtime import __version__
+from eidos_runtime.application.channels import ChannelApplication
+from eidos_runtime.domain.channels import ChannelError
+from eidos_runtime.protocol.channels import ChannelReadRequest, ChannelSaveRequest, ChannelResponse
+from eidos_runtime.infrastructure.channel_secrets import ChannelSecrets
+from eidos_runtime.persistence.channels import ChannelRepository
+from eidos_runtime.runtime.channel_service import ChannelService
 from eidos_runtime.application.errors import (
     ApplicationError,
     ApplicationInvalidParamsError,
@@ -695,6 +701,7 @@ class RuntimeServer:
         self.model = model
         self.model_gateway: ModelGateway | None = None
         self.memory_jobs: MemoryJobs | None = None
+        self.channel_service: ChannelService | None = None
         self.automation_scheduler: AutomationScheduler | None = None
         self._frozen_model_configs: dict[str, ModelConfig] = {}
         self._frozen_model_configs_lock = threading.RLock()
@@ -828,6 +835,8 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            ("channel/read", ChannelReadRequest, ChannelResponse, lambda _id, _request: self._channel_read()),
+            ("channel/save", ChannelSaveRequest, ChannelResponse, lambda _id, request: self._channel_save(request)),
             (
                 "schedule/execute", AutomationExecuteRequest, AutomationResponse,
                 lambda _id, request: self._automation_application().execute(request.command,
@@ -1401,6 +1410,7 @@ class RuntimeServer:
             ),
         )
         draining_blocked = {
+            "channel/save",
             "schedule/execute", "schedule/runNow",
             "run/updateQueued",
             "run/deleteQueued",
@@ -1423,7 +1433,7 @@ class RuntimeServer:
             "mcp/remove",
         }
         draining_blocked.update(method for method, _request, _response in MEMORY_METHODS if method not in {"memory/list", "memory/get", "memory/export"})
-        reconfiguration_blocked = {"run/start", "schedule/execute", "schedule/runNow"}
+        reconfiguration_blocked = {"channel/save", "run/start", "schedule/execute", "schedule/runNow"}
         for name, request_type, response_type, handler in handlers:
             registry.register(
                 MethodRegistration(
@@ -1550,6 +1560,20 @@ class RuntimeServer:
     def _planning_application(self) -> PlanningApplication:
         return PlanningApplication(self.store, self.supervisor.schedule_next,
                                    self.supervisor.events.deliver_pending, self._scan_text)
+
+    def _channel_read(self) -> ChannelResponse:
+        if self.channel_service is None:
+            raise ApplicationError("INVALID_STATE", "channel service unavailable")
+        return self.channel_service.read()
+
+    def _channel_save(self, request: ChannelSaveRequest) -> ChannelResponse:
+        if self.channel_service is None:
+            raise ApplicationError("INVALID_STATE", "channel service unavailable")
+        try:
+            self.channel_service.application.save(request)
+        except (ChannelError, OSError) as error:
+            raise ApplicationError("INVALID_PARAMS", "渠道保存失败，请检查配置、模型、项目及凭证文件权限。") from error
+        return self.channel_service.read()
 
     def _automation_application(self) -> AutomationApplication:
         if self.store.automations is None:
@@ -1790,6 +1814,13 @@ class RuntimeServer:
                 with startup_phase("applications_and_handoffs"):
                     self._applications = self._build_applications()
                     self._applications.sessions.recover_handoffs()
+                applications = self._applications_or_error()
+                self.channel_service = ChannelService(ChannelApplication(ChannelRepository(self.store.database),
+                    ChannelSecrets(self.store.data_directory), applications.sessions, applications.runs, self.model_config),
+                    lambda: self.initialized and self.supervisor.control_state is RuntimeControlState.RUNNING,
+                    self.supervisor.events.deliver_pending,
+                    lambda target: self.supervisor.start_managed_task("channel-prepare", target))
+                self.supervisor.start_channel_service(self.channel_service.run)
                 application = self._automation_application()
                 self.automation_scheduler = AutomationScheduler(application.repository, self._launch_automation,
                     lambda: self.initialized and self.supervisor.control_state is RuntimeControlState.RUNNING,

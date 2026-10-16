@@ -1,4 +1,5 @@
 from __future__ import annotations
+from eidos_runtime.domain.channels import ChannelOrigin
 from eidos_runtime.domain.automation import AutomationOrigin
 
 import json
@@ -173,7 +174,7 @@ def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
     )
 
 def _run_from_row(
-    row: sqlite3.Row, *, include_user_input: bool = True, automation_origin: AutomationOrigin | None = None
+    row: sqlite3.Row, *, include_user_input: bool = True, automation_origin: AutomationOrigin | None = None, channel_origin: ChannelOrigin | None = None
 ) -> dict[str, object]:
     run: dict[str, object] = {
         "id": row["id"],
@@ -186,6 +187,8 @@ def _run_from_row(
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
+    if channel_origin is not None:
+        run["channelOrigin"] = channel_origin.to_wire_dict()
     if automation_origin is not None:
         run["automationOrigin"] = automation_origin.to_wire_dict()
     allowed_actions = {

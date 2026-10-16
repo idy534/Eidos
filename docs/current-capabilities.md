@@ -1,5 +1,7 @@
 # Eidos 当前能力
 
+Eidos 已增加钉钉应用机器人接入。用户可以在设置的“渠道”页配置连接、模型、项目、允许的用户和群。Runtime 接收群 @ 或显式开启的单聊文字消息，使用普通 Session / Run 执行，并向原会话回复。代码与模拟平台验证已覆盖收发链路；真实钉钉应用验收仍待完成。配置和边界见 [当前渠道接入](current-channels.md)。
+
 本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](current-automations.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。

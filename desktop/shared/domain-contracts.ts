@@ -267,6 +267,7 @@ export interface TerminalExitEvent {
 export type ApprovalMode = "manual" | "auto_review" | "full_access";
 
 export interface Run {
+  channelOrigin?: import("./channels.generated.js").ChannelOrigin;
   automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   inherited?: boolean;
   approvalMode?: ApprovalMode;

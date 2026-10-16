@@ -210,6 +210,8 @@ class ResponseActionRepository:
                     "INSERT OR IGNORE INTO automation_run_origins(run_id,origin_json) "
                     "SELECT ?,origin_json FROM automation_run_origins WHERE run_id=?", (run_id, source_run_id),
                 )
+            if revision_kind == "regenerate":
+                connection.execute("INSERT OR IGNORE INTO channel_run_origins SELECT ?,origin_json FROM channel_run_origins WHERE run_id=?", (run_id, source_run_id))
             invalidate_source(connection, source['session_id'], reason='revision', run_id=source_run_id)
 
     def _connection(self) -> sqlite3.Connection:

@@ -10,6 +10,7 @@
 @import "./components/WorkspaceExplorer.css";
 @import "./components/GitReview.css";
 @import "./components/settings/SettingsPage.css";
+@import "./components/settings/ChannelSettings.css";
 @import "./components/ProjectPicker.css";
 @import "./components/ProjectDialogs.css";
 @import "./components/ExecutionFeed.css";

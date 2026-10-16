@@ -248,6 +248,7 @@ class RunRepository(Repository):
                     "INSERT INTO automation_run_origins(run_id,origin_json) SELECT ?,origin_json FROM automation_run_origins WHERE run_id=?",
                     (run_id, regenerate_source_run_id),
                 )
+                connection.execute("INSERT INTO channel_run_origins SELECT ?,origin_json FROM channel_run_origins WHERE run_id=?", (run_id, regenerate_source_run_id))
                 from eidos_runtime.memory.lifecycle import invalidate_source
                 invalidate_source(connection, session_id, reason="revision", run_id=regenerate_source_run_id)
             from eidos_runtime.persistence.planning import PlanningRepository
@@ -481,7 +482,8 @@ class RunRepository(Repository):
         if row is None:
             raise ResourceNotFoundError("run not found")
         from eidos_runtime.persistence.automations import AutomationRepository
-        return _run_from_row(row, automation_origin=AutomationRepository(self.database).origin(run_id))
+        from eidos_runtime.persistence.channels import ChannelRepository
+        return _run_from_row(row, channel_origin=ChannelRepository(self.database).origin(run_id), automation_origin=AutomationRepository(self.database).origin(run_id))
 
     def read_run_extension_snapshot(self, run_id: str) -> dict[str, object]:
         """Internal immutable snapshot, including restart-only Skill metadata."""
@@ -501,6 +503,7 @@ class RunRepository(Repository):
                    JOIN runs source ON source.id = i.run_id
                    WHERE i.session_id = current.session_id AND i.kind = 'user_message'
                      AND NOT EXISTS (SELECT 1 FROM automation_run_origins a WHERE a.run_id=source.id)
+                     AND NOT EXISTS (SELECT 1 FROM channel_run_origins c WHERE c.run_id=source.id)
                      AND source.creation_seq <= current.creation_seq
                    ORDER BY i.creation_seq DESC LIMIT 32""", (run_id,),
             ).fetchall()

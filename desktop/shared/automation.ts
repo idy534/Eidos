@@ -1,11 +1,10 @@
-import { Ajv2020 } from "ajv/dist/2020.js";
-import { automationSchema } from "./automation-schema.generated.js";
-import type { AutomationExecuteRequest, AutomationResponse, AutomationHistoryRequest, AutomationRunNowRequest } from "./automation.generated.js";
+import type { ValidateFunction } from "ajv";
+import * as validators from "./automation-validators.generated.js";
+import type { AutomationExecuteRequest, AutomationResponse, AutomationHistoryRequest, AutomationRunNowRequest, AutomationOrigin } from "./automation.generated.js";
 export type * from "./automation.generated.js";
 
-const ajv = new Ajv2020({ strict: false, coerceTypes: false });
-export const isAutomationRequest = ajv.compile<AutomationExecuteRequest>({ $defs: automationSchema.$defs, $ref: "#/$defs/AutomationExecuteRequest" });
-export const isAutomationResponse = ajv.compile<AutomationResponse>({ $defs: automationSchema.$defs, $ref: "#/$defs/AutomationResponse" });
-export const isAutomationHistoryRequest = ajv.compile<AutomationHistoryRequest>({ $defs: automationSchema.$defs, $ref: "#/$defs/AutomationHistoryRequest" });
-export const isAutomationRunNowRequest = ajv.compile<AutomationRunNowRequest>({ $defs: automationSchema.$defs, $ref: "#/$defs/AutomationRunNowRequest" });
-export const isAutomationOrigin = ajv.compile({ $defs: automationSchema.$defs, $ref: "#/$defs/AutomationOrigin" });
+export const isAutomationRequest = validators.isAutomationRequest as ValidateFunction<AutomationExecuteRequest>;
+export const isAutomationResponse = validators.isAutomationResponse as ValidateFunction<AutomationResponse>;
+export const isAutomationHistoryRequest = validators.isAutomationHistoryRequest as ValidateFunction<AutomationHistoryRequest>;
+export const isAutomationRunNowRequest = validators.isAutomationRunNowRequest as ValidateFunction<AutomationRunNowRequest>;
+export const isAutomationOrigin = validators.isAutomationOrigin as ValidateFunction<AutomationOrigin>;

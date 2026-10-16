@@ -17,6 +17,7 @@ import { SkillSettings } from "./SkillSettings.js";
 import { McpSettings } from "./McpSettings.js";
 import { RuntimeSettings } from "./RuntimeSettings.js";
 import { MemorySettings } from "./MemorySettings.js";
+import { ChannelSettings } from "./ChannelSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
 import { Button } from "../Button.js";
 
@@ -104,6 +105,7 @@ export function SettingsPage({
   const mcpHasError = mcpServers.some((s) => Boolean(s.errorCode));
   const categories: SettingsCategoryItem[] = [
     { id: "model", label: "模型" },
+    { id: "channels", label: "渠道" },
     { id: "memory", label: "记忆" },
     { id: "plugins", label: "Plugins", count: plugins.length },
     { id: "skills", label: "技能", count: skills.length },
@@ -153,6 +155,7 @@ export function SettingsPage({
               <p className="error-banner" role="alert">{extensionError}</p>
             )}
 
+            {activeCategory === "channels" && (storageReady ? <ChannelSettings modelList={modelList}/> : <p role="alert">Runtime 尚未就绪。</p>)}
             {activeCategory === "memory" && storageReady && <MemorySettings sessionId={sessionId} onOpenSource={onOpenMemorySource}/>}
             {activeCategory === "memory" && !storageReady && <p role="alert">Runtime 尚未就绪。</p>}
             {activeCategory === "model" && (

@@ -548,12 +548,12 @@ export function AppShell({ runtime }: AppShellProps) {
       const isCmdOrCtrl = event.metaKey || event.ctrlKey;
       if (isCmdOrCtrl && (event.key === "b" || event.key === "B")) {
         event.preventDefault();
-        if (!settingsOpen) toggleSidebar();
+        if (!settingsOpen && !automationsOpen) toggleSidebar();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleSidebar, settingsOpen]);
+  }, [toggleSidebar, settingsOpen, automationsOpen]);
 
   // -----------------------------------------------------------------------
   // Session Selection & Creation with Model re-eval
@@ -591,20 +591,22 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }, [sessionState.snapshot?.session.id, sessionState.draft, navHistoryState.history.length, navHistoryActions]);
 
-  const canGoBack = settingsOpen || navHistoryState.canGoBack;
-  const canGoForward = !settingsOpen && navHistoryState.canGoForward;
+  const canGoBack = settingsOpen || automationsOpen || navHistoryState.canGoBack;
+  const canGoForward = !settingsOpen && !automationsOpen && navHistoryState.canGoForward;
   const handleGoBack = useCallback(() => {
     if (settingsOpen) {
       setSettingsOpen(false);
+    } else if (automationsOpen) {
+      setAutomationsOpen(false);
     } else {
       void navHistoryActions.goBack();
     }
-  }, [settingsOpen, navHistoryActions]);
+  }, [settingsOpen, automationsOpen, navHistoryActions]);
   const handleGoForward = useCallback(() => {
-    if (!settingsOpen) {
+    if (!settingsOpen && !automationsOpen) {
       void navHistoryActions.goForward();
     }
-  }, [settingsOpen, navHistoryActions]);
+  }, [settingsOpen, automationsOpen, navHistoryActions]);
 
   async function handleSelectSession(session: Session) {
     setAutomationsOpen(false);
@@ -1375,10 +1377,10 @@ export function AppShell({ runtime }: AppShellProps) {
         navHistoryActions.navigateTo(target);
         handleNavigateToSession(target);
       }}>
-    <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
+    <main className={`workbench${sidebarOpen && !settingsOpen && !automationsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}${automationsOpen ? " workbench--settings workbench--automations" : ""}`}>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <SessionSidebar
-        collapsed={!sidebarOpen || settingsOpen}
+        collapsed={!sidebarOpen || settingsOpen || automationsOpen}
         sessions={sessionState.sessions}
         projects={sessionState.projects}
         pins={sidebarPins.pins}
@@ -1438,11 +1440,16 @@ export function AppShell({ runtime }: AppShellProps) {
         )}
 
         {automationsOpen ? (
-          <AutomationPage projects={sessionState.projects} sessions={sessionState.sessions} models={modelState.list?.models ?? []}
+          <AutomationPage
+            projects={sessionState.projects}
+            sessions={sessionState.sessions}
+            models={modelState.list?.models ?? []}
             currentSessionId={isDraft ? undefined : currentSnapshot?.session.id}
             currentProjectId={currentSnapshot?.session.project?.id}
             onClose={() => setAutomationsOpen(false)}
-            onOpenSession={(id) => { setAutomationsOpen(false); handleNavigateToSession(id); }} />
+            onOpenSession={(id) => { setAutomationsOpen(false); handleNavigateToSession(id); }}
+            runtimeVersion={runtimeStatus.state === "ready" ? runtimeStatus.runtimeVersion : "0.x"}
+          />
         ) : settingsOpen ? (
           <SettingsPage
             initialCategory={settingsCategory}
@@ -1869,7 +1876,7 @@ export function AppShell({ runtime }: AppShellProps) {
       )}
       </section>
 
-      {!sidebarOpen && !settingsOpen && (
+      {!sidebarOpen && !settingsOpen && !automationsOpen && (
         <div className="collapsed-navigation-bar">
           <NavigationControls
             sidebarOpen={sidebarOpen}

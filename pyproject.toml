@@ -33,6 +33,7 @@ dependencies = [
     "semantic-version>=2.10,<3",
     "croniter>=6,<7",
     "tzdata>=2026.2",
+    "dingtalk-stream==0.24.4b1",
 ]
 
 [dependency-groups]

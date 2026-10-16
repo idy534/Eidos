@@ -43,6 +43,8 @@ pnpm start
 
 `pnpm start` 会先构建 Preload、Main 和 Renderer，再启动 Electron。源码 Runtime 使用仓库 `runtime/` 和 `.venv/bin/python`。
 
+开发者可以在 `pnpm build` 后运行 `pnpm test:renderer-startup`。该定向检查使用临时 user-data，加载生产 HTML、CSP、Renderer bundle 和 sandboxed preload，并确认 React 启动页已经挂载。该检查只模拟初始 Runtime 状态，不启动 Python Runtime，也不读取真实 Session。定时任务契约更新后，开发者需要运行 `node scripts/generate-automation-contracts.mjs`，同步 DTO、Schema 和 Ajv standalone 静态校验器。
+
 如果需要指定开发 Python，可以设置绝对路径：
 
 ```bash
@@ -480,3 +482,23 @@ pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/com
 ```
 
 人工验收应使用隔离的数据目录。用户在目录中创建定义后，可以在 `+ → Agent` 选择并查看冻结预览，再检查父模型是否通过现有工具调用对应类型。验收需要覆盖实际提供商、续派、取消、定义编辑和重启恢复。模型参数校验与脚本模型测试不能替代真实 Provider 验收。
+
+
+## 钉钉渠道定向开发与验证
+
+用户可以在“设置 → 渠道”保存企业内部应用的机器人配置。应用需要选择 Stream 接收模式。Eidos 需要一直运行并能访问钉钉公网服务。渠道不开放入站监听端口。数据与凭证文件由 Runtime 管理，用户不应手工编辑 SQLite。
+
+维护者修改渠道 DTO 后运行 `node scripts/generate-channel-contracts.mjs`。定向验证入口如下，维护者不需要因此运行 Full Suite：
+
+```bash
+uv run --locked pytest runtime/tests/test_channels.py runtime/tests/test_storage_schema.py
+pnpm build:main
+node --test dist/main/runtime-client-channels.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ChannelSettings.behavior.test.tsx
+pnpm build
+pnpm exec electron scripts/test-channels.cjs
+```
+
+`test-channels.cjs` 使用隔离的 Electron userData、模拟渠道 API 和四种窗口宽度。它不读取真实钉钉凭证，也不发送真实消息。设置 `EIDOS_CHANNEL_SCREENSHOT=/absolute/path.png` 可以保存验收截图。修改渠道服务生命周期时还需要执行既有 Electron smoke；修改 Python 生产依赖时还需要执行 Ruff、Deptry、pip-audit 和 Runtime Bundle 验证。
+
+真实钉钉应用的创建、权限、消息投递与待验收清单见 [钉钉渠道方案](docs/dingtalk-channel-design.md)。

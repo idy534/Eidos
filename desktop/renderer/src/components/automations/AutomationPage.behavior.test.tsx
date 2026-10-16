@@ -105,4 +105,34 @@ describe("local automation management", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("任务已被修改，请重新打开后再编辑");
     expect(screen.getByRole("button", { name: "暂停" })).toBeInTheDocument();
   });
+
+  it("calls onClose on '返回 Eidos' button click and Escape key", async () => {
+    const onClose = vi.fn();
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={onClose} onOpenSession={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: /检查部署/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回 Eidos" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("displays hero state with template cards and prefills form on template click", async () => {
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: /检查部署/ })).toBeInTheDocument();
+    expect(screen.getByText("安排任务")).toBeInTheDocument();
+    expect(screen.getByText("Eidos 可以帮你处理持续性任务，让你不必亲自动手。")).toBeInTheDocument();
+
+    const templateBtn = screen.getByRole("button", { name: /Agent 长期记忆研究速览/ });
+    fireEvent.click(templateBtn);
+
+    expect(screen.getByRole("textbox", { name: "名称" })).toHaveValue("Agent 长期记忆研究速览");
+    expect(screen.getByRole("textbox", { name: "任务内容" })).toHaveValue(
+      "筛选本周影响桌面 Agent 记忆架构、会话持久化和经验检索的新论文与工程实践，输出重点速览与选型建议。",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByText("安排任务")).toBeInTheDocument();
+  });
 });

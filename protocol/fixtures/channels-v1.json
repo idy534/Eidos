@@ -1,0 +1,99 @@
+{
+  "validRequests": [
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "robotCode": "robot",
+        "corpId": "corp",
+        "modelId": "deepseek-v4-flash",
+        "allowedUserIds": [
+          "user"
+        ],
+        "allowedConversationIds": [
+          "group"
+        ]
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    }
+  ],
+  "invalidRequests": [
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "robotCode": "robot",
+        "corpId": "corp",
+        "modelId": "deepseek-v4-flash",
+        "allowedUserIds": [
+          "user"
+        ],
+        "allowedConversationIds": [
+          "group"
+        ]
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "unexpected": true
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "robotCode": "robot",
+        "corpId": "corp",
+        "modelId": "deepseek-v4-flash",
+        "allowedUserIds": [
+          "user"
+        ],
+        "allowedConversationIds": [
+          "group"
+        ]
+      },
+      "expectedRevision": true,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "robotCode": "robot",
+        "corpId": "corp",
+        "modelId": "deepseek-v4-flash",
+        "allowedUserIds": [
+          "user"
+        ],
+        "allowedConversationIds": [
+          "group"
+        ],
+        "approvalMode": "full_access"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "robotCode": "robot",
+        "corpId": "corp",
+        "modelId": "deepseek-v4-flash",
+        "allowedUserIds": [],
+        "allowedConversationIds": [
+          "group"
+        ]
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    }
+  ],
+  "validResponses": [
+    {
+      "connection": null,
+      "state": "disabled",
+      "reason": null,
+      "deliveries": []
+    }
+  ]
+}

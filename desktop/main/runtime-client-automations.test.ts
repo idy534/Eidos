@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +17,33 @@ void test("automation Python schema fixtures validate at the Desktop boundary", 
   for (const request of fixture.invalidRequests) assert.equal(isAutomationRequest(request), false, JSON.stringify(request));
   for (const response of fixture.validResponses) assert.equal(isAutomationResponse(response), true);
   for (const response of fixture.invalidResponses) assert.equal(isAutomationResponse(response), false);
+});
+
+void test("automation validators load and reject invalid data when dynamic code generation is disabled", () => {
+  execFileSync(process.execPath, ["--disallow-code-generation-from-strings", "--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    import { readFileSync } from "node:fs";
+    import { isAutomationRequest, isAutomationResponse, isAutomationHistoryRequest,
+      isAutomationRunNowRequest, isAutomationOrigin } from "./dist/shared/automation.js";
+    const fixture = JSON.parse(readFileSync("protocol/fixtures/automations-v1.json", "utf8"));
+    for (const value of fixture.validRequests) assert.equal(isAutomationRequest(value), true);
+    for (const value of fixture.invalidRequests) assert.equal(isAutomationRequest(value), false);
+    for (const value of fixture.validResponses) assert.equal(isAutomationResponse(value), true);
+    for (const value of fixture.invalidResponses) assert.equal(isAutomationResponse(value), false);
+    const id = "11111111-1111-1111-1111-111111111111";
+    assert.equal(isAutomationHistoryRequest({ id }), true);
+    assert.equal(isAutomationHistoryRequest({ id, unexpected: true }), false);
+    assert.equal(isAutomationRunNowRequest({ id, operationId: id }), true);
+    assert.equal(isAutomationRunNowRequest({ id, operationId: 1 }), false);
+    const origin = { automationId: id, revision: 1, occurrenceId: id, scheduledFor: "2026-10-16T00:00:00Z" };
+    assert.equal(isAutomationOrigin(origin), true);
+    assert.equal(isAutomationOrigin({ ...origin, revision: "1" }), false);
+    const request = structuredClone(fixture.validRequests[1]);
+    request.command.name = "😀".repeat(80);
+    assert.equal(isAutomationRequest(request), true, "Unicode limits count characters rather than UTF-16 units");
+    request.command.name += "😀";
+    assert.equal(isAutomationRequest(request), false);
+  `], { cwd: root, stdio: "pipe" });
 });
 
 void test("automations persist across Runtime restart with typed reads and revision conflicts", { timeout: 30000 }, async () => {
