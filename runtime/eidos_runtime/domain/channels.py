@@ -89,5 +89,3 @@ class ChannelDelivery(EidosFrozenStrictModel):
     status: Literal["pending", "sending", "sent", "failed", "unknown"]
     reason: str | None = None
     created_at: JsonSafeInt
-
-
