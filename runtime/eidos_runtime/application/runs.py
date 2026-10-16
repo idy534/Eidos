@@ -321,9 +321,13 @@ class RunApplication:
         return AutomationModel(model_id=model_id, reasoning_selection=profile.reasoning_selection)
 
     def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None) -> RunStartOutcome:
-        if channel_message_id is not None and request.approval_mode == "full_access":
-            raise ApplicationError("INVALID_PARAMS", "渠道任务不支持完全访问模式。")
         store, runtime, environment, scan_text = self._start_dependencies()
+        if channel_message_id is not None:
+            from eidos_runtime.persistence.channels import ChannelRepository
+            snapshot = ChannelRepository(store.database).inbound(channel_message_id).connection
+            if (request.approval_mode != snapshot.config.approval_mode
+                    or request.full_access_confirmation != snapshot.full_access_confirmation):
+                raise ApplicationError("INVALID_PARAMS", "渠道任务的审批模式必须与已确认的渠道配置一致。")
         if not environment.model_is_configured():
             raise ApplicationError("INVALID_STATE", "no model is configured")
         try:

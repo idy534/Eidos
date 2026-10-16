@@ -53,7 +53,7 @@ function StyleSamples() {
       <div className="clarification-footer"><Button id="clarification-submit" variant="primary">提交回答</Button></div>
     </div>
     <div className="sample-row">
-      <button id="model-trigger" className="reasoning-selector__trigger">模型</button>
+      <button id="model-trigger" className="model-selector__trigger">模型</button>
       <button id="mode-trigger" className="approval-mode-selector__trigger">审批模式</button>
     </div>
     <ApprovalComposer run={run} approval={approval} onApprove={noop} onReject={noop} />
@@ -65,7 +65,7 @@ function StyleSamples() {
       <button id="selected-git" className="git-scope-tab" aria-selected="true">当前任务</button>
       <button id="selected-project" className="project-picker-item project-picker-item--selected">当前项目</button>
       <div id="selected-tree" className="workspace-tree-row is-selected">当前文件</div>
-      <label id="selected-model" className="reasoning-selector__model-choice is-selected">当前模型</label>
+      <label id="selected-model" className="model-selector__model-choice is-selected">当前模型</label>
       <label id="selected-mode" className="approval-mode-selector__choice is-selected">审批方式</label>
       <div className="skill-categories"><button id="selected-skill" aria-pressed="true">个人</button></div>
       <div id="selected-handoff" className="handoff-mode-card is-selected">本地执行</div>

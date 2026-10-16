@@ -8,7 +8,7 @@ import { formatContextUsage } from "../context-usage.js";
 import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
-import { ReasoningSelector } from "./ReasoningSelector.js";
+import { ModelSelector } from "./ModelSelector.js";
 
 export interface ComposerProps {
   composerMode: ComposerMode;
@@ -303,7 +303,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           if (command === "plan") onWorkModeChange?.("plan");
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
-            textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".reasoning-selector > button")?.click();
+            textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".model-selector > button")?.click();
           } else context?.settings(command);
         }}
         onSelectPlanMode={() => onWorkModeChange?.("plan")} />}
@@ -378,7 +378,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         <div className="composer-options">
           {showContextIndicator && <ContextIndicator usage={contextUsage} />}
           {modelList && modelList.models.length > 0 && (
-            <ReasoningSelector
+            <ModelSelector
               models={modelList.models}
               selectedModelId={selectedModelId}
               selection={selectedReasoning}

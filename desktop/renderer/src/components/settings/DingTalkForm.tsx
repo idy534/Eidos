@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import type { ChannelConfig, ChannelPublicConnection, ChannelSaveRequest, State } from "../../../../shared/channels.js";
 import type { ModelOption, Project } from "../../contracts.js";
+import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
 import { StatusBadge, type StatusTone } from "./StatusBadge.js";
 import { Toggle } from "./Toggle.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import { BackArrowIcon, DingTalkLogo, EyeIcon, EyeOffIcon, RefreshIcon } from "./ChannelIcons.js";
 
 export const channelStateLabels: Record<State, string> = {
@@ -52,9 +54,10 @@ export function DingTalkForm({
   const [secret, setSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [error, setError] = useState("");
+  const [showFullAccessDialog, setShowFullAccessDialog] = useState(false);
+  const [fullAccessConfirmed, setFullAccessConfirmed] = useState(false);
 
   const change = <K extends keyof ChannelConfig>(key: K, value: ChannelConfig[K]) => setConfig((old) => ({ ...old, [key]: value }));
-  const missingModel = config.modelId && !models.some((model) => model.id === config.modelId);
   const missingProject = config.projectId && !projects.some((project) => project.id === config.projectId);
 
   return (
@@ -62,7 +65,9 @@ export function DingTalkForm({
       className="channel-form"
       onSubmit={(event) => {
         event.preventDefault();
+        if (showFullAccessDialog) return;
         setError("");
+        if (!config.modelId) { setError("请选择模型。"); return; }
         if (!secret && (!connection?.hasSecret || config.clientId !== connection.config.clientId)) {
           setError("请填写 Client Secret。 ");
           return;
@@ -70,6 +75,7 @@ export function DingTalkForm({
         void onSave({
           expectedRevision: connection?.revision ?? 0,
           config,
+          ...(config.approvalMode === "full_access" && fullAccessConfirmed ? { fullAccessConfirmation: "full-access-v1" as const } : {}),
           ...(secret ? { clientSecret: secret } : {}),
         }).then((saved) => {
           if (saved) setSecret("");
@@ -201,24 +207,10 @@ export function DingTalkForm({
           </div>
           <div className="channel-form-card-body">
             <div className="channel-grid-fields">
-              <div className="channel-field">
-                <label htmlFor="field-model-id">模型</label>
-                <div className="channel-select-wrapper">
-                  <select
-                    id="field-model-id"
-                    required
-                    value={config.modelId}
-                    onChange={(event) => change("modelId", event.target.value)}
-                  >
-                    <option value="">请选择模型</option>
-                    {missingModel && <option value={config.modelId}>已保存的模型不可用</option>}
-                    {models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div className="model-selector-field"><span>模型与思考强度</span>
+                <ModelSelector models={models} selectedModelId={config.modelId} selection={config.reasoningSelection ?? undefined} disabled={busy}
+                  onModelChange={(id) => setConfig((old) => ({ ...old, modelId: id, reasoningSelection: null }))}
+                  onChange={(selection) => change("reasoningSelection", selection)} />
               </div>
 
               <div className="channel-field">
@@ -246,10 +238,16 @@ export function DingTalkForm({
                   <select
                     id="field-approval-mode"
                     value={config.approvalMode ?? "manual"}
-                    onChange={(event) => change("approvalMode", event.target.value as "manual" | "auto_review")}
+                    onChange={(event) => {
+                      const next = event.target.value as ChannelConfig["approvalMode"];
+                      if (next === config.approvalMode) return;
+                      if (next === "full_access") setShowFullAccessDialog(true);
+                      else { change("approvalMode", next); setFullAccessConfirmed(false); }
+                    }}
                   >
                     <option value="manual">请求审批</option>
                     <option value="auto_review">替我审批</option>
+                    <option value="full_access">完全访问</option>
                   </select>
                 </div>
               </div>
@@ -270,6 +268,14 @@ export function DingTalkForm({
           </Button>
         </div>
       </fieldset>
+      <ConfirmDialog open={showFullAccessDialog} title="开启完全访问？" isDestructive busy={busy}
+        confirmLabel="开启完全访问" cancelLabel="取消"
+        description={<div className="channel-full-access-warning">
+          <p>Eidos 将不再逐项请求批准</p>
+          <p>此渠道今后收到的消息都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任此渠道及可向机器人发送消息的用户时开启。</p>
+        </div>}
+        onConfirm={() => { change("approvalMode", "full_access"); setFullAccessConfirmed(true); setShowFullAccessDialog(false); }}
+        onCancel={() => setShowFullAccessDialog(false)} />
     </form>
   );
 }

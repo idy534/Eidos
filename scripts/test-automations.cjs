@@ -49,6 +49,22 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate("[...document.querySelectorAll('label')].find(label=>label.textContent.startsWith('审批模式')).querySelector('select').value"), "auto_review");
     for (const width of [1440, 1024, 768, 320]) {
       win.setSize(width, 900); await settle();
+      await evaluate("document.querySelector('.model-selector__trigger').scrollIntoView({block:'center'})"); await settle();
+      await evaluate("document.querySelector('.model-selector__trigger').click()"); await settle();
+      const picker = await evaluate(`(() => {
+        const panel=document.querySelector('.model-selector__panel'); const rect=panel.getBoundingClientRect();
+        const slider=panel.querySelector('input[type=range]');
+        return {left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,width:innerWidth,height:innerHeight,
+          logo:!!panel.querySelector('img.provider-logo'),padding:getComputedStyle(slider).padding};
+      })()`);
+      assert.ok(picker.left >= 0 && picker.right <= picker.width && picker.top >= 0 && picker.bottom <= picker.height, `Picker outside viewport at ${width}px: ${JSON.stringify(picker)}`);
+      assert.equal(picker.logo, true);
+      assert.equal(picker.padding, "0px");
+      win.webContents.focus();
+      win.webContents.sendInputEvent({type:"keyDown",keyCode:"Escape"});
+      win.webContents.sendInputEvent({type:"keyUp",keyCode:"Escape"}); await settle();
+      assert.equal(await evaluate("document.activeElement.classList.contains('model-selector__trigger')"), true);
+
       const dimensions = await evaluate("({width:document.querySelector('.automation-sidebar-col').clientWidth,scroll:document.querySelector('.automation-sidebar-col').scrollWidth})");
       assert.ok(dimensions.scroll <= dimensions.width + 1, `No horizontal overflow at ${width}px: ${JSON.stringify(dimensions)}`);
       assert.equal(await evaluate("document.querySelectorAll('.automation-task-group').length"), 2);
@@ -62,11 +78,42 @@ app.whenReady().then(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(textarea,'检查项目状态。');
       textarea.dispatchEvent(new Event('input',{bubbles:true}));
     })()`); await settle();
+    const approvalSelect = "[...document.querySelectorAll('label')].find(label=>label.textContent.startsWith('审批模式')).querySelector('select')";
+    const selectFullAccess = async () => {
+      await evaluate(`(() => { const select=${approvalSelect}; select.focus();
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,'full_access');
+        select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+      await settle();
+      await evaluate("Promise.all([...document.querySelectorAll('.modal-backdrop, .modal-dialog')].flatMap(element=>element.getAnimations()).map(animation=>animation.finished))");
+    };
+    await selectFullAccess();
+    assert.equal(await evaluate("document.querySelector('[role=alertdialog] h3').textContent"), "开启完全访问？");
+    assert.equal(await evaluate("document.querySelector('[role=alertdialog]').textContent.includes('此计划今后的每次执行')"), true);
+    assert.equal(await evaluate("document.activeElement.textContent"), "取消");
+    assert.equal(await evaluate(`${approvalSelect}.value`), "auto_review");
+    if (process.env.EIDOS_AUTOMATION_FULL_ACCESS_SCREENSHOT) await writeFile(process.env.EIDOS_AUTOMATION_FULL_ACCESS_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+    for (const width of [1440, 1024, 768, 320]) {
+      win.setSize(width, 900); await settle();
+      const bounds = await evaluate("(() => { const dialog=document.querySelector('[role=alertdialog]'); const rect=dialog.getBoundingClientRect(); return {left:rect.left,right:rect.right,width:innerWidth,scroll:dialog.scrollWidth,client:dialog.clientWidth}; })()");
+      assert.ok(bounds.left >= 0 && bounds.right <= bounds.width + 1 && bounds.scroll <= bounds.client + 1, `Confirmation fits at ${width}px: ${JSON.stringify(bounds)}`);
+    }
+    win.setSize(1100, 850); await settle();
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Escape" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Escape" }); await settle();
+    assert.equal(await evaluate("Boolean(document.querySelector('[role=alertdialog]'))"), false);
+    assert.equal(await evaluate(`${approvalSelect}.value`), "auto_review");
+    assert.equal(await evaluate(`document.activeElement===${approvalSelect}`), true);
+    await selectFullAccess();
+    await evaluate("document.querySelector('[role=alertdialog] .btn--danger').click()"); await settle();
+    assert.equal(await evaluate(`${approvalSelect}.value`), "full_access");
+    assert.equal(await evaluate("window.automationTestState.commands.some(command=>command.mode==='create')"), false);
     await evaluate("document.querySelector('button[type=submit]').click()"); await settle();
     const saved = await evaluate("window.automationTestState.commands.find(command=>command.mode==='create')");
-    assert.equal(saved.approvalMode, "auto_review");
+    assert.equal(saved.approvalMode, "full_access");
     assert.equal(saved.name, "每日检查");
     assert.equal("sessionId" in saved, false);
+    assert.equal(await evaluate("window.automationTestState.requests.find(request=>request.command.mode==='create').fullAccessConfirmation"), "full-access-v1");
+    assert.equal(await evaluate("document.querySelector('.automation-detail-view').textContent.includes('完全访问')"), true);
     win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
     win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" }); await settle();
     assert.equal(await evaluate("document.activeElement.tagName==='BUTTON' || document.activeElement.tagName==='SELECT' || document.activeElement.tagName==='INPUT'"), true);
@@ -91,7 +138,7 @@ app.whenReady().then(async () => {
     await settle();
     assert.equal(await evaluate("document.querySelector('.automation-detail-view h2')?.textContent"), "检查部署");
     assert.deepEqual(errors, []);
-    console.log("Automation UI passed: task groups, search, create, keyboard, 4 viewport sizes and Session source icon/tooltip/detail navigation");
+    console.log("Automation UI passed: task groups, search, full-access confirmation/cancel/save/focus, keyboard, 4 viewport sizes and Session source icon/tooltip/detail navigation");
   } catch (error) { exitCode = 1; console.error(error); }
   finally { clearTimeout(timeout); win?.destroy(); await server?.close(); await rm(temporaryRoot, { recursive: true, force: true }); app.exit(exitCode); }
 });

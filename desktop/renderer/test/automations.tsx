@@ -1,16 +1,16 @@
 import { createRoot } from "react-dom/client";
 import { useState } from "react";
-import type { Automation, AutomationRequest, AutomationResponse } from "../../shared/automation.js";
+import type { Automation, AutomationDesktopRequest, AutomationExecuteRequest } from "../../shared/automation.js";
 import type { ModelOption, Project, Session } from "../src/contracts.js";
 import { AutomationPage } from "../src/components/automations/AutomationPage.js";
 import { SessionSidebar } from "../src/components/SessionSidebar.js";
 import "../src/styles.css";
 
-declare global { interface Window { automationTestState: { commands: AutomationRequest[] }; } }
-window.automationTestState = { commands: [] };
+declare global { interface Window { automationTestState: { commands: AutomationDesktopRequest[]; requests: AutomationExecuteRequest[] }; } }
+window.automationTestState = { commands: [], requests: [] };
 const project = { id: "project_eidos", name: "Eidos", workspaceRoot: "/workspace/eidos", gitAvailable: true, createdAt: 1, updatedAt: 1 } as Project;
 const session = { id: "22222222-2222-2222-2222-222222222222", title: "部署检查", project, taskStatus: "completed", workspaceRoot: project.workspaceRoot, createdAt: 1, updatedAt: 1 } as Session;
-const model = { id: "model", name: "本地配置模型" } as ModelOption;
+const model = { id: "model", name: "本地配置模型", provider: "deepseek", supportsReasoning: true, reasoning: { defaultSelection: "high", selections: ["none", "high"] } } as ModelOption;
 let task: Automation = { id: "11111111-1111-1111-1111-111111111111", revision: 1, name: "检查部署", prompt: "检查项目部署状态。部署成功后报告结果，并暂停本定时任务。",
   kind: "cron", schedule: { expression: "*/10 * * * *", timezone: "Asia/Shanghai" }, status: "ACTIVE", model: { modelId: model.id }, approvalMode: "auto_review",
   target: { kind: "existing_session", sessionId: session.id, projectId: project.id, execution: { executionMode: "local" } }, createdAt: 1, updatedAt: 1 };
@@ -18,10 +18,13 @@ const waiting: Automation = { ...task, id: "33333333-3333-3333-3333-333333333333
 const paused: Automation = { ...task, id: "44444444-4444-4444-4444-444444444444", name: "暂停检查", status: "PAUSED" };
 const fired: Automation = { ...waiting, id: "55555555-5555-5555-5555-555555555555", name: "一次性提醒", status: "PAUSED", pauseReason: "one_shot_fired" };
 window.eidosRuntime = {
-  automation: async ({ command }) => {
+  automation: async (request: AutomationExecuteRequest) => {
+    const { command } = request;
     window.automationTestState.commands.push(command);
+    window.automationTestState.requests.push(request);
     if (command.mode === "preview") return { kind: "preview", nextRuns: ["2026-10-16T01:00:00Z"] };
-    if (command.mode === "create") task = { ...task, name: command.name!, prompt: command.prompt!, approvalMode: command.approvalMode!, target: { kind: "new_session", projectId: command.projectId ?? null } };
+    if (command.mode === "create") task = { ...task, name: command.name!, prompt: command.prompt!, approvalMode: command.approvalMode!,
+      fullAccessConfirmation: request.fullAccessConfirmation ?? null, target: { kind: "new_session", projectId: command.projectId ?? null } };
     const tasks = [task, waiting, paused, fired];
     return command.mode === "view" && !command.id ? { kind: "list", items: tasks.map((item) => ({ ...item,
       nextRunAt: item.status === "ACTIVE" ? item.schedule.runAt ?? "2026-10-17T01:10:00Z" : null })) }

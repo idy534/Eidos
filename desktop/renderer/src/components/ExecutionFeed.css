@@ -306,6 +306,15 @@ button.tool-file-link:focus,
 .tool-body { padding: 0.3rem 0 0.4rem 1.5rem; }
 .tool-body p { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
 .tool-body p.tool-summary--error { color: var(--danger); }
+.tool-body ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}
+.tool-body ul li {
+  margin: 0.15rem 0;
+}
 .tool-file-list {
   display: flex;
   flex-direction: column;

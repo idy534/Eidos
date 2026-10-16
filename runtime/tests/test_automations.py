@@ -19,6 +19,7 @@ from eidos_runtime.domain.automation import AutomationError, AutomationRequest, 
 from eidos_runtime.infrastructure.automation_time import future_times, normalize
 from eidos_runtime.model.client import ModelToolCall, ScriptedModel, ModelResponse
 from eidos_runtime.protocol.server import RuntimeServer
+from eidos_runtime.protocol.automations import AutomationDesktopRequest
 from eidos_runtime.runtime.automation_scheduler import AutomationScheduler
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
@@ -51,6 +52,63 @@ def create(fixture, **overrides):
     result = application.execute(AutomationRequest.model_validate(command), context_session_id=session, operation_id=str(uuid4()))
     assert result.automation
     return result.automation
+
+
+def test_desktop_full_access_requires_confirmation_and_keeps_model_input_restricted(automation):
+    store, session, app, _ = automation
+    raw = {"mode": "create", "kind": "cron", "name": "本地整理", "prompt": "整理当前目录", "model": {"modelId": "test"},
+        "schedule": {"expression": "*/10 * * * *"}, "approvalMode": "full_access"}
+    with pytest.raises(ValidationError):
+        AutomationRequest.model_validate(raw)
+    assert not automation_entry(app).validate_arguments(raw).valid
+    request = AutomationDesktopRequest.model_validate(raw)
+    with pytest.raises(AutomationError, match="由用户确认"):
+        app.execute(request, context_session_id=session, operation_id=str(uuid4()))
+    assert app.repository.list() == []
+    run, _ = store.create_run(session, "创建任务")
+    with pytest.raises(AutomationError, match="由用户确认"):
+        app.execute(request, context_session_id=session, operation_id=str(uuid4()), run_id=run["id"], full_access_confirmation="full-access-v1")
+    result = app.execute(request, context_session_id=session, operation_id=str(uuid4()), full_access_confirmation="full-access-v1")
+    task = result.automation
+    assert task.approval_mode == "full_access" and task.full_access_confirmation == "full-access-v1"
+    assert app.repository.read(task.id) == task
+    assert app.execute(AutomationRequest(mode="view", scope="all"), context_session_id=session).items[0].approval_mode == "full_access"
+    with pytest.raises(ValidationError):
+        type(task).model_validate({**task.to_wire_dict(), "fullAccessConfirmation": None})
+
+
+def test_full_access_update_preserves_confirmation_and_downgrade_clears_it(automation):
+    _store, session, app, _ = automation
+    task = create(automation)
+    request = AutomationDesktopRequest.model_validate({"mode": "update", "id": task.id, "expectedRevision": 1,
+        "changes": {"approvalMode": "full_access"}})
+    with pytest.raises(AutomationError, match="由用户确认"):
+        app.execute(request, context_session_id=session, operation_id=str(uuid4()))
+    task = app.execute(request, context_session_id=session, operation_id=str(uuid4()), full_access_confirmation="full-access-v1").automation
+    task = app.execute(AutomationDesktopRequest.model_validate({"mode": "update", "id": task.id, "expectedRevision": task.revision,
+        "changes": {"name": "用户修改名称"}}), context_session_id=session, operation_id=str(uuid4())).automation
+    assert task.approval_mode == "full_access" and task.full_access_confirmation == "full-access-v1"
+    task = app.execute(AutomationRequest.model_validate({"mode": "update", "id": task.id, "expectedRevision": task.revision,
+        "changes": {"approvalMode": "auto_review"}}), context_session_id=session, operation_id=str(uuid4())).automation
+    assert task.approval_mode == "auto_review" and task.full_access_confirmation is None
+    assert "fullAccessConfirmation" not in task.to_wire_dict()
+
+
+def test_model_cannot_repurpose_or_resume_a_full_access_plan(automation):
+    store, session, app, _ = automation
+    original = create(automation)
+    task = app.execute(AutomationDesktopRequest.model_validate({"mode": "update", "id": original.id, "expectedRevision": 1,
+        "changes": {"approvalMode": "full_access"}}), context_session_id=session, operation_id=str(uuid4()), full_access_confirmation="full-access-v1").automation
+    run, _ = store.create_run(session, "管理计划")
+    for changes in ({"prompt": "替换任务内容"}, {"status": "ACTIVE"}):
+        with pytest.raises(AutomationError, match="手动编辑"):
+            app.execute(AutomationRequest.model_validate({"mode": "update", "id": task.id, "expectedRevision": task.revision,
+                "changes": changes}), context_session_id=session, operation_id=str(uuid4()), run_id=run["id"])
+    task = app.execute(AutomationRequest.model_validate({"mode": "update", "id": task.id, "expectedRevision": task.revision,
+        "changes": {"status": "PAUSED"}}), context_session_id=session, operation_id=str(uuid4()), run_id=run["id"]).automation
+    task = app.execute(AutomationRequest.model_validate({"mode": "update", "id": task.id, "expectedRevision": task.revision,
+        "changes": {"approvalMode": "manual"}}), context_session_id=session, operation_id=str(uuid4()), run_id=run["id"]).automation
+    assert task.approval_mode == "manual" and task.full_access_confirmation is None
 
 
 @pytest.mark.parametrize("expression", ["*/5 * * * *", "*/15 * * * *", "0 */2 * * *", "0,10 * * * *", "0 9 1 * 1", "0 9 * 2 *", "0 9 * * 7", "* * * * *", "0 0 9 * * *", "0 9 L * *"])
@@ -302,7 +360,8 @@ def test_real_loop_search_then_create_and_query(automation):
 
 
 @pytest.mark.parametrize("existing", [True, False])
-def test_manual_trigger_launches_real_run_with_origin_and_default_review(tmp_path, existing):
+@pytest.mark.parametrize("approval_mode", ["auto_review", "full_access"])
+def test_manual_trigger_launches_real_run_with_origin_and_confirmed_review(tmp_path, existing, approval_mode):
     from eidos_runtime.model.config import DEFAULT_MODEL_ID
     output = io.StringIO()
     server = RuntimeServer(output, tmp_path / "data", model=ScriptedModel([ModelResponse(text="已完成检查。")]))
@@ -312,9 +371,11 @@ def test_manual_trigger_launches_real_run_with_origin_and_default_review(tmp_pat
         workspace.mkdir()
         session = server.store.create_session(str(workspace))["id"]
         app = server._automation_application()
-        task = app.execute(AutomationRequest.model_validate({"mode": "create", "kind": "cron", "name": "状态检查", "prompt": "检查当前状态。",
+        task = app.execute(AutomationDesktopRequest.model_validate({"mode": "create", "kind": "cron", "name": "状态检查", "prompt": "检查当前状态。",
             "schedule": {"expression": "*/10 * * * *"}, "model": {"modelId": DEFAULT_MODEL_ID},
-            **({"sessionId": session} if existing else {})}), context_session_id=session, operation_id=str(uuid4())).automation
+            "approvalMode": approval_mode,
+            **({"sessionId": session} if existing else {})}), context_session_id=session, operation_id=str(uuid4()),
+            full_access_confirmation="full-access-v1" if approval_mode == "full_access" else None).automation
         result = app.run_now(task.id, str(uuid4()))
         until = time.monotonic() + 10
         record = app.repository.occurrence(result.occurrence_id)
@@ -324,7 +385,7 @@ def test_manual_trigger_launches_real_run_with_origin_and_default_review(tmp_pat
         assert record.status == "submitted", record
         assert (record.session_id == session) is existing
         run = server.store.read_run(record.run_id)
-        assert run["approvalMode"] == "auto_review"
+        assert run["approvalMode"] == approval_mode
         assert app.repository.origin(run["id"]).automation_id == task.id
         displayed = server.store.read_session(record.session_id)
         if existing:
@@ -487,6 +548,9 @@ def test_automation_protocol_fixture_matches_python_models():
     SessionDto.model_validate(fixture["automationSession"])
     for request in fixture["validRequests"]:
         AutomationExecuteRequest.model_validate(request)
+        if request.get("fullAccessConfirmation"):
+            with pytest.raises(ValidationError):
+                AutomationRequest.model_validate(request["command"])
     for request in fixture["invalidRequests"]:
         with pytest.raises(ValidationError):
             AutomationExecuteRequest.model_validate(request)

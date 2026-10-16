@@ -76,6 +76,44 @@ describe("automation source and tool results", () => {
       runs={[baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} />);
     expect(screen.queryByText("执行时间预览")).not.toBeInTheDocument();
   });
+
+  it("renders the automation card with AutomationsIcon and task name", () => {
+    const item = shellItem({ kind: "tool_call", status: "completed", toolCall: {
+      ...shellItem().toolCall!, toolName: "automation", status: "completed",
+      argumentsJson: JSON.stringify({ mode: "create" }),
+      provenance: { kind: "builtin", sourceId: "eidos.automation", sourceVersion: "v1", contentHash: "hash" },
+      resultJson: JSON.stringify({
+        outcome: "success",
+        code: "ok",
+        data: {
+          response: {
+            kind: "mutation",
+            changed: true,
+            automation: {
+              id: "11111111-1111-1111-1111-111111111111",
+              revision: 1,
+              name: "每小时喝水提醒",
+              prompt: "提醒喝水。",
+              kind: "cron",
+              schedule: { expression: "0 * * * *", timezone: "Asia/Shanghai", runAt: null },
+              status: "ACTIVE",
+              model: { modelId: "test", reasoningSelection: null },
+              approvalMode: "auto_review",
+              target: { kind: "new_session", projectId: null, execution: { executionMode: "local", baseRef: null } },
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          },
+        },
+      }),
+    } });
+    const { container } = renderFeed(item);
+    const summary = container.querySelector("details.tool-item > summary");
+    expect(summary).not.toBeNull();
+    const icon = summary?.querySelector(".tool-icon svg circle");
+    expect(icon).toHaveAttribute("r", "6.2");
+    expect(summary?.querySelector(".tool-summary-text")).toHaveTextContent("已创建定时任务 · 每小时喝水提醒");
+  });
 });
 
 describe("conversation fork actions", () => {

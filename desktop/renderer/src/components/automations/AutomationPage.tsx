@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Automation, AutomationOccurrence, AutomationRequest, AutomationSummary } from "../../../../shared/automation.js";
+import type { Automation, AutomationOccurrence, AutomationDesktopRequest, AutomationSummary } from "../../../../shared/automation.js";
 import type { ModelOption, Project, Session } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { AutomationForm, type InitialAutomationValues } from "./AutomationForm.js";
@@ -312,13 +312,14 @@ export function AutomationPage({
     if (initialAutomationId) void read(initialAutomationId);
   }, [initialAutomationId, read]);
 
-  const save = async (command: AutomationRequest) => {
+  const save = async (command: AutomationDesktopRequest, confirmation?: "full-access-v1") => {
     setBusy(true);
     setError("");
     try {
       const result = await window.eidosRuntime.automation({
         operationId: crypto.randomUUID(),
         command,
+        ...(confirmation ? { fullAccessConfirmation: confirmation } : {}),
         ...(currentSessionId ? { contextSessionId: currentSessionId } : {}),
       });
       setSelected(result.automation ?? null);
@@ -583,7 +584,7 @@ export function AutomationPage({
                     <dt>模型</dt>
                     <dd>{models.find((model) => model.id === selected.model.modelId)?.name ?? selected.model.modelId}</dd>
                     <dt>审批模式</dt>
-                    <dd>{selected.approvalMode === "auto_review" ? "替我审批" : "请求审批"}</dd>
+                    <dd>{selected.approvalMode === "full_access" ? "完全访问" : selected.approvalMode === "auto_review" ? "替我审批" : "请求审批"}</dd>
                   </dl>
                 </div>
 

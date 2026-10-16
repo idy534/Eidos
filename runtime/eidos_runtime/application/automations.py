@@ -15,6 +15,7 @@ from eidos_runtime.domain.automation import (
 )
 from eidos_runtime.infrastructure.automation_time import future_times, normalize
 from eidos_runtime.persistence.automations import AutomationRepository
+from eidos_runtime.domain.approval_policy import FULL_ACCESS_WARNING_VERSION
 
 
 class AutomationApplication:
@@ -37,6 +38,7 @@ class AutomationApplication:
         operation_id: str | None = None, run_id: str | None = None,
         cancel: threading.Event | None = None,
         prepare_only: bool = False,
+        full_access_confirmation: str | None = None,
     ) -> AutomationResponse:
         origin = self.repository.origin(run_id) if run_id else None
         if run_id:
@@ -61,6 +63,8 @@ class AutomationApplication:
         if operation_id is None:
             raise AutomationError("automation_operation_conflict", "写入操作缺少请求标识。")
         wire = request.receipt_request()
+        if full_access_confirmation is not None:
+            wire["fullAccessConfirmation"] = full_access_confirmation
         if run_id and request.mode == "create":
             operation_id = str(uuid5(NAMESPACE_URL, "automation/create/" + self.repository.logical_request(run_id) + "/" + json.dumps(wire, sort_keys=True, ensure_ascii=False)))
         try:
@@ -71,6 +75,8 @@ class AutomationApplication:
             return self.detail(replay).model_copy(update={"kind": "mutation", "replayed": True})
         if request.mode == "create":
             assert request.name and request.prompt and request.kind and request.schedule
+            if request.approval_mode == "full_access":
+                self._require_full_access_confirmation(run_id, full_access_confirmation)
             default_model: AutomationModel | None = None
             if run_id:
                 profile = self.store.read_model_profile(run_id)
@@ -87,11 +93,19 @@ class AutomationApplication:
             task = Automation(id=str(uuid4()), revision=1, name=request.name.strip(), prompt=self.scan_text(request.prompt),
                 kind=request.kind, schedule=schedule, model=model, target=binding,
                 status=request.status or "ACTIVE", approval_mode=request.approval_mode or "auto_review",
+                full_access_confirmation=FULL_ACCESS_WARNING_VERSION if request.approval_mode == "full_access" else None,
                 created_from_session_id=context_session_id, created_at=now, updated_at=now)
             expected = None
         else:
             assert request.id and request.expected_revision
             current = self.repository.read(request.id)
+            if run_id and current.approval_mode == "full_access" and request.mode == "update":
+                changes = request.changes
+                assert changes is not None
+                safe_pause = changes.model_fields_set == {"status"} and changes.status == "PAUSED"
+                downgrade = changes.approval_mode in {"manual", "auto_review"}
+                if not safe_pause and not downgrade:
+                    raise AutomationError("automation_source_not_allowed", "完全访问任务请在定时任务页面手动编辑；对话中可以暂停、删除或降低审批权限。")
             if current.deleted_at is not None and request.mode == "update":
                 raise AutomationError("automation_not_found", "这个定时任务已删除，不能继续修改。")
             if current.revision != request.expected_revision:
@@ -104,7 +118,11 @@ class AutomationApplication:
             else:
                 assert request.changes
                 changes = request.changes
+                if changes.approval_mode == "full_access":
+                    self._require_full_access_confirmation(run_id, full_access_confirmation)
                 updates = changes.model_dump(exclude_unset=True, exclude={"target", "model", "schedule"})
+                if changes.approval_mode is not None:
+                    updates["full_access_confirmation"] = FULL_ACCESS_WARNING_VERSION if changes.approval_mode == "full_access" else None
                 if changes.prompt is not None:
                     updates["prompt"] = self.scan_text(changes.prompt)
                 if changes.target is not None:
@@ -136,6 +154,11 @@ class AutomationApplication:
     def _validate_future(self, kind: str, schedule: Schedule) -> None:
         if not future_times(kind, schedule, self.clock(), 1):
             raise AutomationError("automation_time_in_past", "执行时间已过去，请设置未来时间。")
+
+    @staticmethod
+    def _require_full_access_confirmation(run_id: str | None, confirmation: str | None) -> None:
+        if run_id is not None or confirmation != FULL_ACCESS_WARNING_VERSION:
+            raise AutomationError("automation_confirmation_required", "开启完全访问需要在定时任务页面由用户确认。")
 
     def _binding(self, session_id: str | None, project_id: str | None, explicit_project: bool,
                  execution: AutomationExecution | None, context_session_id: str | None) -> AutomationBinding:
@@ -180,7 +203,7 @@ class AutomationApplication:
                 continue
             if request.query and request.query.casefold() not in task.name.casefold():
                 continue
-            values = task.model_dump(exclude={"prompt", "created_from_session_id", "deleted_at", "created_at", "updated_at"})
+            values = task.model_dump(exclude={"prompt", "created_from_session_id", "deleted_at", "created_at", "updated_at", "full_access_confirmation"})
             values["next_run_at"] = self.detail(task).next_run_at
             items.append(AutomationSummary.model_validate(values))
             if len(items) >= (request.limit or 10):

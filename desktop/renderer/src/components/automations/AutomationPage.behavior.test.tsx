@@ -27,6 +27,63 @@ beforeEach(() => {
 });
 
 describe("local automation management", () => {
+  it("requires a danger confirmation before saving a new full-access plan", async () => {
+    const save = vi.fn(async (_request: unknown, _confirmation?: string) => {});
+    render(<AutomationForm projects={[]} sessions={[]} models={[model]} busy={false} onSave={save} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), { target: { value: "本地整理" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "任务内容" }), { target: { value: "整理目录。" } });
+    const approval = screen.getByRole("combobox", { name: "审批模式" });
+    fireEvent.change(approval, { target: { value: "full_access" } });
+    const dialog = screen.getByRole("alertdialog", { name: "开启完全访问？" });
+    expect(dialog).toHaveTextContent("此计划今后的每次执行");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "取消" })).toHaveFocus());
+    expect(approval).toHaveValue("auto_review");
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(approval).toHaveValue("auto_review");
+    fireEvent.change(approval, { target: { value: "full_access" } });
+    fireEvent.click(screen.getByRole("button", { name: "开启完全访问" }));
+    expect(approval).toHaveValue("full_access");
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ mode: "create", approvalMode: "full_access" }), "full-access-v1"));
+  });
+
+  it("confirms full-access edits and preserves already confirmed plans on ordinary edits", async () => {
+    const save = vi.fn(async (_request: unknown, _confirmation?: string) => {});
+    const { rerender } = render(<AutomationForm task={task} projects={[]} sessions={[session]} models={[model]} busy={false} onSave={save} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "审批模式" }), { target: { value: "full_access" } });
+    fireEvent.click(screen.getByRole("button", { name: "开启完全访问" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ mode: "update", id: task.id, expectedRevision: 2,
+      changes: { approvalMode: "full_access" } }, "full-access-v1"));
+    const confirmed: Automation = { ...task, approvalMode: "full_access", fullAccessConfirmation: "full-access-v1" };
+    save.mockClear();
+    rerender(<AutomationForm key="confirmed" task={confirmed} projects={[]} sessions={[session]} models={[model]} busy={false} onSave={save} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), { target: { value: "新名称" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith({ mode: "update", id: task.id, expectedRevision: 2, changes: { name: "新名称" } }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("cancels the full-access dialog with Escape and forwards confirmed Desktop authorization", async () => {
+    const close = vi.fn();
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} onClose={close} onOpenSession={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "名称" }), { target: { value: "本地整理" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "任务内容" }), { target: { value: "整理目录。" } });
+    const approval = screen.getByRole("combobox", { name: "审批模式" });
+    fireEvent.change(approval, { target: { value: "full_access" } });
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(close).not.toHaveBeenCalled();
+    expect(approval).toHaveValue("auto_review");
+    fireEvent.change(approval, { target: { value: "full_access" } });
+    fireEvent.click(screen.getByRole("button", { name: "开启完全访问" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+    await waitFor(() => expect(window.eidosRuntime.automation).toHaveBeenCalledWith(expect.objectContaining({
+      fullAccessConfirmation: "full-access-v1", command: expect.objectContaining({ mode: "create", approvalMode: "full_access" }),
+    })));
+  });
   it("opens a source task directly even when it is outside the loaded task page", async () => {
     vi.mocked(window.eidosRuntime.automation).mockImplementation(async ({ command }) => command.id
       ? { kind: "detail", automation: task } : { kind: "list", items: [] });
@@ -155,7 +212,8 @@ describe("local automation management", () => {
 
   it("offers only configured reasoning levels and disables changes while saving", () => {
     const { rerender } = render(<AutomationForm projects={[]} sessions={[]} models={[model]} busy={false} onSave={async () => {}} />);
-    expect(screen.getByRole("combobox", { name: "思考强度" }).querySelectorAll("option")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: /本地配置模型.*思考强度/ }));
+    expect(screen.getByRole("slider", { name: "本地配置模型 思考强度" })).toHaveAttribute("max", "1");
     expect(screen.queryByRole("option", { name: "max" })).not.toBeInTheDocument();
     rerender(<AutomationForm projects={[]} sessions={[]} models={[model]} busy onSave={async () => {}} />);
     expect(screen.getByRole("textbox", { name: "名称" })).toBeDisabled();
@@ -277,4 +335,15 @@ describe("local automation management", () => {
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(screen.getByText("安排任务")).toBeInTheDocument();
   });
+
+  it("saves the reasoning selected through the shared picker", async () => {
+    const save = vi.fn(async (_request: unknown) => {});
+    render(<AutomationForm task={task} projects={[]} sessions={[session]} models={[model]} busy={false} onSave={save} />);
+    fireEvent.click(screen.getByRole("button", { name: /本地配置模型.*思考强度/ }));
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "0" } });
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ changes: { model: { modelId: "model", reasoningSelection: "none" } } })));
+  });
+
 });

@@ -16,7 +16,7 @@ window.eidosRuntime = { readChannel: async () => response, listProjects: async (
     return response;
   },
 } as unknown as typeof window.eidosRuntime;
-const model = { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" } as ModelOption;
+const model = { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", provider: "deepseek", supportsReasoning: true, reasoning: { defaultSelection: "high", selections: ["none", "high"] } } as ModelOption;
 const noop = async () => {};
 createRoot(document.getElementById("root")!).render(<SettingsPage initialCategory="channels"
   runtime={{ state: "ready", protocolVersion: 1, runtimeVersion: "0.5.4", runShell: true, modelConfigured: true, storageHealth: { state: "ready" } }}

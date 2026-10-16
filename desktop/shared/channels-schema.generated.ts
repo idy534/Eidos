@@ -21,6 +21,26 @@ export const channelSchema = {
           "title": "Modelid",
           "type": "string"
         },
+        "reasoningSelection": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "thinking",
+                "low",
+                "medium",
+                "high",
+                "max"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoningselection"
+        },
         "projectId": {
           "anyOf": [
             {
@@ -38,7 +58,8 @@ export const channelSchema = {
           "default": "manual",
           "enum": [
             "manual",
-            "auto_review"
+            "auto_review",
+            "full_access"
           ],
           "title": "Approvalmode",
           "type": "string"
@@ -251,6 +272,19 @@ export const channelSchema = {
           ],
           "default": null,
           "title": "Clientsecret"
+        },
+        "fullAccessConfirmation": {
+          "anyOf": [
+            {
+              "const": "full-access-v1",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fullaccessconfirmation"
         }
       },
       "required": [

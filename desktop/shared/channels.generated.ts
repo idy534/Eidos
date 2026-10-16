@@ -3,10 +3,12 @@
 export type Enabled = boolean;
 export type Clientid = string;
 export type Modelid = string;
+export type Reasoningselection = ("none" | "thinking" | "low" | "medium" | "high" | "max") | null;
 export type Projectid = string | null;
-export type Approvalmode = "manual" | "auto_review";
+export type Approvalmode = "manual" | "auto_review" | "full_access";
 export type Expectedrevision = number;
 export type Clientsecret = string | null;
+export type Fullaccessconfirmation = "full-access-v1" | null;
 export type Id = string;
 export type Revision = number;
 export type Hassecret = boolean;
@@ -39,11 +41,13 @@ export interface ChannelSaveRequest {
   config: ChannelConfig;
   expectedRevision: Expectedrevision;
   clientSecret?: Clientsecret;
+  fullAccessConfirmation?: Fullaccessconfirmation;
 }
 export interface ChannelConfig {
   enabled?: Enabled;
   clientId: Clientid;
   modelId: Modelid;
+  reasoningSelection?: Reasoningselection;
   projectId?: Projectid;
   approvalMode?: Approvalmode;
 }

@@ -344,6 +344,7 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   AUTOMATION_OPERATION_CONFLICT: "请求标识已使用，请重新操作。",
   AUTOMATION_VERIFICATION_REQUIRED: "上次执行的操作结果需要核验，请先查看原执行记录。",
   AUTOMATION_CANCELED: "操作已停止，计划没有修改。",
+  AUTOMATION_CONFIRMATION_REQUIRED: "开启完全访问需要在定时任务页面由用户确认。",
   AUTOMATION_SESSION_BUSY: "目标会话忙碌，本次执行已跳过。",
   SKILL_CATALOG_UNAVAILABLE: "技能列表暂时无法读取，请检查技能文件后重试。",
   SKILL_UNAVAILABLE: "技能已不存在或内容无法读取，请重新打开设置。",

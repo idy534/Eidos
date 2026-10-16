@@ -1,8 +1,8 @@
 # 执行门控清单
 
-钉钉渠道增加组织、机器人、用户与群的允许列表检查，以及配置版本检查。渠道 Run 不支持 full_access。渠道输入不进入本机授权证据。渠道服务复用既有 Supervisor、普通 Run 和执行权限规则，没有增加跨 Session 的执行配额。
+钉钉渠道默认支持单聊，群聊要求 @ 机器人；系统不再设置用户和群白名单。渠道保留配置版本检查。用户可以在 Desktop 渠道设置中选择 full_access，经危险弹窗确认并保存后，Runtime 持久保存确认版本，后续 Run 只能继承冻结配置中的审批模式和确认。渠道输入不进入本机授权证据，也不能自行切换模式。渠道服务复用既有 Supervisor、普通 Run 和执行权限规则，没有增加跨 Session 的执行配额。
 
-定时任务保留同计划不重叠、原 Session 忙碌跳过、最终入队版本检查和所属计划核验暂停，不增加全局配额或共享 Workspace 锁。automation 的 view / preview 使用只读类别；写模式继续经过 Durable Intent。默认 auto_review 只配置未来 Run，不切换当前 Run。具体规则见 [当前本地定时任务](current-automations.md)。
+定时任务保留同计划不重叠、原 Session 忙碌跳过、最终入队版本检查和所属计划核验暂停，不增加全局配额或共享 Workspace 锁。automation 的 view / preview 使用只读类别；写模式继续经过 Durable Intent。默认 auto_review 只配置未来 Run，不切换当前 Run。用户在管理页面手动开启 full_access 时需要危险弹窗确认，Runtime 保存确认版本，并在每次接纳 Run 时使用既有的确认校验。模型工具不能开启该模式，也不能修改或重新启用保持完全访问的计划。具体规则见 [当前本地定时任务](current-automations.md)。
 
 本文列出基于 main 的整体整改决策。移除只约束调用形式、输入编辑或无关任务的门控；不能证明结果、授权、版本或所有权的操作继续受约束。检查尽量由 Runtime 处理，不把内部恢复步骤强加给模型或用户。
 

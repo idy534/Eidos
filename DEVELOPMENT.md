@@ -499,6 +499,6 @@ pnpm build
 pnpm exec electron scripts/test-channels.cjs
 ```
 
-`test-channels.cjs` 使用隔离的 Electron userData、模拟渠道 API 和四种窗口宽度。它不读取真实钉钉凭证，也不发送真实消息。设置 `EIDOS_CHANNEL_SCREENSHOT=/absolute/path.png` 可以保存验收截图。修改渠道服务生命周期时还需要执行既有 Electron smoke；修改 Python 生产依赖时还需要执行 Ruff、Deptry、pip-audit 和 Runtime Bundle 验证。
+`test-channels.cjs` 使用隔离的 Electron userData、模拟渠道 API 和四种窗口宽度。它检查保存、键盘操作和完全访问的二次确认，不读取真实钉钉凭证，也不发送真实消息。设置 `EIDOS_CHANNEL_SCREENSHOT=/absolute/path.png` 可以保存页面截图，设置 `EIDOS_CHANNEL_FULL_ACCESS_SCREENSHOT=/absolute/path.png` 可以保存完全访问确认截图。修改渠道服务生命周期时还需要执行既有 Electron smoke；修改 Python 生产依赖时还需要执行 Ruff、Deptry、pip-audit 和 Runtime Bundle 验证。
 
 真实钉钉应用的创建、权限、消息投递与待验收清单见 [钉钉渠道方案](docs/dingtalk-channel-design.md)。

@@ -26,7 +26,7 @@ void test("channel configuration is redacted, revision guarded and survives Runt
     await client.initialize();
     assert.equal((await client.readChannel()).connection ?? null, null);
     const request = { expectedRevision: 0, clientSecret: "sample-channel-secret", config: {
-      enabled: false, clientId: "app", modelId: "deepseek-v4-flash",
+      enabled: false, clientId: "app", modelId: "deepseek-v4-flash", reasoningSelection: "high" as const,
     } };
     const saved = await client.saveChannel(request);
     assert.equal(saved.connection?.revision, 1);
@@ -35,13 +35,25 @@ void test("channel configuration is redacted, revision guarded and survives Runt
     assert.equal(Object.hasOwn(saved.connection?.config ?? {}, "corpId"), false);
     assert.equal(JSON.stringify(saved).includes("sample-channel-secret"), false);
     await assert.rejects(client.saveChannel(request), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
+    const full = { expectedRevision: 1, config: { ...request.config, approvalMode: "full_access" as const } };
+    await assert.rejects(client.saveChannel(full), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
+    const confirmed = await client.saveChannel({ ...full, fullAccessConfirmation: "full-access-v1" });
+    assert.equal(confirmed.connection?.revision, 2);
+    assert.equal(confirmed.connection?.config.approvalMode, "full_access");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
     client = new RuntimeClient(options);
     await client.initialize();
     const restored = await client.readChannel();
-    assert.equal(restored.connection?.revision, 1);
+    assert.equal(restored.connection?.revision, 2);
     assert.equal(restored.connection?.config.clientId, "app");
+    assert.equal(restored.connection?.config.approvalMode, "full_access");
     assert.equal(restored.state, "disabled");
+    assert.equal(restored.connection?.config.reasoningSelection, "high");
+    const retained = await client.saveChannel({ ...full, expectedRevision: 2 });
+    assert.equal(retained.connection?.revision, 3);
+    await client.saveChannel({ expectedRevision: 3, config: { ...request.config, approvalMode: "manual" } });
+    await assert.rejects(client.saveChannel({ ...full, expectedRevision: 4 }),
+      (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
   } finally {
     client.terminate();

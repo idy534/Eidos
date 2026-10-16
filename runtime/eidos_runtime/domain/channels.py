@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
+from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
 
@@ -16,8 +17,9 @@ class ChannelConfig(EidosFrozenStrictModel):
     enabled: bool = False
     client_id: str = Field(min_length=1, max_length=256)
     model_id: str = Field(min_length=1, max_length=256)
+    reasoning_selection: Literal["none", "thinking", "low", "medium", "high", "max"] | None = None
     project_id: str | None = Field(default=None, max_length=256)
-    approval_mode: Literal["manual", "auto_review"] = "manual"
+    approval_mode: ApprovalMode = "manual"
 
     @field_validator("client_id", "model_id")
     @classmethod
@@ -32,6 +34,13 @@ class ChannelConnection(EidosFrozenStrictModel):
     revision: JsonSafeInt = Field(ge=1)
     config: ChannelConfig
     secret_ref: str
+    full_access_confirmation: Literal["full-access-v1"] | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def validate_full_access(self) -> ChannelConnection:
+        if (self.config.approval_mode == "full_access") != (self.full_access_confirmation == FULL_ACCESS_WARNING_VERSION):
+            raise ValueError("完全访问渠道需要保存用户确认。")
+        return self
 
 
 class ChannelMessage(EidosFrozenStrictModel):

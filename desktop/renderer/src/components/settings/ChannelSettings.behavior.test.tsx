@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { EidosRuntimeAPI, ModelOption } from "../../contracts.js";
 import type { ChannelPublicConnection } from "../../../../shared/channels.js";
 import { ChannelSettings } from "./ChannelSettings.js";
+import minimaxLogo from "../../assets/providers/minimax.svg";
 import { DingTalkForm } from "./DingTalkForm.js";
 
 const model: ModelOption = {
@@ -57,7 +58,7 @@ it("loads connection state, navigates to dingtalk details, masks credentials and
   expect(screen.getByLabelText("Client Secret")).toHaveValue("");
   expect(screen.getByText("发送结果未知")).toBeInTheDocument();
   expect(screen.getByText("网络中断，结果未知。")).toBeInTheDocument();
-  expect(screen.queryByRole("option", { name: "完全访问" })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "完全访问" })).toBeInTheDocument();
 
   // 点击返回按钮回到接入渠道列表页
   await user.click(screen.getByRole("button", { name: "接入渠道" }));
@@ -180,6 +181,51 @@ it("creates a connection with just app credentials and the default model and per
   expect(screen.getByLabelText("Client Secret")).toHaveValue("");
 });
 
+it("requires a danger confirmation before selecting full access and saves its confirmation", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn().mockResolvedValue(true);
+  render(<DingTalkForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
+  const approval = screen.getByRole("combobox", { name: "审批模式" });
+  await user.selectOptions(approval, "full_access");
+  expect(screen.getByRole("alertdialog", { name: "开启完全访问？" })).toBeInTheDocument();
+  expect(screen.getByText(/此渠道今后收到的消息/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "开启完全访问" })).toHaveClass("btn--danger");
+  await waitFor(() => expect(screen.getByRole("button", { name: "取消" })).toHaveFocus());
+  expect(approval).toHaveValue("manual");
+  fireEvent.submit(screen.getByRole("button", { name: "保存渠道配置" }).closest("form")!);
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "取消" }));
+  expect(approval).toHaveValue("manual");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  await user.selectOptions(approval, "full_access");
+  await user.click(screen.getByRole("button", { name: "开启完全访问" }));
+  expect(approval).toHaveValue("full_access");
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ fullAccessConfirmation: "full-access-v1",
+    config: expect.objectContaining({ approvalMode: "full_access" }) }));
+  await user.selectOptions(approval, "auto_review");
+  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  expect(save.mock.calls[1]![0]).not.toHaveProperty("fullAccessConfirmation");
+});
+
+it("retains saved full access and requires confirmation again after changing to another mode", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn().mockResolvedValue(true);
+  render(<DingTalkForm connection={{ ...connection, config: { ...connection.config, approvalMode: "full_access" } }}
+    models={[model]} projects={[]} busy={false} onSave={save} />);
+  const approval = screen.getByRole("combobox", { name: "审批模式" });
+  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(save.mock.calls[0]![0]).not.toHaveProperty("fullAccessConfirmation");
+  await user.selectOptions(approval, "auto_review");
+  await user.selectOptions(approval, "full_access");
+  expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(approval).toHaveValue("auto_review");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+});
+
 it("requires a fresh secret when changing the app and preserves it after failure", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(false);
@@ -291,4 +337,22 @@ it("clamps long deliveries to 2 lines and opens modal with rich markdown on clic
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-
+it("saves reasoning, switches provider logos and clears the old model reasoning", async () => {
+  const save = vi.fn().mockResolvedValue(true);
+  const reasoningModel: ModelOption = { ...model, supportsReasoning: true, reasoning: { defaultSelection: "high", selections: ["none", "high"] } };
+  const otherModel: ModelOption = { ...model, id: "minimax", name: "MiniMax", provider: "minimax", supportsReasoning: true, reasoning: { defaultSelection: "thinking", selections: ["none", "thinking"] } };
+  render(<DingTalkForm connection={connection} models={[reasoningModel, otherModel]} projects={[]} busy={false} onSave={save} />);
+  const trigger = screen.getByRole("button", { name: /DeepSeek.*思考强度/ });
+  expect(trigger.querySelector("img")).toBeInTheDocument();
+  fireEvent.click(trigger);
+  fireEvent.change(screen.getByRole("slider", { name: "DeepSeek 思考强度" }), { target: { value: "0" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ reasoningSelection: "none" }) })));
+  fireEvent.click(screen.getByRole("button", { name: /切换模型/ }));
+  fireEvent.click(screen.getByRole("radio", { name: "MiniMax，MiniMax" }));
+  expect(screen.getByRole("slider", { name: "MiniMax 思考强度" })).toHaveAttribute("aria-valuetext", "启用思考");
+  const nextTrigger = screen.getByRole("button", { name: /MiniMax，MiniMax.*思考强度/ });
+  expect(nextTrigger.querySelector("img")?.getAttribute("src")).toBe(minimaxLogo);
+  fireEvent.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ config: expect.objectContaining({ modelId: "minimax", reasoningSelection: null }) })));
+});

@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.models.base import EidosFrozenStrictModel
+from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
 
 Identifier = Annotated[str, Field(min_length=36, max_length=36)]
 ProjectIdentifier = Annotated[str, Field(min_length=1, max_length=128)]
@@ -167,13 +168,20 @@ class Automation(EidosFrozenStrictModel):
     schedule: Schedule
     status: Literal["ACTIVE", "PAUSED"] = "ACTIVE"
     model: AutomationModel
-    approval_mode: Literal["manual", "auto_review"] = "auto_review"
+    approval_mode: ApprovalMode = "auto_review"
+    full_access_confirmation: Literal["full-access-v1"] | None = Field(default=None, exclude_if=lambda value: value is None)
     target: AutomationBinding
     created_from_session_id: str | None = None
     deleted_at: int | None = None
     pause_reason: str | None = None
     created_at: int
     updated_at: int
+
+    @model_validator(mode="after")
+    def validate_full_access(self) -> Automation:
+        if (self.approval_mode == "full_access") != (self.full_access_confirmation == FULL_ACCESS_WARNING_VERSION):
+            raise ValueError("完全访问计划需要保存用户确认。")
+        return self
 
     def session_title(self) -> str:
         title = self.name[:60]
@@ -213,7 +221,7 @@ class AutomationSummary(EidosFrozenStrictModel):
     schedule: Schedule
     target: AutomationBinding
     model: AutomationModel
-    approval_mode: Literal["manual", "auto_review"]
+    approval_mode: ApprovalMode
     next_run_at: str | None = None
     pause_reason: str | None = None
 

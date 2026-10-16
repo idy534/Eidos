@@ -116,3 +116,51 @@ void test("automations persist across Runtime restart with typed reads and revis
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
   } finally { client.terminate(); await client.waitForExit().catch(() => undefined); await rm(temporary, { recursive: true, force: true }); }
 });
+
+void test("Desktop-confirmed automation keeps full access across restart and launches an ordinary Run", { timeout: 30000 }, async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "eidos-automation-full-access-"));
+  const options = { pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory: path.join(temporary, "data"),
+    environment: { EIDOS_FAKE_MODEL: "write", EIDOS_PROJECTLESS_ROOT: path.join(temporary, "workspaces") } };
+  let client = new RuntimeClient(options);
+  try {
+    await client.initialize();
+    const command = { mode: "create", kind: "cron", name: "本地整理", prompt: "整理目录。", projectId: null,
+      schedule: { expression: "*/10 * * * *", timezone: "Asia/Shanghai" }, model: { modelId: "deepseek-v4-flash" }, approvalMode: "full_access" } as const;
+    await assert.rejects(client.automation({ operationId: crypto.randomUUID(), command }),
+      (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "AUTOMATION_CONFIRMATION_REQUIRED");
+    const created = await client.automation({ operationId: crypto.randomUUID(), command, fullAccessConfirmation: "full-access-v1" });
+    const id = created.automation!.id;
+    assert.equal(created.automation?.fullAccessConfirmation, "full-access-v1");
+    await client.shutdown(); assert.equal(await client.waitForExit(), 0);
+    client = new RuntimeClient(options); await client.initialize();
+    const restored = await client.automation({ command: { mode: "view", id } });
+    assert.equal(restored.automation?.approvalMode, "full_access");
+    assert.equal(restored.automation?.fullAccessConfirmation, "full-access-v1");
+    const list = await client.automation({ command: { mode: "view", scope: "all" } });
+    assert.equal(list.items?.find((task) => task.id === id)?.approvalMode, "full_access");
+    await client.automationRunNow({ id, operationId: crypto.randomUUID() });
+    const until = Date.now() + 10000;
+    let history = await client.automationHistory({ id });
+    while (history.occurrences?.[0]?.runStatus !== "succeeded" && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      history = await client.automationHistory({ id });
+    }
+    const occurrence = history.occurrences![0]!;
+    assert.equal(occurrence.runStatus, "succeeded");
+    const snapshot = await client.readSession(occurrence.sessionId!);
+    assert.equal(snapshot.runs.find((run) => run.id === occurrence.runId)?.approvalMode, "full_access");
+    const updated = await client.automation({ operationId: crypto.randomUUID(), command: {
+      mode: "update", id, expectedRevision: 1, changes: { approvalMode: "manual" },
+    } });
+    assert.equal(updated.automation?.fullAccessConfirmation ?? null, null);
+    await assert.rejects(client.automation({ operationId: crypto.randomUUID(), command: {
+      mode: "update", id, expectedRevision: 2, changes: { approvalMode: "full_access" },
+    } }), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "AUTOMATION_CONFIRMATION_REQUIRED");
+    const confirmed = await client.automation({ operationId: crypto.randomUUID(), fullAccessConfirmation: "full-access-v1", command: {
+      mode: "update", id, expectedRevision: 2, changes: { approvalMode: "full_access" },
+    } });
+    assert.equal(confirmed.automation?.approvalMode, "full_access");
+    assert.equal(confirmed.automation?.fullAccessConfirmation, "full-access-v1");
+    await client.shutdown(); assert.equal(await client.waitForExit(), 0);
+  } finally { client.terminate(); await client.waitForExit().catch(() => undefined); await rm(temporary, { recursive: true, force: true }); }
+});

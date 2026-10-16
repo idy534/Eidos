@@ -1737,6 +1737,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     onOpenPlan={handleOpenPlan}
                     workspaceRoot={currentSnapshot.session.workspaceRoot}
                     onBackToList={openAgentList}
+                    expanded={dockExpanded}
                   />;
                   if (tab.kind === "text-review" && reviewRequest) return <TextReviewPanel
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}

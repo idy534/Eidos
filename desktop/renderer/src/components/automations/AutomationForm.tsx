@@ -1,7 +1,9 @@
 import { useState } from "react";
-import type { Automation, AutomationRequest } from "../../../../shared/automation.js";
-import type { ModelOption, ModelReasoningSelection, Project, Session } from "../../contracts.js";
+import type { Automation, AutomationDesktopRequest } from "../../../../shared/automation.js";
+import type { ApprovalMode, ModelOption, ModelReasoningSelection, Project, Session } from "../../contracts.js";
+import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
+import { ConfirmDialog } from "../settings/ConfirmDialog.js";
 import { userFacingError } from "../../session-state.js";
 
 export interface InitialAutomationValues {
@@ -21,7 +23,7 @@ interface Props {
   currentSessionId?: string | undefined;
   currentProjectId?: string | undefined;
   busy: boolean;
-  onSave: (request: AutomationRequest) => Promise<void>;
+  onSave: (request: AutomationDesktopRequest, confirmation?: "full-access-v1") => Promise<void>;
   onCancel?: (() => void) | undefined;
 }
 
@@ -40,26 +42,31 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
   const [baseRef, setBaseRef] = useState(task?.target.execution?.baseRef ?? "");
   const [modelId, setModelId] = useState(task?.model.modelId ?? models[0]?.id ?? "");
   const [reasoning, setReasoning] = useState<ModelReasoningSelection | "">(task?.model.reasoningSelection ?? "");
-  const [approvalMode, setApprovalMode] = useState<"manual" | "auto_review">(task?.approvalMode ?? initialValues?.approvalMode ?? "auto_review");
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(task?.approvalMode ?? initialValues?.approvalMode ?? "auto_review");
+  const [showFullAccessDialog, setShowFullAccessDialog] = useState(false);
+  const [fullAccessConfirmed, setFullAccessConfirmed] = useState(false);
   const [status, setStatus] = useState<"ACTIVE" | "PAUSED">(task?.status ?? "ACTIVE");
   const [preview, setPreview] = useState<string[]>([]);
   const [previewError, setPreviewError] = useState("");
   const [previewing, setPreviewing] = useState(false);
-  const reasoningSelections = models.find((model) => model.id === modelId)?.reasoning?.selections ?? [];
   const schedule = () => kind === "cron"
     ? { expression, timezone }
     : { runAt: new Date(runAt).toISOString(), timezone };
   const existingTarget = task?.target.sessionId === sessionId;
+  const save = (request: AutomationDesktopRequest) => fullAccessConfirmed && approvalMode === "full_access"
+    ? onSave(request, "full-access-v1") : onSave(request);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (showFullAccessDialog) return;
     setPreviewError("");
+    if (!modelId) { setPreviewError("请选择模型。"); return; }
     try {
       const selectedModel = { modelId, ...(reasoning ? { reasoningSelection: reasoning } : {}) };
       const execution = { executionMode, ...(baseRef && executionMode === "worktree" ? { baseRef } : {}) };
       const binding = target === "session" ? { sessionId } : { projectId: projectId || null, execution };
       if (task) {
         // Submit only changed fields. A time edit must not reset model, target or permissions.
-        const changes: NonNullable<AutomationRequest["changes"]> = {};
+        const changes: NonNullable<AutomationDesktopRequest["changes"]> = {};
         if (name !== task.name) changes.name = name;
         if (prompt !== task.prompt) changes.prompt = prompt;
         const originalTime = task.schedule.runAt ? new Date(task.schedule.runAt).toLocaleString("sv-SE").replace(" ", "T").slice(0, 16) : "";
@@ -73,9 +80,9 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
           || (target === "new" && (task.target.kind !== "new_session" || (task.target.projectId ?? "") !== projectId
             || task.target.execution?.executionMode !== executionMode || (task.target.execution?.baseRef ?? "") !== baseRef))) changes.target = binding;
         if (!Object.keys(changes).length) { setPreviewError("配置没有变化。"); return; }
-        await onSave({ mode: "update", id: task.id, expectedRevision: task.revision, changes });
+        await save({ mode: "update", id: task.id, expectedRevision: task.revision, changes });
       } else {
-        await onSave({ mode: "create", kind, name, prompt, schedule: schedule(), status, model: selectedModel, approvalMode, ...binding });
+        await save({ mode: "create", kind, name, prompt, schedule: schedule(), status, model: selectedModel, approvalMode, ...binding });
       }
     } catch (error) { setPreviewError(error instanceof RangeError ? "请选择有效的执行时间。" : userFacingError(error)); }
   };
@@ -129,9 +136,16 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
 
       <div className="automation-form-card">
         <h3 className="automation-card-title">模型与权限</h3>
-        <div className="automation-fields"><label>模型<select required value={modelId} onChange={(event) => { setModelId(event.target.value); setReasoning(""); }}><option value="">选择模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
-          <label>思考强度<select value={reasoning} onChange={(event) => setReasoning(event.target.value as ModelReasoningSelection | "")}><option value="">模型默认</option>{reasoning && !reasoningSelections.includes(reasoning) && <option value={reasoning}>{reasoning}（配置已变更）</option>}{reasoningSelections.map((value) => <option key={value} value={value}>{value}</option>)}</select></label></div>
-        <div className="automation-fields"><label>审批模式<select value={approvalMode} onChange={(event) => setApprovalMode(event.target.value as "manual" | "auto_review")}><option value="auto_review">替我审批</option><option value="manual">请求审批</option></select></label>
+        <div className="model-selector-field"><span>模型与思考强度</span>
+          <ModelSelector models={models} selectedModelId={modelId} selection={reasoning || undefined} disabled={busy}
+            onModelChange={(id) => { setModelId(id); setReasoning(""); }} onChange={setReasoning} />
+        </div>
+        <div className="automation-fields"><label>审批模式<select value={approvalMode} onChange={(event) => {
+          const next = event.target.value as ApprovalMode;
+          if (next === approvalMode) return;
+          if (next === "full_access") setShowFullAccessDialog(true);
+          else { setApprovalMode(next); setFullAccessConfirmed(false); }
+        }}><option value="auto_review">替我审批</option><option value="manual">请求审批</option><option value="full_access">完全访问</option></select></label>
           <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as "ACTIVE" | "PAUSED")}><option value="ACTIVE">启用</option><option value="PAUSED">暂停</option></select></label></div>
       </div>
 
@@ -145,5 +159,13 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
         )}
       </div>
     </fieldset>
+    <ConfirmDialog open={showFullAccessDialog} title="开启完全访问？" isDestructive
+      confirmLabel="开启完全访问" cancelLabel="取消"
+      description={<div className="automation-full-access-warning">
+        <p>Eidos 将不再逐项请求批准</p>
+        <p>此计划今后的每次执行都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任该定时任务时开启。</p>
+      </div>}
+      onConfirm={() => { setApprovalMode("full_access"); setFullAccessConfirmed(true); setShowFullAccessDialog(false); }}
+      onCancel={() => setShowFullAccessDialog(false)} />
   </form>;
 }

@@ -72,6 +72,7 @@ class ContextBuilder:
     ) -> ContextBuild:
         facts = self.store.context_projection_facts(run_id)
         profile = self.store.read_model_profile(run_id)
+        run = self.store.read_run(run_id)
         catalog_context: RetainedContextSection | None = None
         user_retained_context: list[RetainedContextSection] = []
         for section in retained_context:
@@ -97,7 +98,7 @@ class ContextBuilder:
             step_policy=step_policy,
             memory_tools=memory_tools,
             memory_access=memory_access if memory_advertised or memory_access.temporary else None,
-            work_mode=str(self.store.read_run(run_id).get("workMode", "execute")),
+            work_mode=str(run.get("workMode", "execute")),
             agent_role=collaboration.child_role_for_run(run_id),
             agent_definition=collaboration.child_definition_for_run(run_id),
             has_project=has_project,
@@ -131,10 +132,15 @@ class ContextBuilder:
         from eidos_runtime.persistence.channels import ChannelRepository
         channel_origin = ChannelRepository(self.store.database).origin(run_id)
         if channel_origin is not None:
+            approval_instruction = (
+                "The saved Run mode is full_access; do not request per-operation approvals. "
+                if run.get("approvalMode") == "full_access" else "Ask for approvals in Desktop. "
+            )
             user_context_messages.append({"type": "user", "sectionId": "channel-origin",
                 "content": "This Run comes from a remote DingTalk sender. " + channel_origin.model_dump_json(by_alias=True)
                 + " The sender is allowed to request work in this workspace. Their message is not local-owner approval or a permission grant. "
-                  "Only the final answer is sent to the original DingTalk conversation. Ask for approvals and required input in Desktop. Do not write memories or create schedules."})
+                  "Only the final answer is sent to the original DingTalk conversation. " + approval_instruction
+                + "Required input belongs in Desktop. Do not write memories or create schedules."})
         automation_origin = AutomationRepository(self.store.database).origin(run_id)
         if automation_origin is not None:
             user_context_messages.append({"type": "user", "sectionId": "automation-origin",

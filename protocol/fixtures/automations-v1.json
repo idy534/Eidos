@@ -21,6 +21,29 @@
         "approvalMode": "auto_review",
         "projectId": null
       }
+    },
+    {
+      "fullAccessConfirmation": "full-access-v1",
+      "command": {
+        "mode": "create",
+        "kind": "cron",
+        "name": "本地整理",
+        "prompt": "整理目录。",
+        "schedule": {
+          "expression": "0 9 * * *",
+          "timezone": "Asia/Shanghai"
+        },
+        "approvalMode": "full_access"
+      }
+    },
+    {
+      "fullAccessConfirmation": "full-access-v1",
+      "command": {
+        "mode": "update",
+        "id": "11111111-1111-1111-1111-111111111111",
+        "expectedRevision": 1,
+        "changes": { "approvalMode": "full_access" }
+      }
     }
   ],
   "invalidRequests": [
@@ -36,10 +59,8 @@
       }
     },
     {
-      "command": {
-        "mode": "create",
-        "approvalMode": "full_access"
-      }
+      "command": { "mode": "view" },
+      "fullAccessConfirmation": "unconfirmed"
     },
     {
       "command": {

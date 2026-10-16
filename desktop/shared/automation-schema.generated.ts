@@ -51,10 +51,24 @@ export const automationSchema = {
           "default": "auto_review",
           "enum": [
             "manual",
-            "auto_review"
+            "auto_review",
+            "full_access"
           ],
           "title": "Approvalmode",
           "type": "string"
+        },
+        "fullAccessConfirmation": {
+          "anyOf": [
+            {
+              "const": "full-access-v1",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fullaccessconfirmation"
         },
         "target": {
           "$ref": "#/$defs/AutomationBinding"
@@ -284,6 +298,378 @@ export const automationSchema = {
       "title": "AutomationChanges",
       "type": "object"
     },
+    "AutomationDesktopChanges": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "at",
+                "cron"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "ACTIVE",
+                "PAUSED"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationModel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "approvalMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "manual",
+                "auto_review",
+                "full_access"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approvalmode"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationTarget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "AutomationDesktopChanges",
+      "type": "object"
+    },
+    "AutomationDesktopRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "view",
+            "create",
+            "update",
+            "delete",
+            "preview"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "expectedRevision": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expectedrevision"
+        },
+        "changes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationDesktopChanges"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "at",
+                "cron"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "ACTIVE",
+                "PAUSED"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationModel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "approvalMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "manual",
+                "auto_review",
+                "full_access"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approvalmode"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sessionid"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectid"
+        },
+        "execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomationExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "current_session",
+                "current_project",
+                "all"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limit"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "AutomationDesktopRequest",
+      "type": "object"
+    },
     "AutomationExecuteRequest": {
       "additionalProperties": false,
       "properties": {
@@ -300,7 +686,7 @@ export const automationSchema = {
           "title": "Operationid"
         },
         "command": {
-          "$ref": "#/$defs/AutomationRequest"
+          "$ref": "#/$defs/AutomationDesktopRequest"
         },
         "contextSessionId": {
           "anyOf": [
@@ -315,6 +701,19 @@ export const automationSchema = {
           ],
           "default": null,
           "title": "Contextsessionid"
+        },
+        "fullAccessConfirmation": {
+          "anyOf": [
+            {
+              "const": "full-access-v1",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fullaccessconfirmation"
         }
       },
       "required": [
@@ -986,7 +1385,8 @@ export const automationSchema = {
         "approvalMode": {
           "enum": [
             "manual",
-            "auto_review"
+            "auto_review",
+            "full_access"
           ],
           "title": "Approvalmode",
           "type": "string"
@@ -1140,6 +1540,9 @@ export const automationSchema = {
     },
     "origin": {
       "$ref": "#/$defs/AutomationOrigin"
+    },
+    "toolRequest": {
+      "$ref": "#/$defs/AutomationRequest"
     }
   },
   "required": [
@@ -1147,7 +1550,8 @@ export const automationSchema = {
     "history",
     "runNow",
     "response",
-    "origin"
+    "origin",
+    "toolRequest"
   ],
   "title": "AutomationContract",
   "type": "object"

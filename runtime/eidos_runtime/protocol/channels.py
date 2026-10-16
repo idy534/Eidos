@@ -31,3 +31,4 @@ class ChannelSaveRequest(EidosFrozenStrictModel):
     config: ChannelConfig
     expected_revision: JsonSafeInt = Field(ge=0)
     client_secret: str | None = Field(default=None, min_length=1, max_length=1024, repr=False)
+    full_access_confirmation: Literal["full-access-v1"] | None = None

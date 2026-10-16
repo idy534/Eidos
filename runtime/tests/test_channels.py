@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import shlex
 from pathlib import Path
 import sqlite3
 import time
@@ -20,7 +21,7 @@ from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.channels import ChannelConfig, ChannelConnection, ChannelError, ChannelMessage
 from eidos_runtime.infrastructure.channel_secrets import ChannelSecrets
 from eidos_runtime.infrastructure.dingtalk import DingTalkAdapter, DingTalkSendError
-from eidos_runtime.model.client import ModelResponse, ScriptedModel
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
 from eidos_runtime.persistence.channels import ChannelRepository, stable_id
 from eidos_runtime.protocol.channels import ChannelSaveRequest
@@ -74,11 +75,41 @@ def test_disabled_channels_and_unmentioned_group_messages_are_ignored(channels):
     assert len(repository.pending()) == 1
 
 
-def test_strict_config_rejects_full_access_invalid_fields_and_retired_options():
-    for changes in ({"approval_mode": "full_access"}, {"enabled": 1}, {"client_id": " "}, {"robot_code": "robot"},
+def test_strict_config_rejects_invalid_fields_and_retired_options():
+    for changes in ({"approval_mode": "unknown"}, {"enabled": 1}, {"client_id": " "}, {"robot_code": "robot"},
                     {"corp_id": "corp"}, {"allowed_user_ids": []}, {"allowed_conversation_ids": []}, {"allow_direct_messages": False}):
         with pytest.raises(ValidationError):
             ChannelConfig.model_validate(configuration().model_dump() | changes)
+
+
+def test_full_access_save_requires_confirmation_persists_it_and_clears_on_downgrade(channels):
+    from eidos_runtime.application.channels import ChannelApplication
+    store, repository, old, _ = channels
+    secrets = ChannelSecrets(store.data_directory)
+    application = ChannelApplication(repository, secrets, None, None, None)
+    request = ChannelSaveRequest(config=configuration(approval_mode="full_access"), expected_revision=1, client_secret="channel-secret")
+    with pytest.raises(ChannelError, match="由用户确认"):
+        application.save(request)
+    assert repository.connection() == old
+    application.save(request.model_copy(update={"full_access_confirmation": "full-access-v1"}))
+    confirmed = repository.connection()
+    assert confirmed.config.approval_mode == "full_access"
+    assert confirmed.full_access_confirmation == "full-access-v1"
+    assert type(confirmed).model_validate_json(confirmed.model_dump_json()) == confirmed
+    raw = confirmed.model_dump()
+    del raw["full_access_confirmation"]
+    with pytest.raises(ValidationError):
+        ChannelConnection.model_validate(raw)
+    application.save(ChannelSaveRequest(config=confirmed.config, expected_revision=2))
+    assert repository.connection().full_access_confirmation == "full-access-v1"
+    with pytest.raises(ChannelError, match="不一致"):
+        application.save(ChannelSaveRequest(config=configuration(), expected_revision=3, full_access_confirmation="full-access-v1"))
+    application.save(ChannelSaveRequest(config=configuration(), expected_revision=3))
+    restored = repository.connection()
+    assert restored.config.approval_mode == "manual" and restored.full_access_confirmation is None
+    assert "full_access_confirmation" not in restored.model_dump()
+    with pytest.raises(ChannelError, match="由用户确认"):
+        application.save(ChannelSaveRequest(config=configuration(approval_mode="full_access"), expected_revision=4))
 
 
 def test_inbound_dedup_and_atomic_run_origin(channels):
@@ -461,9 +492,18 @@ def test_send_classifies_known_failure_and_uncertain_result(monkeypatch, status,
     assert raised.value.retry == retry
 
 
-def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path):
+@pytest.mark.parametrize("approval_mode", ["manual", "full_access"])
+def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, approval_mode):
+    from eidos_runtime.application.errors import ApplicationError
+    from eidos_runtime.protocol.methods import RunStartRequestDto
     output = io.StringIO()
-    server = RuntimeServer(output, tmp_path / "data", model=ScriptedModel([ModelResponse(text="渠道任务已完成。")]))
+    target = tmp_path / "outside-workspace.txt"
+    responses = [ModelResponse(text="渠道任务已完成。")]
+    if approval_mode == "full_access":
+        responses.insert(0, ModelResponse(tool_calls=(ModelToolCall("shell", "run_shell", {
+            "command": f"printf 'channel-full-access' > {shlex.quote(str(target))}"}),)))
+    model = ScriptedModel(responses)
+    server = RuntimeServer(output, tmp_path / "data", model=model)
     try:
         server.handle({"jsonrpc": "2.0", "id": "client-init", "method": "initialize", "params": {"protocolVersion": 1, "client": {"name": "test", "version": "1"}}})
         assert server.initialized, output.getvalue()
@@ -471,7 +511,9 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path):
         service.active = lambda: False
         configured = server.model_config.create(provider_id="deepseek", model_id=DEFAULT_MODEL_ID, api_key="test-key")
         application = service.application
-        application.save(ChannelSaveRequest(config=configuration().model_copy(update={"model_id": configured.id}), expected_revision=0, client_secret="test-channel-secret"))
+        application.save(ChannelSaveRequest(config=configuration(approval_mode=approval_mode).model_copy(update={"model_id": configured.id, "reasoning_selection": "high"}),
+            expected_revision=0, client_secret="test-channel-secret",
+            full_access_confirmation="full-access-v1" if approval_mode == "full_access" else None))
         connection = application.repository.connection()
         connection = connection.model_copy(update={"revision": 2, "config": connection.config.model_copy(update={"enabled": True})})
         application.repository.save(connection, 1)
@@ -480,10 +522,25 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path):
         application.process_pending()
         identifier = application.repository.inbound(application.repository._connection().execute("SELECT id FROM channel_inbound").fetchone()[0])
         assert identifier.run_id
+        assert server.store.read_model_profile(identifier.run_id).reasoning_selection == "high"
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and server.store.read_run(identifier.run_id)["status"] in {"queued", "running", "finalizing"}:
             time.sleep(0.02)
         assert server.store.read_run(identifier.run_id)["status"] == "succeeded", output.getvalue()
+        assert server.store.read_run(identifier.run_id).get("approvalMode", "manual") == approval_mode
+        source = [item["content"] for context in model.contexts for item in context if item.get("sectionId") == "channel-origin"]
+        assert source
+        assert all(("do not request per-operation approvals" in text) == (approval_mode == "full_access") for text in source)
+        if approval_mode == "full_access":
+            assert target.read_text() == "channel-full-access"
+            assert server.store.connection.execute("SELECT sandbox_type FROM tool_attempts").fetchone()[0] == "none"
+            assert server.store.connection.execute("SELECT count(*) FROM approvals").fetchone()[0] == 0
+            assert server.store.connection.execute("SELECT count(*) FROM durable_intents").fetchone()[0] == 1
+        forged_mode = "full_access" if approval_mode == "manual" else "manual"
+        with pytest.raises(ApplicationError, match="已确认的渠道配置"):
+            application.runs.start(RunStartRequestDto(sessionId=identifier.session_id, userInput="switch mode", modelId=configured.id,
+                approvalMode=forged_mode, fullAccessConfirmation="full-access-v1" if forged_mode == "full_access" else None),
+                channel_message_id=identifier.id)
         application.repository.collect_replies()
         assert application.repository.deliveries()[0].text == "渠道任务已完成。"
         assert server.store.connection.execute("SELECT count(*) FROM runs WHERE id=?", (identifier.run_id,)).fetchone()[0] == 1
@@ -545,3 +602,24 @@ def test_managed_stream_callback_to_run_and_openapi_delivery(tmp_path, monkeypat
     finally:
         server.close()
     assert server.supervisor.resources.active_resources() == ()
+
+
+@pytest.mark.parametrize("selection", [None, "none", "thinking", "low", "medium", "high", "max"])
+def test_channel_reasoning_persists_across_restart(channels, selection):
+    store, repository, connection, _ = channels
+    saved = connection.model_copy(update={"revision": 2, "config": configuration(reasoning_selection=selection)})
+    repository.save(saved, 1)
+    data_directory = store.data_directory
+    store.close()
+    reopened = SessionStore(data_directory)
+    try:
+        reopened.initialize()
+        recovered = ChannelRepository(reopened.database).connection()
+        assert recovered.config.reasoning_selection == selection
+    finally:
+        reopened.close()
+
+
+def test_channel_reasoning_rejects_unknown_values():
+    with pytest.raises(ValidationError):
+        ChannelConfig.model_validate(configuration().model_dump() | {"reasoningSelection": "ultra"})

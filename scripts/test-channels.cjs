@@ -31,6 +31,22 @@ app.whenReady().then(async () => {
     assert.equal(await evaluate("Boolean(document.querySelector('#field-allow-dm,#field-user-ids,#field-group-ids,#field-robot-code,#field-corp-id'))"), false);
     for (const width of [1440, 1024, 768, 320]) {
       win.setSize(width, 1000); await settle();
+      await evaluate("document.querySelector('.model-selector__trigger').scrollIntoView({block:'center'})"); await settle();
+      await evaluate("document.querySelector('.model-selector__trigger').click()"); await settle();
+      const picker = await evaluate(`(() => {
+        const panel=document.querySelector('.model-selector__panel'); const rect=panel.getBoundingClientRect();
+        const slider=panel.querySelector('input[type=range]');
+        return {left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,width:innerWidth,height:innerHeight,
+          logo:!!panel.querySelector('img.provider-logo'),padding:getComputedStyle(slider).padding};
+      })()`);
+      assert.ok(picker.left >= 0 && picker.right <= picker.width && picker.top >= 0 && picker.bottom <= picker.height, `Picker outside viewport at ${width}px: ${JSON.stringify(picker)}`);
+      assert.equal(picker.logo, true);
+      assert.equal(picker.padding, "0px");
+      win.webContents.focus();
+      win.webContents.sendInputEvent({type:"keyDown",keyCode:"Escape"});
+      win.webContents.sendInputEvent({type:"keyUp",keyCode:"Escape"}); await settle();
+      assert.equal(await evaluate("document.activeElement.classList.contains('model-selector__trigger')"), true);
+
       const dimensions = await evaluate("({width:document.querySelector('.settings-content-col').clientWidth,scroll:document.querySelector('.settings-content-col').scrollWidth})");
       assert.ok(dimensions.scroll <= dimensions.width + 1, `Channel settings overflow at ${width}px: ${JSON.stringify(dimensions)}`);
     }
@@ -44,8 +60,32 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
     win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" }); await settle();
     assert.equal(await evaluate("document.activeElement.id"), "field-client-secret");
+    const selectMode = async value => {
+      await evaluate(`(() => { const select=document.querySelector('#field-approval-mode'); select.value=${JSON.stringify(value)}; select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+      await settle();
+    };
+    await selectMode("full_access");
+    assert.equal(await evaluate("document.querySelector('#field-approval-mode').value"), "manual");
+    assert.equal(await evaluate("document.activeElement.textContent.trim()"), "取消");
+    assert.equal(await evaluate("Boolean(document.querySelector('[role=alertdialog] .btn--danger'))"), true);
+    for (const width of [1440, 1024, 768, 320]) {
+      win.setSize(width, 1000); await settle();
+      assert.ok(await evaluate("(() => { const r=document.querySelector('[role=alertdialog]').getBoundingClientRect(); return r.left>=-1 && r.right<=innerWidth+1 && r.top>=-1 && r.bottom<=innerHeight+1; })()"), `Full access dialog overflow at ${width}px`);
+    }
+    win.setSize(1100, 1000); await settle();
+    if (process.env.EIDOS_CHANNEL_FULL_ACCESS_SCREENSHOT) await writeFile(process.env.EIDOS_CHANNEL_FULL_ACCESS_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+    await evaluate("[...document.querySelectorAll('[role=alertdialog] button')].find(button=>button.textContent.trim()==='取消').click()"); await settle();
+    assert.equal(await evaluate("document.querySelector('#field-approval-mode').value"), "manual");
+    await selectMode("full_access");
+    await evaluate("document.querySelector('[role=alertdialog] .btn--danger').click()"); await settle();
+    assert.equal(await evaluate("document.querySelector('#field-approval-mode').value"), "full_access");
+    await evaluate("document.querySelector('.channel-form button[type=submit]').click()"); await settle();
+    assert.equal(await evaluate("window.channelSaved.fullAccessConfirmation"), "full-access-v1");
+    await selectMode("auto_review");
+    await evaluate("document.querySelector('.channel-form button[type=submit]').click()"); await settle();
+    assert.equal(await evaluate("'fullAccessConfirmation' in window.channelSaved"), false);
     assert.deepEqual(errors, []);
-    console.log("Channel UI passed: masked credentials, save, keyboard and 4 viewport sizes");
+    console.log("Channel UI passed: masked credentials, save, keyboard, full access confirmation and 4 viewport sizes");
   } catch (error) { exitCode = 1; console.error(error); }
   finally { clearTimeout(timeout); win?.destroy(); await server?.close(); await rm(temporary, { recursive: true, force: true }); app.exit(exitCode); }
 });

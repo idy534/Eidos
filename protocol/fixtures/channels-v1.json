@@ -17,6 +17,27 @@
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "approvalMode": "full_access"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "fullAccessConfirmation": "full-access-v1"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "reasoningSelection": "high"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
     }
   ],
   "invalidRequests": [
@@ -44,7 +65,7 @@
         "enabled": false,
         "clientId": "app",
         "modelId": "deepseek-v4-flash",
-        "approvalMode": "full_access"
+        "approvalMode": "unknown"
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret"
@@ -108,6 +129,27 @@
         "clientId": "app",
         "modelId": "deepseek-v4-flash",
         "allowDirectMessages": false
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "approvalMode": "full_access"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "fullAccessConfirmation": "unsupported-version"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "reasoningSelection": "ultra"
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret"

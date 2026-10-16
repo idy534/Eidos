@@ -840,7 +840,8 @@ class RuntimeServer:
             (
                 "schedule/execute", AutomationExecuteRequest, AutomationResponse,
                 lambda _id, request: self._automation_application().execute(request.command,
-                    context_session_id=request.context_session_id, operation_id=request.operation_id),
+                    context_session_id=request.context_session_id, operation_id=request.operation_id,
+                    full_access_confirmation=request.full_access_confirmation),
             ),
             (
                 "schedule/history", AutomationHistoryRequest, AutomationResponse,
@@ -1629,6 +1630,7 @@ class RuntimeServer:
                 outcome = applications.runs.start(method_dtos.RunStartRequestDto(
                     sessionId=session_id, userInput=task.prompt, modelId=task.model.model_id,
                     reasoningSelection=task.model.reasoning_selection, approvalMode=task.approval_mode,
+                    fullAccessConfirmation=task.full_access_confirmation,
                 ), automation_occurrence_id=occurrence.id)
                 outcome.release_after_commit()
                 self.supervisor.events.deliver_pending()

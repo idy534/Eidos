@@ -843,3 +843,7 @@ AppShell 只在已持久化的 Session 中挂载 QueuedMessages。`draft-…` �
 队列修改和 FIFO claim 使用同一数据库锁与短事务。修改先检查 Session 归属、未开始状态和原消息文字；文字冲突返回 `QUEUED_RUN_INPUT_CONFLICT`，已经开始、取消或恢复的消息返回 `QUEUED_RUN_ALREADY_STARTED`。编辑同时更新 Run 输入和用户 Item，并保留引用及执行快照。删除移除未执行 Run、用户 Item、执行前快照及其旧 Run 事件，记录新的队列删除事件；删除消息不会作为用户输入进入后续 Run。两种写操作复用现有 Operation 幂等记录，不新增数据库表或第二套调度器。
 
 新 Run 持久保存内部 Skill 元数据快照，公共 Run DTO 不发送该快照；内部恢复读取保持完整。只有实际选择、读取或激活的 Skill 建立租约，其他 Skill 可删除；旧 Run 继续按目录引用保护。资源激活重新检查冻结身份和内容版本，已移除且未使用的 Skill 以普通工具错误反馈，不破坏整个 Run 的恢复。
+
+### 公共模型选择组件
+
+Renderer 的 `components/ModelSelector.tsx` 与 `ModelSelector.css` 统一维护模型选择、ProviderLogo、思考强度和弹层交互。Composer、AutomationForm 和 DingTalkForm 使用该组件。调用方持有模型与思考强度值，组件不保存业务配置。弹层使用 React DOM Portal，并按视口和滚动位置定位。旧 ReasoningSelector 与 Composer 中对应样式已迁移到公共组件。

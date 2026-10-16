@@ -13,7 +13,7 @@ export type Timezone = string | null;
 export type Status = ("ACTIVE" | "PAUSED") | null;
 export type Modelid = string;
 export type Reasoningselection = ("none" | "thinking" | "low" | "medium" | "high" | "max") | null;
-export type Approvalmode = ("manual" | "auto_review") | null;
+export type Approvalmode = ("manual" | "auto_review" | "full_access") | null;
 export type Sessionid = string | null;
 export type Projectid = string | null;
 export type Executionmode = "local" | "worktree";
@@ -22,7 +22,7 @@ export type Kind1 = ("at" | "cron") | null;
 export type Name1 = string | null;
 export type Prompt1 = string | null;
 export type Status1 = ("ACTIVE" | "PAUSED") | null;
-export type Approvalmode1 = ("manual" | "auto_review") | null;
+export type Approvalmode1 = ("manual" | "auto_review" | "full_access") | null;
 export type Sessionid1 = string | null;
 export type Projectid1 = string | null;
 export type Scope = ("current_session" | "current_project" | "all") | null;
@@ -30,6 +30,7 @@ export type Query = string | null;
 export type Cursor = string | null;
 export type Limit = number | null;
 export type Contextsessionid = string | null;
+export type Fullaccessconfirmation = "full-access-v1" | null;
 export type Id1 = string;
 export type Cursor1 = string | null;
 export type Operationid1 = string | null;
@@ -41,7 +42,8 @@ export type Name2 = string;
 export type Prompt2 = string;
 export type Kind3 = "at" | "cron";
 export type Status2 = "ACTIVE" | "PAUSED";
-export type Approvalmode2 = "manual" | "auto_review";
+export type Approvalmode2 = "manual" | "auto_review" | "full_access";
+export type Fullaccessconfirmation1 = "full-access-v1" | null;
 export type Kind4 = "existing_session" | "new_session";
 export type Sessionid2 = string | null;
 export type Projectid2 = string | null;
@@ -55,7 +57,7 @@ export type Revision1 = number;
 export type Name3 = string;
 export type Status3 = "ACTIVE" | "PAUSED";
 export type Kind5 = "at" | "cron";
-export type Approvalmode3 = "manual" | "auto_review";
+export type Approvalmode3 = "manual" | "auto_review" | "full_access";
 export type Nextrunat = string | null;
 export type Pausereason1 = string | null;
 export type Items = AutomationSummary[];
@@ -81,6 +83,25 @@ export type Automationid1 = string;
 export type Revision3 = number;
 export type Occurrenceid1 = string;
 export type Scheduledfor1 = string;
+export type Mode1 = "view" | "create" | "update" | "delete" | "preview";
+export type Id6 = string | null;
+export type Expectedrevision1 = number | null;
+export type Name4 = string | null;
+export type Prompt3 = string | null;
+export type Kind6 = ("at" | "cron") | null;
+export type Status5 = ("ACTIVE" | "PAUSED") | null;
+export type Approvalmode4 = ("manual" | "auto_review") | null;
+export type Kind7 = ("at" | "cron") | null;
+export type Name5 = string | null;
+export type Prompt4 = string | null;
+export type Status6 = ("ACTIVE" | "PAUSED") | null;
+export type Approvalmode5 = ("manual" | "auto_review") | null;
+export type Sessionid4 = string | null;
+export type Projectid3 = string | null;
+export type Scope1 = ("current_session" | "current_project" | "all") | null;
+export type Query1 = string | null;
+export type Cursor2 = string | null;
+export type Limit1 = number | null;
 
 export interface AutomationContract {
   execute: AutomationExecuteRequest;
@@ -88,20 +109,19 @@ export interface AutomationContract {
   runNow: AutomationRunNowRequest;
   response: AutomationResponse;
   origin: AutomationOrigin;
+  toolRequest: AutomationRequest;
 }
 export interface AutomationExecuteRequest {
   operationId?: Operationid;
-  command: AutomationRequest;
+  command: AutomationDesktopRequest;
   contextSessionId?: Contextsessionid;
+  fullAccessConfirmation?: Fullaccessconfirmation;
 }
-/**
- * One model-visible object; strict per-mode combinations remain Runtime-owned.
- */
-export interface AutomationRequest {
+export interface AutomationDesktopRequest {
   mode: Mode;
   id?: Id;
   expectedRevision?: Expectedrevision;
-  changes?: AutomationChanges | null;
+  changes?: AutomationDesktopChanges | null;
   kind?: Kind1;
   name?: Name1;
   prompt?: Prompt1;
@@ -117,7 +137,7 @@ export interface AutomationRequest {
   cursor?: Cursor;
   limit?: Limit;
 }
-export interface AutomationChanges {
+export interface AutomationDesktopChanges {
   name?: Name;
   prompt?: Prompt;
   kind?: Kind;
@@ -176,6 +196,7 @@ export interface Automation {
   status?: Status2;
   model: AutomationModel;
   approvalMode?: Approvalmode2;
+  fullAccessConfirmation?: Fullaccessconfirmation1;
   target: AutomationBinding;
   createdFromSessionId?: Createdfromsessionid;
   deletedAt?: Deletedat;
@@ -221,4 +242,37 @@ export interface AutomationOrigin {
   revision: Revision3;
   occurrenceId: Occurrenceid1;
   scheduledFor: Scheduledfor1;
+}
+/**
+ * One model-visible object; strict per-mode combinations remain Runtime-owned.
+ */
+export interface AutomationRequest {
+  mode: Mode1;
+  id?: Id6;
+  expectedRevision?: Expectedrevision1;
+  changes?: AutomationChanges | null;
+  kind?: Kind7;
+  name?: Name5;
+  prompt?: Prompt4;
+  schedule?: Schedule | null;
+  status?: Status6;
+  model?: AutomationModel | null;
+  approvalMode?: Approvalmode5;
+  sessionId?: Sessionid4;
+  projectId?: Projectid3;
+  execution?: AutomationExecution | null;
+  scope?: Scope1;
+  query?: Query1;
+  cursor?: Cursor2;
+  limit?: Limit1;
+}
+export interface AutomationChanges {
+  name?: Name4;
+  prompt?: Prompt3;
+  kind?: Kind6;
+  schedule?: Schedule | null;
+  status?: Status5;
+  model?: AutomationModel | null;
+  approvalMode?: Approvalmode4;
+  target?: AutomationTarget | null;
 }
