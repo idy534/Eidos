@@ -556,7 +556,7 @@ export function AgentWorkspacePanel({
                 </svg>
               </div>
               <h3>暂无智能体任务</h3>
-              <p>主任务派生的通用任务 Default、代码调查 Explorer 和实现与验证 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。</p>
+              <p>主任务派生的通用任务 Default、调查 Explorer 和工作 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。</p>
             </div>
           ) : (
             <AgentList

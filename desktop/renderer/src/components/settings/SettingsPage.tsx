@@ -77,7 +77,6 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
   const [toasts, setToasts] = useState<SettingsToast[]>([]);
-  const [agentCount, setAgentCount] = useState<number>();
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -111,7 +110,7 @@ export function SettingsPage({
     { id: "memory", label: "记忆" },
     { id: "plugins", label: "Plugins", count: plugins.length },
     { id: "skills", label: "技能", count: skills.length },
-    { id: "agents", label: "智能体", count: agentCount },
+    { id: "agents", label: "智能体" },
     {
       id: "mcp",
       label: "MCP Servers",
@@ -194,7 +193,7 @@ export function SettingsPage({
               />
             )}
 
-            {activeCategory === "agents" && <AgentSettings ready={storageReady} onCountChange={setAgentCount} onShowToast={showToast} />}
+            {activeCategory === "agents" && <AgentSettings ready={storageReady} onShowToast={showToast} />}
 
             {activeCategory === "mcp" && (
               <McpSettings

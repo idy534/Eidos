@@ -65,7 +65,7 @@ class AgentCatalog:
 
     def _model_reason(self, definition: AgentDefinition) -> str | None:
         if not definition.enabled:
-            return "定义已停用。"
+            return "已停用"
         if definition.model is None or definition.model.config_id is None:
             return None
         try:

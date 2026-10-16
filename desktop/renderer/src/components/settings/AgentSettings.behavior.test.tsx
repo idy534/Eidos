@@ -45,7 +45,7 @@ describe("智能体设置与编辑", () => {
     const api = setup(); const close = vi.fn();
     render(<AgentEditorDialog onSaved={vi.fn()} onClose={close} />);
     await waitFor(() => expect(screen.queryByText("正在读取模型配置…")).not.toBeInTheDocument());
-    fill(); fireEvent.click(screen.getByLabelText("指定模型"));
+    fill(); fireEvent.click(screen.getByLabelText("指定"));
     fireEvent.click(screen.getByRole("button", { name: /deepseek-config，深度求索/ }));
     fireEvent.change(screen.getByRole("slider", { name: "deepseek-config 思考强度" }), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: /切换模型，当前为 deepseek-config/ }));
@@ -65,7 +65,7 @@ describe("智能体设置与编辑", () => {
     setup();
     render(<AgentEditorDialog onSaved={vi.fn()} onClose={vi.fn()} />);
     await waitFor(() => expect(screen.queryByText("正在读取模型配置…")).not.toBeInTheDocument());
-    fireEvent.click(screen.getByLabelText("指定模型"));
+    fireEvent.click(screen.getByLabelText("指定"));
     fireEvent.click(screen.getByRole("button", { name: /deepseek-config，深度求索/ }));
     const slider = screen.getByRole("slider", { name: "deepseek-config 思考强度" });
     slider.focus(); fireEvent.keyDown(slider, { key: "Tab" });
@@ -90,7 +90,7 @@ describe("智能体设置与编辑", () => {
     expect(screen.getByText("已保存的模型配置不可用或提供商不匹配，请重新选择。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     expect(api.saveAgentDefinition).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByLabelText("继承父任务模型"));
+    fireEvent.click(screen.getByLabelText("继承父任务"));
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     await waitFor(() => expect(api.saveAgentDefinition).toHaveBeenCalledWith(expect.objectContaining({ definition: expect.objectContaining({ model: null }) })));
   });
@@ -139,5 +139,29 @@ describe("智能体设置与编辑", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "复制为自定义智能体" })[2]!);
     expect(screen.getByLabelText("基础角色")).toHaveValue("worker");
     expect(screen.getByLabelText("名称")).toHaveValue("worker-custom");
+  });
+
+  it("closes the more options menu when clicking outside or pressing Escape", async () => {
+    setup();
+    render(<AgentSettings ready onCountChange={vi.fn()} onShowToast={vi.fn()} />);
+    expect(await screen.findByRole("heading", { name: "luna-work" })).toBeInTheDocument();
+
+    const trigger = screen.getByLabelText("luna-work 的更多操作");
+    const details = trigger.closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+
+    // Open menu
+    details.setAttribute("open", "");
+    expect(details).toHaveAttribute("open");
+
+    // Click outside in blank area (heading outside details)
+    fireEvent.pointerDown(screen.getByRole("heading", { name: "智能体" }));
+    expect(details).not.toHaveAttribute("open");
+
+    // Open again and test Escape
+    details.setAttribute("open", "");
+    expect(details).toHaveAttribute("open");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(details).not.toHaveAttribute("open");
   });
 });
