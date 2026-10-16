@@ -22,10 +22,13 @@ app.whenReady().then(async () => {
     await win.loadURL(`${server.resolvedUrls.local[0]}test/channels.html`);
     const evaluate = code => win.webContents.executeJavaScript(code);
     const settle = () => evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
-    for (let i = 0; i < 100 && !await evaluate("Boolean(document.querySelector('.channel-form'))"); i++) await new Promise(resolve => setTimeout(resolve, 50));
+    for (let i = 0; i < 100 && !await evaluate("Boolean([...document.querySelectorAll('button')].find(button => button.textContent.trim()==='设置'))"); i++) await new Promise(resolve => setTimeout(resolve, 50));
+    await evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.trim()==='设置').click()");
+    await settle();
     assert.equal(await evaluate("Boolean(document.querySelector('.channel-form'))"), true);
     assert.equal(await evaluate("document.querySelector('input[type=password]').value"), "");
-    assert.ok(await evaluate("document.querySelector('.channel-check input').getBoundingClientRect().width <= 24"));
+    assert.equal(await evaluate("document.querySelectorAll('.channel-form input[role=switch]').length"), 1);
+    assert.equal(await evaluate("Boolean(document.querySelector('#field-allow-dm,#field-user-ids,#field-group-ids,#field-robot-code,#field-corp-id'))"), false);
     for (const width of [1440, 1024, 768, 320]) {
       win.setSize(width, 1000); await settle();
       const dimensions = await evaluate("({width:document.querySelector('.settings-content-col').clientWidth,scroll:document.querySelector('.settings-content-col').scrollWidth})");
@@ -36,10 +39,11 @@ app.whenReady().then(async () => {
     await evaluate("document.querySelector('.channel-form button[type=submit]').click()"); await settle();
     assert.equal(await evaluate("window.channelSaved.expectedRevision"), 1);
     assert.equal(await evaluate("'clientSecret' in window.channelSaved"), false);
-    await evaluate("document.querySelector('.channel-form input').focus()");
+    assert.deepEqual(await evaluate("Object.keys(window.channelSaved.config).sort()"), ["approvalMode", "clientId", "enabled", "modelId"]);
+    await evaluate("document.querySelector('#field-client-id').focus()");
     win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
     win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" }); await settle();
-    assert.equal(await evaluate("document.activeElement.tagName==='INPUT'"), true);
+    assert.equal(await evaluate("document.activeElement.id"), "field-client-secret");
     assert.deepEqual(errors, []);
     console.log("Channel UI passed: masked credentials, save, keyboard and 4 viewport sizes");
   } catch (error) { exitCode = 1; console.error(error); }

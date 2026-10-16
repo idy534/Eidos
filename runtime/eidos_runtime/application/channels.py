@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from uuid import uuid4
 
@@ -16,14 +17,11 @@ from eidos_runtime.model.config import ModelConfigStore
 from eidos_runtime.persistence.channels import ChannelRepository, stable_id
 from eidos_runtime.protocol.methods import RunStartRequestDto, SessionCreateRequestDto
 
+_LOGGER = logging.getLogger("eidos.dingtalk")
 
-def allowed(connection: ChannelConnection, message: ChannelMessage) -> bool:
-    config = connection.config
-    return (config.enabled and config.corp_id == message.corp_id and config.robot_code == message.robot_code
-            and message.sender_id in config.allowed_user_ids
-            and ((message.conversation_type == "1" and config.allow_direct_messages)
-                 or (message.conversation_type == "2" and message.mentioned
-                     and message.conversation_id in config.allowed_conversation_ids)))
+
+def accepts_message(connection: ChannelConnection, message: ChannelMessage) -> bool:
+    return connection.config.enabled and (message.conversation_type == "1" or message.mentioned)
 
 
 class ChannelApplication:
@@ -64,8 +62,11 @@ class ChannelApplication:
         return self.read()
 
     def receive(self, connection: ChannelConnection, message: ChannelMessage) -> None:
-        if allowed(connection, message):
-            self.repository.receive(connection, message)
+        if accepts_message(connection, message):
+            identifier = self.repository.receive(connection, message)
+            _LOGGER.info("DingTalk inbound persisted inbound_id=%s", identifier)
+        else:
+            _LOGGER.info("DingTalk callback ignored reason=%s", "not_mentioned" if connection.config.enabled else "disabled")
 
     def process_pending(self, canceled: Callable[[], bool] = lambda: False) -> None:
         for identifier in self.repository.pending():
@@ -81,10 +82,10 @@ class ChannelApplication:
         incoming = self.repository.inbound(identifier)
         self.repository.require_current(incoming.connection)
         if not incoming.message.supported or not incoming.message.text.strip():
-            self.repository.reject(identifier, "目前支持文字消息，请输入文字后再次 @ Eidos。")
+            self.repository.reject(identifier, "目前支持文字消息，请发送文字后重试。")
             return
         config = incoming.connection.config
-        route = stable_id(json.dumps([incoming.connection.id, config.client_id, config.corp_id,
+        route = stable_id(json.dumps([incoming.connection.id, config.client_id, incoming.message.corp_id,
                                      incoming.message.conversation_id, incoming.message.sender_id, config.project_id]))
         session_id = self.repository.session(route)
         if session_id is None:

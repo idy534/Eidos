@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
+import logging
 import time
 import threading
 
 import anyio
 
-from eidos_runtime.application.channels import ChannelApplication, allowed
+from eidos_runtime.application.channels import ChannelApplication, accepts_message
 from eidos_runtime.domain.channels import ChannelError
 from eidos_runtime.protocol.channels import ChannelResponse
 from eidos_runtime.infrastructure.dingtalk import DingTalkAdapter, DingTalkSendError
+
+_LOGGER = logging.getLogger("eidos.dingtalk")
 
 
 class ChannelService:
@@ -59,7 +62,8 @@ class ChannelService:
                                 self.state = "connecting"
                             await anyio.sleep(1)
                         group.cancel_scope.cancel()
-                except Exception:
+                except Exception as error:
+                    _LOGGER.warning("DingTalk service restarting exception=%s", type(error).__name__)
                     self.state, self.reason = "error", "渠道连接失败，请检查凭证、模型和网络。"
                     await anyio.sleep(3)
         finally:
@@ -76,8 +80,8 @@ class ChannelService:
                 try:
                     incoming = await anyio.to_thread.run_sync(self.application.repository.inbound, delivery.inbound_id)
                     current = await anyio.to_thread.run_sync(self.application.repository.connection)
-                    if current is None or current.config.client_id != incoming.connection.config.client_id or not allowed(current, incoming.message):
-                        raise ChannelError("回复目标已经停用或不再被允许。")
+                    if current is None or current.config.client_id != incoming.connection.config.client_id or not accepts_message(current, incoming.message):
+                        raise ChannelError("渠道已经停用或应用已经改变。")
                     secret = await anyio.to_thread.run_sync(self.application.secrets.read, current.secret_ref)
                     await self.adapter.send(current, secret, incoming.message, delivery.text)
                     await anyio.to_thread.run_sync(self.application.repository.settle, delivery.id, "sent")

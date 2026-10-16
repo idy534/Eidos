@@ -2,21 +2,9 @@
 
 export type Enabled = boolean;
 export type Clientid = string;
-export type Robotcode = string;
-export type Corpid = string;
 export type Modelid = string;
 export type Projectid = string | null;
 export type Approvalmode = "manual" | "auto_review";
-/**
- * @minItems 1
- * @maxItems 100
- */
-export type Alloweduserids = [string, ...string[]];
-/**
- * @maxItems 100
- */
-export type Allowedconversationids = string[];
-export type Allowdirectmessages = boolean;
 export type Expectedrevision = number;
 export type Clientsecret = string | null;
 export type Id = string;
@@ -55,14 +43,9 @@ export interface ChannelSaveRequest {
 export interface ChannelConfig {
   enabled?: Enabled;
   clientId: Clientid;
-  robotCode: Robotcode;
-  corpId: Corpid;
   modelId: Modelid;
   projectId?: Projectid;
   approvalMode?: Approvalmode;
-  allowedUserIds: Alloweduserids;
-  allowedConversationIds?: Allowedconversationids;
-  allowDirectMessages?: Allowdirectmessages;
 }
 export interface ChannelResponse {
   connection?: ChannelPublicConnection | null;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import hashlib
 import json
 import logging
 import time
@@ -13,6 +14,29 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from eidos_runtime.domain.channels import ChannelConnection, ChannelError, ChannelMessage
 
 _JSON_RESPONSE = TypeAdapter(dict[str, JsonValue])
+_LOGGER = logging.getLogger("eidos.dingtalk")
+
+
+def _fingerprint(value: JsonValue) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:12] if isinstance(value, str) else "missing"
+
+
+class _SdkLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        # Never forward upstream args, formatted messages or exception values:
+        # those can contain callback bodies, connection tickets and credentials.
+        events = {
+            "connecting to endpoint %s": "connecting",
+            "received disconnect topic=%s, message=%s": "disconnected",
+            "error processing message": "callback_failed",
+            "invalid message, content=%r": "invalid_frame",
+            "unknown callback message topic, topic=%s, message=%s": "unknown_topic",
+        }
+        event = events.get(record.msg) if isinstance(record.msg, str) else None
+        if event is not None or record.levelno >= logging.WARNING:
+            exception = record.exc_info[0].__name__ if record.exc_info and record.exc_info[0] else "none"
+            _LOGGER.log(max(record.levelno, logging.INFO), "DingTalk Stream event=%s exception=%s",
+                        event or "connection_error", exception)
 
 
 class DingTalkSendError(Exception):
@@ -30,6 +54,17 @@ class _StreamClient(dingtalk_stream.DingTalkStreamClient):
     def get_host_ip(self) -> str:
         return ""
 
+    async def background_task(self, json_message: dict[str, JsonValue], websocket: object | None = None) -> None:
+        # Observe before SDK deduplication; callback-level logs alone cannot
+        # distinguish platform non-delivery from an upstream cached ACK.
+        if json_message.get("type") == "CALLBACK":
+            headers = json_message.get("headers")
+            if isinstance(headers, dict):
+                _LOGGER.info("DingTalk Stream callback frame frame=%s topic=%s",
+                             _fingerprint(headers.get("messageId")),
+                             "robot" if headers.get("topic") == dingtalk_stream.ChatbotMessage.TOPIC else "other")
+        await super().background_task(json_message, websocket)
+
 
 class DingTalkAdapter:
     def __init__(self) -> None:
@@ -38,10 +73,9 @@ class DingTalkAdapter:
         self._token_until = 0.0
         self._token_key: tuple[str, str] | None = None
         # Upstream logs can include complete callbacks and connection tickets.
-        self._logger = logging.getLogger("eidos.dingtalk.sdk")
+        self._logger = logging.Logger("eidos.dingtalk.sdk", level=logging.INFO)
         self._logger.propagate = False
-        self._logger.addHandler(logging.NullHandler())
-        self._logger.disabled = True
+        self._logger.addHandler(_SdkLogHandler())
 
     async def listen(self, connection: ChannelConnection, secret: str,
                      receive: Callable[[ChannelConnection, ChannelMessage], None]) -> None:
@@ -49,7 +83,10 @@ class DingTalkAdapter:
             async def process(self, callback: dingtalk_stream.CallbackMessage) -> tuple[int, str]:
                 data = callback.data
                 if not isinstance(data, dict):
+                    _LOGGER.warning("DingTalk callback ignored reason=invalid_body")
                     return dingtalk_stream.AckMessage.STATUS_OK, "ignored"
+                fingerprint = _fingerprint(data.get("msgId"))
+                _LOGGER.info("DingTalk callback received message=%s revision=%s", fingerprint, connection.revision)
                 try:
                     content = data.get("text", {})
                     message = ChannelMessage(
@@ -59,8 +96,15 @@ class DingTalkAdapter:
                         mentioned=data.get("isInAtList", False),
                         text=content.get("content", "") if isinstance(content, dict) else "",
                         supported=data.get("msgtype") == "text")
+                    _LOGGER.info("DingTalk callback parsed message=%s conversation_type=%s mentioned=%s supported=%s text_length=%s",
+                                 fingerprint, message.conversation_type, message.mentioned, message.supported, len(message.text))
                     await anyio.to_thread.run_sync(receive, connection, message)
-                except (ValidationError, ChannelError):
+                except ValidationError as error:
+                    fields = ",".join(str(entry["loc"][0]) for entry in error.errors(include_input=False, include_context=False, include_url=False))
+                    _LOGGER.warning("DingTalk callback ignored message=%s reason=invalid_fields fields=%s", fingerprint, fields)
+                    return dingtalk_stream.AckMessage.STATUS_OK, "ignored"
+                except ChannelError:
+                    _LOGGER.warning("DingTalk callback ignored message=%s reason=configuration_changed", fingerprint)
                     return dingtalk_stream.AckMessage.STATUS_OK, "ignored"
                 return dingtalk_stream.AckMessage.STATUS_OK, "OK"
 
@@ -123,7 +167,7 @@ class DingTalkAdapter:
                     raise DingTalkSendError("钉钉应用凭证无效，请重新配置。")
                 self._token, self._token_key = token, key
                 self._token_until = time.monotonic() + max(0, expiry - 60)
-            payload: dict[str, JsonValue] = {"robotCode": connection.config.robot_code, "msgKey": "sampleMarkdown",
+            payload: dict[str, JsonValue] = {"robotCode": message.robot_code, "msgKey": "sampleMarkdown",
                                           "msgParam": json.dumps({"title": "Eidos", "text": text}, ensure_ascii=False)}
             if message.conversation_type == "2":
                 path = "/v1.0/robot/groupMessages/send"

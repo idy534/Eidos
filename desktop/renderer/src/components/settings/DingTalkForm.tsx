@@ -33,8 +33,6 @@ interface Props {
   onRefresh?: (() => void) | undefined;
 }
 
-const splitIds = (text: string) => [...new Set(text.split(/[\s,，]+/).filter(Boolean))];
-
 export function DingTalkForm({
   connection,
   models,
@@ -48,13 +46,11 @@ export function DingTalkForm({
   onRefresh,
 }: Props) {
   const [config, setConfig] = useState<ChannelConfig>(connection?.config ?? {
-    enabled: false, clientId: "", robotCode: "", corpId: "", modelId: models[0]?.id ?? "",
-    projectId: null, approvalMode: "manual", allowedUserIds: [""], allowedConversationIds: [], allowDirectMessages: false,
+    enabled: false, clientId: "", modelId: models[0]?.id ?? "",
+    projectId: null, approvalMode: "manual",
   });
   const [secret, setSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
-  const [users, setUsers] = useState(config.allowedUserIds.join("\n"));
-  const [groups, setGroups] = useState((config.allowedConversationIds ?? []).join("\n"));
   const [error, setError] = useState("");
 
   const change = <K extends keyof ChannelConfig>(key: K, value: ChannelConfig[K]) => setConfig((old) => ({ ...old, [key]: value }));
@@ -67,27 +63,13 @@ export function DingTalkForm({
       onSubmit={(event) => {
         event.preventDefault();
         setError("");
-        const identifiers = splitIds(users);
-        if (!identifiers.length) {
-          setError("请填写至少一个允许用户的企业 UserID。 ");
-          return;
-        }
-        const targetGroups = splitIds(groups);
-        if (config.enabled && !config.allowDirectMessages && !targetGroups.length) {
-          setError("请填写至少一个允许群，或开启单聊。 ");
-          return;
-        }
         if (!secret && (!connection?.hasSecret || config.clientId !== connection.config.clientId)) {
           setError("请填写 Client Secret。 ");
           return;
         }
         void onSave({
           expectedRevision: connection?.revision ?? 0,
-          config: {
-            ...config,
-            allowedUserIds: identifiers as [string, ...string[]],
-            allowedConversationIds: targetGroups,
-          },
+          config,
           ...(secret ? { clientSecret: secret } : {}),
         }).then((saved) => {
           if (saved) setSecret("");
@@ -207,30 +189,6 @@ export function DingTalkForm({
                   </button>
                 </div>
               </div>
-
-              <div className="channel-field">
-                <label htmlFor="field-robot-code">机器人 RobotCode</label>
-                <input
-                  id="field-robot-code"
-                  required
-                  maxLength={256}
-                  value={config.robotCode}
-                  placeholder="请输入机器人的 RobotCode"
-                  onChange={(event) => change("robotCode", event.target.value.trim())}
-                />
-              </div>
-
-              <div className="channel-field">
-                <label htmlFor="field-corp-id">组织 CorpID</label>
-                <input
-                  id="field-corp-id"
-                  required
-                  maxLength={256}
-                  value={config.corpId}
-                  placeholder="请输入企业 CorpID"
-                  onChange={(event) => change("corpId", event.target.value.trim())}
-                />
-              </div>
             </div>
           </div>
         </div>
@@ -295,68 +253,6 @@ export function DingTalkForm({
                   </select>
                 </div>
               </div>
-            </div>
-
-            <div className="channel-card-divider" />
-
-            <div className="channel-setting-row channel-subrow">
-              <div className="channel-setting-info">
-                <label htmlFor="field-allow-dm" className="channel-setting-title">
-                  允许单聊
-                </label>
-                <span className="channel-setting-desc">
-                  允许白名单内的授权用户直接向机器人发起 1 对 1 私聊对话
-                </span>
-              </div>
-              <Toggle
-                id="field-allow-dm"
-                label="允许这些用户与机器人单聊"
-                checked={config.allowDirectMessages ?? false}
-                disabled={busy}
-                onChange={(checked) => change("allowDirectMessages", checked)}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 访问控制卡片 */}
-        <div className="channel-form-card">
-          <div className="channel-form-card-header">
-            <h3 className="channel-card-heading">访问白名单</h3>
-            <p className="channel-card-subheading">严格限定允许触发 Eidos 的人员与群聊，未授权消息将被忽略</p>
-          </div>
-          <div className="channel-form-card-body">
-            <div className="channel-field">
-              <label htmlFor="field-user-ids">允许的用户 UserID</label>
-              <textarea
-                id="field-user-ids"
-                required
-                rows={3}
-                value={users}
-                maxLength={25_600}
-                placeholder="每行输入一个企业 UserID，例如：0123456789"
-                aria-describedby="channel-user-help"
-                onChange={(event) => setUsers(event.target.value)}
-              />
-              <p id="channel-user-help" className="channel-field-hint">
-                用户可以填写多个企业 UserID，每行一个。系统通过唯一 UserID 精确鉴权，不会使用群昵称识别用户。
-              </p>
-            </div>
-
-            <div className="channel-field">
-              <label htmlFor="field-group-ids">允许的群 ConversationID</label>
-              <textarea
-                id="field-group-ids"
-                rows={3}
-                value={groups}
-                maxLength={25_600}
-                placeholder="每行输入一个群聊 ConversationID，例如：cidXXXXXXXX..."
-                aria-describedby="channel-group-help"
-                onChange={(event) => setGroups(event.target.value)}
-              />
-              <p id="channel-group-help" className="channel-field-hint">
-                机器人在所属群内被 @ 时，仅在白名单中的群聊内响应并回复。单聊时不受此限制。
-              </p>
             </div>
           </div>
         </div>

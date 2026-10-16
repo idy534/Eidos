@@ -24,11 +24,7 @@ const connection: ChannelPublicConnection = {
   config: {
     enabled: true,
     clientId: "app",
-    robotCode: "robot",
-    corpId: "corp",
     modelId: model.id,
-    allowedUserIds: ["owner"],
-    allowedConversationIds: ["group"],
     approvalMode: "manual",
   },
 };
@@ -149,18 +145,39 @@ it("automatically dismisses toast notification after 3.5 seconds", async () => {
   vi.useRealTimers();
 });
 
-it("saves explicit allowlists and retains an existing secret without resending it", async () => {
+it("saves only current options and retains an existing secret without resending it", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
   render(<DingTalkForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
-  await user.clear(screen.getByLabelText("允许的用户 UserID"));
-  await user.type(screen.getByLabelText("允许的用户 UserID"), "owner, second\nowner");
+  expect(screen.queryByText("允许单聊")).not.toBeInTheDocument();
+  expect(screen.queryByText("访问白名单")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("允许的用户 UserID")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("允许的群 ConversationID")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("机器人 RobotCode")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("组织 CorpID")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
   expect(save).toHaveBeenCalledOnce();
   const request = save.mock.calls[0]![0];
   expect(request.expectedRevision).toBe(2);
-  expect(request.config.allowedUserIds).toEqual(["owner", "second"]);
+  expect(request.config).toEqual(connection.config);
   expect(request).not.toHaveProperty("clientSecret");
+});
+
+it("creates a connection with just app credentials and the default model and permissions", async () => {
+  const user = userEvent.setup();
+  const save = vi.fn().mockResolvedValue(true);
+  render(<DingTalkForm connection={null} models={[model]} projects={[]} busy={false} onSave={save} />);
+  await user.type(screen.getByLabelText("Client ID"), "new-app");
+  await user.type(screen.getByLabelText("Client Secret"), "new-secret");
+  await user.click(screen.getByLabelText("启用钉钉渠道"));
+  await user.click(screen.getByRole("button", { name: "保存渠道配置" }));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(save).toHaveBeenCalledWith({
+    expectedRevision: 0,
+    clientSecret: "new-secret",
+    config: { enabled: true, clientId: "new-app", modelId: model.id, projectId: null, approvalMode: "manual" },
+  });
+  expect(screen.getByLabelText("Client Secret")).toHaveValue("");
 });
 
 it("requires a fresh secret when changing the app and preserves it after failure", async () => {

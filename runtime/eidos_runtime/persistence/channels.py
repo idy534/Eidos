@@ -4,12 +4,27 @@ from collections.abc import Callable
 import sqlite3
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from pydantic import JsonValue, TypeAdapter
+
 from eidos_runtime.db.database import Repository, now_ms
 from eidos_runtime.db.events import append_event
 from eidos_runtime.domain.channels import (
     ChannelConnection, ChannelDelivery, ChannelError, ChannelInbound, ChannelMessage, ChannelOrigin,
 )
 from eidos_runtime.runtime.state_machine import EventType
+
+_STORED_CONNECTION = TypeAdapter(dict[str, JsonValue])
+
+
+def _read_connection(raw: str) -> ChannelConnection:
+    value = _STORED_CONNECTION.validate_json(raw)
+    config = value.get("config")
+    if isinstance(config, dict):
+        # Only persisted v30 configurations and inbox snapshots accept retired fields.
+        # Public requests remain strict; the next save writes the current format.
+        for key in ("robot_code", "corp_id", "allowed_user_ids", "allowed_conversation_ids", "allow_direct_messages"):
+            config.pop(key, None)
+    return ChannelConnection.model_validate(value)
 
 
 def stable_id(value: str) -> str:
@@ -23,7 +38,7 @@ class ChannelRepository(Repository):
     def connection(self) -> ChannelConnection | None:
         with self.lock:
             row = self._connection().execute("SELECT connection_json FROM channel_connections LIMIT 1").fetchone()
-        return ChannelConnection.model_validate_json(row[0]) if row else None
+        return _read_connection(row[0]) if row else None
 
     def save(self, value: ChannelConnection, expected: int) -> None:
         with self.database.transaction() as connection:
@@ -56,7 +71,7 @@ class ChannelRepository(Repository):
             row = self._connection().execute("SELECT * FROM channel_inbound WHERE id=?", (identifier,)).fetchone()
         if row is None:
             raise ChannelError("渠道消息已不可用。")
-        return ChannelInbound(id=row["id"], connection=ChannelConnection.model_validate_json(row["snapshot_json"]),
+        return ChannelInbound(id=row["id"], connection=_read_connection(row["snapshot_json"]),
                               message=ChannelMessage.model_validate_json(row["message_json"]), status=row["status"],
                               session_id=row["session_id"], run_id=row["run_id"])
 

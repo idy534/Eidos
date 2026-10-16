@@ -1,6 +1,6 @@
 # 当前渠道接入
 
-Eidos 在本机运行钉钉应用机器人。用户可以在“设置 → 渠道”配置一个企业内部应用。群聊需要 @ 机器人；单聊需要在设置中明确开启。系统只接受指定组织、机器人、企业 UserID 和群 ConversationID 的消息。
+Eidos 在本机运行钉钉应用机器人。用户可以在“设置 → 渠道”配置一个企业内部应用。机器人默认支持单聊，群聊需要 @ 机器人。Eidos 不设置额外的用户或群白名单。钉钉应用的发布状态和可用范围决定哪些用户可以接触机器人。
 
 ## 配置与运行
 
@@ -8,9 +8,9 @@ Eidos 在本机运行钉钉应用机器人。用户可以在“设置 → 渠道
 
 用户在本机选择已经配置的模型、独立工作区或一个现有 Project。Project 使用 Local 执行，不自动创建 Worktree。渠道审批模式默认 manual，也可以选择 auto_review。渠道不能选择 full_access。
 
-配置字段包括 Client ID、Client Secret、RobotCode、CorpID、允许的企业 UserID、允许的群 ConversationID，以及单聊开关。UserID 与回调的 senderStaffId 对应。CorpID 与 senderCorpId 对应。群 ID 与 conversationId 对应。RobotCode 不通过 Client ID 猜测。用户需要通过钉钉的身份和会话接口取得这些 ID，不能使用昵称、群名称或手机号代替。每份允许列表最多保存 100 个 ID。
+应用凭证只需要 Client ID 和 Client Secret。用户不需要填写 RobotCode、CorpID、UserID 或 ConversationID，也不需要开启单聊开关。Stream 使用 Client ID 和 Secret 建立连接。Runtime 从该连接的消息回调读取 robotCode、senderCorpId、senderStaffId 和 conversationId。回复使用消息里的 robotCode，Session 使用消息里的 senderCorpId 区分组织。系统不通过 Client ID 猜测 RobotCode。字段来源见[官方 Stream 协议](https://open-dingtalk.github.io/developerpedia/docs/learn/stream/protocol/)与[官方 SDK 回调解析](https://github.com/open-dingtalk/dingtalk-stream-sdk-python/blob/main/dingtalk_stream/chatbot.py)。
 
-Client Secret 留空会保留同一 Client ID 已保存的凭证。更换 Client ID 必须填写新 Secret。Runtime 把 Secret 保存在数据目录的 channel-secrets 下，目录权限为 0700，文件权限为 0600。SQLite 只保存 UUID 引用。API 读取响应不返回 Secret 或其文件引用。SDK 原始日志被隔离，AccessToken 只在内存缓存。
+Client Secret 留空会保留同一 Client ID 已保存的凭证。更换 Client ID 必须填写新 Secret。Runtime 把 Secret 保存在数据目录的 channel-secrets 下，目录权限为 0700，文件权限为 0600。SQLite 只保存 UUID 引用。API 读取响应不返回 Secret 或其文件引用。SDK 原始日志被隔离，Eidos 只记录经过固定映射的连接事件和异常类型。AccessToken 只在内存缓存。
 
 系统不开放本地 HTTP 服务。Desktop 仍通过 typed IPC 和 stdio JSON-RPC 管理 Runtime。Runtime 主动连接钉钉。Eidos 完全退出、电脑休眠或网络不可用时，系统不能保证接收消息。平台不能保证补投机器人离线消息。同一应用应只在一台 Eidos 中启用。
 
@@ -34,9 +34,17 @@ channel_inbound 使用由连接和原消息 msgId 得到的稳定 ID 去重。�
 
 发送前，系统将回复记为 sending。成功回执会将记录改为 sent，该状态表示平台已接受发送，不代表用户已读。明确的权限或目标错误记为 failed。限流、凭据刷新和获取 Token 的暂时错误最多尝试五次，间隔一分钟。发送超时、服务端异常、无法确认的回执、取消时的发送和重启遗留的 sending 记录记为 unknown。系统不会自动重发 unknown。多段回复的前一段未确认时，后续段停止。Desktop 显示最近 20 条回复的状态和原因。
 
+## 漏回复诊断
+
+维护者应先核对 channel_inbound、Run 和 channel_deliveries。接收记录不存在时，维护者需要继续核对 Stream 回调日志，不能直接归因为模型未回答。接收记录存在时，维护者再检查 Run 是否等待、失败或结束，以及回复是否被平台接受。
+
+Runtime 的 eidos.dingtalk 日志记录 SDK 去重前的回调消息帧、回调到达、规范化结果和落库阶段。帧与消息标识均为 SHA-256 摘要的前 12 位，只用于关联诊断。日志还记录配置版本、单聊或群聊、@ 标记、格式支持状态和文字长度。校验失败时，日志只列出失败字段名；配置改变、停用和群聊未 @ 也有固定原因。SDK 日志只转换为连接、断开、无效帧、未知主题、回调处理失败等固定事件，以及异常类型。日志不保留消息正文、昵称、完整平台 ID、Webhook、连接 ticket、Secret、SDK 原始异常值或格式化响应。
+
 ## 数据与验证
 
 Schema v30 增加 channel_connections、channel_sessions、channel_inbound、channel_run_origins 和 channel_deliveries。v29→v30 迁移包含 DDL 与版本回滚。普通旧库升级和持久化布局升级均接入该迁移。旧 Runtime 不能读取 v30，回退程序前需要恢复升级前的数据备份。
+
+配置精简没有改变表结构或 Schema 版本。Repository 在读取旧连接和旧消息的配置快照时，移除已停用的 RobotCode、CorpID、白名单和单聊开关字段。旧开关和列表不再限制消息。系统保留连接 ID、版本、凭证引用和 Session 映射。下一次保存会写入精简后的配置。公开的 channel/save 不再接受这些旧字段，其他未知字段仍被拒绝。Desktop 与 Runtime 需要配套更新；回退到要求旧字段的 Runtime 前需要恢复备份。
 
 协议增加 channel/read 和 channel/save。Python DTO 与 Domain 模型分别保存；TypeScript DTO 和验证 Schema 由 scripts/generate-channel-contracts.mjs 生成。共享 Fixture 为 protocol/fixtures/channels-v1.json。
 

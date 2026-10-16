@@ -6,8 +6,7 @@ import "../src/styles.css";
 
 declare global { interface Window { channelSaved: ChannelSaveRequest | undefined; } }
 let response: ChannelResponse = { state: "connected", connection: { id: "connection", revision: 1, hasSecret: true,
-  config: { enabled: true, clientId: "ding-example", robotCode: "ding-example-robot", corpId: "ding-example-corp",
-    modelId: "deepseek-v4-flash", allowedUserIds: ["user-example"], allowedConversationIds: ["cid-example"], approvalMode: "manual" } },
+  config: { enabled: true, clientId: "ding-example", modelId: "deepseek-v4-flash", approvalMode: "manual" } },
   deliveries: [{ id: "reply", inboundId: "message", kind: "final:0", status: "unknown", text: "任务已完成，请在 Eidos 查看产物。",
     reason: "网络中断，发送结果未知。", createdAt: 1 }] };
 window.eidosRuntime = { readChannel: async () => response, listProjects: async () => ({ items: [] }),

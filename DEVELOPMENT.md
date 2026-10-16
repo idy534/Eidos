@@ -486,7 +486,7 @@ pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/com
 
 ## 钉钉渠道定向开发与验证
 
-用户可以在“设置 → 渠道”保存企业内部应用的机器人配置。应用需要选择 Stream 接收模式。Eidos 需要一直运行并能访问钉钉公网服务。渠道不开放入站监听端口。数据与凭证文件由 Runtime 管理，用户不应手工编辑 SQLite。
+用户可以在“设置 → 渠道”保存企业内部应用的机器人配置。应用凭证只需要 Client ID 和 Client Secret，机器人和组织 ID 由消息回调提供。机器人默认支持单聊，群聊需要 @。Eidos 不再提供用户、群白名单或单聊开关。应用需要选择 Stream 接收模式。Eidos 需要一直运行并能访问钉钉公网服务。渠道不开放入站监听端口。数据与凭证文件由 Runtime 管理，用户不应手工编辑 SQLite。
 
 维护者修改渠道 DTO 后运行 `node scripts/generate-channel-contracts.mjs`。定向验证入口如下，维护者不需要因此运行 Full Suite：
 

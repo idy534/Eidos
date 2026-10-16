@@ -26,12 +26,13 @@ void test("channel configuration is redacted, revision guarded and survives Runt
     await client.initialize();
     assert.equal((await client.readChannel()).connection ?? null, null);
     const request = { expectedRevision: 0, clientSecret: "sample-channel-secret", config: {
-      enabled: false, clientId: "app", robotCode: "robot", corpId: "corp", modelId: "deepseek-v4-flash",
-      allowedUserIds: ["owner"] as [string], allowedConversationIds: ["group"],
+      enabled: false, clientId: "app", modelId: "deepseek-v4-flash",
     } };
     const saved = await client.saveChannel(request);
     assert.equal(saved.connection?.revision, 1);
     assert.equal(saved.connection?.hasSecret, true);
+    assert.equal(Object.hasOwn(saved.connection?.config ?? {}, "robotCode"), false);
+    assert.equal(Object.hasOwn(saved.connection?.config ?? {}, "corpId"), false);
     assert.equal(JSON.stringify(saved).includes("sample-channel-secret"), false);
     await assert.rejects(client.saveChannel(request), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "INVALID_PARAMS");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);

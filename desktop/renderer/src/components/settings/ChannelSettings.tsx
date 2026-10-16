@@ -335,7 +335,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
             </>
           ) : (
             <>
-              {/* 表单主体（包含单行顶栏与凭证/策略/白名单卡片） */}
+              {/* 表单主体（包含单行顶栏与凭证、运行策略卡片） */}
               <DingTalkForm
                 key={response?.connection?.revision ?? 0}
                 connection={response?.connection ?? null}
@@ -367,12 +367,12 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                       <strong>开启机器人 Stream 模式</strong>：在“应用功能 - 机器人”中开启机器人，并在消息接收模式选择 <strong>Stream 模式</strong>（无需公网回调域名）。
                     </li>
                     <li>
-                      <strong>填入凭证并入群</strong>：获取 Client ID (AppKey)、Client Secret (AppSecret) 和 RobotCode，保存后将机器人加入所属企业群。
+                      <strong>填入凭证并入群</strong>：填写 Client ID (AppKey) 和 Client Secret (AppSecret)，保存后将机器人加入所属企业群。
                     </li>
                   </ol>
                   <div className="channel-guide-notice">
                     <p>
-                      群消息需 @ 机器人唤醒。电脑休眠或退出 Eidos 时机器人无法接收消息；同一应用凭证请只在一台 Eidos 客户端上启用。
+                      机器人默认支持单聊，群消息需要 @ 机器人。电脑休眠或退出 Eidos 时机器人无法接收消息；同一应用凭证请只在一台 Eidos 客户端上启用。
                     </p>
                   </div>
                 </div>

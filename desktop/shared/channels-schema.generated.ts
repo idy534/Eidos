@@ -15,18 +15,6 @@ export const channelSchema = {
           "title": "Clientid",
           "type": "string"
         },
-        "robotCode": {
-          "maxLength": 256,
-          "minLength": 1,
-          "title": "Robotcode",
-          "type": "string"
-        },
-        "corpId": {
-          "maxLength": 256,
-          "minLength": 1,
-          "title": "Corpid",
-          "type": "string"
-        },
         "modelId": {
           "maxLength": 256,
           "minLength": 1,
@@ -54,36 +42,11 @@ export const channelSchema = {
           ],
           "title": "Approvalmode",
           "type": "string"
-        },
-        "allowedUserIds": {
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 100,
-          "minItems": 1,
-          "title": "Alloweduserids",
-          "type": "array"
-        },
-        "allowedConversationIds": {
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 100,
-          "title": "Allowedconversationids",
-          "type": "array"
-        },
-        "allowDirectMessages": {
-          "default": false,
-          "title": "Allowdirectmessages",
-          "type": "boolean"
         }
       },
       "required": [
         "clientId",
-        "robotCode",
-        "corpId",
-        "modelId",
-        "allowedUserIds"
+        "modelId"
       ],
       "title": "ChannelConfig",
       "type": "object"

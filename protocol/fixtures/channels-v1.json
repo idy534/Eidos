@@ -4,15 +4,16 @@
       "config": {
         "enabled": false,
         "clientId": "app",
-        "robotCode": "robot",
-        "corpId": "corp",
-        "modelId": "deepseek-v4-flash",
-        "allowedUserIds": [
-          "user"
-        ],
-        "allowedConversationIds": [
-          "group"
-        ]
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": true,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret"
@@ -23,15 +24,7 @@
       "config": {
         "enabled": false,
         "clientId": "app",
-        "robotCode": "robot",
-        "corpId": "corp",
-        "modelId": "deepseek-v4-flash",
-        "allowedUserIds": [
-          "user"
-        ],
-        "allowedConversationIds": [
-          "group"
-        ]
+        "modelId": "deepseek-v4-flash"
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret",
@@ -41,15 +34,7 @@
       "config": {
         "enabled": false,
         "clientId": "app",
-        "robotCode": "robot",
-        "corpId": "corp",
-        "modelId": "deepseek-v4-flash",
-        "allowedUserIds": [
-          "user"
-        ],
-        "allowedConversationIds": [
-          "group"
-        ]
+        "modelId": "deepseek-v4-flash"
       },
       "expectedRevision": true,
       "clientSecret": "sample-secret"
@@ -58,15 +43,7 @@
       "config": {
         "enabled": false,
         "clientId": "app",
-        "robotCode": "robot",
-        "corpId": "corp",
         "modelId": "deepseek-v4-flash",
-        "allowedUserIds": [
-          "user"
-        ],
-        "allowedConversationIds": [
-          "group"
-        ],
         "approvalMode": "full_access"
       },
       "expectedRevision": 0,
@@ -75,14 +52,62 @@
     {
       "config": {
         "enabled": false,
+        "clientId": "",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
         "clientId": "app",
-        "robotCode": "robot",
-        "corpId": "corp",
         "modelId": "deepseek-v4-flash",
-        "allowedUserIds": [],
+        "robotCode": "robot"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "corpId": "corp"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "allowedUserIds": [
+          "user"
+        ]
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
         "allowedConversationIds": [
           "group"
         ]
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "allowDirectMessages": false
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret"

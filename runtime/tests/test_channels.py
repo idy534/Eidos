@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import time
@@ -12,7 +13,7 @@ import httpx2 as httpx
 import pytest
 from pydantic import ValidationError
 
-from eidos_runtime.application.channels import allowed
+from eidos_runtime.application.channels import accepts_message
 from eidos_runtime.db.channel_migration import migrate_channels
 from eidos_runtime.db.repositories.runs import RunRepository
 from eidos_runtime.db.storage import SessionStore
@@ -21,7 +22,7 @@ from eidos_runtime.infrastructure.channel_secrets import ChannelSecrets
 from eidos_runtime.infrastructure.dingtalk import DingTalkAdapter, DingTalkSendError
 from eidos_runtime.model.client import ModelResponse, ScriptedModel
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
-from eidos_runtime.persistence.channels import ChannelRepository
+from eidos_runtime.persistence.channels import ChannelRepository, stable_id
 from eidos_runtime.protocol.channels import ChannelSaveRequest
 from eidos_runtime.protocol.server import RuntimeServer
 
@@ -29,8 +30,7 @@ pytestmark = pytest.mark.integration
 
 
 def configuration(**changes):
-    return ChannelConfig(client_id="app", robot_code="robot", corp_id="corp", model_id=DEFAULT_MODEL_ID,
-                         allowed_user_ids=["user"], allowed_conversation_ids=["group"], **changes)
+    return ChannelConfig(client_id="app", model_id=DEFAULT_MODEL_ID, **changes)
 
 
 def message(**changes):
@@ -54,21 +54,29 @@ def channels(tmp_path):
 
 
 @pytest.mark.parametrize("changes", [dict(corp_id="other"), dict(robot_code="other"), dict(sender_id="other"),
-    dict(conversation_id="other"), dict(mentioned=False), dict(conversation_type="1")])
-def test_allowlist_checks_every_identity(changes):
+    dict(conversation_id="other"), dict(conversation_type="1", mentioned=False)])
+def test_direct_and_mentioned_group_messages_need_no_local_allowlist(changes):
     connection = ChannelConnection(id="connection", revision=1, config=configuration(enabled=True), secret_ref="ref")
-    assert allowed(connection, message())
-    assert not allowed(connection, message(**changes))
+    assert accepts_message(connection, message())
+    assert accepts_message(connection, message(**changes))
 
 
-def test_direct_messages_require_opt_in_and_user_identity():
-    connection = ChannelConnection(id="connection", revision=1, config=configuration(enabled=True, allow_direct_messages=True), secret_ref="ref")
-    assert allowed(connection, message(conversation_type="1", mentioned=False))
-    assert not allowed(connection, message(conversation_type="1", sender_id="other"))
+def test_disabled_channels_and_unmentioned_group_messages_are_ignored(channels):
+    from eidos_runtime.application.channels import ChannelApplication
+    _, repository, connection, _ = channels
+    application = ChannelApplication(repository, None, None, None, None)
+    application.receive(connection, message(mentioned=False))
+    assert repository.pending() == []
+    disabled = connection.model_copy(update={"config": configuration()})
+    assert not accepts_message(disabled, message())
+    assert not accepts_message(disabled, message(conversation_type="1", mentioned=False))
+    application.receive(connection, message(conversation_type="1", mentioned=False, sender_id="new-user"))
+    assert len(repository.pending()) == 1
 
 
-def test_strict_config_rejects_full_access_and_empty_allowlist():
-    for changes in ({"approval_mode": "full_access"}, {"allowed_user_ids": []}, {"enabled": 1}, {"corp_id": " "}):
+def test_strict_config_rejects_full_access_invalid_fields_and_retired_options():
+    for changes in ({"approval_mode": "full_access"}, {"enabled": 1}, {"client_id": " "}, {"robot_code": "robot"},
+                    {"corp_id": "corp"}, {"allowed_user_ids": []}, {"allowed_conversation_ids": []}, {"allow_direct_messages": False}):
         with pytest.raises(ValidationError):
             ChannelConfig.model_validate(configuration().model_dump() | changes)
 
@@ -121,10 +129,6 @@ def test_conversation_and_sender_bindings_preserve_context_without_mixing(channe
     from types import SimpleNamespace
     from eidos_runtime.application.channels import ChannelApplication
     store, repository, connection, session = channels
-    configuration = connection.config.model_copy(update={"allowed_user_ids": ["user", "other"],
-                                                        "allowed_conversation_ids": ["group", "second-group"]})
-    connection = connection.model_copy(update={"revision": 2, "config": configuration})
-    repository.save(connection, 1)
     class Sessions:
         def create(self, request):
             return SimpleNamespace(id=store.create_session(store.read_session(session)["workspaceRoot"])["id"])
@@ -136,14 +140,59 @@ def test_conversation_and_sender_bindings_preserve_context_without_mixing(channe
     application = ChannelApplication(repository, None, Sessions(), Runs(), None)
     identifiers = []
     for changes in ({"msg_id": "one"}, {"msg_id": "two"}, {"msg_id": "three", "sender_id": "other"},
-                    {"msg_id": "four", "conversation_id": "second-group"}):
+                    {"msg_id": "four", "conversation_id": "second-group"}, {"msg_id": "five", "corp_id": "other-corp"}):
         incoming = message(**changes)
         application.receive(connection, incoming)
         identifiers.append(repository.receive(connection, incoming))
     application.process_pending()
     sessions = [repository.inbound(identifier).session_id for identifier in identifiers]
     assert sessions[0] == sessions[1]
-    assert len(set(sessions)) == 3
+    assert len(set(sessions)) == 4
+
+
+def test_saved_legacy_config_and_inbox_snapshots_remain_readable_after_restart(channels):
+    from types import SimpleNamespace
+    from eidos_runtime.application.channels import ChannelApplication
+    store, repository, connection, session = channels
+    identifier = repository.receive(connection, message())
+    route = stable_id(json.dumps(
+        [connection.id, "app", "corp", "group", "user", None]))
+    repository.bind(route, session)
+    legacy = connection.model_dump()
+    legacy["config"].update(robot_code="robot", corp_id="corp", allowed_user_ids=["someone-else"],
+                            allowed_conversation_ids=[], allow_direct_messages=False)
+    with store.database.transaction() as transaction:
+        transaction.execute("UPDATE channel_connections SET connection_json=?", (json.dumps(legacy),))
+        transaction.execute("UPDATE channel_inbound SET snapshot_json=? WHERE id=?", (json.dumps(legacy), identifier))
+    directory = store.database.data_directory
+    store.close()
+    restored = SessionStore(directory)
+    try:
+        restored.initialize()
+        recovered = ChannelRepository(restored.database)
+        assert recovered.connection() == connection
+        assert recovered.inbound(identifier).connection == connection
+        class Runs:
+            def start(self, request, *, channel_message_id):
+                assert request.session_id == session
+                recovered.accept(channel_message_id, session, lambda transaction: str(RunRepository(restored.database).create_run(
+                    session, request.user_input, queued=True, transaction_connection=transaction)[0]["id"]))
+                return SimpleNamespace(release_after_commit=lambda: None)
+        sessions = SimpleNamespace(create=lambda _: pytest.fail("Existing Session must be reused"))
+        application = ChannelApplication(recovered, None, sessions, Runs(), None)
+        application.process_pending()
+        assert recovered.inbound(identifier).status == "submitted"
+        assert recovered.inbound(identifier).session_id == session
+        recovered.save(connection.model_copy(update={"revision": 2}), 1)
+        saved = json.loads(restored.connection.execute("SELECT connection_json FROM channel_connections").fetchone()[0])
+        assert set(saved["config"]) == set(connection.config.model_dump())
+        legacy["config"]["unknown_option"] = True
+        with restored.database.transaction() as transaction:
+            transaction.execute("UPDATE channel_connections SET connection_json=?", (json.dumps(legacy),))
+        with pytest.raises(ValidationError):
+            recovered.connection()
+    finally:
+        restored.close()
 
 
 def test_pending_and_sending_records_survive_real_database_restart(channels):
@@ -262,6 +311,65 @@ def test_official_callback_adapter_filters_and_closes_without_a_new_loop(monkeyp
     assert adapter.client is None
 
 
+def test_callback_diagnostics_explain_ignored_fields_without_logging_secrets(monkeypatch, caplog):
+    import dingtalk_stream
+    from eidos_runtime.infrastructure.dingtalk import _StreamClient
+    caplog.set_level(logging.INFO, logger="eidos.dingtalk")
+    async def start(client):
+        callback = dingtalk_stream.CallbackMessage()
+        callback.data = {"msgId": "private-message-id", "senderCorpId": "corp", "robotCode": "robot",
+                         "conversationId": "group", "conversationType": "2", "senderStaffId": "user",
+                         "senderNick": "private-name", "isInAtList": True, "msgtype": "text",
+                         "text": {"content": "private-message-text"}, "sessionWebhook": "https://private-webhook"}
+        handler = client.callback_handler_map[dingtalk_stream.ChatbotMessage.TOPIC]
+        assert (await handler.process(callback))[1] == "OK"
+        callback.data["senderCorpId"] = None
+        assert (await handler.process(callback))[1] == "ignored"
+        client.logger.info("connecting to endpoint %s", "https://private-endpoint?ticket=private-ticket")
+        client.logger.warning("invalid message, content=%r", callback.data)
+        try:
+            raise ValueError("private-exception-secret")
+        except ValueError:
+            client.logger.exception("error processing message")
+        client.logger.error("private-formatted-response-secret")
+    monkeypatch.setattr(_StreamClient, "start", start)
+    connection = ChannelConnection(id="connection", revision=1, config=configuration(), secret_ref="ref")
+    anyio.run(DingTalkAdapter().listen, connection, "private-client-secret", lambda *_: None)
+    assert "callback parsed" in caplog.text
+    assert "reason=invalid_fields fields=corp_id" in caplog.text
+    assert "event=connecting" in caplog.text
+    assert "event=invalid_frame" in caplog.text
+    assert "event=callback_failed exception=ValueError" in caplog.text
+    assert "private-" not in caplog.text
+
+
+def test_stream_frame_diagnostics_observe_sdk_duplicate_ack_without_exposing_payload(caplog):
+    import dingtalk_stream
+    from eidos_runtime.infrastructure.dingtalk import _StreamClient
+    caplog.set_level(logging.INFO, logger="eidos.dingtalk")
+    handled = []
+    acks = []
+    class Handler(dingtalk_stream.CallbackHandler):
+        async def process(self, callback):
+            handled.append(callback.data)
+            return 200, "OK"
+    class Websocket:
+        async def send(self, data):
+            acks.append(data)
+    client = _StreamClient(dingtalk_stream.Credential("app", "private-secret"))
+    client.register_callback_handler(dingtalk_stream.ChatbotMessage.TOPIC, Handler())
+    frame = {"type": "CALLBACK", "headers": {"messageId": "private-frame-id", "topic": dingtalk_stream.ChatbotMessage.TOPIC},
+             "data": json.dumps({"text": "private-text", "sessionWebhook": "private-webhook"})}
+    async def exercise():
+        await client.background_task(frame, Websocket())
+        await client.background_task(frame, Websocket())
+    anyio.run(exercise)
+    assert len(handled) == 1
+    assert len(acks) == 2
+    assert caplog.text.count("Stream callback frame") == 2
+    assert "private-" not in caplog.text
+
+
 def test_message_size_limits_are_utf8_bounded(channels):
     _, repository, connection, _ = channels
     identifier = repository.receive(connection, message())
@@ -334,7 +442,7 @@ def test_openapi_token_send_target_and_receipt(monkeypatch, direct):
     adapter = DingTalkAdapter()
     connection = ChannelConnection(id="connection", revision=1, config=configuration(), secret_ref="ref")
     anyio.run(adapter.send, connection, "secret", message(conversation_type="1" if direct else "2"), "answer")
-    assert calls[0][0] == "/v1.0/oauth2/accessToken"
+    assert calls[0] == ("/v1.0/oauth2/accessToken", {"appKey": "app", "appSecret": "secret"})
     assert calls[1][1]["robotCode"] == "robot"
     assert calls[1][1]["userIds" if direct else "openConversationId"] == (["user"] if direct else "group")
     assert json.loads(calls[1][1]["msgParam"])["text"] == "answer"
@@ -401,15 +509,16 @@ def test_channel_fixture_matches_python_contracts():
         ChannelResponse.model_validate(value)
 
 
-def test_managed_stream_callback_to_run_and_openapi_delivery(tmp_path, monkeypatch):
+@pytest.mark.parametrize("direct", [False, True])
+def test_managed_stream_callback_to_run_and_openapi_delivery(tmp_path, monkeypatch, direct):
     import dingtalk_stream
     from eidos_runtime.infrastructure.dingtalk import _StreamClient
     sent = []
     async def start(client):
         callback = dingtalk_stream.CallbackMessage()
         callback.data = {"msgId": "from-stream", "senderCorpId": "corp", "robotCode": "robot",
-                         "conversationId": "group", "conversationType": "2", "senderStaffId": "user",
-                         "senderNick": "用户", "isInAtList": True, "msgtype": "text", "text": {"content": "检查状态。"}}
+                         "conversationId": "group", "conversationType": "1" if direct else "2", "senderStaffId": "user",
+                         "senderNick": "用户", "isInAtList": not direct, "msgtype": "text", "text": {"content": "检查状态。"}}
         await client.callback_handler_map[dingtalk_stream.ChatbotMessage.TOPIC].process(callback)
         await anyio.sleep_forever()
     async def send(adapter, connection, secret, incoming, text):
