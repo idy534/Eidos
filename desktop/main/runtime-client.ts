@@ -1,4 +1,4 @@
-import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest } from "../shared/channels.js";
+import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest, type ChannelReadRequest } from "../shared/channels.js";
 import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
 import type { SessionForkRequest } from "../shared/session-fork.generated.js";
 import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
@@ -487,8 +487,8 @@ export class RuntimeClient {
     return this.validatedRequest("project/list", {}, isProjectListResult);
   }
 
-  readChannel(): Promise<ChannelResponse> {
-    return this.validatedRequest("channel/read", {}, isChannelResponse);
+  readChannel(request: ChannelReadRequest = {}): Promise<ChannelResponse> {
+    return this.validatedRequest("channel/read", { ...request }, isChannelResponse);
   }
 
   saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse> {

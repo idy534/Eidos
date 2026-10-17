@@ -6,6 +6,8 @@ import { Button } from "../Button.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { userFacingError } from "../../session-state.js";
+import { MarkdownContent } from "../MarkdownContent.js";
+import { CodeIcon, CompressIcon, ExpandIcon, PreviewIcon } from "../MenuIcons.js";
 
 export const agentRoleLabels: Record<string, string> = { default: "通用", explorer: "调查", worker: "工作" };
 const emptyDefinition: AgentDefinition = { schemaVersion: 1, name: "", description: "", instructions: "", baseRole: "default", enabled: true };
@@ -54,7 +56,10 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
   const [error, setError] = useState<string>();
   const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [expandedMd, setExpandedMd] = useState(false);
+  const [viewMode, setViewMode] = useState<"edit" | "preview">("edit");
   const nameRef = useRef<HTMLInputElement>(null);
+  const instructionsRef = useRef<HTMLTextAreaElement>(null);
   const dialogRef = useRef<HTMLFormElement>(null);
   const titleId = useId();
   useDialogFocusLifecycle({ open: true, initialFocusRef: nameRef });
@@ -94,6 +99,9 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
   async function save() {
     if (busy) return;
     setAttempted(true); setError(undefined);
+    if (instructionsError && viewMode === "preview") {
+      setViewMode("edit");
+    }
     if (nameError || descriptionError || instructionsError || modelValidationError) return;
     setBusy(true);
     try {
@@ -105,17 +113,22 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
   }
 
   return createPortal(
-    <div className="modal-backdrop agent-editor-backdrop">
-      <form
-        ref={dialogRef}
-        noValidate
-        className="modal-dialog agent-editor"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void save(); }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") { event.stopPropagation(); if (!busy) onClose(); }
+    <>
+      <div className="modal-backdrop agent-editor-backdrop" aria-hidden={expandedMd}>
+        <form
+          ref={dialogRef}
+          noValidate
+          className="modal-dialog agent-editor"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void save(); }}
+          onKeyDown={(event) => {
+            if (expandedMd) return;
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              if (!busy) onClose();
+            }
           if (event.key !== "Tab") return;
           const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex='0']") ?? []);
           const panel = (event.target as HTMLElement).closest?.(".model-selector__panel");
@@ -125,7 +138,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
             if (event.shiftKey && (document.activeElement === items[0] || document.activeElement?.getAttribute("tabindex") === "-1")) {
               event.preventDefault(); trigger?.focus();
             } else if (!event.shiftKey && document.activeElement === items.at(-1)) {
-              event.preventDefault(); controls[controls.indexOf(trigger!) + 1]?.focus();
+              event.preventDefault(); (instructionsRef.current ?? controls[controls.indexOf(trigger!) + 1])?.focus();
             }
             return;
           }
@@ -153,7 +166,6 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                 <label className="agent-editor__field agent-editor__field--flex-grow">
                   <span className="agent-editor__label-row">
                     <span className="agent-editor__label-title">名称 <span className="field-required" aria-hidden="true">*</span></span>
-                    {original && <span className="agent-editor__tag-readonly">已锁定</span>}
                   </span>
                   <div className="agent-editor__input-affix">
                     <span className="agent-editor__affix-text" aria-hidden="true">@</span>
@@ -292,27 +304,84 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
               </div>
             </div>
 
-            {/* 执行指令区块 */}
+            {/* Agent.md 格式指令区块 */}
             <div className="agent-editor__section agent-editor__section--instructions">
               <div className="agent-editor__section-header-row">
-                <span className="agent-editor__label-title">指令 <span className="field-required" aria-hidden="true">*</span></span>
-                <span className="agent-editor__bytes-badge">
-                  {new TextEncoder().encode(draft.instructions).length} / 48 KiB
-                </span>
+                <div className="agent-editor__title-group">
+                  <span className="agent-editor__label-title agent-editor__label-title--code">
+                    Agent.md <span className="field-required" aria-hidden="true">*</span>
+                  </span>
+                  <span className="agent-editor__bytes-badge" title="字符数">
+                    {draft.instructions.length}
+                  </span>
+                </div>
+
+                <div className="agent-editor__instructions-toolbar">
+                  <div className="agent-editor__segmented-bar agent-editor__segmented-bar--sm" role="tablist" aria-label="查看方式">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={viewMode === "edit"}
+                      className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
+                      onClick={() => setViewMode("edit")}
+                      title="查看与编辑源码"
+                    >
+                      <CodeIcon className="agent-editor__tab-icon" />
+                      <span>源码</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={viewMode === "preview"}
+                      className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
+                      onClick={() => setViewMode("preview")}
+                      title="预览 Markdown 效果"
+                    >
+                      <PreviewIcon className="agent-editor__tab-icon" />
+                      <span>预览</span>
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="agent-editor__icon-btn"
+                    onClick={() => setExpandedMd(true)}
+                    title="放大编辑"
+                    aria-label="放大编辑"
+                  >
+                    <ExpandIcon />
+                  </button>
+                </div>
               </div>
-              <label className="agent-editor__field">
-                <textarea
-                  aria-label="指令"
-                  required
-                  maxLength={49152}
-                  rows={9}
-                  value={draft.instructions}
-                  placeholder={"你负责完成父任务分配的实现任务。\n你需要先阅读相关源码，并保留已有修改。\n你需要报告修改内容、验证结果和未完成事项。"}
-                  className="agent-editor__textarea"
-                  onChange={(event) => setDraft({ ...draft, instructions: event.target.value })}
-                />
-                {attempted && instructionsError && <span className="setting-field-error" role="alert">{instructionsError}</span>}
-              </label>
+
+              {viewMode === "edit" ? (
+                <label className="agent-editor__field agent-editor__field--instructions">
+                  <textarea
+                    ref={instructionsRef}
+                    aria-label="Agent.md"
+                    required
+                    maxLength={49152}
+                    rows={9}
+                    value={draft.instructions}
+                    placeholder={"# 角色定位\n你负责范围明确的实现、修复与验证。\n\n## 工作约束\n- 先探索并理解已有代码架构\n- 每次改动保持定向测试覆盖\n- 报告关键证据与改动点"}
+                    className="agent-editor__textarea"
+                    onChange={(event) => setDraft({ ...draft, instructions: event.target.value })}
+                  />
+                </label>
+              ) : (
+                <div className="agent-editor__preview-wrapper">
+                  {draft.instructions.trim() ? (
+                    <div className="agent-editor__preview-body eidos-chat-prose" tabIndex={0} role="region" aria-label="Agent.md 预览">
+                      <MarkdownContent content={draft.instructions} />
+                    </div>
+                  ) : (
+                    <div className="agent-editor__preview-empty">
+                      <p>暂无内容，请切换至「源码」编写 Markdown 格式的 Agent 指令。</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {attempted && instructionsError && <span className="setting-field-error" role="alert">{instructionsError}</span>}
             </div>
           </fieldset>
           {error && <p className="setting-field-error" role="alert">{error}</p>}
@@ -325,6 +394,145 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
           </Button>
         </footer>
       </form>
-    </div>, document.body,
+    </div>
+    {expandedMd && (
+      <AgentMdExpandedDialog
+        instructions={draft.instructions}
+        viewMode={viewMode}
+        onChangeInstructions={(instructions) => setDraft((previous) => ({ ...previous, instructions }))}
+        onChangeViewMode={setViewMode}
+        onClose={() => {
+          setExpandedMd(false);
+          setTimeout(() => instructionsRef.current?.focus(), 0);
+        }}
+      />
+    )}
+  </>, document.body,
+  );
+}
+
+function AgentMdExpandedDialog({
+  instructions,
+  viewMode,
+  onChangeInstructions,
+  onChangeViewMode,
+  onClose,
+}: {
+  instructions: string;
+  viewMode: "edit" | "preview";
+  onChangeInstructions(instructions: string): void;
+  onChangeViewMode(mode: "edit" | "preview"): void;
+  onClose(): void;
+}) {
+  const titleId = useId();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (viewMode === "edit") {
+      textareaRef.current?.focus();
+    }
+  }, [viewMode]);
+
+  return (
+    <div
+      className="agent-md-expanded-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="agent-md-expanded-dialog"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <header className="agent-md-expanded-header">
+          <div className="agent-editor__title-group">
+            <span id={titleId} className="agent-editor__label-title agent-editor__label-title--code">
+              Agent.md
+            </span>
+            <span className="agent-editor__bytes-badge" title="字符数">
+              {instructions.length}
+            </span>
+          </div>
+
+          <div className="agent-editor__instructions-toolbar">
+            <div className="agent-editor__segmented-bar agent-editor__segmented-bar--sm" role="tablist" aria-label="查看方式">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === "edit"}
+                className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
+                onClick={() => onChangeViewMode("edit")}
+                title="查看与编辑源码"
+              >
+                <CodeIcon className="agent-editor__tab-icon" />
+                <span>源码</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === "preview"}
+                className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
+                onClick={() => onChangeViewMode("preview")}
+                title="预览 Markdown 效果"
+              >
+                <PreviewIcon className="agent-editor__tab-icon" />
+                <span>预览</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="agent-editor__icon-btn"
+              onClick={onClose}
+              title="收起"
+              aria-label="收起"
+            >
+              <CompressIcon />
+            </button>
+          </div>
+        </header>
+
+        <div className="agent-md-expanded-body">
+          {viewMode === "edit" ? (
+            <textarea
+              ref={textareaRef}
+              aria-label="Agent.md"
+              maxLength={49152}
+              value={instructions}
+              placeholder={"# 角色定位\n你负责范围明确的实现、修复与验证。\n\n## 工作约束\n- 先探索并理解已有代码架构\n- 每次改动保持定向测试覆盖\n- 报告关键证据与改动点"}
+              className="agent-md-expanded-textarea"
+              onChange={(event) => onChangeInstructions(event.target.value)}
+            />
+          ) : (
+            <div className="agent-md-expanded-preview-wrapper">
+              {instructions.trim() ? (
+                <div className="agent-md-expanded-preview-body eidos-chat-prose" tabIndex={0} role="region" aria-label="Agent.md 预览">
+                  <MarkdownContent content={instructions} />
+                </div>
+              ) : (
+                <div className="agent-editor__preview-empty">
+                  <p>暂无内容，请切换至「源码」编写 Markdown 格式的 Agent 指令。</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <footer className="agent-md-expanded-footer">
+          <span className="agent-md-expanded-tip">按 Esc 或点击完成返回</span>
+          <Button variant="primary" size="small" onClick={onClose}>
+            完成
+          </Button>
+        </footer>
+      </div>
+    </div>
   );
 }

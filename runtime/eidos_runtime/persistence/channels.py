@@ -9,7 +9,7 @@ from pydantic import JsonValue, TypeAdapter
 from eidos_runtime.db.database import Repository, now_ms
 from eidos_runtime.db.events import append_event
 from eidos_runtime.domain.channels import (
-    ChannelConnection, ChannelDelivery, ChannelError, ChannelInbound, ChannelMessage, ChannelOrigin,
+    ChannelConnection, ChannelDelivery, ChannelError, ChannelInbound, ChannelKind, ChannelMessage, ChannelOrigin,
 )
 from eidos_runtime.runtime.state_machine import EventType
 
@@ -33,20 +33,23 @@ def stable_id(value: str) -> str:
 
 class ChannelRepository(Repository):
     def changed(self, connection: sqlite3.Connection) -> None:
-        append_event(connection, EventType.CHANNEL_CHANGED, now_ms(), {"id": "dingtalk"})
+        append_event(connection, EventType.CHANNEL_CHANGED, now_ms(), {"id": "channels"})
 
-    def connection(self) -> ChannelConnection | None:
+    def connection(self, channel: ChannelKind = "dingtalk") -> ChannelConnection | None:
         with self.lock:
-            row = self._connection().execute("SELECT connection_json FROM channel_connections LIMIT 1").fetchone()
+            row = self._connection().execute("SELECT connection_json FROM channel_connections WHERE coalesce(json_extract(connection_json,'$.channel'),'dingtalk')=? LIMIT 1", (channel,)).fetchone()
         return _read_connection(row[0]) if row else None
 
     def save(self, value: ChannelConnection, expected: int) -> None:
         with self.database.transaction() as connection:
-            old = self.connection()
+            old = self.connection(value.channel)
             if (old.revision if old else 0) != expected:
                 raise ChannelError("渠道配置已经改变，请刷新后重试。")
             if value.revision != expected + 1 or (old is not None and old.id != value.id):
                 raise ChannelError("渠道配置的身份或版本无效。")
+            identity = connection.execute("SELECT connection_json FROM channel_connections WHERE id=?", (value.id,)).fetchone()
+            if identity and _read_connection(identity[0]).channel != value.channel:
+                raise ChannelError("渠道配置的身份无效。")
             connection.execute("INSERT INTO channel_connections VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,connection_json=excluded.connection_json",
                                (value.id, value.revision, value.model_dump_json()))
             self.changed(connection)
@@ -62,7 +65,7 @@ class ChannelRepository(Repository):
         return identifier
 
     def require_current(self, snapshot: ChannelConnection) -> None:
-        current = self.connection()
+        current = self.connection(snapshot.channel)
         if current is None or not current.config.enabled or current != snapshot:
             raise ChannelError("渠道已经停用或配置已经改变。")
 
@@ -104,7 +107,7 @@ class ChannelRepository(Repository):
             if incoming.status != "pending":
                 raise ChannelError("这条渠道消息已经处理。")
             run_id = write(connection)
-            origin = ChannelOrigin(message_id=identifier, sender_id=incoming.message.sender_id,
+            origin = ChannelOrigin(channel=incoming.connection.channel, message_id=identifier, sender_id=incoming.message.sender_id,
                                    conversation_id=incoming.message.conversation_id)
             connection.execute("INSERT INTO channel_run_origins VALUES(?,?)", (run_id, origin.model_dump_json()))
             connection.execute("UPDATE channel_inbound SET status='submitted',session_id=?,run_id=? WHERE id=?",
@@ -131,13 +134,15 @@ class ChannelRepository(Repository):
         return {row[0]: ChannelOrigin.model_validate_json(row[1]) for row in rows}
 
     def _reply(self, connection: sqlite3.Connection, identifier: str, kind: str, text: str) -> None:
-        # Bound the full answer and split by UTF-8 bytes, below DingTalk message limits.
+        # Use a conservative 3 KiB Markdown segment for WeCom. Other adapters
+        # retain the existing 6 KiB text segments; split only at UTF-8 boundaries.
+        limit = 3000 if self.inbound(identifier).connection.channel == "wecom" else 6000
         raw = text.encode("utf-8")
         if len(raw) > 24_000:
             raw = raw[:24_000].decode("utf-8", errors="ignore").encode() + "\n内容较长，请在 Eidos 查看完整回答。".encode()
         parts = []
         while raw:
-            part = raw[:6000].decode("utf-8", errors="ignore")
+            part = raw[:limit].decode("utf-8", errors="ignore")
             parts.append(part)
             raw = raw[len(part.encode()):]
         before = connection.total_changes
@@ -171,9 +176,9 @@ class ChannelRepository(Repository):
     def _delivery(row: sqlite3.Row) -> ChannelDelivery:
         return ChannelDelivery(**{name: row[name] for name in ChannelDelivery.model_fields})
 
-    def deliveries(self) -> list[ChannelDelivery]:
+    def deliveries(self, channel: ChannelKind = "dingtalk") -> list[ChannelDelivery]:
         with self.lock:
-            return [self._delivery(r) for r in self._connection().execute("SELECT * FROM channel_deliveries ORDER BY sequence DESC LIMIT 20")]
+            return [self._delivery(r) for r in self._connection().execute("SELECT d.* FROM channel_deliveries d JOIN channel_inbound i ON i.id=d.inbound_id WHERE coalesce(json_extract(i.snapshot_json,'$.channel'),'dingtalk')=? ORDER BY d.sequence DESC LIMIT 20", (channel,))]
 
     def claim_delivery(self) -> ChannelDelivery | None:
         with self.database.transaction() as connection:

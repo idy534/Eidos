@@ -12,6 +12,7 @@ import httpx2 as httpx
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from eidos_runtime.domain.channels import ChannelConnection, ChannelError, ChannelMessage
+from eidos_runtime.infrastructure.channel_adapter import ChannelSendError
 
 _JSON_RESPONSE = TypeAdapter(dict[str, JsonValue])
 _LOGGER = logging.getLogger("eidos.dingtalk")
@@ -39,11 +40,7 @@ class _SdkLogHandler(logging.Handler):
                         event or "connection_error", exception)
 
 
-class DingTalkSendError(Exception):
-    def __init__(self, reason: str, *, uncertain: bool = False, retry: bool = False) -> None:
-        super().__init__(reason)
-        self.uncertain = uncertain
-        self.retry = retry
+DingTalkSendError = ChannelSendError
 
 
 class _StreamClient(dingtalk_stream.DingTalkStreamClient):

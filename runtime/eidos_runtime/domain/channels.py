@@ -7,6 +7,9 @@ from pydantic import Field, field_validator, model_validator
 from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
+ChannelKind = Literal["dingtalk", "feishu", "wecom"]
+CHANNEL_NAMES: dict[ChannelKind, str] = {"dingtalk": "钉钉", "feishu": "飞书", "wecom": "企业微信"}
+
 
 class ChannelError(ValueError):
     def __init__(self, message: str) -> None:
@@ -30,6 +33,7 @@ class ChannelConfig(EidosFrozenStrictModel):
 
 
 class ChannelConnection(EidosFrozenStrictModel):
+    channel: ChannelKind = "dingtalk"
     id: str
     revision: JsonSafeInt = Field(ge=1)
     config: ChannelConfig
@@ -66,7 +70,7 @@ class ChannelInbound(EidosFrozenStrictModel):
 
 
 class ChannelOrigin(EidosFrozenStrictModel):
-    channel: Literal["dingtalk"] = "dingtalk"
+    channel: ChannelKind = "dingtalk"
     message_id: str
     sender_id: str
     conversation_id: str

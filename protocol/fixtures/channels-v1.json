@@ -38,6 +38,26 @@
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "channel": "feishu"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "channel": "wecom"
     }
   ],
   "invalidRequests": [
@@ -153,6 +173,16 @@
       },
       "expectedRevision": 0,
       "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "channel": "unknown"
     }
   ],
   "validResponses": [
@@ -161,6 +191,59 @@
       "state": "disabled",
       "reason": null,
       "deliveries": []
+    },
+    {
+      "state": "connecting",
+      "connection": {
+        "channel": "feishu",
+        "id": "feishu",
+        "revision": 1,
+        "hasSecret": true,
+        "config": {
+          "clientId": "app",
+          "modelId": "model",
+          "enabled": true
+        }
+      }
+    },
+    {
+      "state": "connecting",
+      "connection": {
+        "channel": "wecom",
+        "id": "wecom",
+        "revision": 1,
+        "hasSecret": true,
+        "config": {
+          "clientId": "app",
+          "modelId": "model",
+          "enabled": true
+        }
+      }
+    }
+  ],
+  "validReadRequests": [
+    {},
+    {
+      "channel": "dingtalk"
+    },
+    {
+      "channel": "feishu"
+    },
+    {
+      "channel": "wecom"
+    }
+  ],
+  "invalidReadRequests": [
+    null,
+    {
+      "channel": "unknown"
+    },
+    {
+      "channel": true
+    },
+    {
+      "channel": "feishu",
+      "unexpected": true
     }
   ]
 }

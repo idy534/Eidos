@@ -23,14 +23,14 @@ function setup(overrides = {}) {
 function fill() {
   fireEvent.change(screen.getByLabelText("名称"), { target: { value: "new-worker" } });
   fireEvent.change(screen.getByLabelText("用途说明"), { target: { value: "负责验证" } });
-  fireEvent.change(screen.getByLabelText("指令"), { target: { value: "报告验证结果。" } });
+  fireEvent.change(screen.getByLabelText(/Agent\.md|指令/), { target: { value: "报告验证结果。" } });
 }
 
 describe("智能体设置与编辑", () => {
   it("creates with inherited model and gives field errors without losing the draft", async () => {
     const api = setup(); const saved = vi.fn();
     render(<AgentEditorDialog onSaved={saved} onClose={vi.fn()} />);
-    await screen.findByLabelText("指令");
+    await screen.findByLabelText(/Agent\.md|指令/);
     fireEvent.click(screen.getByRole("button", { name: "创建智能体" }));
     expect(api.saveAgentDefinition).not.toHaveBeenCalled();
     expect(screen.getByText("请填写智能体指令。")).toBeInTheDocument();
@@ -69,7 +69,7 @@ describe("智能体设置与编辑", () => {
     fireEvent.click(screen.getByRole("button", { name: /deepseek-config，深度求索/ }));
     const slider = screen.getByRole("slider", { name: "deepseek-config 思考强度" });
     slider.focus(); fireEvent.keyDown(slider, { key: "Tab" });
-    expect(screen.getByLabelText("指令")).toHaveFocus();
+    expect(screen.getByLabelText(/Agent\.md|指令/)).toHaveFocus();
     expect(screen.queryByRole("slider")).not.toBeInTheDocument();
   });
 
@@ -77,10 +77,10 @@ describe("智能体设置与编辑", () => {
     const api = setup({ saveAgentDefinition: vi.fn().mockRejectedValue(new Error("EIDOS_RUNTIME_ERROR:AGENT_DEFINITION_CONFLICT")) });
     render(<AgentEditorDialog document={document} onSaved={vi.fn()} onClose={vi.fn()} />);
     expect(screen.getByLabelText("名称")).toHaveAttribute("readonly");
-    fireEvent.change(screen.getByLabelText("指令"), { target: { value: "新的约束" } });
+    fireEvent.change(screen.getByLabelText(/Agent\.md|指令/), { target: { value: "新的约束" } });
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("智能体配置已经变化");
-    expect(screen.getByLabelText("指令")).toHaveValue("新的约束");
+    expect(screen.getByLabelText(/Agent\.md|指令/)).toHaveValue("新的约束");
     expect(api.saveAgentDefinition).toHaveBeenCalledWith({ source: document.source, expectedVersion: document.version, definition: { ...definition, instructions: "新的约束" } });
   });
 
@@ -163,5 +163,59 @@ describe("智能体设置与编辑", () => {
     expect(details).toHaveAttribute("open");
     fireEvent.keyDown(window, { key: "Escape" });
     expect(details).not.toHaveAttribute("open");
+  });
+
+  it("switches between Agent.md source and preview mode", async () => {
+    setup();
+    render(<AgentEditorDialog onSaved={vi.fn()} onClose={vi.fn()} />);
+    const textarea = await screen.findByLabelText(/Agent\.md|指令/);
+    fireEvent.change(textarea, { target: { value: "## 核心规则\n- 测试驱动开发\n- 必须保留注释" } });
+
+    // Switch to preview
+    fireEvent.click(screen.getByRole("tab", { name: "预览" }));
+    expect(screen.queryByRole("textbox", { name: "Agent.md" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "核心规则" })).toBeInTheDocument();
+    expect(screen.getByText("测试驱动开发")).toBeInTheDocument();
+
+    // Switch back to source
+    fireEvent.click(screen.getByRole("tab", { name: "源码" }));
+    expect(screen.getByLabelText(/Agent\.md|指令/)).toHaveValue("## 核心规则\n- 测试驱动开发\n- 必须保留注释");
+  });
+
+  it("opens enlarged Agent.md editor and exits with Escape or complete button", async () => {
+    setup();
+    const close = vi.fn();
+    render(<AgentEditorDialog onSaved={vi.fn()} onClose={close} />);
+    const dialog = screen.getByRole("dialog", { name: "创建智能体" });
+
+    // Open enlarged editor via icon button
+    const expandBtn = screen.getByRole("button", { name: "放大编辑" });
+    fireEvent.click(expandBtn);
+    const expandedDialog = screen.getByRole("dialog", { name: "Agent.md" });
+    expect(expandedDialog).toBeInTheDocument();
+
+    // Textarea is editable in enlarged mode
+    const expandedTextarea = within(expandedDialog).getByRole("textbox", { name: "Agent.md" });
+    fireEvent.change(expandedTextarea, { target: { value: "## 放大编辑内容" } });
+    expect(expandedTextarea).toHaveValue("## 放大编辑内容");
+
+    // Press Escape to exit enlarged editor
+    fireEvent.keyDown(expandedDialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Agent.md" })).not.toBeInTheDocument();
+    expect(close).not.toHaveBeenCalled();
+
+    // Value reflected in main dialog
+    expect(within(dialog).getByRole("textbox", { name: "Agent.md" })).toHaveValue("## 放大编辑内容");
+
+    // Open again and close with "完成" button
+    fireEvent.click(screen.getByRole("button", { name: "放大编辑" }));
+    expect(screen.getByRole("dialog", { name: "Agent.md" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "完成" }));
+    expect(screen.queryByRole("dialog", { name: "Agent.md" })).not.toBeInTheDocument();
+    expect(close).not.toHaveBeenCalled();
+
+    // Press Escape to close the main dialog
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,11 +9,14 @@ import threading
 import anyio
 
 from eidos_runtime.application.channels import ChannelApplication, accepts_message
-from eidos_runtime.domain.channels import ChannelError
+from eidos_runtime.domain.channels import CHANNEL_NAMES, ChannelError, ChannelKind
 from eidos_runtime.protocol.channels import ChannelResponse
-from eidos_runtime.infrastructure.dingtalk import DingTalkAdapter, DingTalkSendError
+from eidos_runtime.infrastructure.channel_adapter import ChannelAdapter, ChannelSendError
+from eidos_runtime.infrastructure.dingtalk import DingTalkAdapter
+from eidos_runtime.infrastructure.feishu import FeishuAdapter
+from eidos_runtime.infrastructure.wecom import WeComAdapter
 
-_LOGGER = logging.getLogger("eidos.dingtalk")
+_LOGGER = logging.getLogger("eidos.channels")
 
 
 class ChannelService:
@@ -25,67 +28,84 @@ class ChannelService:
         self.launch = launch
         self._preparing = threading.Event()
         self.adapter = DingTalkAdapter()
-        self.state = "disabled"
-        self.reason: str | None = None
+        self.adapters: dict[ChannelKind, ChannelAdapter] = {"feishu": FeishuAdapter(), "wecom": WeComAdapter()}
+        self.states: dict[ChannelKind, str] = {}
+        self.reasons: dict[ChannelKind, str | None] = {}
 
-    def read(self) -> ChannelResponse:
-        response = self.application.read()
+    def read(self, channel: ChannelKind = "dingtalk") -> ChannelResponse:
+        response = self.application.read(channel)
         if response.connection is None or not response.connection.config.enabled:
             return response.model_copy(update={"state": "disabled", "reason": None})
-        return response.model_copy(update={"state": "connecting" if self.state == "disabled" else self.state, "reason": self.reason})
+        return response.model_copy(update={"state": self.states.get(channel, "connecting"), "reason": self.reasons.get(channel)})
+
+    def _adapter(self, channel: ChannelKind) -> ChannelAdapter:
+        return self.adapter if channel == "dingtalk" else self.adapters[channel]
 
     async def run(self) -> None:
+        # Recovery runs once, before any provider can claim a delivery.
         recovered = False
+        while True:
+            try:
+                if not recovered:
+                    await anyio.to_thread.run_sync(self.application.repository.recover)
+                    recovered = True
+                async with anyio.create_task_group() as group:
+                    group.start_soon(self._work)
+                    for channel in CHANNEL_NAMES:
+                        group.start_soon(self._listen, channel)
+            except Exception as error:
+                _LOGGER.warning("Channel worker restarting exception=%s", type(error).__name__)
+                await anyio.sleep(3)
+
+    async def _listen(self, channel: ChannelKind) -> None:
+        adapter = self._adapter(channel)
         try:
             while True:
                 try:
-                    if not recovered:
-                        await anyio.to_thread.run_sync(self.application.repository.recover)
-                        recovered = True
-                    connection = await anyio.to_thread.run_sync(self.application.repository.connection)
+                    connection = await anyio.to_thread.run_sync(self.application.repository.connection, channel)
                     if not self.active() or connection is None or not connection.config.enabled:
-                        self.state, self.reason = "disabled", None
+                        self.states[channel], self.reasons[channel] = "disabled", None
                         await anyio.sleep(1)
                         continue
                     secret = await anyio.to_thread.run_sync(self.application.secrets.read, connection.secret_ref)
-                    self.state, self.reason = "connecting", None
+                    self.states[channel], self.reasons[channel] = "connecting", None
                     started = time.monotonic()
                     async with anyio.create_task_group() as group:
-                        group.start_soon(self.adapter.listen, connection, secret, self.application.receive)
-                        group.start_soon(self._work)
-                        while self.active() and await anyio.to_thread.run_sync(self.application.repository.connection) == connection:
-                            if self.adapter.connected:
-                                self.state, self.reason = "connected", None
+                        group.start_soon(adapter.listen, connection, secret, self.application.receive)
+                        while self.active() and await anyio.to_thread.run_sync(self.application.repository.connection, channel) == connection:
+                            if adapter.connected:
+                                self.states[channel], self.reasons[channel] = "connected", None
                             elif time.monotonic() - started > 15:
-                                self.state, self.reason = "error", "钉钉连接尚未建立，系统正在重试，请检查凭证和网络。"
+                                self.states[channel], self.reasons[channel] = "error", CHANNEL_NAMES[channel] + "连接尚未建立，请检查凭证和网络。"
                             else:
-                                self.state = "connecting"
+                                self.states[channel] = "connecting"
                             await anyio.sleep(1)
                         group.cancel_scope.cancel()
                 except Exception as error:
-                    _LOGGER.warning("DingTalk service restarting exception=%s", type(error).__name__)
-                    self.state, self.reason = "error", "渠道连接失败，请检查凭证、模型和网络。"
+                    _LOGGER.warning("Channel service restarting channel=%s exception=%s", channel, type(error).__name__)
+                    self.states[channel], self.reasons[channel] = "error", "渠道连接失败，请检查凭证、模型和网络。"
                     await anyio.sleep(3)
         finally:
-            self.state = "disabled"
+            self.states[channel] = "disabled"
 
     async def _work(self) -> None:
         while True:
             if not self.active():
-                return
+                await anyio.sleep(0.5)
+                continue
             await anyio.to_thread.run_sync(self._prepare)
             await anyio.to_thread.run_sync(self.application.repository.collect_replies)
             delivery = await anyio.to_thread.run_sync(self.application.repository.claim_delivery)
             if delivery is not None:
                 try:
                     incoming = await anyio.to_thread.run_sync(self.application.repository.inbound, delivery.inbound_id)
-                    current = await anyio.to_thread.run_sync(self.application.repository.connection)
+                    current = await anyio.to_thread.run_sync(self.application.repository.connection, incoming.connection.channel)
                     if current is None or current.config.client_id != incoming.connection.config.client_id or not accepts_message(current, incoming.message):
                         raise ChannelError("渠道已经停用或应用已经改变。")
                     secret = await anyio.to_thread.run_sync(self.application.secrets.read, current.secret_ref)
-                    await self.adapter.send(current, secret, incoming.message, delivery.text)
+                    await self._adapter(current.channel).send(current, secret, incoming.message, delivery.text)
                     await anyio.to_thread.run_sync(self.application.repository.settle, delivery.id, "sent")
-                except DingTalkSendError as error:
+                except ChannelSendError as error:
                     await anyio.to_thread.run_sync(partial(self.application.repository.settle, delivery.id,
                         "unknown" if error.uncertain else "failed", str(error), retry=error.retry))
                 except ChannelError as error:

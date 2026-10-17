@@ -1,4 +1,4 @@
-import { isChannelSaveRequest } from "../shared/channels.js";
+import { isChannelSaveRequest, isChannelReadRequest } from "../shared/channels.js";
 import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
@@ -600,7 +600,11 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
-ipcMain.handle(IPC.CHANNEL_READ, () => clientOrThrow().readChannel());
+ipcMain.handle(IPC.CHANNEL_READ, (_event, request: unknown) => {
+  const value = request === undefined ? {} : request;
+  if (!isChannelReadRequest(value)) throw new Error("助理类型无效，请刷新后重试。");
+  return clientOrThrow().readChannel(value);
+});
 ipcMain.handle(IPC.CHANNEL_SAVE, (_event, request: unknown) => {
   if (!isChannelSaveRequest(request)) throw new Error("渠道配置无效，请检查必填项。 ");
   return clientOrThrow().saveChannel(request);

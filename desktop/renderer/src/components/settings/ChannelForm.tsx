@@ -1,12 +1,12 @@
 import React, { useState } from "react";
-import type { ChannelConfig, ChannelPublicConnection, ChannelSaveRequest, State } from "../../../../shared/channels.js";
+import type { Channel, ChannelConfig, ChannelPublicConnection, ChannelSaveRequest, State } from "../../../../shared/channels.js";
 import type { ModelOption, Project } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
 import { StatusBadge, type StatusTone } from "./StatusBadge.js";
 import { Toggle } from "./Toggle.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
-import { BackArrowIcon, DingTalkLogo, EyeIcon, EyeOffIcon, RefreshIcon } from "./ChannelIcons.js";
+import { BackArrowIcon, DingTalkLogo, FeishuLogo, WeChatWorkLogo, EyeIcon, EyeOffIcon, RefreshIcon } from "./ChannelIcons.js";
 
 export const channelStateLabels: Record<State, string> = {
   disabled: "未连接",
@@ -23,6 +23,7 @@ export const channelStateTones: Record<State, StatusTone> = {
 };
 
 interface Props {
+  channel?: Channel;
   connection: ChannelPublicConnection | null;
   models: ModelOption[];
   projects: Project[];
@@ -35,7 +36,8 @@ interface Props {
   onRefresh?: (() => void) | undefined;
 }
 
-export function DingTalkForm({
+export function ChannelForm({
+  channel = "dingtalk",
   connection,
   models,
   projects,
@@ -47,6 +49,9 @@ export function DingTalkForm({
   refreshing = false,
   onRefresh,
 }: Props) {
+  const name = channel === "feishu" ? "飞书" : channel === "wecom" ? "企业微信" : "钉钉";
+  const idLabel = channel === "feishu" ? "App ID" : channel === "wecom" ? "Bot ID" : "Client ID";
+  const secretLabel = channel === "feishu" ? "App Secret" : channel === "wecom" ? "Secret" : "Client Secret";
   const [config, setConfig] = useState<ChannelConfig>(connection?.config ?? {
     enabled: false, clientId: "", modelId: models[0]?.id ?? "",
     projectId: null, approvalMode: "manual",
@@ -69,10 +74,11 @@ export function DingTalkForm({
         setError("");
         if (!config.modelId) { setError("请选择模型。"); return; }
         if (!secret && (!connection?.hasSecret || config.clientId !== connection.config.clientId)) {
-          setError("请填写 Client Secret。 ");
+          setError(`请填写 ${secretLabel}。`);
           return;
         }
         void onSave({
+          channel,
           expectedRevision: connection?.revision ?? 0,
           config,
           ...(config.approvalMode === "full_access" && fullAccessConfirmed ? { fullAccessConfirmation: "full-access-v1" as const } : {}),
@@ -101,9 +107,9 @@ export function DingTalkForm({
           )}
           <div className="channel-topbar-identity">
             <div className="channel-topbar-logo">
-              <DingTalkLogo size={24} />
+              {channel === "feishu" ? <FeishuLogo size={24} /> : channel === "wecom" ? <WeChatWorkLogo size={24} /> : <DingTalkLogo size={24} />}
             </div>
-            <h2 className="channel-topbar-title">钉钉</h2>
+            <h2 className="channel-topbar-title">{name}</h2>
             {state && (
               <StatusBadge tone={channelStateTones[state]} dot>
                 {channelStateLabels[state]}
@@ -115,11 +121,11 @@ export function DingTalkForm({
         <div className="channel-topbar-right">
           <div
             className="channel-topbar-toggle-wrapper"
-            title={config.enabled ? "点击停用钉钉助理" : "点击启用钉钉助理"}
+            title={`点击${config.enabled ? "停用" : "启用"}${name}助理`}
           >
             <Toggle
               id="field-channel-enabled"
-              label="启用钉钉助理"
+              label={`启用${name}助理`}
               checked={config.enabled ?? false}
               disabled={busy}
               onChange={(checked) => change("enabled", checked)}
@@ -148,31 +154,31 @@ export function DingTalkForm({
       )}
 
       <fieldset disabled={busy} className="channel-fieldset">
-        <legend className="sr-only">钉钉连接配置</legend>
+        <legend className="sr-only">{name}连接配置</legend>
 
         {/* 应用凭证卡片 */}
         <div className="channel-form-card">
           <div className="channel-form-card-header">
             <h3 className="channel-card-heading">应用凭证</h3>
-            <p className="channel-card-subheading">在钉钉开放平台创建的企业内部应用凭证（需启用 Stream 模式）</p>
+            <p className="channel-card-subheading">{channel === "feishu" ? "在飞书开放平台创建的自建应用凭证（需启用长连接）" : channel === "wecom" ? "在企业微信创建智能机器人，选择 API 模式和长连接，获取 Bot ID 与 Secret" : "在钉钉开放平台创建的企业内部应用凭证（需启用 Stream 模式）"}</p>
           </div>
           <div className="channel-form-card-body">
             <div className="channel-grid-fields">
               <div className="channel-field">
-                <label htmlFor="field-client-id">Client ID</label>
+                <label htmlFor="field-client-id">{idLabel}</label>
                 <input
                   id="field-client-id"
                   required
                   maxLength={256}
                   value={config.clientId}
                   autoComplete="off"
-                  placeholder="请输入 AppKey / Client ID"
+                  placeholder={`请输入 ${idLabel}`}
                   onChange={(event) => change("clientId", event.target.value.trim())}
                 />
               </div>
 
               <div className="channel-field">
-                <label htmlFor="field-client-secret">Client Secret</label>
+                <label htmlFor="field-client-secret">{secretLabel}</label>
                 <div className="channel-input-with-action">
                   <input
                     id="field-client-secret"
@@ -180,7 +186,7 @@ export function DingTalkForm({
                     maxLength={1024}
                     value={secret}
                     autoComplete="new-password"
-                    placeholder={connection?.hasSecret ? "留空保留已保存的凭证" : "请输入应用凭证 (AppSecret)"}
+                    placeholder={connection?.hasSecret ? "留空保留已保存的凭证" : `请输入 ${secretLabel}`}
                     onChange={(event) => setSecret(event.target.value)}
                   />
                   <button
@@ -203,14 +209,20 @@ export function DingTalkForm({
         <div className="channel-form-card">
           <div className="channel-form-card-header">
             <h3 className="channel-card-heading">运行与权限</h3>
-            <p className="channel-card-subheading">配置钉钉消息的默认执行模型、项目工作区和审批规则</p>
+            <p className="channel-card-subheading">配置{name}消息的默认执行模型、项目工作区和审批规则</p>
           </div>
           <div className="channel-form-card-body">
             <div className="channel-grid-fields">
-              <div className="model-selector-field"><span>模型与思考强度</span>
-                <ModelSelector models={models} selectedModelId={config.modelId} selection={config.reasoningSelection ?? undefined} disabled={busy}
+              <div className="channel-field model-selector-field">
+                <label>模型与思考强度</label>
+                <ModelSelector
+                  models={models}
+                  selectedModelId={config.modelId}
+                  selection={config.reasoningSelection ?? undefined}
+                  disabled={busy}
                   onModelChange={(id) => setConfig((old) => ({ ...old, modelId: id, reasoningSelection: null }))}
-                  onChange={(selection) => change("reasoningSelection", selection)} />
+                  onChange={(selection) => change("reasoningSelection", selection)}
+                />
               </div>
 
               <div className="channel-field">

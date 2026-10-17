@@ -10,7 +10,7 @@ from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.domain.approval_policy import FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.domain.channels import (
-    ChannelConnection, ChannelError, ChannelMessage,
+    CHANNEL_NAMES, ChannelConnection, ChannelError, ChannelKind, ChannelMessage,
 )
 from eidos_runtime.infrastructure.channel_secrets import ChannelSecrets
 from eidos_runtime.protocol.channels import ChannelPublicConnection, ChannelResponse, ChannelSaveRequest
@@ -18,7 +18,7 @@ from eidos_runtime.model.config import ModelConfigStore
 from eidos_runtime.persistence.channels import ChannelRepository, stable_id
 from eidos_runtime.protocol.methods import RunStartRequestDto, SessionCreateRequestDto
 
-_LOGGER = logging.getLogger("eidos.dingtalk")
+_LOGGER = logging.getLogger("eidos.channels")
 
 
 def accepts_message(connection: ChannelConnection, message: ChannelMessage) -> bool:
@@ -34,14 +34,14 @@ class ChannelApplication:
         self.runs = runs
         self.models = models
 
-    def read(self) -> ChannelResponse:
-        connection = self.repository.connection()
-        return ChannelResponse(connection=ChannelPublicConnection(id=connection.id, revision=connection.revision,
+    def read(self, channel: ChannelKind = "dingtalk") -> ChannelResponse:
+        connection = self.repository.connection(channel)
+        return ChannelResponse(connection=ChannelPublicConnection(channel=channel, id=connection.id, revision=connection.revision,
             config=connection.config, has_secret=True) if connection else None,
-            deliveries=self.repository.deliveries())
+            deliveries=self.repository.deliveries(channel))
 
     def save(self, request: ChannelSaveRequest) -> ChannelResponse:
-        old = self.repository.connection()
+        old = self.repository.connection(request.channel)
         if (old.revision if old else 0) != request.expected_revision:
             raise ChannelError("渠道配置已经改变，请刷新后重试。")
         confirmation = None
@@ -64,17 +64,17 @@ class ChannelApplication:
             reference = old.secret_ref
         else:
             raise ChannelError("请填写 Client Secret。")
-        value = ChannelConnection(id=old.id if old else str(uuid4()), revision=request.expected_revision + 1,
+        value = ChannelConnection(channel=request.channel, id=old.id if old else str(uuid4()), revision=request.expected_revision + 1,
                                   config=request.config, secret_ref=reference, full_access_confirmation=confirmation)
         self.repository.save(value, request.expected_revision)
-        return self.read()
+        return self.read(request.channel)
 
     def receive(self, connection: ChannelConnection, message: ChannelMessage) -> None:
         if accepts_message(connection, message):
             identifier = self.repository.receive(connection, message)
-            _LOGGER.info("DingTalk inbound persisted inbound_id=%s", identifier)
+            _LOGGER.info("Channel inbound persisted channel=%s inbound_id=%s", connection.channel, identifier)
         else:
-            _LOGGER.info("DingTalk callback ignored reason=%s", "not_mentioned" if connection.config.enabled else "disabled")
+            _LOGGER.info("Channel callback ignored channel=%s reason=%s", connection.channel, "not_mentioned" if connection.config.enabled else "disabled")
 
     def process_pending(self, canceled: Callable[[], bool] = lambda: False) -> None:
         for identifier in self.repository.pending():
@@ -99,7 +99,7 @@ class ChannelApplication:
         if session_id is None:
             root = self.repository.project_root(config.project_id) if config.project_id else None
             session = self.sessions.create(SessionCreateRequestDto(operationId=stable_id("session/" + route + "/" + identifier),
-                workspaceRoot=root, workspaceNameHint="钉钉对话" if root is None else None))
+                workspaceRoot=root, workspaceNameHint=CHANNEL_NAMES[incoming.connection.channel] + "对话" if root is None else None))
             session_id = session.id
             self.repository.bind(route, session_id)
         if canceled():

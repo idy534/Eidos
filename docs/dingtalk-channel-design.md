@@ -1,5 +1,7 @@
 # 钉钉渠道接入方案与实现记录
 
+飞书与企业微信扩展沿用本文的 Session、Run 和回复记录设计，新增内容见 [飞书与微信渠道方案](feishu-wechat-channel-design.md)。
+
 本方案对应分支 `codex/dingtalk-channel`。该分支从 `codex/custom-subagents` 创建。文档会随实现更新，未验证内容不会记为完成。
 
 ## 目标与首版范围

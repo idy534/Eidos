@@ -5,12 +5,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
-import { isChannelResponse, isChannelSaveRequest } from "../shared/channels.js";
+import { isChannelResponse, isChannelSaveRequest, isChannelReadRequest } from "../shared/channels.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 void test("channel fixtures enforce the generated Python boundary", async () => {
   const fixture = JSON.parse(await readFile(path.join(root, "protocol/fixtures/channels-v1.json"), "utf8"));
+  for (const value of fixture.validReadRequests) assert.equal(isChannelReadRequest(value), true);
+  for (const value of fixture.invalidReadRequests) assert.equal(isChannelReadRequest(value), false);
   for (const value of fixture.validRequests) assert.equal(isChannelSaveRequest(value), true);
   for (const value of fixture.invalidRequests) assert.equal(isChannelSaveRequest(value), false);
   for (const value of fixture.validResponses) assert.equal(isChannelResponse(value), true);
@@ -40,6 +42,12 @@ void test("channel configuration is redacted, revision guarded and survives Runt
     const confirmed = await client.saveChannel({ ...full, fullAccessConfirmation: "full-access-v1" });
     assert.equal(confirmed.connection?.revision, 2);
     assert.equal(confirmed.connection?.config.approvalMode, "full_access");
+    for (const channel of ["feishu", "wecom"] as const) {
+      const extra = await client.saveChannel({ ...request, channel });
+      assert.equal(extra.connection?.channel, channel);
+      assert.equal(extra.connection?.revision, 1);
+      assert.equal((await client.readChannel({ channel })).connection?.channel, channel);
+    }
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
     client = new RuntimeClient(options);
     await client.initialize();
@@ -49,6 +57,9 @@ void test("channel configuration is redacted, revision guarded and survives Runt
     assert.equal(restored.connection?.config.approvalMode, "full_access");
     assert.equal(restored.state, "disabled");
     assert.equal(restored.connection?.config.reasoningSelection, "high");
+    for (const channel of ["feishu", "wecom"] as const) {
+      assert.equal((await client.readChannel({ channel })).connection?.revision, 1);
+    }
     const retained = await client.saveChannel({ ...full, expectedRevision: 2 });
     assert.equal(retained.connection?.revision, 3);
     await client.saveChannel({ expectedRevision: 3, config: { ...request.config, approvalMode: "manual" } });

@@ -229,6 +229,17 @@ export function ExpandIcon(props: IconProps) {
 }
 
 /**
+ * Compress / Collapse icon to exit enlarged editor
+ */
+export function CompressIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="M13.5 6H10V2.5M2.5 10H6v3.5M10 6l3.5-3.5M6 10l-3.5 3.5" />
+    </svg>
+  );
+}
+
+/**
  * Three dots horizontal icon for dropdown triggers
  */
 export function MoreHorizontalIcon(props: IconProps) {
