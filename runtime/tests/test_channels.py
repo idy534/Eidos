@@ -492,8 +492,9 @@ def test_send_classifies_known_failure_and_uncertain_result(monkeypatch, status,
     assert raised.value.retry == retry
 
 
+@pytest.mark.parametrize("channel", ["dingtalk", "feishu", "wecom"])
 @pytest.mark.parametrize("approval_mode", ["manual", "full_access"])
-def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, approval_mode):
+def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, approval_mode, channel):
     from eidos_runtime.application.errors import ApplicationError
     from eidos_runtime.protocol.methods import RunStartRequestDto
     output = io.StringIO()
@@ -511,10 +512,10 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, appr
         service.active = lambda: False
         configured = server.model_config.create(provider_id="deepseek", model_id=DEFAULT_MODEL_ID, api_key="test-key")
         application = service.application
-        application.save(ChannelSaveRequest(config=configuration(approval_mode=approval_mode).model_copy(update={"model_id": configured.id, "reasoning_selection": "high"}),
+        application.save(ChannelSaveRequest(channel=channel, config=configuration(approval_mode=approval_mode).model_copy(update={"model_id": configured.id, "reasoning_selection": "high"}),
             expected_revision=0, client_secret="test-channel-secret",
             full_access_confirmation="full-access-v1" if approval_mode == "full_access" else None))
-        connection = application.repository.connection()
+        connection = application.repository.connection(channel)
         connection = connection.model_copy(update={"revision": 2, "config": connection.config.model_copy(update={"enabled": True})})
         application.repository.save(connection, 1)
         application.receive(connection, message())
@@ -542,10 +543,10 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, appr
                 approvalMode=forged_mode, fullAccessConfirmation="full-access-v1" if forged_mode == "full_access" else None),
                 channel_message_id=identifier.id)
         application.repository.collect_replies()
-        assert application.repository.deliveries()[0].text == "渠道任务已完成。"
+        assert application.repository.deliveries(channel)[0].text == "渠道任务已完成。"
         assert server.store.connection.execute("SELECT count(*) FROM runs WHERE id=?", (identifier.run_id,)).fetchone()[0] == 1
         assert server.store.approval_user_evidence(identifier.run_id) == ()
-        response = application.read().model_dump_json()
+        response = application.read(channel).model_dump_json()
         assert "test-channel-secret" not in response
         assert "secret_ref" not in response
         snapshot = server.store.read_session_snapshot(identifier.session_id)
@@ -555,8 +556,13 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, appr
 
 
 def test_channel_fixture_matches_python_contracts():
-    from eidos_runtime.protocol.channels import ChannelResponse
+    from eidos_runtime.protocol.channels import ChannelReadRequest, ChannelResponse
     fixture = json.loads((Path(__file__).parents[2] / "protocol/fixtures/channels-v1.json").read_text())
+    for value in fixture["validReadRequests"]:
+        ChannelReadRequest.model_validate(value)
+    for value in fixture["invalidReadRequests"]:
+        with pytest.raises(ValidationError):
+            ChannelReadRequest.model_validate(value)
     for value in fixture["validRequests"]:
         ChannelSaveRequest.model_validate(value)
     for value in fixture["invalidRequests"]:

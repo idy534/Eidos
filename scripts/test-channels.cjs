@@ -84,8 +84,31 @@ app.whenReady().then(async () => {
     await selectMode("auto_review");
     await evaluate("document.querySelector('.channel-form button[type=submit]').click()"); await settle();
     assert.equal(await evaluate("'fullAccessConfirmation' in window.channelSaved"), false);
+    for (const [channel, name, idLabel] of [["feishu", "飞书", "App ID"], ["wecom", "企业微信", "Bot ID"]]) {
+      await evaluate("document.querySelector('.channel-back-link-btn').click()"); await settle();
+      await evaluate(`document.querySelector('[aria-label="${name}设置"]').click()`); await settle();
+      assert.equal(await evaluate("document.querySelector('label[for=field-client-id]').textContent"), idLabel);
+      assert.equal(await evaluate("document.querySelector('#field-client-secret').type"), "password");
+      for (const width of [1440, 1024, 768, 320]) {
+        win.setSize(width, 1000); await settle();
+        assert.ok(await evaluate("(() => { const e=document.querySelector('.settings-content-col'); return e.scrollWidth<=e.clientWidth+1; })()"), `${name} overflow at ${width}px`);
+      }
+      win.setSize(1100, 1000); await settle();
+      await evaluate("document.querySelector('#field-client-id').focus()");
+      await win.webContents.insertText(`${channel}-example`);
+      await evaluate("document.querySelector('#field-client-secret').focus()");
+      await win.webContents.insertText("mock-secret");
+      await selectMode("full_access");
+      await evaluate("document.querySelector('[role=alertdialog] .btn--danger').click()"); await settle();
+      await evaluate("document.querySelector('.channel-form button[type=submit]').click()"); await settle();
+      assert.equal(await evaluate("window.channelSaved.channel"), channel);
+      assert.equal(await evaluate("window.channelSaved.clientSecret"), "mock-secret");
+      assert.equal(await evaluate("window.channelSaved.fullAccessConfirmation"), "full-access-v1");
+      const screenshot = channel === "feishu" ? process.env.EIDOS_FEISHU_CHANNEL_SCREENSHOT : process.env.EIDOS_WECOM_CHANNEL_SCREENSHOT;
+      if (screenshot) await writeFile(screenshot, (await win.webContents.capturePage()).toPNG());
+    }
     assert.deepEqual(errors, []);
-    console.log("Channel UI passed: masked credentials, save, keyboard, full access confirmation and 4 viewport sizes");
+    console.log("Channel UI passed: DingTalk, Feishu, WeCom credentials, saves, keyboard, full access confirmation and 4 viewport sizes");
   } catch (error) { exitCode = 1; console.error(error); }
   finally { clearTimeout(timeout); win?.destroy(); await server?.close(); await rm(temporary, { recursive: true, force: true }); app.exit(exitCode); }
 });

@@ -1,18 +1,24 @@
 import { createRoot } from "react-dom/client";
-import type { ChannelResponse, ChannelSaveRequest } from "../../shared/channels.js";
+import type { Channel, ChannelResponse, ChannelSaveRequest } from "../../shared/channels.js";
 import type { ModelOption } from "../src/contracts.js";
 import { SettingsPage } from "../src/components/settings/SettingsPage.js";
 import "../src/styles.css";
 
 declare global { interface Window { channelSaved: ChannelSaveRequest | undefined; } }
-let response: ChannelResponse = { state: "connected", connection: { id: "connection", revision: 1, hasSecret: true,
+const initial: ChannelResponse = { state: "connected", connection: { id: "connection", revision: 1, hasSecret: true,
   config: { enabled: true, clientId: "ding-example", modelId: "deepseek-v4-flash", approvalMode: "manual" } },
   deliveries: [{ id: "reply", inboundId: "message", kind: "final:0", status: "unknown", text: "任务已完成，请在 Eidos 查看产物。",
     reason: "网络中断，发送结果未知。", createdAt: 1 }] };
-window.eidosRuntime = { readChannel: async () => response, listProjects: async () => ({ items: [] }),
+const responses: Partial<Record<Channel, ChannelResponse>> = { dingtalk: initial };
+window.eidosRuntime = { readChannel: async (request = {}) => responses[request.channel ?? "dingtalk"] ?? { state: "disabled" }, listProjects: async () => ({ items: [] }),
   saveChannel: async (request: ChannelSaveRequest) => {
     window.channelSaved = request;
-    response = { ...response, connection: { id: "connection", revision: 2, hasSecret: true, config: request.config } };
+    const channel = request.channel ?? "dingtalk";
+    const previous = responses[channel];
+    const response: ChannelResponse = { ...previous, state: request.config.enabled ? "connecting" : "disabled", connection: {
+      channel, id: channel, revision: (previous?.connection?.revision ?? 0) + 1, hasSecret: true, config: request.config,
+    } };
+    responses[channel] = response;
     return response;
   },
 } as unknown as typeof window.eidosRuntime;

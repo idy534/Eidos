@@ -837,7 +837,7 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
-            ("channel/read", ChannelReadRequest, ChannelResponse, lambda _id, _request: self._channel_read()),
+            ("channel/read", ChannelReadRequest, ChannelResponse, lambda _id, request: self._channel_read(request)),
             ("channel/save", ChannelSaveRequest, ChannelResponse, lambda _id, request: self._channel_save(request)),
             (
                 "schedule/execute", AutomationExecuteRequest, AutomationResponse,
@@ -1572,10 +1572,10 @@ class RuntimeServer:
         return PlanningApplication(self.store, self.supervisor.schedule_next,
                                    self.supervisor.events.deliver_pending, self._scan_text)
 
-    def _channel_read(self) -> ChannelResponse:
+    def _channel_read(self, request: ChannelReadRequest) -> ChannelResponse:
         if self.channel_service is None:
             raise ApplicationError("INVALID_STATE", "channel service unavailable")
-        return self.channel_service.read()
+        return self.channel_service.read(request.channel)
 
     def _channel_save(self, request: ChannelSaveRequest) -> ChannelResponse:
         if self.channel_service is None:
@@ -1584,7 +1584,7 @@ class RuntimeServer:
             self.channel_service.application.save(request)
         except (ChannelError, OSError) as error:
             raise ApplicationError("INVALID_PARAMS", "渠道保存失败，请检查配置、模型、项目及凭证文件权限。") from error
-        return self.channel_service.read()
+        return self.channel_service.read(request.channel)
 
     def _automation_application(self) -> AutomationApplication:
         if self.store.automations is None:

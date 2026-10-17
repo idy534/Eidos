@@ -1,4 +1,4 @@
-import type { ChannelResponse, ChannelSaveRequest } from "./channels.js";
+import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "./channels.js";
 import type { SessionForkRequest } from "./session-fork.generated.js";
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "./automation.js";
 import type { MemoryMethods } from "./memory.js";
@@ -80,7 +80,7 @@ import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js"
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
-  readChannel(): Promise<ChannelResponse>;
+  readChannel(request?: ChannelReadRequest): Promise<ChannelResponse>;
   saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse>;
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;

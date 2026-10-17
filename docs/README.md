@@ -20,7 +20,7 @@ architecture-overview.html
 - [当前架构](current-architecture.md)：说明进程、边界、职责和真实调用链。
 - [Runtime Git Worktree Kernel](architecture/git-worktree.md)：说明 Project、Worktree、恢复和 Sandbox 边界。
 - [当前能力](current-capabilities.md)：说明当前 main 已经能做什么。
-- [当前渠道接入](current-channels.md)：说明钉钉配置、收发消息、权限、会话与恢复。
+- [当前渠道接入](current-channels.md)：说明钉钉、飞书和企业微信配置、收发消息、权限、会话与恢复。
 - [当前本地定时任务](current-automations.md)：说明时间规则、执行目标、审批、工具、持久化和验证边界。
 - [当前限制](current-limitations.md)：说明当前 main 还没有形成哪些完整闭环。
 - [执行门控清单](current-execution-gates.md)：列举移除、调整和保留的检查及其依据。
@@ -29,6 +29,7 @@ architecture-overview.html
 ## Development
 
 - [本地开发与验证](../DEVELOPMENT.md)：说明安装、启动、测试、Runtime Bundle 和 DMG 打包。
+- [飞书与微信渠道方案](feishu-wechat-channel-design.md)：说明平台差异、实现、依赖选择和个人微信的后续方案。
 - [钉钉渠道方案与实现记录](dingtalk-channel-design.md)：说明接入方案、实际实现、验证结果和待补充项。
 - [自定义子 Agent 设计与实施记录](custom-subagents-design.md)：说明 TOML 配置、模型提供商、引用流程和后续范围。
 

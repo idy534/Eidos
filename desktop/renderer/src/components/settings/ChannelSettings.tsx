@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type {
+  Channel,
   ChannelDelivery,
-  ChannelPublicConnection,
   ChannelResponse,
   ChannelSaveRequest,
-  State,
 } from "../../../../shared/channels.js";
 import type { ModelListResult, Project } from "../../contracts.js";
 import { ToastContainer, type ToastItem, type ToastType } from "../ToastContainer.js";
@@ -13,10 +12,10 @@ import { StatusBadge, type StatusTone } from "./StatusBadge.js";
 import { Toggle } from "./Toggle.js";
 import { DeliveryDetailModal } from "./DeliveryDetailModal.js";
 import {
-  DingTalkForm,
+  ChannelForm,
   channelStateLabels as stateLabels,
   channelStateTones as stateTones,
-} from "./DingTalkForm.js";
+} from "./ChannelForm.js";
 import {
   DingTalkLogo,
   FeishuLogo,
@@ -46,12 +45,19 @@ const previewText = (text: string) => text.replace(/\r\n/g, "\n").replace(/\n{2,
 
 interface ChannelSettingsProps {
   modelList?: ModelListResult | undefined;
-  initialChannel?: "list" | "dingtalk";
+  initialChannel?: "list" | Channel;
 }
 
 export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelSettingsProps) {
-  const [currentView, setCurrentView] = useState<"list" | "dingtalk">(initialChannel);
-  const [response, setResponse] = useState<ChannelResponse>();
+  const [currentView, setCurrentView] = useState<"list" | Channel>(initialChannel);
+  const [responses, setResponses] = useState<Partial<Record<Channel, ChannelResponse>>>({});
+  const selected = currentView === "list" ? "dingtalk" : currentView;
+  const response = responses[selected];
+  const selectedName = selected === "feishu" ? "飞书" : selected === "wecom" ? "企业微信" : "钉钉";
+  const load = useCallback(async () => {
+    const entries = await Promise.all((["dingtalk", "feishu", "wecom"] as const).map(async (channel) => [channel, await window.eidosRuntime.readChannel({ channel })] as const));
+    return Object.fromEntries(entries) as Record<Channel, ChannelResponse>;
+  }, []);
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -74,8 +80,8 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
   const refreshStatus = async (showNotice = false) => {
     setRefreshing(true);
     try {
-      const value = await window.eidosRuntime.readChannel();
-      setResponse(value);
+      const value = await load();
+      setResponses(value);
       setError("");
       if (showNotice) {
         showToast("助理状态已刷新", "success");
@@ -94,8 +100,8 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
 
     async function poll() {
       try {
-        const value = await window.eidosRuntime.readChannel();
-        if (active) setResponse(value);
+        const value = await load();
+        if (active) setResponses(value);
       } catch {
         if (active) setError("无法读取助理状态，请检查 Runtime 后刷新。 ");
       }
@@ -121,15 +127,15 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
       active = false;
       clearTimeout(timer);
     };
-  }, []);
+  }, [load]);
 
   async function save(request: ChannelSaveRequest) {
     setBusy(true);
     setError("");
     try {
       const value = await window.eidosRuntime.saveChannel(request);
-      setResponse(value);
-      showToast(request.config.enabled ? "配置已保存，Eidos 正在连接钉钉。" : "助理已停用。", "success");
+      setResponses((old) => ({ ...old, [request.channel ?? "dingtalk"]: value }));
+      showToast(request.config.enabled ? "配置已保存，Eidos 正在连接。" : "助理已停用。", "success");
       return true;
     } catch {
       const errMsg = "助理保存失败。请检查配置、模型和项目；配置有冲突时请刷新后重试。 ";
@@ -141,10 +147,11 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
     }
   }
 
-  const handleToggleDingTalk = async (checked: boolean) => {
-    if (!response?.connection) return;
-    const { connection } = response;
+  const handleToggle = async (channel: Channel, checked: boolean) => {
+    const connection = responses[channel]?.connection;
+    if (!connection) return;
     await save({
+      channel,
       expectedRevision: connection.revision,
       config: {
         ...connection.config,
@@ -152,13 +159,6 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
       },
     });
   };
-
-  const handleUnsupported = (channelName: string) => {
-    showToast(`${channelName}助理接入功能正在研发中，敬请期待。`, "info");
-  };
-
-  const isDingTalkConfigured = Boolean(response?.connection?.config?.clientId);
-  const dingTalkState = response?.state ?? "disabled";
 
   return (
     <div className="settings-panel channel-settings-page">
@@ -197,131 +197,39 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
           </div>
 
           <div className="channel-cards-list">
-            {/* 钉钉 */}
-            <div
-              className={`channel-card channel-card--interactive ${
-                isDingTalkConfigured ? "channel-card--configured" : ""
-              }`}
-            >
-              <div
-                className="channel-card-left"
-                role="button"
-                tabIndex={0}
-                onClick={() => setCurrentView("dingtalk")}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setCurrentView("dingtalk");
-                  }
-                }}
-              >
-                <div className="channel-card-logo">
-                  <DingTalkLogo />
-                </div>
-                <div className="channel-card-meta">
-                  <div className="channel-card-title-row">
-                    <span className="channel-card-name">钉钉</span>
-                    <StatusBadge
-                      tone={isDingTalkConfigured ? stateTones[dingTalkState] : "neutral"}
-                      dot={isDingTalkConfigured}
-                    >
-                      {isDingTalkConfigured ? stateLabels[dingTalkState] : "未接入"}
-                    </StatusBadge>
+            {(["dingtalk", "feishu", "wecom"] as const).map((channel) => {
+              const value = responses[channel];
+              const configured = Boolean(value?.connection);
+              const name = channel === "dingtalk" ? "钉钉" : channel === "feishu" ? "飞书" : "企业微信";
+              const status = value?.state ?? "disabled";
+              return <div key={channel} className={`channel-card channel-card--interactive ${configured ? "channel-card--configured" : ""}`}>
+                <div className="channel-card-left" role="button" tabIndex={0} aria-label={`${name}设置`}
+                  onClick={() => setCurrentView(channel)} onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setCurrentView(channel); }
+                  }}>
+                  <div className="channel-card-logo">{channel === "dingtalk" ? <DingTalkLogo /> : channel === "feishu" ? <FeishuLogo /> : <WeChatWorkLogo />}</div>
+                  <div className="channel-card-meta">
+                    <div className="channel-card-title-row"><span className="channel-card-name">{name}</span>
+                      <StatusBadge tone={configured ? stateTones[status] : "neutral"} dot={configured}>
+                        {configured ? stateLabels[status] : "未接入"}
+                      </StatusBadge>
+                    </div><span className="channel-card-slug">{channel}</span>
                   </div>
-                  <span className="channel-card-slug">dingtalk</span>
                 </div>
-              </div>
-              <div className="channel-card-right">
-                {isDingTalkConfigured ? (
-                  <div className="channel-card-actions-group">
-                    <Button
-                      variant="secondary"
-                      size="small"
-                      onClick={() => setCurrentView("dingtalk")}
-                    >
-                      设置
-                    </Button>
-                    <Toggle
-                      id="channel-list-dingtalk-toggle"
-                      label="启用或停用钉钉助理"
-                      checked={Boolean(response?.connection?.config?.enabled)}
-                      disabled={busy}
-                      onChange={(checked) => void handleToggleDingTalk(checked)}
-                    />
-                  </div>
-                ) : (
-                  <Button
-                    variant="secondary"
-                    size="small"
-                    onClick={() => setCurrentView("dingtalk")}
-                  >
-                    接入
-                  </Button>
-                )}
-              </div>
-            </div>
+                <div className="channel-card-right"><div className="channel-card-actions-group">
+                  <Button variant="secondary" size="small" disabled={busy} onClick={() => setCurrentView(channel)}>{configured ? "设置" : "接入"}</Button>
+                  {configured && <Toggle id={`channel-list-${channel}-toggle`} label={`启用或停用${name}助理`}
+                    checked={Boolean(value?.connection?.config.enabled)} disabled={busy} onChange={(checked) => void handleToggle(channel, checked)} />}
+                </div></div>
+              </div>;
+            })}
 
-            {/* 飞书 */}
-            <div className="channel-card channel-card--disabled">
-              <div className="channel-card-left">
-                <div className="channel-card-logo">
-                  <FeishuLogo />
-                </div>
-                <div className="channel-card-meta">
-                  <div className="channel-card-title-row">
-                    <span className="channel-card-name">飞书</span>
-                    <StatusBadge tone="neutral" dot={false}>
-                      未接入
-                    </StatusBadge>
-                  </div>
-                  <span className="channel-card-slug">feishu</span>
-                </div>
-              </div>
-              <div className="channel-card-right">
-                <Button
-                  variant="secondary"
-                  size="small"
-                  disabled
-                  title="即将支持"
-                >
-                  接入
-                </Button>
-              </div>
-            </div>
-
-            {/* 企业微信 */}
-            <div className="channel-card channel-card--disabled">
-              <div className="channel-card-left">
-                <div className="channel-card-logo">
-                  <WeChatWorkLogo />
-                </div>
-                <div className="channel-card-meta">
-                  <div className="channel-card-title-row">
-                    <span className="channel-card-name">企业微信</span>
-                    <StatusBadge tone="neutral" dot={false}>
-                      未接入
-                    </StatusBadge>
-                  </div>
-                  <span className="channel-card-slug">wechat</span>
-                </div>
-              </div>
-              <div className="channel-card-right">
-                <Button
-                  variant="secondary"
-                  size="small"
-                  disabled
-                  title="即将支持"
-                >
-                  接入
-                </Button>
-              </div>
-            </div>
           </div>
         </div>
       )}
 
       {/* 视图 2：钉钉助理配置详情页（单行顶栏重构） */}
-      {currentView === "dingtalk" && (
+      {currentView !== "list" && (
         <div className="channel-detail-view">
           {!response && !error ? (
             <>
@@ -346,15 +254,16 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
           ) : (
             <>
               {/* 表单主体（包含单行顶栏与凭证、运行策略卡片） */}
-              <DingTalkForm
-                key={response?.connection?.revision ?? 0}
+              <ChannelForm
+                key={`${selected}:${response?.connection?.revision ?? 0}`}
+                channel={selected}
                 connection={response?.connection ?? null}
                 models={modelList?.models ?? []}
                 projects={projects}
                 busy={busy}
                 onSave={save}
                 onBack={() => setCurrentView("list")}
-                state={dingTalkState}
+                state={response?.state ?? "disabled"}
                 reason={response?.reason}
                 refreshing={refreshing}
                 onRefresh={() => void refreshStatus(true)}
@@ -370,15 +279,20 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
                 </div>
                 <div className="channel-form-card-body">
                   <ol className="channel-guide-steps">
-                    <li>
-                      <strong>创建企业应用</strong>：登录钉钉开放平台，在应用开发中创建“企业内部应用”。
-                    </li>
-                    <li>
-                      <strong>开启机器人 Stream 模式</strong>：在“应用功能 - 机器人”中开启机器人，并在消息接收模式选择 <strong>Stream 模式</strong>（无需公网回调域名）。
-                    </li>
-                    <li>
-                      <strong>填入凭证并入群</strong>：填写 Client ID (AppKey) 和 Client Secret (AppSecret)，保存后将机器人加入所属企业群。
-                    </li>
+                    {selected === "feishu" ? <>
+                      <li>在飞书开放平台创建自建应用，并开启机器人能力。</li>
+                      <li>添加单聊消息读取权限 im:message.p2p_msg:readonly、群聊 @ 消息权限 im:message.group_at_msg:readonly 和发送权限 im:message:send_as_bot。</li>
+                      <li>填写 App ID 和 App Secret，启用并保存；在飞书后台选择“使用长连接接收事件”，订阅 im.message.receive_v1。</li>
+                      <li>发布应用版本并设置可用范围，将机器人加入群聊。</li>
+                    </> : selected === "wecom" ? <>
+                      <li>在企业微信创建智能机器人，选择 API 模式，并使用长连接接收消息。</li>
+                      <li>填写机器人提供的 Bot ID 和 Secret，启用并保存。此处不使用普通群 Webhook。</li>
+                      <li>设置机器人的可用范围，将机器人加入群聊。单聊直接发消息，群聊需要 @ 机器人。</li>
+                    </> : <>
+                      <li><strong>创建企业应用</strong>：登录钉钉开放平台，创建“企业内部应用”。</li>
+                      <li><strong>开启机器人 Stream 模式</strong>：开启机器人，并选择 Stream 模式（无需公网回调域名）。</li>
+                      <li><strong>填入凭证并入群</strong>：填写 Client ID 和 Client Secret，发布应用后将机器人加入内部群。</li>
+                    </>}
                   </ol>
                   <div className="channel-guide-notice">
                     <p>
@@ -392,7 +306,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
               <div className="channel-form-card channel-deliveries-card">
                 <div className="channel-form-card-header">
                   <h3 className="channel-card-heading">最近回复</h3>
-                  <p className="channel-card-subheading">钉钉助理近期的消息处理与发送记录</p>
+                  <p className="channel-card-subheading">{selectedName}助理近期的消息处理与发送记录</p>
                 </div>
                 <div className="channel-form-card-body">
                   {!response?.deliveries?.length ? (

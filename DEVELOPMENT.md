@@ -486,12 +486,12 @@ pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/com
 
 ## 钉钉渠道定向开发与验证
 
-用户可以在“设置 → 渠道”保存企业内部应用的机器人配置。应用凭证只需要 Client ID 和 Client Secret，机器人和组织 ID 由消息回调提供。机器人默认支持单聊，群聊需要 @。Eidos 不再提供用户、群白名单或单聊开关。应用需要选择 Stream 接收模式。Eidos 需要一直运行并能访问钉钉公网服务。渠道不开放入站监听端口。数据与凭证文件由 Runtime 管理，用户不应手工编辑 SQLite。
+用户可以在“设置 → 助理”的钉钉入口保存企业内部应用的机器人配置。应用凭证只需要 Client ID 和 Client Secret，机器人和组织 ID 由消息回调提供。机器人默认支持单聊，群聊需要 @。Eidos 不再提供用户、群白名单或单聊开关。应用需要选择 Stream 接收模式。Eidos 需要一直运行并能访问钉钉公网服务。渠道不开放入站监听端口。数据与凭证文件由 Runtime 管理，用户不应手工编辑 SQLite。
 
 维护者修改渠道 DTO 后运行 `node scripts/generate-channel-contracts.mjs`。定向验证入口如下，维护者不需要因此运行 Full Suite：
 
 ```bash
-uv run --locked pytest runtime/tests/test_channels.py runtime/tests/test_storage_schema.py
+uv run --locked pytest runtime/tests/test_channels.py runtime/tests/test_channel_adapters.py runtime/tests/test_storage_schema.py
 pnpm build:main
 node --test dist/main/runtime-client-channels.test.js
 pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ChannelSettings.behavior.test.tsx
@@ -502,3 +502,24 @@ pnpm exec electron scripts/test-channels.cjs
 `test-channels.cjs` 使用隔离的 Electron userData、模拟渠道 API 和四种窗口宽度。它检查保存、键盘操作和完全访问的二次确认，不读取真实钉钉凭证，也不发送真实消息。设置 `EIDOS_CHANNEL_SCREENSHOT=/absolute/path.png` 可以保存页面截图，设置 `EIDOS_CHANNEL_FULL_ACCESS_SCREENSHOT=/absolute/path.png` 可以保存完全访问确认截图。修改渠道服务生命周期时还需要执行既有 Electron smoke；修改 Python 生产依赖时还需要执行 Ruff、Deptry、pip-audit 和 Runtime Bundle 验证。
 
 真实钉钉应用的创建、权限、消息投递与待验收清单见 [钉钉渠道方案](docs/dingtalk-channel-design.md)。
+
+
+### 飞书与企业微信的渠道验证
+
+“设置 → 助理”现有三个入口分别管理钉钉、飞书和企业微信。飞书需要自建应用的 App ID、App Secret 和长连接事件订阅；企业微信需要智能机器人 API 模式的 Bot ID 和 Secret。配置步骤与个人微信的方案区别见 [渠道方案](docs/feishu-wechat-channel-design.md)。本次没有增加本地 HTTP 服务或常驻外部进程。
+
+开发者可以运行以下定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_channels.py runtime/tests/test_channel_adapters.py
+pnpm build:main
+node --test dist/main/runtime-client-channels.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ChannelSettings.behavior.test.tsx
+pnpm build
+pnpm exec electron scripts/test-channels.cjs
+pnpm test:electron-smoke
+```
+
+真实 macOS Shell 的完全访问用例需要原生执行权限。SDK 测试使用模拟传输，不读取真实凭证。Electron 渠道脚本检查三个渠道在四种窗口宽度下的表单和危险确认。EIDOS_FEISHU_CHANNEL_SCREENSHOT 和 EIDOS_WECOM_CHANNEL_SCREENSHOT 可以指定本地截图路径。
+
+两个官方 SDK 已锁定在 pyproject.toml 和 uv.lock。飞书 SDK 约束 websockets<16，当前锁定为 15.0.1。修改这些依赖时，开发者还需运行 Ruff、Deptry、pip-audit、macOS Runtime Bundle 构建与 bundled-runtime-smoke。Bundle smoke 会导入两个 SDK、飞书帧解析模块和原生 AES 扩展。当前已有 pydantic-ai-slim 漏洞会让主审计失败，开发者需要单独报告该结果，并另行运行隔离工具依赖审计。

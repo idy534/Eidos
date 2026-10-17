@@ -63,6 +63,49 @@ describe("automation source and tool results", () => {
     expect(screen.getByText("检查状态。")).toBeInTheDocument();
   });
 
+  it("identifies channel origin input with DingTalk, Feishu, and WeCom message labels", () => {
+    const dingtalkRun = {
+      ...baseRun,
+      channelOrigin: { channel: "dingtalk" as const, messageId: "m1", senderId: "u1", conversationId: "c1" },
+    };
+    const { rerender } = renderFeed(shellItem({ kind: "user_message", content: "钉钉来的消息", toolCall: undefined }), dingtalkRun);
+    expect(screen.getByText("钉钉消息")).toBeInTheDocument();
+
+    const feishuRun = {
+      ...baseRun,
+      channelOrigin: { channel: "feishu" as const, messageId: "m2", senderId: "u2", conversationId: "c2" },
+    };
+    rerender(
+      <ExecutionFeed
+        items={[shellItem({ kind: "user_message", content: "飞书来的消息", toolCall: undefined })]}
+        runs={[feishuRun]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+    expect(screen.getByText("飞书消息")).toBeInTheDocument();
+
+    const wecomRun = {
+      ...baseRun,
+      channelOrigin: { channel: "wecom" as const, messageId: "m3", senderId: "u3", conversationId: "c3" },
+    };
+    rerender(
+      <ExecutionFeed
+        items={[shellItem({ kind: "user_message", content: "企微来的消息", toolCall: undefined })]}
+        runs={[wecomRun]}
+        approvals={[]}
+        respondingApprovalIds={new Set()}
+        respondingKindByApprovalId={{}}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />,
+    );
+    expect(screen.getByText("企业微信消息")).toBeInTheDocument();
+  });
+
   it("renders the automation card only for the trusted builtin tool", () => {
     const item = shellItem({ kind: "tool_call", status: "completed", toolCall: {
       ...shellItem().toolCall!, toolName: "automation", status: "completed",

@@ -198,7 +198,7 @@ assert Path(sys.executable).resolve().is_relative_to(python_root)
 assert Path(eidos_runtime.__file__).resolve().is_relative_to(app_root)
 snapshot = RuntimeDependencyCatalog.from_manifest(bundle_root / "runtime.json").snapshot()
 assert snapshot.python_path == (str(dependency_root),), snapshot.python_path
-for module in ("anyio", "httpx", "lark", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter"):
+for module in ("anyio", "httpx", "lark", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter", "dingtalk_stream", "aibot", "lark_channel", "Crypto.Cipher.AES", "eidos_runtime.infrastructure.feishu_stream"):
     __import__(module)
 assert Path(lark.__file__).resolve().is_relative_to(app_root), lark.__file__
 import docx

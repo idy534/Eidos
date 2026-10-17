@@ -615,7 +615,7 @@ function UserMessage({
 
   return (
     <div className="feed-item feed-item--user">
-      {run.channelOrigin && <p className="feed-label">钉钉渠道消息</p>}
+      {run.channelOrigin && <p className="feed-label">{run.channelOrigin.channel === "feishu" ? "飞书" : run.channelOrigin.channel === "wecom" ? "企业微信" : "钉钉"}消息</p>}
       {run.automationOrigin && <p className="feed-label">定时任务自动执行</p>}
       <div className="user-message-bubble">
         {(editing ? draftReferences : item.references)?.length ? (

@@ -4,11 +4,12 @@ from typing import Literal
 
 from pydantic import ConfigDict, Field
 
-from eidos_runtime.domain.channels import ChannelConfig, ChannelDelivery
+from eidos_runtime.domain.channels import ChannelConfig, ChannelDelivery, ChannelKind
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
 
 class ChannelPublicConnection(EidosFrozenStrictModel):
+    channel: ChannelKind = "dingtalk"
     id: str
     revision: JsonSafeInt
     config: ChannelConfig
@@ -23,11 +24,12 @@ class ChannelResponse(EidosFrozenStrictModel):
 
 
 class ChannelReadRequest(EidosFrozenStrictModel):
-    pass
+    channel: ChannelKind = "dingtalk"
 
 
 class ChannelSaveRequest(EidosFrozenStrictModel):
     model_config = ConfigDict(hide_input_in_errors=True)
+    channel: ChannelKind = "dingtalk"
     config: ChannelConfig
     expected_revision: JsonSafeInt = Field(ge=0)
     client_secret: str | None = Field(default=None, min_length=1, max_length=1024, repr=False)

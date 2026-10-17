@@ -311,8 +311,8 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                   <span className="agent-editor__label-title agent-editor__label-title--code">
                     Agent.md <span className="field-required" aria-hidden="true">*</span>
                   </span>
-                  <span className="agent-editor__bytes-badge">
-                    {new TextEncoder().encode(draft.instructions).length} / 48 KiB
+                  <span className="agent-editor__bytes-badge" title="字符数">
+                    {draft.instructions.length}
                   </span>
                 </div>
 
@@ -457,8 +457,8 @@ function AgentMdExpandedDialog({
             <span id={titleId} className="agent-editor__label-title agent-editor__label-title--code">
               Agent.md
             </span>
-            <span className="agent-editor__bytes-badge">
-              {new TextEncoder().encode(instructions).length} / 48 KiB
+            <span className="agent-editor__bytes-badge" title="字符数">
+              {instructions.length}
             </span>
           </div>
 

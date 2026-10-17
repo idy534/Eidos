@@ -250,5 +250,28 @@
 
 .model-selector__trigger:hover:not(:disabled) { background: var(--surface-hover); box-shadow: none; }
 .model-selector-field { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 0.4rem; }
-.model-selector-field > span { color: var(--text); font-size: var(--font-size-caption); }
+.model-selector-field > span,
+.model-selector-field > label { color: var(--text); font-size: var(--font-size-caption); }
+.model-selector-field .model-selector { flex-shrink: 0; }
+.model-selector-field .model-selector__trigger {
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  height: 2.1rem;
+  min-height: 2.1rem;
+  border-radius: var(--radius);
+  padding: 0 0.65rem;
+  font-size: 12px;
+  gap: 0.35rem;
+  white-space: nowrap;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+.model-selector-field .model-selector__trigger:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.18);
+  background: var(--surface-raised);
+}
+.model-selector-field .model-selector__trigger:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
 @media (max-width: 760px) { .model-selector__info-card { display: none; } }

@@ -136,8 +136,12 @@ export const channelSchema = {
       "additionalProperties": false,
       "properties": {
         "channel": {
-          "const": "dingtalk",
           "default": "dingtalk",
+          "enum": [
+            "dingtalk",
+            "feishu",
+            "wecom"
+          ],
           "title": "Channel",
           "type": "string"
         },
@@ -165,6 +169,16 @@ export const channelSchema = {
     "ChannelPublicConnection": {
       "additionalProperties": false,
       "properties": {
+        "channel": {
+          "default": "dingtalk",
+          "enum": [
+            "dingtalk",
+            "feishu",
+            "wecom"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
         "id": {
           "title": "Id",
           "type": "string"
@@ -194,7 +208,18 @@ export const channelSchema = {
     },
     "ChannelReadRequest": {
       "additionalProperties": false,
-      "properties": {},
+      "properties": {
+        "channel": {
+          "default": "dingtalk",
+          "enum": [
+            "dingtalk",
+            "feishu",
+            "wecom"
+          ],
+          "title": "Channel",
+          "type": "string"
+        }
+      },
       "title": "ChannelReadRequest",
       "type": "object"
     },
@@ -250,6 +275,16 @@ export const channelSchema = {
     "ChannelSaveRequest": {
       "additionalProperties": false,
       "properties": {
+        "channel": {
+          "default": "dingtalk",
+          "enum": [
+            "dingtalk",
+            "feishu",
+            "wecom"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
         "config": {
           "$ref": "#/$defs/ChannelConfig"
         },

@@ -5,7 +5,7 @@ import type { EidosRuntimeAPI, ModelOption } from "../../contracts.js";
 import type { ChannelPublicConnection } from "../../../../shared/channels.js";
 import { ChannelSettings } from "./ChannelSettings.js";
 import minimaxLogo from "../../assets/providers/minimax.svg";
-import { DingTalkForm } from "./DingTalkForm.js";
+import { ChannelForm } from "./ChannelForm.js";
 
 const model: ModelOption = {
   id: "deepseek-v4-flash",
@@ -38,13 +38,13 @@ afterEach(() => {
 it("loads connection state, navigates to dingtalk details, masks credentials and shows unknown delivery reasons", async () => {
   const user = userEvent.setup();
   window.eidosRuntime = {
-    readChannel: vi.fn().mockResolvedValue({
+    readChannel: vi.fn().mockImplementation(({ channel } = {}) => Promise.resolve(channel && channel !== "dingtalk" ? { state: "disabled" } : {
       connection,
       state: "connected",
       deliveries: [
         { id: "reply", status: "unknown", text: "任务已完成。", reason: "网络中断，结果未知。" },
       ],
-    }),
+    })),
     listProjects: vi.fn().mockResolvedValue({ items: [] }),
   } as unknown as EidosRuntimeAPI;
 
@@ -65,7 +65,7 @@ it("loads connection state, navigates to dingtalk details, masks credentials and
   expect(screen.getByRole("heading", { name: "接入助理" })).toBeInTheDocument();
 });
 
-it("renders channel list with DingTalk at the top and disabled buttons for Feishu and WeChat", async () => {
+it("renders three available channels with DingTalk at the top", async () => {
   const user = userEvent.setup();
   window.eidosRuntime = {
     readChannel: vi.fn().mockResolvedValue({ state: "disabled" }),
@@ -78,7 +78,7 @@ it("renders channel list with DingTalk at the top and disabled buttons for Feish
   expect(screen.getByText("飞书")).toBeInTheDocument();
   expect(screen.getByText("企业微信")).toBeInTheDocument();
 
-  // 钉钉排在最前，接入按钮可点击；飞书和企业微信接入按钮置灰不可点击
+  // 三个渠道均可接入。
   const accessButtons = screen.getAllByRole("button", { name: "接入" });
   expect(accessButtons).toHaveLength(3);
   const dingTalkButton = accessButtons[0]!;
@@ -86,8 +86,8 @@ it("renders channel list with DingTalk at the top and disabled buttons for Feish
   const wechatButton = accessButtons[2]!;
 
   expect(dingTalkButton).not.toBeDisabled();
-  expect(feishuButton).toBeDisabled();
-  expect(wechatButton).toBeDisabled();
+  expect(feishuButton).not.toBeDisabled();
+  expect(wechatButton).not.toBeDisabled();
 
   // 钉钉未配置时点击接入进入钉钉详情页
   await user.click(dingTalkButton);
@@ -149,7 +149,7 @@ it("automatically dismisses toast notification after 3.5 seconds", async () => {
 it("saves only current options and retains an existing secret without resending it", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
-  render(<DingTalkForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
+  render(<ChannelForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
   expect(screen.queryByText("允许单聊")).not.toBeInTheDocument();
   expect(screen.queryByText("访问白名单")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("允许的用户 UserID")).not.toBeInTheDocument();
@@ -167,13 +167,14 @@ it("saves only current options and retains an existing secret without resending 
 it("creates a connection with just app credentials and the default model and permissions", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
-  render(<DingTalkForm connection={null} models={[model]} projects={[]} busy={false} onSave={save} />);
+  render(<ChannelForm connection={null} models={[model]} projects={[]} busy={false} onSave={save} />);
   await user.type(screen.getByLabelText("Client ID"), "new-app");
   await user.type(screen.getByLabelText("Client Secret"), "new-secret");
   await user.click(screen.getByLabelText("启用钉钉助理"));
   await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledWith({
+    channel: "dingtalk",
     expectedRevision: 0,
     clientSecret: "new-secret",
     config: { enabled: true, clientId: "new-app", modelId: model.id, projectId: null, approvalMode: "manual" },
@@ -184,7 +185,7 @@ it("creates a connection with just app credentials and the default model and per
 it("requires a danger confirmation before selecting full access and saves its confirmation", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
-  render(<DingTalkForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
+  render(<ChannelForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
   const approval = screen.getByRole("combobox", { name: "审批模式" });
   await user.selectOptions(approval, "full_access");
   expect(screen.getByRole("alertdialog", { name: "开启完全访问？" })).toBeInTheDocument();
@@ -212,7 +213,7 @@ it("requires a danger confirmation before selecting full access and saves its co
 it("retains saved full access and requires confirmation again after changing to another mode", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
-  render(<DingTalkForm connection={{ ...connection, config: { ...connection.config, approvalMode: "full_access" } }}
+  render(<ChannelForm connection={{ ...connection, config: { ...connection.config, approvalMode: "full_access" } }}
     models={[model]} projects={[]} busy={false} onSave={save} />);
   const approval = screen.getByRole("combobox", { name: "审批模式" });
   await user.click(screen.getByRole("button", { name: "保存助理配置" }));
@@ -229,7 +230,7 @@ it("retains saved full access and requires confirmation again after changing to 
 it("requires a fresh secret when changing the app and preserves it after failure", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(false);
-  render(<DingTalkForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
+  render(<ChannelForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
   await user.clear(screen.getByLabelText("Client ID"));
   await user.type(screen.getByLabelText("Client ID"), "other");
   await user.click(screen.getByRole("button", { name: "保存助理配置" }));
@@ -341,7 +342,7 @@ it("saves reasoning, switches provider logos and clears the old model reasoning"
   const save = vi.fn().mockResolvedValue(true);
   const reasoningModel: ModelOption = { ...model, supportsReasoning: true, reasoning: { defaultSelection: "high", selections: ["none", "high"] } };
   const otherModel: ModelOption = { ...model, id: "minimax", name: "MiniMax", provider: "minimax", supportsReasoning: true, reasoning: { defaultSelection: "thinking", selections: ["none", "thinking"] } };
-  render(<DingTalkForm connection={connection} models={[reasoningModel, otherModel]} projects={[]} busy={false} onSave={save} />);
+  render(<ChannelForm connection={connection} models={[reasoningModel, otherModel]} projects={[]} busy={false} onSave={save} />);
   const trigger = screen.getByRole("button", { name: /DeepSeek.*思考强度/ });
   expect(trigger.querySelector("img")).toBeInTheDocument();
   fireEvent.click(trigger);
@@ -355,4 +356,32 @@ it("saves reasoning, switches provider logos and clears the old model reasoning"
   expect(nextTrigger.querySelector("img")?.getAttribute("src")).toBe(minimaxLogo);
   fireEvent.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ config: expect.objectContaining({ modelId: "minimax", reasoningSelection: null }) })));
+});
+
+
+it.each(["feishu", "wecom"] as const)("saves %s credentials independently and requires full access confirmation", async (channel) => {
+  const user = userEvent.setup();
+  const saveChannel = vi.fn().mockImplementation(async (request) => ({ state: "connecting", connection: { channel, id: channel, revision: 1, hasSecret: true, config: request.config } }));
+  window.eidosRuntime = {
+    readChannel: vi.fn().mockResolvedValue({ state: "disabled" }), saveChannel,
+    listProjects: vi.fn().mockResolvedValue({ items: [] }),
+  } as unknown as EidosRuntimeAPI;
+  render(<ChannelSettings modelList={{ models: [model] }} initialChannel={channel} />);
+  const idLabel = channel === "feishu" ? "App ID" : "Bot ID";
+  const secretLabel = channel === "feishu" ? "App Secret" : "Secret";
+  await user.type(await screen.findByLabelText(idLabel), "other-app");
+  await user.type(screen.getByLabelText(secretLabel), "other-secret");
+  await user.selectOptions(screen.getByLabelText("审批模式"), "full_access");
+  expect(saveChannel).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "取消" }));
+  expect(screen.getByLabelText("审批模式")).toHaveValue("manual");
+  await user.selectOptions(screen.getByLabelText("审批模式"), "full_access");
+  await user.click(screen.getByRole("button", { name: "开启完全访问" }));
+  expect(saveChannel).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
+  await waitFor(() => expect(saveChannel).toHaveBeenCalledOnce());
+  expect(saveChannel).toHaveBeenCalledWith(expect.objectContaining({ channel, expectedRevision: 0,
+    clientSecret: "other-secret", fullAccessConfirmation: "full-access-v1",
+    config: expect.objectContaining({ clientId: "other-app", approvalMode: "full_access" }),
+  }));
 });
