@@ -104,6 +104,7 @@ export const agentDefinitionsSchema = {
                 "low",
                 "medium",
                 "high",
+                "xhigh",
                 "max"
               ],
               "type": "string"

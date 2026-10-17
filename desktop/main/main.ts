@@ -1,3 +1,4 @@
+import type { CustomProviderRequest } from "../shared/custom-models.js";
 import { isChannelSaveRequest, isChannelReadRequest } from "../shared/channels.js";
 import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
@@ -1323,7 +1324,7 @@ ipcMain.handle(IPC.RUN_START, async (
     reasoningSelection === undefined
     || (
       typeof reasoningSelection === "string"
-      && ["none", "thinking", "low", "medium", "high", "max"].includes(
+      && ["none", "thinking", "low", "medium", "high", "xhigh", "max"].includes(
         reasoningSelection,
       )
     );
@@ -1398,6 +1399,10 @@ ipcMain.handle(IPC.ITEM_SET_FEEDBACK, (_event, itemId: unknown, feedback: unknow
   );
 });
 
+ipcMain.handle(IPC.MODEL_DISCOVER_CUSTOM, (_event, input: unknown) => {
+  if (!input || typeof input !== "object") throw new Error("自定义提供商参数无效。");
+  return clientOrThrow().discoverCustomModels(input as CustomProviderRequest);
+});
 ipcMain.handle(IPC.MODEL_PRESETS, () => clientOrThrow().listModelPresets());
 ipcMain.handle(IPC.MODEL_LIST, () => clientOrThrow().listModels());
 ipcMain.handle(IPC.MODEL_CREATE, (_event, input: unknown) => {

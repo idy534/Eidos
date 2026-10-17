@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import uuid
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import Field, field_validator, model_validator
 
@@ -20,7 +22,7 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 
 
 ModelReasoningSelection = Literal[
-    "none", "thinking", "low", "medium", "high", "max"
+    "none", "thinking", "low", "medium", "high", "xhigh", "max"
 ]
 
 
@@ -65,30 +67,113 @@ class ModelReasoningConfig(EidosFrozenStrictModel):
         return self
 
 
+WireApi = Literal["chat_completions", "openai_responses"]
+ReasoningFormat = Literal["openai", "deepseek", "minimax"]
+
+
+def normalize_model_base_url(value: str) -> str:
+    parsed = urlsplit(value.strip())
+    if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment
+            or any(character.isspace() or ord(character) < 32 for character in value)):
+        raise ValueError("接口地址必须是有效的 HTTP 或 HTTPS 地址，且不能包含凭据、查询或片段。")
+    try:
+        parsed.port
+    except ValueError:
+        raise ValueError("接口地址的端口无效。") from None
+    path = parsed.path.rstrip("/")
+    for suffix in ("/chat/completions", "/responses"):
+        if path.endswith(suffix):
+            path = path[:-len(suffix)]
+            break
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+class CustomModelSettings(EidosFrozenStrictModel):
+    provider_id: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+    provider_name: str = Field(min_length=1, max_length=64)
+    base_url: str = Field(min_length=1, max_length=2048)
+    wire_api: WireApi = "chat_completions"
+    name: str = Field(min_length=1, max_length=120)
+    context_window_tokens: int = Field(gt=0, le=100_000_000)
+    max_output_tokens: int = Field(gt=0, le=100_000_000)
+    supports_tool_call: bool = True
+    supports_images: bool = False
+    reasoning: ModelReasoningConfig | None = None
+    reasoning_format: ReasoningFormat = "openai"
+    reasoning_control: Literal["provider_default", "unsupported", "configured"] = "provider_default"
+    output_token_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        return normalize_model_base_url(value)
+
+    @model_validator(mode="after")
+    def validate_limits(self) -> "CustomModelSettings":
+        if self.max_output_tokens > self.context_window_tokens:
+            raise ValueError("最大输出不能超过上下文窗口。")
+        if self.wire_api == "openai_responses" and self.reasoning_format != "openai":
+            raise ValueError("Responses 使用标准 reasoning 参数。")
+        if (self.reasoning is not None) != (self.reasoning_control == "configured"):
+            raise ValueError("思考控制与可选档位不一致。")
+        if self.reasoning is not None:
+            if self.reasoning_format == "openai" and "thinking" in self.reasoning.selections:
+                raise ValueError("标准 OpenAI 接口需要明确的思考强度。")
+            if self.reasoning_format == "minimax" and not set(self.reasoning.selections) <= {"none", "thinking"}:
+                raise ValueError("MiniMax 思考参数只支持开关。")
+        return self
+
+
+class CustomModelRuntimeSettings(EidosFrozenStrictModel):
+    provider_id: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+    wire_api: WireApi = "chat_completions"
+    context_window_tokens: int = Field(gt=0, le=100_000_000)
+    max_output_tokens: int = Field(gt=0, le=100_000_000)
+    reasoning_format: ReasoningFormat = "openai"
+    reasoning_control: Literal["provider_default", "unsupported", "configured"] = "provider_default"
+    output_token_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+
+
 class ModelConfig(EidosFrozenStrictModel):
     id: str = Field(min_length=1, max_length=256)
     name: str = Field(min_length=1, max_length=120)
     vendor: str = Field(min_length=1, max_length=64)
     url: str = Field(min_length=1, max_length=2048)
-    api_key: str = Field(alias="apiKey", min_length=1, max_length=512)
+    api_key: str = Field(alias="apiKey", max_length=512, repr=False)
     supports_tool_call: bool = Field(alias="supportsToolCall")
     supports_images: bool = Field(default=False, alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningConfig | None = None
+    model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    custom: CustomModelRuntimeSettings | None = None
 
     @field_validator("api_key")
     @classmethod
     def validate_api_key(cls, value: str) -> str:
         key = value.strip()
         if (
-            not key
-            or any(character.isspace() or ord(character) < 32 for character in key)
+            any(character.isspace() or ord(character) < 32 for character in key)
         ):
             raise ValueError("API key is invalid")
         return key
 
     @model_validator(mode="after")
     def validate_reasoning(self) -> "ModelConfig":
+        if not self.api_key and self.custom is None:
+            raise ValueError("API key is required for built-in providers")
+        if self.custom is not None:
+            if self.model_id is None or not self.model_id.strip():
+                raise ValueError("custom model requires a remote model ID")
+            settings = CustomModelSettings(
+                provider_name=self.vendor, base_url=self.url, name=self.name,
+                supports_tool_call=self.supports_tool_call, supports_images=self.supports_images,
+                reasoning=self.reasoning, **self.custom.model_dump(),
+            )
+            suffix = "/responses" if self.custom.wire_api == "openai_responses" else "/chat/completions"
+            if self.url != settings.base_url + suffix:
+                raise ValueError("custom model URL does not match wire API")
         if self.reasoning is not None and not self.supports_reasoning:
             raise ValueError("reasoning selections require reasoning capability")
         return self
@@ -104,6 +189,10 @@ class ModelPublicConfig(EidosFrozenStrictModel):
     supports_images: bool = Field(default=False, alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningConfig | None = None
+    custom: CustomModelSettings | None = None
+    model_id: str | None = None
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
 
 
 class ModelProfileSpec(EidosFrozenStrictModel):
@@ -148,7 +237,8 @@ class ModelProfileSpec(EidosFrozenStrictModel):
         )
         return ModelProfileSnapshot(
             provider_id=self.provider_id,
-            model_id=self.model_id,
+            model_id=config.id if isinstance(config, ModelConfig) and config.custom else self.model_id,
+            remote_model_id=self.model_id if isinstance(config, ModelConfig) and config.custom else None,
             wire_api=self.wire_api,
             context_window_tokens=self.context_window_tokens,
             max_output_tokens=self.max_output_tokens,
@@ -400,6 +490,15 @@ class ModelCatalog:
     def profile(
         self, model_id: str, *, config: ModelConfig | None = None
     ) -> ModelProfileSpec:
+        if config is not None and config.custom is not None:
+            return ModelProfileSpec(
+                provider_id="custom", model_id=config.model_id or config.id,
+                wire_api=config.custom.wire_api,
+                context_window_tokens=config.custom.context_window_tokens,
+                max_output_tokens=config.custom.max_output_tokens,
+                request_timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                supports_images=config.supports_images,
+            )
         selected = self._models.get(self.canonical_id(model_id))
         if selected is not None:
             provider, model = selected
@@ -445,10 +544,10 @@ class ModelCatalog:
     ) -> ModelReasoningSelection | None:
         reasoning = None
         selected = self._models.get(self.canonical_id(model_id))
-        if selected is not None:
-            reasoning = selected[1].reasoning
-        elif config is not None:
+        if config is not None and config.reasoning is not None:
             reasoning = config.reasoning
+        elif selected is not None and (config is None or config.custom is None):
+            reasoning = selected[1].reasoning
         if requested is None:
             return reasoning.default_selection if reasoning else None
         if reasoning is None or requested not in reasoning.selections:
@@ -530,7 +629,7 @@ class ModelConfigStore:
         seen: set[str] = set()
         changed = False
         for value in values:
-            canonical_id = MODEL_CATALOG.canonical_id(value.id)
+            canonical_id = value.id if value.custom else MODEL_CATALOG.canonical_id(value.id)
             if canonical_id in seen:
                 raise ModelConfigError("model configuration migration conflict")
             seen.add(canonical_id)
@@ -564,9 +663,18 @@ class ModelConfigStore:
         return next((model for model in self.list() if model.id == model_id), None)
 
     def create(
-        self, *, provider_id: str, model_id: str, api_key: str
+        self, *, provider_id: str, model_id: str, api_key: str,
+        custom: CustomModelSettings | None = None,
     ) -> ModelConfig:
         values = self.list()
+        if provider_id == "custom":
+            if custom is None:
+                raise ModelConfigError("自定义模型配置必填。")
+            created = self._custom_config(f"custom-{uuid.uuid4()}", model_id, api_key, custom)
+            self._write([*values, created])
+            return created
+        if custom is not None:
+            raise ModelConfigError("内置提供商不能使用自定义连接配置。")
         model_id = MODEL_CATALOG.canonical_id(model_id)
         if any(value.id == model_id for value in values):
             raise ModelConfigError("model ID already exists")
@@ -584,16 +692,29 @@ class ModelConfigStore:
         provider_id: str,
         model_id: str,
         api_key: str | None,
+        custom: CustomModelSettings | None = None,
     ) -> ModelConfig:
         values = self.list()
         existing_id = MODEL_CATALOG.canonical_id(existing_id)
-        model_id = MODEL_CATALOG.canonical_id(model_id)
+        model_id = model_id if provider_id == "custom" else MODEL_CATALOG.canonical_id(model_id)
         index = next(
             (position for position, value in enumerate(values) if value.id == existing_id),
             None,
         )
         if index is None:
             raise ModelConfigError("model was not found")
+        if provider_id == "custom":
+            if custom is None:
+                raise ModelConfigError("自定义模型配置必填。")
+            old = values[index]
+            if api_key is None and normalize_model_base_url(old.url) != custom.base_url:
+                raise ModelConfigError("修改接口地址后，请重新填写或清除 API Key。")
+            replacement = self._custom_config(existing_id, model_id, old.api_key if api_key is None else api_key, custom)
+            values[index] = replacement
+            self._write(values)
+            return replacement
+        if custom is not None:
+            raise ModelConfigError("内置提供商不能使用自定义连接配置。")
         if model_id != existing_id and any(value.id == model_id for value in values):
             raise ModelConfigError("model ID already exists")
         key = api_key.strip() if api_key is not None else ""
@@ -621,6 +742,22 @@ class ModelConfigStore:
     def public_list(self) -> list[ModelPublicConfig]:
         return [public_model_config(value) for value in self.list()]
 
+    @staticmethod
+    def _custom_config(config_id: str, model_id: str, api_key: str, custom: CustomModelSettings) -> ModelConfig:
+        suffix = "/responses" if custom.wire_api == "openai_responses" else "/chat/completions"
+        try:
+            return ModelConfig(
+                id=config_id, model_id=model_id, name=custom.name, vendor=custom.provider_name,
+                url=custom.base_url + suffix, apiKey=api_key,
+                supportsToolCall=custom.supports_tool_call, supportsImages=custom.supports_images,
+                supportsReasoning=custom.reasoning is not None, reasoning=custom.reasoning,
+                custom=CustomModelRuntimeSettings.model_validate(custom.model_dump(include={
+                    "provider_id", "wire_api", "context_window_tokens", "max_output_tokens", "reasoning_format", "reasoning_control", "output_token_field",
+                })),
+            )
+        except ValueError:
+            raise ModelConfigError("自定义模型配置无效。") from None
+
     def _write(self, values: list[ModelConfig]) -> None:
         path = self._path()
         descriptor, temporary_name = tempfile.mkstemp(
@@ -632,7 +769,7 @@ class ModelConfigStore:
         try:
             os.fchmod(descriptor, 0o600)
             payload = json.dumps(
-                [value.model_dump(mode="json", by_alias=True) for value in values],
+                [value.model_dump(mode="json", by_alias=True, exclude={"custom", "model_id"} if value.custom is None else set()) for value in values],
                 ensure_ascii=False,
                 indent=2,
             ).encode("utf-8")
@@ -679,14 +816,24 @@ class ModelConfigStore:
 
 def public_model_config(config: ModelConfig) -> ModelPublicConfig:
     reasoning = config.reasoning
-    if reasoning is None and config.supports_reasoning:
+    if reasoning is None and config.supports_reasoning and config.custom is None:
         reasoning = MODEL_CATALOG.reasoning_config(config.id)
+    profile = MODEL_CATALOG.profile(config.id, config=config)
+    custom = None
+    if config.custom is not None:
+        custom = CustomModelSettings(
+            provider_name=config.vendor, base_url=normalize_model_base_url(config.url),
+            name=config.name, supports_tool_call=config.supports_tool_call,
+            supports_images=config.supports_images, reasoning=config.reasoning,
+            **config.custom.model_dump(),
+        )
     return ModelPublicConfig(
         **config.model_dump(
-            mode="json", by_alias=True, exclude={"api_key", "reasoning"}
+            mode="json", by_alias=True, exclude={"api_key", "reasoning", "custom", "model_id"}
         ),
-        provider=MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor),
-        reasoning=reasoning,
+        provider="custom" if custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor),
+        reasoning=reasoning, custom=custom, model_id=config.model_id,
+        context_window_tokens=profile.context_window_tokens, max_output_tokens=profile.max_output_tokens,
     )
 
 

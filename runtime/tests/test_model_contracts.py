@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.metadata import version
 from pathlib import Path
 import sys
 import threading
@@ -84,7 +85,14 @@ class ModelContractTests(unittest.TestCase):
         )
         self.assertEqual(profile.schema_version, 1)
         self.assertEqual(profile.wire_api, "chat_completions")
-        self.assertEqual(profile.pydantic_ai_version, "2.43.0")
+        self.assertEqual(profile.pydantic_ai_version, version("pydantic-ai-slim"))
+
+        historical_snapshot = {
+            **profile.model_dump(mode="json"),
+            "pydantic_ai_version": "2.43.0",
+        }
+        restored = ModelProfileSnapshot.model_validate(historical_snapshot)
+        self.assertEqual(restored.model_dump(mode="json"), historical_snapshot)
 
     def test_prompts_are_provider_neutral_model_resources(self) -> None:
         self.assertIn("Eidos", SYSTEM_SAFETY_INSTRUCTIONS)

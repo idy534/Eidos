@@ -1,3 +1,4 @@
+import type { CustomModelSettings } from "./custom-models.js";
 import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
 import type { ModelId } from "./constants.js";
 import type { RunTermination } from "./run-termination.generated.js";
@@ -455,6 +456,7 @@ export type ModelReasoningSelection =
   | "low"
   | "medium"
   | "high"
+  | "xhigh"
   | "max";
 
 export interface ModelReasoning {
@@ -463,6 +465,10 @@ export interface ModelReasoning {
 }
 
 export interface ModelOption {
+  custom?: CustomModelSettings | null;
+  modelId?: string | null;
+  contextWindowTokens?: number | null;
+  maxOutputTokens?: number | null;
   id: ModelId;
   name: string;
   vendor: string;
@@ -492,9 +498,10 @@ export interface ModelPresetsResult {
 }
 
 export interface ModelCreateInput {
-  provider: ModelProviderPreset["id"];
+  provider: ModelProviderPreset["id"] | "custom";
+  custom?: CustomModelSettings;
   modelId: ModelId;
-  apiKey: string;
+  apiKey?: string;
 }
 
 export interface ModelUpdateInput extends Omit<ModelCreateInput, "apiKey"> {

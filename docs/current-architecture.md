@@ -211,6 +211,8 @@ Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,53
 
 ## 7. Model Gateway
 
+Runtime 锁定 `pydantic-ai-slim[openai,retries]==2.57.0` 和 `openai==3.26.0`。OpenAI SDK 版本满足 Pydantic AI 的最低要求。锁文件只同步升级必需的 `pydantic-graph` 与 `genai-prices`。新建 `ModelProfileSnapshot` 记录 Pydantic AI 2.57.0；读取历史快照时，Runtime 保留其中已记录的版本。该升级不修改 SQLite Schema、模型配置格式或 Eidos Loop。
+
 ModelConfigStore 使用受保护的 `models.json` 保存本地配置。默认位置是 `~/.eidos/models.json`，显式数据目录会改变 Runtime-owned 数据位置。文件按 owner-only 权限保存。
 
 API Key 会经过本地模型配置写入链路：Renderer 通过 typed IPC 把配置交给 Electron Main，Main 再通过 `model/create` 或 `model/update` JSON-RPC request 把 `apiKey` 发送给 Runtime。Runtime 将 Key 写入受保护的 `models.json`。Key 不应出现在模型列表/读取响应、SQLite、Event/Execution Feed 或正常日志中。
@@ -247,7 +249,13 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 `run/start` 接受所选模型允许的思考设置。Runtime 会拒绝该模型未声明的设置；请求没有设置时，Runtime 使用 Catalog 默认值。Runtime 将解析后的设置放入 Run 的不可变 `ModelProfileSnapshot`，并写入现有 `runs.model_profile_json`。这项改动不增加 SQLite 列，也不改变 schema 版本。
 
-`models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。ModelConfigStore 负责从 `models.json` 读取模型配置，校验文件权限、格式与 ID 唯一性。内置 Catalog 提供新建模型的默认值。已有配置未保存思考档位时，公开模型列表会回退到 Catalog 档位；已有非空设置优先。本逻辑只影响读取，不改写 `models.json`。Catalog 不再强制全等校验。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Chat Completions 是不支持 Responses、Custom Tool 或 Grammar 的模型的兼容路径，不是废弃路径。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。Responses stream 只有 `response.completed` 可以产生可执行的 normalized response。`response.failed`、`response.incomplete`、`error` 和没有 terminal event 的 EOF 都 fail closed。模型请求取消覆盖流式上下文建立和 SSE 等待阶段。流建立后，Runtime 关闭 Responses stream，并取消等待中的 `anext` task。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供主动 capability probe。
+`models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。ModelConfigStore 负责从 `models.json` 读取模型配置，校验文件权限、格式与 ID 唯一性。内置 Catalog 提供新建模型的默认值。已有配置未保存思考档位时，公开模型列表会回退到 Catalog 档位；已有非空设置优先。本逻辑只影响读取，不改写 `models.json`。Catalog 不再强制全等校验。当前内置 Model Catalog 使用 OpenAI-compatible Chat Completions。Chat Completions 是不支持 Responses、Custom Tool 或 Grammar 的模型的兼容路径，不是废弃路径。Runtime 另外保留一个按 ModelProfile wire API 路由的 OpenAI Responses native adapter。Responses profile 使用这个 adapter；只有 `supports_custom_tools=true` 且 `supports_tool_grammar=true` 的 profile 才会暴露 native Custom `apply_patch`，其他 Responses profile 仍发送 Function Tool。Chat Completions profile 继续使用 Pydantic AI 的 Function Tool API。Responses stream 只有 `response.completed` 可以产生可执行的 normalized response。`response.failed`、`response.incomplete`、`error` 和没有 terminal event 的 EOF 都 fail closed。模型请求取消覆盖流式上下文建立和 SSE 等待阶段。流建立后，Runtime 关闭 Responses stream，并取消等待中的 `anext` task。两条路径都复用 RuntimeAsyncKernel 的同一 asyncio loop。Runtime 不提供后台主动 capability probe。`model/discoverCustom` 是设置页用户主动触发的自定义连接列表请求，且只接受 `provider="custom"`。该方法通过受管任务进入共享异步内核，调用官方 OpenAI SDK 的模型列表接口，并限制时间、字节数和条目数。该方法不会生成模型回复，也不测试内置 Provider 或已有模型。
+
+自定义配置复用 `models.json` 的数组格式。`ModelConfig.id` 继续作为会话、定时任务和子任务使用的本地身份；可选 `modelId` 保存远端 ID。可选 `custom` 保存协议、Token 上限和思考参数格式，名称、URL、凭据和能力继续使用原字段。公开 DTO 将这些字段组合成可编辑的 `CustomModelSettings`，不返回凭据。新建自定义配置使用独立随机 ID；已有配置保存时保持原 ID。旧配置缺少这些可选字段时继续采用原目录行为。Run 快照的 `model_id` 保留本地身份，`remote_model_id` 保存自定义远端 ID。Gateway 的请求规格与 SDK 模型使用远端 ID。
+
+`CustomModelSettings.providerId` 与持久化 `CustomModelRuntimeSettings.provider_id` 保存用户指定的提供商标识，名称继续由 `vendor` 保存。该字段对旧配置可缺省，不创建独立提供商实体，也不改变内部 `provider="custom"` 的适配器路由。Renderer 在新建及编辑保存时要求有效 ID，并负责名称跟随、Token 预设、紧凑能力勾选和默认思考强度。Python DTO 继续生成 TypeScript、JSON Schema 与 Ajv 静态校验器。表单移除了免 Key 勾选，通过输入修改状态区分保留旧密钥和显式清除；地址改变且没有新 Key 时，表单发送空 Key，原有 Runtime 地址与凭据检查仍然生效。
+
+自定义模型发现仍使用原来的有界 SDK 列表请求。远端元数据模型通过 Pydantic 按字段处理无效值，模型 ID 继续严格校验。名称支持明确的显示名别名，思考设置支持已声明的配置或强度列表；未知强度不会使整条记录退回仅有 ID。公开发现 DTO 与模型配置格式保持原样。Renderer 选择另一个模型时重新填入元数据，刷新同一个模型时保留手动覆盖。Token 输入组件在 K 与整数 Token 之间精确换算，持久化和 Run 快照继续使用整数 Token。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 

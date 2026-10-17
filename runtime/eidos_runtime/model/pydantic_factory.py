@@ -6,6 +6,7 @@ import httpx2 as httpx
 from openai import AsyncOpenAI
 from pydantic_ai.models import Model
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.providers.moonshotai import MoonshotAIProvider
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -39,18 +40,24 @@ def build_provider(
     wire_api: str = "chat_completions",
     retry_policy: RetryPolicy | None = None,
 ) -> tuple[OpenAICompatibleProvider, AsyncOpenAI, RetryTransportClient]:
-    provider_id = MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
+    provider_id = "custom" if config.custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
     retry_client = build_retrying_http_client(
         config, timeout=timeout, wire_api=wire_api, retry_policy=retry_policy
     )
+    if config.custom is not None and not config.api_key:
+        # The SDK requires an internal key. The mature HTTP client's request hook
+        # removes its placeholder before every network attempt, including titles.
+        retry_client.http_client.event_hooks["request"].append(_omit_authentication)
     client = AsyncOpenAI(
-        api_key=config.api_key,
+        api_key=config.api_key or "unused-no-auth",
+        **({"organization": "", "project": "", "admin_api_key": ""}
+           if config.custom else {}),
         base_url=_client_base_url(config.url),
         max_retries=0,
         timeout=timeout,
         http_client=retry_client.http_client,
     )
-    if provider_id == "deepseek":
+    if provider_id == "deepseek" or (config.custom is not None and config.custom.reasoning_format == "deepseek"):
         provider: OpenAICompatibleProvider = DeepSeekProvider(openai_client=client)
     elif provider_id == "kimi":
         provider = MoonshotAIProvider(openai_client=client)
@@ -61,8 +68,19 @@ def build_provider(
     return provider, client, retry_client
 
 
+async def _omit_authentication(request: httpx.Request) -> None:
+    request.headers.pop("Authorization", None)
+
+
 def build_model(config: ModelConfig, provider: OpenAICompatibleProvider) -> Model:
-    return OpenAIChatModel(config.id, provider=provider)
+    if config.custom:
+        profile = OpenAIModelProfile({
+            **(provider.model_profile(config.model_id or config.id) or {}),
+            "openai_chat_supports_max_completion_tokens": config.custom.output_token_field == "max_completion_tokens",
+            "openai_system_prompt_role": "system",
+        })
+        return OpenAIChatModel(config.model_id or config.id, provider=provider, profile=profile)
+    return OpenAIChatModel(config.model_id or config.id, provider=provider)
 
 
 def build_pydantic_model(

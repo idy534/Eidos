@@ -37,6 +37,7 @@ from eidos_runtime.application.extensions import (
     PluginImportFailure,
 )
 from eidos_runtime.application.models import ModelApplication
+from eidos_runtime.model.discovery import CustomProviderRequest, CustomProviderResult, discover_custom_models
 from eidos_runtime.application.projects import ProjectApplication
 from eidos_runtime.application.sidebar import SidebarApplication
 from eidos_runtime.application.queued_runs import QueuedRunApplication
@@ -481,6 +482,27 @@ class _DeferredGitPushAdapter:
             self._server.send(business_error(request_id, "INTERNAL_ERROR"))
             return
         self._server.send(response(request_id, result.to_json_value()))
+
+
+class _CustomProviderAdapter:
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(self, request_id: str, request: CustomProviderRequest) -> DeferredMethodResult:
+        base_url, api_key = self._server._applications_or_error().models.discovery_credentials(request)
+
+        def run(cancel: threading.Event) -> None:
+            try:
+                result = self._server._required_async_kernel().call(discover_custom_models, base_url, api_key, cancel)
+                payload = CustomProviderResult.model_validate(result).to_wire_dict(exclude_none=True)
+                self._server.send(response(request_id, payload))
+            except Exception:
+                # Never log a request or third-party exception containing a credential.
+                self._server.send(business_error(request_id, "INTERNAL_ERROR"))
+
+        if not self._server.supervisor.start_managed_task("custom-provider-models", run):
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
 
 
 class _DeferredGitObserveAdapter:
@@ -1247,6 +1269,7 @@ class RuntimeServer:
                     provider=request.provider,
                     model_id=request.model_id,
                     api_key=request.api_key,
+                    custom=request.custom,
                 ),
             ),
             (
@@ -1258,6 +1281,7 @@ class RuntimeServer:
                     provider=request.provider,
                     model_id=request.model_id,
                     api_key=request.api_key,
+                    custom=request.custom,
                 ),
             ),
             (
@@ -1433,6 +1457,7 @@ class RuntimeServer:
             "agent/definitionRemove",
             "plan/edit",
             "model/create",
+            "model/discoverCustom",
             "model/update",
             "model/delete",
             "plugin/import",
@@ -1457,6 +1482,12 @@ class RuntimeServer:
                     error_mapper=_application_error_mapping,
                 )
             )
+        registry.register(MethodRegistration(
+            name="model/discoverCustom", request_type=CustomProviderRequest,
+            response_type=CustomProviderResult, handler=_CustomProviderAdapter(self),
+            allowed_when_draining=False, allowed_during_reconfiguration=False,
+            error_mapper=_application_error_mapping,
+        ))
         registry.register(
             MethodRegistration(
                 name="session/gitFetch",

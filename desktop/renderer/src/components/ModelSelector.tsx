@@ -1,3 +1,4 @@
+import { formatTokenCount } from "../context-usage.js";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type {
@@ -12,6 +13,7 @@ const SELECTION_ORDER: readonly ModelReasoningSelection[] = [
   "low",
   "medium",
   "high",
+  "xhigh",
   "max",
   "thinking",
 ];
@@ -22,6 +24,7 @@ const SELECTION_LABELS: Record<ModelReasoningSelection, string> = {
   low: "低",
   medium: "中",
   high: "高",
+  xhigh: "超高",
   max: "最高",
 };
 
@@ -58,10 +61,11 @@ const MODEL_CONTEXT_LIMITS: Record<string, string> = {
 };
 
 function getModelProviderDisplay(model: ModelOption): string {
-  return getProviderName(model.provider) || model.vendor;
+  return model.custom ? model.vendor : getProviderName(model.provider) || model.vendor;
 }
 
 function getModelInputDisplay(model: ModelOption): string {
+  if (model.custom) return model.supportsImages ? "文本, 图像" : "文本";
   if (FULL_MULTIMODAL_MODELS.has(model.id)) {
     return "文本, 图像, 视频, PDF";
   }
@@ -72,10 +76,15 @@ function getModelInputDisplay(model: ModelOption): string {
 }
 
 function getModelReasoningDisplay(model: ModelOption): string {
+  if (model.custom) {
+    if (!model.custom.reasoningControl || model.custom.reasoningControl === "provider_default") return "由服务商决定";
+    if (model.reasoning?.selections.length === 1 && model.reasoning.selections[0] === "none") return "已关闭思考";
+  }
   return model.supportsReasoning ? "支持推理" : "不支持推理";
 }
 
 function getModelContextDisplay(model: ModelOption): string {
+  if (model.contextWindowTokens) return formatTokenCount(model.contextWindowTokens);
   return MODEL_CONTEXT_LIMITS[model.id] ?? "128K";
 }
 
@@ -135,7 +144,7 @@ export function ModelSelector({
   const firstSelection = selections[0] ?? selectedSelection ?? "none";
   const lastSelection = selections.at(-1) ?? selectedSelection ?? "none";
   const modelName = selectedModel?.name ?? (selectedModelId ? "已保存的模型不可用" : "选择模型");
-  const providerName = selectedModel ? getProviderName(selectedModel.provider) : "";
+  const providerName = selectedModel ? getModelProviderDisplay(selectedModel) : "";
   const modelLabel = providerName ? `${modelName}，${providerName}` : modelName;
 
   useEffect(() => {
@@ -419,7 +428,7 @@ export function ModelSelector({
                       type="radio"
                       name={modelRadioName}
                       value={model.id}
-                      aria-label={`${model.name}，${getProviderName(model.provider)}`}
+                      aria-label={`${model.name}，${getModelProviderDisplay(model)}`}
                       checked={model.id === selectedModelId}
                       disabled={disabled}
                       onChange={() => selectModel(model.id)}

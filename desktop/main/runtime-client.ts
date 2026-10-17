@@ -1,3 +1,5 @@
+import { isCustomModelSettings, isCustomProviderResult } from "../shared/custom-models.js";
+import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest, type ChannelReadRequest } from "../shared/channels.js";
 import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
 import type { SessionForkRequest } from "../shared/session-fork.generated.js";
@@ -983,6 +985,10 @@ export class RuntimeClient {
       : null;
   }
 
+  discoverCustomModels(input: CustomProviderRequest): Promise<CustomProviderResult> {
+    return this.validatedRequest("model/discoverCustom", { ...input }, isCustomProviderResult);
+  }
+
   listModelPresets(): Promise<ModelPresetsResult> {
     return this.validatedRequest("model/presets", {}, isModelPresetsResult);
   }
@@ -1483,8 +1489,12 @@ function isModelOption(value: unknown): value is ModelOption {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "name", "vendor", "provider", "url", "supportsToolCall",
-      "supportsImages", "supportsReasoning", "reasoning",
+      "supportsImages", "supportsReasoning", "reasoning", "custom", "modelId", "contextWindowTokens", "maxOutputTokens",
     ])
+    && (value.custom == null || isCustomModelSettings(value.custom))
+    && (value.modelId == null || isModelId(value.modelId))
+    && (value.contextWindowTokens == null || (Number.isSafeInteger(value.contextWindowTokens) && Number(value.contextWindowTokens) > 0))
+    && (value.maxOutputTokens == null || (Number.isSafeInteger(value.maxOutputTokens) && Number(value.maxOutputTokens) > 0))
     && isModelId(value.id)
     && typeof value.name === "string"
     && typeof value.vendor === "string"
@@ -1503,7 +1513,7 @@ function isModelOption(value: unknown): value is ModelOption {
 
 function isModelReasoning(value: unknown): boolean {
   const selections = isRecord(value) ? value.selections : undefined;
-  const validSelections = ["none", "thinking", "low", "medium", "high", "max"];
+  const validSelections = ["none", "thinking", "low", "medium", "high", "xhigh", "max"];
   return isRecord(value)
     && hasOnlyKeys(value, ["defaultSelection", "selections"])
     && typeof value.defaultSelection === "string"

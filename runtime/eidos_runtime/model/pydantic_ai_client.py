@@ -136,6 +136,7 @@ class PydanticAIModelClient:
         parallel_tool_calls: bool | None = True,
         reasoning_effort: str | None = None,
         reasoning_selection: ModelReasoningSelection | None = None,
+        reasoning_format: str | None = None,
         async_kernel: RuntimeAsyncKernel,
     ) -> None:
         self._model = model
@@ -145,7 +146,7 @@ class PydanticAIModelClient:
         self._retry_transport = retry_transport
         if settings_extra_body is not None:
             self._settings_extra_body = settings_extra_body
-        elif profile_spec.provider_id == "deepseek":
+        elif profile_spec.provider_id == "deepseek" or (reasoning_format == "deepseek" and reasoning_selection is not None):
             self._settings_extra_body = {
                 "thinking": {
                     "type": "disabled"
@@ -154,7 +155,7 @@ class PydanticAIModelClient:
                 }
             }
         elif (
-            profile_spec.provider_id == "minimax"
+            (profile_spec.provider_id == "minimax" or reasoning_format == "minimax")
             and reasoning_selection in ("none", "thinking")
         ):
             self._settings_extra_body = {
@@ -172,6 +173,11 @@ class PydanticAIModelClient:
         self._reasoning_selection = reasoning_selection
         if reasoning_effort is not None:
             self._reasoning_effort = reasoning_effort
+        elif profile_spec.provider_id == "custom" and reasoning_selection not in (None, "thinking"):
+            self._reasoning_effort = (
+                None if reasoning_format in {"deepseek", "minimax"} and reasoning_selection == "none"
+                else reasoning_selection
+            )
         elif (
             profile_spec.provider_id == "volcengine"
             and profile_spec.model_id == "deepseek-v4.1-flash"

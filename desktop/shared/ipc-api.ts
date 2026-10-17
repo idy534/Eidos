@@ -1,3 +1,4 @@
+import type { CustomProviderRequest, CustomProviderResult } from "./custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "./channels.js";
 import type { SessionForkRequest } from "./session-fork.generated.js";
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "./automation.js";
@@ -297,6 +298,7 @@ export interface EidosRuntimeAPI {
   ): Promise<ItemFeedbackResult>;
 
   // Models
+  discoverCustomModels(input: CustomProviderRequest): Promise<CustomProviderResult>;
   listModelPresets(): Promise<ModelPresetsResult>;
   listModels(): Promise<ModelListResult>;
   createModel(input: ModelCreateInput): Promise<ModelOption>;

@@ -34,7 +34,7 @@ class ModelGatewayLease(ModelClientLease):
     ) -> None:
         self.lease_id = str(uuid.uuid4())
         self.model_id = config.id
-        self.provider = MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
+        self.provider = "custom" if config.custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor)
         super().__init__(
             client,
             client.close,
@@ -90,7 +90,7 @@ class ModelGateway:
                 retry_transport=built.retry_client,
                 profile_snapshot=profile_snapshot,
                 parallel_tool_calls=config.supports_tool_call,
-                reasoning_effort=None,
+                reasoning_effort=reasoning_selection if config.custom else None,
                 async_kernel=self.async_kernel,
             )
         else:
@@ -103,6 +103,7 @@ class ModelGateway:
                 profile_snapshot=profile_snapshot,
                 parallel_tool_calls=config.supports_tool_call,
                 reasoning_selection=reasoning_selection,
+                reasoning_format=config.custom.reasoning_format if config.custom else None,
                 async_kernel=self.async_kernel,
             )
         lease = ModelGatewayLease(

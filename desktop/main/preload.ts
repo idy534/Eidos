@@ -1,3 +1,4 @@
+import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "../shared/channels.js";
 import type { MemoryMethods } from "../shared/memory.js";
 import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
@@ -369,6 +370,7 @@ const api: EidosRuntimeAPI = {
   ): Promise<ItemFeedbackResult> => ipcRenderer.invoke(IPC.ITEM_SET_FEEDBACK, itemId, feedback),
 
   // Models
+  discoverCustomModels: (input: CustomProviderRequest): Promise<CustomProviderResult> => ipcRenderer.invoke(IPC.MODEL_DISCOVER_CUSTOM, input),
   listModelPresets: (): Promise<ModelPresetsResult> => ipcRenderer.invoke(IPC.MODEL_PRESETS),
   listModels: (): Promise<ModelListResult> => ipcRenderer.invoke(IPC.MODEL_LIST),
   createModel: (input: ModelCreateInput): Promise<ModelOption> =>

@@ -186,7 +186,7 @@ runtime/eidos_runtime/
 只保留 `ModelProfile`、`RunModelSnapshot`、配置版本、Base URL 安全校验、本地 API Key 存储、稳定错误码、能力声明、Model Lease 和安全重试 Predicate。
 交给 Pydantic AI：Provider Client、OpenAI-Compatible 请求、Responses API、Chat Completions API、流式解析、ToolCall Chunk 合并、Usage、Provider Profile、HTTP Client 生命周期和 Structured Output。
 不得恢复主动 Capability Probe。
-不得恢复独立“模型连接测试”流程。
+不得恢复针对内置 Provider 或内置模型的独立“模型连接测试”流程。用户可以在设置页主动测试自定义 Provider 的地址和 API Key，并获取模型列表；该操作不生成回复、不测试已有模型，也不得变成后台能力探测。
 能力来源：用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值。
 模型错误必须映射为稳定 Eidos 错误码，不得直接跨协议发送第三方异常对象。
 HTTP 重试的退避、Retry-After 和可重试状态交给成熟实现；Eidos 只决定当前 Attempt 是否还能安全重新开始。

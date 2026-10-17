@@ -1,13 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { customModelAddressError } from "./custom-model-address.js";
+import React, { useEffect, useState } from "react";
 import type {
   ModelListResult,
   ModelOption,
-  ModelProviderPreset,
   ModelPresetsResult,
 } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
-import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
+import { ModelDialog, type ModelDraft } from "./ModelDialog.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { SettingSection } from "./SettingSection.js";
 import { SettingRow } from "./SettingRow.js";
@@ -21,12 +21,6 @@ interface ModelSettingsProps {
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
 }
 
-interface ModelDraft {
-  originalId?: string;
-  provider: ModelProviderPreset["id"];
-  modelId: string;
-  apiKey: string;
-}
 
 export function ModelSettings({
   modelList,
@@ -66,32 +60,54 @@ export function ModelSettings({
     setModelToDelete(undefined);
     setDraft({
       originalId: model.id,
-      provider: model.provider as ModelProviderPreset["id"],
-      modelId: model.id,
+      provider: model.custom ? "custom" : model.provider as ModelDraft["provider"],
+      modelId: model.modelId ?? model.id,
+      ...(model.custom ? { custom: { ...model.custom }, originalBaseUrl: model.custom.baseUrl } : {}),
       apiKey: "",
     });
   };
 
   async function save() {
-    if (!draft || (!draft.originalId && !draft.apiKey.trim())) {
+    if (!draft || (!draft.custom && !draft.originalId && !draft.apiKey.trim())) {
       setLocalError("API Key 必填");
       return;
+    }
+    if (draft.custom && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(draft.custom.providerId ?? "")) {
+      setLocalError("请填写提供商 ID，只能使用字母、数字、点、下划线和短横线，并以字母或数字开头。");
+      return;
+    }
+    if (draft.custom && (!draft.modelId.trim() || !draft.custom.baseUrl.trim() || !draft.custom.name.trim()
+      || !draft.custom.providerName.trim() || !Number.isSafeInteger(draft.custom.contextWindowTokens) || !Number.isSafeInteger(draft.custom.maxOutputTokens)
+      || draft.custom.contextWindowTokens <= 0 || draft.custom.maxOutputTokens <= 0
+      || draft.custom.contextWindowTokens > 100000000 || draft.custom.maxOutputTokens > 100000000
+      || draft.custom.maxOutputTokens > draft.custom.contextWindowTokens)) {
+      setLocalError("请填写模型 ID、展示名、接口地址和有效的 Token 上限；最大输出不能超过上下文窗口。");
+      return;
+    }
+    if (draft.custom) {
+      const addressError = customModelAddressError(draft.custom.baseUrl);
+      if (addressError) { setLocalError(addressError); return; }
     }
     setBusy(true);
     setLocalError(undefined);
     try {
+      const extra = draft.custom ? { custom: draft.custom } : {};
+      const keyChanged = draft.apiKeyEdited || Boolean(draft.apiKey.trim())
+        || (draft.custom && draft.originalBaseUrl !== draft.custom.baseUrl);
       if (draft.originalId) {
         await window.eidosRuntime.updateModel({
           id: draft.originalId,
           provider: draft.provider,
           modelId: draft.modelId,
-          ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+          ...extra,
+          ...(keyChanged ? { apiKey: draft.apiKey.trim() } : {}),
         });
       } else {
         await window.eidosRuntime.createModel({
           provider: draft.provider,
           modelId: draft.modelId,
           apiKey: draft.apiKey.trim(),
+          ...extra,
         });
       }
       await onModelsChanged();
@@ -150,7 +166,7 @@ export function ModelSettings({
                   <ProviderLogo provider={model.provider} className="model-vendor-icon" />
                   <span className="saved-model-copy">
                     <strong>{model.name}</strong>
-                    <span>{getProviderName(model.provider)}</span>
+                    <span>{model.custom ? model.vendor : getProviderName(model.provider)}</span>
                   </span>
                 </div>
               }
@@ -211,110 +227,6 @@ export function ModelSettings({
           }
         }}
       />
-    </div>
-  );
-}
-
-interface ModelDialogProps {
-  draft?: ModelDraft | undefined;
-  presets?: ModelPresetsResult | undefined;
-  busy: boolean;
-  error?: string | undefined;
-  onChange: (draft: ModelDraft) => void;
-  onCancel: () => void;
-  onSave: () => void;
-}
-
-function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }: ModelDialogProps) {
-  const providerSelectRef = useRef<HTMLSelectElement>(null);
-  useDialogFocusLifecycle({ open: Boolean(draft), initialFocusRef: providerSelectRef });
-  const provider = useMemo(
-    () => presets?.providers.find((item) => item.id === draft?.provider),
-    [draft?.provider, presets],
-  );
-
-  useEffect(() => {
-    if (!draft) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onCancel();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [busy, draft, onCancel]);
-
-  if (!draft || !presets) return null;
-  return (
-    <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
-      <div className="modal-dialog model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header model-dialog-header">
-          <div>
-            <h3 id="model-dialog-title">{draft.originalId ? "编辑模型" : "添加模型"}</h3>
-            <p>仅支持 OpenAI 兼容协议 API</p>
-          </div>
-        </div>
-        <div className="modal-body model-dialog-fields">
-          <label>
-            <span>提供商</span>
-            <div className="model-select-control model-select-control--with-prefix model-provider-control">
-              <span className="model-select-control__prefix" aria-hidden="true">
-                <ProviderLogo provider={draft.provider} className="model-provider-control__logo" />
-              </span>
-              <select
-                ref={providerSelectRef}
-                aria-label="提供商"
-                value={draft.provider}
-                disabled={busy}
-                onChange={(event) => {
-                  const next = presets.providers.find((item) => item.id === event.target.value)!;
-                  onChange({ ...draft, provider: next.id, modelId: next.models[0]?.id ?? "" });
-                }}
-              >
-                {presets.providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-              <span className="model-select-control__chevron" aria-hidden="true">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </span>
-            </div>
-          </label>
-          <label>
-            <span>API Key</span>
-            <input
-              type="password"
-              autoComplete="off"
-              aria-label="API Key"
-              placeholder={draft.originalId ? "留空表示保持原值" : "请输入 API Key"}
-              value={draft.apiKey}
-              disabled={busy}
-              onChange={(event) => onChange({ ...draft, apiKey: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>模型名称</span>
-            <div className="model-select-control">
-              <select
-                aria-label="模型名称"
-                value={draft.modelId}
-                disabled={busy}
-                onChange={(event) => onChange({ ...draft, modelId: event.target.value })}
-              >
-                {provider?.models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-              </select>
-              <span className="model-select-control__chevron" aria-hidden="true">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </span>
-            </div>
-          </label>
-          {error && <p className="setting-field-error" role="alert">{error}</p>}
-        </div>
-        <div className="modal-footer">
-          <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>
-          <Button variant="primary" loading={busy} disabled={busy} onClick={onSave}>保存</Button>
-        </div>
-      </div>
     </div>
   );
 }
