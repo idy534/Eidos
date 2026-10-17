@@ -218,4 +218,39 @@ describe("智能体设置与编辑", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(close).toHaveBeenCalledTimes(1);
   });
+
+  it("displays custom provider and model names in agent badge", async () => {
+    const customAgent = {
+      name: "custom-agent",
+      source: "/data/agents/custom-agent.toml",
+      description: "网关智能体",
+      enabled: true,
+      available: true,
+      baseRole: "worker",
+      definitionVersion: "c".repeat(64),
+      providerId: "custom",
+      modelId: "custom-5e6280a4-c8e1-4707-8b8e-c30b462aa988",
+    };
+    const customModelOption = {
+      id: "custom-5e6280a4-c8e1-4707-8b8e-c30b462aa988",
+      name: "公司推理模型",
+      vendor: "公司网关",
+      provider: "custom",
+      url: "https://api.corp.internal",
+      supportsToolCall: true,
+      supportsImages: false,
+      supportsReasoning: false,
+      custom: {
+        providerName: "公司网关",
+        name: "公司推理模型",
+        baseUrl: "https://api.corp.internal",
+      },
+    };
+    setup({
+      listAgentTypes: vi.fn().mockResolvedValue({ agents: [customAgent] }),
+      listModels: vi.fn().mockResolvedValue({ models: [customModelOption] }),
+    });
+    render(<AgentSettings ready onCountChange={vi.fn()} onShowToast={vi.fn()} />);
+    expect(await screen.findByText("公司网关 / 公司推理模型")).toBeInTheDocument();
+  });
 });

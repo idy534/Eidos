@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgentSummary, CollaborationState } from "../../../shared/collaboration.generated.js";
-import type { ApprovalRequest, Item, Run, SessionSnapshot } from "../contracts.js";
+import type { ApprovalRequest, Item, Run, SessionSnapshot, ModelOption } from "../contracts.js";
 import { ApprovalComposer } from "./ApprovalComposer.js";
 import { ExecutionFeed, formatItemTime } from "./ExecutionFeed.js";
 import { userFacingError } from "../session-state.js";
 import { terminalRunPresentation } from "../run-presentation.js";
+import { getProviderName } from "./ProviderLogo.js";
 
 const active = new Set([
   "queued",
@@ -108,12 +109,49 @@ export function statusBadgeTone(status: AgentSummary["status"]): "success" | "wa
   }
 }
 
-export function formatAgentTooltip(agent: AgentSummary): string {
+export function formatAgentModelDisplay(
+  providerId: string | null | undefined,
+  modelId: string | null | undefined,
+  models?: readonly ModelOption[] | undefined,
+): { providerName: string; modelName: string; fullDisplay: string } | undefined {
+  if (!modelId) return undefined;
+
+  const matched = models?.find(
+    (m) =>
+      m.id === modelId ||
+      m.modelId === modelId ||
+      (providerId && m.provider === providerId && (m.id.endsWith(`/${modelId}`) || m.name === modelId)),
+  );
+
+  let providerName = "";
+  let modelName = "";
+
+  if (matched) {
+    if (matched.custom) {
+      providerName = matched.custom.providerName || matched.vendor || getProviderName(matched.provider) || "自定义";
+      modelName = matched.custom.name || matched.name;
+    } else {
+      providerName = getProviderName(matched.provider) || matched.vendor || (providerId ? getProviderName(providerId) : "");
+      modelName = matched.name || matched.id;
+    }
+  } else {
+    if (providerId) {
+      providerName = getProviderName(providerId);
+    }
+    modelName = modelId;
+  }
+
+  const fullDisplay = providerName ? `${providerName} / ${modelName}` : modelName;
+  return { providerName, modelName, fullDisplay };
+}
+
+export function formatAgentTooltip(agent: AgentSummary, models?: readonly ModelOption[]): string {
   const roleName = agent.role;
   const parts: string[] = [
     `${agent.taskName} (${roleName} · ${labels[agent.status]})`,
   ];
-  if (agent.modelId) parts.push(`模型：${agent.providerId ? `${agent.providerId} / ` : ""}${agent.modelId}`);
+  const modelDisplay = formatAgentModelDisplay(agent.providerId, agent.modelId, models);
+  if (modelDisplay) parts.push(`模型：${modelDisplay.fullDisplay}`);
   if (agent.task?.trim()) {
     parts.push(`任务描述：${agent.task.trim()}`);
   }
@@ -133,12 +171,14 @@ export function AgentList({
   approvalCounts = {},
   selectedAgentId,
   compact = false,
+  models,
 }: {
   agents: AgentSummary[];
   onOpen: (agent: AgentSummary) => void;
   approvalCounts?: Readonly<Record<string, number>>;
   selectedAgentId?: string | undefined;
   compact?: boolean;
+  models?: readonly ModelOption[] | undefined;
 }) {
   return (
     <div className={`agent-list${compact ? " agent-list--compact" : ""}`} role="list">
@@ -146,7 +186,7 @@ export function AgentList({
         const pendingApprovals = approvalCounts[agent.sessionId] ?? 0;
         const isRunning = active.has(agent.status);
         const isSelected = selectedAgentId === agent.id;
-        const tooltip = formatAgentTooltip(agent);
+        const tooltip = formatAgentTooltip(agent, models);
 
         if (compact) {
           return (
@@ -453,6 +493,7 @@ export function AgentWorkspacePanel({
   workspaceRoot,
   onBackToList,
   expanded = false,
+  models,
 }: {
   agents: AgentSummary[];
   agentId: string | undefined;
@@ -472,9 +513,29 @@ export function AgentWorkspacePanel({
   workspaceRoot?: string | undefined;
   onBackToList?: (() => void) | undefined;
   expanded?: boolean | undefined;
+  models?: readonly ModelOption[] | undefined;
 }) {
   const [filter, setFilter] = useState<"all" | "active" | "approvals" | "completed">("all");
+  const [fetchedModels, setFetchedModels] = useState<ModelOption[]>([]);
+
+  useEffect(() => {
+    if (models && models.length > 0) return;
+    if (typeof window.eidosRuntime?.listModels !== "function") return;
+    let active = true;
+    void window.eidosRuntime.listModels().then(
+      (result) => {
+        if (active && result.models) setFetchedModels(result.models);
+      },
+      () => {},
+    );
+    return () => {
+      active = false;
+    };
+  }, [models]);
+
+  const effectiveModels = models && models.length > 0 ? models : fetchedModels;
   const agent = agents.find((entry) => entry.id === agentId);
+  const modelDisplay = formatAgentModelDisplay(agent?.providerId, agent?.modelId, effectiveModels);
 
   const approvalCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -564,6 +625,7 @@ export function AgentWorkspacePanel({
               onOpen={onOpen}
               approvalCounts={approvalCounts}
               selectedAgentId={agentId}
+              models={effectiveModels}
             />
           )}
         </div>
@@ -587,23 +649,23 @@ export function AgentWorkspacePanel({
                 </button>
               )}
 
-              <div className="agent-heading__name-wrap">
+              <div className="agent-heading__name-wrap" title={agent.taskName}>
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
-                <strong>{agent.taskName}</strong>
+                {expanded && <strong>{agent.taskName}</strong>}
                 <span
                   className={`agent-role-pill agent-role-pill--${agent.baseRole ?? agent.role}${expanded ? " agent-role-pill--expanded" : ""}`}
-                  title={agent.modelId
-                    ? `模式：${agent.role} · 模型：${agent.providerId ? `${agent.providerId} / ` : ""}${agent.modelId}`
+                  title={modelDisplay
+                    ? `模式：${agent.role} · 模型：${modelDisplay.fullDisplay}`
                     : `模式：${agent.role}`}
                 >
                   <span className="agent-role-pill__role">{agent.role}</span>
-                  {agent.modelId && (
+                  {modelDisplay && (
                     <>
                       <span className="agent-role-pill__ellipsis" aria-hidden="true">…</span>
                       <span className="agent-role-pill__details">
                         <span className="agent-role-pill__sep">·</span>
                         <span className="agent-role-pill__model">
-                          {agent.providerId ? `${agent.providerId} / ` : ""}{agent.modelId}
+                          {modelDisplay.fullDisplay}
                         </span>
                       </span>
                     </>

@@ -86,6 +86,22 @@ describe("ModelSelector", () => {
     expect(onChange).toHaveBeenCalledWith("none");
   });
 
+  it.each([null, undefined])("shows automatic independently of supported strengths and allows returning to it (default=%s)", defaultSelection => {
+    const model: ModelOption = { ...models[0]!, reasoning: { ...(defaultSelection === null ? { defaultSelection } : {}), selections: ["low", "high", "max"] } };
+    const onChange = vi.fn();
+    const { rerender } = render(<ModelSelector models={[model]} selectedModelId={model.id} selection={undefined} disabled={false} onModelChange={vi.fn()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek Flash，深度求索/ }));
+    const slider = screen.getByRole("slider");
+    expect(slider).toHaveValue("0");
+    expect(slider).toHaveAttribute("aria-valuetext", "自动");
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(slider, { target: { value: "2" } });
+    expect(onChange).toHaveBeenLastCalledWith("high");
+    rerender(<ModelSelector models={[model]} selectedModelId={model.id} selection="high" disabled={false} onModelChange={vi.fn()} onChange={onChange} />);
+    fireEvent.change(slider, { target: { value: "0" } });
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
   it("keeps the slider continuous while dragging and snaps on release", () => {
     const onChange = vi.fn();
     render(
@@ -263,6 +279,21 @@ describe("ModelSelector", () => {
     fireEvent.pointerDown(screen.getByRole("slider"), { pointerId: 1 });
     fireEvent.pointerUp(screen.getByRole("slider"), { pointerId: 1 });
     expect(onChange).toHaveBeenCalledWith("high");
+  });
+
+  it("shows custom metadata and leaves undeclared reasoning to the provider", () => {
+    const custom: ModelOption = { ...models[0]!, id: "custom-config", modelId: "MiniMax-M3", name: "公司模型", vendor: "公司网关", provider: "custom",
+      supportsImages: false, supportsReasoning: false, reasoning: null, contextWindowTokens: 64000,
+      custom: { providerName: "公司网关", baseUrl: "https://gateway.invalid/v1", name: "公司模型", contextWindowTokens: 64000, maxOutputTokens: 4096, reasoningControl: "provider_default" } };
+    render(<ModelSelector models={[custom]} selectedModelId={custom.id} selection={undefined} disabled={false} onModelChange={vi.fn()} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "公司模型，公司网关，选择模型" }));
+    const choice = screen.getByRole("radio", { name: "公司模型，公司网关" });
+    fireEvent.mouseEnter(choice.closest("label")!);
+    const info = screen.getByRole("tooltip");
+    expect(info).toHaveTextContent("64K");
+    expect(info).toHaveTextContent("由服务商决定");
+    expect(info).not.toHaveTextContent("不支持推理");
+    expect(info).not.toHaveTextContent("视频");
   });
 
 });

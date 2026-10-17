@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentCatalogItem, AgentDefinition, AgentDefinitionDocument } from "../../../../shared/collaboration.generated.js";
+import type { ModelOption } from "../../contracts.js";
+import { formatAgentModelDisplay } from "../AgentPanel.js";
 import { AgentEditorDialog, AgentRoleIcon, agentRoleLabels } from "./AgentEditorDialog.js";
 import { Button } from "../Button.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
@@ -23,6 +25,7 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
   onShowToast(message: string, type: "success" | "info" | "error"): void;
 }) {
   const [agents, setAgents] = useState<AgentCatalogItem[]>([]);
+  const [models, setModels] = useState<ModelOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [query, setQuery] = useState("");
@@ -36,6 +39,19 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (ready && typeof window.eidosRuntime?.listModels === "function") {
+      void window.eidosRuntime.listModels().then(
+        (result) => {
+          if (active && result.models) setModels(result.models);
+        },
+        () => {},
+      );
+    }
+    return () => { active = false; };
+  }, [ready]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,15 +195,19 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
                           ? "已停用"
                           : agent.reason ?? "已停用"}
                       </span>
-                      {agent.modelId && (
-                        <span className="agent-meta-badge">
-                          {agent.providerId ? (
-                            <ProviderLogo provider={agent.providerId} className="agent-provider-logo" />
-                          ) : null}
-                          {agent.providerId ? `${getProviderName(agent.providerId)} / ` : ""}
-                          {agent.modelId}
-                        </span>
-                      )}
+                      {agent.modelId && (() => {
+                        const modelDisplay = formatAgentModelDisplay(agent.providerId, agent.modelId, models);
+                        return (
+                          <span className="agent-meta-badge" title={modelDisplay?.fullDisplay}>
+                            {agent.providerId ? (
+                              <ProviderLogo provider={agent.providerId} className="agent-provider-logo" />
+                            ) : null}
+                            {modelDisplay
+                              ? modelDisplay.fullDisplay
+                              : `${agent.providerId ? `${getProviderName(agent.providerId)} / ` : ""}${agent.modelId}`}
+                          </span>
+                        );
+                      })()}
                       {agent.definitionVersion && (
                         <span className="agent-meta-source" title={agent.source}>
                           ~/{agent.source.split("/").slice(-2).join("/")}

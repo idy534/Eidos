@@ -30,6 +30,7 @@ export const channelSchema = {
                 "low",
                 "medium",
                 "high",
+                "xhigh",
                 "max"
               ],
               "type": "string"

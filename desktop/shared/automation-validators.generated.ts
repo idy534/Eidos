@@ -280,7 +280,7 @@ return errors === 0;
 }
 validate56.evaluated = {"props":true,"dynamicProps":false,"dynamicItems":false};
 
-const schema24 = {"additionalProperties":false,"properties":{"modelId":{"maxLength":256,"minLength":1,"title":"Modelid","type":"string"},"reasoningSelection":{"anyOf":[{"enum":["none","thinking","low","medium","high","max"],"type":"string"},{"type":"null"}],"default":null,"title":"Reasoningselection"}},"required":["modelId"],"title":"AutomationModel","type":"object"};
+const schema24 = {"additionalProperties":false,"properties":{"modelId":{"maxLength":256,"minLength":1,"title":"Modelid","type":"string"},"reasoningSelection":{"anyOf":[{"enum":["none","thinking","low","medium","high","xhigh","max"],"type":"string"},{"type":"null"}],"default":null,"title":"Reasoningselection"}},"required":["modelId"],"title":"AutomationModel","type":"object"};
 
 function validate58(data, {instancePath="", parentData, parentDataProperty, rootData=data, dynamicAnchors={}}={}){
 let vErrors = null;
@@ -352,7 +352,7 @@ vErrors.push(err0);
 }
 errors++;
 }
-if(!((((((data1 === "none") || (data1 === "thinking")) || (data1 === "low")) || (data1 === "medium")) || (data1 === "high")) || (data1 === "max"))){
+if(!(((((((data1 === "none") || (data1 === "thinking")) || (data1 === "low")) || (data1 === "medium")) || (data1 === "high")) || (data1 === "xhigh")) || (data1 === "max"))){
 const err1 = {instancePath:instancePath+"/reasoningSelection",schemaPath:"#/properties/reasoningSelection/anyOf/0/enum",keyword:"enum",params:{allowedValues: schema24.properties.reasoningSelection.anyOf[0].enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err1];

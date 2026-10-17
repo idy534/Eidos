@@ -11,7 +11,7 @@ import { CodeIcon, CompressIcon, ExpandIcon, PreviewIcon } from "../MenuIcons.js
 
 export const agentRoleLabels: Record<string, string> = { default: "通用", explorer: "调查", worker: "工作" };
 const emptyDefinition: AgentDefinition = { schemaVersion: 1, name: "", description: "", instructions: "", baseRole: "default", enabled: true };
-const reasoningLabels = { none: "关闭思考", thinking: "开启思考", low: "低", medium: "中", high: "高", max: "最高" };
+const reasoningLabels = { none: "关闭思考", thinking: "开启思考", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高" };
 
 export function AgentRoleIcon({ role, size = 18 }: { role: string; size?: number }) {
   if (role === "worker") {
@@ -273,7 +273,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                           selection={selection?.reasoningSelection ?? undefined}
                           disabled={!configured || busy || modelLoading}
                           onModelChange={chooseModel}
-                          onChange={updateReasoning}
+                          onChange={(value) => updateReasoning(value ?? "")}
                         />
                       </div>
                     </div>

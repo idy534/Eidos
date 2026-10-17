@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import deepseekLogo from "../assets/providers/deepseek.svg";
 import kimiLogo from "../assets/providers/kimi.svg";
@@ -250,6 +250,7 @@ describe("Model settings", () => {
     await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
     await user.click(screen.getByRole("button", { name: "编辑" }));
     expect(screen.getByRole("heading", { name: "编辑 MCP Server" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("名称")).toHaveFocus());
     expect(screen.getByLabelText("启动命令")).toHaveValue("npx");
     await user.clear(screen.getByLabelText("启动命令"));
     await user.type(screen.getByLabelText("启动命令"), "node");

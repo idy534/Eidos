@@ -5,3 +5,5 @@ export * from "./ipc-channels.js";
 export * from "./ipc-api.js";
 
 export * from "./input-context.js";
+
+export type * from "./custom-models.js";

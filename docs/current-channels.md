@@ -74,9 +74,13 @@ Session 输入框、定时任务和渠道配置共用 `ModelSelector`。组件�
 
 渠道配置增加可选 `reasoningSelection`。旧配置缺少该字段时继续使用模型默认值。用户切换模型时，表单清除旧思考设置；未切换时，表单保留已保存设置。配置和消息快照继续保存在原有 JSON 中，没有新增表或 Schema 迁移。渠道启动 Run 时传递该设置，既有模型校验和不可变 Run 快照继续生效。Desktop 与 Runtime 需要一起更新。
 
-公共模型选择的定向验证通过：Renderer 行为与样式共 102 项，渠道 Runtime 44 项，Main 跨进程与 Fixture 2 项。隔离 Electron 页面覆盖渠道和定时任务的四种窗口宽度、图标、弹层范围和 Escape 焦点恢复；Composer 布局与通用样式也单独验证。Ruff、Deptry 与 Main / Renderer 构建通过。本次未运行 Full Suite、打包或真实钉钉及 Provider 验收。依赖审计没有通过：当前锁定的 pydantic-ai-slim 2.43.0 报告五项已知漏洞；本次没有修改依赖。工作区全局 diff 检查另有 AgentPanel.behavior.test.tsx 的既有尾部空行提示，该文件不属于本次修改。
+公共模型选择的定向验证通过：Renderer 行为与样式共 102 项，渠道 Runtime 44 项，Main 跨进程与 Fixture 2 项。隔离 Electron 页面覆盖渠道和定时任务的四种窗口宽度、图标、弹层范围和 Escape 焦点恢复；Composer 布局与通用样式也单独验证。Ruff、Deptry 与 Main / Renderer 构建通过。本次未运行 Full Suite、打包或真实钉钉及 Provider 验收。该次依赖审计没有通过：当时锁定的 pydantic-ai-slim 2.43.0 报告五项已知漏洞；该次没有修改依赖。工作区全局 diff 检查另有 AgentPanel.behavior.test.tsx 的既有尾部空行提示，该文件不属于本次修改。
 
 
 ## 飞书和企业微信扩展的验证
 
 本次代码与文档涉及 38 个路径，包含旧钉钉表单到共享表单的复用。最终定向验证通过 Runtime 74 项、Renderer 15 项和 Main/Runtime 2 项。Ruff、Deptry、Desktop 契约检查、Main/Renderer 构建、三个渠道四种宽度的 Electron 交互、Electron 启动关闭与 macOS arm64 Bundle 验证均通过。测试使用模拟平台网络，不使用真实飞书或企业微信凭证。两个 SDK 的 macOS arm64 依赖随 Runtime Bundle 构建，并通过隔离导入与启动关闭检查。生产依赖审计仍有 pydantic-ai-slim 2.43.0 的 5 个已有漏洞；新增 SDK 没有新增审计发现。隔离工具依赖审计通过。真实账号收发、发布范围和平台限频仍待人工验收。开发过程未运行 Full Suite。
+
+## 依赖审计更新（2026-10-17）
+
+Runtime 已升级至 pydantic-ai-slim 2.57.0，并同步其必需依赖。主 Python、隔离工具 Python 与 Runtime Node 审计均通过，以上历史记录中的五条漏洞已不再报告。升级后的定向测试与 Bundle 验证见 [当前限制](current-limitations.md#model-gateway-依赖升级2026-10-17)。真实渠道账号的验收范围保持原样。

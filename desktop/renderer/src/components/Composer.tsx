@@ -35,7 +35,7 @@ export interface ComposerProps {
   onSubmit: () => void;
   onCancel: () => void;
   onModelChange: (id: ModelId) => void;
-  onReasoningSelectionChange?: (selection: ModelReasoningSelection) => void;
+  onReasoningSelectionChange?: (selection: ModelReasoningSelection | undefined) => void;
   onOpenModelSettings: () => void;
   showContextIndicator?: boolean;
   showSessionContext?: boolean;
@@ -198,7 +198,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const hasProjectContext = showSessionContext && (project !== undefined || projectless);
   const selectedModel = modelList?.models.find((model) => model.id === selectedModelId);
   const modelReasoning = selectedModel?.reasoning ?? undefined;
-  const selectedReasoning = reasoningSelection ?? modelReasoning?.defaultSelection;
+  const selectedReasoning = reasoningSelection ?? modelReasoning?.defaultSelection ?? undefined;
   const projectName = project?.name?.trim() || (project ? basename(project.workspaceRoot) : undefined);
 
   return (

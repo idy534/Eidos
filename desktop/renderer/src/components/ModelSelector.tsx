@@ -1,3 +1,4 @@
+import { formatTokenCount } from "../context-usage.js";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type {
@@ -12,16 +13,20 @@ const SELECTION_ORDER: readonly ModelReasoningSelection[] = [
   "low",
   "medium",
   "high",
+  "xhigh",
   "max",
   "thinking",
 ];
 
-const SELECTION_LABELS: Record<ModelReasoningSelection, string> = {
+type ReasoningChoice = ModelReasoningSelection | "auto";
+const SELECTION_LABELS: Record<ReasoningChoice, string> = {
+  auto: "自动",
   none: "关闭思考",
   thinking: "启用思考",
   low: "低",
   medium: "中",
   high: "高",
+  xhigh: "超高",
   max: "最高",
 };
 
@@ -33,7 +38,7 @@ export interface ModelSelectorProps {
   selection: ModelReasoningSelection | undefined;
   disabled: boolean;
   onModelChange: (id: ModelId) => void;
-  onChange: (selection: ModelReasoningSelection) => void;
+  onChange: (selection: ModelReasoningSelection | undefined) => void;
 }
 
 const FULL_MULTIMODAL_MODELS = new Set([
@@ -58,10 +63,11 @@ const MODEL_CONTEXT_LIMITS: Record<string, string> = {
 };
 
 function getModelProviderDisplay(model: ModelOption): string {
-  return getProviderName(model.provider) || model.vendor;
+  return model.custom ? model.vendor : getProviderName(model.provider) || model.vendor;
 }
 
 function getModelInputDisplay(model: ModelOption): string {
+  if (model.custom) return model.supportsImages ? "文本, 图像" : "文本";
   if (FULL_MULTIMODAL_MODELS.has(model.id)) {
     return "文本, 图像, 视频, PDF";
   }
@@ -72,10 +78,15 @@ function getModelInputDisplay(model: ModelOption): string {
 }
 
 function getModelReasoningDisplay(model: ModelOption): string {
+  if (model.custom) {
+    if (!model.custom.reasoningControl || model.custom.reasoningControl === "provider_default") return "由服务商决定";
+    if (model.reasoning?.selections.length === 1 && model.reasoning.selections[0] === "none") return "已关闭思考";
+  }
   return model.supportsReasoning ? "支持推理" : "不支持推理";
 }
 
 function getModelContextDisplay(model: ModelOption): string {
+  if (model.contextWindowTokens) return formatTokenCount(model.contextWindowTokens);
   return MODEL_CONTEXT_LIMITS[model.id] ?? "128K";
 }
 
@@ -110,7 +121,7 @@ export function ModelSelector({
   const canAdjustReasoning = selections.length > 1;
   const selectedSelection = selection && selections.includes(selection)
     ? selection
-    : selectedModel?.reasoning?.defaultSelection ?? selections[0];
+    : selectedModel?.reasoning?.defaultSelection ?? (selections.includes("auto") ? "auto" : selections[0]);
   const selectedIndex = Math.max(0, selections.indexOf(selectedSelection ?? "none"));
   const maxSliderIndex = Math.max(0, selections.length - 1);
   const [sliderPosition, setSliderPosition] = useState(selectedIndex);
@@ -135,7 +146,7 @@ export function ModelSelector({
   const firstSelection = selections[0] ?? selectedSelection ?? "none";
   const lastSelection = selections.at(-1) ?? selectedSelection ?? "none";
   const modelName = selectedModel?.name ?? (selectedModelId ? "已保存的模型不可用" : "选择模型");
-  const providerName = selectedModel ? getProviderName(selectedModel.provider) : "";
+  const providerName = selectedModel ? getModelProviderDisplay(selectedModel) : "";
   const modelLabel = providerName ? `${modelName}，${providerName}` : modelName;
 
   useEffect(() => {
@@ -282,7 +293,7 @@ export function ModelSelector({
     const nextSelection = selections[index];
 
     if (nextSelection && (index !== selectedIndex || invalidSelection)) {
-      onChange(nextSelection);
+      onChange(nextSelection === "auto" ? undefined : nextSelection);
     }
 
     const startPos = sliderPositionRef.current;
@@ -419,7 +430,7 @@ export function ModelSelector({
                       type="radio"
                       name={modelRadioName}
                       value={model.id}
-                      aria-label={`${model.name}，${getProviderName(model.provider)}`}
+                      aria-label={`${model.name}，${getModelProviderDisplay(model)}`}
                       checked={model.id === selectedModelId}
                       disabled={disabled}
                       onChange={() => selectModel(model.id)}
@@ -540,9 +551,10 @@ export function ModelSelector({
   );
 }
 
-function getSelections(reasoning: ModelOption["reasoning"]): ModelReasoningSelection[] {
+function getSelections(reasoning: ModelOption["reasoning"]): ReasoningChoice[] {
   const available = new Set(reasoning?.selections ?? []);
-  return SELECTION_ORDER.filter((value) => available.has(value));
+  const selections: ReasoningChoice[] = SELECTION_ORDER.filter((value) => available.has(value));
+  return reasoning && reasoning.defaultSelection == null && selections.length ? ["auto", ...selections] : selections;
 }
 
 function ChevronIcon() {

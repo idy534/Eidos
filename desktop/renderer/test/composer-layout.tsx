@@ -2,6 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Item, Run } from "../src/contracts.js";
 import { Composer } from "../src/components/Composer.js";
+import { SessionCanvas } from "../src/components/SessionCanvas.js";
 import { ExecutionFeed } from "../src/components/ExecutionFeed.js";
 import { ArtifactProvider } from "../src/components/ArtifactContext.js";
 import "../src/styles.css";
@@ -43,7 +44,8 @@ function ComposerLayout() {
           <div className="workspace-content">
             <div className="workspace-main">
               <div className="input-drop-zone">
-                <ExecutionFeed items={items} runs={runs} approvals={[]} onApprove={noop} onReject={noop} />
+                <SessionCanvas sessionId="layout-session" welcome={false}
+                  feed={<ExecutionFeed items={items} runs={runs} approvals={[]} onApprove={noop} onReject={noop} />}>
                 <Composer
                   composerMode="idle" activeRun={undefined} input={input}
                   modelList={undefined} selectedModelId={undefined} contextUsage={undefined}
@@ -52,6 +54,7 @@ function ComposerLayout() {
                   onInputChange={setInput} onSubmit={noop} onCancel={noop}
                   onModelChange={noop} onOpenModelSettings={noop}
                 />
+                </SessionCanvas>
               </div>
             </div>
           </div>

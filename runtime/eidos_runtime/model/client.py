@@ -19,7 +19,7 @@ MAX_TOOL_NAME_BYTES = 256
 
 ModelContextItem = dict[str, object]
 ModelReasoningSelection = Literal[
-    "none", "thinking", "low", "medium", "high", "max"
+    "none", "thinking", "low", "medium", "high", "xhigh", "max"
 ]
 
 
@@ -168,6 +168,7 @@ class ModelProfileSnapshot(_FrozenModel):
     completion_check_version: Literal[0, 1] = 0  # Legacy persisted snapshots; no runtime assessment.
     provider_id: str
     model_id: str
+    remote_model_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     wire_api: Literal[
         "chat_completions",
         "openai_responses",
@@ -185,7 +186,7 @@ class ModelProfileSnapshot(_FrozenModel):
     retry_max_attempts: int = Field(default=6, ge=1, le=10)
     retry_initial_backoff_seconds: float = Field(default=0.2, ge=0, le=60)
     retry_max_backoff_seconds: float = Field(default=2.0, ge=0, le=300)
-    pydantic_ai_version: str = "2.43.0"
+    pydantic_ai_version: str = "2.57.0"
 
 
 class ModelClient(Protocol):

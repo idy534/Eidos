@@ -522,4 +522,31 @@ pnpm test:electron-smoke
 
 真实 macOS Shell 的完全访问用例需要原生执行权限。SDK 测试使用模拟传输，不读取真实凭证。Electron 渠道脚本检查三个渠道在四种窗口宽度下的表单和危险确认。EIDOS_FEISHU_CHANNEL_SCREENSHOT 和 EIDOS_WECOM_CHANNEL_SCREENSHOT 可以指定本地截图路径。
 
-两个官方 SDK 已锁定在 pyproject.toml 和 uv.lock。飞书 SDK 约束 websockets<16，当前锁定为 15.0.1。修改这些依赖时，开发者还需运行 Ruff、Deptry、pip-audit、macOS Runtime Bundle 构建与 bundled-runtime-smoke。Bundle smoke 会导入两个 SDK、飞书帧解析模块和原生 AES 扩展。当前已有 pydantic-ai-slim 漏洞会让主审计失败，开发者需要单独报告该结果，并另行运行隔离工具依赖审计。
+两个官方 SDK 已锁定在 pyproject.toml 和 uv.lock。飞书 SDK 约束 websockets<16，当前锁定为 15.0.1。修改这些依赖时，开发者还需运行 Ruff、Deptry、pip-audit、macOS Runtime Bundle 构建与 bundled-runtime-smoke。Bundle smoke 会导入两个 SDK、飞书帧解析模块和原生 AES 扩展。Model Gateway 当前锁定 pydantic-ai-slim 2.57.0 和其要求的 OpenAI SDK 3.26.0。2026-10-17 的主 Python、隔离工具 Python 与 Runtime Node 依赖审计均通过；原 2.43.0 的五条漏洞已不再报告。审计结果会随漏洞数据库变化，开发者仍需实际运行审计并分别报告各项结果。
+
+## 自定义模型提供商定向验证
+
+开发者可以运行以下入口。测试使用模拟传输，不读取用户凭据，不调用真实 Provider，也不运行 Full Suite。
+
+```bash
+uv run --locked pytest runtime/tests/test_custom_model_providers.py runtime/tests/test_model_config_store.py runtime/tests/test_model_gateway_protocol.py
+node scripts/generate-custom-model-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-custom-models.test.js dist/shared/custom-models.test.js
+pnpm exec electron scripts/test-custom-models.cjs
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/CustomModelSettings.behavior.test.tsx desktop/renderer/src/components/SettingsPage.behavior.test.tsx desktop/renderer/src/components/ModelSelector.behavior.test.tsx
+```
+
+自定义模型的接口测试只获取模型列表。真实验收需要分别检查用户接口的 `/models`、Chat Completions 或 Responses、工具调用和已声明思考参数，不能把列表请求成功当作模型能力验证。
+
+## 欢迎页与首次发送的定向验证
+
+开发者可以运行以下定向检查。页面使用内存 IPC fixture，不读取真实会话，也不调用模型或写入用户工作区。Electron 检查覆盖 320、768、1024、1440 四种宽度、原生输入、首次发送的位移动画、输入框实例保留和再次新建会话。
+
+```bash
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/app/welcome.behavior.test.tsx desktop/renderer/src/components/SessionCanvas.behavior.test.tsx
+pnpm exec electron scripts/test-welcome-layout.cjs
+pnpm test:composer-layout
+```
+
+开发者可以设置 `EIDOS_WELCOME_SCREENSHOT=/absolute/path.png` 保存欢迎页截图。行为测试另外覆盖创建失败、Run 启动失败后的草稿恢复、项目选择和系统减少动态效果设置。

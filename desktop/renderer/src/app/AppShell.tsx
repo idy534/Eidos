@@ -14,13 +14,12 @@ import type {
 import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedbackValue, Run, Session, Item } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
-import { EidosMark } from "../components/EidosMark.js";
+import { WelcomeMessage } from "../components/WelcomeMessage.js";
 import { SessionSidebar } from "../components/SessionSidebar.js";
 import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
-import { PlusIcon, PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
@@ -29,6 +28,7 @@ import { ProjectPicker } from "../components/ProjectPicker.js";
 import { CreateProjectDialog } from "../components/CreateProjectDialog.js";
 import { ComposerSlot } from "../components/ComposerSlot.js";
 import { Composer } from "../components/Composer.js";
+import { SessionCanvas } from "../components/SessionCanvas.js";
 import { QueuedMessages } from "../components/QueuedMessages.js";
 import { TextReviewPanel } from "../components/TextReviewPanel.js";
 import { GitChangesPanel } from "../components/GitChangesPanel.js";
@@ -168,6 +168,7 @@ export function AppShell({ runtime }: AppShellProps) {
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [startingDraftId, setStartingDraftId] = useState<string>();
   const [automationDetailId, setAutomationDetailId] = useState<string | undefined>();
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("model");
   const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
@@ -391,6 +392,9 @@ export function AppShell({ runtime }: AppShellProps) {
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (runtimeStatus.state !== "ready" || runtimeStatus.storageHealth.state !== "ready") return;
+    if (!sessionState.snapshot && !sessionState.draft && !sessionState.navigationSessionId) {
+      sessionActions.startDraft(null);
+    }
     void Promise.allSettled([
       sessionActions.loadProjects(),
       sessionActions.loadSessions(),
@@ -800,31 +804,36 @@ export function AppShell({ runtime }: AppShellProps) {
       const workspaceNameHint = draftInput.trim()
         ? Array.from(draftInput.trim().split(/\r?\n/, 1)[0] ?? "").slice(0, 512).join("")
         : "附件任务";
-      const materialized = await sessionActions.materializeDraft(workspaceNameHint);
-      if (!materialized) return;
-      navHistoryActions.replaceCurrent(materialized.session.id);
-      const started = await runActions.submitInput({
-        snapshot: materialized,
-        selectedModelId: modelState.selectedModelId,
-        reasoningSelection: modelState.reasoningSelection,
-        approvalMode,
-        planning: { workMode },
-        isStorageReady,
-        inputOverride: draftInput,
-        referencesOverride: draftReferences,
-        onRunProjected: (sessionId, run) => {
-          sessionActions.projectRun(sessionId, run);
-          if (draftSnapshot.runs.length === 0) {
-            setRunDefaults(saveRunDefaults(run));
-          }
-        },
-      });
-      if (started) {
-        runActions.clearDraftIfUnchanged(draftSnapshot.session.id, draftInput, draftReferences);
-        sessionActions.discardDraft();
-      } else {
-        const rolledBack = await sessionActions.rollbackMaterializedSession(materialized.session, draftSnapshot);
-        if (!rolledBack) sessionActions.setError("Run 启动结果不明确，已保留 Session 供检查。");
+      setStartingDraftId(draftSnapshot.session.id);
+      try {
+        const materialized = await sessionActions.materializeDraft(workspaceNameHint);
+        if (!materialized) return;
+        navHistoryActions.replaceCurrent(materialized.session.id);
+        const started = await runActions.submitInput({
+          snapshot: materialized,
+          selectedModelId: modelState.selectedModelId,
+          reasoningSelection: modelState.reasoningSelection,
+          approvalMode,
+          planning: { workMode },
+          isStorageReady,
+          inputOverride: draftInput,
+          referencesOverride: draftReferences,
+          onRunProjected: (sessionId, run) => {
+            sessionActions.projectRun(sessionId, run);
+            if (draftSnapshot.runs.length === 0) {
+              setRunDefaults(saveRunDefaults(run));
+            }
+          },
+        });
+        if (started) {
+          runActions.clearDraftIfUnchanged(draftSnapshot.session.id, draftInput, draftReferences);
+          sessionActions.discardDraft();
+        } else {
+          const rolledBack = await sessionActions.rollbackMaterializedSession(materialized.session, draftSnapshot);
+          if (!rolledBack) sessionActions.setError("Run 启动结果不明确，已保留 Session 供检查。");
+        }
+      } finally {
+        setStartingDraftId((current) => current === draftSnapshot.session.id ? undefined : current);
       }
       return;
     }
@@ -894,6 +903,10 @@ export function AppShell({ runtime }: AppShellProps) {
   const { snapshot } = sessionState;
   const currentSnapshot = snapshot ?? sessionState.draft;
   const isDraft = Boolean(!snapshot && sessionState.draft);
+  const showWelcome = Boolean(currentSnapshot
+    && (isDraft || (currentSnapshot.session.taskStatus === "new"
+      && currentSnapshot.runs.length === 0 && currentSnapshot.items.length === 0))
+    && !(startingDraftId && sessionState.draft?.session.id === startingDraftId));
   const completeSessionItems = useCompleteSessionItems(
     currentSnapshot && !isDraft ? currentSnapshot.session.id : undefined,
     currentSnapshot?.items ?? [],
@@ -1307,7 +1320,7 @@ export function AppShell({ runtime }: AppShellProps) {
               {agents.state?.agents && agents.state.agents.length > 0 && (
                 <div className="environment-popover__section">
                   <div className="environment-popover__section-title">智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
-                  <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
+                  <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} models={feedModels} compact />
                 </div>
               )}
               {agents.error && <p role="alert">{agents.error}</p>}
@@ -1494,8 +1507,8 @@ export function AppShell({ runtime }: AppShellProps) {
               } as CSSProperties}
             >
             <div className={`workspace-main-column${dockExpanded ? " workspace-main-column--hidden" : ""}`} inert={dockExpanded}>
-            <header className="workspace-header session-header">
-              {isRenamingThisSession ? (
+            <header className={`workspace-header session-header${isDraft ? " session-header--draft" : ""}`}>
+              {!isDraft && (isRenamingThisSession ? (
                 <form
                   className="rename-form"
                   onSubmit={(e) => { e.preventDefault(); void submitRename(); }}
@@ -1554,7 +1567,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     />
                   )}
                 </div>
-              )}
+              ))}
               {workspaceToggle && (
                 <div className="session-header-actions">{workspaceEnvironment}{!dockOpen && workspaceToggle}</div>
               )}
@@ -1569,7 +1582,10 @@ export function AppShell({ runtime }: AppShellProps) {
                     {responseActionState.error}
                   </p>
                 )}
-                <ExecutionFeed
+                <SessionCanvas
+                  sessionId={currentSnapshot.session.id}
+                  welcome={showWelcome}
+                  feed={<ExecutionFeed
                   key={currentSnapshot.session.id}
                   items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
@@ -1601,7 +1617,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   onOpenPlan={handleOpenPlan}
                   agents={feedAgents}
                   onOpenSubagent={handleOpenSubagent}
-                />
+                />}
+                >
 
                 {!isDraft && <QueuedMessages
                   key={`queue-${currentSnapshot.session.id}`}
@@ -1679,6 +1696,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   onExecutionModeChange={sessionProject?.gitAvailable === true ? requestExecutionModeChange : undefined}
                 />
                 </ComposerSlot>
+                </SessionCanvas>
                 </InputDropZone>
               </div>
 
@@ -1722,6 +1740,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     key={`${currentSnapshot.session.id}:${tab.id}`}
                     agents={agents.state?.agents ?? []}
                     agentId={tab.id.startsWith("agent-") ? tab.id.slice(6) : undefined}
+                    models={feedModels}
                     error={agents.error}
                     stopping={agents.stopping}
                     onOpen={openAgent}
@@ -1851,26 +1870,7 @@ export function AppShell({ runtime }: AppShellProps) {
         ) : (
           <>
             <header className="workspace-header workspace-header--empty" aria-hidden="true" />
-            <div className="empty-state">
-            <div className="empty-hero">
-              <EidosMark className="empty-logo" variant="hero" />
-            </div>
-            <h2>让思考抵达现实</h2>
-            <p className="empty-subtitle">深度工作，理解复杂问题，分析关键脉络，持续推进每一项重要任务</p>
-            <div className="empty-actions">
-              <PrimaryActionButton
-                size="large"
-                label="新建会话"
-                icon={<PlusIcon size={18} />}
-                showArrow={true}
-                disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => {
-                  setAutomationsOpen(false);
-                  handleCreateSession();
-                }}
-              />
-            </div>
-          </div>
+            <WelcomeMessage />
         </>
       )}
       </section>

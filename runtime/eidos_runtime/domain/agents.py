@@ -20,7 +20,7 @@ class AgentModelSelection(EidosFrozenStrictModel):
     provider_id: str | None = Field(default=None, min_length=1, max_length=64)
     config_id: str | None = Field(default=None, min_length=1, max_length=256)
     reasoning_selection: (
-        Literal["none", "thinking", "low", "medium", "high", "max"] | None
+        Literal["none", "thinking", "low", "medium", "high", "xhigh", "max"] | None
     ) = None
 
     @model_validator(mode="after")

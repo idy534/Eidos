@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 import io
 import json
 from pathlib import Path
@@ -15,9 +16,11 @@ class ModelGatewayProtocolTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory(prefix="eidos-model-rpc-") as data,
             tempfile.TemporaryDirectory(prefix="eidos-model-workspace-") as workspace,
+            ExitStack() as resources,
         ):
             output = io.StringIO()
             server = RuntimeServer(output, Path(data))
+            resources.callback(server.close)
             server.store.initialize()
             server.model_config.initialize()
             server.initialized = True
@@ -155,12 +158,12 @@ class ModelGatewayProtocolTests(unittest.TestCase):
             self.assertEqual(
                 messages(output)["delete"]["result"], {"deletedModelId": "kimi-k3"}
             )
-            server.store.close()
 
     def test_removed_profile_and_configure_methods_are_not_registered(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="eidos-model-rpc-") as data:
+        with tempfile.TemporaryDirectory(prefix="eidos-model-rpc-") as data, ExitStack() as resources:
             output = io.StringIO()
             server = RuntimeServer(output, Path(data))
+            resources.callback(server.close)
             server.store.initialize()
             server.model_config.initialize()
             server.initialized = True
@@ -181,7 +184,6 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                 results[f"removed-{index}"]["error"]["code"] == -32601
                 for index in range(7)
             ))
-            server.store.close()
 
 
 def request(method: str, params: dict[str, object], suffix: str) -> dict[str, object]:

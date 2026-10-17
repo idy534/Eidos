@@ -50,7 +50,7 @@ export interface ModelControllerActions {
   initialize(list: ModelListResult, currentSessionModelId?: ModelId, defaultModelId?: ModelId): void;
   load(currentSessionModelId?: ModelId, defaultModelId?: ModelId): Promise<void>;
   selectModel(modelId: ModelId): void;
-  setReasoningSelection(modelId: ModelId, selection: ModelReasoningSelection): void;
+  setReasoningSelection(modelId: ModelId, selection: ModelReasoningSelection | undefined): void;
   clearError(): void;
 }
 
@@ -126,12 +126,12 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
     setError(undefined);
   }, []);
 
-  const setReasoningSelection = useCallback((modelId: ModelId, selection: ModelReasoningSelection) => {
+  const setReasoningSelection = useCallback((modelId: ModelId, selection: ModelReasoningSelection | undefined) => {
     const model = listRef.current?.models.find((candidate) => candidate.id === modelId);
     const reasoning = model?.reasoning;
-    if (!reasoning?.selections.includes(selection)) return;
+    if (!reasoning || (selection !== undefined && !reasoning.selections.includes(selection))) return;
     setReasoningOverrides((previous) => {
-      if (selection === reasoning.defaultSelection) {
+      if (selection === undefined || selection === reasoning.defaultSelection) {
         if (previous[modelId] === undefined) return previous;
         const next = { ...previous };
         delete next[modelId];
@@ -146,7 +146,7 @@ export function useModelController(): [ModelControllerState, ModelControllerActi
   const reasoningSelection = selectedModel?.reasoning
     ? (savedSelection && selectedModel.reasoning.selections.includes(savedSelection)
       ? savedSelection
-      : selectedModel.reasoning.defaultSelection)
+      : selectedModel.reasoning.defaultSelection ?? undefined)
     : undefined;
 
   return [

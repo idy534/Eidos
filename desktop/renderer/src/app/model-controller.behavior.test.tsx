@@ -51,6 +51,18 @@ describe("useModelController", () => {
     expect(result.current[0].selectedModelId).toBe("deepseek-v4-flash");
   });
 
+  it.each([null, undefined])("preserves automatic reasoning and clears only the explicit override (default=%s)", defaultSelection => {
+    const automatic = { ...list, models: [{ ...list.models[0]!, reasoning: { ...(defaultSelection === null ? { defaultSelection } : {}), selections: ["low", "high", "max"] as const } }] };
+    const { result } = renderHook(() => useModelController());
+    act(() => result.current[1].initialize({ ...automatic, models: automatic.models.map(model => ({ ...model, reasoning: { ...model.reasoning, selections: [...model.reasoning.selections] } })) }));
+    expect(result.current[0].reasoningSelection).toBeUndefined();
+    act(() => result.current[1].setReasoningSelection("deepseek-v4-flash", "max"));
+    expect(result.current[0].reasoningSelection).toBe("max");
+    act(() => result.current[1].setReasoningSelection("deepseek-v4-flash", undefined));
+    expect(result.current[0].reasoningSelection).toBeUndefined();
+    expect(JSON.parse(window.localStorage.getItem(REASONING_OVERRIDES_KEY) ?? "{}")).toEqual({});
+  });
+
   it("preserves a manually selected GLM when a new session initializes without runs", () => {
     const { result } = renderHook(() => useModelController());
 

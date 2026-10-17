@@ -324,23 +324,13 @@ describe("AppShell workspace file links", () => {
   });
 });
 
-describe("AppShell empty state actions", () => {
-  it("renders '新建会话' action button and hides '选择项目', triggering startDraft on click", async () => {
+describe("AppShell startup draft", () => {
+  it("starts a projectless draft without requiring a new-session click", async () => {
     fixture.snapshot = undefined;
     fixture.draft = undefined;
     renderShell();
     await act(async () => {});
-
-    expect(screen.getByText("让思考抵达现实")).toBeInTheDocument();
-    const newSessionBtn = screen.getByRole("button", { name: "新建会话" });
-    expect(newSessionBtn).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "选择项目" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "开始对话" })).not.toBeInTheDocument();
-
-    act(() => {
-      fireEvent.click(newSessionBtn);
-    });
-    expect(fixture.startDraft).toHaveBeenCalledTimes(1);
+    expect(fixture.startDraft).toHaveBeenCalledExactlyOnceWith(null);
+    expect(screen.queryByRole("button", { name: "新建会话" })).not.toBeInTheDocument();
   });
 });
-

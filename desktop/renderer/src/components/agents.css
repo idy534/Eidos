@@ -715,6 +715,10 @@
   overflow: hidden;
 }
 
+.agent-detail-header:not(.agent-detail-header--expanded) strong {
+  display: none;
+}
+
 .agent-detail-header strong,
 .agent-heading strong {
   font-size: var(--font-size-title);

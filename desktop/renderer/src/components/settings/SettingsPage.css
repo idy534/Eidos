@@ -1045,3 +1045,95 @@
 .workbench.workbench--settings .settings-page-header::before { content: none; }
 
 .workbench.workbench--settings .settings-page-header { padding-left: 5.5rem; }
+
+/* Custom model configuration uses the same settings controls and semantic colors. */
+.model-dialog--custom { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; }
+.model-dialog--custom .modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.model-dialog--custom .modal-body > * { flex-shrink: 0; }
+.model-dialog--custom .model-dialog-fields { gap: 12px; }
+.model-dialog--custom .model-dialog-header { padding-bottom: 16px; }
+.model-dialog--custom .modal-header, .model-dialog--custom .modal-footer { flex: none; }
+.model-dialog-fields select:not(.model-select-control select) { width: 100%; min-height: 38px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius); background-color: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; padding: 8px 32px 8px 12px; }
+.model-dialog-fields select:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
+.custom-model-section-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 4px; }
+.custom-model-section-heading strong { font-size: 13px; color: var(--text); font-weight: 600; }
+.custom-model-section-heading span, .custom-model-required, .custom-model-grid small { color: var(--muted); font-size: 11px; font-weight: 400; }
+.custom-model-required { margin-left: 4px; }
+.model-dialog--custom .custom-model-required { color: var(--status-danger); font-size: 12px; font-weight: 500; }
+.custom-model-secret { display: flex; align-items: center; width: 100%; }
+.custom-model-secret-input { position: relative; min-width: 0; flex: 1; }
+.custom-model-secret-input input { padding-right: 36px; }
+.custom-model-secret-input .custom-model-secret-toggle {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+}
+.custom-model-secret-input .custom-model-secret-toggle .btn-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.custom-model-secret button { flex: none; }
+.custom-model-key-row { display: flex; align-items: flex-end; gap: 8px; }
+.custom-model-key-row > label { flex: 1; min-width: 0; }
+.custom-model-test-actions { position: relative; flex: none; display: flex; flex-direction: column; align-items: flex-end; }
+.custom-model-test-actions > button { min-height: 38px; white-space: nowrap; }
+.custom-model-test-actions .custom-model-status { position: absolute; right: 0; bottom: calc(100% + 7px); font-size: 11px; text-align: right; white-space: nowrap; }
+.model-dialog-fields .custom-model-check { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12.5px; font-weight: 400; }
+.model-dialog-fields .custom-model-check input { appearance: auto; accent-color: var(--accent); width: 15px; height: 15px; margin: 0; box-shadow: none; flex: none; }
+.custom-model-check small { color: var(--muted); font-size: 11px; }
+.custom-model-status { font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.custom-model-status.is-success { color: var(--status-success); }
+.custom-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.custom-model-grid > label { min-width: 0; }
+.custom-model-endpoint-row { grid-template-columns: minmax(0, 1fr) minmax(0, 180px); }
+.custom-model-capabilities { display: flex; flex-direction: column; gap: 8px; color: var(--text); font-size: 12.5px; font-weight: 600; }
+.custom-model-capabilities > div { display: flex; align-items: center; gap: 20px; }
+.custom-model-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.custom-model-reasoning { display: flex; flex-direction: column; gap: 12px; }
+.custom-model-reasoning fieldset { flex: none; margin: 0; padding: 0; border: 0; min-width: 0; }
+.custom-model-reasoning legend { color: var(--text); font-size: 12.5px; font-weight: 600; margin-bottom: 12px; }
+.custom-model-efforts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.custom-model-token-field { position: relative; min-width: 0; }
+.custom-model-token-field > label small { color: var(--muted); font-size: 11px; font-weight: 400; }
+.custom-model-token-control { position: relative; }
+.custom-model-token-control input { padding-right: 36px; }
+.custom-model-token-control > button { position: absolute; right: 1px; top: 1px; bottom: 1px; width: 34px; border: 0; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; border-radius: var(--radius); }
+.custom-model-token-field .custom-model-options { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 4; box-shadow: var(--shadow-menu); }
+.custom-model-combobox { display: flex; flex-direction: column; gap: 7px; }
+.custom-model-combobox > label { display: block; font-size: 12.5px; font-weight: 600; }
+.custom-model-options { max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-menu); background: var(--surface-raised); padding: 4px; }
+.custom-model-options button { display: flex; width: 100%; gap: 12px; align-items: baseline; justify-content: space-between; border: 0; border-radius: var(--radius-sm); background: var(--custom-model-option-bg, transparent); padding: 9px 10px; text-align: left; font: inherit; font-size: 12px; color: var(--text); cursor: pointer; transition: none; }
+.custom-model-options button:hover:not(:disabled), .custom-model-options button:active:not(:disabled) { background: var(--custom-model-option-bg, transparent); }
+.custom-model-options button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.custom-model-options button small { color: var(--muted); font-size: 11px; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.custom-model-options button[aria-selected="true"] { color: var(--accent); font-weight: 500; }
+.custom-model-options button.is-active { --custom-model-option-bg: var(--surface-selected); }
+.custom-model-token-options button { padding: 7px 10px; min-height: 34px; align-items: center; }
+.custom-model-token-options button.is-active { --custom-model-option-bg: var(--surface-hover); }
+.custom-model-token-check { color: var(--accent); flex: none; }
+.custom-model-options p { margin: 8px; font-size: 12px; color: var(--muted); }
+@media (max-width: 480px) {
+  .model-dialog--custom { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+  .custom-model-grid { grid-template-columns: 1fr; gap: 16px; }
+  .custom-model-key-row { gap: 8px; }
+  .custom-model-secret { gap: 0; }
+  .custom-model-secret button { padding-inline: 6px; }
+  .custom-model-capabilities > div { gap: 12px; }
+  .custom-model-efforts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .custom-model-section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .custom-model-check small { flex-basis: 100%; }
+  .model-dialog-fields .custom-model-check { flex-wrap: wrap; }
+}

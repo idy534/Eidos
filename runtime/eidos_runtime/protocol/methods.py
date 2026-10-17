@@ -16,6 +16,7 @@ import re
 from typing import ClassVar, Literal
 
 from eidos_runtime.domain.input_reference import InputReferenceId
+from eidos_runtime.model.config import CustomModelSettings
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
 from pydantic import field_validator, model_validator
@@ -39,7 +40,7 @@ from eidos_runtime.protocol.schemas import (
 
 
 ModelReasoningSelection = Literal[
-    "none", "thinking", "low", "medium", "high", "max"
+    "none", "thinking", "low", "medium", "high", "xhigh", "max"
 ]
 
 
@@ -485,7 +486,8 @@ class ModelListRequestDto(MethodRequestDto):
 class ModelCreateRequestDto(MethodRequestDto):
     provider: StrictStr = Field(min_length=1, max_length=64)
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
-    api_key: StrictStr = Field(alias="apiKey", min_length=1, max_length=512)
+    api_key: StrictStr = Field(default="", alias="apiKey", max_length=512, repr=False)
+    custom: CustomModelSettings | None = None
 
 
 class ModelUpdateRequestDto(MethodRequestDto):
@@ -493,6 +495,7 @@ class ModelUpdateRequestDto(MethodRequestDto):
     provider: StrictStr = Field(min_length=1, max_length=64)
     model_id: StrictStr = Field(alias="modelId", min_length=1, max_length=256)
     api_key: StrictStr | None = Field(default=None, alias="apiKey", max_length=512)
+    custom: CustomModelSettings | None = None
 
 
 class ModelDeleteRequestDto(MethodRequestDto):
@@ -1066,7 +1069,7 @@ class ContextUsageResponseDto(MethodResultDto):
 
 
 class ModelReasoningDto(ClosedModel):
-    default_selection: ModelReasoningSelection = Field(alias="defaultSelection")
+    default_selection: ModelReasoningSelection | None = Field(default=None, alias="defaultSelection")
     selections: list[ModelReasoningSelection]
 
 
@@ -1080,6 +1083,10 @@ class ModelOptionDto(ClosedModel):
     supports_images: bool = Field(alias="supportsImages")
     supports_reasoning: bool = Field(alias="supportsReasoning")
     reasoning: ModelReasoningDto | None = None
+    custom: CustomModelSettings | None = None
+    model_id: StrictStr | None = Field(default=None, alias="modelId")
+    context_window_tokens: int | None = Field(default=None, alias="contextWindowTokens")
+    max_output_tokens: int | None = Field(default=None, alias="maxOutputTokens")
 
 
 class ModelListResponseDto(MethodResultDto):

@@ -33,7 +33,7 @@ class Schedule(EidosFrozenStrictModel):
 
 class AutomationModel(EidosFrozenStrictModel):
     model_id: str = Field(min_length=1, max_length=256)
-    reasoning_selection: Literal["none", "thinking", "low", "medium", "high", "max"] | None = None
+    reasoning_selection: Literal["none", "thinking", "low", "medium", "high", "xhigh", "max"] | None = None
 
 
 class AutomationExecution(EidosFrozenStrictModel):

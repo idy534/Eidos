@@ -1,0 +1,27 @@
+{
+  "create": {
+    "provider": "custom",
+    "modelId": "company/model",
+    "apiKey": "",
+    "custom": {
+      "providerId": "company-gateway",
+      "providerName": "公司网关",
+      "baseUrl": "http://127.0.0.1:3425/v1",
+      "wireApi": "chat_completions",
+      "name": "公司模型",
+      "contextWindowTokens": 128000,
+      "maxOutputTokens": 8192,
+      "supportsImages": true,
+      "reasoningControl": "configured",
+      "reasoning": { "defaultSelection": "high", "selections": ["none", "high", "xhigh"] }
+    }
+  },
+  "automaticReasoning": { "defaultSelection": null, "selections": ["low", "high", "max"] },
+  "discover": { "provider": "custom", "baseUrl": "http://127.0.0.1:3425/v1", "apiKey": "" },
+  "discovered": {
+    "state": "success",
+    "message": "已获取 1 个模型",
+    "models": [{ "id": "company/model", "name": "公司模型", "contextWindowTokens": 128000, "maxOutputTokens": 8192, "supportsImages": true }],
+    "truncated": false
+  }
+}

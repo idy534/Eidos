@@ -20,7 +20,7 @@ class ChannelConfig(EidosFrozenStrictModel):
     enabled: bool = False
     client_id: str = Field(min_length=1, max_length=256)
     model_id: str = Field(min_length=1, max_length=256)
-    reasoning_selection: Literal["none", "thinking", "low", "medium", "high", "max"] | None = None
+    reasoning_selection: Literal["none", "thinking", "low", "medium", "high", "xhigh", "max"] | None = None
     project_id: str | None = Field(default=None, max_length=256)
     approval_mode: ApprovalMode = "manual"
 
