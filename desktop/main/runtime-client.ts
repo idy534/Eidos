@@ -1513,17 +1513,17 @@ function isModelOption(value: unknown): value is ModelOption {
 
 function isModelReasoning(value: unknown): boolean {
   const selections = isRecord(value) ? value.selections : undefined;
+  const defaultSelection = isRecord(value) ? value.defaultSelection : undefined;
   const validSelections = ["none", "thinking", "low", "medium", "high", "xhigh", "max"];
   return isRecord(value)
     && hasOnlyKeys(value, ["defaultSelection", "selections"])
-    && typeof value.defaultSelection === "string"
-    && validSelections.includes(value.defaultSelection)
+    && (defaultSelection == null || (typeof defaultSelection === "string" && validSelections.includes(defaultSelection)))
     && Array.isArray(selections)
     && selections.length > 0
     && selections.every((selection) => (
       typeof selection === "string" && validSelections.includes(selection)
     ))
-    && selections.includes(value.defaultSelection)
+    && (defaultSelection == null || selections.includes(defaultSelection))
     && new Set(selections).size === selections.length;
 }
 

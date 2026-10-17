@@ -273,7 +273,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                           selection={selection?.reasoningSelection ?? undefined}
                           disabled={!configured || busy || modelLoading}
                           onModelChange={chooseModel}
-                          onChange={updateReasoning}
+                          onChange={(value) => updateReasoning(value ?? "")}
                         />
                       </div>
                     </div>

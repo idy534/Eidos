@@ -2,38 +2,41 @@ import { useEffect, useId, useRef, useState } from "react";
 
 interface Props {
   label: string;
-  value: number;
+  value?: number | undefined;
   presets: readonly number[];
   disabled: boolean;
+  placeholder?: string;
   onChange: (value: number) => void;
 }
 
-const format = (value: number) => value ? `${value / 1024}K` : "";
+const format = (value?: number) => value ? String(value) : "";
 const parse = (raw: string) => {
-  const match = /^(\d+(?:\.\d+)?)\s*([km]?)$/i.exec(raw.trim());
-  return match ? Number(match[1]) * (match[2]?.toLowerCase() === "m" ? 1_048_576 : 1024) : 0;
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  const match = /^(\d+(?:\.\d*)?)\s*([km]?)$/i.exec(trimmed);
+  return match ? Math.round(Number(match[1]) * (match[2]?.toLowerCase() === "m" ? 1_048_576 : match[2]?.toLowerCase() === "k" ? 1024 : 1)) : NaN;
 };
 
-export function TokenLimitField({ label, value, presets, disabled, onChange }: Props) {
+export function TokenLimitField({ label, value, presets, disabled, placeholder, onChange }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const listId = useId();
   const [text, setText] = useState(format(value));
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  useEffect(() => { setText(previous => parse(previous) === value ? previous : format(value)); }, [value]);
+  useEffect(() => { setText(previous => Object.is(parse(previous), value) ? previous : format(value)); }, [value]);
   useEffect(() => {
     const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
   }, []);
-  const openMenu = () => { setOpen(true); setActive(presets.indexOf(value)); };
+  const openMenu = () => { setOpen(true); setActive(value !== undefined ? presets.indexOf(value) : -1); };
   const select = (next: number) => { setText(format(next)); onChange(next); setOpen(false); };
   return <div className="custom-model-combobox custom-model-token-field" ref={root}>
-    <label htmlFor={`${listId}-input`}>{label} <span className="custom-model-required" aria-hidden="true">*</span></label>
+    <label htmlFor={`${listId}-input`}>{label}</label>
     <div className="custom-model-token-control">
       <input id={`${listId}-input`} role="combobox" aria-label={label} aria-autocomplete="list" aria-expanded={open}
         aria-controls={listId} aria-activedescendant={open && active >= 0 ? `${listId}-${active}` : undefined}
-        aria-required="true" autoComplete="off" inputMode="decimal" maxLength={24} placeholder="选择或输入" value={text} disabled={disabled}
+        autoComplete="off" inputMode="decimal" maxLength={24} placeholder={placeholder ?? "选择或输入"} value={text} disabled={disabled}
         onFocus={openMenu} onClick={() => { if (!open) openMenu(); }}
         onChange={event => { const next = parse(event.target.value); setText(event.target.value); onChange(next); setActive(presets.indexOf(next)); }}
         onBlur={event => { if (!root.current?.contains(event.relatedTarget as Node)) { setOpen(false); if (value) setText(format(value)); } }}
@@ -60,7 +63,7 @@ export function TokenLimitField({ label, value, presets, disabled, onChange }: P
       {presets.map((preset, index) => <button type="button" role="option" tabIndex={-1} id={`${listId}-${index}`} key={preset}
         className={active === index ? "is-active" : ""} aria-selected={preset === value}
         onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => select(preset)}>
-        <span>{format(preset)}</span>
+        <span>{preset / 1024}K</span>
         {preset === value && <svg className="custom-model-token-check" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m3 8 3 3 7-7" /></svg>}
       </button>)}
     </div>}

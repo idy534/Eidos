@@ -1,0 +1,58 @@
+.session-canvas {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.session-canvas__feed {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.session-canvas__composer { flex: none; width: 100%; }
+
+.session-welcome {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.session-canvas--welcome {
+  display: grid;
+  grid-template-rows: minmax(min-content, calc(50vh - 2.75rem)) auto minmax(0, 1fr);
+  overflow-y: auto;
+  padding-bottom: 1.5rem;
+}
+
+.session-canvas--welcome .session-welcome {
+  position: static;
+  flex: none;
+  align-self: end;
+  margin-bottom: clamp(0.5rem, 2vh, 1.25rem);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-canvas--welcome .session-canvas__composer { align-self: start; }
+.session-canvas--welcome .composer textarea { min-height: 5.5rem; }
+.session-canvas--welcome .composer { margin-bottom: 0; }
+
+.workspace-body .session-header--draft {
+  border-bottom-color: transparent;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-welcome { transition: none; }
+}

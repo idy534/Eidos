@@ -74,6 +74,27 @@ def test_custom_reasoning_overrides_catalog_and_builtin_keys_stay_required(tmp_p
     assert MODEL_CATALOG.reasoning_selection(custom.id, None, config=configs.get(custom.id)) is None
 
 
+def test_custom_automatic_reasoning_preserves_supported_levels_after_restart(tmp_path):
+    fixture = json.loads((Path(__file__).parents[2] / "protocol/fixtures/custom-models-v1.json").read_text())
+    configs = store(tmp_path)
+    created = configs.create(provider_id="custom", model_id="reasoner", api_key="", custom=settings(
+        reasoningControl="configured", reasoning=fixture["automaticReasoning"],
+    ))
+    reloaded = store(tmp_path).get(created.id)
+    assert reloaded.reasoning.default_selection is None
+    assert reloaded.reasoning.selections == ("low", "high", "max")
+    assert MODEL_CATALOG.reasoning_selection(created.id, None, config=reloaded) is None
+    assert MODEL_CATALOG.reasoning_selection(created.id, "max", config=reloaded) == "max"
+    with pytest.raises(ValueError, match="unsupported"):
+        MODEL_CATALOG.reasoning_selection(created.id, "medium", config=reloaded)
+    public = ModelOptionDto.model_validate(store(tmp_path).public_list()[0].model_dump(mode="json", by_alias=True))
+    assert public.reasoning.default_selection is None
+    assert public.custom.reasoning.selections == ("low", "high", "max")
+    for invalid in ({"defaultSelection": "medium", "selections": ["high"]}, {"defaultSelection": None, "selections": []}):
+        with pytest.raises(ValidationError):
+            ModelReasoningConfig.model_validate(invalid)
+
+
 def test_custom_provider_identity_survives_rename_and_restart_with_legacy_compatibility(tmp_path):
     configs = store(tmp_path)
     legacy = configs.create(provider_id="custom", model_id="model", api_key="", custom=settings())
@@ -182,7 +203,8 @@ def test_stored_credentials_are_only_reused_for_the_same_custom_address(tmp_path
     assert app.discovery_credentials(request.model_copy(update={"api_key": ""}))[1] == ""
 
 
-def test_custom_model_rpc_roundtrip_and_fixture(tmp_path):
+@pytest.mark.parametrize("automatic", [False, True])
+def test_custom_model_rpc_roundtrip_and_fixture(tmp_path, automatic):
     fixture = json.loads((Path(__file__).parents[2] / "protocol/fixtures/custom-models-v1.json").read_text())
     ModelCreateRequestDto.model_validate(fixture["create"])
     CustomProviderRequest.model_validate(fixture["discover"])
@@ -193,7 +215,10 @@ def test_custom_model_rpc_roundtrip_and_fixture(tmp_path):
     server.model_config.initialize()
     server.initialized = True
     try:
-        server.handle({"jsonrpc": "2.0", "id": "client-custom-create", "method": "model/create", "params": fixture["create"]})
+        create = fixture["create"]
+        if automatic:
+            create = {**create, "custom": {**create["custom"], "reasoning": fixture["automaticReasoning"]}}
+        server.handle({"jsonrpc": "2.0", "id": "client-custom-create", "method": "model/create", "params": create})
         response = json.loads(output.getvalue().splitlines()[-1])
         result = ModelOptionDto.model_validate(response["result"])
         assert result.provider == "custom" and result.model_id == "company/model"
@@ -207,12 +232,13 @@ def test_custom_model_rpc_roundtrip_and_fixture(tmp_path):
         workspace.mkdir()
         session = server.store.create_session(str(workspace))
         server.handle({"jsonrpc": "2.0", "id": "client-custom-run", "method": "run/start", "params": {
-            "sessionId": session["id"], "modelId": result.id, "userInput": "fixture", "reasoningSelection": "xhigh",
+            "sessionId": session["id"], "modelId": result.id, "userInput": "fixture", **({} if automatic else {"reasoningSelection": "xhigh"}),
         }})
         run = next(json.loads(line)["result"] for line in output.getvalue().splitlines() if json.loads(line).get("id") == "client-custom-run")
         profile = server.store.read_model_profile(run["id"])
         assert profile.model_id == result.id and profile.remote_model_id == "company/model"
-        assert profile.reasoning_selection == "xhigh" and profile.max_output_tokens == 8192
+        assert profile.reasoning_selection == (None if automatic else "xhigh")
+        assert profile.supports_reasoning and profile.max_output_tokens == 8192
         server.model_config.update(result.id, provider_id="custom", model_id="changed-model", api_key="", custom=settings())
         assert server._frozen_model_configs[run["id"]].model_id == "company/model"
         assert server._frozen_model_configs[run["id"]].custom.max_output_tokens == 8192
@@ -223,16 +249,18 @@ def test_custom_model_rpc_roundtrip_and_fixture(tmp_path):
         server.close()
 
 
-@pytest.mark.parametrize(("protocol", "format_name", "selection", "expected"), [
-    ("chat_completions", "openai", "xhigh", {"reasoning_effort": "xhigh"}),
-    ("chat_completions", "openai", "none", {"reasoning_effort": "none"}),
-    ("chat_completions", "deepseek", "none", {"thinking": {"type": "disabled"}}),
-    ("chat_completions", "deepseek", "high", {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}),
-    ("chat_completions", "minimax", "thinking", {"thinking": {"type": "adaptive"}}),
-    ("chat_completions", "openai", None, {}),
-    ("openai_responses", "openai", "high", {"reasoning": {"effort": "high"}}),
+@pytest.mark.parametrize(("protocol", "format_name", "selection", "expected", "declared_auto"), [
+    ("chat_completions", "openai", "xhigh", {"reasoning_effort": "xhigh"}, False),
+    ("chat_completions", "openai", "none", {"reasoning_effort": "none"}, False),
+    ("chat_completions", "deepseek", "none", {"thinking": {"type": "disabled"}}, False),
+    ("chat_completions", "deepseek", "high", {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}, False),
+    ("chat_completions", "minimax", "thinking", {"thinking": {"type": "adaptive"}}, False),
+    ("chat_completions", "openai", None, {}, False),
+    ("openai_responses", "openai", "high", {"reasoning": {"effort": "high"}}, False),
+    ("chat_completions", "openai", None, {}, True),
+    ("openai_responses", "openai", None, {}, True),
 ])
-def test_custom_gateway_sends_remote_id_limits_and_real_reasoning_parameters(tmp_path, monkeypatch, protocol, format_name, selection, expected):
+def test_custom_gateway_sends_remote_id_limits_and_real_reasoning_parameters(tmp_path, monkeypatch, protocol, format_name, selection, expected, declared_auto):
     from eidos_runtime.model import pydantic_factory
     from eidos_runtime.model.gateway import ModelGateway
     from eidos_runtime.model.retry_transport import build_retrying_http_client
@@ -252,8 +280,8 @@ def test_custom_gateway_sends_remote_id_limits_and_real_reasoning_parameters(tmp
     configs = store(tmp_path)
     model = configs.create(provider_id="custom", model_id="raw/model", api_key="", custom=settings(
         wireApi=protocol, reasoningFormat=format_name,
-        reasoningControl="configured" if selection is not None else "provider_default",
-        reasoning={"defaultSelection": selection, "selections": [selection]} if selection is not None else None,
+        reasoningControl="configured" if selection is not None or declared_auto else "provider_default",
+        reasoning={"defaultSelection": selection, "selections": [selection] if selection is not None else ["low", "high", "max"]} if selection is not None or declared_auto else None,
     ))
     kernel = RuntimeAsyncKernel()
     kernel.start()
@@ -302,6 +330,24 @@ async def test_discovery_preserves_declared_efforts_without_inventing_a_default(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(("levels", "expected"), [
+    ([{"effort": "low"}, {"effort": "high"}, {"effort": "max"}, {"effort": "future"}, {"effort": "high"}, {"invalid": True}, None], ["low", "high", "max"]),
+    (["low", "medium", "xhigh"], ["low", "medium", "xhigh"]),
+    ({"invalid": True}, None),
+])
+async def test_discovery_reads_supported_reasoning_level_objects(levels, expected):
+    result = await discover_custom_models("https://gateway.invalid", "", threading.Event(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [
+        {"id": "workbuddy-ai/deepseek-v4.1-flash", "display_name": "Deepseek-V4.1-Flash", "context_window": 1000000, "max_output_tokens": 128000,
+         "reasoning": True, "supported_reasoning_levels": levels},
+    ]})))
+    model = result.models[0]
+    assert model.name == "Deepseek-V4.1-Flash"
+    assert model.context_window_tokens == 1000000 and model.max_output_tokens == 128000
+    assert model.reasoning_selections == expected
+    assert model.reasoning is None
+
+
+@pytest.mark.anyio
 async def test_discovery_keeps_names_and_reasoning_when_other_metadata_is_invalid():
     result = await discover_custom_models("https://gateway.invalid", "", threading.Event(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [
         {"id": "reasoner", "display_name": "Company Reasoner", "context_window_tokens": 262144, "maxOutputTokens": 32768,
@@ -329,3 +375,15 @@ def test_custom_remote_ids_are_never_rewritten_by_builtin_aliases(tmp_path):
     created = configs.create(provider_id="custom", model_id=remote, api_key="", custom=settings())
     updated = configs.update(created.id, provider_id="custom", model_id=remote, api_key=None, custom=settings(name="Edited"))
     assert updated.id == created.id and updated.model_id == remote
+
+
+def test_custom_model_settings_defaults_when_tokens_omitted():
+    from eidos_runtime.model.config import DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS
+    s = CustomModelSettings.model_validate({
+        "providerName": "公司网关",
+        "baseUrl": "https://api.example.com/v1",
+        "name": "缺省限制模型",
+    })
+    assert s.context_window_tokens == DEFAULT_CONTEXT_WINDOW_TOKENS
+    assert s.max_output_tokens == DEFAULT_MAX_OUTPUT_TOKENS
+

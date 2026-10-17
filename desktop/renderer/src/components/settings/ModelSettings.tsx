@@ -7,7 +7,13 @@ import type {
 } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
-import { ModelDialog, type ModelDraft } from "./ModelDialog.js";
+import {
+  DEFAULT_CUSTOM_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_CUSTOM_MAX_OUTPUT_TOKENS,
+  emptyCustomSettings,
+  ModelDialog,
+  type ModelDraft,
+} from "./ModelDialog.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { SettingSection } from "./SettingSection.js";
 import { SettingRow } from "./SettingRow.js";
@@ -66,6 +72,23 @@ export function ModelSettings({
       apiKey: "",
     });
   };
+  const openCopy = (model: ModelOption) => {
+    if (!model.custom) return;
+    setLocalError(undefined);
+    setModelToDelete(undefined);
+    setDraft({
+      provider: "custom",
+      modelId: "",
+      apiKey: "",
+      custom: {
+        ...emptyCustomSettings(),
+        ...(model.custom.providerId ? { providerId: model.custom.providerId } : {}),
+        providerName: model.custom.providerName,
+        baseUrl: model.custom.baseUrl,
+        ...(model.custom.wireApi ? { wireApi: model.custom.wireApi } : {}),
+      },
+    });
+  };
 
   async function save() {
     if (!draft || (!draft.custom && !draft.originalId && !draft.apiKey.trim())) {
@@ -76,24 +99,37 @@ export function ModelSettings({
       setLocalError("请填写提供商 ID，只能使用字母、数字、点、下划线和短横线，并以字母或数字开头。");
       return;
     }
-    if (draft.custom && (!draft.modelId.trim() || !draft.custom.baseUrl.trim() || !draft.custom.name.trim()
-      || !draft.custom.providerName.trim() || !Number.isSafeInteger(draft.custom.contextWindowTokens) || !Number.isSafeInteger(draft.custom.maxOutputTokens)
-      || draft.custom.contextWindowTokens <= 0 || draft.custom.maxOutputTokens <= 0
-      || draft.custom.contextWindowTokens > 100000000 || draft.custom.maxOutputTokens > 100000000
-      || draft.custom.maxOutputTokens > draft.custom.contextWindowTokens)) {
+    const resolveTokenLimit = (value: number | undefined, defaultValue: number): number => {
+      if (value === undefined || value === null || value === 0) {
+        return defaultValue;
+      }
+      return value;
+    };
+
+    const resolvedCustom = draft.custom ? {
+      ...draft.custom,
+      contextWindowTokens: resolveTokenLimit(draft.custom.contextWindowTokens, DEFAULT_CUSTOM_CONTEXT_WINDOW_TOKENS),
+      maxOutputTokens: resolveTokenLimit(draft.custom.maxOutputTokens, DEFAULT_CUSTOM_MAX_OUTPUT_TOKENS),
+    } : undefined;
+
+    if (resolvedCustom && (!draft.modelId.trim() || !resolvedCustom.baseUrl.trim() || !resolvedCustom.name.trim()
+      || !resolvedCustom.providerName.trim() || !Number.isSafeInteger(resolvedCustom.contextWindowTokens) || !Number.isSafeInteger(resolvedCustom.maxOutputTokens)
+      || resolvedCustom.contextWindowTokens <= 0 || resolvedCustom.maxOutputTokens <= 0
+      || resolvedCustom.contextWindowTokens > 100000000 || resolvedCustom.maxOutputTokens > 100000000
+      || resolvedCustom.maxOutputTokens > resolvedCustom.contextWindowTokens)) {
       setLocalError("请填写模型 ID、展示名、接口地址和有效的 Token 上限；最大输出不能超过上下文窗口。");
       return;
     }
-    if (draft.custom) {
-      const addressError = customModelAddressError(draft.custom.baseUrl);
+    if (resolvedCustom) {
+      const addressError = customModelAddressError(resolvedCustom.baseUrl);
       if (addressError) { setLocalError(addressError); return; }
     }
     setBusy(true);
     setLocalError(undefined);
     try {
-      const extra = draft.custom ? { custom: draft.custom } : {};
+      const extra = resolvedCustom ? { custom: resolvedCustom } : {};
       const keyChanged = draft.apiKeyEdited || Boolean(draft.apiKey.trim())
-        || (draft.custom && draft.originalBaseUrl !== draft.custom.baseUrl);
+        || (resolvedCustom && draft.originalBaseUrl !== resolvedCustom.baseUrl);
       if (draft.originalId) {
         await window.eidosRuntime.updateModel({
           id: draft.originalId,
@@ -172,6 +208,15 @@ export function ModelSettings({
               }
               action={
                 <div className="saved-model-actions">
+                  {model.custom && (
+                    <Button
+                      size="small"
+                      variant="secondary"
+                      aria-label={`复制 ${model.name}`}
+                      disabled={busy}
+                      onClick={() => openCopy(model)}
+                    >复制</Button>
+                  )}
                   <Button
                     size="small"
                     variant="secondary"

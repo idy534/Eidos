@@ -460,7 +460,7 @@ export type ModelReasoningSelection =
   | "max";
 
 export interface ModelReasoning {
-  defaultSelection: ModelReasoningSelection;
+  defaultSelection?: ModelReasoningSelection | null;
   selections: ModelReasoningSelection[];
 }
 

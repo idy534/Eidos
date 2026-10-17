@@ -16,6 +16,7 @@
       "reasoning": { "defaultSelection": "high", "selections": ["none", "high", "xhigh"] }
     }
   },
+  "automaticReasoning": { "defaultSelection": null, "selections": ["low", "high", "max"] },
   "discover": { "provider": "custom", "baseUrl": "http://127.0.0.1:3425/v1", "apiKey": "" },
   "discovered": {
     "state": "success",

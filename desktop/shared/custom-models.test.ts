@@ -6,6 +6,7 @@ import { isCustomModelSettings, isCustomProviderResult } from "./custom-models.j
 test("custom model contracts accept the shared fixture and reject unknown fields", () => {
   const fixture = JSON.parse(readFileSync("protocol/fixtures/custom-models-v1.json", "utf8"));
   assert.equal(isCustomModelSettings(fixture.create.custom), true);
+  assert.equal(isCustomModelSettings({ ...fixture.create.custom, reasoning: fixture.automaticReasoning }), true);
   assert.equal(isCustomModelSettings({ ...fixture.create.custom, providerId: "invalid provider" }), false);
   assert.equal(isCustomModelSettings({ ...fixture.create.custom, providerId: "" }), false);
   assert.equal(isCustomProviderResult(fixture.discovered), true);

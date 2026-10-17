@@ -1069,7 +1069,7 @@ class ContextUsageResponseDto(MethodResultDto):
 
 
 class ModelReasoningDto(ClosedModel):
-    default_selection: ModelReasoningSelection = Field(alias="defaultSelection")
+    default_selection: ModelReasoningSelection | None = Field(default=None, alias="defaultSelection")
     selections: list[ModelReasoningSelection]
 
 

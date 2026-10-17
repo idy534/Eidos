@@ -99,6 +99,7 @@ class _RemoteModel(BaseModel):
     effort: _RemoteEffort | None = None
     reasoning: _RemoteEffort | None = None
     reasoning_selections: list[ModelReasoningSelection] | None = Field(default=None, max_length=20, validation_alias=AliasChoices("reasoning_selections", "reasoningSelections"))
+    supported_reasoning_levels: list[ModelReasoningSelection] | None = Field(default=None, max_length=20, validation_alias=AliasChoices("supported_reasoning_levels", "supportedReasoningLevels"))
     supported_parameters: list[str] | None = Field(default=None, max_length=100)
 
     @field_validator("reasoning_selections", mode="before")
@@ -106,8 +107,15 @@ class _RemoteModel(BaseModel):
     def known_selections(cls, value: object) -> object:
         return _known_remote_levels(value)
 
+    @field_validator("supported_reasoning_levels", mode="before")
+    @classmethod
+    def known_supported_levels(cls, value: object) -> object:
+        if isinstance(value, list):
+            return _known_remote_levels([level.get("effort") if isinstance(level, dict) else level for level in value])
+        return value
+
     @field_validator("name", "context_window", "context_length", "max_output_tokens", "input_modalities",
-                     "architecture", "top_provider", "effort", "reasoning", "reasoning_selections", "supported_parameters", mode="wrap")
+                     "architecture", "top_provider", "effort", "reasoning", "reasoning_selections", "supported_reasoning_levels", "supported_parameters", mode="wrap")
     @classmethod
     def optional_metadata(cls, value: object, handler: ValidatorFunctionWrapHandler) -> object:
         try:
@@ -120,7 +128,7 @@ class _RemoteModel(BaseModel):
         if modalities is None and self.architecture is not None:
             modalities = self.architecture.input_modalities
         reasoning = None
-        levels = tuple(dict.fromkeys(self.reasoning_selections or ())) or None
+        levels = tuple(dict.fromkeys(self.reasoning_selections or self.supported_reasoning_levels or ())) or None
         metadata = self.reasoning if self.reasoning and self.reasoning.supported_levels else self.effort
         if metadata and metadata.supported_levels:
             levels = tuple(dict.fromkeys(metadata.supported_levels))

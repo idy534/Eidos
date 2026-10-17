@@ -58,16 +58,18 @@ app.whenReady().then(async () => {
     await screenshot("custom-model-connection-loading.png");
     await wait("document.querySelector('[role=status]').textContent.includes('已获取 2 个模型')");
     assert.deepEqual(await connectionSize(), beforeRequest);
-    assert.equal(await script("document.querySelectorAll('.model-dialog [aria-required=true]').length"), 7);
+    assert.equal(await script("document.querySelectorAll('.model-dialog [aria-required=true]').length"), 5);
     assert.equal(await script("document.querySelector('.model-dialog').textContent.includes('必填')"), false);
     await script("document.querySelector('[aria-label=\"模型 ID\"]').click()");
     await wait("document.querySelector('[role=option]')");
     assert.equal(await script("document.querySelector('[role=option] small').textContent"), "公司推理模型");
     await screenshot("custom-model-list.png");
     await script("document.querySelector('[role=option]').click()");
-    await wait("document.querySelector('[aria-label=\"上下文窗口\"]').value === '125K'");
+    await wait("document.querySelector('[aria-label=\"上下文窗口\"]').value === '128000'");
+    assert.equal(await script("document.querySelector('[aria-label=\"最大输出\"]').value"), "8192");
     assert.equal(await script("document.querySelector('[aria-label=\"展示名\"]').value"), "公司推理模型");
-    assert.deepEqual(await script("Array.from(document.querySelectorAll('.custom-model-efforts label')).filter(label => label.querySelector('input').checked).map(label => label.textContent.trim())"), ["低", "高", "超高"]);
+    assert.deepEqual(await script("Array.from(document.querySelectorAll('.custom-model-efforts label')).filter(label => label.querySelector('input').checked).map(label => label.textContent.trim())"), ["低", "高", "最高"]);
+    assert.equal(await script("document.querySelector('[aria-label=\"默认思考强度\"]').value"), "auto");
     await script("document.querySelector('.modal-body').scrollTop = 0");
     await screenshot("custom-model-connection.png");
     await script("document.querySelector('[aria-label=\"上下文窗口\"]').focus(); document.querySelector('[aria-label=\"上下文窗口\"]').click()");
@@ -79,7 +81,7 @@ app.whenReady().then(async () => {
     await win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
     await win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
     await win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
-    await wait("document.querySelector('[aria-label=\"上下文窗口\"]').value === '512K'");
+    await wait("document.querySelector('[aria-label=\"上下文窗口\"]').value === '524288'");
     await script("document.querySelector('[aria-label=\"上下文窗口\"]').click()");
     await wait("document.querySelector('.custom-model-token-options')");
     await script("document.querySelectorAll('.custom-model-token-options [role=option]')[2].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))");
@@ -132,7 +134,7 @@ app.whenReady().then(async () => {
     }
     assert.equal(await script("window.customModelCalls.length"), 1);
     assert.deepEqual(errors, []);
-    console.log("Custom model Electron checks passed: stable connection feedback, one menu highlight, inline K values, metadata and reasoning fill, required stars, input icons, keyboard presets and layout at 320/768/1024/1440px.");
+    console.log("Custom model Electron checks passed: stable connection feedback, one menu highlight, actual token values with K presets, metadata and reasoning fill, required stars, input icons, keyboard presets and layout at 320/768/1024/1440px.");
   } catch (error) { code = 1; console.error(error); }
   finally { clearTimeout(deadline); win?.destroy(); await server?.close(); await rm(temporaryRoot, { recursive: true, force: true }); app.exit(code); }
 });

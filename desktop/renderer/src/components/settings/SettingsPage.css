@@ -1060,16 +1060,37 @@
 .custom-model-section-heading span, .custom-model-required, .custom-model-grid small { color: var(--muted); font-size: 11px; font-weight: 400; }
 .custom-model-required { margin-left: 4px; }
 .model-dialog--custom .custom-model-required { color: var(--status-danger); font-size: 12px; font-weight: 500; }
-.custom-model-secret { display: flex; gap: 4px; align-items: center; }
+.custom-model-secret { display: flex; align-items: center; width: 100%; }
 .custom-model-secret-input { position: relative; min-width: 0; flex: 1; }
-.custom-model-secret-input input { padding-right: 38px; }
-.custom-model-secret-input .custom-model-secret-toggle { position: absolute; right: 3px; top: 3px; bottom: 3px; width: 32px; padding: 0; min-height: 0; border: 0; display: grid; place-items: center; color: var(--muted); }
+.custom-model-secret-input input { padding-right: 36px; }
+.custom-model-secret-input .custom-model-secret-toggle {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+}
+.custom-model-secret-input .custom-model-secret-toggle .btn-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .custom-model-secret button { flex: none; }
-.custom-model-key-row { display: flex; align-items: flex-end; gap: 12px; }
+.custom-model-key-row { display: flex; align-items: flex-end; gap: 8px; }
 .custom-model-key-row > label { flex: 1; min-width: 0; }
-.custom-model-test-actions { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; width: 112px; }
-.custom-model-test-actions > button { min-height: 38px; }
-.custom-model-test-actions .custom-model-status { font-size: 11px; text-align: right; }
+.custom-model-test-actions { position: relative; flex: none; display: flex; flex-direction: column; align-items: flex-end; }
+.custom-model-test-actions > button { min-height: 38px; white-space: nowrap; }
+.custom-model-test-actions .custom-model-status { position: absolute; right: 0; bottom: calc(100% + 7px); font-size: 11px; text-align: right; white-space: nowrap; }
 .model-dialog-fields .custom-model-check { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12.5px; font-weight: 400; }
 .model-dialog-fields .custom-model-check input { appearance: auto; accent-color: var(--accent); width: 15px; height: 15px; margin: 0; box-shadow: none; flex: none; }
 .custom-model-check small { color: var(--muted); font-size: 11px; }

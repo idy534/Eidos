@@ -86,6 +86,22 @@ describe("ModelSelector", () => {
     expect(onChange).toHaveBeenCalledWith("none");
   });
 
+  it.each([null, undefined])("shows automatic independently of supported strengths and allows returning to it (default=%s)", defaultSelection => {
+    const model: ModelOption = { ...models[0]!, reasoning: { ...(defaultSelection === null ? { defaultSelection } : {}), selections: ["low", "high", "max"] } };
+    const onChange = vi.fn();
+    const { rerender } = render(<ModelSelector models={[model]} selectedModelId={model.id} selection={undefined} disabled={false} onModelChange={vi.fn()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek Flash，深度求索/ }));
+    const slider = screen.getByRole("slider");
+    expect(slider).toHaveValue("0");
+    expect(slider).toHaveAttribute("aria-valuetext", "自动");
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(slider, { target: { value: "2" } });
+    expect(onChange).toHaveBeenLastCalledWith("high");
+    rerender(<ModelSelector models={[model]} selectedModelId={model.id} selection="high" disabled={false} onModelChange={vi.fn()} onChange={onChange} />);
+    fireEvent.change(slider, { target: { value: "0" } });
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
   it("keeps the slider continuous while dragging and snaps on release", () => {
     const onChange = vi.fn();
     render(

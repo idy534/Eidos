@@ -18,7 +18,9 @@ const SELECTION_ORDER: readonly ModelReasoningSelection[] = [
   "thinking",
 ];
 
-const SELECTION_LABELS: Record<ModelReasoningSelection, string> = {
+type ReasoningChoice = ModelReasoningSelection | "auto";
+const SELECTION_LABELS: Record<ReasoningChoice, string> = {
+  auto: "自动",
   none: "关闭思考",
   thinking: "启用思考",
   low: "低",
@@ -36,7 +38,7 @@ export interface ModelSelectorProps {
   selection: ModelReasoningSelection | undefined;
   disabled: boolean;
   onModelChange: (id: ModelId) => void;
-  onChange: (selection: ModelReasoningSelection) => void;
+  onChange: (selection: ModelReasoningSelection | undefined) => void;
 }
 
 const FULL_MULTIMODAL_MODELS = new Set([
@@ -119,7 +121,7 @@ export function ModelSelector({
   const canAdjustReasoning = selections.length > 1;
   const selectedSelection = selection && selections.includes(selection)
     ? selection
-    : selectedModel?.reasoning?.defaultSelection ?? selections[0];
+    : selectedModel?.reasoning?.defaultSelection ?? (selections.includes("auto") ? "auto" : selections[0]);
   const selectedIndex = Math.max(0, selections.indexOf(selectedSelection ?? "none"));
   const maxSliderIndex = Math.max(0, selections.length - 1);
   const [sliderPosition, setSliderPosition] = useState(selectedIndex);
@@ -291,7 +293,7 @@ export function ModelSelector({
     const nextSelection = selections[index];
 
     if (nextSelection && (index !== selectedIndex || invalidSelection)) {
-      onChange(nextSelection);
+      onChange(nextSelection === "auto" ? undefined : nextSelection);
     }
 
     const startPos = sliderPositionRef.current;
@@ -549,9 +551,10 @@ export function ModelSelector({
   );
 }
 
-function getSelections(reasoning: ModelOption["reasoning"]): ModelReasoningSelection[] {
+function getSelections(reasoning: ModelOption["reasoning"]): ReasoningChoice[] {
   const available = new Set(reasoning?.selections ?? []);
-  return SELECTION_ORDER.filter((value) => available.has(value));
+  const selections: ReasoningChoice[] = SELECTION_ORDER.filter((value) => available.has(value));
+  return reasoning && reasoning.defaultSelection == null && selections.length ? ["auto", ...selections] : selections;
 }
 
 function ChevronIcon() {

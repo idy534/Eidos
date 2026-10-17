@@ -27,7 +27,7 @@ ModelReasoningSelection = Literal[
 
 
 class ModelReasoningConfig(EidosFrozenStrictModel):
-    default_selection: ModelReasoningSelection
+    default_selection: ModelReasoningSelection | None = None
     selections: tuple[ModelReasoningSelection, ...]
 
     @field_validator("selections", mode="before")
@@ -60,7 +60,7 @@ class ModelReasoningConfig(EidosFrozenStrictModel):
 
     @model_validator(mode="after")
     def validate_default_selection(self) -> "ModelReasoningConfig":
-        if not self.selections or self.default_selection not in self.selections:
+        if not self.selections or (self.default_selection is not None and self.default_selection not in self.selections):
             raise ValueError("default reasoning selection must be supported")
         if len(set(self.selections)) != len(self.selections):
             raise ValueError("reasoning selections must be unique")
@@ -96,8 +96,8 @@ class CustomModelSettings(EidosFrozenStrictModel):
     base_url: str = Field(min_length=1, max_length=2048)
     wire_api: WireApi = "chat_completions"
     name: str = Field(min_length=1, max_length=120)
-    context_window_tokens: int = Field(gt=0, le=100_000_000)
-    max_output_tokens: int = Field(gt=0, le=100_000_000)
+    context_window_tokens: int = Field(default=DEFAULT_CONTEXT_WINDOW_TOKENS, gt=0, le=100_000_000)
+    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, gt=0, le=100_000_000)
     supports_tool_call: bool = True
     supports_images: bool = False
     reasoning: ModelReasoningConfig | None = None
@@ -129,8 +129,8 @@ class CustomModelSettings(EidosFrozenStrictModel):
 class CustomModelRuntimeSettings(EidosFrozenStrictModel):
     provider_id: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
     wire_api: WireApi = "chat_completions"
-    context_window_tokens: int = Field(gt=0, le=100_000_000)
-    max_output_tokens: int = Field(gt=0, le=100_000_000)
+    context_window_tokens: int = Field(default=DEFAULT_CONTEXT_WINDOW_TOKENS, gt=0, le=100_000_000)
+    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, gt=0, le=100_000_000)
     reasoning_format: ReasoningFormat = "openai"
     reasoning_control: Literal["provider_default", "unsupported", "configured"] = "provider_default"
     output_token_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"

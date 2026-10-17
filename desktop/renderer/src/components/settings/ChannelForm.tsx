@@ -221,7 +221,7 @@ export function ChannelForm({
                   selection={config.reasoningSelection ?? undefined}
                   disabled={busy}
                   onModelChange={(id) => setConfig((old) => ({ ...old, modelId: id, reasoningSelection: null }))}
-                  onChange={(selection) => change("reasoningSelection", selection)}
+                  onChange={(selection) => change("reasoningSelection", selection ?? null)}
                 />
               </div>
 

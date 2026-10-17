@@ -180,7 +180,7 @@ describe("AgentWorkspacePanel", () => {
     }
     render(<Fixture />);
 
-    expect((await screen.findAllByText("inspect-files")).length).toBe(2);
+    expect((await screen.findAllByText("inspect-files")).length).toBe(1);
     expect(screen.getAllByText("explorer").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("执行中").length).toBeGreaterThanOrEqual(1);
     screen.getByRole("button", { name: "停止" }).click();
@@ -211,7 +211,7 @@ describe("AgentWorkspacePanel", () => {
       respondingApprovalIds={new Set()} respondingKindByApprovalId={{}} expiredApprovalIds={new Set()}
       errorsByApprovalId={{}} onApprove={onApprove} onReject={() => undefined} />);
     expect(await screen.findByText("执行测试命令")).toBeInTheDocument();
-    expect(screen.getByText("fix-tests")).toBeInTheDocument();
+    expect(screen.getByText("来自智能体：fix-tests 的审批")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "批准" }));
     expect(onApprove).toHaveBeenCalledWith(expect.objectContaining({ id: "approval-1" }));
   });
@@ -272,6 +272,7 @@ describe("AgentWorkspacePanel", () => {
         onOpen={() => undefined}
         onStop={() => undefined}
         approvals={[]}
+        expanded={true}
         onApprove={() => undefined}
         onReject={() => undefined}
         onBackToList={onBackToList}
@@ -672,7 +673,7 @@ describe("AgentWorkspacePanel", () => {
     const onOpen = vi.fn();
     render(<AgentList agents={[agent]} onOpen={onOpen} />);
     expect(screen.getByText("luna-work")).toBeInTheDocument();
-    expect(formatAgentTooltip(agent)).toContain("volcengine / deepseek-v4.1-flash");
+    expect(formatAgentTooltip(agent)).toContain("火山引擎 / deepseek-v4.1-flash");
     fireEvent.click(screen.getByRole("button"));
     expect(onOpen).toHaveBeenCalledWith(agent);
   });
@@ -717,14 +718,16 @@ describe("AgentWorkspacePanel", () => {
     const rolePill = container.querySelector(".agent-role-pill");
     expect(rolePill).toBeInTheDocument();
     expect(rolePill).not.toHaveClass("agent-role-pill--expanded");
-    expect(rolePill).toHaveAttribute("title", "模式：default · 模型：volcengine / deepseek-v3");
+    expect(rolePill).toHaveAttribute("title", "模式：default · 模型：火山引擎 / deepseek-v3");
 
     const roleText = container.querySelector(".agent-role-pill__role");
     expect(roleText).toHaveTextContent("default");
     const ellipsis = container.querySelector(".agent-role-pill__ellipsis");
     expect(ellipsis).toHaveTextContent("…");
     const details = container.querySelector(".agent-role-pill__details");
-    expect(details).toHaveTextContent("·volcengine / deepseek-v3");
+    expect(details).toHaveTextContent("·火山引擎 / deepseek-v3");
+    expect(screen.queryByText("review-luna-demo")).not.toBeInTheDocument();
+    expect(container.querySelector(".agent-heading__name-wrap strong")).not.toBeInTheDocument();
 
     // 2. Expanded mode
     rerender(
@@ -744,6 +747,8 @@ describe("AgentWorkspacePanel", () => {
 
     expect(container.querySelector(".agent-detail-header")).toHaveClass("agent-detail-header--expanded");
     expect(container.querySelector(".agent-role-pill")).toHaveClass("agent-role-pill--expanded");
+    expect(screen.getByText("review-luna-demo")).toBeInTheDocument();
+    expect(container.querySelector(".agent-heading__name-wrap strong")).toBeInTheDocument();
   });
 
   it("renders redesigned stop button with stop icon, and shows spinner when stopping", () => {
@@ -819,7 +824,63 @@ describe("AgentWorkspacePanel", () => {
     expect(agentsCss).toMatch(/\.agent-stop-button[^{]*\{[^}]*border-radius:\s*var\(--radius-pill\);/s);
     expect(agentsCss).toMatch(/\.agent-role-pill__ellipsis\s*\{[^}]*display:\s*inline;/s);
     expect(agentsCss).toMatch(/\.agent-role-pill__details\s*\{[^}]*display:\s*none;/s);
+    expect(agentsCss).toMatch(/\.agent-detail-header:not\(\.agent-detail-header--expanded\)\s+strong\s*\{[^}]*display:\s*none;/s);
   });
 
+  it("resolves and displays custom provider and model names in workspace panel", () => {
+    const customChild = {
+      ...historyAgent(),
+      id: "agent-custom-test",
+      taskName: "analyze-data",
+      role: "worker" as const,
+      baseRole: "worker" as const,
+      providerId: "custom",
+      modelId: "custom-5e6280a4-c8e1-4707-8b8e-c30b462aa988",
+      status: "running" as const,
+    };
+    const customModel: ModelOption = {
+      id: "custom-5e6280a4-c8e1-4707-8b8e-c30b462aa988",
+      name: "公司推理模型",
+      vendor: "公司网关",
+      provider: "custom",
+      url: "https://api.corp.internal",
+      supportsToolCall: true,
+      supportsImages: false,
+      supportsReasoning: false,
+      custom: {
+        providerName: "公司网关",
+        name: "公司推理模型",
+        baseUrl: "https://api.corp.internal",
+      },
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({ items: [], runs: [] }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+      listModels: vi.fn().mockResolvedValue({ models: [customModel] }),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    const { container } = render(
+      <AgentWorkspacePanel
+        agents={[customChild]}
+        agentId={customChild.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        expanded={true}
+        models={[customModel]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    const rolePill = container.querySelector(".agent-role-pill");
+    expect(rolePill).toBeInTheDocument();
+    expect(rolePill).toHaveAttribute("title", "模式：worker · 模型：公司网关 / 公司推理模型");
+    const modelSpan = container.querySelector(".agent-role-pill__model");
+    expect(modelSpan).toHaveTextContent("公司网关 / 公司推理模型");
+  });
 });
 

@@ -138,7 +138,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
         <h3 className="automation-card-title">模型与权限</h3>
         <div className="model-selector-field"><span>模型与思考强度</span>
           <ModelSelector models={models} selectedModelId={modelId} selection={reasoning || undefined} disabled={busy}
-            onModelChange={(id) => { setModelId(id); setReasoning(""); }} onChange={setReasoning} />
+            onModelChange={(id) => { setModelId(id); setReasoning(""); }} onChange={(value) => setReasoning(value ?? "")} />
         </div>
         <div className="automation-fields"><label>审批模式<select value={approvalMode} onChange={(event) => {
           const next = event.target.value as ApprovalMode;

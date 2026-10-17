@@ -9,7 +9,7 @@ export type Contextwindowtokens = number;
 export type Maxoutputtokens = number;
 export type Supportstoolcall = boolean;
 export type Supportsimages = boolean;
-export type Defaultselection = "none" | "thinking" | "low" | "medium" | "high" | "xhigh" | "max";
+export type Defaultselection = ("none" | "thinking" | "low" | "medium" | "high" | "xhigh" | "max") | null;
 export type Selections = ("none" | "thinking" | "low" | "medium" | "high" | "xhigh" | "max")[];
 export type Reasoningformat = "openai" | "deepseek" | "minimax";
 export type Reasoningcontrol = "provider_default" | "unsupported" | "configured";
@@ -44,8 +44,8 @@ export interface CustomModelSettings {
   baseUrl: Baseurl;
   wireApi?: Wireapi;
   name: Name;
-  contextWindowTokens: Contextwindowtokens;
-  maxOutputTokens: Maxoutputtokens;
+  contextWindowTokens?: Contextwindowtokens;
+  maxOutputTokens?: Maxoutputtokens;
   supportsToolCall?: Supportstoolcall;
   supportsImages?: Supportsimages;
   reasoning?: ModelReasoningConfig | null;
@@ -54,7 +54,7 @@ export interface CustomModelSettings {
   outputTokenField?: Outputtokenfield;
 }
 export interface ModelReasoningConfig {
-  defaultSelection: Defaultselection;
+  defaultSelection?: Defaultselection;
   selections: Selections;
 }
 export interface CustomProviderRequest {

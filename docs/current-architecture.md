@@ -255,7 +255,7 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 `CustomModelSettings.providerId` 与持久化 `CustomModelRuntimeSettings.provider_id` 保存用户指定的提供商标识，名称继续由 `vendor` 保存。该字段对旧配置可缺省，不创建独立提供商实体，也不改变内部 `provider="custom"` 的适配器路由。Renderer 在新建及编辑保存时要求有效 ID，并负责名称跟随、Token 预设、紧凑能力勾选和默认思考强度。Python DTO 继续生成 TypeScript、JSON Schema 与 Ajv 静态校验器。表单移除了免 Key 勾选，通过输入修改状态区分保留旧密钥和显式清除；地址改变且没有新 Key 时，表单发送空 Key，原有 Runtime 地址与凭据检查仍然生效。
 
-自定义模型发现仍使用原来的有界 SDK 列表请求。远端元数据模型通过 Pydantic 按字段处理无效值，模型 ID 继续严格校验。名称支持明确的显示名别名，思考设置支持已声明的配置或强度列表；未知强度不会使整条记录退回仅有 ID。公开发现 DTO 与模型配置格式保持原样。Renderer 选择另一个模型时重新填入元数据，刷新同一个模型时保留手动覆盖。Token 输入组件在 K 与整数 Token 之间精确换算，持久化和 Run 快照继续使用整数 Token。
+自定义模型发现仍使用原来的有界 SDK 列表请求。远端元数据模型通过 Pydantic 按字段处理无效值，模型 ID 继续严格校验。名称支持明确的显示名别名，思考设置支持已声明的配置或强度列表，包括 `supported_reasoning_levels` 中的字符串和 effort 对象；未知强度不会使整条记录退回仅有 ID。发现 DTO 的字段不变。`ModelReasoningConfig.defaultSelection` 与公开模型 DTO 允许 `null` 或省略，表示保留支持档位但不设置默认请求强度；旧配置的明确默认值仍然有效。配置文件保存空默认值，协议沿用省略空值的规则，接收端将省略与 `null` 都作为自动处理。Runtime 会校验显式选择属于支持列表，省略选择时将空默认值保留到 Run 快照，不发送 effort 参数。Renderer 选择另一个模型时重新填入元数据并采用自动默认值，刷新同一个模型时保留手动覆盖。公共模型选择器为这类配置增加自动档位，并使用已有的空请求选择语义。Token 输入框显示和编辑实际整数，预设列表保留 K 标签，选中预设后显示对应整数；显式 K/M 简写仍按倍率解析。持久化和 Run 快照继续使用整数 Token。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 

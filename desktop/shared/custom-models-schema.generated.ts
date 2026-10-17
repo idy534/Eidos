@@ -47,12 +47,14 @@ export const customModelSchema = {
           "type": "string"
         },
         "contextWindowTokens": {
+          "default": 128000,
           "exclusiveMinimum": 0,
           "maximum": 100000000,
           "title": "Contextwindowtokens",
           "type": "integer"
         },
         "maxOutputTokens": {
+          "default": 8192,
           "exclusiveMinimum": 0,
           "maximum": 100000000,
           "title": "Maxoutputtokens",
@@ -112,9 +114,7 @@ export const customModelSchema = {
       "required": [
         "providerName",
         "baseUrl",
-        "name",
-        "contextWindowTokens",
-        "maxOutputTokens"
+        "name"
       ],
       "title": "CustomModelSettings",
       "type": "object"
@@ -323,17 +323,25 @@ export const customModelSchema = {
       "additionalProperties": false,
       "properties": {
         "defaultSelection": {
-          "enum": [
-            "none",
-            "thinking",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "thinking",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Defaultselection",
-          "type": "string"
+          "default": null,
+          "title": "Defaultselection"
         },
         "selections": {
           "items": {
@@ -353,7 +361,6 @@ export const customModelSchema = {
         }
       },
       "required": [
-        "defaultSelection",
         "selections"
       ],
       "title": "ModelReasoningConfig",

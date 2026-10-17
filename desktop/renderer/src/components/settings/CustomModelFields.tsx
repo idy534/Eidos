@@ -36,9 +36,8 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
     onChange({ ...draft, custom: { ...custom, [key]: value } });
   };
   const select = (model: DiscoveredModel) => {
-    const reasoning = model.reasoning ?? (model.reasoningSelections?.length ? {
-      selections: model.reasoningSelections, defaultSelection: model.reasoningSelections[0]!,
-    } : null);
+    const selections = model.reasoning?.selections ?? model.reasoningSelections;
+    const reasoning = selections?.length ? { selections, defaultSelection: null } : null;
     const values: Partial<CustomModelSettings> = {
       name: model.name?.trim() || model.id, contextWindowTokens: model.contextWindowTokens ?? 0,
       maxOutputTokens: model.maxOutputTokens ?? 0, supportsImages: model.supportsImages ?? false,
@@ -52,8 +51,7 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
     }
     onChange({ ...draft, modelId: model.id, custom: next });
     const missing = [!model.contextWindowTokens && "上下文窗口", !model.maxOutputTokens && "最大输出"].filter(Boolean);
-    if (reasoning && !model.reasoning) missing.push("默认思考档位（当前使用首个档位，请确认）");
-    setSource(missing.length ? `接口未提供${missing.join("、")}，请补充。` : undefined);
+    setSource(missing.length ? `接口未提供${missing.join("、")}，未填写将使用默认值。` : undefined);
   };
   const test = async () => {
     const version = ++requestVersion.current;
@@ -85,7 +83,7 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
     </div>
     <div className="custom-model-grid custom-model-endpoint-row">
     <label><span>接口地址 <small className="custom-model-required" aria-hidden="true">*</small></span><input aria-label="接口地址" aria-required="true" type="url" maxLength={2048}
-      value={custom.baseUrl} disabled={busy} placeholder="http://127.0.0.1:3425/v1"
+      value={custom.baseUrl} disabled={busy} placeholder="https://api.example.com/v1"
       onChange={event => update("baseUrl", event.target.value)}
       onBlur={event => {
         const raw = event.currentTarget.value.trim().replace(/\/$/, "");
@@ -107,8 +105,6 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
       <Button type="button" variant="ghost" size="small" className="custom-model-secret-toggle" aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
         title={showKey ? "隐藏 API Key" : "显示 API Key"} aria-pressed={showKey} disabled={busy || !draft.apiKey} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOffIcon /> : <EyeIcon />}</Button>
       </div>
-      {draft.originalId && <Button type="button" variant="ghost" size="small" aria-label="清除 API Key" disabled={busy}
-        onClick={() => { setShowKey(false); onChange({ ...draft, apiKey: "", apiKeyEdited: true }); }}>清除</Button>}
     </div></label>
       <div className="custom-model-test-actions">
       {inlineStatus && <div role="status" aria-live="polite" className={`custom-model-status${!testing ? " is-success" : ""}`}>
@@ -128,8 +124,8 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
     <label><span>展示名 <small className="custom-model-required" aria-hidden="true">*</small></span><input aria-label="展示名" aria-required="true" value={custom.name} maxLength={120} disabled={busy}
       onChange={event => update("name", event.target.value)} placeholder="模型在 Eidos 中显示的名称" /></label>
     <div className="custom-model-grid">
-      <TokenLimitField label="上下文窗口" value={custom.contextWindowTokens} presets={[262144, 524288, 1048576]} disabled={busy} onChange={value => update("contextWindowTokens", value)} />
-      <TokenLimitField label="最大输出" value={custom.maxOutputTokens} presets={[32768, 65536, 131072]} disabled={busy} onChange={value => update("maxOutputTokens", value)} />
+      <TokenLimitField label="上下文窗口" value={custom.contextWindowTokens} presets={[262144, 524288, 1048576]} placeholder="默认 128K" disabled={busy} onChange={value => update("contextWindowTokens", value)} />
+      <TokenLimitField label="最大输出" value={custom.maxOutputTokens} presets={[32768, 65536, 131072]} placeholder="默认 8K" disabled={busy} onChange={value => update("maxOutputTokens", value)} />
     </div>
     <div className="custom-model-capabilities"><span>输入类型</span><div>
       <label className="custom-model-check"><input type="checkbox" checked disabled />文本</label>

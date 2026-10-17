@@ -68,16 +68,16 @@ describe("Custom provider settings", () => {
     expect(option.querySelector("small")).toHaveTextContent("公司推理模型");
     await user.click(option);
     expect(screen.getByLabelText("展示名")).toHaveValue("公司推理模型");
-    expect(screen.getByLabelText("上下文窗口")).toHaveValue("62.5K");
-    expect(screen.getByLabelText("最大输出")).toHaveValue("4K");
+    expect(screen.getByLabelText("上下文窗口")).toHaveValue("64000");
+    expect(screen.getByLabelText("最大输出")).toHaveValue("4096");
     expect(screen.getByRole("checkbox", { name: "图像" })).toBeChecked();
-    expect(screen.getByLabelText("默认思考强度")).toHaveValue("high");
+    expect(screen.getByLabelText("默认思考强度")).toHaveValue("auto");
     expect(screen.getByRole("checkbox", { name: "超高" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "低", exact: true })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "高", exact: true })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "中", exact: true })).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "custom", modelId: "company/reasoner", apiKey: "", custom: expect.objectContaining({ name: "公司推理模型", contextWindowTokens: 64000, reasoningControl: "configured" }) }));
+    expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "custom", modelId: "company/reasoner", apiKey: "", custom: expect.objectContaining({ name: "公司推理模型", contextWindowTokens: 64000, reasoningControl: "configured", reasoning: { defaultSelection: null, selections: ["low", "high", "xhigh"] } }) }));
   });
 
   it("fills a different model and reports missing metadata", async () => {
@@ -101,8 +101,10 @@ describe("Custom provider settings", () => {
     await screen.findByText("已获取 2 个模型");
     await user.click(screen.getByLabelText("模型 ID"));
     await user.click(screen.getByRole("option", { name: /First Model/ }));
-    expect(screen.getByLabelText("上下文窗口")).toHaveValue(`${127001 / 1024}K`);
+    expect(screen.getByLabelText("上下文窗口")).toHaveValue("127001");
     expect(screen.getByRole("checkbox", { name: "超高" })).toBeChecked();
+    expect(screen.getByLabelText("默认思考强度")).toHaveValue("auto");
+    expect(screen.queryByText(/当前使用首个档位/)).not.toBeInTheDocument();
     await user.clear(screen.getByLabelText("展示名"));
     await user.type(screen.getByLabelText("展示名"), "我的名称");
     await user.selectOptions(screen.getByLabelText("默认思考强度"), "high");
@@ -115,10 +117,10 @@ describe("Custom provider settings", () => {
     await user.click(screen.getByLabelText("模型 ID"));
     await user.click(screen.getByRole("option", { name: /Second Model/ }));
     expect(screen.getByLabelText("展示名")).toHaveValue("Second Model");
-    expect(screen.getByLabelText("上下文窗口")).toHaveValue("256K");
-    expect(screen.getByLabelText("默认思考强度")).toHaveValue("max");
+    expect(screen.getByLabelText("上下文窗口")).toHaveValue("262144");
+    expect(screen.getByLabelText("默认思考强度")).toHaveValue("auto");
     expect(screen.getByRole("checkbox", { name: "中", exact: true })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "极致" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "最高" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "超高" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "低", exact: true })).not.toBeChecked();
   });
@@ -126,10 +128,13 @@ describe("Custom provider settings", () => {
   it("uses required stars and an input icon to show and hide the API key", async () => {
     const user = userEvent.setup(); setup(); await customForm(user);
     expect(screen.queryByText("必填", { exact: true })).not.toBeInTheDocument();
-    for (const field of ["提供商 ID", "提供商名称", "接口地址", "模型 ID", "展示名", "上下文窗口", "最大输出"]) {
+    for (const field of ["提供商 ID", "提供商名称", "接口地址", "模型 ID", "展示名"]) {
       expect(screen.getByLabelText(field)).toHaveAttribute("aria-required", "true");
     }
-    expect(screen.getAllByText("*", { exact: true })).toHaveLength(7);
+    for (const field of ["上下文窗口", "最大输出", "API Key"]) {
+      expect(screen.getByLabelText(field)).not.toHaveAttribute("aria-required", "true");
+    }
+    expect(screen.getAllByText("*", { exact: true })).toHaveLength(5);
     expect(screen.getByLabelText("API Key")).not.toHaveAttribute("aria-required", "true");
     await user.type(screen.getByLabelText("API Key"), "fixture-key");
     const toggle = screen.getByRole("button", { name: "显示 API Key" });
@@ -156,7 +161,7 @@ describe("Custom provider settings", () => {
     await user.type(screen.getByLabelText("最大输出"), "2");
     await user.selectOptions(screen.getByLabelText("默认思考强度"), "none");
     await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ modelId: "private-model", apiKey: "", custom: expect.objectContaining({ reasoning: { selections: ["none"], defaultSelection: "none" } }) }));
+    expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ modelId: "private-model", apiKey: "", custom: expect.objectContaining({ contextWindowTokens: 32, maxOutputTokens: 2, reasoning: { selections: ["none"], defaultSelection: "none" } }) }));
   });
 
   it("discards stale listing results after the address changes", async () => {
@@ -179,7 +184,8 @@ describe("Custom provider settings", () => {
     await user.click(screen.getByRole("button", { name: "测试连接" }));
     expect(api.discoverCustomModels).toHaveBeenCalledWith({ provider: "custom", baseUrl: custom.baseUrl, configId: model.id });
     await screen.findByText("已获取 2 个模型");
-    await user.click(screen.getByRole("button", { name: "清除 API Key" }));
+    await user.type(screen.getByLabelText("API Key"), "new-key");
+    await user.clear(screen.getByLabelText("API Key"));
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(api.updateModel).toHaveBeenCalledWith(expect.objectContaining({ id: model.id, modelId: "remote-id", apiKey: "" }));
   });
@@ -259,14 +265,16 @@ describe("Custom provider settings", () => {
     await user.click(screen.getByRole("option", { name: /512K/ }));
     await user.click(screen.getByLabelText("最大输出"));
     await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
-    expect(screen.getByLabelText("最大输出")).toHaveValue("64K");
+    expect(screen.getByLabelText("上下文窗口")).toHaveValue("524288");
+    expect(screen.getByLabelText("最大输出")).toHaveValue("65536");
     await user.clear(screen.getByLabelText("上下文窗口"));
-    await user.type(screen.getByLabelText("上下文窗口"), "87.890625");
+    await user.type(screen.getByLabelText("上下文窗口"), "1000000");
     await user.tab();
+    expect(screen.getByLabelText("上下文窗口")).toHaveValue("1000000");
     await user.type(screen.getByLabelText("模型 ID"), "manual");
     await user.type(screen.getByLabelText("展示名"), "我的模型");
     await user.click(screen.getByRole("button", { name: "保存" }));
-    expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ custom: expect.objectContaining({ providerId: "company-gateway", providerName: "company-gateway", contextWindowTokens: 90000, maxOutputTokens: 65536 }) }));
+    expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ custom: expect.objectContaining({ providerId: "company-gateway", providerName: "company-gateway", contextWindowTokens: 1000000, maxOutputTokens: 65536 }) }));
   });
 
   it("marks only the committed preset and commits custom values without replacing them", async () => {
@@ -274,7 +282,7 @@ describe("Custom provider settings", () => {
     const field = screen.getByLabelText("上下文窗口");
     await user.click(field);
     await user.click(screen.getByRole("option", { name: "256K" }));
-    expect(field).toHaveValue("256K");
+    expect(field).toHaveValue("262144");
     await user.click(field);
     const selected = screen.getByRole("option", { name: "256K" });
     const hovered = screen.getByRole("option", { name: "512K" });
@@ -285,9 +293,9 @@ describe("Custom provider settings", () => {
     expect(hovered).toHaveClass("is-active");
     expect(selected).not.toHaveClass("is-active");
     await user.clear(field);
-    await user.type(field, "123.5");
+    await user.type(field, "123.5K");
     await user.keyboard("{Enter}");
-    expect(field).toHaveValue("123.5K");
+    expect(field).toHaveValue("126464");
     expect(screen.queryByRole("listbox", { name: "上下文窗口预设" })).not.toBeInTheDocument();
     await user.click(field);
     expect(within(screen.getByRole("listbox", { name: "上下文窗口预设" })).queryByRole("option", { selected: true })).not.toBeInTheDocument();
@@ -320,8 +328,8 @@ describe("Custom provider settings", () => {
 
   it("keeps a valid default when reasoning strengths are checked or removed", async () => {
     const user = userEvent.setup(); const api = setup(); await customForm(user);
-    await user.click(screen.getByRole("checkbox", { name: "极致" }));
-    expect(screen.getByLabelText("默认思考强度")).toHaveValue("max");
+    await user.click(screen.getByRole("checkbox", { name: "最高" }));
+    expect(screen.getByLabelText("默认思考强度")).toHaveValue("auto");
     await user.selectOptions(screen.getByLabelText("默认思考强度"), "high");
     expect(screen.getByRole("checkbox", { name: "高", exact: true })).toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: "高", exact: true }));
@@ -332,5 +340,93 @@ describe("Custom provider settings", () => {
     await user.type(screen.getByLabelText("最大输出"), "32K");
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ custom: expect.objectContaining({ reasoning: { selections: ["none", "max"], defaultSelection: "none" }, reasoningFormat: "openai" }) }));
+  });
+
+  it("keeps supported strengths when returning to automatic and editing a saved model", async () => {
+    const custom = { providerId: "company-gateway", providerName: "公司网关", baseUrl: "https://gateway.invalid/v1", name: "已保存模型", contextWindowTokens: 64000, maxOutputTokens: 4096,
+      reasoningControl: "configured", reasoning: { selections: ["low", "high", "max"] } } as const;
+    const model = { id: "custom-auto", modelId: "reasoner", name: custom.name, provider: "custom", vendor: custom.providerName, url: custom.baseUrl + "/chat/completions", custom: { ...custom, reasoning: { ...custom.reasoning, selections: [...custom.reasoning.selections] } }, supportsToolCall: true, supportsImages: false, supportsReasoning: true } satisfies ModelOption;
+    const user = userEvent.setup(); const api = setup({}, [model]);
+    await user.click(await screen.findByRole("button", { name: "编辑 已保存模型" }));
+    expect(screen.getByLabelText("默认思考强度")).toHaveValue("auto");
+    expect(screen.getByRole("checkbox", { name: "最高" })).toBeChecked();
+    await user.selectOptions(screen.getByLabelText("默认思考强度"), "high");
+    await user.selectOptions(screen.getByLabelText("默认思考强度"), "auto");
+    for (const name of ["低", "高", "最高"]) expect(screen.getByRole("checkbox", { name, exact: true })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "中", exact: true }));
+    expect(screen.getByLabelText("默认思考强度")).toHaveValue("auto");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(api.updateModel).toHaveBeenCalledWith(expect.objectContaining({ id: "custom-auto", custom: expect.objectContaining({ reasoning: { defaultSelection: null, selections: ["none", "low", "high", "max", "medium"] } }) }));
+  });
+
+  it("uses default values for context window and max output when left empty", async () => {
+    const user = userEvent.setup(); const api = setup(); await customForm(user);
+    await user.type(screen.getByRole("combobox", { name: "模型 ID" }), "default-limits-model");
+    await user.type(screen.getByLabelText("展示名"), "默认限制模型");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: "default-limits-model",
+      custom: expect.objectContaining({
+        contextWindowTokens: 128000,
+        maxOutputTokens: 8192,
+      }),
+    }));
+  });
+
+  it("supports copying an existing custom model prefilling only provider settings", async () => {
+    const custom = {
+      providerId: "local-provider",
+      providerName: "Local Gateway",
+      baseUrl: "https://gateway.invalid/v1",
+      name: "已保存自定义模型",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 4096,
+      wireApi: "chat_completions" as const,
+    };
+    const model = {
+      id: "custom-local",
+      modelId: "local-m1",
+      name: custom.name,
+      provider: "custom",
+      vendor: custom.providerName,
+      url: custom.baseUrl + "/chat/completions",
+      custom,
+      supportsToolCall: true,
+      supportsImages: false,
+      supportsReasoning: false,
+    } satisfies ModelOption;
+    const user = userEvent.setup();
+    const api = setup({}, [model]);
+    const copyButton = await screen.findByRole("button", { name: "复制 已保存自定义模型" });
+    expect(copyButton).toBeInTheDocument();
+    await user.click(copyButton);
+
+    expect(screen.getByRole("heading", { name: "添加模型" })).toBeInTheDocument();
+    expect(screen.getByLabelText("提供商 ID")).toHaveValue("local-provider");
+    expect(screen.getByLabelText("提供商名称")).toHaveValue("Local Gateway");
+    expect(screen.getByLabelText("接口地址")).toHaveValue("https://gateway.invalid/v1");
+    expect(screen.getByLabelText("接口协议")).toHaveValue("chat_completions");
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+
+    expect(screen.getByRole("combobox", { name: "模型 ID" })).toHaveValue("");
+    expect(screen.getByLabelText("展示名")).toHaveValue("");
+    expect(screen.getByLabelText("上下文窗口")).toHaveValue("");
+    expect(screen.getByLabelText("最大输出")).toHaveValue("");
+  });
+
+  it("does not show copy button for built-in preset models", async () => {
+    const builtinModel = {
+      id: "deepseek-chat",
+      name: "DeepSeek Chat",
+      vendor: "深度求索",
+      provider: "deepseek",
+      url: "https://api.seek.com/chat/completions",
+      supportsToolCall: true,
+      supportsImages: false,
+      supportsReasoning: false,
+    } satisfies ModelOption;
+    setup({}, [builtinModel]);
+    expect(await screen.findByRole("button", { name: "编辑 DeepSeek Chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "复制 DeepSeek Chat" })).not.toBeInTheDocument();
   });
 });

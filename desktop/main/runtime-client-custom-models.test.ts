@@ -17,7 +17,7 @@ test("custom provider discovery and configuration roundtrip through the real Run
     received.push({ path: request.url ?? "", method: request.method ?? "", authorization: request.headers.authorization });
     response.writeHead(listStatus, { "Content-Type": "application/json" });
     response.end(JSON.stringify(listStatus === 200 ? { data: [{ id: "same-model", display_name: "公司模型", context_window: 64000, max_output_tokens: 4096,
-      input_modalities: { invalid: true }, effort: { supported_levels: ["low", "high", "future-level", "xhigh"], default_level: "high" } }] } : {}));
+      input_modalities: { invalid: true }, reasoning: true, supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }, { effort: "future-level" }, { effort: "xhigh" }] }] } : {}));
   });
   await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
   const address = http.address();
@@ -32,16 +32,19 @@ test("custom provider discovery and configuration roundtrip through the real Run
     assert.equal(discovered.state, "success");
     assert.equal(discovered.models?.[0]?.contextWindowTokens, 64000);
     assert.equal(discovered.models?.[0]?.name, "公司模型");
-    assert.deepEqual(discovered.models?.[0]?.reasoning, { defaultSelection: "high", selections: ["low", "high", "xhigh"] });
+    assert.deepEqual(discovered.models?.[0]?.reasoningSelections, ["low", "high", "xhigh"]);
     assert.deepEqual(received[0], { path: "/v1/models", method: "GET", authorization: undefined });
     const custom = { providerId: "company-gateway", providerName: "公司接口", baseUrl, name: "模型甲", contextWindowTokens: 64000, maxOutputTokens: 4096 };
-    const first = await client.createModel({ provider: "custom", modelId: "same-model", apiKey: "", custom });
+    const automaticReasoning = { defaultSelection: null, selections: discovered.models![0]!.reasoningSelections! };
+    const first = await client.createModel({ provider: "custom", modelId: "same-model", apiKey: "", custom: { ...custom, reasoningControl: "configured", reasoning: automaticReasoning } });
     const second = await client.createModel({ provider: "custom", modelId: "same-model", apiKey: "explicit-fixture-key", custom: { ...custom, name: "模型乙" } });
     assert.notEqual(first.id, second.id);
     assert.equal(first.provider, "custom");
     assert.equal(first.modelId, "same-model");
     assert.equal(first.contextWindowTokens, 64000);
     assert.equal(first.custom?.providerId, "company-gateway");
+    const wireReasoning = { selections: automaticReasoning.selections };
+    assert.deepEqual(first.reasoning, wireReasoning);
     assert.equal("apiKey" in first, false);
     const edited = await client.updateModel({ provider: "custom", id: second.id, modelId: "same-model", custom: { ...custom, name: "模型乙已编辑" } });
     assert.equal(edited.id, second.id);
@@ -57,6 +60,8 @@ test("custom provider discovery and configuration roundtrip through the real Run
     await client.initialize();
     const models = await client.listModels();
     assert.deepEqual(models.models.map(model => model.id), [first.id, second.id]);
+    assert.deepEqual(models.models[0]?.custom?.reasoning, wireReasoning);
+    assert.deepEqual(models.models[0]?.reasoning, wireReasoning);
     assert.equal(models.models[1]?.name, "模型乙已编辑");
     assert.equal(models.models[1]?.custom?.providerId, "company-gateway");
     assert.equal(diagnostics.join("\n").includes("explicit-fixture-key"), false);

@@ -16,6 +16,9 @@ export interface ModelDraft {
   custom?: CustomModelSettings;
 }
 
+export const DEFAULT_CUSTOM_CONTEXT_WINDOW_TOKENS = 128_000;
+export const DEFAULT_CUSTOM_MAX_OUTPUT_TOKENS = 8_192;
+
 export function emptyCustomSettings(): CustomModelSettings {
   return { providerId: "", providerName: "", baseUrl: "", wireApi: "chat_completions", name: "",
     contextWindowTokens: 0, maxOutputTokens: 0, supportsToolCall: true, supportsImages: false,

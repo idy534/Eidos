@@ -538,3 +538,15 @@ pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/com
 ```
 
 自定义模型的接口测试只获取模型列表。真实验收需要分别检查用户接口的 `/models`、Chat Completions 或 Responses、工具调用和已声明思考参数，不能把列表请求成功当作模型能力验证。
+
+## 欢迎页与首次发送的定向验证
+
+开发者可以运行以下定向检查。页面使用内存 IPC fixture，不读取真实会话，也不调用模型或写入用户工作区。Electron 检查覆盖 320、768、1024、1440 四种宽度、原生输入、首次发送的位移动画、输入框实例保留和再次新建会话。
+
+```bash
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/app/welcome.behavior.test.tsx desktop/renderer/src/components/SessionCanvas.behavior.test.tsx
+pnpm exec electron scripts/test-welcome-layout.cjs
+pnpm test:composer-layout
+```
+
+开发者可以设置 `EIDOS_WELCOME_SCREENSHOT=/absolute/path.png` 保存欢迎页截图。行为测试另外覆盖创建失败、Run 启动失败后的草稿恢复、项目选择和系统减少动态效果设置。
