@@ -55,6 +55,67 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("automation source and tool results", () => {
+  it("identifies scheduled input in the conversation", () => {
+    const run = { ...baseRun, automationOrigin: { automationId: "task", revision: 1, occurrenceId: "occurrence", scheduledFor: "2026-10-15T01:00:00Z" } };
+    renderFeed(shellItem({ kind: "user_message", content: "检查状态。", toolCall: undefined }), run);
+    expect(screen.getByText("定时任务自动执行")).toBeInTheDocument();
+    expect(screen.getByText("检查状态。")).toBeInTheDocument();
+  });
+
+  it("renders the automation card only for the trusted builtin tool", () => {
+    const item = shellItem({ kind: "tool_call", status: "completed", toolCall: {
+      ...shellItem().toolCall!, toolName: "automation", status: "completed",
+      argumentsJson: JSON.stringify({ mode: "preview" }),
+      provenance: { kind: "builtin", sourceId: "eidos.automation", sourceVersion: "v1", contentHash: "hash" },
+      resultJson: JSON.stringify({ outcome: "success", code: "ok", data: { response: { kind: "preview", nextRuns: ["2026-10-16T01:00:00Z"] } } }),
+    } });
+    const { rerender } = renderFeed(item);
+    expect(screen.getByText("执行时间预览")).toBeInTheDocument();
+    rerender(<ExecutionFeed items={[{ ...item, toolCall: { ...item.toolCall!, provenance: { kind: "mcp", sourceId: "external", sourceVersion: "v1", contentHash: "hash" } } }]}
+      runs={[baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} />);
+    expect(screen.queryByText("执行时间预览")).not.toBeInTheDocument();
+  });
+
+  it("renders the automation card with AutomationsIcon and task name", () => {
+    const item = shellItem({ kind: "tool_call", status: "completed", toolCall: {
+      ...shellItem().toolCall!, toolName: "automation", status: "completed",
+      argumentsJson: JSON.stringify({ mode: "create" }),
+      provenance: { kind: "builtin", sourceId: "eidos.automation", sourceVersion: "v1", contentHash: "hash" },
+      resultJson: JSON.stringify({
+        outcome: "success",
+        code: "ok",
+        data: {
+          response: {
+            kind: "mutation",
+            changed: true,
+            automation: {
+              id: "11111111-1111-1111-1111-111111111111",
+              revision: 1,
+              name: "每小时喝水提醒",
+              prompt: "提醒喝水。",
+              kind: "cron",
+              schedule: { expression: "0 * * * *", timezone: "Asia/Shanghai", runAt: null },
+              status: "ACTIVE",
+              model: { modelId: "test", reasoningSelection: null },
+              approvalMode: "auto_review",
+              target: { kind: "new_session", projectId: null, execution: { executionMode: "local", baseRef: null } },
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          },
+        },
+      }),
+    } });
+    const { container } = renderFeed(item);
+    const summary = container.querySelector("details.tool-item > summary");
+    expect(summary).not.toBeNull();
+    const icon = summary?.querySelector(".tool-icon svg circle");
+    expect(icon).toHaveAttribute("r", "6.2");
+    expect(summary?.querySelector(".tool-summary-text")).toHaveTextContent("已创建定时任务 · 每小时喝水提醒");
+  });
+});
+
 describe("conversation fork actions", () => {
   it("lets the user request an earlier page and disables repeated clicks during loading", () => {
     const onLoadOlder = vi.fn();
@@ -970,7 +1031,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
     const btn = container.querySelector("button.tool-file-link");
     expect(btn).not.toBeNull();
     expect(btn?.textContent).toBe("reviewer");
-    expect(container.textContent).toContain("创建子智能体 · reviewer");
+    expect(container.textContent).toContain("创建智能体 · reviewer");
     expect(container.querySelector("details.tool-item")).toBeNull();
 
     fireEvent.click(btn!);

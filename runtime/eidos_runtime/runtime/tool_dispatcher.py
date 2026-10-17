@@ -35,6 +35,7 @@ class ToolValidationResult:
 class ToolDispatchPlan:
     binding: StepToolBinding | None
     activation_required: bool = False
+    invocation_side_effect: str | None = None
 
     @property
     def descriptor(self) -> ToolDescriptor | None:
@@ -61,6 +62,8 @@ class ToolDispatchPlan:
     def side_effect(self) -> str:
         if self.activation_required:
             return "none"
+        if self.invocation_side_effect is not None:
+            return self.invocation_side_effect
         return (
             self.descriptor.execution_policy.side_effect
             if self.descriptor is not None
@@ -271,7 +274,18 @@ class ToolDispatcher:
                 )
                 else None
             )
-        return ToolDispatchPlan(binding, activation_required=activation_required)
+        effect = None
+        if binding and not activation_required:
+            from eidos_runtime.tools.automation import AutomationToolRuntime
+            from pydantic import ValidationError
+            entry = binding.descriptor
+            if entry.provenance.kind == "builtin" and entry.provenance.source_id == "eidos.automation" and isinstance(entry.runtime, AutomationToolRuntime):
+                try:
+                    if entry.validate_arguments(call.arguments).valid:
+                        effect = entry.runtime.invocation_effect(call.arguments)
+                except (ValueError, ValidationError):
+                    pass
+        return ToolDispatchPlan(binding, activation_required=activation_required, invocation_side_effect=effect)
 
     def argument_validation(
         self, call: ModelToolCall, plan: ToolDispatchPlan

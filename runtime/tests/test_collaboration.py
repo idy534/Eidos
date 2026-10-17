@@ -152,8 +152,8 @@ def test_busy_followup_is_a_message_and_never_restarts_after_completion(tmp_path
         store.close()
 
 
-def test_omitted_role_creates_default_and_custom_roles_are_rejected(tmp_path: Path) -> None:
-    from pydantic import ValidationError
+def test_omitted_role_creates_default_and_unknown_types_are_rejected(tmp_path: Path) -> None:
+    from eidos_runtime.domain.collaboration import CollaborationRejected
 
     store, _session, parent = _parent(tmp_path)
     try:
@@ -162,8 +162,9 @@ def test_omitted_role_creates_default_and_custom_roles_are_rejected(tmp_path: Pa
         child = repository.spawn(parent['id'], item['id'], SpawnAgent(task_name='general', message='Inspect the task'))
         assert child.role == 'default'
         assert repository.child_role_for_run(child.run_id) == 'default'
-        with pytest.raises(ValidationError):
-            SpawnAgent(task_name='custom', message='Inspect the task', role='reviewer')
+        unknown = store.create_tool_item(parent['id'], 1, 1, 'spawn-custom', 'spawn_agent', '{}')
+        with pytest.raises(CollaborationRejected, match='agent_type_unavailable'):
+            repository.spawn(parent['id'], unknown['id'], SpawnAgent(task_name='custom', message='Inspect the task', role='reviewer'))
     finally:
         store.close()
 

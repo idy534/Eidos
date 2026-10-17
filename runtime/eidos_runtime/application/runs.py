@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from eidos_runtime.persistence.input_context import InputContextRepository
+from eidos_runtime.persistence.agent_catalog import AgentSnapshotRepository
+from eidos_runtime.application.agent_catalog import AgentCatalog
+from eidos_runtime.domain.agents import AgentCatalogSnapshot
 from eidos_runtime.domain.input_reference import InputSnapshot
+from eidos_runtime.domain.automation import AutomationModel, AutomationError
 
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -96,6 +100,7 @@ class RunStorePort(Protocol):
         plan_id: str | None = None,
         plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        agent_catalog: AgentCatalogSnapshot | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]: ...
 
@@ -208,6 +213,10 @@ class RunStartOutcome:
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def mark_response_delivered(self) -> None:
+        self.release_after_commit()
+
+    def release_after_commit(self) -> None:
+        """Release accepted internal work without fabricating an RPC response."""
         self._mark_settled()
         if self._start is not None:
             self._runtime.release(self._start)
@@ -260,10 +269,12 @@ class RunApplication:
         session_repository: RunSessionRepositoryPort | None = None,
         lifecycle_coordinator: SessionLifecycleCoordinator | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
+        agent_catalog: AgentCatalog | None = None,
     ) -> None:
         self._typed_repository = (
             TypedRuntimeRepository(database) if database is not None else None
         )
+        self._agent_catalog = agent_catalog
         self._store = store
         self._runtime = runtime
         self._environment = environment
@@ -302,8 +313,21 @@ class RunApplication:
             raise RuntimeError("store is not configured")
         return [value.reference.id for value in InputContextRepository(self._store.database).for_run(run_id)]
 
-    def start(self, request: RunStartRequestDto) -> RunStartOutcome:
+    def select_automation_model(self, model: AutomationModel) -> AutomationModel:
+        store, _runtime, environment, _scan = self._start_dependencies()
+        request = RunStartRequestDto(sessionId="00000000-0000-0000-0000-000000000000", userInput="scheduled task",
+            modelId=model.model_id, reasoningSelection=model.reasoning_selection)
+        model_id, profile, _config = self._select_model(request, store=store, environment=environment)
+        return AutomationModel(model_id=model_id, reasoning_selection=profile.reasoning_selection)
+
+    def start(self, request: RunStartRequestDto, *, automation_occurrence_id: str | None = None, regenerate_source_run_id: str | None = None, agent_source_run_id: str | None = None, channel_message_id: str | None = None) -> RunStartOutcome:
         store, runtime, environment, scan_text = self._start_dependencies()
+        if channel_message_id is not None:
+            from eidos_runtime.persistence.channels import ChannelRepository
+            snapshot = ChannelRepository(store.database).inbound(channel_message_id).connection
+            if (request.approval_mode != snapshot.config.approval_mode
+                    or request.full_access_confirmation != snapshot.full_access_confirmation):
+                raise ApplicationError("INVALID_PARAMS", "渠道任务的审批模式必须与已确认的渠道配置一致。")
         if not environment.model_is_configured():
             raise ApplicationError("INVALID_STATE", "no model is configured")
         try:
@@ -347,6 +371,7 @@ class RunApplication:
                 raise ApplicationError("INVALID_STATE", str(error)) from error
         extension_snapshot = environment.extension_snapshot()
         operation_request: dict[str, object] = {
+            **({"regenerateSourceRunId": regenerate_source_run_id} if regenerate_source_run_id is not None else {}),
             "sessionId": request.session_id,
             "userInput": user_input,
             "workMode": request.work_mode,
@@ -380,8 +405,16 @@ class RunApplication:
                     _environment=environment,
                 )
 
+        agent_snapshot = AgentCatalogSnapshot()
+        if self._agent_catalog is not None:
+            previous = AgentSnapshotRepository(store.database).read(agent_source_run_id) if agent_source_run_id else None
+            retained = set(self.input_reference_ids(agent_source_run_id)) if agent_source_run_id else None
+            try:
+                agent_snapshot = self._agent_catalog.freeze(input_snapshots, previous=previous, retained_ids=retained)
+            except ValueError as error:
+                raise ApplicationError("INVALID_STATE", str(error)) from error
         if input_snapshots:
-            environment.validate_input_selections(input_snapshots)
+            environment.validate_input_selections([value for value in input_snapshots if value.reference.kind != "agent"])
 
         try:
             if self._session_repository is not None:
@@ -419,21 +452,52 @@ class RunApplication:
                     ):
                         self._repository_runtime.activate_workspace(workspace.path)
                     needs_title = "title" not in current_session
-                    created, _user_item = store.enqueue_run(
-                        request.session_id,
-                        user_input,
-                        references=[value.reference for value in input_snapshots],
-                        operation_id=request.operation_id,
-                        session_title=None,
-                        model_id=model_id,
-                        model_profile=model_profile,
-                        approval_mode=request.approval_mode,
-                        work_mode=request.work_mode,
-                        plan_id=request.plan_id,
-                        plan_revision=request.plan_revision,
-                        extension_snapshot=extension_snapshot,
-                        expected_workspace_identity=expected_workspace_identity,
-                    )
+                    if automation_occurrence_id is not None:
+                        from eidos_runtime.persistence.automations import AutomationRepository
+                        from eidos_runtime.db.repositories.runs import RunRepository
+                        repository = AutomationRepository(store.database)
+                        created, _user_item = repository.accept(automation_occurrence_id,
+                            lambda connection, _origin: RunRepository(store.database).create_run(
+                                request.session_id, user_input, queued=True,
+                                references=[value.reference for value in input_snapshots],
+                                model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                                work_mode=request.work_mode, extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                                expected_workspace_identity=expected_workspace_identity,
+                                transaction_connection=connection,
+                            ), request.session_id)
+                    elif channel_message_id is not None:
+                        from eidos_runtime.persistence.channels import ChannelRepository
+                        from eidos_runtime.db.repositories.runs import RunRepository
+                        channel_run_id = ChannelRepository(store.database).accept(channel_message_id, request.session_id,
+                            lambda connection: str(RunRepository(store.database).create_run(
+                                request.session_id, user_input, queued=True,
+                                model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                                extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                                expected_workspace_identity=expected_workspace_identity, transaction_connection=connection,
+                            )[0]["id"]))
+                        created = store.read_run(channel_run_id)
+                    elif regenerate_source_run_id is not None:
+                        from eidos_runtime.db.repositories.runs import RunRepository
+                        created, _user_item = RunRepository(store.database).create_run(
+                            request.session_id, user_input, queued=True,
+                            references=[value.reference for value in input_snapshots], operation_id=request.operation_id,
+                            model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                            work_mode=request.work_mode, extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                            expected_workspace_identity=expected_workspace_identity,
+                            regenerate_source_run_id=regenerate_source_run_id,
+                        )
+                    else:
+                        created, _user_item = store.enqueue_run(
+                            request.session_id, user_input,
+                            references=[value.reference for value in input_snapshots],
+                            operation_id=request.operation_id, session_title=None,
+                            model_id=model_id, model_profile=model_profile, approval_mode=request.approval_mode,
+                            work_mode=request.work_mode, plan_id=request.plan_id, plan_revision=request.plan_revision,
+                            extension_snapshot=extension_snapshot, agent_catalog=agent_snapshot,
+                            expected_workspace_identity=expected_workspace_identity,
+                        )
+        except AutomationError:
+            raise
         except ValueError as error:
             raise ApplicationError("INVALID_STATE", str(error)) from error
         except ResourceNotFoundError as error:
@@ -485,7 +549,7 @@ class RunApplication:
                     user_input=user_input or ", ".join(value.reference.label for value in input_snapshots),
                     model_id=model_id,
                 )
-                if needs_title
+                if needs_title and automation_occurrence_id is None
                 else None
             ),
         )

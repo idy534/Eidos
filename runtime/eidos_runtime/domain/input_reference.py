@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StrictStr
 
+from eidos_runtime.domain.agents import AgentDefinition
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
@@ -11,7 +12,7 @@ InputReferenceId = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")]
 
 class InputReference(EidosFrozenStrictModel):
     id: InputReferenceId
-    kind: Literal['file', 'directory', 'image', 'skill', 'mcp', 'plugin', 'history', 'excerpt']
+    kind: Literal['file', 'directory', 'image', 'skill', 'mcp', 'plugin', 'history', 'excerpt', 'agent']
     label: str = Field(min_length=1, max_length=512)
     source: str = Field(max_length=4096)
     sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
@@ -27,6 +28,7 @@ class InputSnapshot(EidosFrozenStrictModel):
     image_token_estimate: int = Field(default=0, ge=0, le=1000000)
     selection_id: str | None = Field(default=None, max_length=512)
     plugin_id: str | None = Field(default=None, max_length=256)
+    agent_definition: AgentDefinition | None = None
 
 
 class InputDraft(EidosFrozenStrictModel):

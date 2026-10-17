@@ -1,6 +1,6 @@
 # Eidos 本地定时任务：修订方案 V3
 
-修订日期：2026-10-15。本文替代上一版方案。本文只定义待实现设计，不表示功能已经完成。本轮只修改方案文档。
+修订日期：2026-10-15。本文保留实现前的方案与调研依据。当前实现、协议和验证边界以 [当前本地定时任务](current-automations.md)、生产代码与测试为准。
 
 Session 工具的参数、绑定、幂等、权限和失败处理见 [automation 详细设计](automation-tool-design.md)。本文中的 schedule/* 是 Desktop 与 Runtime 的协议接口；模型只使用一个内置工具 automation，通过 mode 处理管理操作。
 
@@ -219,16 +219,14 @@ Runtime 只维护一个调度模块。AnyIO 负责可取消等待，SQLite 决�
 
 Run 的唯一关联只能防止重复创建，不能证明任意外部副作用只发生一次。已有 Durable Intent、文件版本校验、取消和 Reconciliation 继续保留。
 
-### 建议协议
+### 实现采用的协议
 
 | 方法 | 用途 |
 | --- | --- |
-| schedule/preview | Runtime 校验规则，返回规范形式和未来五次时间；一次性任务只返回一个时刻 |
-| schedule/list、schedule/read | Runtime 分页返回计划和详情 |
-| schedule/create、schedule/update | Runtime 幂等保存计划；更新使用预期配置版本检查 |
-| schedule/pause、schedule/resume、schedule/delete | Runtime 管理未来触发 |
+| schedule/execute | command.mode 统一处理 view / create / update / delete / preview；更新使用预期配置版本检查 |
 | schedule/runNow | Runtime 幂等创建手动执行 |
-| schedule/listOccurrences | Runtime 分页返回实际触发历史 |
+| schedule/history | Runtime 分页返回实际触发历史与关联 Run 状态 |
+| schedule/refresh | Desktop 在系统唤醒后要求 Runtime 重算未来时刻 |
 
 automation 与页面调用同一应用模块。首版所有 mode 顺序执行。可信内置 Runtime 对已校验命令区分只读与写入：view / preview 不提交 Durable Intent，创建、更新与删除继续经过现有 Validate、Permission、Durable Intent、Execute、Verify 和 Commit 流程。实际调用类别需要在屏障和取消处理前固定；该分类属于待实现的小范围契约改动，不是当前已有能力。模型不能通过 Shell 写调度文件绕过流程。Python DTO 与 Desktop 契约继续使用同一 Schema 源。用户取消 Run 和处理审批继续使用现有协议。
 

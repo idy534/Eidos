@@ -14,15 +14,17 @@ const CATEGORIES = [
   { id: "all", label: "全部" },
   { id: "file", label: "文件" },
   { id: "skill", label: "Skill" },
+  { id: "agent", label: "智能体" },
   { id: "mcp", label: "MCP" },
   { id: "plugin", label: "插件" },
   { id: "history", label: "会话" },
 ] as const;
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode }: {
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onCreateAgent }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
   onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
   onSelectPlanMode?(): void;
+  onCreateAgent?: (() => void) | undefined;
 }) {
   const context = useInputContext();
   const [catalog, setCatalog] = useState<Candidate[]>([]);
@@ -76,7 +78,8 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
     void Promise.allSettled([
       window.eidosRuntime.listSkills(), window.eidosRuntime.listPlugins(),
       window.eidosRuntime.listMcpServers(), window.eidosRuntime.listSessions(),
-    ]).then(([skills, plugins, mcp, sessions]) => {
+      window.eidosRuntime.listAgentTypes?.() ?? Promise.resolve({ agents: [], error: null }),
+    ]).then(([skills, plugins, mcp, sessions, agents]) => {
       if (!active) return;
       const rows: Candidate[] = [];
       if (skills.status === "fulfilled") for (const value of skills.value.skills) {
@@ -95,6 +98,14 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
         detail: `mcp · ${value.pluginId}`,
         request: { kind: "mcp", source: value.serverId, pluginId: value.pluginId }, unavailable: !value.available || !value.consented,
       });
+      if (agents.status === "fulfilled") {
+        for (const value of agents.value.agents ?? []) rows.push({
+          id: `agent:${value.source}`, label: value.name,
+          detail: value.reason || `${value.description} · ${value.providerId ? `${value.providerId} / ` : ""}${value.modelId || "继承父模型"}`,
+          request: { kind: "agent", source: value.name }, unavailable: !value.available || !value.enabled,
+        });
+        if (agents.value.error) setError(agents.value.error);
+      }
       if (sessions.status === "fulfilled") for (const value of sessions.value.items) {
         const isProjectless = Boolean(value.projectless || !value.project);
         const projectName = !isProjectless ? (value.project?.name || value.project?.workspaceRoot.split("/").filter(Boolean).at(-1)) : undefined;
@@ -104,7 +115,7 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
           request: { kind: "history", source: value.id },
         });
       }
-      if ([skills, plugins, mcp, sessions].some((value) => value.status === "rejected")) setError("部分候选未能加载，请关闭后重试。");
+      if ([skills, plugins, mcp, sessions, agents].some((value) => value.status === "rejected")) setError("部分候选未能加载，请关闭后重试。");
       setCatalog(rows); setLoading(false);
     });
     return () => { active = false; };
@@ -215,7 +226,7 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
               ref={searchInputRef}
               autoFocus
               aria-label="搜索引用"
-              placeholder="搜索名称、Skill、扩展…"
+              placeholder="搜索名称、智能体、Skill、扩展…"
               value={query}
               onChange={(event) => onQuery(event.target.value)}
               onKeyDown={handleSearchKeyDown}
@@ -440,10 +451,14 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
           <div className="input-picker__empty">
             <SearchEmptyIcon />
             <p className="input-picker__empty-title">没有匹配项</p>
-            <p className="input-picker__empty-desc">可以通过上方按钮添加本地文件，或直接拖拽文件到输入框。</p>
+            <p className="input-picker__empty-desc">{category === "agent" ? "你可以创建智能体，也可以在设置中管理已有配置。" : "可以通过上方按钮添加本地文件，或直接拖拽文件到输入框。"}</p>
           </div>
         )}
       </div>
+      {mode === "all" && !inline && category === "agent" && <div className="input-picker__agent-actions">
+        <button type="button" className="btn btn--ghost btn--small" disabled={!onCreateAgent} onClick={onCreateAgent}>+ 创建智能体</button>
+        <button type="button" className="btn btn--ghost btn--small" onClick={() => onCommand("agents")}>管理智能体</button>
+      </div>}
     </div>
   );
 }
@@ -455,6 +470,8 @@ function renderItemIcon(candidate: Candidate) {
       return <FileIcon />;
     case "directory":
       return <FolderIcon />;
+    case "agent":
+      return <AgentIcon />;
     case "skill":
       return <SparklesIcon />;
     case "mcp":
@@ -625,6 +642,38 @@ function SearchEmptyIcon() {
     <svg viewBox="0 0 32 32" width="32" height="32" fill="none" aria-hidden="true">
       <circle cx="14" cy="14" r="8" stroke="currentColor" strokeWidth="2" strokeDasharray="3 3" />
       <path d="m20 20 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function AgentIcon({
+  width = 14,
+  height = 14,
+  className,
+}: {
+  width?: number | string;
+  height?: number | string;
+  className?: string;
+} = {}) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={width}
+      height={height}
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="3.5" r="1.5" />
+      <circle cx="3.5" cy="11.5" r="1.5" />
+      <circle cx="12.5" cy="11.5" r="1.5" />
+      <path d="M2.6 9.8C1.8 6.2 4.6 3.2 6.5 2.5" />
+      <path d="M9.5 2.5C11.4 3.2 14.2 6.2 13.4 9.8" />
+      <path d="M5.2 13C7 14.2 9 14.2 10.8 13" />
     </svg>
   );
 }

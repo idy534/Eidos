@@ -22,6 +22,9 @@ from eidos_runtime.db.schema import (
     V24_SCHEMA_VERSION,
     V25_SCHEMA_VERSION,
     V26_SCHEMA_VERSION,
+    V27_SCHEMA_VERSION,
+    V28_SCHEMA_VERSION,
+    V29_SCHEMA_VERSION,
     V18_SCHEMA_VERSION,
     V17_SCHEMA_VERSION,
     V16_SCHEMA_VERSION,
@@ -764,6 +767,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V24_SCHEMA_VERSION,
         V25_SCHEMA_VERSION,
         V26_SCHEMA_VERSION,
+        V27_SCHEMA_VERSION,
+        V28_SCHEMA_VERSION,
+        V29_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -837,6 +843,15 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V26_SCHEMA_VERSION:
                 from eidos_runtime.db.session_fork_migration import migrate_session_fork_titles
                 migrate_session_fork_titles(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V27_SCHEMA_VERSION:
+                from eidos_runtime.db.automation_migration import migrate_automations
+                migrate_automations(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V28_SCHEMA_VERSION:
+                from eidos_runtime.db.custom_agents_migration import migrate_custom_agents
+                migrate_custom_agents(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V29_SCHEMA_VERSION:
+                from eidos_runtime.db.channel_migration import migrate_channels
+                migrate_channels(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()
@@ -1076,7 +1091,7 @@ def _blob_references(state: StateDatabase) -> Iterator[str]:
     tables = _table_names(connection)
     queries = [
         f"SELECT snapshot_json FROM {table}"
-        for table in ("context_snapshots", "step_resolution_snapshots", "input_references")
+        for table in ("context_snapshots", "step_resolution_snapshots", "input_references", "run_agent_catalogs")
         if table in tables
     ]
     if "session_history_entries" in tables:

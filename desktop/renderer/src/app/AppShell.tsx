@@ -16,10 +16,11 @@ import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { EidosMark } from "../components/EidosMark.js";
 import { SessionSidebar } from "../components/SessionSidebar.js";
+import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
-import { PrimaryActionButton } from "../components/PrimaryActionButton.js";
+import { PlusIcon, PrimaryActionButton } from "../components/PrimaryActionButton.js";
 import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
 import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
@@ -141,7 +142,8 @@ export function AppShell({ runtime }: AppShellProps) {
   const approvalMode = (approvalSessionId ? approvalModes[approvalSessionId] : undefined)
     ?? sessionApprovalMode;
   const [workModes, setWorkModes] = useState<Record<string, "execute" | "plan">>({});
-  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestRun?.workMode ?? "execute";
+  const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin).at(-1);
+  const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestUserRun?.workMode ?? "execute";
   const contextRun = runState.activeRun ?? latestRun;
   const contextRunId = contextRun && contextRun.modelId === modelState.selectedModelId
     ? contextRun.id
@@ -165,6 +167,8 @@ export function AppShell({ runtime }: AppShellProps) {
 
   // UI-only state (not domain state)
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [automationDetailId, setAutomationDetailId] = useState<string | undefined>();
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("model");
   const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
   const [titleDraft, setTitleDraft] = useState("");
@@ -545,16 +549,17 @@ export function AppShell({ runtime }: AppShellProps) {
       const isCmdOrCtrl = event.metaKey || event.ctrlKey;
       if (isCmdOrCtrl && (event.key === "b" || event.key === "B")) {
         event.preventDefault();
-        if (!settingsOpen) toggleSidebar();
+        if (!settingsOpen && !automationsOpen) toggleSidebar();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleSidebar, settingsOpen]);
+  }, [toggleSidebar, settingsOpen, automationsOpen]);
 
   // -----------------------------------------------------------------------
   // Session Selection & Creation with Model re-eval
   const handleNavigateToSession = useCallback((target: string) => {
+    setAutomationsOpen(false);
     if (target === "draft") {
       sessionActions.startDraft();
       return;
@@ -587,27 +592,31 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }, [sessionState.snapshot?.session.id, sessionState.draft, navHistoryState.history.length, navHistoryActions]);
 
-  const canGoBack = settingsOpen || navHistoryState.canGoBack;
-  const canGoForward = !settingsOpen && navHistoryState.canGoForward;
+  const canGoBack = settingsOpen || automationsOpen || navHistoryState.canGoBack;
+  const canGoForward = !settingsOpen && !automationsOpen && navHistoryState.canGoForward;
   const handleGoBack = useCallback(() => {
     if (settingsOpen) {
       setSettingsOpen(false);
+    } else if (automationsOpen) {
+      setAutomationsOpen(false);
     } else {
       void navHistoryActions.goBack();
     }
-  }, [settingsOpen, navHistoryActions]);
+  }, [settingsOpen, automationsOpen, navHistoryActions]);
   const handleGoForward = useCallback(() => {
-    if (!settingsOpen) {
+    if (!settingsOpen && !automationsOpen) {
       void navHistoryActions.goForward();
     }
-  }, [settingsOpen, navHistoryActions]);
+  }, [settingsOpen, automationsOpen, navHistoryActions]);
 
   async function handleSelectSession(session: Session) {
+    setAutomationsOpen(false);
     navHistoryActions.navigateTo(session.id);
     return sessionActions.selectSession(session);
   }
 
   function handleCreateSession(project?: Project | null): void {
+    setAutomationsOpen(false);
     navHistoryActions.navigateTo("draft");
     sessionActions.startDraft(project);
   }
@@ -1109,7 +1118,7 @@ export function AppShell({ runtime }: AppShellProps) {
     if (!currentSnapshot) return;
     const existing = openTabs.find((tab) => tab.id === "agent");
     if (!existing) {
-      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "子智能体" }]);
+      setOpenTabs((current) => [...current, { id: "agent", kind: "agent", title: "智能体" }]);
     }
     setActiveTabId("agent");
     setDockOpen(true);
@@ -1141,7 +1150,7 @@ export function AppShell({ runtime }: AppShellProps) {
       openAgent(matched);
     } else if (target?.id) {
       const id = `agent-${target.id}`;
-      const title = target.taskName || "子智能体";
+      const title = target.taskName || "智能体";
       setOpenTabs((tabs) => tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, kind: "agent", title }]);
       setActiveTabId(id);
       setDockOpen(true);
@@ -1297,7 +1306,7 @@ export function AppShell({ runtime }: AppShellProps) {
               )}
               {agents.state?.agents && agents.state.agents.length > 0 && (
                 <div className="environment-popover__section">
-                  <div className="environment-popover__section-title">子智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
+                  <div className="environment-popover__section-title">智能体 · {agents.state.agents.length}{pendingAgentApprovals > 0 ? ` · 待审批 ${pendingAgentApprovals}` : ""}</div>
                   <AgentList agents={agents.state.agents} onOpen={openAgent} approvalCounts={agentApprovalCounts} compact />
                 </div>
               )}
@@ -1363,16 +1372,16 @@ export function AppShell({ runtime }: AppShellProps) {
       showToast,
     } : undefined}>
     <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
-      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
+      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
       onNavigateToSession={(target) => {
         if (settingsOpen) setSettingsOpen(false);
         navHistoryActions.navigateTo(target);
         handleNavigateToSession(target);
       }}>
-    <main className={`workbench${sidebarOpen && !settingsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}`}>
+    <main className={`workbench${sidebarOpen && !settingsOpen && !automationsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}${automationsOpen ? " workbench--settings workbench--automations" : ""}`}>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <SessionSidebar
-        collapsed={!sidebarOpen || settingsOpen}
+        collapsed={!sidebarOpen || settingsOpen || automationsOpen}
         sessions={sessionState.sessions}
         projects={sessionState.projects}
         pins={sidebarPins.pins}
@@ -1385,9 +1394,9 @@ export function AppShell({ runtime }: AppShellProps) {
         runtimePresentation={runtimePresentation}
         isSelectingSessionId={sessionState.pending.selectingSessionId}
         gitStatusBySessionId={gitReviewState.statusBySessionId}
-        onCreate={() => handleCreateSession()}
+        onCreate={() => { setAutomationsOpen(false); handleCreateSession(); }}
         onCreateInProject={handleCreateInProject}
-        onSelect={(session) => void handleSelectSession(session)}
+        onSelect={(session) => { setAutomationsOpen(false); void handleSelectSession(session); }}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
         onDeleteProject={(project) => requestDeleteProject(project)}
@@ -1395,11 +1404,14 @@ export function AppShell({ runtime }: AppShellProps) {
           void window.eidosRuntime.showItemInFolder(project.workspaceRoot).catch(() => undefined);
         }}
         onOpenSettings={() => {
+          setAutomationsOpen(false);
           setSettingsOpen(true);
           setDockOpen(false);
           setDockExpanded(false);
           setRenamingSessionId(undefined);
         }}
+        onOpenAutomations={() => { setAutomationDetailId(undefined); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
+        onOpenAutomation={(id) => { setAutomationDetailId(id); setAutomationsOpen(true); setSettingsOpen(false); setDockOpen(false); setDockExpanded(false); }}
         navigationSlot={
           <NavigationControls
             sidebarOpen={sidebarOpen}
@@ -1429,7 +1441,19 @@ export function AppShell({ runtime }: AppShellProps) {
           </div>
         )}
 
-        {settingsOpen ? (
+        {automationsOpen ? (
+          <AutomationPage
+            initialAutomationId={automationDetailId}
+            projects={sessionState.projects}
+            sessions={sessionState.sessions}
+            models={modelState.list?.models ?? []}
+            currentSessionId={isDraft ? undefined : currentSnapshot?.session.id}
+            currentProjectId={currentSnapshot?.session.project?.id}
+            onClose={() => setAutomationsOpen(false)}
+            onOpenSession={(id) => { setAutomationsOpen(false); handleNavigateToSession(id); }}
+            runtimeVersion={runtimeStatus.state === "ready" ? runtimeStatus.runtimeVersion : "0.x"}
+          />
+        ) : settingsOpen ? (
           <SettingsPage
             initialCategory={settingsCategory}
             sessionId={activeSnapshot?.session.id}
@@ -1713,6 +1737,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     onOpenPlan={handleOpenPlan}
                     workspaceRoot={currentSnapshot.session.workspaceRoot}
                     onBackToList={openAgentList}
+                    expanded={dockExpanded}
                   />;
                   if (tab.kind === "text-review" && reviewRequest) return <TextReviewPanel
                     key={`${executionKey}:${reviewRequest.requestId}`} sessionId={currentSnapshot.session.id}
@@ -1835,19 +1860,14 @@ export function AppShell({ runtime }: AppShellProps) {
             <div className="empty-actions">
               <PrimaryActionButton
                 size="large"
-                label="开始对话"
-                subtitle="不选择项目也可以开始"
+                label="新建会话"
+                icon={<PlusIcon size={18} />}
                 showArrow={true}
                 disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => handleCreateSession()}
-              />
-              <PrimaryActionButton
-                size="large"
-                label="选择项目"
-                subtitle="选择一个项目开始使用 Eidos"
-                showArrow={true}
-                disabled={sessionState.pending.creatingSession || !isStorageReady}
-                onClick={() => void handleSelectProject()}
+                onClick={() => {
+                  setAutomationsOpen(false);
+                  handleCreateSession();
+                }}
               />
             </div>
           </div>
@@ -1855,7 +1875,7 @@ export function AppShell({ runtime }: AppShellProps) {
       )}
       </section>
 
-      {!sidebarOpen && !settingsOpen && (
+      {!sidebarOpen && !settingsOpen && !automationsOpen && (
         <div className="collapsed-navigation-bar">
           <NavigationControls
             sidebarOpen={sidebarOpen}

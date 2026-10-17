@@ -51,11 +51,14 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
 
 
 EXPECTED_TABLES = {
+    "channel_connections", "channel_sessions", "channel_inbound", "channel_run_origins", "channel_deliveries",
+    "scheduled_tasks", "scheduled_occurrences", "automation_run_origins",
     "sessions",
     "session_forks",
     "session_history_entries",
     "session_history_resources",
     "runs",
+    "run_agent_catalogs",
     "items",
     "tool_calls",
     "approvals",
@@ -464,7 +467,9 @@ class StorageSchemaTests(unittest.TestCase):
         self.assertEqual(
             indexes - {"memory_source_items_session", "memory_entries_scope", "memory_evidence_source", "memory_jobs_queue", "memory_model_attempts_time"},
             {
+                "channel_inbound_status", "channel_deliveries_pending",
                 "one_active_run_per_session",
+                "scheduled_occurrences_task", "scheduled_occurrences_preparing", "automation_run_origins_task",
                 "one_pending_approval_per_item",
                 "one_pending_approval_per_run",
                 "one_running_tool_attempt_per_tool_call",
@@ -545,8 +550,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 27)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 26)
+        self.assertEqual(SCHEMA_VERSION, 30)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 29)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

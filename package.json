@@ -40,6 +40,7 @@
     "test:renderer-behavior": "vitest run --config vitest.renderer.config.ts",
     "test:composer-layout": "electron scripts/test-composer-layout.cjs",
     "test:renderer-styles": "electron scripts/test-renderer-styles.cjs",
+    "test:renderer-startup": "electron scripts/test-renderer-startup.cjs",
     "test:sidebar-pinning": "electron scripts/test-sidebar-pinning.cjs",
     "test:main:fast": "pnpm build:main && node --test dist/main/app-command-dispatch.test.js dist/main/log-redaction.test.js dist/main/quit-flow.test.js dist/main/runtime-paths.test.js dist/main/runtime-shutdown.test.js dist/main/terminal-manager.test.js",
     "test:main": "pnpm build:main && node --test \"dist/main/*.test.js\"",

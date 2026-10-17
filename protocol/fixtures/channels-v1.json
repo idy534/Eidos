@@ -1,0 +1,166 @@
+{
+  "validRequests": [
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": true,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "approvalMode": "full_access"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "fullAccessConfirmation": "full-access-v1"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "reasoningSelection": "high"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    }
+  ],
+  "invalidRequests": [
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "unexpected": true
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": true,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "approvalMode": "unknown"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "",
+        "modelId": "deepseek-v4-flash"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "robotCode": "robot"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "corpId": "corp"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "allowedUserIds": [
+          "user"
+        ]
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "allowedConversationIds": [
+          "group"
+        ]
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "allowDirectMessages": false
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "approvalMode": "full_access"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret",
+      "fullAccessConfirmation": "unsupported-version"
+    },
+    {
+      "config": {
+        "enabled": false,
+        "clientId": "app",
+        "modelId": "deepseek-v4-flash",
+        "reasoningSelection": "ultra"
+      },
+      "expectedRevision": 0,
+      "clientSecret": "sample-secret"
+    }
+  ],
+  "validResponses": [
+    {
+      "connection": null,
+      "state": "disabled",
+      "reason": null,
+      "deliveries": []
+    }
+  ]
+}

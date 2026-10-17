@@ -299,3 +299,5 @@
 }
 .input-thumbnail { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; overflow: hidden; border-radius: 3px; }
 .input-thumbnail img { width: 18px; height: 18px; object-fit: cover; }
+
+.agent-definition-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }

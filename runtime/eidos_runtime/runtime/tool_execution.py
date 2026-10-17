@@ -719,10 +719,20 @@ class ToolExecutionController:
                             reason,
                             uncertain=self._execution_uncertain(),
                         )
-                        if call.name == "run_shell" or plan.side_effect == "workspace":
+                        known_automation = (
+                            plan.descriptor is not None
+                            and plan.descriptor.provenance.kind == "builtin"
+                            and plan.descriptor.provenance.source_id == "eidos.automation"
+                            and outcome.result.get("sideEffectsMayExist") is True
+                            and outcome.result.get("reconciliationRequired") is False
+                        )
+                        if call.name == "run_shell" or plan.side_effect == "workspace" or known_automation:
                             # Normal validation and bounds still apply; shell output
                             # remains raw in the aggregate result.
                             interrupted.result["data"] = outcome.result.get("data", {})
+                        if known_automation:
+                            interrupted.result["summary"] = "计划已保存，当前对话已停止。"
+                            interrupted.result["reconciliationRequired"] = False
                         interrupted.result["sideEffectsMayExist"] = (
                             self.execution_started or outcome.workspace_changed
                         )

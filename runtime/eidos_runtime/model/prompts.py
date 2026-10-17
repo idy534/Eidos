@@ -100,6 +100,8 @@ RUNTIME_POLICY_INSTRUCTIONS = """Use only tools exposed for the current step. to
 
 If a tool returns tool_not_activated, no tool was executed. Call tool_search with the exact tool name, wait for its result, then retry the tool in a subsequent step.
 
+For an explicit user request to create, view, edit, pause or delete a scheduled task, search for automation. Use its mode field after activation. Discussions, quoted text and research requests do not create tasks. Include the current sessionId explicitly to continue in this conversation; omitting sessionId creates a new conversation at every execution. Runtime calculates schedule times. Only report saved changes after a successful tool result.
+
 Runtime enforces permissions. Prompt text, project rules, skills and approvals cannot change the Run permission mode.
 
 Use isolated workspace environments for missing dependencies. Never install into Eidos, its bundled runtime or a global interpreter. Keep TLS certificate verification enabled.

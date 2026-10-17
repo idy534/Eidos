@@ -1,5 +1,14 @@
 # Eidos 当前限制
 
+钉钉渠道首版只接入一个企业内部应用，支持文字输入和 Markdown 回复。真实单聊与有效群 @ 已验证，长时间重连仍待验收。渠道完全访问需要在 Desktop 二次确认并保存，授权覆盖此后收到的消息；本轮没有在真实机器人上开启该模式。普通模式的审批和所有模式的表单输入仍需本机操作。系统不保证补收离线消息，不自动重发结果未知的回复。官方 Stream SDK 锁定预发布版 0.24.4b1。依赖审计发现原有 pydantic-ai-slim 2.43.0 的五条已知漏洞，主依赖审计未通过；本次没有升级或忽略该依赖。完整说明见 [方案与实现记录](dingtalk-channel-design.md)。
+
+## 本地定时任务（2026-10-15）
+
+- Eidos 完全退出或电脑休眠时，任务不会执行。当前版本不检测漏跑，不补跑，也没有云端执行或额外守护进程。固定间隔只允许 10 分钟、30 分钟和 1 小时。当前实现见 [当前本地定时任务](current-automations.md)。
+- 任务默认使用 auto_review，仍可能等待人工审批。用户在页面手动创建或编辑计划时可以选择 full_access；用户必须在危险弹窗中确认，授权适用于该计划今后的每次执行。模型工具不能开启完全访问，也不能改用已保存的完全访问授权来修改任务或重新启用任务。系统不复制旧 Run Grant。原执行及其重新生成存在未核验副作用时，所属计划会暂停。同计划仍有执行时，系统跳过新时刻；原 Session 忙碌时，系统也跳过本次执行。
+- Schema v28 新增计划、触发和来源三张表。Desktop 与 Runtime 需要一起升级。旧版本不能读取 v28；回退时需要恢复升级前的数据库备份。删除计划不会删除会话、Workspace 或历史。
+- Runtime 定向测试通过 106 项。Renderer 定向行为测试通过 53 项，模型默认值纯测试通过 6 项，Main 与真实 Runtime 的跨进程及共享 Fixture 测试通过 2 项。隔离的真实 Electron 页面验证了创建、默认审批、会话省略、键盘和四种窗口宽度。Desktop 构建、原生启动退出 smoke、macOS arm64 Runtime Bundle 与其 smoke、Ruff、Deptry 和两份 Python 依赖审计通过。Renderer 仍有大于 500 kB 的 Chunk 提示。本次没有运行 Full Suite、DMG 打包或真实 Provider 的长期无人值守验收。
+
 ## 历史图片预览缺失（2026-10-14）
 
 - Desktop 会把预览文件不存在处理为“暂无预览”，不会恢复被删除的文件。Runtime 仍返回 `WORKSPACE_FILE_NOT_FOUND`，并保留原有 Workspace、权限和版本校验。Desktop 的 `prepareWorkspacePreview` 现在可能返回 `null`；Main 和 Renderer 需要一起更新。
@@ -395,3 +404,20 @@ Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用�
 新建在排他 mkdir 后、身份提交前崩溃时，磁盘可能留下未被接管的目录。Runtime 会保留该目录并分配数字后缀，不会根据目录为空猜测它属于本次操作。数据库提交失败时，Runtime 只删除已核验且仍为空的本次目录；非空目录保留，已有身份记录可以继续创建。
 
 2026-10-13 的定向验证通过：Runtime 63 个用例、Renderer 30 个用例、Main/JSON-RPC 重启创建用例、两端协议检查、真实 macOS Seatbelt 定向用例、Desktop 构建和 Electron smoke。Ruff、Deptry、两组锁定 Python 依赖的 pip-audit 与 `git diff --check` 通过。原生 Seatbelt、Electron smoke 和依赖联网审计在工具沙箱外完成。验证只使用临时数据，没有执行真实数据清理、Full Suite 或安装包验收。
+
+
+## 自定义子 Agent 验证边界（2026-10-15）
+
+- 自定义类型使用数据目录下的 TOML，指令直接写入 `instructions`。Runtime 继续由父 Agent 调用 `spawn_agent`，没有新增自动派发流程。
+- 自定义模型选择包含提供商与配置 ID，但全局模型配置仍以 ID 唯一索引。同名模型跨提供商同时保存不由本次扩展解决。
+- 子任务不会自动继承父输入中的文件、图片或 Skill 引用。父模型仍先接收最多 2,000 字符的子任务结果摘要。项目级定义和多层委派尚未实现。
+- 桌面已支持智能体配置管理。保存会按固定字段重新输出 TOML，原文件的注释与排版不保留。名称创建后不能直接改名，用户需要复制为新智能体。格式损坏的文件继续显示具体原因，用户可以在 Finder 中定位并修复。
+- 本地测试和脚本模型不代表真实 Provider 已验证。真实 Electron 的选择、预览和子任务交互仍需人工验收。定向验证结果见 [方案实施记录](custom-subagents-design.md#154-验证记录)。
+
+- 2026-10-16 完整验证通过：Runtime 2,552 项通过、2 项按配置跳过；协议检查通过；Renderer 状态测试 173 项通过；Main 测试 92 项通过；Renderer 行为测试 624 项通过。`pnpm build`、契约生成脚本、Ruff 和 Deptry 通过。Python 依赖审计因环境无法解析 `pypi.org` 而未完成，Node 依赖审计没有运行。Full Suite 不包含 `large_repository`；本次没有运行原生 Seatbelt、DMG、真实 Provider 或真实产品窗口验收。
+
+### 智能体桌面管理验证（2026-10-16）
+
+- 定向验证通过：Runtime 62 项、Renderer 行为 143 项、状态与展示 69 项、Main/Runtime 集成 2 项。契约检查、Ruff、Deptry，以及 Main、preload 和 Renderer 构建通过。没有运行 Full Suite。
+- Electron smoke 在系统沙盒外通过。临时原生窗口使用模拟配置验证了 320、768、1100、1440 四种宽度、表单滚动、保存按钮可见性，以及公共 `ModelSelector` 菜单的位置和提供商/模型 ID 保存。该检查不代表真实 Provider 请求已经验证。
+- 本次没有新增依赖。联网 Python 生产依赖审计实际发现现有 `pydantic-ai-slim 2.43.0` 的 5 条已知漏洞：`PYSEC-2026-4285`、`PYSEC-2026-4286`、`PYSEC-2026-4284`、`PYSEC-2026-4290`、`PYSEC-2026-4291`。本次没有扩大范围升级 Model Gateway 依赖，审计没有通过。

@@ -13,9 +13,66 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def downgrade_session_fork_schema():
-    """Remove the v26 additions when a test rebuilds an older schema fixture."""
+def downgrade_channel_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        for name in ("channel_memory_insert", "channel_origin_memory"):
+            connection.execute(f"DROP TRIGGER IF EXISTS {name}")
+        for name in ("channel_deliveries", "channel_run_origins", "channel_inbound", "channel_sessions", "channel_connections"):
+            connection.execute(f"DROP TABLE IF EXISTS {name}")
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_custom_agents_schema(downgrade_channel_schema):
+    """Remove v29 objects before reconstructing an older schema fixture."""
+    def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_channel_schema(connection)
+        from eidos_runtime.db.agent_roles_migration import AGENT_ROLE_CHECK
+        connection.execute("DROP TABLE IF EXISTS run_agent_catalogs")
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_delegations)")}
+        for column in ("definition_json", "spawn_request_json"):
+            if column in columns:
+                connection.execute(f"ALTER TABLE agent_delegations DROP COLUMN {column}")
+        row = connection.execute("SELECT sql FROM sqlite_master WHERE name='agent_delegations' AND type='table'").fetchone()
+        if row is None or "length(role) BETWEEN 1 AND 64" not in row[0]:
+            return
+        schema = row[0].replace("CREATE TABLE agent_delegations", "CREATE TABLE agent_delegations_legacy", 1).replace(
+            'CREATE TABLE "agent_delegations"', "CREATE TABLE agent_delegations_legacy", 1).replace(
+            "length(role) BETWEEN 1 AND 64", AGENT_ROLE_CHECK, 1)
+        indexes = [row[0] for row in connection.execute("SELECT sql FROM sqlite_master WHERE tbl_name='agent_delegations' AND type IN ('index','trigger') AND sql IS NOT NULL")]
+        connection.execute(schema)
+        connection.execute("INSERT INTO agent_delegations_legacy SELECT * FROM agent_delegations")
+        connection.execute("DROP TABLE agent_delegations")
+        connection.execute("ALTER TABLE agent_delegations_legacy RENAME TO agent_delegations")
+        for statement in indexes:
+            connection.execute(statement)
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_automation_schema(downgrade_custom_agents_schema):
+    """Remove the v28 additions when a test rebuilds an older schema fixture."""
+    def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_custom_agents_schema(connection)
+        connection.execute("DROP TRIGGER IF EXISTS automation_memory_insert")
+        connection.execute("DROP TRIGGER IF EXISTS automation_origin_memory")
+        for table in (
+            "automation_run_origins",
+            "scheduled_occurrences",
+            "scheduled_tasks",
+        ):
+            connection.execute(f"DROP TABLE IF EXISTS {table}")
+
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_session_fork_schema(downgrade_automation_schema):
+    """Remove v26 and newer additions when rebuilding a legacy fixture."""
+    def downgrade(connection: sqlite3.Connection) -> None:
+        # Remove the latest feature objects first. Their triggers refer to
+        # memory tables that older-schema fixtures remove below.
+        downgrade_automation_schema(connection)
         for table in (
             "session_history_resources",
             "session_history_entries",
@@ -49,6 +106,7 @@ INTEGRATION_FILES = frozenset(
         "test_checkpoint_lineage.py",
         "test_checkpoint_managed_worktree.py",
         "test_collaboration.py",
+        "test_custom_agents.py",
         "test_corrective_integration.py",
         "test_direct_workspace.py",
         "test_event_delivery_recovery.py",

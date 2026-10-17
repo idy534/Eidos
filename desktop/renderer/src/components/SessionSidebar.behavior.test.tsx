@@ -1047,6 +1047,30 @@ describe("SessionSidebar fork origin hover", () => {
     onDeleteProject: vi.fn(), onOpenSettings: vi.fn(),
   };
 
+  it.each([false, true])("opens the automation source from a scheduled Session (pinned: %s)", async (pinned) => {
+    const generated: Session = { ...parent, id: "scheduled-session", title: "每日一个为什么",
+      automationOrigin: { automationId: "task-id", revision: 1, occurrenceId: "occurrence-id", scheduledFor: "manual:hidden-id" } };
+    delete generated.forkedFrom;
+    const open = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = render(<SessionSidebar {...props} selectedId={generated.id} sessions={[generated]} onSelect={onSelect}
+      onOpenAutomation={open} pins={pinned ? [{ kind: "session", id: generated.id }] : []} />);
+    const trigger = container.querySelector<HTMLElement>('[data-session-id="scheduled-session"] button')!;
+    expect(trigger.querySelector(".session-title")).toHaveTextContent("每日一个为什么");
+    expect(within(trigger).getByRole("img", { name: "定时任务会话" })).toHaveClass("session-automation-indicator");
+    fireEvent.mouseEnter(trigger);
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent("会话来源");
+    expect(tooltip).not.toHaveTextContent("manual:");
+    act(() => { fireEvent.mouseLeave(trigger); fireEvent.mouseEnter(tooltip); });
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    fireEvent.click(within(tooltip).getByRole("button", { name: "打开来源定时任务" }));
+    expect(open).toHaveBeenCalledExactlyOnceWith("task-id");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
   it.each([false, true])("opens the immediate source with its updated name (pinned: %s)", async (pinned) => {
     const onSelect = vi.fn();
     const pins = pinned ? [{ kind: "session" as const, id: fork.id }] : [];

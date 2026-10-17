@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.agents import AgentCatalogSnapshot
+
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
 
 from eidos_runtime.domain.run_termination import RunTermination
@@ -18,6 +20,10 @@ from pathlib import Path
 import sqlite3
 import threading
 from typing import Callable, Literal, TypeVar
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from eidos_runtime.application.automations import AutomationApplication
 
 from eidos_runtime.models.tool_text import ToolTextPage
 from eidos_runtime.models.skill_settings import SkillState
@@ -117,6 +123,7 @@ def _legacy_session_mutation(
 
 class SessionStore:
     def __init__(self, data_directory: Path | None = None) -> None:
+        self.automations: AutomationApplication | None = None
         self._database = Database(data_directory)
         self._persistence_layout: PersistenceLayout | None = None
         self._sessions: SessionRepository | None = None
@@ -633,6 +640,7 @@ class SessionStore:
         plan_id: str | None = None,
         plan_revision: int | None = None,
         extension_snapshot: dict[str, object] | None = None,
+        agent_catalog: AgentCatalogSnapshot | None = None,
         expected_workspace_identity: WorkspaceIdentity | None = None,
         run_id: str | None = None,
         item_id: str | None = None,
@@ -650,6 +658,7 @@ class SessionStore:
             plan_id=plan_id,
             plan_revision=plan_revision,
             extension_snapshot=extension_snapshot,
+            agent_catalog=agent_catalog,
             expected_workspace_identity=expected_workspace_identity,
             run_id=run_id,
             item_id=item_id,

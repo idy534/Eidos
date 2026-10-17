@@ -5,7 +5,7 @@ import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.
 import { groupSessionsByProject, projectSidebarGroups, sidebarTargetKey, taskStatusPresentation } from "../session-state.js";
 import type { SidebarTarget } from "../../../shared/sidebar.js";
 import { ContextMenu } from "./DropdownMenu.js";
-import { FinderIcon, EditIcon, TrashIcon, PinIcon } from "./MenuIcons.js";
+import { FinderIcon, EditIcon, TrashIcon, PinIcon, AutomationsIcon } from "./MenuIcons.js";
 import { EidosMark } from "./EidosMark.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
@@ -63,6 +63,8 @@ interface Props {
   onDeleteProject: (project: Project) => void;
   onShowInFinder?: (project: Project) => void;
   onOpenSettings: () => void;
+  onOpenAutomations?: () => void;
+  onOpenAutomation?: (id: string) => void;
   navigationSlot?: React.ReactNode;
 }
 
@@ -89,7 +91,7 @@ export function SessionSidebar({
   pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
-  navigationSlot,
+  navigationSlot, onOpenAutomations, onOpenAutomation,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
@@ -586,6 +588,19 @@ export function SessionSidebar({
         }}
       />
       <nav ref={navRef} aria-label="项目与最近" onScroll={dismissTooltipImmediately}>
+        {onOpenAutomations && (
+          <div className="sidebar-automation-section">
+            <button
+              type="button"
+              className="sidebar-automation-entry"
+              onClick={onOpenAutomations}
+              aria-label="打开定时任务"
+            >
+              <AutomationsIcon className="sidebar-automation-icon" />
+              <span className="sidebar-automation-label">定时任务</span>
+            </button>
+          </div>
+        )}
         {sidebar.pinned.length > 0 && (
           <section className="sidebar-pinned" aria-label="置顶">
             <p className="nav-label">置顶</p>
@@ -718,6 +733,11 @@ export function SessionSidebar({
           dismissTooltipImmediately();
           onSelect(source);
         }}
+        onOpenAutomation={onOpenAutomation ? (id) => {
+          if (disabled) return;
+          dismissTooltipImmediately();
+          onOpenAutomation(id);
+        } : undefined}
         disabled={disabled}
         onMouseEnter={handleTooltipEnter}
         onMouseLeave={handleTooltipLeave}
@@ -860,6 +880,9 @@ function ProjectSessionList({
                     <span className="session-title">{session.title ?? "新任务"}</span>
                     {session.forkedFrom && <span className="session-fork-indicator" role="img" aria-label="分叉会话" title="分叉会话">
                       <ForkIcon />
+                    </span>}
+                    {session.automationOrigin && <span className="session-automation-indicator" role="img" aria-label="定时任务会话" title="定时任务会话">
+                      <AutomationsIcon />
                     </span>}
                   </span>
                   {project.gitAvailable && session.worktree && (

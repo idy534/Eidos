@@ -1020,9 +1020,9 @@ test("renders subagent collaboration tools with custom label, subagent name, and
     />,
   );
 
-  assert.match(html, /创建子智能体 · /);
+  assert.match(html, /创建智能体 · /);
   assert.match(html, /class="tool-file-link"[^>]*>explore<\/button>/);
-  assert.match(html, /class="tool-file-link"[^>]*>等待子智能体<\/button>/);
+  assert.match(html, /class="tool-file-link"[^>]*>等待智能体<\/button>/);
   assert.doesNotMatch(html, /已运行 spawn_agent/);
   assert.doesNotMatch(html, /已运行 wait_agents/);
   assert.doesNotMatch(html, /tool-subagent-btn/);

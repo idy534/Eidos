@@ -282,7 +282,7 @@ describe("AgentWorkspacePanel", () => {
     expect((await screen.findAllByText("Write API documentation for auth module")).length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("I have updated the auth documentation.")).toBeInTheDocument();
 
-    const backButton = screen.getByRole("button", { name: "返回子智能体列表" });
+    const backButton = screen.getByRole("button", { name: "返回智能体列表" });
     fireEvent.click(backButton);
     expect(onBackToList).toHaveBeenCalled();
   });
@@ -426,7 +426,7 @@ describe("AgentWorkspacePanel", () => {
     );
 
     expect(await screen.findByText("Current answer")).toBeInTheDocument();
-    expect(await screen.findByRole("alert")).toHaveTextContent("子智能体执行记录未能全部加载。");
+    expect(await screen.findByRole("alert")).toHaveTextContent("智能体执行记录未能全部加载。");
     expect(screen.getByText("Current answer")).toBeInTheDocument();
     expect(api.readSession).toHaveBeenCalledTimes(2);
   });
@@ -446,7 +446,7 @@ describe("AgentWorkspacePanel", () => {
       />,
     );
 
-    expect(screen.getByText("暂无子智能体任务")).toBeInTheDocument();
+    expect(screen.getByText("暂无智能体任务")).toBeInTheDocument();
     expect(screen.getByText("0 个任务")).toBeInTheDocument();
   });
 
@@ -666,4 +666,160 @@ describe("AgentWorkspacePanel", () => {
     );
     expect(scrollbarCss).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*var\(--scrollbar-size\);/s);
   });
+  it("shows custom type names and the actual model provider", () => {
+    const agent = { ...historyAgent(), role: "luna-work", baseRole: "worker" as const,
+      providerId: "volcengine", modelId: "deepseek-v4.1-flash" };
+    const onOpen = vi.fn();
+    render(<AgentList agents={[agent]} onOpen={onOpen} />);
+    expect(screen.getByText("luna-work")).toBeInTheDocument();
+    expect(formatAgentTooltip(agent)).toContain("volcengine / deepseek-v4.1-flash");
+    fireEvent.click(screen.getByRole("button"));
+    expect(onOpen).toHaveBeenCalledWith(agent);
+  });
+
+  it("renders role pill with compact ellipsis when unexpanded and full display when expanded", () => {
+    const child = {
+      ...historyAgent(),
+      id: "agent-mode-test",
+      taskName: "review-luna-demo",
+      role: "default" as const,
+      baseRole: "default" as const,
+      providerId: "volcengine",
+      modelId: "deepseek-v3",
+      status: "running" as const,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({ items: [], runs: [] }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+
+    // 1. Unexpanded mode
+    const { container, rerender } = render(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        expanded={false}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    const header = container.querySelector(".agent-detail-header");
+    expect(header).toBeInTheDocument();
+    expect(header).not.toHaveClass("agent-detail-header--expanded");
+
+    const rolePill = container.querySelector(".agent-role-pill");
+    expect(rolePill).toBeInTheDocument();
+    expect(rolePill).not.toHaveClass("agent-role-pill--expanded");
+    expect(rolePill).toHaveAttribute("title", "模式：default · 模型：volcengine / deepseek-v3");
+
+    const roleText = container.querySelector(".agent-role-pill__role");
+    expect(roleText).toHaveTextContent("default");
+    const ellipsis = container.querySelector(".agent-role-pill__ellipsis");
+    expect(ellipsis).toHaveTextContent("…");
+    const details = container.querySelector(".agent-role-pill__details");
+    expect(details).toHaveTextContent("·volcengine / deepseek-v3");
+
+    // 2. Expanded mode
+    rerender(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={() => undefined}
+        approvals={[]}
+        expanded={true}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    expect(container.querySelector(".agent-detail-header")).toHaveClass("agent-detail-header--expanded");
+    expect(container.querySelector(".agent-role-pill")).toHaveClass("agent-role-pill--expanded");
+  });
+
+  it("renders redesigned stop button with stop icon, and shows spinner when stopping", () => {
+    const child = {
+      ...historyAgent(),
+      id: "agent-stop-test",
+      taskName: "review-luna-demo",
+      role: "default" as const,
+      status: "running" as const,
+    };
+    const api: Partial<EidosRuntimeAPI> = {
+      readSession: vi.fn().mockResolvedValue({ items: [], runs: [] }),
+      onNotification: vi.fn().mockReturnValue(vi.fn()),
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = api as EidosRuntimeAPI;
+    const onStop = vi.fn();
+
+    const { container, rerender } = render(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={undefined}
+        onOpen={() => undefined}
+        onStop={onStop}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    const stopButton = screen.getByRole("button", { name: "停止" });
+    expect(stopButton).toBeInTheDocument();
+    expect(stopButton).toHaveClass("agent-stop-button");
+    expect(stopButton).toHaveAttribute("title", "停止智能体");
+    expect(stopButton.querySelector(".agent-stop-button__icon")).toBeInTheDocument();
+    expect(stopButton.querySelector("rect")).toBeInTheDocument();
+
+    fireEvent.click(stopButton);
+    expect(onStop).toHaveBeenCalledWith(child);
+
+    // When stopping
+    rerender(
+      <AgentWorkspacePanel
+        agents={[child]}
+        agentId={child.id}
+        error=""
+        stopping={child.id}
+        onOpen={() => undefined}
+        onStop={onStop}
+        approvals={[]}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+      />,
+    );
+
+    const stoppingButton = screen.getByRole("button", { name: "停止中…" });
+    expect(stoppingButton).toBeDisabled();
+    expect(stoppingButton).toHaveClass("agent-stop-button--stopping");
+    expect(stoppingButton.querySelector(".agent-stop-button__spinner")).toBeInTheDocument();
+    expect(stoppingButton.querySelector(".agent-stop-button__icon")).not.toBeInTheDocument();
+  });
+
+  it("verifies responsive CSS container queries and stop button pill styling in agents.css", () => {
+    const agentsCss = readFileSync(
+      path.resolve(process.cwd(), "desktop/renderer/src/components/agents.css"),
+      "utf8",
+    );
+    expect(agentsCss).toContain("container-type: inline-size;");
+    expect(agentsCss).toContain("container-name: agent-header;");
+    expect(agentsCss).toContain("@container agent-header (min-width: 26rem)");
+    expect(agentsCss).toContain("@container agent-header (min-width: 36rem)");
+    expect(agentsCss).toMatch(/\.agent-stop-button[^{]*\{[^}]*border-radius:\s*var\(--radius-pill\);/s);
+    expect(agentsCss).toMatch(/\.agent-role-pill__ellipsis\s*\{[^}]*display:\s*inline;/s);
+    expect(agentsCss).toMatch(/\.agent-role-pill__details\s*\{[^}]*display:\s*none;/s);
+  });
+
 });
+

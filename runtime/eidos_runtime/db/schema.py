@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+from eidos_runtime.db.channel_migration import CHANNEL_SCHEMA_SQL
+
+from eidos_runtime.db.custom_agents_migration import CUSTOM_AGENTS_SCHEMA_SQL
+
 from eidos_runtime.db.collaboration_migration import COLLABORATION_SCHEMA_SQL
 from eidos_runtime.db.agent_roles_migration import AGENT_ROLE_CHECK, LEGACY_AGENT_ROLE_CHECK
 from eidos_runtime.db.gate_refinements_migration import GATE_REFINEMENTS_SCHEMA_SQL
 from eidos_runtime.db.session_fork_migration import SESSION_FORK_SCHEMA_SQL
+from eidos_runtime.db.automation_migration import AUTOMATION_SCHEMA_SQL
 from eidos_runtime.memory.schema import MEMORY_SCHEMA_SQL, MEMORY_USE_SCHEMA_SQL, MEMORY_HISTORY_SCHEMA_SQL
 
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 30
+V29_SCHEMA_VERSION = 29
+V28_SCHEMA_VERSION = 28
+V27_SCHEMA_VERSION = 27
 V26_SCHEMA_VERSION = 26
 V25_SCHEMA_VERSION = 25
 V24_SCHEMA_VERSION = 24
@@ -30,7 +38,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V26_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V29_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1523,7 +1531,10 @@ CREATE INDEX sidebar_pins_event_revision ON events(id)
 WHERE event_type = 'sidebar.pins_changed';
 """
 V25_SCHEMA_SQL = V24_SCHEMA_SQL + SIDEBAR_PINS_SCHEMA_SQL
-SCHEMA_SQL = V25_SCHEMA_SQL + SESSION_FORK_SCHEMA_SQL
+V27_SCHEMA_SQL = V25_SCHEMA_SQL + SESSION_FORK_SCHEMA_SQL
+V28_SCHEMA_SQL = V27_SCHEMA_SQL + AUTOMATION_SCHEMA_SQL
+V29_SCHEMA_SQL = V28_SCHEMA_SQL.replace(AGENT_ROLE_CHECK, "length(role) BETWEEN 1 AND 64", 1) + CUSTOM_AGENTS_SCHEMA_SQL
+SCHEMA_SQL = V29_SCHEMA_SQL + CHANNEL_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

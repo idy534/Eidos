@@ -9,7 +9,7 @@ from eidos_runtime.protocol.schemas import ClosedModel
 class InputPrepareRequest(ClosedModel):
     session_id: StrictStr | None = Field(default=None, alias="sessionId", max_length=128)
     origin: Literal["selected", "clipboard"] = "selected"
-    kind: Literal['file', 'directory', 'image', 'skill', 'mcp', 'plugin', 'history', 'excerpt']
+    kind: Literal['file', 'directory', 'image', 'skill', 'mcp', 'plugin', 'history', 'excerpt', 'agent']
     source: StrictStr = Field(min_length=1, max_length=4096)
     label: StrictStr | None = Field(default=None, max_length=512)
     text: StrictStr | None = Field(default=None, max_length=65536)

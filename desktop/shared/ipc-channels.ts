@@ -6,6 +6,11 @@
  */
 
 export const IPC = {
+  CHANNEL_READ: "channel:read",
+  CHANNEL_SAVE: "channel:save",
+  AUTOMATION_EXECUTE: "automation:execute",
+  AUTOMATION_HISTORY: "automation:history",
+  AUTOMATION_RUN_NOW: "automation:run-now",
   // Runtime
   RUNTIME_GET_STATUS: "runtime:get-status",
   RUNTIME_HEALTH: "runtime:health",
@@ -87,6 +92,10 @@ export const IPC = {
   INPUT_PASTE_IMAGE: "input:pasteImage",
   INPUT_DRAFT_READ: "input:draftRead",
   INPUT_DRAFT_WRITE: "input:draftWrite",
+  AGENT_CATALOG: "agent:catalog",
+  AGENT_DEFINITION_READ: "agent:definition-read",
+  AGENT_DEFINITION_SAVE: "agent:definition-save",
+  AGENT_DEFINITION_REMOVE: "agent:definition-remove",
   AGENT_READ: "agent:read",
   AGENT_STOP: "agent:stop",
   MEMORY_BACKUP: "memory:backup",

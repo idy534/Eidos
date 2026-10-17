@@ -5,11 +5,16 @@ import { deriveRuntimePresentation } from "../session-state.js";
 import { AppShell } from "./AppShell.js";
 import { isQueuedRunListRequest } from "../../../shared/queued-runs.js";
 
-const fixture = vi.hoisted(() => ({ snapshot: undefined as SessionSnapshot | undefined, draft: undefined as SessionSnapshot | undefined, forkSession: vi.fn() }));
+const fixture = vi.hoisted(() => ({
+  snapshot: undefined as SessionSnapshot | undefined,
+  draft: undefined as SessionSnapshot | undefined,
+  forkSession: vi.fn(),
+  startDraft: vi.fn(),
+}));
 vi.mock("./useSessionController.js", () => ({
   useSessionController: () => [{
     snapshot: fixture.snapshot, draft: fixture.draft, projects: [], sessions: [], pending: {},
-  }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession }],
+  }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession, startDraft: fixture.startDraft }],
 }));
 vi.mock("./useRunController.js", () => ({
   useRunController: () => [{ composerMode: "idle", input: "", references: [], draftReady: false }, {}],
@@ -117,6 +122,7 @@ describe("AppShell text change review", () => {
 beforeEach(() => {
   fixture.draft = undefined;
   fixture.forkSession.mockReset().mockImplementation(async () => fixture.snapshot);
+  fixture.startDraft.mockReset();
   fixture.snapshot = {
     session: {
       id: "session-a", workspaceRoot: "/workspace", executionMode: "local",
@@ -317,3 +323,24 @@ describe("AppShell workspace file links", () => {
     expect(within(tools).getByRole("tab", { name: "新标签页 2" })).toBeInTheDocument();
   });
 });
+
+describe("AppShell empty state actions", () => {
+  it("renders '新建会话' action button and hides '选择项目', triggering startDraft on click", async () => {
+    fixture.snapshot = undefined;
+    fixture.draft = undefined;
+    renderShell();
+    await act(async () => {});
+
+    expect(screen.getByText("让思考抵达现实")).toBeInTheDocument();
+    const newSessionBtn = screen.getByRole("button", { name: "新建会话" });
+    expect(newSessionBtn).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "选择项目" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始对话" })).not.toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(newSessionBtn);
+    });
+    expect(fixture.startDraft).toHaveBeenCalledTimes(1);
+  });
+});
+

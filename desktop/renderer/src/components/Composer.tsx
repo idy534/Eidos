@@ -1,4 +1,4 @@
-import type { InputReference } from "../../../shared/input-context.js";
+import type { InputReference, InputPrepareRequest } from "../../../shared/input-context.js";
 import { InputReferenceCards, useInputContext } from "./InputContext.js";
 import { InputPicker, type InputPickerMode, LightbulbIcon } from "./InputPicker.js";
 import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useRef } from "react";
@@ -8,7 +8,8 @@ import { formatContextUsage } from "../context-usage.js";
 import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
-import { ReasoningSelector } from "./ReasoningSelector.js";
+import { ModelSelector } from "./ModelSelector.js";
+import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
 
 export interface ComposerProps {
   composerMode: ComposerMode;
@@ -91,12 +92,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 }, forwardedRef) {
   const context = useInputContext();
   const [picker, setPicker] = useState<{ mode: InputPickerMode; query: string; start?: number; end?: number }>();
+  const [agentCreator, setAgentCreator] = useState<{ owner: string; add(request: InputPrepareRequest): Promise<void> }>();
   const [list, setList] = useState<{ id: string; active: string | undefined }>();
   const [showStatus, setShowStatus] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pickerList = useCallback((id: string, active: string | undefined) => setList((previous) => previous?.id === id && previous.active === active ? previous : { id, active }), []);
   const closePicker = useCallback(() => { setPicker(undefined); textareaRef.current?.focus(); }, []);
-  useEffect(() => { setPicker(undefined); setShowStatus(false); }, [context?.sessionId]);
+  useEffect(() => { setPicker(undefined); setShowStatus(false); setAgentCreator(undefined); }, [context?.sessionId]);
   function updateMention(value: string, position: number) {
     const match = /(?:^|\s)([@$/])([^\s]*)$/.exec(value.slice(0, position));
     if (!match) { setPicker(undefined); return; }
@@ -295,6 +297,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       {context?.error && <p className="input-reference-error" role="alert">{context.error}</p>}
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
+        onCreateAgent={context ? () => { setAgentCreator({ owner: context.sessionId, add: context.add }); closePicker(); } : undefined}
         onQuery={(query) => setPicker((previous) => previous ? { ...previous, query } : previous)}
         onListId={pickerList} onClose={closePicker}
         onChoose={(request) => { void context?.add(request); consumeMention(); }}
@@ -303,10 +306,15 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           if (command === "plan") onWorkModeChange?.("plan");
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
-            textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".reasoning-selector > button")?.click();
+            textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".model-selector > button")?.click();
           } else context?.settings(command);
         }}
         onSelectPlanMode={() => onWorkModeChange?.("plan")} />}
+      {agentCreator && <AgentEditorDialog referenceAfterSave onClose={() => { setAgentCreator(undefined); textareaRef.current?.focus(); }}
+        onSaved={(saved) => {
+          void agentCreator.add({ kind: "agent", source: saved.definition.name });
+          setAgentCreator(undefined); textareaRef.current?.focus();
+        }} />}
       <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
       <textarea
         ref={textareaRef}
@@ -378,7 +386,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         <div className="composer-options">
           {showContextIndicator && <ContextIndicator usage={contextUsage} />}
           {modelList && modelList.models.length > 0 && (
-            <ReasoningSelector
+            <ModelSelector
               models={modelList.models}
               selectedModelId={selectedModelId}
               selection={selectedReasoning}

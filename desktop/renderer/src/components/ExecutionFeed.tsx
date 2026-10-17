@@ -23,12 +23,13 @@ import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
-import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
+import { CopyIcon, CheckmarkIcon, AutomationsIcon } from "./MenuIcons.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
-import { SparklesIcon } from "./InputPicker.js";
+import { AutomationToolCard } from "./automations/AutomationToolCard.js";
+import { SparklesIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 
@@ -614,6 +615,8 @@ function UserMessage({
 
   return (
     <div className="feed-item feed-item--user">
+      {run.channelOrigin && <p className="feed-label">钉钉渠道消息</p>}
+      {run.automationOrigin && <p className="feed-label">定时任务自动执行</p>}
       <div className="user-message-bubble">
         {(editing ? draftReferences : item.references)?.length ? (
           <InputReferenceCards
@@ -1505,6 +1508,10 @@ function ToolItem({
   }
 
   const toolResult = parseObject(toolCall.resultJson);
+  if (toolCall.toolName === "automation" && toolCall.provenance?.kind === "builtin" && toolCall.provenance.sourceId === "eidos.automation" && toolResult.outcome === "success") {
+    const data = toolResult.data && typeof toolResult.data === "object" ? toolResult.data as Record<string, unknown> : {};
+    return <AutomationToolCard response={data.response} mode={parseObject(toolCall.argumentsJson).mode} />;
+  }
   if (toolCall.toolName === "request_user_input"
     && (item.status === "in_progress" || (item.status === "completed" && toolResult.outcome === "success"))) {
     const args = parseObject(toolCall.argumentsJson);
@@ -1979,10 +1986,10 @@ function subagentActionLabel(
   resultObj: Record<string, unknown>,
 ): string {
   const baseLabels: Record<string, string> = {
-    spawn_agent: "创建子智能体",
-    wait_agents: "等待子智能体",
-    list_agents: "查询子智能体",
-    stop_agent: "停止子智能体",
+    spawn_agent: "创建智能体",
+    wait_agents: "等待智能体",
+    list_agents: "查询智能体",
+    stop_agent: "停止智能体",
     send_message: "发送智能体消息",
     followup_task: "追加智能体任务",
   };
@@ -1994,10 +2001,10 @@ function subagentActionLabel(
     return `${statusLabel(status)} ${base}`;
   }
   const runningLabels: Record<string, string> = {
-    spawn_agent: "正在创建子智能体",
-    wait_agents: "正在等待子智能体",
-    list_agents: "正在查询子智能体",
-    stop_agent: "正在停止子智能体",
+    spawn_agent: "正在创建智能体",
+    wait_agents: "正在等待智能体",
+    list_agents: "正在查询智能体",
+    stop_agent: "正在停止智能体",
     send_message: "正在发送智能体消息",
     followup_task: "正在追加智能体任务",
   };
@@ -2006,6 +2013,7 @@ function subagentActionLabel(
 
 function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentSummary[]): string {
   const args = parseObject(toolCall.argumentsJson);
+  const taskName = stringField(args, "name") || stringField(objectField(args, "changes"), "name");
   const result = parseObject(toolCall.resultJson);
   const data = objectField(result, "data");
   const rawImagePath = stringField(args, "path") || stringField(args, "filePath") || stringField(data, "path");
@@ -2024,10 +2032,11 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const skillName = skillInfo?.name || "";
 
   const baseLabels: Record<string, string> = {
-    spawn_agent: subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体",
-    wait_agents: subagentName ? `等待子智能体 · ${subagentName}` : "等待子智能体",
-    list_agents: subagentName ? `查询子智能体 · ${subagentName}` : "查询子智能体",
-    stop_agent: subagentName ? `停止子智能体 · ${subagentName}` : "停止子智能体",
+    automation: "定时任务",
+    spawn_agent: subagentName ? `创建智能体 · ${subagentName}` : "创建智能体",
+    wait_agents: subagentName ? `等待智能体 · ${subagentName}` : "等待智能体",
+    list_agents: subagentName ? `查询智能体 · ${subagentName}` : "查询智能体",
+    stop_agent: subagentName ? `停止智能体 · ${subagentName}` : "停止智能体",
     send_message: subagentName ? `发送智能体消息 · ${subagentName}` : "发送智能体消息",
     followup_task: subagentName ? `追加智能体任务 · ${subagentName}` : "追加智能体任务",
     view_image: imageFileName ? `查看图像 · ${imageFileName}` : "查看图像",
@@ -2076,23 +2085,26 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     memory_record: running ? "正在修订记忆" : "已修订记忆",
     memory_manage: running ? "正在优化记忆" : "已优化记忆",
     spawn_agent: running
-      ? (subagentName ? `正在创建子智能体 · ${subagentName}` : "正在创建子智能体")
-      : (subagentName ? `创建子智能体 · ${subagentName}` : "创建子智能体"),
+      ? (subagentName ? `正在创建智能体 · ${subagentName}` : "正在创建智能体")
+      : (subagentName ? `创建智能体 · ${subagentName}` : "创建智能体"),
     wait_agents: running
-      ? (subagentName ? `正在等待子智能体 · ${subagentName}` : "正在等待子智能体")
-      : (subagentName ? `等待子智能体 · ${subagentName}` : "等待子智能体"),
+      ? (subagentName ? `正在等待智能体 · ${subagentName}` : "正在等待智能体")
+      : (subagentName ? `等待智能体 · ${subagentName}` : "等待智能体"),
     list_agents: running
-      ? (subagentName ? `正在查询子智能体 · ${subagentName}` : "正在查询子智能体")
-      : (subagentName ? `查询子智能体 · ${subagentName}` : "查询子智能体"),
+      ? (subagentName ? `正在查询智能体 · ${subagentName}` : "正在查询智能体")
+      : (subagentName ? `查询智能体 · ${subagentName}` : "查询智能体"),
     stop_agent: running
-      ? (subagentName ? `正在停止子智能体 · ${subagentName}` : "正在停止子智能体")
-      : (subagentName ? `停止子智能体 · ${subagentName}` : "停止子智能体"),
+      ? (subagentName ? `正在停止智能体 · ${subagentName}` : "正在停止智能体")
+      : (subagentName ? `停止智能体 · ${subagentName}` : "停止智能体"),
     send_message: running
       ? (subagentName ? `正在发送智能体消息 · ${subagentName}` : "正在发送智能体消息")
       : (subagentName ? `发送智能体消息 · ${subagentName}` : "发送智能体消息"),
     followup_task: running
       ? (subagentName ? `正在追加智能体任务 · ${subagentName}` : "正在追加智能体任务")
       : (subagentName ? `追加智能体任务 · ${subagentName}` : "追加智能体任务"),
+    automation: running
+      ? (taskName ? `正在配置定时任务 · ${taskName}` : "正在配置定时任务")
+      : (taskName ? `定时任务 · ${taskName}` : "已运行定时任务"),
   };
   return labels[toolCall.toolName] ?? `${running ? "正在运行" : "已运行"} ${toolCall.toolName}`;
 }
@@ -2177,19 +2189,6 @@ function McpIcon() {
   );
 }
 
-function SubagentToolIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="8" cy="3.5" r="1.5" />
-      <circle cx="3.5" cy="11.5" r="1.5" />
-      <circle cx="12.5" cy="11.5" r="1.5" />
-      <path d="M2.6 9.8C1.8 6.2 4.6 3.2 6.5 2.5" />
-      <path d="M9.5 2.5C11.4 3.2 14.2 6.2 13.4 9.8" />
-      <path d="M5.2 13C7 14.2 9 14.2 10.8 13" />
-    </svg>
-  );
-}
-
 function ImageIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -2220,6 +2219,7 @@ function DefaultToolIcon() {
 }
 
 function toolIcon(name: string): ReactNode {
+  if (name === "automation") return <AutomationsIcon />;
   if (name === "declare_outputs") return <DeclareOutputsIcon />;
   if (name === "run_shell" || name === "read_tool_output") return <ShellIcon />;
   if (name === "list_files") return <FileListIcon />;

@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from eidos_runtime.domain.agents import AgentRole, AgentTypeName
 from eidos_runtime.domain.run import RunStatus
 from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
@@ -13,7 +14,6 @@ from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 MAX_AGENTS = 16
 # The scheduler counts executing children per parent Run, never across Runs.
 MAX_ACTIVE_AGENTS = 8
-AgentRole = Literal["default", "explorer", "worker"]
 AGENT_TOOLS = frozenset({
     "spawn_agent", "send_message", "followup_task", "wait_agents", "list_agents", "stop_agent",
 })
@@ -23,7 +23,7 @@ ACTIVE_STATUSES = ("queued", "running", "waiting_approval", "waiting_input", "wa
 class SpawnAgent(EidosFrozenStrictModel):
     task_name: str = Field(min_length=1, max_length=60, pattern=r"^[a-z][a-z0-9_-]*$")
     message: str = Field(min_length=1, max_length=8000, description="A self-contained assignment with scope and acceptance criteria. The child receives this task, not the whole parent conversation.")
-    role: AgentRole = Field(default="default", description="Built-in task role: default for general work, explorer for focused investigation, worker for implementation and verification. All roles inherit the parent Run's permissions and ordinary tools; explorer is not a read-only permission mode. Custom roles are not supported.")
+    role: AgentTypeName = Field(default="default", description="Agent type from the frozen catalog: default for general work, explorer for focused investigation, worker for implementation and verification. All roles inherit the parent Run's permissions and ordinary tools; explorer is not a read-only permission mode. Custom types use their configured instructions and model.")
     required_for_completion: bool = Field(default=True, description="Set false only for supplementary work whose result is not needed to finish the task. Runtime cancels optional tasks and awaits their resource cleanup at parent completion.")
 
 
@@ -43,7 +43,11 @@ class WaitAgents(EidosFrozenStrictModel):
 class AgentSummary(EidosFrozenStrictModel):
     id: str
     task_name: str
-    role: AgentRole
+    role: AgentTypeName
+    base_role: AgentRole | None = None
+    model_id: str | None = None
+    provider_id: str | None = None
+    definition_version: str | None = None
     required_for_completion: bool = True
     parent_run_id: str
     session_id: str

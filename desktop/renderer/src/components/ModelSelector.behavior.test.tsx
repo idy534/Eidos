@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import deepseekLogo from "../assets/providers/deepseek.svg";
 import minimaxLogo from "../assets/providers/minimax.svg";
 import type { ModelOption } from "../contracts.js";
-import { ReasoningSelector } from "./ReasoningSelector.js";
+import { ModelSelector } from "./ModelSelector.js";
 
 const models: ModelOption[] = [
   {
@@ -30,7 +30,7 @@ const models: ModelOption[] = [
   },
 ];
 
-describe("ReasoningSelector", () => {
+describe("ModelSelector", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -40,8 +40,8 @@ describe("ReasoningSelector", () => {
   });
   it("shows provider logos and names in the current model and model list", () => {
     const onModelChange = vi.fn();
-    const { container } = render(
-      <ReasoningSelector
+    const { baseElement: container } = render(
+      <ModelSelector
         models={models}
         selectedModelId="deepseek-flash"
         selection="high"
@@ -59,7 +59,7 @@ describe("ReasoningSelector", () => {
 
     const minimaxChoice = screen.getByRole("radio", { name: "MiniMax M3，MiniMax" });
     expect(minimaxChoice.closest("label")).toHaveTextContent("MiniMax M3");
-    expect(container.querySelector(".reasoning-selector__model-provider")).not.toBeInTheDocument();
+    expect(container.querySelector(".model-selector__model-provider")).not.toBeInTheDocument();
     expect(Array.from(container.querySelectorAll("img.provider-logo")).map((logo) => logo.getAttribute("src"))).toContain(minimaxLogo);
     fireEvent.click(minimaxChoice);
     expect(onModelChange).toHaveBeenCalledWith("MiniMax-M3");
@@ -68,7 +68,7 @@ describe("ReasoningSelector", () => {
   it("maps reasoning slider positions to the supported values", () => {
     const onChange = vi.fn();
     render(
-      <ReasoningSelector
+      <ModelSelector
         models={models}
         selectedModelId="MiniMax-M3"
         selection="thinking"
@@ -89,7 +89,7 @@ describe("ReasoningSelector", () => {
   it("keeps the slider continuous while dragging and snaps on release", () => {
     const onChange = vi.fn();
     render(
-      <ReasoningSelector
+      <ModelSelector
         models={models}
         selectedModelId="deepseek-flash"
         selection="high"
@@ -120,7 +120,7 @@ describe("ReasoningSelector", () => {
 
     const onChange = vi.fn();
     render(
-      <ReasoningSelector
+      <ModelSelector
         models={models}
         selectedModelId="deepseek-flash"
         selection="high"
@@ -165,7 +165,7 @@ describe("ReasoningSelector", () => {
     });
 
     render(
-      <ReasoningSelector
+      <ModelSelector
         models={models}
         selectedModelId="deepseek-flash"
         selection="high"
@@ -210,7 +210,7 @@ describe("ReasoningSelector", () => {
 
     const rafSpy = vi.spyOn(window, "requestAnimationFrame");
     render(
-      <ReasoningSelector
+      <ModelSelector
         models={models}
         selectedModelId="deepseek-flash"
         selection="high"
@@ -231,4 +231,38 @@ describe("ReasoningSelector", () => {
 
     window.matchMedia = originalMatchMedia;
   });
+
+  it("renders its menu outside forms and closes on Escape or disabled state", () => {
+    const props = { models, selectedModelId: models[0]!.id, selection: "high" as const, disabled: false, onModelChange: vi.fn(), onChange: vi.fn() };
+    const { rerender } = render(<form><ModelSelector {...props} /></form>);
+    const trigger = screen.getByRole("button", { name: /DeepSeek Flash.*思考强度/ });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog").parentElement).toBe(document.body);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    rerender(<form><ModelSelector {...props} disabled /></form>);
+    expect(trigger).toBeDisabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps missing models visible and uses defaults without changing stored values", () => {
+    const onChange = vi.fn();
+    const props = { models, selectedModelId: "deleted", selection: undefined, disabled: false, onModelChange: vi.fn(), onChange };
+    const { rerender } = render(<ModelSelector {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: /已保存的模型不可用/ }));
+    expect(screen.getAllByRole("radio")).toHaveLength(models.length);
+    fireEvent.keyDown(document, { key: "Escape" });
+    rerender(<ModelSelector {...props} selectedModelId="deepseek-flash" />);
+    fireEvent.click(screen.getByRole("button", { name: /思考强度 高/ }));
+    expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "高");
+    expect(onChange).not.toHaveBeenCalled();
+    rerender(<ModelSelector {...props} selectedModelId="deepseek-flash" selection="medium" />);
+    expect(screen.getByRole("button", { name: /思考配置已变更/ })).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole("slider"), { pointerId: 1 });
+    fireEvent.pointerUp(screen.getByRole("slider"), { pointerId: 1 });
+    expect(onChange).toHaveBeenCalledWith("high");
+  });
+
 });

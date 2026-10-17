@@ -43,6 +43,8 @@ pnpm start
 
 `pnpm start` 会先构建 Preload、Main 和 Renderer，再启动 Electron。源码 Runtime 使用仓库 `runtime/` 和 `.venv/bin/python`。
 
+开发者可以在 `pnpm build` 后运行 `pnpm test:renderer-startup`。该定向检查使用临时 user-data，加载生产 HTML、CSP、Renderer bundle 和 sandboxed preload，并确认 React 启动页已经挂载。该检查只模拟初始 Runtime 状态，不启动 Python Runtime，也不读取真实 Session。定时任务契约更新后，开发者需要运行 `node scripts/generate-automation-contracts.mjs`，同步 DTO、Schema 和 Ajv standalone 静态校验器。
+
 如果需要指定开发 Python，可以设置绝对路径：
 
 ```bash
@@ -74,6 +76,10 @@ MCP Connection 使用标准库 `tempfile.mkdtemp()` 在 macOS 的 canonical `/pr
 Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=...`，以及 `Runtime initialized duration_ms=...`。存储阶段是 `storage` 的子阶段，开发者不能把父阶段与子阶段耗时相加。初始化总计时不包含 Python 模块导入、Desktop 构建和 Renderer 首屏请求。启动不执行 Blob 全量清理和仓库库全库扫描；现有受管后台任务会在任务创建至少 60 秒后且 Runtime 空闲时执行仓库库完整性检查、有界空闲页回收和 Blob 清理，之后每小时检查一次。Session 删除和隐私撤销仍保留即时清理。
 
 ## 4. Test
+
+定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py`。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx`。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置。
+
+Runtime 随现有启动运行受管调度服务，并随 Supervisor 关闭，无需系统 cron、launchd 或额外守护进程。v27→v28 升级新增任务、触发和来源表。croniter 与 tzdata 已进入 pyproject.toml 和 uv.lock，打包沿用现有流程。
 
 Agent 在 Eidos Shell 内执行本仓库测试时，应先核对实际执行权限。部分集成测试需要启动原生 Seatbelt，外层沙箱可能阻止嵌套启动。测试者不能仅凭 `sandbox_unavailable` 排除代码回归。需要原生执行时，Agent 应使用系统提供的明确审批入口；文件路径授权不等于 unsandboxed 授权。
 
@@ -410,7 +416,7 @@ Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦�
 
 运行、审批和收尾期间可提交下一轮请求，由同 Session FIFO 队列执行。模型、推理、权限和 Plan 设置属于下一轮草稿；当前 Run 保留创建时的固定配置。取消与排队提交可同时使用。普通 Execute Run 也能请求澄清，计划写入和确认仍属于 Plan 模式。
 
-子任务支持 `default`、`explorer`、`worker`，省略角色时使用 `default`。三个角色继承父 Run 的普通工具和权限，`explorer` 能执行 Shell，不提供强制只读保证。本期不支持自定义角色。Schema 20→21 迁移只扩展角色 CHECK，保留历史委派、消息与等待。定向验证需要覆盖三种角色在三种审批模式下执行真实 Shell、续派保持角色、取消、等待恢复、迁移失败回滚，以及 Desktop 角色与审批显示。
+子任务支持 `default`、`explorer`、`worker`，省略角色时使用 `default`。三个角色继承父 Run 的普通工具和权限，`explorer` 能执行 Shell，不提供强制只读保证。自定义类型使用数据目录下的 `agents/*.toml`，其中 `instructions` 保存指令，模型选择包含 `provider_id` 和 `config_id`。Schema 20→21 迁移只扩展角色 CHECK，保留历史委派、消息与等待。定向验证需要覆盖三种角色在三种审批模式下执行真实 Shell、续派保持角色、取消、等待恢复、迁移失败回滚，以及 Desktop 角色与审批显示。
 
 子任务默认是必要依赖；明确设置 `requiredForCompletion=false` 的补充任务在父任务完成时取消，并等待进程和资源清理。必要依赖仍等待真实结果。协作消息优先投递最早未读的 16 条；只有已完成模型请求的固定上下文会建立投递回执，失败、重启和上下文预览不消费消息。Schema 17 事务迁移增加投递回执、Skill 使用租约及必要依赖标记，Schema 16 及更旧数据可升级。
 
@@ -458,3 +464,41 @@ EIDOS_DATA_DIR=/absolute/path/new-eidos-data pnpm start
 ZIP 含私有聊天、记忆和执行状态，可能含 MCP 环境配置，未加密。Provider 配置和 Workspace 不包含在内，需另行配置/恢复路径。旧备份可能恢复之后被遗忘资料；恢复默认取消旧作业与回填授权、关闭生成，需要明确确认后重新启用。不要仅复制 `state.sqlite` 当作完整备份。
 
 审批模式定向回归增加 `runtime/tests/test_dangerous_approvals.py`，覆盖高危人工批准、拒绝、取消、重启恢复、版本冲突、完全访问直接执行和真实 Seatbelt 的精确路径例外。完全访问不得创建新的 Approval 或进入 waiting_approval；旧版待审批记录只恢复完成原操作。
+
+
+## 自定义子 Agent 配置与定向验证
+
+用户在 `<EIDOS_DATA_DIR>/agents/` 放置独立 TOML。默认目录是 `~/.eidos/agents/`。完整字段与示例见 [自定义子 Agent 设计](docs/custom-subagents-design.md)。用户需要先通过现有模型设置保存目标模型；TOML 不保存 API Key。用户省略模型表时，子任务继承父模型。
+
+相关定向验证入口：
+
+```bash
+uv run --locked pytest runtime/tests/test_custom_agents.py runtime/tests/test_collaboration.py runtime/tests/test_input_context.py -m "not platform"
+node scripts/generate-collaboration-contracts.mjs
+node scripts/generate-input-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-agents.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/InputPicker.behavior.test.tsx desktop/renderer/src/components/InputContext.behavior.test.tsx desktop/renderer/src/components/AgentPanel.behavior.test.tsx
+```
+
+人工验收应使用隔离的数据目录。用户在目录中创建定义后，可以在 `+ → Agent` 选择并查看冻结预览，再检查父模型是否通过现有工具调用对应类型。验收需要覆盖实际提供商、续派、取消、定义编辑和重启恢复。模型参数校验与脚本模型测试不能替代真实 Provider 验收。
+
+
+## 钉钉渠道定向开发与验证
+
+用户可以在“设置 → 渠道”保存企业内部应用的机器人配置。应用凭证只需要 Client ID 和 Client Secret，机器人和组织 ID 由消息回调提供。机器人默认支持单聊，群聊需要 @。Eidos 不再提供用户、群白名单或单聊开关。应用需要选择 Stream 接收模式。Eidos 需要一直运行并能访问钉钉公网服务。渠道不开放入站监听端口。数据与凭证文件由 Runtime 管理，用户不应手工编辑 SQLite。
+
+维护者修改渠道 DTO 后运行 `node scripts/generate-channel-contracts.mjs`。定向验证入口如下，维护者不需要因此运行 Full Suite：
+
+```bash
+uv run --locked pytest runtime/tests/test_channels.py runtime/tests/test_storage_schema.py
+pnpm build:main
+node --test dist/main/runtime-client-channels.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ChannelSettings.behavior.test.tsx
+pnpm build
+pnpm exec electron scripts/test-channels.cjs
+```
+
+`test-channels.cjs` 使用隔离的 Electron userData、模拟渠道 API 和四种窗口宽度。它检查保存、键盘操作和完全访问的二次确认，不读取真实钉钉凭证，也不发送真实消息。设置 `EIDOS_CHANNEL_SCREENSHOT=/absolute/path.png` 可以保存页面截图，设置 `EIDOS_CHANNEL_FULL_ACCESS_SCREENSHOT=/absolute/path.png` 可以保存完全访问确认截图。修改渠道服务生命周期时还需要执行既有 Electron smoke；修改 Python 生产依赖时还需要执行 Ruff、Deptry、pip-audit 和 Runtime Bundle 验证。
+
+真实钉钉应用的创建、权限、消息投递与待验收清单见 [钉钉渠道方案](docs/dingtalk-channel-design.md)。

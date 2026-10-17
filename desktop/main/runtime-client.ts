@@ -1,11 +1,15 @@
+import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest } from "../shared/channels.js";
 import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
 import type { SessionForkRequest } from "../shared/session-fork.generated.js";
 import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
-import { isCollaborationState } from "../shared/collaboration.js";
+import { isAgentCatalog, isCollaborationState } from "../shared/collaboration.js";
 import { isRunTermination } from "../shared/run-termination.js";
-import type { CollaborationState } from "../shared/collaboration.generated.js";
+import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
+import type { AgentDefinitionDocument, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "../shared/collaboration.generated.js";
+import { isAgentDefinitionDocument } from "../shared/agent-definitions.js";
 import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../shared/planning.js";
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
+import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
 import { isQueuedRunChangeResponse, isQueuedRunListResponse } from "../shared/queued-runs.js";
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
@@ -19,6 +23,20 @@ import readline from "node:readline";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const RUNTIME_BUSINESS_CODES = new Set([
+  "AGENT_DEFINITION_INVALID",
+  "AGENT_DEFINITION_EXISTS",
+  "AGENT_DEFINITION_CONFLICT",
+  "AGENT_DEFINITION_IO_ERROR",
+  "AGENT_DEFINITION_BUSY",
+  "AGENT_DEFINITION_WRITE_UNCERTAIN",
+  "AGENT_MODEL_NOT_AVAILABLE",
+  "AGENT_MODEL_PROVIDER_MISMATCH",
+  "AGENT_MODEL_REASONING_INVALID",
+  "AUTOMATION_SCHEDULE_NOT_SUPPORTED", "AUTOMATION_TIME_IN_PAST", "AUTOMATION_NOT_FOUND",
+  "AUTOMATION_REVISION_CONFLICT", "AUTOMATION_TARGET_UNAVAILABLE", "AUTOMATION_MODEL_UNAVAILABLE",
+  "AUTOMATION_SOURCE_NOT_ALLOWED", "AUTOMATION_OPERATION_CONFLICT", "AUTOMATION_VERIFICATION_REQUIRED",
+  "AUTOMATION_CANCELED", "AUTOMATION_SESSION_BUSY",
+  "AUTOMATION_CONFIRMATION_REQUIRED",
   "RUNTIME_NOT_INITIALIZED",
   "RUNTIME_DRAINING",
   "RUNTIME_RECONFIGURING",
@@ -469,6 +487,30 @@ export class RuntimeClient {
     return this.validatedRequest("project/list", {}, isProjectListResult);
   }
 
+  readChannel(): Promise<ChannelResponse> {
+    return this.validatedRequest("channel/read", {}, isChannelResponse);
+  }
+
+  saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse> {
+    return this.validatedRequest("channel/save", { ...request }, isChannelResponse);
+  }
+
+  automation(request: AutomationExecuteRequest): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/execute", { ...request }, isAutomationResponse);
+  }
+
+  automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/history", { ...request }, isAutomationResponse);
+  }
+
+  automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/runNow", { ...request }, isAutomationResponse);
+  }
+
+  refreshAutomationSchedule(): Promise<AutomationResponse> {
+    return this.validatedRequest("schedule/refresh", {}, isAutomationResponse);
+  }
+
   listSidebarPins(): Promise<SidebarPinsResponse> {
     return this.validatedRequest("sidebar/listPins", {}, isSidebarPinsResponse);
   }
@@ -845,6 +887,18 @@ export class RuntimeClient {
     return this.validatedRequest("input/draftWrite", { key, text: draft.text, references: draft.references.map((value) => value.id) }, isInputDraft);
   }
 
+  listAgentTypes(): Promise<AgentCatalogResponse> {
+    return this.validatedRequest("agent/catalog", {}, isAgentCatalog);
+  }
+  readAgentDefinition(source: string): Promise<AgentDefinitionDocument> {
+    return this.validatedRequest("agent/definitionRead", { source }, isAgentDefinitionDocument);
+  }
+  saveAgentDefinition(request: AgentDefinitionSaveRequest): Promise<AgentDefinitionDocument> {
+    return this.validatedRequest("agent/definitionSave", { ...request }, isAgentDefinitionDocument);
+  }
+  removeAgentDefinition(request: AgentDefinitionRemoveRequest): Promise<AgentCatalogResponse> {
+    return this.validatedRequest("agent/definitionRemove", { ...request }, isAgentCatalog);
+  }
   readAgents(sessionId: string): Promise<CollaborationState> {
     return this.validatedRequest("agent/read", { sessionId }, isCollaborationState);
   }
@@ -1291,6 +1345,9 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "automation/changed") {
+    return typeof value.params.id === "string";
+  }
   if (value.method === "run/queueChanged") {
     return isQueuedRunChangeResponse(params);
   }
@@ -1509,12 +1566,13 @@ function isSession(value: unknown): value is Session {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "workspaceRoot", "executionMode", "associatedWorktreeId",
-      "worktreeRestoreAvailable", "forkedFrom", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
+      "worktreeRestoreAvailable", "forkedFrom", "automationOrigin", "projectless", "project", "worktree", "title", "taskStatus", "activeRunStatus",
       "createdAt", "updatedAt",
     ])
     && typeof value.id === "string"
     && typeof value.workspaceRoot === "string"
     && (value.forkedFrom === undefined || isSessionForkSource(value.forkedFrom))
+    && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && (value.projectless === undefined || typeof value.projectless === "boolean")
     && (value.executionMode === undefined || ["local", "worktree"].includes(String(value.executionMode)))
     && (value.associatedWorktreeId === undefined || typeof value.associatedWorktreeId === "string")
@@ -2005,6 +2063,8 @@ function isRun(value: unknown): value is Run {
       "reconciliationRequired",
       "extensionSnapshot",
       "activatedTools",
+      "automationOrigin",
+      "channelOrigin",
     ])
   ) {
     return false;
@@ -2026,6 +2086,8 @@ function isRun(value: unknown): value is Run {
     )
     && (value.workMode === undefined || ["execute", "plan"].includes(String(value.workMode)))
     && (value.approvalMode === undefined || ["manual", "auto_review", "full_access"].includes(String(value.approvalMode)))
+    && (value.channelOrigin === undefined || isChannelOrigin(value.channelOrigin))
+    && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (

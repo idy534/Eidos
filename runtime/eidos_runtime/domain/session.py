@@ -8,6 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.domain.worktree import WorktreeState
 from eidos_runtime.domain.session_fork import SessionForkSource
+from eidos_runtime.domain.automation import AutomationOrigin
 from eidos_runtime.models import EidosFrozenStrictModel
 
 
@@ -26,6 +27,7 @@ class SessionExecutionMode(StrEnum):
 
 class Session(EidosFrozenStrictModel):
     forked_from: SessionForkSource | None = None
+    automation_origin: AutomationOrigin | None = None
     id: str = Field(min_length=1)
     workspace_root: str = Field(min_length=1, max_length=4096)
     execution_mode: SessionExecutionMode = SessionExecutionMode.LOCAL

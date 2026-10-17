@@ -35,6 +35,10 @@ class SidebarPinsChangedPayload(ClosedModel):
     pass
 
 
+class AutomationChangedPayload(ClosedModel):
+    id: str
+
+
 class SessionCreatedPayload(ClosedModel):
     session: SessionDto
 
@@ -165,6 +169,8 @@ class MemoryChangedPayload(ClosedModel):
 
 
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
+    EventType.CHANNEL_CHANGED: AutomationChangedPayload,
+    EventType.AUTOMATION_CHANGED: AutomationChangedPayload,
     EventType.SESSION_CREATED: SessionCreatedPayload,
     EventType.SESSION_TITLE_UPDATED: SessionTitleUpdatedPayload,
     EventType.SESSION_TITLE_GENERATION_STARTED: SessionTitleGenerationStartedPayload,

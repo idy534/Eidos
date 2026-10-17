@@ -235,6 +235,8 @@ class ProjectWorktreeRepository(Repository):
             from eidos_runtime.persistence.sidebar import remove_sidebar_pin
 
             pin_events = remove_sidebar_pin(connection, "project", project_id)
+            from eidos_runtime.persistence.automations import AutomationRepository
+            AutomationRepository.pause_targets(connection, project_id=project_id)
             deleted = connection.execute(
                 "DELETE FROM projects WHERE id = ?",
                 (project_id,),

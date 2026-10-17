@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   ModelId,
   ModelOption,
@@ -26,7 +27,7 @@ const SELECTION_LABELS: Record<ModelReasoningSelection, string> = {
 
 type PickerView = "reasoning" | "models";
 
-export interface ReasoningSelectorProps {
+export interface ModelSelectorProps {
   models: ModelOption[];
   selectedModelId: ModelId | undefined;
   selection: ModelReasoningSelection | undefined;
@@ -82,14 +83,14 @@ function easeOutQuart(x: number): number {
   return 1 - Math.pow(1 - x, 4);
 }
 
-export function ReasoningSelector({
+export function ModelSelector({
   models,
   selectedModelId,
   selection,
   disabled,
   onModelChange,
   onChange,
-}: ReasoningSelectorProps) {
+}: ModelSelectorProps) {
   const panelId = useId();
   const modelRadioName = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -98,6 +99,7 @@ export function ReasoningSelector({
   const sliderRef = useRef<HTMLInputElement>(null);
   const modelHeadingRef = useRef<HTMLHeadingElement>(null);
   const [open, setOpen] = useState(false);
+  const [panelPosition, setPanelPosition] = useState({ left: 0, top: 0 });
   const [view, setView] = useState<PickerView>("reasoning");
   const [hoveredModel, setHoveredModel] = useState<ModelOption | null>(null);
   const [cardTop, setCardTop] = useState(0);
@@ -127,11 +129,12 @@ export function ReasoningSelector({
   const sliderProgress = (sliderRatio * 100).toFixed(3);
   const sliderFillWidth = `calc(${sliderProgress}% ${sliderRatio <= 0.5 ? "+" : "-"} ${sliderInset}rem)`;
   const sliderPreviewIndex = Math.min(maxSliderIndex, Math.max(0, Math.round(sliderPositionValue)));
-  const currentLabel = SELECTION_LABELS[selectedSelection ?? "none"];
+  const invalidSelection = Boolean(selectedModel && selection && !selections.includes(selection));
+  const currentLabel = invalidSelection ? "思考配置已变更" : SELECTION_LABELS[selectedSelection ?? "none"];
   const sliderLabel = SELECTION_LABELS[selections[sliderPreviewIndex] ?? selectedSelection ?? "none"];
   const firstSelection = selections[0] ?? selectedSelection ?? "none";
   const lastSelection = selections.at(-1) ?? selectedSelection ?? "none";
-  const modelName = selectedModel?.name ?? "选择模型";
+  const modelName = selectedModel?.name ?? (selectedModelId ? "已保存的模型不可用" : "选择模型");
   const providerName = selectedModel ? getProviderName(selectedModel.provider) : "";
   const modelLabel = providerName ? `${modelName}，${providerName}` : modelName;
 
@@ -164,7 +167,7 @@ export function ReasoningSelector({
     }
 
     const closeOnOutsideInteraction = (event: Event) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) {
         setOpen(false);
       }
     };
@@ -185,6 +188,29 @@ export function ReasoningSelector({
       document.removeEventListener("keydown", closeOnEscape, true);
     };
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const positionPanel = () => {
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      const panel = panelRef.current?.getBoundingClientRect();
+      if (!trigger || !panel) return;
+      const margin = 8;
+      const left = Math.max(margin, Math.min(trigger.right - panel.width, window.innerWidth - panel.width - margin));
+      const above = trigger.top - panel.height - margin;
+      const top = above >= margin ? above : Math.max(margin, Math.min(trigger.bottom + margin, window.innerHeight - panel.height - margin));
+      setPanelPosition({ left, top });
+    };
+    positionPanel();
+    window.addEventListener("resize", positionPanel);
+    window.addEventListener("scroll", positionPanel, true);
+    return () => {
+      window.removeEventListener("resize", positionPanel);
+      window.removeEventListener("scroll", positionPanel, true);
+    };
+  }, [open, view, models.length]);
+
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -255,7 +281,7 @@ export function ReasoningSelector({
     const index = Math.min(maxSliderIndex, Math.max(0, Math.round(projected)));
     const nextSelection = selections[index];
 
-    if (nextSelection && index !== selectedIndex) {
+    if (nextSelection && (index !== selectedIndex || invalidSelection)) {
       onChange(nextSelection);
     }
 
@@ -332,11 +358,11 @@ export function ReasoningSelector({
   };
 
   return (
-    <div ref={rootRef} className="reasoning-selector">
+    <div ref={rootRef} className="model-selector">
       <button
         ref={triggerRef}
         type="button"
-        className="reasoning-selector__trigger"
+        className="model-selector__trigger"
         aria-label={canAdjustReasoning
           ? `${modelLabel}，思考强度 ${currentLabel}，打开模型和思考强度菜单`
           : `${modelLabel}，选择模型`}
@@ -353,36 +379,37 @@ export function ReasoningSelector({
           setOpen(true);
         }}
       >
-        <span className="reasoning-selector__trigger-model">
-          {selectedModel && <ProviderLogo provider={selectedModel.provider} className="reasoning-selector__trigger-logo" />}
-          <span className="reasoning-selector__trigger-model-name">{modelName}</span>
+        <span className="model-selector__trigger-model">
+          {selectedModel && <ProviderLogo provider={selectedModel.provider} className="model-selector__trigger-logo" />}
+          <span className="model-selector__trigger-model-name">{modelName}</span>
         </span>
         {canAdjustReasoning && (
-          <span className="reasoning-selector__trigger-selection">
+          <span className="model-selector__trigger-selection">
             {currentLabel}
           </span>
         )}
         <ChevronIcon />
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
           id={panelId}
           ref={panelRef}
-          className="reasoning-selector__panel"
+          className="model-selector model-selector__panel"
+          style={panelPosition}
           role="dialog"
           aria-label={view === "models" ? "选择模型" : `${modelName} 思考强度`}
         >
           {view === "models" ? (
             <>
-              <header className="reasoning-selector__header reasoning-selector__header--models">
+              <header className="model-selector__header model-selector__header--models">
                 <h2 ref={modelHeadingRef} tabIndex={-1}>选择模型</h2>
               </header>
-              <fieldset className="reasoning-selector__model-list" aria-label="模型">
+              <fieldset className="model-selector__model-list" aria-label="模型">
                 {models.map((model) => (
                   <label
                     key={model.id}
-                    className={`reasoning-selector__model-choice${model.id === selectedModelId ? " is-selected" : ""}`}
+                    className={`model-selector__model-choice${model.id === selectedModelId ? " is-selected" : ""}`}
                     onMouseEnter={(event) => handleModelHover(model, event.currentTarget)}
                     onMouseLeave={() => handleModelLeave(model.id)}
                     onFocus={(event) => handleModelHover(model, event.currentTarget)}
@@ -397,48 +424,48 @@ export function ReasoningSelector({
                       disabled={disabled}
                       onChange={() => selectModel(model.id)}
                     />
-                    <ProviderLogo provider={model.provider} className="reasoning-selector__model-logo" />
-                    <span className="reasoning-selector__model-name">{model.name}</span>
+                    <ProviderLogo provider={model.provider} className="model-selector__model-logo" />
+                    <span className="model-selector__model-name">{model.name}</span>
                     {model.id === selectedModelId && (
-                      <span className="reasoning-selector__check" aria-hidden="true">✓</span>
+                      <span className="model-selector__check" aria-hidden="true">✓</span>
                     )}
                   </label>
                 ))}
               </fieldset>
               {hoveredModel && (
                 <div
-                  className={`reasoning-selector__info-card reasoning-selector__info-card--${cardPlacement}`}
+                  className={`model-selector__info-card model-selector__info-card--${cardPlacement}`}
                   style={{ top: `${cardTop}px` }}
                   role="tooltip"
                   aria-live="polite"
                 >
-                  <div className="reasoning-selector__info-row">
-                    <span className="reasoning-selector__info-label">模型</span>
-                    <span className="reasoning-selector__info-value" title={hoveredModel.name}>
+                  <div className="model-selector__info-row">
+                    <span className="model-selector__info-label">模型</span>
+                    <span className="model-selector__info-value" title={hoveredModel.name}>
                       {hoveredModel.name}
                     </span>
                   </div>
-                  <div className="reasoning-selector__info-row">
-                    <span className="reasoning-selector__info-label">提供商</span>
-                    <span className="reasoning-selector__info-value" title={getModelProviderDisplay(hoveredModel)}>
+                  <div className="model-selector__info-row">
+                    <span className="model-selector__info-label">提供商</span>
+                    <span className="model-selector__info-value" title={getModelProviderDisplay(hoveredModel)}>
                       {getModelProviderDisplay(hoveredModel)}
                     </span>
                   </div>
-                  <div className="reasoning-selector__info-row">
-                    <span className="reasoning-selector__info-label">输入</span>
-                    <span className="reasoning-selector__info-value">
+                  <div className="model-selector__info-row">
+                    <span className="model-selector__info-label">输入</span>
+                    <span className="model-selector__info-value">
                       {getModelInputDisplay(hoveredModel)}
                     </span>
                   </div>
-                  <div className="reasoning-selector__info-row">
-                    <span className="reasoning-selector__info-label">推理</span>
-                    <span className="reasoning-selector__info-value">
+                  <div className="model-selector__info-row">
+                    <span className="model-selector__info-label">推理</span>
+                    <span className="model-selector__info-value">
                       {getModelReasoningDisplay(hoveredModel)}
                     </span>
                   </div>
-                  <div className="reasoning-selector__info-row">
-                    <span className="reasoning-selector__info-label">上下文</span>
-                    <span className="reasoning-selector__info-value">
+                  <div className="model-selector__info-row">
+                    <span className="model-selector__info-label">上下文</span>
+                    <span className="model-selector__info-value">
                       {getModelContextDisplay(hoveredModel)}
                     </span>
                   </div>
@@ -447,25 +474,25 @@ export function ReasoningSelector({
             </>
           ) : (
             <>
-              <header className="reasoning-selector__header">
+              <header className="model-selector__header">
                 <button
                   type="button"
-                  className="reasoning-selector__model-button"
+                  className="model-selector__model-button"
                   disabled={disabled}
                   aria-label={`切换模型，当前为 ${modelName}，提供商 ${providerName}`}
                   onClick={() => setView("models")}
                 >
-                  {selectedModel && <ProviderLogo provider={selectedModel.provider} className="reasoning-selector__model-button-logo" />}
-                  <span className="reasoning-selector__model-button-name">{modelName}</span>
+                  {selectedModel && <ProviderLogo provider={selectedModel.provider} className="model-selector__model-button-logo" />}
+                  <span className="model-selector__model-button-name">{modelName}</span>
                   <ChevronRightIcon />
                 </button>
                 <span>{isDragging || isAnimating ? sliderLabel : currentLabel}</span>
               </header>
               <label className="sr-only" htmlFor={`${panelId}-slider`}>思考强度</label>
-              <div className={`reasoning-selector__slider-wrap${isDragging ? " is-dragging" : ""}${isAnimating ? " is-animating" : ""}`}>
-                <div className="reasoning-selector__rail" aria-hidden="true">
-                  <span className="reasoning-selector__fill" style={{ width: sliderFillWidth }} />
-                  <span className="reasoning-selector__dots">
+              <div className={`model-selector__slider-wrap${isDragging ? " is-dragging" : ""}${isAnimating ? " is-animating" : ""}`}>
+                <div className="model-selector__rail" aria-hidden="true">
+                  <span className="model-selector__fill" style={{ width: sliderFillWidth }} />
+                  <span className="model-selector__dots">
                     {selections.map((value) => (
                       <svg key={value} viewBox="0 0 8 8" aria-hidden="true">
                         <circle cx="4" cy="4" r="4" fill="currentColor" />
@@ -476,7 +503,7 @@ export function ReasoningSelector({
                 <input
                   ref={sliderRef}
                   id={`${panelId}-slider`}
-                  className="reasoning-selector__range"
+                  className="model-selector__range"
                   type="range"
                   min={0}
                   max={maxSliderIndex}
@@ -501,13 +528,13 @@ export function ReasoningSelector({
                   onChange={(event) => updateSliderPosition(Number(event.currentTarget.value))}
                 />
               </div>
-              <div className="reasoning-selector__scale-labels" aria-hidden="true">
+              <div className="model-selector__scale-labels" aria-hidden="true">
                 <span>{SELECTION_LABELS[firstSelection]}</span>
                 <span>{SELECTION_LABELS[lastSelection]}</span>
               </div>
             </>
           )}
-        </div>
+        </div>, document.body
       )}
     </div>
   );

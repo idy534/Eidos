@@ -2,7 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { userFacingError } from "../session-state.js";
-import { FileIcon, FolderIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
+import { FileIcon, FolderIcon, AgentIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
+import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
 interface InputContextValue {
@@ -191,6 +192,8 @@ export function InputReferenceCards({
             preview={preview}
             onClose={() => setPreview(undefined)}
           />
+        ) : preview.reference.kind === "agent" ? (
+          <AgentDefinitionDialog preview={preview} onClose={() => setPreview(undefined)} />
         ) : preview.reference.kind === "skill" ? (
           <SkillDetailDialog
             skill={{
@@ -315,6 +318,8 @@ function renderReferenceIcon(reference: InputReference, cat: string) {
       return <ExcerptIcon />;
     case "directory":
       return <FolderIcon />;
+    case "agent":
+      return <AgentIcon />;
     case "skill":
       return <SparklesIcon />;
     case "mcp":

@@ -105,37 +105,40 @@ class ResponseActionRepository:
 
     def validate_revision_source(self, source_run_id: str) -> dict[str, object]:
         with self._store.lock:
-            connection = self._connection()
-            source = connection.execute(
-                """
-                SELECT id, session_id, user_input, model_id, status, creation_seq, work_mode
-                FROM runs WHERE id = ?
-                """,
-                (source_run_id,),
-            ).fetchone()
-            if source is None:
-                raise ResourceNotFoundError("source run not found")
-            if str(source["status"]) not in TERMINAL_RUN_STATUSES:
-                raise InvalidRunStateError("source run is not terminal")
-            if connection.execute(
-                "SELECT 1 FROM run_revisions WHERE source_run_id = ?",
-                (source_run_id,),
-            ).fetchone() is not None:
-                raise InvalidRunStateError("source run has already been revised")
-            latest = connection.execute(
-                """
-                SELECT runs.id FROM runs
-                WHERE runs.session_id = ?
-                  AND NOT EXISTS (
-                    SELECT 1 FROM run_revisions
-                    WHERE run_revisions.source_run_id = runs.id
-                  )
-                ORDER BY runs.creation_seq DESC LIMIT 1
-                """,
-                (source["session_id"],),
-            ).fetchone()
-            if latest is None or str(latest["id"]) != source_run_id:
-                raise InvalidRunStateError("only the latest visible run can be revised")
+            return self.validate_revision_source_in(self._connection(), source_run_id)
+
+    @staticmethod
+    def validate_revision_source_in(connection: sqlite3.Connection, source_run_id: str) -> dict[str, object]:
+        source = connection.execute(
+            """
+            SELECT id, session_id, user_input, model_id, status, creation_seq, work_mode
+            FROM runs WHERE id = ?
+            """,
+            (source_run_id,),
+        ).fetchone()
+        if source is None:
+            raise ResourceNotFoundError("source run not found")
+        if str(source["status"]) not in TERMINAL_RUN_STATUSES:
+            raise InvalidRunStateError("source run is not terminal")
+        if connection.execute(
+            "SELECT 1 FROM run_revisions WHERE source_run_id = ?",
+            (source_run_id,),
+        ).fetchone() is not None:
+            raise InvalidRunStateError("source run has already been revised")
+        latest = connection.execute(
+            """
+            SELECT runs.id FROM runs
+            WHERE runs.session_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM run_revisions
+                WHERE run_revisions.source_run_id = runs.id
+              )
+            ORDER BY runs.creation_seq DESC LIMIT 1
+            """,
+            (source["session_id"],),
+        ).fetchone()
+        if latest is None or str(latest["id"]) != source_run_id:
+            raise InvalidRunStateError("only the latest visible run can be revised")
         return {
             "id": str(source["id"]),
             "sessionId": str(source["session_id"]),
@@ -164,6 +167,11 @@ class ResponseActionRepository:
                 raise ResourceNotFoundError("revision run not found")
             if replacement["session_id"] != source["session_id"]:
                 raise InvalidRunStateError("revision runs must share a session")
+            recorded = connection.execute("SELECT source_run_id,revision_kind FROM run_revisions WHERE run_id=?", (run_id,)).fetchone()
+            if recorded is not None:
+                if tuple(recorded) == (source_run_id, revision_kind):
+                    return
+                raise InvalidRunStateError("revision source changed")
             already_revised = connection.execute(
                 "SELECT 1 FROM run_revisions WHERE source_run_id = ?",
                 (source_run_id,),
@@ -190,13 +198,20 @@ class ResponseActionRepository:
                 raise InvalidRunStateError("source run is no longer the latest visible run")
             connection.execute(
                 """
-                INSERT INTO run_revisions (
+                INSERT OR IGNORE INTO run_revisions (
                     run_id, source_run_id, revision_kind, created_at
                 ) VALUES (?, ?, ?, ?)
                 """,
                 (run_id, source_run_id, revision_kind, now_ms()),
             )
             from eidos_runtime.memory.lifecycle import invalidate_source
+            if revision_kind == "regenerate":
+                connection.execute(
+                    "INSERT OR IGNORE INTO automation_run_origins(run_id,origin_json) "
+                    "SELECT ?,origin_json FROM automation_run_origins WHERE run_id=?", (run_id, source_run_id),
+                )
+            if revision_kind == "regenerate":
+                connection.execute("INSERT OR IGNORE INTO channel_run_origins SELECT ?,origin_json FROM channel_run_origins WHERE run_id=?", (run_id, source_run_id))
             invalidate_source(connection, source['session_id'], reason='revision', run_id=source_run_id)
 
     def _connection(self) -> sqlite3.Connection:

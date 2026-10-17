@@ -22,6 +22,18 @@ export function PinIcon(props: IconProps) {
 }
 
 /**
+ * Automations / Scheduled Tasks Clock icon
+ */
+export function AutomationsIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <circle cx="8" cy="8" r="6.2" />
+      <path d="M8 4.6V8l2.3 1.4" />
+    </svg>
+  );
+}
+
+/**
  * macOS Finder icon (or Folder open in Finder)
  */
 export function FinderIcon(props: IconProps) {

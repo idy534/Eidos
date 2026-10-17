@@ -233,8 +233,22 @@ class RunResources:
             else None
         )
         memory_access = self.store.database.memory.access(str(self.store.read_run(self.run_id)["sessionId"]))
+        from eidos_runtime.persistence.automations import AutomationRepository
+        from eidos_runtime.tools.automation import automation_entry
+        from eidos_runtime.persistence.channels import ChannelRepository
+        channel_origin = ChannelRepository(self.store.database).origin(self.run_id)
+        automation_origin = AutomationRepository(self.store.database).origin(self.run_id)
+        automation_tools = ()
+        if self.store.automations is not None and not self.is_child and channel_origin is None:
+            if automation_origin is None:
+                automation_tools = (automation_entry(self.store.automations),)
+            else:
+                task = self.store.automations.repository.read(automation_origin.automation_id)
+                if task.status == "ACTIVE" and task.kind == "cron":
+                    automation_tools = (automation_entry(self.store.automations, self_pause_only=True),)
         base = ToolRegistry.build(
             builtin_entries=(
+                *automation_tools,
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
                 declare_outputs_entry(self.tool_executor.workspace),
@@ -242,7 +256,7 @@ class RunResources:
                 *memory_entries(
                     child=self.is_child,
                     read_enabled=memory_access.read_enabled,
-                    write_enabled=memory_access.writable,
+                    write_enabled=memory_access.writable and automation_origin is None and channel_origin is None,
                 ),
                 *(collaboration_entries(self.collaboration, child=self.is_child) if self.collaboration else ()),
                 *planning_entries(include_plan=self.store.read_run(self.run_id).get("workMode") == "plan"),
@@ -259,7 +273,7 @@ class RunResources:
             # Coordination and direct permission expansion stay with the parent.
             base = ToolRegistry(tuple(
                 entry for entry in base.entries
-                if entry.spec.name not in {"request_permissions", "request_user_input"}
+                if entry.spec.name not in {"request_permissions", "request_user_input", "write_plan"}
                 and (entry.provenance.source_id != "eidos.collaboration" or entry.spec.name == "send_message")
             ))
         deferred = tuple(

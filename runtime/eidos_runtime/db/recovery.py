@@ -22,6 +22,8 @@ from eidos_runtime.runtime.state_machine import (
 def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     """Recover abandoned persisted facts without consulting in-memory phases."""
     now = _now_ms()
+    from eidos_runtime.persistence.automation_recovery import recover_automation_results
+    recover_automation_results(connection, now)
     legacy_paused = connection.execute(
         """
         SELECT id, session_id FROM runs

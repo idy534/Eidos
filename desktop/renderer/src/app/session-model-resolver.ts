@@ -14,6 +14,7 @@ export function resolveSessionRun(runs: Run[]): Run | undefined {
   if (!Array.isArray(runs) || runs.length === 0) {
     return undefined;
   }
+  runs = runs.filter((run) => !run.automationOrigin);
 
   // 1. Active Run priority
   const activeRun = findActiveRun(runs);

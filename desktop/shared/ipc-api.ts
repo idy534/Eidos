@@ -1,6 +1,9 @@
+import type { ChannelResponse, ChannelSaveRequest } from "./channels.js";
 import type { SessionForkRequest } from "./session-fork.generated.js";
+import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "./automation.js";
 import type { MemoryMethods } from "./memory.js";
-import type { CollaborationState } from "./collaboration.generated.js";
+import type { AgentCatalogResponse, CollaborationState } from "./collaboration.generated.js";
+import type { AgentDefinitionDocument, AgentDefinitionSaveRequest, AgentDefinitionRemoveRequest } from "./collaboration.generated.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "./planning.generated.js";
 import type { InputDraft, InputPrepareRequest, InputPreview, InputReference } from "./input-context.js";
 import type {
@@ -77,6 +80,11 @@ import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js"
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
+  readChannel(): Promise<ChannelResponse>;
+  saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse>;
+  automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;
+  automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;
+  automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse>;
   backupMemory(): Promise<void>;
   memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]>;
 
@@ -254,6 +262,10 @@ export interface EidosRuntimeAPI {
   readInputDraft(key: string): Promise<InputDraft>;
   writeInputDraft(key: string, draft: InputDraft): Promise<InputDraft>;
 
+  listAgentTypes(): Promise<AgentCatalogResponse>;
+  readAgentDefinition(source: string): Promise<AgentDefinitionDocument>;
+  saveAgentDefinition(request: AgentDefinitionSaveRequest): Promise<AgentDefinitionDocument>;
+  removeAgentDefinition(request: AgentDefinitionRemoveRequest): Promise<AgentCatalogResponse>;
   readAgents(sessionId: string): Promise<CollaborationState>;
   stopAgent(parentRunId: string, agentId: string): Promise<CollaborationState>;
 

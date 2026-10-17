@@ -29,18 +29,6 @@ const labels: Record<AgentSummary["status"], string> = {
   interrupted: "已中断",
 };
 
-const roleLabels: Record<AgentSummary["role"], string> = {
-  default: "default",
-  explorer: "explorer",
-  worker: "worker",
-};
-
-const roleDescriptions: Record<AgentSummary["role"], string> = {
-  default: "default",
-  explorer: "explorer",
-  worker: "worker",
-};
-
 export function useAgentState(sessionId: string | undefined, ready: boolean) {
   const [state, setState] = useState<CollaborationState>();
   const [error, setError] = useState("");
@@ -121,10 +109,11 @@ export function statusBadgeTone(status: AgentSummary["status"]): "success" | "wa
 }
 
 export function formatAgentTooltip(agent: AgentSummary): string {
-  const roleName = roleLabels[agent.role] ?? agent.role;
+  const roleName = agent.role;
   const parts: string[] = [
     `${agent.taskName} (${roleName} · ${labels[agent.status]})`,
   ];
+  if (agent.modelId) parts.push(`模型：${agent.providerId ? `${agent.providerId} / ` : ""}${agent.modelId}`);
   if (agent.task?.trim()) {
     parts.push(`任务描述：${agent.task.trim()}`);
   }
@@ -167,13 +156,13 @@ export function AgentList({
               className={`environment-popover__row agent-list__row agent-list__row--compact${isSelected ? " agent-list__row--selected" : ""}${isRunning ? " agent-list__row--running" : ""}`}
               onClick={() => onOpen(agent)}
               title={tooltip}
-              aria-label={`${agent.taskName} · ${roleLabels[agent.role]} · ${labels[agent.status]}${pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}`}
+              aria-label={`${agent.taskName} · ${agent.role} · ${labels[agent.status]}${pendingApprovals ? ` · 待审批 ${pendingApprovals}` : ""}`}
             >
               <div className="agent-list__row-main">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <span className="agent-list__row-name">{agent.taskName}</span>
-                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
-                  {roleLabels[agent.role]}
+                <span className={`agent-role-pill agent-role-pill--${agent.baseRole ?? agent.role}`}>
+                  {agent.role}
                 </span>
               </div>
               <div className="agent-list__row-status">
@@ -202,8 +191,8 @@ export function AgentList({
               <div className="agent-card__identity">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <span className="agent-card__name">{agent.taskName}</span>
-                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
-                  {roleLabels[agent.role]}
+                <span className={`agent-role-pill agent-role-pill--${agent.baseRole ?? agent.role}`}>
+                  {agent.role}
                 </span>
               </div>
               <div className="agent-card__status-wrap">
@@ -326,7 +315,7 @@ function AgentTranscript({
         setSnapshot(complete);
         setError("");
       } catch (cause) {
-        if (!disposed) setError(`子智能体执行记录未能全部加载。${userFacingError(cause)}`);
+        if (!disposed) setError(`智能体执行记录未能全部加载。${userFacingError(cause)}`);
       } finally {
         reading = false;
         if (refreshPending) scheduleLoad();
@@ -396,10 +385,10 @@ function AgentTranscript({
   }, [snapshot?.items, agent.id, agent.sessionId, agent.runId, agent.task, agent.createdAt]);
 
   return (
-    <section className="agent-transcript" aria-label="子智能体执行记录">
+    <section className="agent-transcript" aria-label="智能体执行记录">
       {childApprovals.length > 0 && (
         <div className="agent-transcript__approvals">
-          <h3>来自子智能体：{agent.taskName} 的审批</h3>
+          <h3>来自智能体：{agent.taskName} 的审批</h3>
           {childApprovals.map((request) => {
             const run = runs.find((entry) => entry.id === request.runId) ?? fallbackRun;
             return run ? (
@@ -463,6 +452,7 @@ export function AgentWorkspacePanel({
   onOpenPlan,
   workspaceRoot,
   onBackToList,
+  expanded = false,
 }: {
   agents: AgentSummary[];
   agentId: string | undefined;
@@ -481,6 +471,7 @@ export function AgentWorkspacePanel({
   onOpenPlan?: (() => void) | undefined;
   workspaceRoot?: string | undefined;
   onBackToList?: (() => void) | undefined;
+  expanded?: boolean | undefined;
 }) {
   const [filter, setFilter] = useState<"all" | "active" | "approvals" | "completed">("all");
   const agent = agents.find((entry) => entry.id === agentId);
@@ -505,14 +496,14 @@ export function AgentWorkspacePanel({
   const completedCount = useMemo(() => agents.filter((a) => a.status === "succeeded").length, [agents]);
 
   return (
-    <section className="agent-workspace" aria-label="子智能体工作区">
+    <section className="agent-workspace" aria-label="智能体工作区">
       {error && <p className="agent-error-banner" role="alert">{error}</p>}
 
       {!agent && (
         <div className="agent-workspace__overview">
           <header className="agent-overview-header">
             <div className="agent-overview-header__title-row">
-              <h2>子智能体</h2>
+              <h2>智能体</h2>
               <span className="agent-overview-count">{agents.length} 个任务</span>
             </div>
 
@@ -564,8 +555,8 @@ export function AgentWorkspacePanel({
                   <path d="M8 15h8" />
                 </svg>
               </div>
-              <h3>暂无子智能体任务</h3>
-              <p>主 Agent 派生的通用任务 Default、代码调查 Explorer 和实现与验证 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。</p>
+              <h3>暂无智能体任务</h3>
+              <p>主任务派生的通用任务 Default、调查 Explorer 和工作 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。</p>
             </div>
           ) : (
             <AgentList
@@ -580,13 +571,13 @@ export function AgentWorkspacePanel({
 
       {agent && (
         <article className="agent-detail-view">
-          <header className="agent-detail-header">
+          <header className={`agent-detail-header${expanded ? " agent-detail-header--expanded" : ""}`}>
             <div className="agent-detail-header__main">
               {onBackToList && (
                 <button
                   type="button"
                   className="agent-detail-back-btn"
-                  aria-label="返回子智能体列表"
+                  aria-label="返回智能体列表"
                   onClick={onBackToList}
                 >
                   <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -599,8 +590,24 @@ export function AgentWorkspacePanel({
               <div className="agent-heading__name-wrap">
                 <span className={`agent-status-dot agent-status-dot--${agent.status}`} aria-hidden="true" />
                 <strong>{agent.taskName}</strong>
-                <span className={`agent-role-pill agent-role-pill--${agent.role}`}>
-                  {roleDescriptions[agent.role]}
+                <span
+                  className={`agent-role-pill agent-role-pill--${agent.baseRole ?? agent.role}${expanded ? " agent-role-pill--expanded" : ""}`}
+                  title={agent.modelId
+                    ? `模式：${agent.role} · 模型：${agent.providerId ? `${agent.providerId} / ` : ""}${agent.modelId}`
+                    : `模式：${agent.role}`}
+                >
+                  <span className="agent-role-pill__role">{agent.role}</span>
+                  {agent.modelId && (
+                    <>
+                      <span className="agent-role-pill__ellipsis" aria-hidden="true">…</span>
+                      <span className="agent-role-pill__details">
+                        <span className="agent-role-pill__sep">·</span>
+                        <span className="agent-role-pill__model">
+                          {agent.providerId ? `${agent.providerId} / ` : ""}{agent.modelId}
+                        </span>
+                      </span>
+                    </>
+                  )}
                 </span>
               </div>
             </div>
@@ -613,11 +620,29 @@ export function AgentWorkspacePanel({
               {active.has(agent.status) && (
                 <button
                   type="button"
-                  className="agent-stop-button"
+                  className={`agent-stop-button${stopping === agent.id ? " agent-stop-button--stopping" : ""}`}
                   disabled={stopping === agent.id}
                   onClick={() => onStop(agent)}
+                  aria-label={stopping === agent.id ? "停止中…" : "停止"}
+                  title={stopping === agent.id ? "正在停止智能体…" : "停止智能体"}
                 >
-                  {stopping === agent.id ? "停止中…" : "停止"}
+                  {stopping === agent.id ? (
+                    <span className="agent-stop-button__spinner" aria-hidden="true" />
+                  ) : (
+                    <svg
+                      viewBox="0 0 16 16"
+                      width="10"
+                      height="10"
+                      fill="currentColor"
+                      aria-hidden="true"
+                      className="agent-stop-button__icon"
+                    >
+                      <rect x="3" y="3" width="10" height="10" rx="2" />
+                    </svg>
+                  )}
+                  <span className="agent-stop-button__text">
+                    {stopping === agent.id ? "停止中…" : "停止"}
+                  </span>
                 </button>
               )}
             </div>

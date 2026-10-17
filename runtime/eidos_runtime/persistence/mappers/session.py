@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 
 from pydantic import ValidationError
 
@@ -16,6 +17,7 @@ from eidos_runtime.domain.session import (
 )
 from eidos_runtime.domain.worktree import WorktreeState
 from eidos_runtime.domain.session_fork import SessionForkSource
+from eidos_runtime.domain.automation import Automation, AutomationOrigin
 from eidos_runtime.persistence.conversion import (
     RowReader,
     RowValues,
@@ -76,8 +78,20 @@ def session_from_row(row: RowValues | Mapping[str, object]) -> Session:
             field="task_status",
         ) from None
     try:
+        automation_origin = (
+            AutomationOrigin.model_validate_json(values.text("automation_origin_json"))
+            if "automation_origin_json" in row.keys() and row["automation_origin_json"] is not None else None
+        )
+        if automation_origin and "automation_config_json" in row.keys() and row["automation_config_json"] is not None:
+            task = Automation.model_validate_json(values.text("automation_config_json"))
+            legacy_title = (task.name + " " + automation_origin.scheduled_for[:16])[:40]
+            while len(legacy_title.encode("utf-8")) > 120:
+                legacy_title = legacy_title[:-1]
+            if title == legacy_title:
+                title = task.session_title()
         return Session(
             id=session_id,
+            automation_origin=automation_origin,
             forked_from=(SessionForkSource.model_validate_json(values.text("fork_source_json"))
                          if "fork_source_json" in row.keys() and row["fork_source_json"] is not None else None),
             workspace_root=workspace_root,
@@ -139,6 +153,7 @@ def session_from_legacy_dict(value: object) -> Session:
         ),
         "task_status": reader.text("taskStatus"),
         "active_run_status": reader.optional_text("activeRunStatus") if "activeRunStatus" in value else None,
+        "automation_origin_json": json.dumps(value["automationOrigin"]) if value.get("automationOrigin") is not None else None,
         "created_at": reader.value("createdAt"),
         "updated_at": reader.value("updatedAt"),
     })
@@ -214,6 +229,8 @@ def session_to_legacy_dict(session: Session) -> dict[str, object]:
     }
     if session.title is not None:
         value["title"] = session.title
+    if session.automation_origin is not None:
+        value["automationOrigin"] = session.automation_origin.to_wire_dict()
     return value
 
 

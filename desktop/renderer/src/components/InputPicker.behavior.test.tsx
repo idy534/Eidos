@@ -177,7 +177,7 @@ describe("InputPicker behavior", () => {
 
     fireEvent.click(searchTrigger);
 
-    const searchInput = screen.getByPlaceholderText("搜索名称、Skill、扩展…");
+    const searchInput = screen.getByRole("textbox", { name: "搜索引用" });
     expect(searchInput).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "添加文件" })).not.toBeInTheDocument();
 
@@ -196,14 +196,14 @@ describe("InputPicker behavior", () => {
       <InputPicker {...pickerProps} query="test" mode="all" onQuery={onQuery} />,
     );
 
-    const searchInput = await screen.findByPlaceholderText("搜索名称、Skill、扩展…");
+    const searchInput = await screen.findByRole("textbox", { name: "搜索引用" });
     expect(searchInput).toBeInTheDocument();
 
     fireEvent.keyDown(searchInput, { key: "Escape" });
     expect(onQuery).toHaveBeenCalledWith("");
 
     rerender(<InputPicker {...pickerProps} query="" mode="all" onQuery={onQuery} />);
-    const emptyInput = screen.getByPlaceholderText("搜索名称、Skill、扩展…");
+    const emptyInput = screen.getByRole("textbox", { name: "搜索引用" });
     fireEvent.keyDown(emptyInput, { key: "Escape" });
 
     expect(screen.queryByPlaceholderText("搜索名称、Skill、扩展…")).not.toBeInTheDocument();
@@ -226,4 +226,32 @@ describe("InputPicker behavior", () => {
     fireEvent.click(skillTab);
     expect(skillTab).toHaveAttribute("aria-selected", "true");
   });
+  it("selects custom agents through the existing reference picker and shows provider details", async () => {
+    setupRuntime({ listAgentTypes: vi.fn().mockResolvedValue({ agents: [{
+      name: "luna-work", description: "负责实现", source: "/data/agents/luna-work.toml",
+      baseRole: "worker", providerId: "volcengine", modelId: "deepseek-v4.1-flash", enabled: true, available: true,
+    }] }) });
+    const onChoose = vi.fn();
+    render(<InputPicker {...pickerProps} mode="all" onChoose={onChoose} />);
+    fireEvent.click(screen.getByRole("tab", { name: "智能体" }));
+    const option = await screen.findByRole("option", { name: /luna-work/ });
+    expect(option).toHaveTextContent("volcengine / deepseek-v4.1-flash");
+    fireEvent.click(option);
+    expect(onChoose).toHaveBeenCalledWith({ kind: "agent", source: "luna-work" });
+  });
+
+  it("keeps unavailable agent definitions visible with a concrete reason", async () => {
+    setupRuntime({ listAgentTypes: vi.fn().mockResolvedValue({ agents: [{
+      name: "missing-model", description: "调查", source: "/data/agents/missing.toml",
+      baseRole: "explorer", enabled: true, available: false, reason: "模型尚未配置。",
+    }] }) });
+    const onChoose = vi.fn();
+    render(<InputPicker {...pickerProps} mode="all" onChoose={onChoose} />);
+    const option = await screen.findByRole("option", { name: /missing-model/ });
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    expect(option).toHaveTextContent("模型尚未配置。");
+    fireEvent.click(option);
+    expect(onChoose).not.toHaveBeenCalled();
+  });
+
 });

@@ -58,6 +58,8 @@ SESSION_SELECT = """
            s.associated_worktree_id,
            s.execution_mode, s.title,
            (SELECT source_json FROM session_forks WHERE session_id=s.id) AS fork_source_json,
+           CASE WHEN automation_creation.id IS NOT NULL THEN automation_source.origin_json END AS automation_origin_json,
+           automation_creation.config_json AS automation_config_json,
            s.created_at, s.updated_at,
            CASE
              WHEN EXISTS (
@@ -104,6 +106,14 @@ SESSION_SELECT = """
     LEFT JOIN worktrees w ON w.id = s.worktree_id
     LEFT JOIN projects p ON p.id = w.project_id
     LEFT JOIN projects direct_p ON direct_p.workspace_root = s.workspace_root
+    LEFT JOIN automation_run_origins automation_source ON automation_source.run_id = (
+        SELECT r.id FROM runs r JOIN automation_run_origins a ON a.run_id=r.id
+        WHERE r.session_id=s.id ORDER BY r.creation_seq LIMIT 1
+    )
+    LEFT JOIN scheduled_occurrences automation_creation
+        ON automation_creation.id=json_extract(automation_source.origin_json,'$.occurrenceId')
+        AND automation_creation.session_id=s.id
+        AND json_extract(automation_creation.config_json,'$.target.kind')='new_session'
 """
 
 class SessionRepository(Repository):
@@ -840,6 +850,8 @@ class SessionRepository(Repository):
             from eidos_runtime.persistence.sidebar import remove_sidebar_pin
 
             pin_events = remove_sidebar_pin(connection, "session", session_id)
+            from eidos_runtime.persistence.automations import AutomationRepository
+            AutomationRepository.pause_targets(connection, session_id=session_id)
             connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return CommittedMutation(
                 DeletedSession(deleted_session_id=session_id), pin_events
@@ -993,13 +1005,17 @@ class SessionRepository(Repository):
                 (session_id,),
             ).fetchone()[0]
         session = session_to_legacy_dict(session_from_row(session_row))
+        from eidos_runtime.persistence.automations import AutomationRepository
+        automation_origins = AutomationRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
+        from eidos_runtime.persistence.channels import ChannelRepository
+        channel_origins = ChannelRepository(self.database).origins_for_runs([row["id"] for row in run_rows])
         selected_runs = [
-            _run_from_row(row, include_user_input=False)
+            _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]))
             for row in reversed(run_rows)
             if row["id"] in known_run_ids
         ]
         remaining_runs = {
-            row["id"]: _run_from_row(row, include_user_input=False)
+            row["id"]: _run_from_row(row, include_user_input=False, automation_origin=automation_origins.get(row["id"]), channel_origin=channel_origins.get(row["id"]))
             for row in run_rows
             if row["id"] not in known_run_ids
         }

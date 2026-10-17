@@ -10,7 +10,7 @@ import os
 import threading
 import time
 import uuid
-from typing import Callable
+from typing import Callable, Awaitable
 
 import anyio
 from opentelemetry import context as otel_context
@@ -171,6 +171,20 @@ class RunSupervisor:
 
         self.collaboration = CollaborationApplication(store, self.schedule_next, self.cancel_agent, self.events.deliver_pending)
         self._agent_maintenance: RuntimeAsyncTask[None] | None = None
+        self._channel_maintenance: RuntimeAsyncTask[None] | None = None
+        self._automation_maintenance: RuntimeAsyncTask[None] | None = None
+
+    def start_channel_service(self, target: Callable[[], Awaitable[None]]) -> None:
+        with self.lock:
+            if self._async_kernel is None or self._channel_maintenance is not None:
+                raise RuntimeError("channel service cannot be started")
+            self._channel_maintenance = self._async_kernel.start_task(target, owner_id="channel-service")
+
+    def start_automation_service(self, target: Callable[[], Awaitable[None]]) -> None:
+        with self.lock:
+            if self._async_kernel is None or self._automation_maintenance is not None:
+                raise RuntimeError("automation service cannot be started")
+            self._automation_maintenance = self._async_kernel.start_task(target, owner_id="automation-scheduler")
 
     def bind_async_kernel(self, kernel: RuntimeAsyncKernel) -> None:
         """Bind the process-owned kernel before the first Run is dispatched."""
@@ -614,6 +628,12 @@ class RunSupervisor:
             active_ids = tuple(self._handles)
             tasks = tuple(self._managed_tasks.values())
             maintenance = self._agent_maintenance
+            channel = self._channel_maintenance
+            if channel is not None:
+                channel.cancel()
+            automation = self._automation_maintenance
+            if automation is not None:
+                automation.cancel()
             if maintenance is not None:
                 maintenance.cancel()
             for task in tasks:
@@ -624,6 +644,10 @@ class RunSupervisor:
         self.wait_managed_tasks(self.shutdown_timeout, include_services=True)
         if maintenance is not None:
             maintenance.wait(self.shutdown_timeout)
+        if channel is not None:
+            channel.wait(self.shutdown_timeout)
+        if automation is not None:
+            automation.wait(self.shutdown_timeout)
         registered = tuple(
             resource
             for resource in self.resources.active_resources()

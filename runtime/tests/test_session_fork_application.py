@@ -231,9 +231,10 @@ def test_fork_is_named_and_listed_before_its_first_run_and_keeps_its_title(tmp_p
 
 
 def test_v26_fork_titles_are_backfilled_on_restart_without_renaming_existing_titles(
-    tmp_path,
+    tmp_path, downgrade_automation_schema,
 ):
     import json
+    from eidos_runtime.db.schema import SCHEMA_VERSION
     from eidos_runtime.db.repositories.sessions import SessionRepository
 
     store, sessions, forks = applications(tmp_path)
@@ -278,6 +279,7 @@ def test_v26_fork_titles_are_backfilled_on_restart_without_renaming_existing_tit
             connection.execute(
                 "UPDATE sessions SET title='用户改名' WHERE id=?", (renamed.id,)
             )
+            downgrade_automation_schema(connection)
             connection.execute("PRAGMA user_version=26")
         assert parent.id not in SessionRepository(
             store.database
@@ -295,7 +297,7 @@ def test_v26_fork_titles_are_backfilled_on_restart_without_renaming_existing_tit
             (child.id,),
         ).fetchall()
         assert [json.loads(row[0])["title"] for row in changed] == ["原标题"]
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 27
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     finally:
         store.close()
 
