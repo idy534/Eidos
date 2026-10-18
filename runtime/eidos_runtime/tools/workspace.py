@@ -44,6 +44,7 @@ from eidos_runtime.workspace.codex_patch import (
     DeleteFile,
     MAX_PATCH_BYTES,
     PatchError as CodexPatchError,
+    format_patch_error,
     UpdateFile,
     apply_update,
     patch_grammar,
@@ -1008,20 +1009,7 @@ class ToolExecutor:
         except ToolCancelled:
             return _error(tool_name, "canceled", "Tool was canceled")
         except CodexPatchError as error:
-            if error.code == "patch_format_error":
-                location = f" at line {error.line_number}" if error.line_number else ""
-                target = f" for {error.target_path}" if error.target_path else ""
-                summary = f"Patch format error{location}{target}: {error.message}"
-            else:
-                summary = error.message
-            if error.code in {"patch_format_error", "patch_context_mismatch"}:
-                recovery = (
-                    "Correct the Patch markers and line prefixes, then resubmit."
-                    if error.code == "patch_format_error" else
-                    "Read the current target lines and correct the Patch context."
-                )
-                summary += f" No files were changed by this call. {recovery}"
-            return _error(tool_name, error.code, summary)
+            return _error(tool_name, error.code, format_patch_error(error))
         except WorkspacePathError as error:
             return _error(
                 tool_name,

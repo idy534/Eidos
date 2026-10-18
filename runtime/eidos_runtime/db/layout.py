@@ -718,9 +718,10 @@ def _externalize_state_snapshots(
                     identifier, stored = str(row[0]), str(row[1])
                     reference = JsonBlobReference.from_json(stored)
                     if reference is not None:
-                        if reference.kind != kind and not (
-                            kind == "context-snapshot" and reference.kind == "context-snapshot-v2"
-                        ):
+                        if reference.kind != kind and (kind, reference.kind) not in {
+                            ("context-snapshot", "context-snapshot-v2"),
+                            ("step-resolution", "step-resolution-v2"),
+                        }:
                             raise StorageError("snapshot_blob_reference_invalid")
                         continue
                     replacement = blobs.put_json(kind, stored)

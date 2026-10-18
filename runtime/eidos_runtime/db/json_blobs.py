@@ -18,7 +18,6 @@ from eidos_runtime.db.errors import StorageError
 
 _REFERENCE_KEY = "$eidosBlob"
 _REFERENCE_VERSION = 1
-_MAX_JSON_BLOB_BYTES = 32 * 1024 * 1024
 
 
 class JsonBlobCorruptionError(StorageError):
@@ -86,10 +85,10 @@ class JsonBlobReference:
             or any(character not in "0123456789abcdef" for character in digest)
             or not isinstance(uncompressed_bytes, int)
             or isinstance(uncompressed_bytes, bool)
-            or not 0 <= uncompressed_bytes <= _MAX_JSON_BLOB_BYTES
+            or uncompressed_bytes < 0
             or not isinstance(compressed_bytes, int)
             or isinstance(compressed_bytes, bool)
-            or not 0 < compressed_bytes <= _MAX_JSON_BLOB_BYTES
+            or compressed_bytes <= 0
         ):
             raise JsonBlobCorruptionError("blob reference is invalid")
         expected = _relative_path(kind, digest)
@@ -105,7 +104,11 @@ class JsonBlobReference:
 
 
 class JsonBlobStore:
-    """Content-addressed gzip storage for immutable bounded JSON payloads."""
+    """Content-addressed JSON storage; callers own payload budgets.
+
+    Reads remain bounded by the persisted byte counts and verify the file and
+    digest. Snapshot persistence does not impose a separate task size ceiling.
+    """
 
     def __init__(self, data_directory: Path) -> None:
         self.root = data_directory / "blobs"
@@ -120,14 +123,11 @@ class JsonBlobStore:
         if not _safe_kind(kind):
             raise ValueError("blob kind is invalid")
         raw = value.encode("utf-8")
-        if len(raw) > _MAX_JSON_BLOB_BYTES:
-            raise ValueError("json blob exceeds size limit")
         try:
             json.loads(value)
         except json.JSONDecodeError as error:
             raise ValueError("json blob is invalid") from error
         digest = hashlib.sha256(raw).hexdigest()
-        compressed = gzip.compress(raw, mtime=0)
         relative_path = _relative_path(kind, digest)
         destination = self.root.joinpath(*PurePosixPath(relative_path).parts)
         _prepare_private_directory(destination.parent.parent)
@@ -138,12 +138,13 @@ class JsonBlobStore:
                 relative_path=relative_path,
                 sha256=digest,
                 uncompressed_bytes=len(raw),
-                compressed_bytes=len(compressed),
+                compressed_bytes=destination.lstat().st_size,
             )
             if self.read(reference) != value:
                 raise JsonBlobCorruptionError("existing blob content is invalid")
             return reference.to_json()
 
+        compressed = gzip.compress(raw, mtime=0)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{digest}.", suffix=".tmp", dir=destination.parent
         )
@@ -206,7 +207,15 @@ class JsonBlobStore:
             os.close(descriptor)
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as stream:
-                raw = stream.read(reference.uncompressed_bytes + 1)
+                chunks: list[bytes] = []
+                remaining = reference.uncompressed_bytes + 1
+                while remaining:
+                    chunk = stream.read(min(remaining, 64 * 1024))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
         except (gzip.BadGzipFile, EOFError, zlib.error) as error:
             raise JsonBlobCorruptionError("blob compression is invalid") from error
         if (
@@ -233,48 +242,25 @@ class JsonBlobStore:
         if cancel is not None and cancel.is_set():
             return 0
         retained: set[str] = set()
+        # Resolve every reference closure before deleting anything. Process one
+        # root at a time so the SQLite reference iterator remains streaming.
         for stored in retained_references:
             if cancel is not None and cancel.is_set():
                 return 0
             reference = JsonBlobReference.from_json(stored)
-            if reference is not None:
+            pending = [reference] if reference is not None else []
+            while pending:
+                if cancel is not None and cancel.is_set():
+                    return 0
+                reference = pending.pop()
+                if reference.relative_path in retained:
+                    continue
                 retained.add(reference.relative_path)
-                if reference.kind == "context-snapshot-v2":
-                    # Resolve children before deleting anything. A corrupt manifest
-                    # must never cause live request blocks to be collected.
-                    manifest = json.loads(self._read(reference))
-                    if (
-                        not isinstance(manifest, dict)
-                        or set(manifest)
-                        != {
-                            "$eidosContextBlocks",
-                            "snapshot",
-                            "modelContextRefs",
-                            "toolDefinitionsRef",
-                        }
-                        or manifest["$eidosContextBlocks"] != 1
-                    ):
-                        raise JsonBlobCorruptionError("context manifest is invalid")
-                    children = manifest["modelContextRefs"]
-                    if not isinstance(children, list) or len(children) > 10000:
-                        raise JsonBlobCorruptionError("context manifest is invalid")
-                    block_references = [(value, "context-item") for value in children]
-                    block_references.append(
-                        (manifest["toolDefinitionsRef"], "context-tools")
-                    )
-                    for value, kind in block_references:
-                        if cancel is not None and cancel.is_set():
-                            return 0
-                        if not isinstance(value, str):
-                            raise JsonBlobCorruptionError(
-                                "context block reference is invalid"
-                            )
-                        child = JsonBlobReference.from_json(value)
-                        if child is None or child.kind != kind:
-                            raise JsonBlobCorruptionError(
-                                "context block reference is invalid"
-                            )
-                        retained.add(child.relative_path)
+                for value, kind in self._request_children(reference):
+                    child = JsonBlobReference.from_json(value)
+                    if child is None or child.kind != kind:
+                        raise JsonBlobCorruptionError("context block reference is invalid")
+                    pending.append(child)
         deleted = 0
         for directory, directory_names, file_names in os.walk(
             self.root, topdown=True, followlinks=False
@@ -312,6 +298,49 @@ class JsonBlobStore:
             if directory_deleted:
                 _fsync_directory(base)
         return deleted
+
+    def _request_children(self, reference: JsonBlobReference) -> list[tuple[str, str]]:
+        from eidos_runtime.db.request_blocks import StoredContextItem, StoredStepResolution
+
+        if reference.kind not in {"context-snapshot-v2", "step-resolution-v2", "context-item"}:
+            return []
+        manifest = json.loads(self._read(reference))
+        if not isinstance(manifest, dict):
+            raise JsonBlobCorruptionError("context manifest is invalid")
+        try:
+            if reference.kind == "context-item":
+                if "$eidosContextItem" not in manifest:
+                    return []  # Existing inline content blocks remain supported.
+                item = StoredContextItem.model_validate_json(json.dumps(manifest))
+                return [
+                    (value, kind) for value, kind in (
+                        (item.tool_content_ref, "tool-result-content"),
+                        (item.input_image_ref, "context-image"),
+                    ) if value is not None
+                ]
+            if reference.kind == "step-resolution-v2":
+                step = StoredStepResolution.model_validate_json(json.dumps(manifest))
+                return [
+                    *((value, "context-item") for value in step.model_context_refs),
+                    (step.tool_definitions_ref, "context-tools"),
+                ]
+            if (
+                set(manifest) != {"$eidosContextBlocks", "snapshot", "modelContextRefs", "toolDefinitionsRef"}
+                or manifest["$eidosContextBlocks"] != 1
+                or not isinstance(manifest["snapshot"], dict)
+                or not isinstance(manifest["modelContextRefs"], list)
+                or len(manifest["modelContextRefs"]) > 10000
+            ):
+                raise ValueError("invalid context manifest")
+            children = [
+                *((value, "context-item") for value in manifest["modelContextRefs"]),
+                (manifest["toolDefinitionsRef"], "context-tools"),
+            ]
+            if any(not isinstance(value, str) for value, _kind in children):
+                raise ValueError("invalid context reference")
+            return children
+        except (TypeError, ValueError):
+            raise JsonBlobCorruptionError("context manifest is invalid") from None
 
 
 def _relative_path(kind: str, digest: str) -> str:

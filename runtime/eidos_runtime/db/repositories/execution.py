@@ -42,6 +42,7 @@ from eidos_runtime.db.repositories.workspace import execution_workspace_for_sess
 from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.model.instructions import InstructionResolver
+from eidos_runtime.persistence.step_snapshots import read_step_snapshot, store_step_snapshot
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.domain.collaboration import ACTIVE_STATUSES, CollaborationState
 from eidos_runtime.runtime.contracts import ProgressSignature
@@ -527,10 +528,7 @@ class ExecutionRepository(Repository):
                     resolution_snapshot.run_snapshot_id,
                     resolution_snapshot.rule_resolution_snapshot_id,
                     resolution_snapshot.snapshot_hash,
-                    self.database.json_blobs.put_json(
-                        "step-resolution",
-                        canonical_json(resolution_snapshot.model_dump(mode="json")),
-                    ),
+                    store_step_snapshot(self.database.json_blobs, resolution_snapshot),
                     resolution_snapshot.created_at,
                 ),
             )
@@ -637,11 +635,7 @@ class ExecutionRepository(Repository):
             ).fetchall()
         try:
             return tuple(
-                StepResolutionSnapshot.model_validate_json(
-                    self.database.json_blobs.read_json(
-                        row["snapshot_json"], expected_kind="step-resolution"
-                    )
-                )
+                read_step_snapshot(self.database.json_blobs, row["snapshot_json"])
                 for row in rows
             )
         except (TypeError, ValueError):

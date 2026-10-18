@@ -74,7 +74,7 @@ from eidos_runtime.runtime.permission_requests import PermissionRequests, networ
 from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator, PermissionDisposition
 from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, NetworkPermissions
 from eidos_runtime.tools.request_permissions import RequestPermissionsInput
-from eidos_runtime.workspace.codex_patch import PatchError
+from eidos_runtime.workspace.codex_patch import PatchError, format_patch_error
 from eidos_runtime.runtime.shell_orchestration import (
     GitWriteAccessError,
     ShellOrchestrationRequest,
@@ -369,7 +369,11 @@ class FileChangeToolHandler:
             scope.enter_context(executor.external_write_scope(paths, effective, revalidate_permissions))
             executor.external_write_approved = decision.disposition is PermissionDisposition.ALLOW
             executor.dangerous_write = decision.requires_human_confirmation
-        except (WorkspacePathError, PatchError, ValidationError, OSError, ValueError) as error:
+        except PatchError as error:
+            return HandlerOutcome(tool_error(
+                call.name, error.code, format_patch_error(error),
+            ), "failed", "failed")
+        except (WorkspacePathError, ValidationError, OSError, ValueError) as error:
             return HandlerOutcome(tool_error(
                 call.name, getattr(error, "code", "file_prepare_failed"),
                 "File paths or permissions could not be prepared",

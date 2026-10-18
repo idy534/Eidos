@@ -5,19 +5,31 @@ import json
 import logging
 import os
 from pathlib import Path, PurePosixPath
+import re
 import sqlite3
 import stat
 import threading
 import time
+import traceback
 import uuid
 
 from opentelemetry import trace
 
 from eidos_runtime.db.errors import StorageError
 from eidos_runtime.db.thread_history import SqliteConnectionOwner
+from eidos_runtime.sandbox.sensitive import default_scanner
 
 
 _MAX_LOG_MESSAGE_BYTES = 16 * 1024
+_MAX_EXCEPTION_MESSAGE_BYTES = 4 * 1024
+_MAX_EXCEPTION_TRACEBACK_BYTES = 16 * 1024
+_LOG_SECRET_ASSIGNMENT = re.compile(
+    r'''(?i)(\b(?:api[_-]?key|password|passwd|token|secret)\b["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)'''
+)
+_LOG_AUTHORIZATION = re.compile(r"(?im)\bauthorization\b[^\r\n]*")
+_LOG_PRIVATE_KEY = re.compile(
+    r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----[\s\S]*?(?:-----END(?: [A-Z0-9]+)? PRIVATE KEY-----|$)"
+)
 _MAX_SEGMENT_BYTES = 8 * 1024 * 1024
 _MAX_TOTAL_LOG_BYTES = 128 * 1024 * 1024
 
@@ -46,7 +58,7 @@ class RuntimeLogStore:
 
     def append(self, record: logging.LogRecord) -> None:
         timestamp = int(record.created * 1000)
-        message = _bounded_text(record.getMessage(), _MAX_LOG_MESSAGE_BYTES)
+        message = _safe_log_text(record.getMessage(), _MAX_LOG_MESSAGE_BYTES)
         span_context = trace.get_current_span().get_span_context()
         correlation = (
             {
@@ -69,6 +81,7 @@ class RuntimeLogStore:
                     if record.exc_info is not None
                     else None
                 ),
+                **_exception_fields(record),
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -201,6 +214,59 @@ class RuntimeLogStore:
                     (str(row["id"]),),
                 )
             total -= int(row["stored_bytes"])
+
+
+def _safe_log_text(value: str, max_bytes: int) -> str:
+    try:
+        text = _bounded_text(value, max_bytes)
+        text = _LOG_PRIVATE_KEY.sub("[REDACTED:private_key]", text)
+        text = _LOG_AUTHORIZATION.sub("Authorization: [REDACTED]", text)
+        text = _LOG_SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", text)
+        text = default_scanner().redact_for_presentation(text, max_bytes=max_bytes).text
+        return _bounded_text(text, max_bytes)
+    except Exception:
+        return "[REDACTED:diagnostic_unavailable]"
+
+
+def _exception_fields(record: logging.LogRecord) -> dict[str, str]:
+    if record.exc_info is None or record.exc_info[1] is None:
+        return {}
+    try:
+        error = record.exc_info[1]
+        message = _safe_log_text(str(error), _MAX_EXCEPTION_MESSAGE_BYTES)
+        lines: list[str] = []
+        seen: set[int] = set()
+        current: BaseException | None = error
+        while current is not None and id(current) not in seen and len(seen) < 8:
+            seen.add(id(current))
+            # Capture frame locations only. Source lines and locals may contain
+            # credentials or full user files, so they never enter the log.
+            frames = traceback.StackSummary.extract(
+                traceback.walk_tb(current.__traceback__), limit=-32,
+                lookup_lines=False, capture_locals=False,
+            )
+            lines.extend(
+                f'  File "{frame.filename}", line {frame.lineno}, in {frame.name}'
+                for frame in frames
+            )
+            lines.append(type(current).__name__ + ": " + _safe_log_text(
+                str(current), _MAX_EXCEPTION_MESSAGE_BYTES,
+            ))
+            if current.__cause__ is not None:
+                lines.append("Caused by:")
+                current = current.__cause__
+            elif not current.__suppress_context__:
+                current = current.__context__
+                if current is not None:
+                    lines.append("During handling of:")
+            else:
+                current = None
+        return {
+            "exceptionMessage": message,
+            "exceptionTraceback": _safe_log_text("\n".join(lines), _MAX_EXCEPTION_TRACEBACK_BYTES),
+        }
+    except Exception:
+        return {"exceptionMessage": "[diagnostic unavailable]"}
 
 
 class RuntimeJsonlLogHandler(logging.Handler):

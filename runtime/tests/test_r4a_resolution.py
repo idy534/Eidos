@@ -199,7 +199,7 @@ class ResolutionPersistenceTests(unittest.TestCase):
             (step.id,),
         ).fetchone()[0]
         step_reference = json.loads(stored_step)["$eidosBlob"]
-        self.assertEqual(step_reference["kind"], "step-resolution")
+        self.assertEqual(step_reference["kind"], "step-resolution-v2")
         self.assertLess(len(stored_step), 512)
         self.assertEqual(step.model_snapshot_hash, run_snapshot.model_profile_snapshot_hash)
         self.assertEqual(step.permission_profile_hash, run_snapshot.permission_profile_hash)

@@ -49,6 +49,24 @@ class PatchError(ValueError):
         return self.message
 
 
+def format_patch_error(error: PatchError) -> str:
+    """Keep parser diagnostics identical at preflight and Prepare boundaries."""
+    if error.code == "patch_format_error":
+        location = f" at line {error.line_number}" if error.line_number else ""
+        target = f" for {error.target_path}" if error.target_path else ""
+        summary = f"Patch format error{location}{target}: {error.message}"
+    else:
+        summary = error.message
+    if error.code in {"patch_format_error", "patch_context_mismatch"}:
+        recovery = (
+            "Correct the Patch markers and line prefixes, then resubmit."
+            if error.code == "patch_format_error" else
+            "Read the current target lines and correct the Patch context."
+        )
+        summary += f" No files were changed by this call. {recovery}"
+    return summary
+
+
 @dataclass(frozen=True, slots=True)
 class AddFile:
     path: str

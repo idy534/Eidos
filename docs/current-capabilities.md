@@ -217,6 +217,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `apply_patch` 为长文本保留独立资源预算。Function 参数校验、Custom 输入和 Parser 共用 8 MiB 原文上限；Function JSON 包装另有转义余量。`apply_patch` 不再对 Patch 参数、变更内容或结果 Diff 执行敏感内容拒绝。读取和提交 helper 共用 16 MiB 文件上限，Prepare 限制累计准备内容为 64 MiB。工具支持单文件、多文件和多 hunk；模型自行决定文件组织和编辑范围。Responses 流按片段累计输入和字节数，在完成时合并文本，避免每个片段都复制和重新编码全部历史输入。
 - Desktop 的通知和快照对大 Diff、结果提供大小及内容哈希。审批、执行详情和文本审查可以按页读取 SQLite 中的完整文本。`toolCall/readText` 校验 Session、ToolCall、文本字段、SHA-256 和字符偏移；接口保持只读。控制通道仍保留原有消息上限。文件写入成功与界面单条消息容量不再共用同一个大小判断。
 - 两条输入路径共用 `parse_patch`、操作说明和最小示例。Runtime 不再使用结构化 Patch encoder。`apply_patch.lark` 以 `openai/codex` grammar 为来源，Lark 负责解析；空 Add、CRLF、外层空白和首个 Update 不带 `@@` 的兼容行为不变。Runtime 不自动补齐 envelope、marker 或行前缀。参数错误会给出当前 Function 输入示例；语法或上下文错误会提示修正方式。以上失败都在文件写入前返回，由模型在现有 Loop 中纠正。
+- Patch 路径预检查与 Prepare 共用错误格式。Function 和 Custom 调用都会保留解析器给出的错误行号、目标文件和具体原因，并说明本次没有修改文件。缺少 Add 行前缀等格式错误不再被替换为路径或权限准备失败。
 - 历史 `changes` 调用继续作为原始历史保留；当前工具说明明确标记旧格式已停用。新的输入契约通过 builtin `sourceVersion=2` 和现有 Contract Hash 标识。Runtime 不改写历史、不重放旧调用、不变更 SQLite Schema。
 - 文件工具在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。`apply_patch` 支持 Codex 风格的 Add、Update、Delete、Move、多文件、多 chunk、首个 Update 不带 `@@`、裸 `@@`、`@@ context` 和 `*** End of File`。Update 匹配按 Patch chunk 顺序向前查找。工具仍会复用版本复检、路径授权、Seatbelt 和最终内容校验。
 - 已应用的文件 Diff 会进入 ToolCall 持久事实，并在 Execution Feed 中展示。

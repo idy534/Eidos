@@ -16,6 +16,7 @@ from eidos_runtime.db.json_blobs import (
     JsonBlobStore,
 )
 from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
+from eidos_runtime.db.request_blocks import read_context_items, store_context_items
 
 
 class ContextSnapshotRepository(Repository):
@@ -304,12 +305,7 @@ class ContextSnapshotRepository(Repository):
         manifest = {
             "$eidosContextBlocks": 1,
             "snapshot": payload,
-            "modelContextRefs": [
-                self.blobs.put_json(
-                    "context-item", json.dumps(item, ensure_ascii=False, sort_keys=True)
-                )
-                for item in context
-            ],
+            "modelContextRefs": store_context_items(self.blobs, tuple(context)),
             "toolDefinitionsRef": self.blobs.put_json(
                 "context-tools", json.dumps(tools, ensure_ascii=False, sort_keys=True)
             ),
@@ -347,10 +343,7 @@ class ContextSnapshotRepository(Repository):
             or len(refs) > 10000
         ):
             raise JsonBlobCorruptionError("context manifest is invalid")
-        payload["model_context"] = [
-            json.loads(self.blobs.read_json(value, expected_kind="context-item"))
-            for value in refs
-        ]
+        payload["model_context"] = read_context_items(self.blobs, refs)
         payload["tool_definitions"] = json.loads(
             self.blobs.read_json(
                 manifest["toolDefinitionsRef"], expected_kind="context-tools"
