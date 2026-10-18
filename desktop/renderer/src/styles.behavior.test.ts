@@ -159,6 +159,13 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.git-review-stat\s*\{[^}]*font-size:\s*var\(--font-size-sidebar\);[^}]*font-variant-numeric:\s*tabular-nums;/s);
   });
 
+  it("aligns sidebar project and session name typography with prose font while preserving sizes and weights", () => {
+    expect(styles).toMatch(/--font-prose:\s*-apple-system,\s*BlinkMacSystemFont,\s*"Segoe UI",\s*"PingFang SC",\s*"Microsoft YaHei"/);
+    expect(styles).toMatch(/\.workspace-name\s*\{[^}]*font-family:\s*var\(--font-prose\);[^}]*font-size:\s*var\(--font-size-body\);[^}]*font-weight:\s*500;/s);
+    expect(styles).toMatch(/\.session-title\s*\{[^}]*font-family:\s*var\(--font-prose\);[^}]*font-size:\s*var\(--font-size-body\);[^}]*font-weight:\s*400;/s);
+    expect(styles).toMatch(/\.sidebar-hover-card__title\s*\{[^}]*font-family:\s*var\(--font-prose\);/s);
+  });
+
   it("anchors streaming scroll to avoid viewport jumps", () => {
     expect(styles).toMatch(/\.feed\s*\{[^}]*overflow-anchor:\s*auto;[^}]*scrollbar-gutter:\s*stable;/s);
     expect(styles).toMatch(/\.feed-item--assistant\s*\{[^}]*overflow-anchor:\s*none;/s);

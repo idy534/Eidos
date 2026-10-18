@@ -47,7 +47,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - Desktop 可以在 Session 对应的 managed Worktree 被 retention 清理后显示 Restore Worktree 提示。Restore 会调用 `session/restoreWorktree`，并继续使用同一个 Session 和同一个 `associatedWorktreeId`。当前 execution mode 是 Worktree 且 Worktree 已删除时，Composer 会保持只读。
 - Settings 可以读取和修改 `automaticCleanup` 与 `managedWorktreeLimit`。Worktree limit 的有效范围是 1 到 100，默认值是 15。
 - Execution Feed 可以展示用户消息、模型文本、ToolCall、Tool Result、Approval、终态和恢复后的历史。
-- 聊天正文使用独立的 `.eidos-chat-prose` 样式。用户消息、过程文字和最终回答优先使用系统字体；正文保持 14px，代码块保持 12.5px，标题和行内代码也保留原字号。正文行高为 23px，相邻段落间距为 14px，列表缩进为 24px，列表项间距为 4px。标题和加粗文字使用 600 字重，代码保留等宽字体与原始空白。现有颜色、背景、消息宽度和气泡结构保持不变；文件预览、计划面板、技能详情和其他 UI 不启用这组样式。
+- 聊天正文使用独立的 `.eidos-chat-prose` 样式。用户消息、过程文字和最终回答优先使用系统字体；正文保持 14px，代码块保持 12.5px，标题和行内代码也保留原字号。正文行高为 23px，相邻段落间距为 14px，列表缩进为 24px，列表项间距为 4px。标题和加粗文字使用 600 字重，代码保留等宽字体与原始空白。现有颜色、背景、消息宽度和气泡结构保持不变；文件预览、计划面板、技能详情和其他 UI 不启用这组样式。侧栏中的项目名称（`.workspace-name`）、Session 名称（`.session-title`）与悬停详情标题（`.sidebar-hover-card__title`）统一使用正文字体（`--font-prose`），字号、行高与字重等其他样式保持不变。
 - Composer 可以选择已配置 Model，并显示当前选中 Model 最新 ContextSnapshot 对应的持久化 Context Usage。Runtime 直接查询关联 Plan 的预算和 ModelAttempt usage，不加载快照正文。该 Snapshot 有正数 Provider `input_tokens` 时显示 Provider 值，否则显示该 Plan 的 `projected_input_tokens` 估算值。快照正文撤销或清理后，这些统计仍可查询。
 - Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。新的 Run 在产生自己的 ContextSnapshot 前显示无数据状态，刷新返回无数据时会清空旧读数。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
 - Quit 流程会先处理活动 Run，再关闭 Runtime 和窗口资源。
@@ -517,7 +517,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 - Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，专用面板继续替换普通输入框。模型、思考强度、工作模式和审批模式可为下一轮调整，当前 Run 保持原快照。主执行模式也可请求必要澄清。
 - Session 输入框上方显示待执行消息列表。列表按发送顺序排列，并独立于聊天记录分页读取。用户可以在列表中编辑消息文字、取消编辑或删除消息。编辑保留引用、模型、工作模式、审批模式和队列位置，也保留主输入框中的草稿。消息开始执行后会离开列表；后端拒绝对已开始或恢复中的 Run 进行队列编辑和删除。修改与删除会持久化，重启后继续生效。
-- Desktop 启动后直接进入无项目草稿页。新建会话也显示同一欢迎页，页面原样复用原欢迎页的 Logo、文案、样式和悬停效果，并在下方接入现有 Composer。欢迎区与输入框整体靠上，输入框上边沿按窗口高度中线对齐；矮窗口优先保留内容所需空间，避免重叠。草稿隐藏顶部任务标题和执行记录空提示。用户可以选择项目、模型、思考强度和审批模式。首次发送沿用现有的 Session 创建与 Run 启动流程，输入框平滑移到底部；系统启用减少动态效果时跳过位移动画。创建失败，或启动失败且原有回滚流程成功后，页面恢复草稿欢迎布局并保留输入。已有记录的 Session 保留原有消息流、排队、审批和澄清流程。
+- Desktop 启动后直接进入无项目草稿页。新建会话也显示同一欢迎页，页面原样复用原欢迎页的 Logo、文案、样式和悬停效果，并在下方接入现有 Composer。欢迎区与输入框整体靠上，输入框上边沿按窗口高度中线对齐；矮窗口优先保留内容所需空间，避免重叠。空白与短文本使用普通 Composer 的相同高度；长草稿保持上边沿不动，向下增长到普通对话的底部留白位置，之后在文本区内部滚动。删除文字后，输入框会收回；窗口缩放和引用区域变化会重新计算可用高度。草稿隐藏顶部任务标题和执行记录空提示。用户可以选择项目、模型、思考强度和审批模式。首次发送沿用现有的 Session 创建与 Run 启动流程，输入框平滑移到底部；系统启用减少动态效果时跳过位移动画。创建失败，或启动失败且原有回滚流程成功后，页面恢复草稿欢迎布局并保留输入。已有记录的 Session 保留原有消息流、排队、审批和澄清流程。
 - 未保存的草稿 Session 不显示队列，也不调用队列接口。首次发送创建持久 Session 后，界面才读取该 Session 的队列。用户切回新草稿时，界面移除原 Session 的队列。
 - 连续安全的只读调用可在混合批次中并行。普通读取和协调不等待整库恢复扫描；冲突文件与未知副作用继续受保护。搜索执行槽位满时排队，取消和退出仍负责清理。
 - 延迟工具优先保留最新激活项，仍受工具定义大小预算约束。新 Run 的 Skill 删除保护基于实际使用租约和冻结元数据；旧 Run 继续保守保护目录引用。

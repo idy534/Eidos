@@ -43,7 +43,7 @@
 /* Chat prose only; font sizes, theme colors and container layout stay inherited. */
 .eidos-chat-prose {
   --chat-font-code: "SF Mono", Menlo, Monaco, Consolas, monospace;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  font-family: var(--font-prose, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif);
   font-weight: 400;
   font-style: normal;
   line-height: 23px;

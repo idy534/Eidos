@@ -317,6 +317,7 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertNotIn("timeoutSeconds", properties)
         self.assertIn("yieldTimeMs", properties)
+        self.assertNotIn("yield_time_ms", properties)
         self.assertEqual(
             RunShellInput.model_validate({"command": "true"}).yieldTimeMs,
             10_000,
@@ -326,6 +327,31 @@ class ToolContractTests(unittest.TestCase):
         for value in (249, 30_001):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
+
+    def test_run_shell_accepts_yield_alias_with_existing_limits(self) -> None:
+        for name in ("yieldTimeMs", "yield_time_ms"):
+            for value in (250, 10_000, 30_000):
+                with self.subTest(name=name, value=value):
+                    arguments = RunShellInput.model_validate_json(json.dumps({
+                        "command": "true", name: value,
+                    })).model_dump(mode="json", by_alias=True)
+                    self.assertEqual(arguments["yieldTimeMs"], value)
+                    self.assertNotIn("yield_time_ms", arguments)
+            for value in (249, 30_001, True, "1000", 1000.5, None):
+                with self.subTest(name=name, value=value), self.assertRaises(ValidationError):
+                    RunShellInput.model_validate_json(json.dumps({
+                        "command": "true", name: value,
+                    }))
+
+    def test_run_shell_json_prefers_canonical_yield_and_rejects_unknown_fields(self) -> None:
+        arguments = RunShellInput.model_validate_json(json.dumps({
+            "command": "true", "yieldTimeMs": 1000, "yield_time_ms": 2000,
+        }))
+        self.assertEqual(arguments.yieldTimeMs, 1000)
+        with self.assertRaises(ValidationError):
+            RunShellInput.model_validate_json(json.dumps({
+                "command": "true", "yield_time_ms": 1000, "unknown": True,
+            }))
 
     def test_shell_observation_budget_preserves_legacy_specs(self) -> None:
         run_shell = next(spec for spec in TOOL_SPECS if spec.name == "run_shell")

@@ -31,7 +31,7 @@
   display: grid;
   grid-template-rows: minmax(min-content, calc(50vh - 2.75rem)) auto minmax(0, 1fr);
   overflow-y: auto;
-  padding-bottom: 1.5rem;
+  padding-bottom: 1rem;
 }
 
 .session-canvas--welcome .session-welcome {
@@ -44,7 +44,7 @@
 }
 
 .session-canvas--welcome .session-canvas__composer { align-self: start; }
-.session-canvas--welcome .composer textarea { min-height: 5.5rem; }
+.session-canvas--welcome .composer textarea { max-height: var(--welcome-input-max-height, 10.5rem); }
 .session-canvas--welcome .composer { margin-bottom: 0; }
 
 .workspace-body .session-header--draft {

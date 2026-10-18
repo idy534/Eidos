@@ -18,7 +18,8 @@ from eidos_runtime.tools.registry import (  # noqa: E402
 )
 from eidos_runtime.model.client import ModelToolDefinition  # noqa: E402
 from eidos_runtime.tools.search import tool_search_entry  # noqa: E402
-from eidos_runtime.tools.contracts import ToolSearchInput  # noqa: E402
+from eidos_runtime.tools.contracts import RunShellInput, RunShellResultData, ToolSearchInput  # noqa: E402
+from eidos_runtime.tools.workspace import TOOL_SPECS  # noqa: E402
 
 
 RESULT_SCHEMA = {
@@ -74,6 +75,28 @@ def memory_entry(name: str = "memory_echo") -> ToolRegistryEntry:
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_shell_yield_alias_is_normalized_before_dispatch(self) -> None:
+        base = memory_entry()
+        entry = ToolRegistryEntry(
+            next(spec for spec in TOOL_SPECS if spec.name == "run_shell"),
+            base.provenance,
+            base.adapter,
+            input_model=RunShellInput,
+            result_data_model=RunShellResultData,
+        )
+        dispatcher = ToolDispatcher(ToolRegistry((entry,)))
+        for name in ("yieldTimeMs", "yield_time_ms"):
+            arguments = {"command": "true", name: 1000}
+            with self.subTest(name=name):
+                validated = dispatcher.validate(ModelResponse(tool_calls=(
+                    ModelToolCall("shell-call", "run_shell", arguments),
+                )))
+                self.assertIsNone(validated.error_code)
+                call = validated.tool_calls[0]
+                self.assertEqual(call.arguments["yieldTimeMs"], 1000)
+                self.assertNotIn("yield_time_ms", call.arguments)
+                self.assertEqual(call.raw_payload.arguments, arguments)
+
     def test_search_keeps_100_deferred_tools_out_until_next_snapshot(self) -> None:
         candidates = tuple(
             ToolRegistryEntry(

@@ -12,6 +12,7 @@ from types import UnionType
 from typing import Annotated, ClassVar, Literal, Protocol, Union, get_args, get_origin
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -286,6 +287,7 @@ class RunShellInput(StrictToolModel):
     )
     yieldTimeMs: StrictInt = Field(
         default=10_000,
+        validation_alias=AliasChoices("yieldTimeMs", "yield_time_ms"),
         ge=250,
         le=30_000,
         description=(

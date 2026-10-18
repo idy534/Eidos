@@ -2,6 +2,7 @@
 
   /* Typography Stack */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   --font-code: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "PingFang SC", monospace;
   --diff-font-family: var(--font-code);
 

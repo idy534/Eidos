@@ -206,6 +206,7 @@
 
 .workspace-name {
   overflow: hidden;
+  font-family: var(--font-prose);
   font-size: var(--font-size-body);
   font-weight: 500;
   line-height: var(--line-height-body);
@@ -341,6 +342,7 @@
   min-width: 0;
   display: block;
   overflow: hidden;
+  font-family: var(--font-prose);
   font-size: var(--font-size-body);
   font-weight: 400;
   line-height: var(--line-height-body);
@@ -605,6 +607,7 @@
 
 .sidebar-hover-card__title {
   min-width: 0;
+  font-family: var(--font-prose);
   font-size: var(--font-size-sidebar, 13px);
   font-weight: 600;
   line-height: 1.35;

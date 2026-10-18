@@ -1,7 +1,7 @@
 import { InputReferenceCards } from "./InputContext.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import stripAnsi from "strip-ansi";
@@ -31,6 +31,8 @@ import { DiffViewer } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { SparklesIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
+import { useFeedScroll } from "./useFeedScroll.js";
+export { isFeedAtBottom } from "./useFeedScroll.js";
 
 
 type FeedbackHandler = (
@@ -135,55 +137,12 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   allowRegenerate = true,
   allowEditResend = true,
 }: Props) {
-  const feedRef = useRef<HTMLElement>(null);
-  const isAtBottomRef = useRef(true);
-  const followRafRef = useRef<number | null>(null);
-  const [atBottom, setAtBottom] = useState(true);
+  const {
+    feedRef, contentRef, atBottom, following, scheduleFollow, jumpToBottom,
+    handleScroll, handleWheel, handleKeyDown, handlePointerDown, handleTouchStart, handleTouchMove,
+  } = useFeedScroll(items.length > 0);
 
-  const handleScroll = useCallback((event: React.UIEvent<HTMLElement>) => {
-    const bottom = isFeedAtBottom(event.currentTarget);
-    isAtBottomRef.current = bottom;
-    setAtBottom(bottom);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (followRafRef.current !== null) {
-        cancelAnimationFrame(followRafRef.current);
-        followRafRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    const feed = feedRef.current;
-    if (!feed) return;
-    const handleToggle = () => {
-      requestAnimationFrame(() => {
-        const target = feedRef.current;
-        if (!target) return;
-        const bottom = isFeedAtBottom(target);
-        isAtBottomRef.current = bottom;
-        setAtBottom(bottom);
-      });
-    };
-    feed.addEventListener("toggle", handleToggle, true);
-    return () => {
-      feed.removeEventListener("toggle", handleToggle, true);
-    };
-  }, []);
-
-  useLayoutEffect(() => {
-    const feed = feedRef.current;
-    if (!feed || !isAtBottomRef.current) return;
-    if (followRafRef.current !== null) return;
-    followRafRef.current = requestAnimationFrame(() => {
-      followRafRef.current = null;
-      const target = feedRef.current;
-      if (!target || !isAtBottomRef.current) return;
-      target.scrollTop = target.scrollHeight;
-    });
-  }, [items, runs, responseActionState.revisions]);
+  useLayoutEffect(scheduleFollow, [items, runs, responseActionState.revisions, scheduleFollow]);
 
   const supersededRunIds = useMemo(
     () => new Set(responseActionState.revisions.map((revision) => revision.sourceRunId)),
@@ -226,85 +185,83 @@ export const ExecutionFeed = memo(function ExecutionFeed({
       <section
         ref={feedRef}
         className="feed"
+        data-following-bottom={following}
         aria-label="Execution Feed"
         aria-live="polite"
         onScroll={handleScroll}
+        onWheel={handleWheel}
+        onKeyDown={handleKeyDown}
+        onPointerDown={handlePointerDown}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
       >
-        {onLoadOlder && <button type="button" className="btn btn--ghost" disabled={loadingOlder} onClick={onLoadOlder}>
-          {loadingOlder ? "正在读取历史…" : "加载更早的记录"}
-        </button>}
-        {itemGroups.map(({ runId, items: runItems }) => {
-          const run = runsById.get(runId);
-          if (!run) return null;
-          const segments = splitRunIntoSegments(runItems);
-          const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
-            && TERMINAL_RUN_STATUSES.has(run.status)
-            && !hasActiveRun
-            && !revisionSubmitting;
-          const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.modelId;
-          return (
-            <Fragment key={runId}>
-              {segments.map((segment, index) => (
-                <RunSegment
-                  key={`${runId}:${segment.user?.id ?? index}`}
-                  segment={segment}
-                  run={run}
-                  resultItems={resultItems}
-                  projectless={projectless}
-                  modelName={modelName}
-                  workspaceRoot={workspaceRoot}
-                  isLast={index === segments.length - 1}
-                  canReviseRun={canReviseRun}
-                  feedbackByItemId={feedbackByItemId}
-                  pendingFeedbackItemIds={pendingFeedbackItemIds}
-                  revisionSubmitting={revisionSubmitting}
-                  approvals={approvals}
-                  respondingApprovalIds={respondingApprovalIds}
-                  respondingKindByApprovalId={respondingKindByApprovalId}
-                  expiredApprovalIds={expiredApprovalIds}
-                  errorsByApprovalId={errorsByApprovalId}
-                  onApprove={onApprove}
-                  onReject={onReject}
-                  onFeedback={onFeedback}
-                  onFork={onFork}
-                  onRegenerate={onRegenerate}
-                  onEditResend={onEditResend}
-                  onOpenFile={onOpenFile}
-                  onOpenPlan={onOpenPlan}
-                  agents={agents}
-                  onOpenSubagent={onOpenSubagent}
-                  allowFeedback={allowFeedback}
-                  allowRegenerate={allowRegenerate}
-                  allowEditResend={allowEditResend}
-                />
-              ))}
-              <RunNotice run={run} />
-            </Fragment>
-          );
-        })}
+        <div className="feed-content" ref={contentRef}>
+          {onLoadOlder && <button type="button" className="btn btn--ghost" disabled={loadingOlder} onClick={onLoadOlder}>
+            {loadingOlder ? "正在读取历史…" : "加载更早的记录"}
+          </button>}
+          {itemGroups.map(({ runId, items: runItems }) => {
+            const run = runsById.get(runId);
+            if (!run) return null;
+            const segments = splitRunIntoSegments(runItems);
+            const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
+              && TERMINAL_RUN_STATUSES.has(run.status)
+              && !hasActiveRun
+              && !revisionSubmitting;
+            const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.modelId;
+            return (
+              <Fragment key={runId}>
+                {segments.map((segment, index) => (
+                  <RunSegment
+                    key={`${runId}:${segment.user?.id ?? index}`}
+                    segment={segment}
+                    run={run}
+                    resultItems={resultItems}
+                    projectless={projectless}
+                    modelName={modelName}
+                    workspaceRoot={workspaceRoot}
+                    isLast={index === segments.length - 1}
+                    canReviseRun={canReviseRun}
+                    feedbackByItemId={feedbackByItemId}
+                    pendingFeedbackItemIds={pendingFeedbackItemIds}
+                    revisionSubmitting={revisionSubmitting}
+                    approvals={approvals}
+                    respondingApprovalIds={respondingApprovalIds}
+                    respondingKindByApprovalId={respondingKindByApprovalId}
+                    expiredApprovalIds={expiredApprovalIds}
+                    errorsByApprovalId={errorsByApprovalId}
+                    onApprove={onApprove}
+                    onReject={onReject}
+                    onFeedback={onFeedback}
+                    onFork={onFork}
+                    onRegenerate={onRegenerate}
+                    onEditResend={onEditResend}
+                    onOpenFile={onOpenFile}
+                    onOpenPlan={onOpenPlan}
+                    agents={agents}
+                    onOpenSubagent={onOpenSubagent}
+                    allowFeedback={allowFeedback}
+                    allowRegenerate={allowRegenerate}
+                    allowEditResend={allowEditResend}
+                  />
+                ))}
+                <RunNotice run={run} />
+              </Fragment>
+            );
+          })}
+        </div>
       </section>
       <button
         className="feed-jump-to-bottom"
         type="button"
         aria-label="滚动到最新内容"
         hidden={atBottom}
-        onClick={() => {
-          isAtBottomRef.current = true;
-          setAtBottom(true);
-          feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
-        }}
+        onClick={jumpToBottom}
       >
         <span aria-hidden="true">↓</span>
       </button>
     </div>
   );
 });
-
-export function isFeedAtBottom(
-  feed: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
-): boolean {
-  return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 16;
-}
 
 const RunSegment = memo(function RunSegment({
   segment,

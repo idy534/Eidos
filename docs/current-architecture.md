@@ -24,7 +24,9 @@ Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electro
 
 Renderer 是展示边界。Renderer 不能直接访问 Node 系统能力，也不能直接连接 Python Runtime。Electron Main 是 Desktop 和 Runtime 之间的控制边界。Python Runtime 是 Session、Run、Item、ToolCall、Approval、事件和副作用状态的业务协调边界。
 
-聊天排版沿用 `ExecutionFeed → MarkdownContent → react-markdown / CodeBlock`。ExecutionFeed 只给用户正文、过程文字和最终回答添加 `.eidos-chat-prose`；MarkdownContent 的可选 `className` 让其他复用方保持原样式。CSS 只覆盖聊天字体、行距、字重和 Markdown 间距，字号、主题颜色、背景和容器布局继续沿用原规则。用户正文仍按原始换行显示；代码块仍保留空白和横向滚动。Renderer 没有增加字体文件、依赖、协议字段或持久化数据。
+聊天排版沿用 `ExecutionFeed → MarkdownContent → react-markdown / CodeBlock`。ExecutionFeed 只给用户正文、过程文字和最终回答添加 `.eidos-chat-prose`；MarkdownContent 的可选 `className` 让其他复用方保持原样式。正文字体定义为 `--font-prose` token 并与侧栏项目名、Session 名共享；CSS 只覆盖正文字体、行距、字重和 Markdown 间距，字号、主题颜色、背景和容器布局继续沿用原规则。用户正文仍按原始换行显示；代码块仍保留空白和横向滚动。Renderer 没有增加字体文件、依赖、协议字段或持久化数据。
+
+`ExecutionFeed → useFeedScroll` 分开保存底部跟随意图和实际底部位置。原生 `ResizeObserver` 同时观察 `.feed-content` 和 Feed 视口，覆盖处理过程与工具的展开动画、延迟图片、代码渲染和视口高度变化。内容更新与尺寸变化共用一个合并到下一帧的滚动入口。跟随开启时，Feed 关闭浏览器滚动锚定；用户浏览历史时，Feed 恢复浏览器锚定，并停止自动到底。向上滚轮、触摸、键盘和滚动条操作可以中断跟随。用户手动回到底部或点击“滚动到最新内容”后恢复跟随。折叠引起的滚动范围收缩不改变用户暂停跟随的选择。“滚动到最新内容”使用同一滚动入口，不再启动独立的平滑滚动。空列表首次出现内容时会挂载观察器，卸载时会断开观察器并取消待执行帧。该状态只用于 Renderer 交互，不增加协议或持久化字段。
 
 远端模型只提供不可信的文本和 ToolCall 提案。Runtime 负责验证模型输出、构建 Context、执行 Tool、处理 Approval、应用 Sandbox Policy 和提交持久事实。
 
@@ -647,6 +649,8 @@ Runtime 重启可以恢复 R1 的结构化待批请求。恢复只接受没有�
 Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替换普通输入框。文件、Shell、网络、MCP 和权限申请共用批准、拒绝、响应中、失效和错误状态。Eidos State 的既有文件变更映射保持兼容。Feed 只显示审批历史。Session 的 `activeRunStatus` 从 Active Run 派生，不写入 Session 表；Sidebar 对等待审批显示“等待批准”。
 
 ## Run 收尾与 Shell 执行期限
+
+`run_shell` 的输入校验同时接受 `yieldTimeMs` 和 `yield_time_ms`，并统一输出 `yieldTimeMs`。模型可见的工具 Schema、描述和提示词保持不变。JSON 调用同时提交两个名称时，校验优先使用 `yieldTimeMs`；原有严格类型、数值范围和未知字段检查继续生效。
 
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
