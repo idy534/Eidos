@@ -38,13 +38,16 @@ app.whenReady().then(async () => {
       await evaluate("document.querySelector('.context-indicator-trigger').focus()");
       await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
       key("Return");
-      await wait("document.querySelector('dialog[open]')?.textContent.includes('Provider 实测')");
+      await wait("document.querySelector('dialog[open]')?.textContent.includes('已使用')");
       const layout = await evaluate(`(() => { const dialog=document.querySelector('dialog'); const box=dialog.getBoundingClientRect(); return {width:innerWidth,left:box.left,right:box.right,top:box.top,bottom:box.bottom,overflow:dialog.scrollWidth>dialog.clientWidth,focused:dialog.contains(document.activeElement)};})()`);
       assert.ok(layout.left >= 0 && layout.right <= width && layout.top >= 0 && layout.bottom <= 800);
       assert.equal(layout.overflow, false);
       assert.equal(layout.focused, true);
       layouts.push(layout);
-      if (width === 1440 && process.env.EIDOS_CONTEXT_SCREENSHOT) await writeFile(process.env.EIDOS_CONTEXT_SCREENSHOT, (await window.webContents.capturePage()).toPNG());
+      if (width === 1440 && process.env.EIDOS_CONTEXT_SCREENSHOT) {
+        await evaluate("new Promise(resolve => setTimeout(resolve, 100))");
+        await writeFile(process.env.EIDOS_CONTEXT_SCREENSHOT, (await window.webContents.capturePage()).toPNG());
+      }
       await evaluate("document.querySelector('.context-details-compact').focus()");
       key("Return");
       await wait("document.querySelector('.context-details-compact')?.disabled");

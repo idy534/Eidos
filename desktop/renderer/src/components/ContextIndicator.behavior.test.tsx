@@ -25,11 +25,10 @@ it("shows provider measurement, explicitly estimated shares, and queues manual c
   render(<ContextIndicator usage={usage} runId="run-1" />);
   fireEvent.click(screen.getByRole("button", { name: "查看上下文详情" }));
   expect(await screen.findByRole("dialog", { name: "上下文详情" })).toBeInTheDocument();
-  expect(await screen.findByText(/Provider 实测 ·/)).toBeInTheDocument();
-  expect(screen.getByText("内容构成（词表参考值）")).toBeInTheDocument();
-  expect(screen.getByText(/低 4.5%/)).toBeInTheDocument();
+  expect(await screen.findByText(/已使用 12K\/ 128K/)).toBeInTheDocument();
+  expect(screen.getByText("工具结果")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "压缩上下文" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "系统已安排压缩" })).toBeDisabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "准备开始压缩" })).toBeDisabled());
   expect(requestContextCompaction).toHaveBeenCalledExactlyOnceWith("run-1");
   fireEvent.click(screen.getByRole("button", { name: "关闭上下文详情" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -44,7 +43,7 @@ it("discards late details when switching runs and shows a concrete read failure"
   view.rerender(<ContextIndicator usage={usage} runId="run-2" />);
   expect(await screen.findByRole("alert")).toHaveTextContent("系统暂时无法读取上下文统计");
   resolve(details);
-  await waitFor(() => expect(screen.queryByText(/Provider 实测 ·/)).toBeNull());
+  await waitFor(() => expect(screen.queryByText(/已使用 12K\/ 128K/)).toBeNull());
 });
 
 it("keeps the manual action available after a request failure", async () => {
