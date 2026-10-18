@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ContextDetails } from "../../../shared/context-management.js";
+import type { ContextCompactionRecord, ContextDetails } from "../../../shared/context-management.js";
 import type { ContextUsage } from "../contracts.js";
-import { formatTokenCount } from "../context-usage.js";
+import { contextSectionPercentages, contextUsageFromDetails, formatTokenCount } from "../context-usage.js";
 import { Button } from "./Button.js";
 
 const SECTION_CONFIG: Record<string, { label: string; color: string }> = {
@@ -27,6 +27,7 @@ const SECTION_ORDER: readonly string[] = [
 export interface ContextDetailsPanelProps {
   runId: string;
   usage: ContextUsage | undefined;
+  details?: ContextDetails | undefined;
   triggerRef?: React.RefObject<HTMLButtonElement | null>;
   onClose(): void;
 }
@@ -34,12 +35,13 @@ export interface ContextDetailsPanelProps {
 export function ContextDetailsPanel({
   runId,
   usage,
+  details,
   triggerRef,
   onClose,
 }: ContextDetailsPanelProps) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [details, setDetails] = useState<ContextDetails>();
-  const [loading, setLoading] = useState(true);
+  const [requested, setRequested] = useState<ContextCompactionRecord>();
+  const loading = !details;
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
   const alive = useRef(true);
@@ -90,27 +92,7 @@ export function ContextDetailsPanel({
     };
   }, [onClose, triggerRef]);
 
-  useEffect(() => {
-    let current = true;
-    setLoading(true);
-    void window.eidosRuntime
-      .readContextDetails(runId)
-      .then((value) => {
-        if (current) {
-          setDetails(value);
-          setError("");
-        }
-      })
-      .catch(() => {
-        if (current) setError("系统暂时无法读取上下文统计，请关闭后重试。");
-      })
-      .finally(() => {
-        if (current) setLoading(false);
-      });
-    return () => {
-      current = false;
-    };
-  }, [runId, usage]);
+  useEffect(() => { setRequested(undefined); }, [details?.compaction]);
 
   async function compact() {
     setRequesting(true);
@@ -118,9 +100,7 @@ export function ContextDetailsPanel({
     try {
       const record = await window.eidosRuntime.requestContextCompaction(runId);
       if (alive.current) {
-        setDetails((previous) =>
-          previous ? { ...previous, manualPending: true, compaction: record } : previous,
-        );
+        setRequested(record);
       }
     } catch {
       if (alive.current) setError("系统未能安排压缩，请稍后重试。");
@@ -129,14 +109,11 @@ export function ContextDetailsPanel({
     }
   }
 
-  const record = details?.compaction;
+  const record = requested ?? details?.compaction;
 
-  const percentUsed = details
-    ? details.activeTokens != null && details.contextWindowTokens > 0
-      ? (details.activeTokens / details.contextWindowTokens) * 100
-      : usage?.percentUsed ?? 0
-    : usage?.percentUsed ?? 0;
-  const percentDisplay = percentUsed.toFixed(1);
+  const currentUsage = details ? contextUsageFromDetails(details) : usage;
+  const percentUsed = currentUsage?.percentUsed ?? 0;
+  const percentDisplay = currentUsage ? percentUsed.toFixed(1).replace(/\.0$/, "") : "--";
   const activeTokensDisplay =
     details?.activeTokens != null ? formatTokenCount(details.activeTokens) : "--";
   const windowTokensDisplay = details
@@ -148,6 +125,7 @@ export function ContextDetailsPanel({
     const indexB = SECTION_ORDER.indexOf(b.name);
     return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB);
   });
+  const shares = details ? contextSectionPercentages(details) : new Map<string, number>();
 
   return (
     <dialog
@@ -199,24 +177,22 @@ export function ContextDetailsPanel({
               className="context-progress-bar"
               role="progressbar"
               aria-label="上下文用量构成"
-              aria-valuenow={Math.round(percentUsed)}
+              aria-valuenow={Math.min(100, Math.round(percentUsed))}
+              aria-valuetext={`${percentDisplay}%`}
               aria-valuemin={0}
               aria-valuemax={100}
             >
               {sortedSections.map((section) => {
                 const config =
                   SECTION_CONFIG[section.name] ?? { label: section.name, color: "#94a3b8" };
-                const sectionShare =
-                  details.contextWindowTokens > 0
-                    ? (section.tokens / details.contextWindowTokens) * 100
-                    : 0;
+                const sectionShare = shares.get(section.name) ?? 0;
                 if (sectionShare <= 0 && section.tokens === 0) return null;
                 return (
                   <div
                     key={section.name}
                     className="context-progress-segment"
                     style={{
-                      width: `${Math.max(sectionShare, 0.4)}%`,
+                      width: `${section.tokens / Math.max(details.activeTokens ?? 0, details.contextWindowTokens) * 100}%`,
                       backgroundColor: config.color,
                     }}
                     title={`${config.label}: ${formatTokenCount(section.tokens)} (${sectionShare.toFixed(1)}%)`}
@@ -236,10 +212,7 @@ export function ContextDetailsPanel({
                 {sortedSections.map((section) => {
                   const config =
                     SECTION_CONFIG[section.name] ?? { label: section.name, color: "#94a3b8" };
-                  const sectionShare =
-                    details.contextWindowTokens > 0
-                      ? (section.tokens / details.contextWindowTokens) * 100
-                      : 0;
+                  const sectionShare = shares.get(section.name) ?? 0;
                   const percentText =
                     section.tokens === 0
                       ? "0%"
@@ -271,10 +244,10 @@ export function ContextDetailsPanel({
               className="context-details-compact"
               variant="primary"
               size="medium"
-              disabled={loading || requesting || details.manualPending || record?.status === "running"}
+              disabled={loading || requesting || !!requested || details.manualPending || record?.status === "running"}
               onClick={() => void compact()}
             >
-              {requesting ? "系统正在安排…" : details.manualPending ? "准备开始压缩" : "压缩上下文"}
+              {requesting ? "系统正在安排…" : requested || details.manualPending ? "准备开始压缩" : "压缩上下文"}
             </Button>
           </>
         )}

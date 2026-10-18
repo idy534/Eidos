@@ -1,0 +1,770 @@
+{
+  "kind": "read_only_compaction_policy_audit",
+  "timezone": "Asia/Shanghai",
+  "runId": "aabae334-b447-47d0-903d-400562403623",
+  "sessionId": "641bf283-7d69-49c8-93a6-00129bdf2044",
+  "modelId": "custom-49b34172-a27b-4b5d-8fd3-b2165b7b4ece",
+  "runStatus": "succeeded",
+  "startedAt": "2026-10-19T00:14:25.242+08:00",
+  "completedAt": "2026-10-19T00:29:16.137+08:00",
+  "modelSteps": 34,
+  "frozenBudget": {
+    "contextWindowTokens": 200000,
+    "maxOutputTokens": 128000,
+    "safetyMarginTokens": 4000,
+    "usableInputTokens": 68000
+  },
+  "findings": {
+    "successfulSummaries": 14,
+    "unsuccessfulAttempts": 7,
+    "successfulStillAboveInputBudget": 7,
+    "successfulReductionUnder10Percent": 5,
+    "successfulDurationMs": 158535,
+    "summaryRequestProviderInputTokens": 75518,
+    "summaryRequestProviderOutputTokens": 33321,
+    "triggerCounts": {
+      "window_pressure": 21
+    }
+  },
+  "tokenCountSemantics": "beforeTokens and afterTokens are projected request counts, not paired provider measurements; inputTokens and outputTokens are the compaction model request usage.",
+  "attempts": [
+    {
+      "eventId": 83580,
+      "requestId": "70a3a7f9-dbdf-4ec4-a3fd-36726579f776",
+      "startedAt": "2026-10-19T00:18:42.614+08:00",
+      "finishedAt": "2026-10-19T00:19:09.089+08:00",
+      "afterStep": 5,
+      "beforeStep": 6,
+      "commitEventId": 83578,
+      "record": {
+        "afterTokens": 115306,
+        "beforeTokens": 130775,
+        "durationMs": 26475,
+        "inputTokens": 5628,
+        "outputTokens": 3398,
+        "reason": "summary_quote_invalid",
+        "requestId": "70a3a7f9-dbdf-4ec4-a3fd-36726579f776",
+        "sourceItemCount": 5,
+        "stage": "finished",
+        "status": "succeeded",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83582,
+      "requestId": "7c41fc1a-271a-47eb-af85-5eed98b450be",
+      "startedAt": "2026-10-19T00:19:09.403+08:00",
+      "finishedAt": "2026-10-19T00:19:09.408+08:00",
+      "afterStep": 5,
+      "beforeStep": 6,
+      "commitEventId": null,
+      "record": {
+        "beforeTokens": 115306,
+        "durationMs": 6,
+        "reason": "no_compactable_history",
+        "requestId": "7c41fc1a-271a-47eb-af85-5eed98b450be",
+        "stage": "finished",
+        "status": "failed",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83597,
+      "requestId": "ddee12cc-347e-46a4-b7d0-3a0ad898f409",
+      "startedAt": "2026-10-19T00:20:08.748+08:00",
+      "finishedAt": "2026-10-19T00:20:15.839+08:00",
+      "afterStep": 6,
+      "beforeStep": 7,
+      "commitEventId": 83595,
+      "record": {
+        "afterTokens": 136966,
+        "beforeTokens": 137119,
+        "durationMs": 7091,
+        "inputTokens": 3384,
+        "outputTokens": 1250,
+        "reason": "summary_claims_downgraded",
+        "requestId": "ddee12cc-347e-46a4-b7d0-3a0ad898f409",
+        "sourceItemCount": 7,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83599,
+      "requestId": "39e3204c-6168-43bf-a0c0-a5e20f76cd41",
+      "startedAt": "2026-10-19T00:20:16.152+08:00",
+      "finishedAt": "2026-10-19T00:20:16.157+08:00",
+      "afterStep": 6,
+      "beforeStep": 7,
+      "commitEventId": null,
+      "record": {
+        "beforeTokens": 136966,
+        "durationMs": 5,
+        "reason": "no_compactable_history",
+        "requestId": "39e3204c-6168-43bf-a0c0-a5e20f76cd41",
+        "stage": "finished",
+        "status": "failed",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83611,
+      "requestId": "5830c174-5289-47fb-9585-234ae367571b",
+      "startedAt": "2026-10-19T00:20:33.695+08:00",
+      "finishedAt": "2026-10-19T00:20:43.924+08:00",
+      "afterStep": 7,
+      "beforeStep": 8,
+      "commitEventId": 83609,
+      "record": {
+        "afterTokens": 141323,
+        "beforeTokens": 141947,
+        "durationMs": 10229,
+        "inputTokens": 3916,
+        "outputTokens": 2880,
+        "reason": "summary_quote_invalid",
+        "requestId": "5830c174-5289-47fb-9585-234ae367571b",
+        "sourceItemCount": 8,
+        "stage": "finished",
+        "status": "succeeded",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83613,
+      "requestId": "4c8839e9-f364-4fe0-88a0-c84bebd29bce",
+      "startedAt": "2026-10-19T00:20:44.247+08:00",
+      "finishedAt": "2026-10-19T00:20:44.253+08:00",
+      "afterStep": 7,
+      "beforeStep": 8,
+      "commitEventId": null,
+      "record": {
+        "beforeTokens": 141323,
+        "durationMs": 5,
+        "reason": "no_compactable_history",
+        "requestId": "4c8839e9-f364-4fe0-88a0-c84bebd29bce",
+        "stage": "finished",
+        "status": "failed",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83633,
+      "requestId": "2ab4b444-78c0-4215-91a6-52abda5cacf8",
+      "startedAt": "2026-10-19T00:20:54.187+08:00",
+      "finishedAt": "2026-10-19T00:21:07.327+08:00",
+      "afterStep": 8,
+      "beforeStep": 9,
+      "commitEventId": 83631,
+      "record": {
+        "afterTokens": 65978,
+        "beforeTokens": 144014,
+        "durationMs": 13139,
+        "inputTokens": 4632,
+        "outputTokens": 3160,
+        "reason": "summary_claims_downgraded",
+        "requestId": "2ab4b444-78c0-4215-91a6-52abda5cacf8",
+        "sourceItemCount": 11,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83647,
+      "requestId": "fb238642-aaf4-44ac-9b4f-96f88a4b5bd7",
+      "startedAt": "2026-10-19T00:21:16.415+08:00",
+      "finishedAt": "2026-10-19T00:21:27.004+08:00",
+      "afterStep": 9,
+      "beforeStep": 10,
+      "commitEventId": 83645,
+      "record": {
+        "afterTokens": 41551,
+        "beforeTokens": 69711,
+        "durationMs": 10588,
+        "inputTokens": 2449,
+        "outputTokens": 1148,
+        "requestId": "fb238642-aaf4-44ac-9b4f-96f88a4b5bd7",
+        "sourceItemCount": 13,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83681,
+      "requestId": "60a5f12c-c1c0-4baf-bea3-965c514ab0d1",
+      "startedAt": "2026-10-19T00:22:05.588+08:00",
+      "finishedAt": "2026-10-19T00:22:13.678+08:00",
+      "afterStep": 12,
+      "beforeStep": 13,
+      "commitEventId": 83679,
+      "record": {
+        "afterTokens": 60060,
+        "beforeTokens": 73883,
+        "durationMs": 8090,
+        "inputTokens": 7218,
+        "outputTokens": 2040,
+        "requestId": "60a5f12c-c1c0-4baf-bea3-965c514ab0d1",
+        "sourceItemCount": 17,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83717,
+      "requestId": "f542527d-6f65-4070-badf-f482c74fef26",
+      "startedAt": "2026-10-19T00:23:13.849+08:00",
+      "finishedAt": "2026-10-19T00:23:30.108+08:00",
+      "afterStep": 15,
+      "beforeStep": 16,
+      "commitEventId": 83715,
+      "record": {
+        "afterTokens": 56278,
+        "beforeTokens": 69924,
+        "durationMs": 16258,
+        "inputTokens": 7270,
+        "outputTokens": 3926,
+        "reason": "summary_quote_invalid",
+        "requestId": "f542527d-6f65-4070-badf-f482c74fef26",
+        "sourceItemCount": 21,
+        "stage": "finished",
+        "status": "succeeded",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83730,
+      "requestId": "d8119a8a-7be2-4198-a35c-c1029b6d42a7",
+      "startedAt": "2026-10-19T00:24:10.395+08:00",
+      "finishedAt": "2026-10-19T00:24:18.993+08:00",
+      "afterStep": 16,
+      "beforeStep": 17,
+      "commitEventId": 83728,
+      "record": {
+        "afterTokens": 69072,
+        "beforeTokens": 72468,
+        "durationMs": 8598,
+        "inputTokens": 5006,
+        "outputTokens": 1966,
+        "reason": "summary_quote_invalid",
+        "requestId": "d8119a8a-7be2-4198-a35c-c1029b6d42a7",
+        "sourceItemCount": 22,
+        "stage": "finished",
+        "status": "succeeded",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83732,
+      "requestId": "a2254a21-63e1-4022-899d-31344b28fada",
+      "startedAt": "2026-10-19T00:24:19.281+08:00",
+      "finishedAt": "2026-10-19T00:24:19.288+08:00",
+      "afterStep": 16,
+      "beforeStep": 17,
+      "commitEventId": null,
+      "record": {
+        "beforeTokens": 69072,
+        "durationMs": 7,
+        "reason": "no_compactable_history",
+        "requestId": "a2254a21-63e1-4022-899d-31344b28fada",
+        "stage": "finished",
+        "status": "failed",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83762,
+      "requestId": "a5e2b1ff-e2b1-44cd-8543-934bb6601563",
+      "startedAt": "2026-10-19T00:24:35.539+08:00",
+      "finishedAt": "2026-10-19T00:24:46.702+08:00",
+      "afterStep": 17,
+      "beforeStep": 18,
+      "commitEventId": 83760,
+      "record": {
+        "afterTokens": 52899,
+        "beforeTokens": 72069,
+        "durationMs": 11162,
+        "inputTokens": 5660,
+        "outputTokens": 3212,
+        "requestId": "a5e2b1ff-e2b1-44cd-8543-934bb6601563",
+        "sourceItemCount": 24,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83777,
+      "requestId": "20cee3fd-0a7a-4c64-826c-e79e3bfece34",
+      "startedAt": "2026-10-19T00:26:30.269+08:00",
+      "finishedAt": "2026-10-19T00:26:40.112+08:00",
+      "afterStep": 18,
+      "beforeStep": 19,
+      "commitEventId": 83775,
+      "record": {
+        "afterTokens": 92366,
+        "beforeTokens": 95513,
+        "durationMs": 9843,
+        "inputTokens": 2519,
+        "outputTokens": 1031,
+        "requestId": "20cee3fd-0a7a-4c64-826c-e79e3bfece34",
+        "sourceItemCount": 25,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83779,
+      "requestId": "2f0cc86c-2817-4cef-8e94-2ef0dc248a80",
+      "startedAt": "2026-10-19T00:26:40.451+08:00",
+      "finishedAt": "2026-10-19T00:26:40.472+08:00",
+      "afterStep": 18,
+      "beforeStep": 19,
+      "commitEventId": null,
+      "record": {
+        "beforeTokens": 92366,
+        "durationMs": 21,
+        "reason": "no_compactable_history",
+        "requestId": "2f0cc86c-2817-4cef-8e94-2ef0dc248a80",
+        "stage": "finished",
+        "status": "failed",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83792,
+      "requestId": "481b9390-6a58-4de6-be7e-422f4058f793",
+      "startedAt": "2026-10-19T00:26:45.056+08:00",
+      "finishedAt": "2026-10-19T00:26:55.284+08:00",
+      "afterStep": 19,
+      "beforeStep": 20,
+      "commitEventId": 83790,
+      "record": {
+        "afterTokens": 73857,
+        "beforeTokens": 87404,
+        "durationMs": 10227,
+        "inputTokens": 5444,
+        "outputTokens": 2406,
+        "requestId": "481b9390-6a58-4de6-be7e-422f4058f793",
+        "sourceItemCount": 26,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83794,
+      "requestId": "eea66c9c-6974-42f6-82d3-b515282989d5",
+      "startedAt": "2026-10-19T00:26:55.579+08:00",
+      "finishedAt": "2026-10-19T00:26:55.586+08:00",
+      "afterStep": 19,
+      "beforeStep": 20,
+      "commitEventId": null,
+      "record": {
+        "beforeTokens": 73857,
+        "durationMs": 7,
+        "reason": "no_compactable_history",
+        "requestId": "eea66c9c-6974-42f6-82d3-b515282989d5",
+        "stage": "finished",
+        "status": "failed",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83806,
+      "requestId": "ca0f5c93-cfb5-46a0-981f-5e71b06a5937",
+      "startedAt": "2026-10-19T00:27:00.660+08:00",
+      "finishedAt": "2026-10-19T00:27:10.632+08:00",
+      "afterStep": 20,
+      "beforeStep": 21,
+      "commitEventId": 83804,
+      "record": {
+        "afterTokens": 72494,
+        "beforeTokens": 77777,
+        "durationMs": 9972,
+        "inputTokens": 5816,
+        "outputTokens": 2382,
+        "reason": "summary_quote_invalid",
+        "requestId": "ca0f5c93-cfb5-46a0-981f-5e71b06a5937",
+        "sourceItemCount": 27,
+        "stage": "finished",
+        "status": "succeeded",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83808,
+      "requestId": "34c28a80-14eb-4d80-bef9-8ce87bf86825",
+      "startedAt": "2026-10-19T00:27:10.915+08:00",
+      "finishedAt": "2026-10-19T00:27:10.922+08:00",
+      "afterStep": 20,
+      "beforeStep": 21,
+      "commitEventId": null,
+      "record": {
+        "beforeTokens": 72494,
+        "durationMs": 7,
+        "reason": "no_compactable_history",
+        "requestId": "34c28a80-14eb-4d80-bef9-8ce87bf86825",
+        "stage": "finished",
+        "status": "failed",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83820,
+      "requestId": "0e95c6e4-fcdc-4e21-aae8-7cc25d9039c3",
+      "startedAt": "2026-10-19T00:27:16.594+08:00",
+      "finishedAt": "2026-10-19T00:27:21.920+08:00",
+      "afterStep": 21,
+      "beforeStep": 22,
+      "commitEventId": 83818,
+      "record": {
+        "afterTokens": 34312,
+        "beforeTokens": 73588,
+        "durationMs": 5326,
+        "inputTokens": 5450,
+        "outputTokens": 1332,
+        "requestId": "0e95c6e4-fcdc-4e21-aae8-7cc25d9039c3",
+        "sourceItemCount": 29,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    },
+    {
+      "eventId": 83911,
+      "requestId": "7dc246f8-3655-45c9-ac06-a998192e10c1",
+      "startedAt": "2026-10-19T00:28:47.102+08:00",
+      "finishedAt": "2026-10-19T00:28:58.639+08:00",
+      "afterStep": 31,
+      "beforeStep": 32,
+      "commitEventId": 83909,
+      "record": {
+        "afterTokens": 48064,
+        "beforeTokens": 69207,
+        "durationMs": 11537,
+        "inputTokens": 11126,
+        "outputTokens": 3190,
+        "reason": "summary_claims_downgraded",
+        "requestId": "7dc246f8-3655-45c9-ac06-a998192e10c1",
+        "sourceItemCount": 39,
+        "stage": "finished",
+        "status": "succeeded",
+        "strategy": "model",
+        "trigger": "window_pressure"
+      }
+    }
+  ],
+  "summaries": [
+    {
+      "summaryId": "034bb0fd-7c68-4924-8cd8-7849c16c8936",
+      "committedAt": "2026-10-19T00:19:08.963+08:00",
+      "sourceItemCount": 5,
+      "newSourceItemCount": 5,
+      "newSourceSteps": [
+        1,
+        2
+      ],
+      "newSourceKinds": {
+        "run_shell": 2,
+        "skill_read": 2,
+        "assistant_message": 1
+      }
+    },
+    {
+      "summaryId": "71264029-f914-4270-9a67-bbeffe0f8a02",
+      "committedAt": "2026-10-19T00:20:15.708+08:00",
+      "sourceItemCount": 7,
+      "newSourceItemCount": 2,
+      "newSourceSteps": [
+        3
+      ],
+      "newSourceKinds": {
+        "assistant_message": 1,
+        "run_shell": 1
+      }
+    },
+    {
+      "summaryId": "698c4c4b-ecaf-4de7-872b-db7e8669ff05",
+      "committedAt": "2026-10-19T00:20:43.799+08:00",
+      "sourceItemCount": 8,
+      "newSourceItemCount": 1,
+      "newSourceSteps": [
+        4
+      ],
+      "newSourceKinds": {
+        "run_shell": 1
+      }
+    },
+    {
+      "summaryId": "4cc65f02-057d-4aed-9cd5-9fc6b3ae535a",
+      "committedAt": "2026-10-19T00:21:07.221+08:00",
+      "sourceItemCount": 11,
+      "newSourceItemCount": 3,
+      "newSourceSteps": [
+        5
+      ],
+      "newSourceKinds": {
+        "assistant_message": 1,
+        "tool_search": 1,
+        "apply_patch": 1
+      }
+    },
+    {
+      "summaryId": "75a2ddf8-924f-4325-961b-c10698f70138",
+      "committedAt": "2026-10-19T00:21:26.911+08:00",
+      "sourceItemCount": 13,
+      "newSourceItemCount": 2,
+      "newSourceSteps": [
+        6
+      ],
+      "newSourceKinds": {
+        "assistant_message": 1,
+        "apply_patch": 1
+      }
+    },
+    {
+      "summaryId": "3218bf69-5339-46ce-9c28-ce46f334dab5",
+      "committedAt": "2026-10-19T00:22:13.572+08:00",
+      "sourceItemCount": 17,
+      "newSourceItemCount": 4,
+      "newSourceSteps": [
+        7,
+        8,
+        9
+      ],
+      "newSourceKinds": {
+        "run_shell": 3,
+        "apply_patch": 1
+      }
+    },
+    {
+      "summaryId": "c78eabf7-5286-4ec1-a229-72bbdb94c0fc",
+      "committedAt": "2026-10-19T00:23:30.002+08:00",
+      "sourceItemCount": 21,
+      "newSourceItemCount": 4,
+      "newSourceSteps": [
+        10,
+        11,
+        12
+      ],
+      "newSourceKinds": {
+        "run_shell": 2,
+        "read_file": 2
+      }
+    },
+    {
+      "summaryId": "12913428-dce3-4be3-9c49-fbaa8519793b",
+      "committedAt": "2026-10-19T00:24:18.867+08:00",
+      "sourceItemCount": 22,
+      "newSourceItemCount": 1,
+      "newSourceSteps": [
+        13
+      ],
+      "newSourceKinds": {
+        "run_shell": 1
+      }
+    },
+    {
+      "summaryId": "0a999746-7799-4519-9292-09a62570d508",
+      "committedAt": "2026-10-19T00:24:46.591+08:00",
+      "sourceItemCount": 24,
+      "newSourceItemCount": 2,
+      "newSourceSteps": [
+        14
+      ],
+      "newSourceKinds": {
+        "run_shell": 1,
+        "skill_read": 1
+      }
+    },
+    {
+      "summaryId": "adb81429-1415-4c88-be44-3e049f06e82a",
+      "committedAt": "2026-10-19T00:26:39.971+08:00",
+      "sourceItemCount": 25,
+      "newSourceItemCount": 1,
+      "newSourceSteps": [
+        15
+      ],
+      "newSourceKinds": {
+        "run_shell": 1
+      }
+    },
+    {
+      "summaryId": "ce72cab8-c51a-4dd1-aae9-5eb47d90955c",
+      "committedAt": "2026-10-19T00:26:55.137+08:00",
+      "sourceItemCount": 26,
+      "newSourceItemCount": 1,
+      "newSourceSteps": [
+        16
+      ],
+      "newSourceKinds": {
+        "run_shell": 1
+      }
+    },
+    {
+      "summaryId": "8b0c463c-de27-49cc-bf7d-1eaeaf659366",
+      "committedAt": "2026-10-19T00:27:10.492+08:00",
+      "sourceItemCount": 27,
+      "newSourceItemCount": 1,
+      "newSourceSteps": [
+        17
+      ],
+      "newSourceKinds": {
+        "run_shell": 1
+      }
+    },
+    {
+      "summaryId": "1000ee1e-4fb1-45c9-aadd-877bb56f6bfb",
+      "committedAt": "2026-10-19T00:27:21.796+08:00",
+      "sourceItemCount": 29,
+      "newSourceItemCount": 2,
+      "newSourceSteps": [
+        18
+      ],
+      "newSourceKinds": {
+        "apply_patch": 1,
+        "assistant_message": 1
+      }
+    },
+    {
+      "summaryId": "35cf1584-92ce-401f-aad9-71466178d837",
+      "committedAt": "2026-10-19T00:28:58.491+08:00",
+      "sourceItemCount": 39,
+      "newSourceItemCount": 10,
+      "newSourceSteps": [
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28
+      ],
+      "newSourceKinds": {
+        "apply_patch": 1,
+        "run_shell": 9
+      }
+    }
+  ],
+  "eidosSourceSha256": {
+    "runtime/eidos_runtime/context/budget.py": "d3b47967facf89a0562807161e1a36a4861496a1586d97e3cab9e9e6750ff225",
+    "runtime/eidos_runtime/context/builder.py": "a9f29aadf3665c86b1cf21c0c5dfe5ec11da08041402b4edcaeb4b63de03e7a7",
+    "runtime/eidos_runtime/context/compactor.py": "ebaf8ba9493a5ad1f798c190c486de0f22d901063fca8146377782e6eaf2747e",
+    "runtime/eidos_runtime/context/policy.py": "8e807d4b686a91747e362dfd681c92bec056b76d57f010afb898cb30f8cf38a8",
+    "runtime/eidos_runtime/db/repositories/context.py": "423f88a25ec1ee8d33d7d12bad5457fd1ca7d986d900a7435c1b26e160aae1d1",
+    "runtime/eidos_runtime/runtime/engine.py": "78e6f20be50dacad6b979bf9f8cd9eb6c0776278e46957c551aafd98734ceda3",
+    "runtime/eidos_runtime/persistence/verified_compaction.py": "d95b77185e71eb7354b9ab32cfc939da55fd5881946a5ca53c606dd9b8311463"
+  },
+  "codexOfficialSource": {
+    "commit": "8c076942cb70fba8e5c4732c23f1faabc4aed484",
+    "sources": [
+      {
+        "path": "codex-rs/protocol/src/openai_models.rs",
+        "bytes": 77875,
+        "sha256": "4b080aeaf5c158104e27d8277f3bc03ee3ad55b55a41c30a788d831fb2e2a99f",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/protocol/src/openai_models.rs"
+      },
+      {
+        "path": "codex-rs/core/src/session/context_window.rs",
+        "bytes": 5307,
+        "sha256": "9692f442771c63308cfc36954810cb2490d84c28b681972ea13b93afbd30050a",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/session/context_window.rs"
+      },
+      {
+        "path": "codex-rs/core/src/session/turn.rs",
+        "bytes": 132993,
+        "sha256": "a0140a3459a91fd353e21e337ad076c1a7f615ac628e2cc4db9f3e8f0bf3b0c9",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/session/turn.rs"
+      },
+      {
+        "path": "codex-rs/core/src/session/token_budget.rs",
+        "bytes": 8297,
+        "sha256": "fd19a6246e31c0d7b4a36354fc0db78ff273d0895e1d0cfd565e24ede5592e91",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/session/token_budget.rs"
+      },
+      {
+        "path": "codex-rs/core/src/compact.rs",
+        "bytes": 33855,
+        "sha256": "9b37f42e826e45ebf2fe3115355fde5ced2f67183c19fab84119b57b0c6bd13b",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/compact.rs"
+      },
+      {
+        "path": "codex-rs/core/src/compact_remote_v2.rs",
+        "bytes": 49829,
+        "sha256": "cb81ae523a2d3674ffe0acd12a492431d773e1148a420bbd99850b9081277673",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/compact_remote_v2.rs"
+      },
+      {
+        "path": "codex-rs/core/src/compact_remote_v2_installation.rs",
+        "bytes": 11829,
+        "sha256": "51bc95908de2153856836f931b25deed831c5e2c3ab13a3dc35231da3a0ae0be",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/compact_remote_v2_installation.rs"
+      },
+      {
+        "path": "codex-rs/core/src/compact_model_fallback.rs",
+        "bytes": 2470,
+        "sha256": "f20227c90efbdb762a2dd4d6709f7f6388d2a1e9a4653389a1f23c5dd654a07f",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/compact_model_fallback.rs"
+      },
+      {
+        "path": "codex-rs/core/src/compact_token_budget.rs",
+        "bytes": 2782,
+        "sha256": "49682d338de201896ee122e36b16dc62072ce791c4acea52c7c0a6b615e6e20f",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/compact_token_budget.rs"
+      },
+      {
+        "path": "codex-rs/core/src/context_manager/history.rs",
+        "bytes": 59016,
+        "sha256": "efa4559b18671e775181360a988073dd8427cf91ff3c591046e81896289ce570",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/context_manager/history.rs"
+      },
+      {
+        "path": "codex-rs/core/src/compact_remote_history.rs",
+        "bytes": 7384,
+        "sha256": "8c6d8d22d9236f44707ae4b77ec8e169fd8e7de5ad53d796944b058bddf1db46",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/compact_remote_history.rs"
+      },
+      {
+        "path": "codex-rs/core/src/state/auto_compact_window.rs",
+        "bytes": 7924,
+        "sha256": "61dd15e182e64fd43883098522854cdc2c6365d8d94d0f2408a03f6da7db6731",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/state/auto_compact_window.rs"
+      },
+      {
+        "path": "codex-rs/core/src/compact_retained_tool_outputs.rs",
+        "bytes": 642,
+        "sha256": "a65fd8d17729cf78db8c98dabfa1a68776fdbf0168d6133bf02897fdd37cc76b",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/compact_retained_tool_outputs.rs"
+      },
+      {
+        "path": "codex-rs/core/src/session/async_compaction.rs",
+        "bytes": 7612,
+        "sha256": "ebb9f46f75bf4a15aacc737cfba145dd0310a4914b44d457f4cb30bb2e08de79",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/core/src/session/async_compaction.rs"
+      },
+      {
+        "path": "codex-rs/prompts/src/compact.rs",
+        "bytes": 176,
+        "sha256": "e312a185459a54a6e44ca9021afe933219d5c19f7f8ec4f452dc8f8e16fe242d",
+        "url": "https://raw.githubusercontent.com/openai/codex/8c076942cb70fba8e5c4732c23f1faabc4aed484/codex-rs/prompts/src/compact.rs"
+      }
+    ]
+  },
+  "codexUpstreamCommitDate": "2026-10-18T01:58:02Z",
+  "productionCodeChanged": false
+}

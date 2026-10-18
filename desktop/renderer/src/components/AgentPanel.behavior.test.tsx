@@ -88,8 +88,8 @@ describe("agent error labels", () => {
   it("uses the shared terminal cause instead of a raw error code", () => {
     expect(formatAgentTooltip({ ...historyAgent(), status: "failed", errorCode: "MODEL_PROTOCOL_ERROR",
       termination: { stage: "tool_validation", reason: "TOOL_ARGUMENT_CONTRACT_VIOLATION", toolName: "read_file", validationPath: "path" },
-    })).toContain("模型调用“读取文件”时提供的“文件路径”参数不符合要求");
-    expect(formatAgentTooltip({ ...historyAgent(), status: "stopped", stopReason: "completion_unconfirmed" })).toContain("任务已停止。");
+    })).toContain("模型传给“读取文件”的“文件路径”参数不符合要求");
+    expect(formatAgentTooltip({ ...historyAgent(), status: "stopped", stopReason: "completion_unconfirmed" })).toContain("任务已停止");
   });
 });
 
@@ -300,6 +300,8 @@ describe("AgentWorkspacePanel", () => {
       historyItem("old-1", "child-run-old", "Earlier answer", 1),
       historyItem("old-2", "child-run-old", "Earlier follow-up", 2),
     ], [historyRun("child-run-old", 1)]);
+    olderPage.contextCompactions = [{ requestId: "historical-compaction", runId: "child-run-old", eventId: 1,
+      startedAt: 1, updatedAt: 2, status: "succeeded", trigger: "window_pressure" }];
     const api: Partial<EidosRuntimeAPI> = {
       readSession: vi.fn().mockResolvedValueOnce(latestPage).mockResolvedValueOnce(olderPage),
       onNotification: vi.fn().mockReturnValue(vi.fn()),
@@ -316,6 +318,7 @@ describe("AgentWorkspacePanel", () => {
     expect(screen.getByText("Earlier follow-up")).toBeInTheDocument();
     expect(screen.getByText("Newest answer")).toBeInTheDocument();
     expect(screen.getByText("Latest follow-up")).toBeInTheDocument();
+    expect(screen.getByText("上下文已自动压缩")).toBeInTheDocument();
     expect(api.readSession).toHaveBeenNthCalledWith(1, child.sessionId, { itemLimit: 500 });
     expect(api.readSession).toHaveBeenNthCalledWith(2, child.sessionId, {
       itemLimit: 500,

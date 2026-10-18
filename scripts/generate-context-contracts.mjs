@@ -10,11 +10,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
 import json
 from eidos_runtime.models import EidosFrozenStrictModel
-from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord
+from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord, ContextCompactionActivity
 from eidos_runtime.protocol.methods import ContextDetailsRequestDto, ContextCompactRequestDto
 class ContextContract(EidosFrozenStrictModel):
     details: ContextDetails
     compaction: ContextCompactionRecord
+    activity: ContextCompactionActivity
     details_request: ContextDetailsRequestDto
     compact_request: ContextCompactRequestDto
 print(json.dumps(ContextContract.model_json_schema(by_alias=True)))
@@ -28,6 +29,7 @@ ajv.addSchema(schema, "eidos:context");
 const generated = standaloneCode(ajv, {
   isContextDetails: "eidos:context#/$defs/ContextDetails",
   isContextCompactionRecord: "eidos:context#/$defs/ContextCompactionRecord",
+  isContextCompactionActivity: "eidos:context#/$defs/ContextCompactionActivity",
 });
 const browserCode = generated.replaceAll('require("ajv/dist/runtime/ucs2length").default', "ucs2length");
 if (/\brequire\(/u.test(browserCode)) throw new Error("Unsupported CommonJS helper in context validators");

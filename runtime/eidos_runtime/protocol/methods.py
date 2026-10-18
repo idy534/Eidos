@@ -16,6 +16,7 @@ import re
 from typing import ClassVar, Literal
 
 from eidos_runtime.domain.input_reference import InputReferenceId
+from eidos_runtime.domain.context_management import ContextCompactionActivity
 from eidos_runtime.model.config import CustomModelSettings
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
@@ -725,6 +726,7 @@ class SessionReadResponseDto(MethodResultDto):
     step_resolutions: list[StepResolutionReviewDto] = Field(alias="stepResolutions")
     previous_item_id: StrictStr | None = Field(default=None, alias="previousItemId")
     through_event_id: StrictInt | None = Field(default=None, alias="throughEventId")
+    context_compactions: list[ContextCompactionActivity] = Field(default_factory=list, alias="contextCompactions")
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()

@@ -152,7 +152,7 @@ describe("Composer DOM interaction & state behavior", () => {
         }}
       />,
     );
-    expect(screen.getByText("上下文 72% · 185K / 258K")).toBeInTheDocument();
+    expect(screen.getByText("上下文 71.7% · 185K / 258K")).toBeInTheDocument();
 
     rerender(<Composer {...defaultProps} contextUsage={{
       activeTokens: 185_000,

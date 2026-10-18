@@ -8,6 +8,7 @@ import { formatContextUsage } from "../context-usage.js";
 import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
+import type { ContextDetails } from "../../../shared/context-management.js";
 import { ModelSelector } from "./ModelSelector.js";
 import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
 
@@ -27,6 +28,7 @@ export interface ComposerProps {
   onApprovalModeChange?: ((mode: ApprovalMode) => void) | undefined;
   contextUsage: ContextUsage | undefined;
   contextRunId?: string | undefined;
+  contextDetails?: ContextDetails | undefined;
   modelConfigured: boolean;
   modelLoading: boolean;
   isSubmitting: boolean;
@@ -68,6 +70,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   onApprovalModeChange,
   contextUsage,
   contextRunId,
+  contextDetails,
   modelConfigured,
   modelLoading,
   isSubmitting,
@@ -386,7 +389,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         </div>
 
         <div className="composer-options">
-          {showContextIndicator && <ContextIndicator key={contextRunId} usage={contextUsage} runId={contextRunId} />}
+          {showContextIndicator && <ContextIndicator key={contextRunId} usage={contextUsage} details={contextDetails} runId={contextRunId} />}
           {modelList && modelList.models.length > 0 && (
             <ModelSelector
               models={modelList.models}

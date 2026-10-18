@@ -44,6 +44,14 @@ app.whenReady().then(async () => {
       assert.equal(layout.overflow, false);
       assert.equal(layout.focused, true);
       layouts.push(layout);
+      await evaluate("window.contextSetScenario('overflow')");
+      await wait("document.querySelector('.context-hero-percent')?.textContent==='181.4%'");
+      assert.equal(await evaluate("document.querySelector('.composer-context-usage').getAttribute('aria-label')"), "上下文 181.4% · 181.4K / 100K");
+      assert.equal(await evaluate("Math.round([...document.querySelectorAll('.context-section-value')].reduce((sum,node)=>sum+parseFloat(node.textContent),0)*10)/10"), 181.4);
+      await evaluate("window.contextSetScenario('compacted')");
+      await wait("document.querySelector('.context-hero-percent')?.textContent==='18%'");
+      assert.equal(await evaluate("document.querySelector('.composer-context-usage').getAttribute('aria-label')"), "上下文 ≈18% · ≈18K / 100K");
+      assert.equal(await evaluate("Math.round([...document.querySelectorAll('.context-section-value')].reduce((sum,node)=>sum+parseFloat(node.textContent),0)*10)/10"), 18);
       if (width === 1440 && process.env.EIDOS_CONTEXT_SCREENSHOT) {
         await evaluate("new Promise(resolve => setTimeout(resolve, 100))");
         await writeFile(process.env.EIDOS_CONTEXT_SCREENSHOT, (await window.webContents.capturePage()).toPNG());

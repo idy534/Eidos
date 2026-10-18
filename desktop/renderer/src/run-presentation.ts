@@ -15,48 +15,51 @@ interface RunOutcome {
 }
 
 const messages: Record<string, string> = {
-  MODEL_PROTOCOL_ERROR: "Eidos 未能正常处理这次模型请求，任务无法继续。",
-  protocol_error: "Eidos 未能正常处理这次模型请求，任务无法继续。",
-  invalid_response: "Eidos 无法处理模型返回的内容，任务无法继续。",
-  invalid_tool_arguments: "模型返回的工具参数格式不正确，任务无法继续。",
-  invalid_tool_call: "模型返回的工具调用不符合要求，任务无法继续。",
-  invalid_tool_results: "Eidos 无法将工具结果发送给模型，任务无法继续。",
-  invalid_turn_signal: "模型返回的结束标记不符合要求，任务无法继续。",
-  empty_response: "模型没有返回文字或可执行操作，任务无法继续。",
-  length: "模型答复达到了长度上限，任务无法继续。",
-  content_filter: "模型服务因内容限制停止了这次答复，任务无法继续。",
-  incomplete: "模型没有完整返回这次答复，任务无法继续。",
-  incomplete_response: "模型没有完整返回这次答复，任务无法继续。",
-  MODEL_STREAM_INTERRUPTED: "模型答复在接收过程中中断，任务无法继续。",
-  model_stream_interrupted: "模型答复在接收过程中中断，任务无法继续。",
-  MODEL_REQUEST_FAILED: "Eidos 未能取得模型答复，任务无法继续。",
-  model_request_failed: "Eidos 未能取得模型答复，任务无法继续。",
-  provider_unavailable: "Eidos 未能连接模型服务，或模型服务暂时无法响应，任务无法继续。",
-  provider_timeout: "模型服务没有在等待时间内返回结果，任务无法继续。",
-  MODEL_RATE_LIMITED: "模型服务限制了本次请求，任务无法继续。",
-  rate_limited: "模型服务限制了本次请求，任务无法继续。",
-  MODEL_AUTHENTICATION_FAILED: "模型服务拒绝了访问，你需要检查 API Key 或账号权限。",
-  authentication_failed: "模型服务拒绝了访问，你需要检查 API Key 或账号权限。",
-  MODEL_INVALID_REQUEST: "模型服务拒绝了本次请求，任务无法继续。",
-  invalid_request: "模型服务拒绝了本次请求，任务无法继续。",
-  CONTEXT_INPUT_TOO_LARGE: "本次请求内容超过了模型可接收的长度，任务无法继续。",
-  context_exceeded: "本次请求内容超过了模型可接收的长度，任务无法继续。",
-  CONTEXT_LIMIT_EXCEEDED: "Eidos 无法将对话内容缩减到模型可接收的长度，任务无法继续。",
-  CONTEXT_PROJECTION_OVERFLOW: "Eidos 整理的请求内容超过了处理上限，任务无法继续。",
-  context_still_over_budget: "Eidos 无法将对话内容缩减到模型可接收的长度，任务已停止。",
-  repeated_tool_call: "模型多次重复相同操作，任务没有取得新进展，Eidos 已停止执行。",
-  no_progress: "模型再次尝试后仍没有取得新进展，Eidos 已停止执行。",
-  repeated_empty_response: "模型连续没有返回文字或可执行操作，Eidos 已停止执行。",
-  repeated_sensitive_tool_input: "模型连续提供了被安全规则拒绝的工具输入，Eidos 已停止执行。",
-  SENSITIVE_SCAN_FAILED: "Eidos 无法完成内容安全检查，任务无法继续。",
-  SENSITIVE_CONTENT_REJECTED: "Eidos 的安全规则拒绝了本次内容，任务无法继续。",
-  TOOL_INFRASTRUCTURE_FAILURE: "Eidos 执行或清理工具时遇到错误，任务无法继续。",
-  RUNTIME_STATE_CONFLICT: "任务状态在执行过程中发生冲突，Eidos 已停止执行。",
-  SKILL_REFERENCE_AMBIGUOUS: "Eidos 找到了多个同名技能，无法确定本次任务要使用哪一个。",
-  SKILL_SNAPSHOT_INVALID: "本次任务使用的技能已变化或无法读取，任务无法继续。",
-  INTERNAL_ERROR: "Eidos 执行任务时遇到内部错误，任务无法继续。",
-  RUNTIME_INTERRUPTED: "任务执行已中断。",
-  active_shell_stopped: "任务已结束，Eidos 已停止仍在运行的命令。",
+  MODEL_PROTOCOL_ERROR: "Eidos 无法处理模型响应",
+  protocol_error: "Eidos 无法处理模型响应",
+  invalid_response: "模型返回的内容不符合响应格式",
+  provider_control_syntax: "模型将工具调用标记混入了回复正文",
+  too_many_tool_calls: "模型单次返回的工具调用超过数量上限",
+  invalid_tool_arguments: "模型返回的工具参数不是有效的 JSON 对象",
+  invalid_tool_call: "模型返回的工具调用不符合要求",
+  invalid_tool_results: "Eidos 无法将工具结果发送给模型",
+  invalid_turn_signal: "模型返回的结束标记无效",
+  empty_response: "模型未返回文字或工具调用",
+  length: "模型输出达到 Token 上限，回复未完成",
+  content_filter: "模型服务因内容限制终止了回复",
+  incomplete: "模型回复不完整",
+  incomplete_response: "模型回复不完整",
+  error: "模型服务报告回复失败",
+  MODEL_STREAM_INTERRUPTED: "模型回复在接收过程中中断",
+  model_stream_interrupted: "模型回复在接收过程中中断",
+  MODEL_REQUEST_FAILED: "Eidos 未能取得模型回复",
+  model_request_failed: "Eidos 未能取得模型回复",
+  provider_unavailable: "模型服务连接失败或暂时不可用",
+  provider_timeout: "模型服务响应超时",
+  MODEL_RATE_LIMITED: "模型服务限制了请求频率或用量",
+  rate_limited: "模型服务限制了请求频率或用量",
+  MODEL_AUTHENTICATION_FAILED: "模型服务拒绝认证，请检查 API Key 或账号权限",
+  authentication_failed: "模型服务拒绝认证，请检查 API Key 或账号权限",
+  MODEL_INVALID_REQUEST: "模型服务拒绝了请求参数",
+  invalid_request: "模型服务拒绝了请求参数",
+  CONTEXT_INPUT_TOO_LARGE: "请求内容超过模型上下文上限",
+  context_exceeded: "请求内容超过模型上下文上限",
+  CONTEXT_LIMIT_EXCEEDED: "Eidos 无法将请求缩减至模型上下文上限内",
+  CONTEXT_PROJECTION_OVERFLOW: "Eidos 整理的请求内容超过处理上限",
+  context_still_over_budget: "请求内容仍超过模型上下文上限",
+  repeated_tool_call: "模型重复相同操作且无新进展，任务已停止",
+  no_progress: "模型重试后仍无新进展，任务已停止",
+  repeated_empty_response: "模型连续未返回文字或工具调用，任务已停止",
+  repeated_sensitive_tool_input: "模型连续提交被安全规则拒绝的工具参数，任务已停止",
+  SENSITIVE_SCAN_FAILED: "Eidos 无法完成内容安全检查",
+  SENSITIVE_CONTENT_REJECTED: "内容未通过 Eidos 安全检查",
+  TOOL_INFRASTRUCTURE_FAILURE: "Eidos 执行或清理工具失败",
+  RUNTIME_STATE_CONFLICT: "任务执行状态冲突",
+  SKILL_REFERENCE_AMBIGUOUS: "技能名称对应多个技能，Eidos 无法确定目标",
+  SKILL_SNAPSHOT_INVALID: "任务使用的技能已变化或无法读取",
+  INTERNAL_ERROR: "Eidos 内部错误导致任务失败",
+  RUNTIME_INTERRUPTED: "任务执行已中断",
+  active_shell_stopped: "任务已结束，仍在运行的命令已停止",
 };
 
 const toolNames: Record<string, string> = {
@@ -71,19 +74,19 @@ const parameterNames: Record<string, string> = {
 function failureMessage(run: RunOutcome): string {
   const fact = run.termination;
   if (fact?.reason === "TOOL_ARGUMENT_CONTRACT_VIOLATION") {
-    const target = fact.toolName ? `“${toolNames[fact.toolName] ?? fact.toolName}”` : "工具";
-    const field = fact.validationPath ? `的“${parameterNames[fact.validationPath] ?? fact.validationPath}”参数` : "的参数";
-    return `模型调用${target}时提供${field}不符合要求，任务无法继续。`;
+    const target = fact.toolName ? `传给“${toolNames[fact.toolName] ?? fact.toolName}”` : "提供";
+    const field = fact.validationPath ? `“${parameterNames[fact.validationPath] ?? fact.validationPath}”参数` : "工具参数";
+    return `模型${target}的${field}不符合要求`;
   }
   if (fact?.reason === "authentication_failed" && fact.httpStatus === 403) {
-    return "模型服务拒绝了当前账号的访问，你需要检查账号是否有权使用该模型。";
+    return "模型服务拒绝访问，请检查账号权限";
   }
   if (fact?.reason === "provider_unavailable" && [408, 504].includes(fact.httpStatus ?? 0)) {
     return messages.provider_timeout!;
   }
   return (fact && messages[fact.reason])
     || (run.errorCode && messages[run.errorCode])
-    || "任务执行失败，Eidos 没有取得具体原因。";
+    || "任务执行失败，暂无详细说明";
 }
 
 export function terminalRunPresentation(run: RunOutcome): RunStatusPresentation | undefined {
@@ -91,24 +94,24 @@ export function terminalRunPresentation(run: RunOutcome): RunStatusPresentation 
   switch (run.status) {
     case "succeeded":
       if (!run.reconciliationRequired) return { label: "已完成", tone: "success" };
-      return { label: "Eidos 尚未确认部分操作的结果，任务完成状态仍需检查。", tone: "warning" };
+      return { label: "部分操作结果尚未确认，请查看操作记录", tone: "warning" };
     case "failed":
       presentation = { label: failureMessage(run), tone: "error" };
       break;
     case "stopped":
-      presentation = { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务已停止。", tone: "warning" };
+      presentation = { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务已停止", tone: "warning" };
       break;
     case "interrupted":
-      presentation = { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务执行已中断。", tone: "warning" };
+      presentation = { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务执行已中断", tone: "warning" };
       break;
     case "canceled":
-      presentation = { label: "任务已取消。", tone: "neutral" };
+      presentation = { label: "任务已取消", tone: "neutral" };
       break;
     default:
       return undefined;
   }
   if (run.reconciliationRequired) {
-    presentation.label += " Eidos 未能确认部分操作的结果，你需要查看对应操作记录。";
+    presentation.label += "；部分操作结果尚未确认，请查看操作记录";
   }
   return presentation;
 }

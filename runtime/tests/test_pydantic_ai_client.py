@@ -289,6 +289,38 @@ class PydanticAIModelClientTests(unittest.TestCase):
         self.assertEqual(raised.exception.failure.code, "protocol_error")
         self.assertEqual(raised.exception.failure.reason, "invalid_tool_arguments")
 
+    def test_incomplete_response_preserves_cause_and_usage_without_tool_calls(self) -> None:
+        for finish_reason, state in (
+            ("length", "complete"), ("content_filter", "complete"),
+            ("error", "complete"), ("stop", "interrupted"),
+        ):
+            with self.subTest(finish_reason=finish_reason, state=state):
+                response = map_model_response(PAIModelResponse(
+                    parts=[
+                        TextPart("Writing the script"),
+                        ToolCallPart("apply_patch", {"patch": "valid earlier call"}, "call-1"),
+                        ToolCallPart("apply_patch", '{"patch":"unfinished', "call-2"),
+                    ],
+                    usage=RequestUsage(output_tokens=16000, details={"reasoning_tokens": 11481}),
+                    provider_name="fixture-provider", provider_response_id="response-1",
+                    finish_reason=finish_reason, state=state,
+                ))
+                self.assertEqual(response.finish_reason, finish_reason)
+                self.assertEqual(response.response_state, state)
+                self.assertEqual(response.usage.output_tokens, 16000)
+                self.assertEqual(response.usage.details["reasoning_tokens"], 11481)
+                self.assertEqual(response.provider_response_id, "response-1")
+                self.assertEqual(response.tool_calls, ())
+                self.assertEqual(response.text, "Writing the script")
+
+    def test_length_repair_describes_truncation_instead_of_invalid_arguments(self) -> None:
+        messages = encode_context(({"type": "protocol_error", "code": "length"},))
+        feedback = messages[0].parts[0].content
+        self.assertIn("output token limit", feedback)
+        self.assertIn("shorter, complete response", feedback)
+        self.assertIn("No tool calls", feedback)
+        self.assertNotIn("invalid", feedback)
+
     def test_encode_context_only_encodes_messages_without_instructions(self) -> None:
         messages = encode_context((
             {"type": "user", "content": "你好"},

@@ -611,6 +611,13 @@ def encode_context(
         elif item_type == "protocol_error":
             code = item.get("code")
             if isinstance(code, str):
+                if code == "length":
+                    messages.append(PAIModelRequest([UserPromptPart(
+                        "Your previous response reached the output token limit "
+                        "and was incomplete. Return a shorter, complete response. "
+                        "No tool calls from that response were executed."
+                    )]))
+                    continue
                 details: dict[str, object] = {}
                 for key in (
                     "toolName", "toolCallIndex", "toolCallCount",
@@ -802,7 +809,13 @@ def map_model_response(
     retry_tracker: RetryTracker | None = None,
 ) -> ModelResponse:
     calls: list[ModelToolCall] = []
-    for index, call in enumerate(response.tool_calls):
+    invalid_completion = (
+        response.state not in {None, "complete"}
+        or response.finish_reason in {"length", "content_filter", "error"}
+    )
+    # Preserve completion evidence for SamplingRuntime before parsing partial
+    # arguments. Incomplete responses must never expose executable tool calls.
+    for index, call in enumerate(() if invalid_completion else response.tool_calls):
         try:
             arguments = call.args_as_dict(raise_if_invalid=True)
         except (ValueError, AssertionError):

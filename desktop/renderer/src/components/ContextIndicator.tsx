@@ -1,4 +1,5 @@
 import type { ContextUsage } from "../contracts.js";
+import type { ContextDetails } from "../../../shared/context-management.js";
 import { formatContextUsage } from "../context-usage.js";
 import { useRef, useState } from "react";
 import { ContextDetailsPanel } from "./ContextDetailsPanel.js";
@@ -7,9 +8,10 @@ export interface ContextIndicatorProps {
   usage: ContextUsage | undefined;
   className?: string;
   runId?: string | undefined;
+  details?: ContextDetails | undefined;
 }
 
-export function ContextIndicator({ usage, className, runId }: ContextIndicatorProps) {
+export function ContextIndicator({ usage, details, className, runId }: ContextIndicatorProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const percent = usage ? Math.min(100, Math.max(0, usage.percentUsed)) : 0;
@@ -91,6 +93,7 @@ export function ContextIndicator({ usage, className, runId }: ContextIndicatorPr
           key={runId}
           runId={runId}
           usage={usage}
+          details={details}
           triggerRef={triggerRef}
           onClose={handleClose}
         />

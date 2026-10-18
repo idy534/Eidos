@@ -208,7 +208,7 @@ Runtime Bundle 必须包含 `resources/tokenizers/cl100k_base.tiktoken`。构建
 上下文模型摘要、Provider 计量与手动压缩的定向验证：
 
 ```bash
-uv run --locked pytest runtime/tests/test_context_model_compaction.py runtime/tests/test_pydantic_ai_client.py runtime/tests/test_model_reasoning_replay.py runtime/tests/test_model_attempt_context_snapshot.py
+uv run --locked pytest runtime/tests/test_context_metrics.py runtime/tests/test_context_usage_protocol.py runtime/tests/test_context_model_compaction.py runtime/tests/test_pydantic_ai_client.py runtime/tests/test_model_reasoning_replay.py runtime/tests/test_model_attempt_context_snapshot.py
 node scripts/generate-context-contracts.mjs
 pnpm build:main
 node --test dist/main/runtime-client-context.test.js dist/shared/context-management.test.js
@@ -216,7 +216,15 @@ pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/com
 pnpm exec electron scripts/test-context-details.cjs
 ```
 
-Electron 验证使用隔离 userData，检查 320、768、1024、1440 四种宽度、键盘打开、焦点返回和手动请求。`EIDOS_CONTEXT_SCREENSHOT` 可以指定截图路径。
+Electron 验证使用隔离 userData，检查 320、768、1024、1440 四种宽度、键盘打开、焦点返回和手动请求。测试还检查 100K 设置上限下的 181.4% 用量、压缩后 18% 用量，以及圆环、详情与分项同步更新。`EIDOS_CONTEXT_SCREENSHOT` 可以指定截图路径。
+
+处理过程中的压缩静态行使用以下定向验证。Runtime 测试覆盖持久事件、开始事件及时交付、重启、取消、分页与原子提交后的中断；Electron 测试覆盖四种宽度的行插入、原位更新与滚动。`EIDOS_FEED_SCREENSHOT` 可以指定过程截图路径。
+
+```bash
+uv run --locked pytest runtime/tests/test_context_compaction_feed.py runtime/tests/test_context_model_compaction.py runtime/tests/test_runtime_state_authority.py
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/ContextCompactionFeed.behavior.test.tsx desktop/renderer/src/components/ExecutionFeed.behavior.test.tsx desktop/renderer/src/app/session-controller.behavior.test.tsx
+pnpm exec electron scripts/test-feed-scroll.cjs
+```
 
 离线回放使用六类合成资料与五种长度，共 30 组，每组默认连续压缩三次。脚本检查约束、路径与 Symbol、失败和未验证状态、累计来源与原始结果 Hash。脚本不读取真实聊天，也不代表真实仓库任务成功率：
 

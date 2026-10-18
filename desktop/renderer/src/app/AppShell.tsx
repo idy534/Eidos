@@ -145,13 +145,11 @@ export function AppShell({ runtime }: AppShellProps) {
   const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin).at(-1);
   const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestUserRun?.workMode ?? "execute";
   const contextRun = runState.activeRun ?? latestRun;
-  const contextRunId = contextRun && contextRun.modelId === modelState.selectedModelId
-    ? contextRun.id
-    : undefined;
+  const contextRunId = contextRun?.id;
   const [contextUsageState, contextUsageActions] = useContextUsageController({
     ready: runtimeStatus.state === "ready" && isStorageReady,
     sessionId: sessionState.snapshot?.session.id,
-    modelId: modelState.selectedModelId,
+    modelId: contextRun?.modelId,
     runId: contextRunId,
   });
   const handleContextUsageNotification = contextUsageActions.handleNotification;
@@ -1589,6 +1587,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   key={currentSnapshot.session.id}
                   items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
+                  contextCompactions={currentSnapshot.contextCompactions}
                   projectless={currentSnapshot.session.projectless === true}
                   runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
                   models={feedModels}
@@ -1664,6 +1663,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   reasoningSelection={modelState.reasoningSelection}
                   contextUsage={contextUsageState.usage}
                   contextRunId={contextRun?.id}
+                  contextDetails={contextUsageState.details}
                   showContextIndicator={Boolean(contextRun)}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}

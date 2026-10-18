@@ -947,6 +947,7 @@ class SessionRepository(Repository):
             if session_row is None:
                 raise ResourceNotFoundError("session not found")
             before_sequence: int | None = None
+            before_timestamp: int | None = None
             from eidos_runtime.persistence.session_history import SessionHistoryRepository
             history = SessionHistoryRepository(self.database)
             inherited_cursor = before_item_id is not None and connection.execute(
@@ -958,7 +959,7 @@ class SessionRepository(Repository):
             elif before_item_id is not None:
                 before_row = connection.execute(
                     """
-                    SELECT creation_seq FROM items
+                    SELECT creation_seq,created_at FROM items
                     WHERE id = ? AND session_id = ?
                     """,
                     (before_item_id, session_id),
@@ -966,6 +967,7 @@ class SessionRepository(Repository):
                 if before_row is None:
                     raise ResourceNotFoundError("item not found")
                 before_sequence = before_row["creation_seq"]
+                before_timestamp = before_row["created_at"]
             run_rows = connection.execute(
                 """
                 SELECT * FROM runs WHERE session_id = ?
@@ -1062,6 +1064,16 @@ class SessionRepository(Repository):
                 "SELECT 1 FROM session_history_entries WHERE session_id=?", (session_id,),
             ).fetchone() and selected_items:
                 snapshot["previousItemId"] = selected_items[0]["id"]
+        if selected_items:
+            from eidos_runtime.persistence.context_management import ContextManagementRepository
+            activities = ContextManagementRepository(self.database).activities(
+                session_id, tuple(dict.fromkeys(str(item["runId"]) for item in selected_items)),
+                through_event_id=through_event_id,
+                since=min(int(item["createdAt"]) for item in selected_items),
+                before=before_timestamp, byte_budget=max(0, MAX_SNAPSHOT_BYTES - _json_bytes(snapshot) - 64),
+            )
+            if activities:
+                snapshot["contextCompactions"] = [activity.to_wire_dict() for activity in activities]
         return snapshot
 
     def list_events(

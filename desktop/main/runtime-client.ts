@@ -1422,6 +1422,11 @@ function isNotification(value: unknown): value is RuntimeNotification {
       && params.phase.length > 0
     );
   }
+  if (value.method === "context/compactionUpdated") {
+    return hasOnlyKeys(params, ["sessionId", "activity"])
+      && typeof params.sessionId === "string"
+      && isContextCompactionActivity(params.activity);
+  }
   if (value.method === "item/started" || value.method === "item/completed" || value.method === "item/updated") {
     const item = params.item;
     const valid = (
@@ -1954,9 +1959,11 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     isRecord(value)
     && hasOnlyKeys(value, [
       "session", "runs", "items", "stepResolutions",
-      "previousItemId", "throughEventId", "inheritedHistory",
+      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions",
     ])
     && isSession(value.session)
+    && (value.contextCompactions === undefined || Array.isArray(value.contextCompactions)
+      && value.contextCompactions.every(isContextCompactionActivity))
     && (value.inheritedHistory === undefined || Array.isArray(value.inheritedHistory) && value.inheritedHistory.every((entry) => isInheritedHistoryEntry(entry)))
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
@@ -2158,7 +2165,6 @@ function isContextUsage(value: unknown): value is RuntimeContextUsage {
     && typeof value.percentUsed === "number"
     && Number.isFinite(value.percentUsed)
     && value.percentUsed >= 0
-    && value.percentUsed <= 100
     && ["provider", "estimated"].includes(String(value.source))
     && (value.updatedAt === undefined || isNonNegativeInteger(value.updatedAt))
   );
@@ -2713,5 +2719,5 @@ function approvalRequestFrom(
   }
   return undefined;
 }
-import { isContextDetails, isContextCompactionRecord } from "../shared/context-management.js";
+import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity } from "../shared/context-management.js";
 import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";

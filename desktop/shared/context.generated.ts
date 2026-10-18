@@ -24,12 +24,23 @@ export type Inputtokens = number | null;
 export type Outputtokens = number | null;
 export type Sourceitemcount = number;
 export type Manualpending = boolean;
+export type Planid = string | null;
+export type Updatedat = number;
+export type Requestid1 = string;
 export type Runid1 = string;
+export type Eventid = number;
+export type Startedat = number;
+export type Updatedat1 = number;
+export type Status1 = "running" | "succeeded" | "failed" | "canceled";
+export type Trigger1 = ("manual" | "soft_target" | "window_pressure" | "provider_limit" | "projection_limit") | null;
+export type Reason1 = string | null;
 export type Runid2 = string;
+export type Runid3 = string;
 
 export interface ContextContract {
   details: ContextDetails;
   compaction: ContextCompactionRecord;
+  activity: ContextCompactionActivity;
   detailsRequest: ContextDetailsRequestDto;
   compactRequest: ContextCompactRequestDto;
 }
@@ -45,6 +56,8 @@ export interface ContextDetails {
   lastEstimationErrorPercent?: Lastestimationerrorpercent;
   compaction?: ContextCompactionRecord | null;
   manualPending?: Manualpending;
+  planId?: Planid;
+  updatedAt?: Updatedat;
 }
 export interface ContextTokenSection {
   name: Name;
@@ -64,9 +77,22 @@ export interface ContextCompactionRecord {
   outputTokens?: Outputtokens;
   sourceItemCount?: Sourceitemcount;
 }
-export interface ContextDetailsRequestDto {
+/**
+ * A display projection of committed compaction events, never model history.
+ */
+export interface ContextCompactionActivity {
+  requestId: Requestid1;
   runId: Runid1;
+  eventId: Eventid;
+  startedAt: Startedat;
+  updatedAt: Updatedat1;
+  status: Status1;
+  trigger?: Trigger1;
+  reason?: Reason1;
+}
+export interface ContextDetailsRequestDto {
+  runId: Runid2;
 }
 export interface ContextCompactRequestDto {
-  runId: Runid2;
+  runId: Runid3;
 }

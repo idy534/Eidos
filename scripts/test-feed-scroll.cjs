@@ -55,6 +55,18 @@ async function checkScroll() {
   await wait(300);
   atBottom("nested tool collapsed");
 
+  window.startCompactionFeed();
+  await wait(100);
+  const compaction = feed.querySelector(".context-compaction");
+  check(compaction?.textContent === "上下文正在压缩", "Compaction must appear while running");
+  check(!compaction.querySelector("button,details,summary,[aria-expanded]"), "Compaction must be a static row");
+  atBottom("compaction inserted");
+  window.finishCompactionFeed();
+  await wait(100);
+  check(feed.querySelector(".context-compaction") === compaction, "Compaction status must update in place");
+  check(compaction.textContent === "上下文已自动压缩", "Completed compaction must update its label");
+  atBottom("compaction completed");
+
   feed.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -150 }));
   feed.scrollTop -= 250;
   await wait(60);
@@ -152,6 +164,17 @@ app.whenReady().then(async () => {
       results.push({ ...layout, nativeWheel: await checkNativeWheel(win) });
     }
     assert.deepEqual(errors, [], "Feed fixture must have no renderer errors");
+    if (process.env.EIDOS_FEED_SCREENSHOT) {
+      win.setContentSize(1024, 420);
+      await win.loadURL(`http://127.0.0.1:${server.httpServer.address().port}/test/feed-scroll.html`);
+      await win.webContents.executeJavaScript(`(async () => {
+        for (let n=0; !window.showCompactionPreview && n<100; n++) await new Promise(resolve => setTimeout(resolve, 30));
+        window.showCompactionPreview();
+        await new Promise(resolve => setTimeout(resolve, 300));
+      })()`);
+      const { writeFile } = require("node:fs/promises");
+      await writeFile(process.env.EIDOS_FEED_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+    }
     console.log(JSON.stringify(results));
     console.log("Feed scroll native layout regression checks passed.");
   } catch (error) {

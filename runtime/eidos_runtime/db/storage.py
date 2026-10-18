@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.agents import AgentCatalogSnapshot
+from eidos_runtime.domain.context_management import ContextDetails
 
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
 
@@ -298,6 +299,10 @@ class SessionStore:
         self, run_id: str
     ) -> tuple[str, ContextBudget] | None:
         return self.context_snapshot_repository().read_latest_budget_for_run(run_id)
+
+    def read_context_details(self, run_id: str) -> ContextDetails:
+        from eidos_runtime.persistence.context_management import ContextManagementRepository
+        return ContextManagementRepository(self.database).details(run_id, self.read_model_profile(run_id))
 
     def runtime_dependency_repository(self) -> RuntimeDependencyRepository:
         self._repository(self._sessions)

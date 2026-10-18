@@ -22,7 +22,7 @@ class ContextUsageSnapshot(EidosFrozenStrictModel):
 
     active_tokens: int = Field(ge=0)
     context_window_tokens: int = Field(gt=0)
-    percent_used: float = Field(ge=0, le=100)
+    percent_used: float = Field(ge=0)
     source: Literal["provider", "estimated"]
     updated_at: JsonSafeInt = 0
 
@@ -106,10 +106,7 @@ def estimate_context_budget(
     context_usage = ContextUsageSnapshot(
         active_tokens=active_tokens,
         context_window_tokens=context_window_tokens,
-        percent_used=min(
-            100.0,
-            round(active_tokens / context_window_tokens * 100, 1),
-        ),
+        percent_used=round(active_tokens / context_window_tokens * 100, 1),
         source=source,
         updated_at=usage_updated_at,
     )
@@ -178,9 +175,11 @@ def estimate_model_request_budget(
     for item in group_response_context(model_context):
         kind = item.get("type")
         name = ("tool_results" if kind == "tool_result" else
+                "tools" if item.get("sectionId") in {"agent-catalog", "selected-agents"} else
                 "summary" if str(item.get("content", "")).startswith("Compact summary:") else
                 "conversation" if kind in {"user", "assistant", "model_response", "tool_call"} else "other")
-        weights[name] = weights.get(name, 0) + estimate_text_tokens(json.dumps(_text_budget_item(item), ensure_ascii=False)) + _tool_media_tokens(item)
+        media = int(item.get("imageTokenEstimate", 4096)) if item.get("inputImage") else _tool_media_tokens(item)
+        weights[name] = weights.get(name, 0) + estimate_text_tokens(json.dumps(_text_budget_item(item), ensure_ascii=False)) + media
     # Allocate the canonical payload count across independently estimated shares.
     total = max(1, sum(weights.values()))
     sections = [ContextTokenSection(name=name, tokens=value * budget.payload_estimate_tokens // total) for name, value in weights.items()]

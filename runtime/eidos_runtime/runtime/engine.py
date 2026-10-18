@@ -349,7 +349,7 @@ class RuntimeEngine:
         context_application = ContextApplication(
             snapshots=self.store.context_snapshot_repository()
         )
-        compactor = ContextCompactor(self.store, self.model)
+        compactor = ContextCompactor(self.store, self.model, on_recorded=self.events.deliver_pending)
         context_management = ContextManagementRepository(self.store.database)
         step_factory = StepContextFactory(self.store)
         rule_resolver = ProjectRuleResolver()
@@ -486,13 +486,29 @@ class RuntimeEngine:
 
             built = build_current_context()
 
+            def measure_current_projection() -> int:
+                current = build_current_context()
+                retrieval = repository_context.retrieval
+                plan = context_application.planner.capture(
+                    model_profile=self.store.read_model_profile(run.run_id), rule_snapshot=rule_snapshot,
+                    model_context=current.model_context, instructions=current.instructions.system_text,
+                    tool_definitions=tool_definitions, token_budget=current.budget,
+                    inventory_snapshot_id=repository_context.inventory.snapshot_id if repository_context.inventory else None,
+                    index_snapshot_id=repository_context.index.snapshot_id if repository_context.index else None,
+                    repository_map_snapshot_id=repository_context.repository_map.snapshot_id if repository_context.repository_map else None,
+                    retrieval_snapshot_id=retrieval.snapshot_id if retrieval else None,
+                    selected_evidence=tuple(evidence for result in retrieval.results for evidence in result.evidence) if retrieval else (),
+                )
+                context_application.publish_projection(run.run_id, plan, retrieval)
+                return current.budget.projected_input_tokens
+
             def compact_context(phase: str, trigger: str, *, keep_recent_items: int = 0, request_id: str | None = None):
                 return compactor.compact(
                     run.run_id, phase, trigger=trigger, cancel=cancel,
                     keep_recent_items=keep_recent_items, request_id=request_id,
                     recent_token_budget=min(16_384, max(1_024, built.budget.usable_input_budget // 8)) if keep_recent_items else None,
                     before_tokens=built.budget.projected_input_tokens,
-                    measure=lambda: build_current_context().budget.projected_input_tokens,
+                    measure=measure_current_projection,
                 )
 
             manual = context_management.pending(run.run_id)

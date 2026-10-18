@@ -277,28 +277,28 @@ test("every terminal run state has a user-facing presentation", () => {
     tone: "success",
   });
   assert.deepEqual(terminalRunPresentation(run("failed")), {
-    label: "任务执行失败，Eidos 没有取得具体原因。",
+    label: "任务执行失败，暂无详细说明",
     tone: "error",
   });
   assert.deepEqual(terminalRunPresentation(run("canceled")), {
-    label: "任务已取消。",
+    label: "任务已取消",
     tone: "neutral",
   });
   assert.deepEqual(terminalRunPresentation(run("interrupted")), {
-    label: "任务执行已中断。",
+    label: "任务执行已中断",
     tone: "warning",
   });
   assert.deepEqual(
     terminalRunPresentation({ ...run("stopped"), stopReason: "repeated_tool_call" }),
     {
-      label: "模型多次重复相同操作，任务没有取得新进展，Eidos 已停止执行。",
+      label: "模型重复相同操作且无新进展，任务已停止",
       tone: "warning",
     },
   );
   assert.deepEqual(
     terminalRunPresentation({ ...run("stopped"), stopReason: "max_effective_runtime" }),
     {
-      label: "任务已停止。",
+      label: "任务已停止",
       tone: "warning",
     },
   );
@@ -312,7 +312,7 @@ test("does not present a succeeded run with an unresolved reconciliation barrier
   };
 
   assert.deepEqual(terminalRunPresentation(unresolved), {
-    label: "Eidos 尚未确认部分操作的结果，任务完成状态仍需检查。",
+    label: "部分操作结果尚未确认，请查看操作记录",
     tone: "warning",
   });
   assert.equal(taskStatusFromRun(unresolved), "failed");
@@ -320,10 +320,10 @@ test("does not present a succeeded run with an unresolved reconciliation barrier
 
 test("uses generic stop messages for removed causes without explaining old mechanisms", () => {
   assert.deepEqual(terminalRunPresentation({ ...run("stopped"), stopReason: "completion_unconfirmed" }), {
-    label: "任务已停止。", tone: "warning",
+    label: "任务已停止", tone: "warning",
   });
   assert.deepEqual(terminalRunPresentation({ ...run("interrupted"), stopReason: "side_effect_reconciliation_required" }), {
-    label: "任务执行已中断。", tone: "warning",
+    label: "任务执行已中断", tone: "warning",
   });
 });
 

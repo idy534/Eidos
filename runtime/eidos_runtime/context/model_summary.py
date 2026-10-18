@@ -200,7 +200,7 @@ def assist_summary(
         # Critical fields and the existing verified summary are never supplied
         # by the model. Notes have provenance and retain an explicit trust label.
         retained = tuple(value for value in baseline.important_facts
-                         if not value.startswith(("Assistant report, unverified,", "Historical user request item=")))
+                         if not value.startswith("Assistant report, unverified,"))
         summary = baseline.model_copy(update={
             "important_facts": (*retained, *notes),
             "next_actions": (*baseline.next_actions, *actions),

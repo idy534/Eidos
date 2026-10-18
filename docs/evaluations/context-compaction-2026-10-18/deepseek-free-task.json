@@ -1,0 +1,161 @@
+{
+  "kind": "synthetic_history_replay",
+  "model": "custom-e82a79fe-9e6a-420e-9a3f-e21f1e8fbf7d",
+  "model_calls": 12,
+  "started_at": "2026-10-18T12:58:08.643503+00:00",
+  "duration_ms": 77857,
+  "source_sha256": {
+    "scripts/evaluate-context-compaction.py": "da5e445a1b77aa24f4fd6ad2156183e5ffdf387b6b9f1650cdd093f89f9839b2",
+    "scripts/fixtures/context-compaction-cases.json": "1ac6d21fb62742950e7617dc75303e2997f6775bfa52b11b488c484f0e991e17",
+    "runtime/eidos_runtime/context/model_summary.py": "c1284a8e4e600dfd3f43fa0b3133f0921871f626e18a4ad35d68fffe3a307edc",
+    "runtime/eidos_runtime/context/compactor.py": "ebaf8ba9493a5ad1f798c190c486de0f22d901063fca8146377782e6eaf2747e",
+    "runtime/eidos_runtime/context/budget.py": "bc803382c44fd3653950033f59ea418d34d2cb9bff23081c21a362557efc1873",
+    "runtime/eidos_runtime/model/pydantic_ai_client.py": "b3751d53bbe315d0f5594920321e8693fb530cf56ac78ff750d002339e50b4b0",
+    "runtime/eidos_runtime/model/native_custom.py": "6989abe1fce1955631245f9eeda34e5b4e826c7dd0236d2a4cab75ffc282ba59"
+  },
+  "provider_usage": {
+    "responses_with_usage": 12,
+    "calls_without_usage": 0,
+    "failed_calls": 0,
+    "input_tokens": 165613,
+    "output_tokens": 13884
+  },
+  "reasoning_selection": "low",
+  "real_repository_task_completion": "isolated_fixture_only",
+  "results": [
+    {
+      "case": "chinese_correction",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "bcffc0d7-7d40-4ab4-b026-f178371dff36",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "summary_quote_invalid",
+            "durationMs": 9513,
+            "beforeTokens": 27029,
+            "afterTokens": 5480,
+            "inputTokens": 3408,
+            "outputTokens": 2020,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": true,
+          "continuation_failure": null,
+          "continuation_usage": {
+            "input_tokens": 11934,
+            "output_tokens": 310,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 148
+            }
+          },
+          "continuation_answer": {
+            "decisionAdopted": false,
+            "testsVerified": false,
+            "targetSymbol": "inspect_chinese_correction"
+          }
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "45db1f8c-2b3e-44c0-b85e-1cc935f07908",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "model",
+            "reason": "summary_claims_downgraded",
+            "durationMs": 10776,
+            "beforeTokens": 28884,
+            "afterTokens": 6315,
+            "inputTokens": 3598,
+            "outputTokens": 2370,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": true,
+          "continuation_failure": null,
+          "continuation_usage": {
+            "input_tokens": 13702,
+            "output_tokens": 364,
+            "cache_read_tokens": 4096,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 202
+            }
+          },
+          "continuation_answer": {
+            "decisionAdopted": false,
+            "testsVerified": false,
+            "targetSymbol": "inspect_chinese_correction"
+          }
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "bbeda1bf-9528-4a5b-b635-3aa87b8d8438",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "summary_source_invalid",
+            "durationMs": 15922,
+            "beforeTokens": 29722,
+            "afterTokens": 6249,
+            "inputTokens": 3866,
+            "outputTokens": 4032,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": true,
+          "continuation_failure": null,
+          "continuation_usage": {
+            "input_tokens": 13566,
+            "output_tokens": 348,
+            "cache_read_tokens": 4352,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 186
+            }
+          },
+          "continuation_answer": {
+            "decisionAdopted": false,
+            "testsVerified": false,
+            "targetSymbol": "inspect_chinese_correction"
+          }
+        }
+      ],
+      "repository_task": {
+        "kind": "isolated_code_fix",
+        "failed_before": true,
+        "external_tests_passed": true,
+        "run_status": "succeeded",
+        "model_calls": 6,
+        "preserved_files": true,
+        "compaction": {
+          "requestId": "5f57bc42-d424-4881-94a2-c5fac1aa7017",
+          "stage": "finished",
+          "trigger": "manual",
+          "status": "succeeded",
+          "strategy": "model",
+          "reason": "summary_claims_downgraded",
+          "durationMs": 11291,
+          "beforeTokens": 36952,
+          "afterTokens": 10721,
+          "inputTokens": 5014,
+          "outputTokens": 3082,
+          "sourceItemCount": 45
+        }
+      }
+    }
+  ]
+}

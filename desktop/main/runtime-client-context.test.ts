@@ -12,11 +12,15 @@ test("context details and durable manual compaction cross the stdio boundary and
   await mkdir(workspace);
   await writeFile(path.join(workspace, "README.md"), "# Context fixture\n");
   let client: RuntimeClient | undefined;
+  const notifications: RuntimeNotification[] = [];
   let completed!: () => void;
   const create = () => new RuntimeClient({
     pythonExecutable: path.resolve(".venv/bin/python"), runtimeRoot: path.resolve("runtime"),
     dataDirectory: path.join(temporary, "data"), environment: { EIDOS_FAKE_MODEL: "1" },
-    onNotification: (notification: RuntimeNotification) => { if (notification.method === "run/completed") completed?.(); },
+    onNotification: (notification: RuntimeNotification) => {
+      notifications.push(notification);
+      if (notification.method === "run/completed") completed?.();
+    },
   });
   async function run(sessionId: string) {
     const done = new Promise<void>((resolve) => { completed = resolve; });
@@ -33,6 +37,10 @@ test("context details and durable manual compaction cross the stdio boundary and
     assert.ok(details.activeTokens && details.activeTokens > 0);
     assert.equal(details.measurement, "tokenizer_estimate");
     assert.ok(details.sections?.some((value) => value.name === "tools"));
+    assert.equal(details.sections?.reduce((sum, value) => sum + value.tokens, 0), details.activeTokens);
+    const usage = await client.readContextUsage(first.id);
+    assert.equal(usage?.activeTokens, details.activeTokens);
+    assert.equal(usage?.windowTokens, details.contextWindowTokens);
     const request = await client.requestContextCompaction(first.id);
     assert.equal(request.status, "queued");
     assert.deepEqual(await client.requestContextCompaction(first.id), request);
@@ -47,6 +55,15 @@ test("context details and durable manual compaction cross the stdio boundary and
     assert.equal(after.compaction?.requestId, request.requestId);
     assert.ok(after.compaction?.afterTokens && after.compaction.afterTokens > 0);
     assert.equal(after.compaction?.strategy, "deterministic");
+    const activities = notifications.filter((notification) => notification.method === "context/compactionUpdated")
+      .map((notification) => notification.params.activity).filter((activity) => activity.requestId === request.requestId);
+    assert.equal(activities[0]?.status, "running");
+    assert.equal(activities.at(-1)?.status, "succeeded");
+    const restored = await client.readSession(session.id);
+    const history = restored.contextCompactions?.filter((activity) => activity.requestId === request.requestId);
+    assert.equal(history?.length, 1);
+    assert.equal(history?.[0]?.status, "succeeded");
+    assert.equal(history?.[0]?.startedAt, activities[0]?.startedAt);
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);
   } finally {

@@ -40,14 +40,18 @@ class ThreadHistoryStore:
             self._repair_uncommitted_tails()
             projected = 0
             while True:
-                row = self.database.connection().execute(
-                    "SELECT COALESCE(MAX(event_id), 0) FROM history_events"
-                ).fetchone()
+                with self.database.lock:
+                    row = self.database.connection().execute(
+                        "SELECT COALESCE(MAX(event_id), 0) FROM history_events"
+                    ).fetchone()
                 after_event_id = int(row[0]) if row is not None else 0
-                rows = state.connection().execute(
-                    "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 500",
-                    (after_event_id,),
-                ).fetchall()
+                # The history lock owns projection files, not the shared state
+                # connection. Hold its owner's lock through result materialization.
+                with state.lock:
+                    rows = state.connection().execute(
+                        "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 500",
+                        (after_event_id,),
+                    ).fetchall()
                 if not rows:
                     self._remove_deleted_session_histories(state)
                     return projected
@@ -73,14 +77,16 @@ class ThreadHistoryStore:
     def _remove_deleted_session_histories(
         self, state: SqliteConnectionOwner
     ) -> None:
-        rows = self.database.connection().execute(
-            "SELECT session_id FROM history_files WHERE session_id != '_global'"
-        ).fetchall()
+        with self.database.lock:
+            rows = self.database.connection().execute(
+                "SELECT session_id FROM history_files WHERE session_id != '_global'"
+            ).fetchall()
         for row in rows:
             session_id = str(row["session_id"])
-            exists = state.connection().execute(
-                "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
+            with state.lock:
+                exists = state.connection().execute(
+                    "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
+                ).fetchone()
             if exists is None:
                 self.delete_session(session_id)
 
@@ -107,10 +113,11 @@ class ThreadHistoryStore:
         ).encode("utf-8") + b"\n"
         stream_id = str(event["session_id"] or "_global")
         relative_path = _relative_path(stream_id)
-        projection = self.database.connection().execute(
-            "SELECT committed_bytes FROM history_files WHERE session_id = ?",
-            (stream_id,),
-        ).fetchone()
+        with self.database.lock:
+            projection = self.database.connection().execute(
+                "SELECT committed_bytes FROM history_files WHERE session_id = ?",
+                (stream_id,),
+            ).fetchone()
         committed_bytes = int(projection[0]) if projection is not None else 0
         path = self.root.joinpath(*PurePosixPath(relative_path).parts)
         offset = _append_at_committed_offset(path, committed_bytes, record)
@@ -157,9 +164,10 @@ class ThreadHistoryStore:
             )
 
     def _repair_uncommitted_tails(self) -> None:
-        rows = self.database.connection().execute(
-            "SELECT session_id, relative_path, committed_bytes FROM history_files"
-        ).fetchall()
+        with self.database.lock:
+            rows = self.database.connection().execute(
+                "SELECT session_id, relative_path, committed_bytes FROM history_files"
+            ).fetchall()
         reset_required = False
         for row in rows:
             stream_id = str(row["session_id"])

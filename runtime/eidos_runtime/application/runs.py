@@ -12,14 +12,14 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
-import time
 from typing import Protocol, TypeVar
 
 from pydantic import ValidationError
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.session_lifecycle import SessionLifecycleCoordinator
-from eidos_runtime.context.budget import ContextBudget, ContextUsageSnapshot
+from eidos_runtime.context.budget import ContextUsageSnapshot
+from eidos_runtime.domain.context_management import ContextDetails
 from eidos_runtime.application.task_lifecycle import (
     LifecycleAction,
     TaskLifecycleApplication,
@@ -35,7 +35,7 @@ from eidos_runtime.db.errors import (
 )
 from eidos_runtime.domain.session import SessionProjection
 from eidos_runtime.git.errors import WorktreeError
-from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot, ModelUsage
+from eidos_runtime.model.client import ModelClient, ModelProfileSnapshot
 from eidos_runtime.model.config import (
     ModelConfig,
     ModelConfigError,
@@ -114,16 +114,7 @@ class RunStorePort(Protocol):
 
     def read_model_profile(self, run_id: str) -> ModelProfileSnapshot: ...
 
-    def latest_model_usage(
-        self,
-        run_id: str,
-        *,
-        context_snapshot_id: str | None = None,
-    ) -> ModelUsage | None: ...
-
-    def read_latest_context_budget(
-        self, run_id: str
-    ) -> tuple[str, ContextBudget] | None: ...
+    def read_context_details(self, run_id: str) -> ContextDetails: ...
 
     def interrupt_run(self, run_id: str) -> dict[str, object]: ...
 
@@ -628,20 +619,7 @@ class RunApplication:
     ) -> ContextUsageResponseDto:
         store, _runtime = self._cancel_dependencies()
         try:
-            profile = store.read_model_profile(request.run_id)
-            latest_budget = store.read_latest_context_budget(request.run_id)
-            usage = (
-                _context_usage_snapshot(
-                    profile.context_window_tokens,
-                    store.latest_model_usage(
-                        request.run_id,
-                        context_snapshot_id=latest_budget[0],
-                    ),
-                    latest_budget[1],
-                )
-                if latest_budget is not None
-                else None
-            )
+            usage = _context_usage_snapshot(store.read_context_details(request.run_id))
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
         return ContextUsageResponseDto(
@@ -821,40 +799,15 @@ def _run_worktree_error_code(error: WorktreeError) -> str:
 
 
 def _context_usage_snapshot(
-    context_window_tokens: int,
-    provider_usage: ModelUsage | None,
-    budget: ContextBudget,
+    details: ContextDetails,
 ) -> ContextUsageSnapshot | None:
-    refreshed_at = int(time.time() * 1000)
-    if (
-        provider_usage is not None
-        and provider_usage.input_tokens is not None
-        and provider_usage.input_tokens > 0
-    ):
-        active_tokens = provider_usage.input_tokens
-        return ContextUsageSnapshot(
-            active_tokens=active_tokens,
-            context_window_tokens=context_window_tokens,
-            percent_used=min(
-                100.0,
-                round(active_tokens / context_window_tokens * 100, 1),
-            ),
-            source="provider",
-            updated_at=refreshed_at,
-        )
-    projected = budget.projected_input_tokens
-    if projected >= 0:
-        return ContextUsageSnapshot(
-            active_tokens=projected,
-            context_window_tokens=context_window_tokens,
-            percent_used=min(
-                100.0,
-                round(projected / context_window_tokens * 100, 1),
-            ),
-            source="estimated",
-            updated_at=refreshed_at,
-        )
-    return None
+    if details.active_tokens is None:
+        return None
+    return ContextUsageSnapshot(
+        active_tokens=details.active_tokens, context_window_tokens=details.context_window_tokens,
+        percent_used=round(details.active_tokens / details.context_window_tokens * 100, 1),
+        source="provider" if details.measurement == "provider" else "estimated", updated_at=details.updated_at,
+    )
 
 
 __all__ = [

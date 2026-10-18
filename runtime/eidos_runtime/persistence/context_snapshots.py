@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from pydantic import ValidationError
 
@@ -11,6 +12,8 @@ from eidos_runtime.context.tokens import TOKEN_ESTIMATOR
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.context.plan import ContextPlan, ContextSnapshot
 from eidos_runtime.db.database import Database, Repository
+from eidos_runtime.db.events import append_event
+from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.db.json_blobs import (
     JsonBlobCorruptionError,
@@ -59,53 +62,7 @@ class ContextSnapshotRepository(Repository):
             if not self.database.memory.valid_epochs(connection, epochs):
                 raise MemoryRejected("memory_snapshot_revoked")
             stored_snapshot = self._store_snapshot(snapshot)
-            if retrieval is not None:
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO repository_retrieval_snapshots (
-                        id, inventory_snapshot_id, index_snapshot_id,
-                        snapshot_hash, snapshot_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        retrieval.snapshot_id,
-                        retrieval.inventory_snapshot_id,
-                        retrieval.index_snapshot_id,
-                        retrieval.snapshot_hash,
-                        retrieval.model_dump_json(),
-                        retrieval.created_at_ms,
-                    ),
-                )
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO run_repository_retrievals (
-                        run_id, retrieval_snapshot_id, created_at
-                    ) VALUES (?, ?, ?)
-                    """,
-                    (run_id, retrieval.snapshot_id, snapshot.created_at_ms),
-                )
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO context_plans (
-                    id, run_id, retrieval_snapshot_id,
-                    model_profile_snapshot_hash, rule_snapshot_id,
-                    inventory_snapshot_id, index_snapshot_id, snapshot_hash,
-                    plan_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    plan.plan_id,
-                    run_id,
-                    plan.retrieval_snapshot_id,
-                    plan.model_profile_snapshot_hash,
-                    plan.rule_resolution_snapshot_id,
-                    plan.inventory_snapshot_id,
-                    plan.index_snapshot_id,
-                    plan.snapshot_hash,
-                    plan.model_dump_json(),
-                    plan.created_at_ms,
-                ),
-            )
+            self._insert_plan(connection, run_id, retrieval, plan)
             connection.execute(
                 """
                 INSERT OR IGNORE INTO context_snapshots (
@@ -113,20 +70,95 @@ class ContextSnapshotRepository(Repository):
                     snapshot_json, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    snapshot.snapshot_id,
-                    run_id,
-                    snapshot.model_attempt_id,
-                    snapshot.plan_id,
-                    snapshot.snapshot_hash,
-                    stored_snapshot,
-                    snapshot.created_at_ms,
-                ),
+                (snapshot.snapshot_id, run_id, snapshot.model_attempt_id,
+                 snapshot.plan_id, snapshot.snapshot_hash, stored_snapshot, snapshot.created_at_ms),
             )
             for scope, epoch in epochs.items():
                 connection.execute("INSERT OR IGNORE INTO memory_snapshot_refs(snapshot_id,scope_id,privacy_epoch) VALUES(?,?,?)",
                                    (snapshot.snapshot_id, scope, epoch))
         return self.read(snapshot.snapshot_id)
+
+    def persist_projection(self, run_id: str, plan: ContextPlan, retrieval: RetrievalSnapshot | None = None) -> None:
+        """Publish current budget metadata without inventing a ModelAttempt.
+
+        The Engine owns projection inputs. Reads never reconstruct a request
+        using incomplete tools, rules or Skill state.
+        """
+        with self.database.transaction() as connection:
+            row = connection.execute("SELECT session_id,status,cancel_requested_at FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None or row["status"] != "running" or row["cancel_requested_at"] is not None:
+                return
+            self._insert_plan(connection, run_id, retrieval, plan)
+            append_event(connection, EventType.RUN_UPDATED, plan.created_at_ms,
+                         {"reason": "context_projection"}, session_id=row["session_id"], run_id=run_id)
+
+    @staticmethod
+    def _insert_plan(connection: sqlite3.Connection, run_id: str, retrieval: RetrievalSnapshot | None, plan: ContextPlan) -> None:
+        if (retrieval.snapshot_id if retrieval else None) != plan.retrieval_snapshot_id:
+            raise ValueError("context persistence plan lineage mismatch")
+        if retrieval is not None:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO repository_retrieval_snapshots (
+                    id, inventory_snapshot_id, index_snapshot_id,
+                    snapshot_hash, snapshot_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    retrieval.snapshot_id,
+                    retrieval.inventory_snapshot_id,
+                    retrieval.index_snapshot_id,
+                    retrieval.snapshot_hash,
+                    retrieval.model_dump_json(),
+                    retrieval.created_at_ms,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO run_repository_retrievals (
+                    run_id, retrieval_snapshot_id, created_at
+                ) VALUES (?, ?, ?)
+                """,
+                (run_id, retrieval.snapshot_id, plan.created_at_ms),
+            )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO context_plans (
+                id, run_id, retrieval_snapshot_id,
+                model_profile_snapshot_hash, rule_snapshot_id,
+                inventory_snapshot_id, index_snapshot_id, snapshot_hash,
+                plan_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan.plan_id,
+                run_id,
+                plan.retrieval_snapshot_id,
+                plan.model_profile_snapshot_hash,
+                plan.rule_resolution_snapshot_id,
+                plan.inventory_snapshot_id,
+                plan.index_snapshot_id,
+                plan.snapshot_hash,
+                plan.model_dump_json(),
+                plan.created_at_ms,
+            ),
+        )
+
+    def read_active_budget(self, run_id: str) -> tuple[str, ContextBudget, int] | None:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT id,plan_json,created_at FROM context_plans WHERE run_id=? ORDER BY rowid DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            plan = ContextPlan.model_validate_json(row["plan_json"])
+            if plan.plan_id != row["id"]:
+                raise ValueError("context plan lineage mismatch")
+        except (TypeError, ValidationError, ValueError):
+            raise PersistenceCorruptionError("persistence_record_invalid", record="context_plan") from None
+        return plan.plan_id, plan.token_budget, row["created_at"]
 
     def read(self, snapshot_id: str) -> ContextSnapshot:
         with self.lock:

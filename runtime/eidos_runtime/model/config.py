@@ -113,8 +113,8 @@ class CustomModelSettings(EidosFrozenStrictModel):
 
     @model_validator(mode="after")
     def validate_limits(self) -> "CustomModelSettings":
-        if self.max_output_tokens > self.context_window_tokens:
-            raise ValueError("最大输出不能超过上下文窗口。")
+        if self.max_output_tokens >= self.context_window_tokens:
+            raise ValueError("上下文窗口必须大于最大输出。")
         if self.wire_api == "openai_responses" and self.reasoning_format != "openai":
             raise ValueError("Responses 使用标准 reasoning 参数。")
         if (self.reasoning is not None) != (self.reasoning_control == "configured"):
@@ -135,6 +135,12 @@ class CustomModelRuntimeSettings(EidosFrozenStrictModel):
     reasoning_format: ReasoningFormat = "openai"
     reasoning_control: Literal["provider_default", "unsupported", "configured"] = "provider_default"
     output_token_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+
+    @model_validator(mode="after")
+    def validate_limits(self) -> "CustomModelRuntimeSettings":
+        if self.max_output_tokens >= self.context_window_tokens:
+            raise ValueError("上下文窗口必须大于最大输出。")
+        return self
 
 
 class ModelConfig(EidosFrozenStrictModel):

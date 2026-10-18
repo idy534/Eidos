@@ -82,6 +82,7 @@ class RunStatusChangedPayload(ClosedModel):
 class RunUpdatedPayload(ClosedModel):
     reason: str
     compaction: ContextCompactionRecord | None = Field(default=None, exclude_if=lambda value: value is None)
+    compaction_started_at: int | None = Field(default=None, alias="compactionStartedAt", ge=0)
     completion_check: CompletionCheckRecord | None = Field(default=None, alias="completionCheck")
     binding_id: str | None = Field(
         default=None,

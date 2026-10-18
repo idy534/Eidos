@@ -55,6 +55,11 @@ class ContextApplication:
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND", "任务不存在。") from error
 
+    def publish_projection(self, run_id: str, plan: ContextPlan, retrieval: RetrievalSnapshot | None = None) -> None:
+        if self.snapshots is None:
+            raise RuntimeError("context snapshot persistence is not configured")
+        self.snapshots.persist_projection(run_id, plan, retrieval)
+
     def verify_compaction(
         self,
         summary: CompactSummary,

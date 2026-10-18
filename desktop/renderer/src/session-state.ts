@@ -8,6 +8,7 @@ import type {
   SessionSnapshot,
 } from "./contracts.js";
 export { terminalRunPresentation, type RunStatusPresentation } from "./run-presentation.js";
+import { mergeContextCompactions } from "./context-compaction.js";
 
 
 export interface ProjectSessionGroup {
@@ -253,6 +254,12 @@ export function applyNotification(
         title: notification.params.title,
       },
     };
+  }
+  if (notification.method === "context/compactionUpdated") {
+    const activity = notification.params.activity;
+    if (!snapshot.runs.some((run) => run.id === activity.runId)
+      || activity.eventId <= (snapshot.throughEventId ?? 0)) return snapshot;
+    return { ...snapshot, contextCompactions: mergeContextCompactions(snapshot.contextCompactions, [activity]) };
   }
   if (
     notification.method === "run/started"

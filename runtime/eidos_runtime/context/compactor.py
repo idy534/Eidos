@@ -48,11 +48,13 @@ _NEXT_ACTION_MARKERS = (
 class ContextCompactor:
     """Persists a bounded deterministic summary without deleting source history."""
 
-    def __init__(self, store: SessionStore, model: ModelClient | None = None) -> None:
+    def __init__(self, store: SessionStore, model: ModelClient | None = None,
+                 *, on_recorded: Callable[[], object] | None = None) -> None:
         self.store = store
         self.model = model
         self._assisted: AssistedSummary | None = None
         self._source_count = 0
+        self._on_recorded = on_recorded
 
     def compact(
         self, run_id: str, phase: str, *, keep_recent_items: int = 0,
@@ -69,6 +71,8 @@ class ContextCompactor:
                                          stage="started", trigger=trigger, status="running",
                                          before_tokens=before_tokens)
         repository.record(run_id, record)
+        if self._on_recorded is not None:
+            self._on_recorded()
         started = time.monotonic()
         cancel = cancel or threading.Event()
         self._assisted = None
@@ -108,12 +112,15 @@ class ContextCompactor:
             return summary
         except (ContextCompactionError, InvalidRunStateError) as error:
             reason = {"no compactable history": "no_compactable_history",
+                      "critical summary facts exceed context budget": "critical_facts_limit",
                       "compaction proposal was not verified": "source_changed"}.get(str(error), "compaction_failed")
             if cancel.is_set() or self.store.read_run(run_id).get("cancelRequestedAt") is not None:
                 status, reason = "canceled", "canceled"
             raise
         finally:
             repository.record(run_id, outcome_record(status, reason, after))
+            if self._on_recorded is not None:
+                self._on_recorded()
 
     def _compact(self, run_id: str, phase: str, *, keep_recent_items: int, recent_token_budget: int | None,
                  cancel: threading.Event, record_on_commit: Callable[[], ContextCompactionRecord]) -> CompactSummary:
@@ -170,8 +177,11 @@ class ContextCompactor:
         failed_tools = tuple(
             text for text, item in tool_records if _tool_outcome(item) != "success"
         )
+        # Keep unresolved effects as stable references to durable originals.
+        # Repeating old error bodies can consume the entire next summary.
         uncertain_tools = tuple(
-            text for text, item in tool_records if _tool_has_uncertain_side_effects(item)
+            _uncertain_tool_text(item) for item in source_facts.items
+            if item.provider_call_id is not None and _tool_has_uncertain_side_effects(item)
         )
         workspace_state = _workspace_state(facts)
         user_constraints = tuple(
@@ -234,7 +244,7 @@ class ContextCompactor:
             ),
             pending_approvals=facts.pending_approval_ids,
             uncertain_side_effects=_merge(
-                existing.uncertain_side_effects if existing else (),
+                (),
                 (*uncertain_tools, *(
                     ("uncertain side effects may exist",)
                     if facts.side_effects_may_exist else ()
@@ -414,6 +424,16 @@ def _tool_has_uncertain_side_effects(item: ContextItemFact) -> bool:
         isinstance(result.get("data"), dict)
         and result["data"].get("workspaceChangeState") == "unknown"
     )
+
+
+def _uncertain_tool_text(item: ContextItemFact) -> str:
+    result = _tool_result(item)
+    data = result.get("data")
+    state = data.get("workspaceChangeState", "unverified") if isinstance(data, dict) else "unverified"
+    return (f"Unverified tool effects: item={item.item_id};call={item.provider_call_id};"
+            f"tool={item.tool_name};workspace={state};"
+            f"sideEffectsMayExist={result.get('sideEffectsMayExist') is True};"
+            f"reconciliationRequired={result.get('reconciliationRequired') is True}")
 
 
 def _workspace_state(facts: ContextFacts) -> str:

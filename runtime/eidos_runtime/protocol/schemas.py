@@ -302,7 +302,7 @@ class RunDto(ClosedModel):
 class ContextUsageSnapshotDto(ClosedModel):
     active_tokens: StrictInt = Field(alias="activeTokens", ge=0)
     context_window_tokens: StrictInt = Field(alias="contextWindowTokens", gt=0)
-    percent_used: float = Field(alias="percentUsed", ge=0, le=100)
+    percent_used: float = Field(alias="percentUsed", ge=0)
     source: Literal["provider", "estimated"]
     updated_at: StrictInt = Field(default=0, alias="updatedAt", ge=0)
 

@@ -1,6 +1,7 @@
 from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.context.budget import ContextBudget, estimate_context_budget
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
+from eidos_runtime.domain.context_management import ContextDetails
 from eidos_runtime.protocol.methods import (
     ContextUsageRequestDto,
     ContextUsageResponseDto,
@@ -71,6 +72,16 @@ class _Store:
         )
         return self.snapshot_id, budget
 
+    def read_context_details(self, run_id: str) -> ContextDetails:
+        latest = self.read_latest_context_budget(run_id)
+        usage = self.latest_model_usage(run_id, context_snapshot_id=latest[0]) if latest else None
+        provider = usage.input_tokens if usage and usage.input_tokens else None
+        return ContextDetails(
+            run_id=run_id, context_window_tokens=self.read_model_profile(run_id).context_window_tokens,
+            active_tokens=provider if provider else latest[1].projected_input_tokens if latest else None,
+            measurement="provider" if provider else "tokenizer_estimate" if latest else "unavailable",
+        )
+
 
 def test_context_usage_response_uses_provider_input_for_latest_snapshot() -> None:
     run_id = "00000000-0000-4000-8000-000000000001"
@@ -138,3 +149,10 @@ def test_context_usage_response_has_no_value_without_context_snapshot() -> None:
 
     assert result.context_usage is None
     assert result.to_json_value() == {}
+
+
+def test_context_usage_does_not_hide_usage_above_a_reduced_window() -> None:
+    application = RunApplication(store=_Store(input_tokens=300_000), runtime=_Runtime())
+    result = application.context_usage(ContextUsageRequestDto(runId="00000000-0000-4000-8000-000000000001"))
+    assert result.context_usage.percent_used == 116.3
+    assert ContextUsageResponseDto.model_validate_json(result.model_dump_json()).context_usage.percent_used == 116.3

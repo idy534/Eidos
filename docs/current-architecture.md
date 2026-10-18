@@ -205,7 +205,11 @@ CLAUDE.md
 
 `InstructionResolver` 按 System Safety、Base Agent、Runtime Policy、Project Rules 和 Selected Skill 形成分层 instructions。Skill Catalog 属于 developer capability context。真正加载的第三方 `SKILL.md` 属于较低权限的 user context。Project Rules 和 Selected Skill 保留来源与 hash。 模型可见的 Skill 目录只保留唯一调用名称、说明和入口路径；完整身份、版本与 hash 留在 Runtime 的冻结快照中。skill_read 继续使用现有参数读取该名称对应的 Skill。它们不具备修改 Runtime Permission、Approval 或 Sandbox 的权限。 通用 Runtime 提示不包含具体审批模式的扩权流程。当前权限层按 manual、auto_review、full_access 分别生成；完全访问层不混入沙盒扩权、嵌套沙盒或自动审查指引。可用工具由当前 Tool Schema 暴露，权限文本不重复整份名称列表。
 
-Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。Context Usage RPC 从 `context_snapshots` 选取当前 Run 最新的 Snapshot ID，并从关联的 `context_plans.plan_json` 读取已持久化预算，再读取与该 Snapshot 绑定的 ModelAttempt usage。该 Attempt 有正的 Provider `input_tokens` 时，RPC 返回 Provider 值；否则 RPC 返回该 Plan 的 `projected_input_tokens`，并标记为 `estimated`。RPC 不加载 Snapshot 正文或 Blob，也不使用当前 Snapshot 以前的 Attempt usage。正文撤销或清理不删除这些统计数字；数字表示最近一次已构建或请求的上下文大小，新合法上下文生成后再更新。完整 Snapshot 的读取和模型使用继续执行撤销检查。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
+Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。圆环、详情和兼容的 Context Usage RPC 使用同一份当前 ContextPlan 元数据。Runtime 只接受与这个 Plan 绑定的已完成 ModelAttempt 的 Provider `input_tokens`，否则系统显示当前投影估算。Provider 数值不是累计消费；分母来自 Run 的冻结 ModelProfile，用户调小窗口后，系统不使用 Catalog 上限替代它。系统保留超过 100% 的真实比例，只把圆环绘图限制在一圈内。
+
+压缩成功后，Engine 使用同一批工具定义、规则、Skill 和仓库上下文重新构建投影，并把新的 ContextPlan 与 Run Updated Event/Outbox 一起保存。系统不为统计伪造 ModelAttempt，也不等待下一次模型响应才刷新。新的 Provider Usage 只覆盖它实际对应的请求。若摘要已经提交，但新投影无法构建，系统显示暂无统计，旧请求总量不能重新冒充压缩后用量。ContextPlan 的原始分项仍保存参考 Token 数；详情按这个构成估算分项，并使分项 Token 合计严格等于当前总量。界面分项与总占用均使用设置上限作为百分比分母，十分之一百分点的舍入也保持合计一致。分项仍属于估算，Provider 没有返回逐项实测。
+
+统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。新的 Run 在产生自己的投影前显示暂无统计。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
 Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,536 tokens、仍符合真实模型窗口、没有待处理 Approval 或 reconciliation，且距离上次尝试已有至少 32 条新的未压缩 Item 时，Runtime 尝试压缩旧历史。这个路径按 Token 预算保留完整近期响应，并保留用户消息和 Skill 读取正文。它复用现有事实验证与事务提交，不删除原始历史。主动压缩失败后，Runtime 保留原投影并继续正常的窗口判断；65,536 不是 Run 停止阈值。
 
@@ -221,9 +225,11 @@ Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应�
 
 模型不能改写确定性的目标、明确约束、成功工具、工作区变更、失败记录、待审批和不确定副作用字段。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载事实，再执行 `ContextCompactionVerifier`。Tool provenance 由 source Item IDs 解析到真实 ToolCall IDs。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生 `context.compacted` Event。Outbox 会投影 `context/compacted` 通知，Desktop 随后重新读取 Context Usage。事务再次核对取消、工作区版本、reconciliation epoch、上一摘要计数和新用户输入。原始历史与上一份有效摘要会在验证失败、取消或来源过期时保留。
 
-`context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项只表示参考词表下的构成，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。成功摘要与成功结果在同一个事务内提交；摘要已提交、后续统计未完成时，系统仍显示成功，后预算可以为空。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未提交记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
+压缩的处理过程记录复用同一批 SQLite Event/Outbox。`ContextCompactionActivity` 是显示投影，不进入模型 Item 历史。`context/compactionUpdated` 发送开始和结果；Engine 在提交开始事件后、请求摘要模型前交付 Outbox，让 Desktop 能及时显示正在压缩。`session/read.contextCompactions` 从当前历史页对应的事件重建记录，并以原始开始时间排序。Renderer 按 Run 和 request ID 合并，使用 event ID 拒绝迟到状态，终态不会被重复开始通知覆盖。压缩行与既有工具行共用样式，但没有交互或详情区。系统没有新增数据库表或后台 Worker。
 
-Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果；Assistant 的决定自述明确标记为报告，普通将来计划不会成为已完成事项。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。
+`context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项按参考词表构成分配当前总量，并明确标为估算，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。成功摘要与成功结果在同一个事务内提交；摘要已提交、后续统计未完成时，系统仍显示成功，后预算可以为空。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未提交记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
+
+Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果；Assistant 的决定自述明确标记为报告，普通将来计划不会成为已完成事项。不确定工具副作用使用原始 Item/ToolCall 的短引用，系统从持久来源重建这些引用，不反复复制旧错误正文。明确的用户历史报告不会仅因模型没有选择它而被删除。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。
 
 ## 7. Model Gateway
 
@@ -272,6 +278,8 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 `CustomModelSettings.providerId` 与持久化 `CustomModelRuntimeSettings.provider_id` 保存用户指定的提供商标识，名称继续由 `vendor` 保存。该字段对旧配置可缺省，不创建独立提供商实体，也不改变内部 `provider="custom"` 的适配器路由。Renderer 在新建及编辑保存时要求有效 ID，并负责名称跟随、Token 预设、紧凑能力勾选和默认思考强度。Python DTO 继续生成 TypeScript、JSON Schema 与 Ajv 静态校验器。表单移除了免 Key 勾选，通过输入修改状态区分保留旧密钥和显式清除；地址改变且没有新 Key 时，表单发送空 Key，原有 Runtime 地址与凭据检查仍然生效。
 
 自定义模型发现仍使用原来的有界 SDK 列表请求。远端元数据模型通过 Pydantic 按字段处理无效值，模型 ID 继续严格校验。名称支持明确的显示名别名，思考设置支持已声明的配置或强度列表，包括 `supported_reasoning_levels` 中的字符串和 effort 对象；未知强度不会使整条记录退回仅有 ID。发现 DTO 的字段不变。`ModelReasoningConfig.defaultSelection` 与公开模型 DTO 允许 `null` 或省略，表示保留支持档位但不设置默认请求强度；旧配置的明确默认值仍然有效。配置文件保存空默认值，协议沿用省略空值的规则，接收端将省略与 `null` 都作为自动处理。Runtime 会校验显式选择属于支持列表，省略选择时将空默认值保留到 Run 快照，不发送 effort 参数。Renderer 选择另一个模型时重新填入元数据并采用自动默认值，刷新同一个模型时保留手动覆盖。公共模型选择器为这类配置增加自动档位，并使用已有的空请求选择语义。Token 输入框显示和编辑实际整数，预设列表保留 K 标签，选中预设后显示对应整数；显式 K/M 简写仍按倍率解析。持久化和 Run 快照继续使用整数 Token。
+
+图像输入能力由发现解析器按 `input_modalities`、`architecture.input_modalities`、`modalities.input` 的顺序读取，已有明确列表（包括空列表）优先。缺少字段或字段无效时，解析器继续读取后续来源；缺省的 architecture 不再等同于明确的空列表。解析器只把输入列表中的 `image` 映射到现有 `DiscoveredModel.supportsImages`，不读取输出列表，也不新增协议字段。Renderer 继续通过原有模型选择回填逻辑更新创建和编辑表单，并保留同一模型的手动覆盖。
 
 每个 Run 固化 Model Profile 和 Extension Snapshot。Model Lease 使用该快照创建 Provider Client。Model Attempt 保存 usage、响应元数据、有限的 transport retry 诊断和稳定 Eidos 错误码。Model Client 不拥有 Runtime Event Loop；共享 RuntimeAsyncKernel 负责其异步 I/O。
 
@@ -415,6 +423,8 @@ v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单
 Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 `workspace/changed` 缓存失效通知。Renderer 根据相对路径刷新已加载的父目录。Watcher 不提供路径安全事实，也不修改 Run snapshot。
 
 ## 11. Persistence & Events
+
+`ThreadHistoryStore` 在读取主库和历史库时，分别持有对应连接所有者的数据库锁，锁覆盖查询执行和结果读取。投影文件锁只负责串行处理历史 JSONL，不能替代数据库锁。系统在释放数据库锁后执行 JSONL 写入、校验、截断和 fsync，避免文件 IO 长时间占用主库。队列查询继续使用已有主库锁，系统不增加跨 Run 执行门或全局并发配额。历史投影保留原有事件顺序、提交偏移、启动恢复和已删除会话清理。
 
 Runtime 启动仍执行主库及历史、日志、旧记忆辅助库完整性检查、Schema 迁移、历史投影和业务恢复。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表；Runtime 仍验证已有 Blob 引用，并保留逐记录提交和中断后重试。
 
@@ -877,3 +887,9 @@ AppShell 只在已持久化的 Session 中挂载 QueuedMessages。`draft-…` �
 ### 公共模型选择组件
 
 Renderer 的 `components/ModelSelector.tsx` 与 `ModelSelector.css` 统一维护模型选择、ProviderLogo、思考强度和弹层交互。Composer、AutomationForm 和 DingTalkForm 使用该组件。调用方持有模型与思考强度值，组件不保存业务配置。弹层使用 React DOM Portal，并按视口和滚动位置定位。旧 ReasoningSelector 与 Composer 中对应样式已迁移到公共组件。
+
+## 任务结束提示与模型输出截断（2026-10-19）
+
+Desktop 的 `terminalRunPresentation` 统一呈现任务结束原因。提示优先使用持久化的 `termination.reason`，再使用 Run 错误码。文案直接说明已知原因，不重复添加“任务无法继续”，并且不以句号结尾。参数 JSON 解析失败、工具字段不符合要求、输出达到 Token 上限、请求超时、认证失败和访问被拒绝分别呈现。未知原因使用通用说明，不推断网络、凭据或重试结果。部分操作结果尚未确认时，提示继续保留检查操作记录的要求。
+
+Pydantic AI Adapter 在解析工具参数前检查响应完成状态。遇到 `length`、`content_filter`、`error` 或非完成状态时，Adapter 保留结束原因、用量与响应 ID，并且不返回可执行工具调用。SamplingRuntime 继续通过原有失败路径持久化这些信息。`length` 的一次有界纠错明确说明输出达到上限，要求模型返回更短且完整的回复，并说明前次回复的工具调用未执行。其他参数解析错误继续使用 `invalid_tool_arguments`。本次不新增依赖，不改变协议、SQLite Schema、权限或纠错次数。

@@ -32,6 +32,8 @@ import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { SparklesIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
+import { ContextCompactionRow } from "./ContextCompactionRow.js";
+import type { ContextCompactionActivity } from "../../../shared/context.generated.js";
 export { isFeedAtBottom } from "./useFeedScroll.js";
 
 
@@ -43,6 +45,7 @@ type RegenerateHandler = (run: Run) => Promise<void>;
 type EditResendHandler = (run: Run, editedInput: string, references?: string[]) => Promise<boolean | void>;
 
 interface Props {
+  contextCompactions?: readonly ContextCompactionActivity[] | undefined;
   items: Item[];
   resultItems?: Item[];
   projectless?: boolean;
@@ -80,9 +83,12 @@ interface Props {
 
 interface Segment {
   user: Item | undefined;
-  process: Item[];
+  process: ProcessEntry[];
   response: Item[];
 }
+
+type ProcessEntry = { kind: "item"; item: Item } | { kind: "compaction"; activity: ContextCompactionActivity };
+const EMPTY_COMPACTIONS: readonly ContextCompactionActivity[] = [];
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
   "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",
@@ -103,6 +109,7 @@ const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
 
 
 export const ExecutionFeed = memo(function ExecutionFeed({
+  contextCompactions = EMPTY_COMPACTIONS,
   items,
   resultItems = items,
   projectless = false,
@@ -142,7 +149,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
     handleScroll, handleWheel, handleKeyDown, handlePointerDown, handleTouchStart, handleTouchMove,
   } = useFeedScroll(items.length > 0);
 
-  useLayoutEffect(scheduleFollow, [items, runs, responseActionState.revisions, scheduleFollow]);
+  useLayoutEffect(scheduleFollow, [items, runs, contextCompactions, responseActionState.revisions, scheduleFollow]);
 
   const supersededRunIds = useMemo(
     () => new Set(responseActionState.revisions.map((revision) => revision.sourceRunId)),
@@ -202,7 +209,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
           {itemGroups.map(({ runId, items: runItems }) => {
             const run = runsById.get(runId);
             if (!run) return null;
-            const segments = splitRunIntoSegments(runItems);
+            const segments = splitRunIntoSegments(runItems, contextCompactions.filter((activity) => activity.runId === runId));
             const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
               && TERMINAL_RUN_STATUSES.has(run.status)
               && !hasActiveRun
@@ -325,7 +332,9 @@ const RunSegment = memo(function RunSegment({
   allowEditResend?: boolean | undefined;
 }) {
   // Hidden observations still determine which assistant messages are progress.
-  const visibleProcess = segment.process.filter((item) => {
+  const visibleProcess = segment.process.filter((entry) => {
+    if (entry.kind === "compaction") return true;
+    const item = entry.item;
     if (item.toolCall?.toolName !== "write_stdin") return true;
     const data = objectField(parseObject(item.toolCall.resultJson), "data");
     return item.status === "failed" && !stringField(data, "executionStatus");
@@ -350,12 +359,14 @@ const RunSegment = memo(function RunSegment({
         <ProcessGroup
           run={run}
         >
-          {visibleProcess.map((item) => (
+          {visibleProcess.map((entry) => entry.kind === "compaction" ? (
+            <ContextCompactionRow key={`compaction:${entry.activity.requestId}`} activity={entry.activity} run={run} />
+          ) : (
             <ProcessItem
-              key={item.id}
-              item={item}
+              key={entry.item.id}
+              item={entry.item}
               run={run}
-              approval={approvals.find((request) => request.itemId === item.id)}
+              approval={approvals.find((request) => request.itemId === entry.item.id)}
               respondingApprovalIds={respondingApprovalIds}
               respondingKindByApprovalId={respondingKindByApprovalId}
               expiredApprovalIds={expiredApprovalIds}
@@ -1753,7 +1764,7 @@ function groupItemsByRun(items: Item[]): Array<{ runId: string; items: Item[] }>
   return groups;
 }
 
-function splitRunIntoSegments(items: Item[]): Segment[] {
+function splitRunIntoSegments(items: Item[], activities: readonly ContextCompactionActivity[] = []): Segment[] {
   const sourceSegments: Item[][] = [];
   for (const item of items) {
     if (item.kind === "user_message" || sourceSegments.length === 0) {
@@ -1762,13 +1773,16 @@ function splitRunIntoSegments(items: Item[]): Segment[] {
     const current = sourceSegments.at(-1);
     if (current) current.push(item);
   }
-  return sourceSegments.map((segmentItems) => {
+  return sourceSegments.map((segmentItems, index) => {
     const user = segmentItems.find((item) => item.kind === "user_message");
     const body = segmentItems.filter((item) => item.kind !== "user_message");
+    const nextUserAt = sourceSegments[index + 1]?.[0]?.createdAt ?? Infinity;
+    const compactions = activities.filter((activity) => activity.startedAt >= (user?.createdAt ?? 0) && activity.startedAt < nextUserAt);
+    const lastCompactionAt = Math.max(-Infinity, ...compactions.map((activity) => activity.startedAt));
     const processTools = body.filter(
       (item) => item.kind !== "assistant_message" && item.toolCall?.toolName !== "write_plan",
     );
-    if (processTools.length === 0) {
+    if (processTools.length === 0 && compactions.length === 0) {
       return {
         user,
         process: [],
@@ -1778,17 +1792,20 @@ function splitRunIntoSegments(items: Item[]): Segment[] {
       };
     }
     const lastProcessToolOrdinal = Math.max(...processTools.map((item) => item.ordinal));
+    const inProcess = (item: Item) => item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal || item.createdAt <= lastCompactionAt;
+    const process: ProcessEntry[] = body.filter((item) => item.toolCall?.toolName !== "write_plan" && inProcess(item))
+      .map((item) => ({ kind: "item", item }));
+    for (const activity of [...compactions].sort((a, b) => a.startedAt - b.startedAt || a.eventId - b.eventId)) {
+      const at = process.findIndex((entry) => entry.kind === "item" && entry.item.createdAt > activity.startedAt);
+      process.splice(at === -1 ? process.length : at, 0, { kind: "compaction", activity });
+    }
     return {
       user,
-      process: body.filter(
-        (item) =>
-          item.toolCall?.toolName !== "write_plan" &&
-          (item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal),
-      ),
+      process,
       response: body.filter(
         (item) =>
           item.toolCall?.toolName === "write_plan" ||
-          (item.kind === "assistant_message" && item.ordinal > lastProcessToolOrdinal),
+          (item.kind === "assistant_message" && !inProcess(item)),
       ),
     };
   });

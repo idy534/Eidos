@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, StrictInt
 
-from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
+from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt, JSON_SAFE_INTEGER_MAX
 
 
 class ContextCompactionRecord(EidosFrozenStrictModel):
@@ -20,6 +20,19 @@ class ContextCompactionRecord(EidosFrozenStrictModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     source_item_count: int = Field(default=0, ge=0)
+
+
+class ContextCompactionActivity(EidosFrozenStrictModel):
+    """A display projection of committed compaction events, never model history."""
+
+    request_id: str = Field(min_length=1, max_length=80)
+    run_id: str = Field(min_length=1, max_length=80)
+    event_id: StrictInt = Field(ge=0, le=JSON_SAFE_INTEGER_MAX)
+    started_at: StrictInt = Field(ge=0, le=JSON_SAFE_INTEGER_MAX)
+    updated_at: StrictInt = Field(ge=0, le=JSON_SAFE_INTEGER_MAX)
+    status: Literal["running", "succeeded", "failed", "canceled"]
+    trigger: Literal["manual", "soft_target", "window_pressure", "provider_limit", "projection_limit"] | None = None
+    reason: str | None = Field(default=None, max_length=80)
 
 
 class ContextTokenSection(EidosFrozenStrictModel):
@@ -39,4 +52,6 @@ class ContextDetails(EidosFrozenStrictModel):
     last_estimation_error_percent: float | None = None
     compaction: ContextCompactionRecord | None = None
     manual_pending: bool = False
+    plan_id: str | None = None
+    updated_at: JsonSafeInt = 0
 

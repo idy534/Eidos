@@ -112,6 +112,21 @@ describe("useSessionController real Hook behavior", () => {
     expect(readSession).toHaveBeenLastCalledWith(mockSession1.id, { itemLimit: 500, beforeItemId: "recent" });
   });
 
+  it("merges older compaction points without replacing the latest lifecycle status", async () => {
+    const activity = { requestId: "compact", runId: "run", startedAt: 1, updatedAt: 3, eventId: 3, status: "succeeded" as const };
+    const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent", contextCompactions: [activity] })
+      .mockResolvedValueOnce({ ...mockSnapshot1, contextCompactions: [
+        { ...activity, eventId: 1, updatedAt: 1, status: "running" },
+        { ...activity, requestId: "older", startedAt: 0, eventId: 2 },
+      ] });
+    setupMockRuntime({ readSession });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].selectSession(mockSession1); });
+    await act(async () => { await result.current[1].loadOlderSession(); });
+    expect(result.current[0].snapshot?.contextCompactions?.map((entry) => entry.requestId)).toEqual(["older", "compact"]);
+    expect(result.current[0].snapshot?.contextCompactions?.at(-1)?.status).toBe("succeeded");
+  });
+
   it("ignores a late history page after navigation to another Session", async () => {
     let resolveHistory!: (snapshot: SessionSnapshot) => void;
     const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent" })

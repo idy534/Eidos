@@ -6,6 +6,7 @@ import json
 import logging
 import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -26,6 +27,8 @@ from eidos_runtime.db.database import Database
 from eidos_runtime.db.schema import SCHEMA_SQL, SCHEMA_VERSION
 from eidos_runtime.db.schema import V5_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.db import thread_history
+from eidos_runtime.persistence.queued_runs import QueuedRunRepository
 from eidos_runtime.application.repository import RepositoryApplication
 from eidos_runtime.persistence.repository_intelligence import (
     RepositoryIntelligenceRepository,
@@ -48,6 +51,117 @@ def _workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return root
+
+
+@pytest.mark.parametrize("owner_name", ["state", "history"])
+def test_history_reads_hold_connection_lock_through_row_materialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owner_name: str,
+) -> None:
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(_workspace(tmp_path)))
+        layout = store._persistence_layout
+        assert layout is not None
+        owner = store.database if owner_name == "state" else layout.thread_history
+        connection = owner.connection()
+
+        def locked_connection() -> sqlite3.Connection:
+            assert owner.lock._is_owned(), "shared connection accessed without its lock"
+            return connection
+
+        def locked_row(cursor: sqlite3.Cursor, values: tuple) -> sqlite3.Row:
+            assert owner.lock._is_owned(), "result materialized outside the connection lock"
+            return sqlite3.Row(cursor, values)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(owner, "connection", locked_connection)
+            patch.setattr(connection, "row_factory", locked_row)
+            assert store.project_thread_history() >= 1
+            assert store.project_thread_history() == 0
+        assert store.read_session(session["id"])["id"] == session["id"]
+    finally:
+        store.close()
+
+
+def test_history_file_io_does_not_hold_database_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        store.create_session(str(_workspace(tmp_path)))
+        layout = store._persistence_layout
+        assert layout is not None
+        checked = set()
+
+        def check_io(name):
+            original = getattr(thread_history, name)
+
+            def call(*args, **kwargs):
+                assert not store.database.lock._is_owned()
+                assert not layout.thread_history.lock._is_owned()
+                checked.add(name)
+                return original(*args, **kwargs)
+
+            return call
+
+        for name in ("_append_at_committed_offset", "_verify_history_file", "_fsync_directory"):
+            monkeypatch.setattr(thread_history, name, check_io(name))
+        store.project_thread_history()
+        path = next((tmp_path / "data" / "history" / "sessions").glob("*.jsonl"))
+        committed_size = path.stat().st_size
+        with path.open("ab") as stream:
+            stream.write(b'{"uncommitted":true}\n')
+        assert store.project_thread_history() == 0
+        assert path.stat().st_size == committed_size
+        assert checked == {"_append_at_committed_offset", "_verify_history_file", "_fsync_directory"}
+    finally:
+        store.close()
+
+
+def test_queue_reads_and_history_projection_preserve_existing_session(
+    tmp_path: Path,
+) -> None:
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        session = store.create_session(str(_workspace(tmp_path)))
+        active, _ = store.create_run(session["id"], "active")
+        first, _ = store.enqueue_run(session["id"], "first")
+        second, _ = store.enqueue_run(session["id"], "second")
+        queue = QueuedRunRepository(store.database)
+        start = threading.Barrier(2, timeout=5)
+
+        def read_queue() -> None:
+            start.wait()
+            for _ in range(2000):
+                assert [item.run_id for item in queue.list(session["id"]).items] == [first["id"], second["id"]]
+
+        def project_history() -> None:
+            start.wait()
+            for _ in range(300):
+                store.project_thread_history()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            reads = executor.submit(read_queue)
+            projections = executor.submit(project_history)
+            reads.result(timeout=15)
+            projections.result(timeout=15)
+        assert store.read_session(session["id"])["id"] == session["id"]
+        assert store.read_run(active["id"])["status"] == "running"
+        assert store.project_thread_history() == 0
+        layout = store._persistence_layout
+        assert layout is not None
+        with store.database.lock:
+            event_ids = [row[0] for row in store.connection.execute("SELECT id FROM events ORDER BY id").fetchall()]
+        with layout.thread_history.lock:
+            projected_ids = [row[0] for row in layout.thread_history.connection().execute(
+                "SELECT event_id FROM history_events ORDER BY event_id",
+            ).fetchall()]
+        assert projected_ids == event_ids
+    finally:
+        store.close()
 
 
 def test_fresh_store_creates_vertical_database_layout(tmp_path: Path) -> None:

@@ -22,6 +22,12 @@ from eidos_runtime.model.client import (  # noqa: E402
 )
 from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
 from eidos_runtime.runtime.protocol_diagnostics import argument_summary  # noqa: E402
+from eidos_runtime.model.pydantic_ai_client import map_model_response  # noqa: E402
+from pydantic_ai.messages import (  # noqa: E402
+    ModelResponse as PAIModelResponse,
+    ToolCallPart,
+)
+from pydantic_ai.usage import RequestUsage  # noqa: E402
 
 
 class ProtocolRepairRegressionTests(unittest.TestCase):
@@ -39,6 +45,48 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         self.temporary.cleanup()
+
+    def test_truncated_tool_json_records_length_and_supports_bounded_repair(self) -> None:
+        truncated = map_model_response(PAIModelResponse(
+            parts=[ToolCallPart("apply_patch", '{"patch":"unfinished', "partial-call")],
+            finish_reason="length", provider_name="fixture-provider",
+            provider_response_id="truncated-response",
+            usage=RequestUsage(output_tokens=16000, details={"reasoning_tokens": 11481}),
+        ))
+        for recover in (False, True):
+            with self.subTest(recover=recover):
+                run, _ = self.store.create_run(self.session["id"], "Write a presentation script")
+                model = ScriptedModel([
+                    truncated,
+                    ModelResponse(text="Recovered") if recover else truncated,
+                ])
+                RuntimeLoop(self.store, model, lambda _message: None).run(
+                    run["id"], threading.Event()
+                )
+                result = self.store.read_run(run["id"])
+                self.assertEqual(result["status"], "succeeded" if recover else "failed")
+                if not recover:
+                    self.assertEqual(result["termination"]["reason"], "length")
+                attempts = self.store.read_model_attempts(run["id"])
+                self.assertEqual(len(attempts), 2)
+                self.assertEqual(attempts[0]["finishReason"], "length")
+                self.assertEqual(attempts[0]["usage"].output_tokens, 16000)
+                self.assertEqual(attempts[0]["providerResponseId"], "truncated-response")
+                self.assertEqual(attempts[0]["protocolDiagnostics"]["code"], "length")
+                self.assertIn({"type": "protocol_error", "code": "length"}, model.contexts[1])
+                self.assertFalse(self.store.side_effects_blocked(run["id"]))
+                assert self.store.connection is not None
+                for table in ("tool_calls JOIN items ON items.id = tool_calls.item_id", "durable_intents", "approvals"):
+                    self.assertEqual(self.store.connection.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE run_id = ?", (run["id"],)
+                    ).fetchone()[0], 0)
+                self.store.close()
+                self.store = SessionStore(self.data)
+                self.store.initialize()
+                persisted = self.store.read_model_attempts(run["id"])[0]
+                self.assertEqual(persisted["finishReason"], "length")
+                self.assertEqual(persisted["usage"].output_tokens, 16000)
+                self.assertEqual(persisted["providerResponseId"], "truncated-response")
 
     def test_multiple_workspace_mutations_are_serialized_not_rejected(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Create a Go skeleton")

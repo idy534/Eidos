@@ -214,7 +214,7 @@ describe("Run failure presentation", () => {
     renderFeed({ id: "user", ordinal: 0, sessionId: run.sessionId, runId: run.id,
       kind: "user_message", status: "completed", createdAt: 1_000, content: "读取文件",
     }, run);
-    expect(screen.getByRole("alert")).toHaveTextContent("模型调用“读取文件”时提供的“文件路径”参数不符合要求");
+    expect(screen.getByRole("alert")).toHaveTextContent("模型传给“读取文件”的“文件路径”参数不符合要求");
     expect(screen.getByRole("alert")).not.toHaveTextContent("MODEL_PROTOCOL_ERROR");
     expect(screen.queryByText("诊断信息")).not.toBeInTheDocument();
     expect(screen.queryByText("错误码")).not.toBeInTheDocument();
@@ -264,7 +264,7 @@ describe("Run failure presentation", () => {
     expect(turnResultsSection).toBeInTheDocument();
     expect(turnResultsSection).toHaveClass("turn-results--standalone");
     const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("任务已取消。");
+    expect(notice).toHaveTextContent("任务已取消");
     expect(notice).toHaveClass("run-notice", "run-notice--neutral");
   });
 });

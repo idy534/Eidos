@@ -7,11 +7,22 @@
     "activeTokens": 12000,
     "projectedTokens": 11800,
     "contextWindowTokens": 128000,
-    "sections": [{"name": "tool_results", "tokens": 6000}, {"name": "conversation", "tokens": 3000}],
+    "sections": [{"name": "tool_results", "tokens": 8000}, {"name": "conversation", "tokens": 4000}],
+    "planId": "plan_current",
+    "updatedAt": 1700000000000,
     "clearedToolResults": 3,
     "calibrationSamples": 4,
     "lastEstimationErrorPercent": -1.7,
     "manualPending": false
+  },
+  "activity": {
+    "requestId": "00000000-0000-4000-8000-000000000002",
+    "runId": "00000000-0000-4000-8000-000000000001",
+    "eventId": 42,
+    "startedAt": 1700000000000,
+    "updatedAt": 1700000001500,
+    "status": "succeeded",
+    "trigger": "manual"
   },
   "compaction": {
     "requestId": "00000000-0000-4000-8000-000000000002",
