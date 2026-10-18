@@ -288,6 +288,8 @@ export interface EidosRuntimeAPI {
   ): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
   readContextUsage(runId: string): Promise<ContextUsage | null>;
+  readContextDetails(runId: string): Promise<ContextDetails>;
+  requestContextCompaction(runId: string): Promise<ContextCompactionRecord>;
   reviseRun(sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult>;
 
   // Response actions
@@ -335,3 +337,4 @@ export interface EidosRuntimeAPI {
   onApprovalRequest(callback: (approval: ApprovalRequest) => void): Unsubscribe;
   onShortcut(shortcut: AppShortcut, callback: () => void): Unsubscribe;
 }
+import type { ContextDetails, ContextCompactionRecord } from "./context-management.js";

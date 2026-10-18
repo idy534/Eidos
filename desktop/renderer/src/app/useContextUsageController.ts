@@ -43,6 +43,7 @@ export function useContextUsageController({
   current.current = { ready, sessionId, modelId, runId };
 
   useEffect(() => {
+    const sequence = ++requestSequence.current;
     if (!ready || !sessionId || !modelId) {
       setUsage(undefined);
       setLoading(false);
@@ -61,7 +62,6 @@ export function useContextUsageController({
 
     if (!runId) return;
 
-    const sequence = ++requestSequence.current;
     setLoading(true);
     void window.eidosRuntime.readContextUsage(runId).then((next) => {
       if (sequence !== requestSequence.current) return;
@@ -79,6 +79,7 @@ export function useContextUsageController({
       !state.ready
       || state.sessionId !== targetSessionId
       || state.modelId !== targetModelId
+      || state.runId !== targetRunId
     ) {
       return;
     }
@@ -90,6 +91,7 @@ export function useContextUsageController({
         sequence !== requestSequence.current
         || latest.sessionId !== targetSessionId
         || latest.modelId !== targetModelId
+        || latest.runId !== targetRunId
       ) {
         return;
       }

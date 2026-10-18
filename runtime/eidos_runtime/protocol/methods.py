@@ -475,6 +475,14 @@ class ContextUsageRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("run_id",)
 
 
+class ContextDetailsRequestDto(ContextUsageRequestDto):
+    pass
+
+
+class ContextCompactRequestDto(ContextUsageRequestDto):
+    pass
+
+
 class ModelPresetsRequestDto(MethodRequestDto):
     pass
 

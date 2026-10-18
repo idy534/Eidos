@@ -7,6 +7,7 @@ import time
 from pydantic import Field, model_validator
 
 from eidos_runtime.context.budget import ContextBudget
+from eidos_runtime.context.tokens import TOKEN_ESTIMATOR
 from eidos_runtime.model.client import (
     ModelContextItem,
     ModelProfileSnapshot,
@@ -175,12 +176,15 @@ class ContextPlanner:
             "selected_evidence_ids": tuple(item.id for item in selected_evidence),
             "token_budget": token_budget.model_dump(mode="json"),
             "canonical_request_hash": request_hash,
-            "omissions": (),
-            "diagnostics": (),
+            "omissions": tuple(
+                f"cleared-tool-result:{item.get('callId')}" for item in model_context
+                if item.get("type") == "tool_result" and '"contextCleared":true' in str(item.get("result", ""))
+            ),
+            "diagnostics": (f"token-estimator:{TOKEN_ESTIMATOR}",),
         }
         digest = _hash(payload)
         return ContextPlan(
-            **payload,
+            **{**payload, "token_budget": token_budget},
             plan_id=f"plan_{digest}",
             created_at_ms=int(time.time() * 1000),
             snapshot_hash=digest,

@@ -238,7 +238,11 @@
 
 - 主动压缩是减少旧历史重发的软策略，不保证固定 token 成本或最优任务步骤。Runtime 保留用户消息、Skill 正文和近期证据，因此有些输入仍会超过软阈值。候选摘要未通过验证时，Runtime 保留原投影。新的有效读取仍可构成进展；LoopGuard 不判断任意任务的业务完成比例。
 
-- 默认 ContextCompactor 使用 deterministic bounded extraction 生成候选摘要。当前没有 model-assisted proposal。
+- 在线 ContextCompactor 在规则候选之上请求结构化模型说明。模型只使用有界来源，因此它可能没有看到全部历史正文。关键事实继续由规则与持久事实提供。Schema、引句与来源校验不能证明所有语义完整，系统仍需要真实任务评测。
+- 离线 cl100k 计数是参考估算，不是所有自定义模型的真实 tokenizer。消息协议、图片和 Provider 私有开销仍有估算误差。词表缺失或损坏时，Runtime 使用保守字节上界，不隐式联网。真实端点的误差分布和长期任务质量仍需单独评测。
+- 旧工具清理只作用于模型输入。系统保留近期完整响应、失败与不确定结果，因此它不保证将所有请求压到目标值。内部候选数量或字节上限仍可能先触发摘要恢复。回读入口只覆盖明确允许的工具，不是任意 Session 或任意工具结果的读取能力。
+- 明确约束仍有规则提取，当前系统没有完整语义证明。模型说明不决定授权或操作完成状态。连续压缩、重启、取消、分页回读与分叉范围有定向测试。合成长历史回放与受控真实模型续接只能验证指定样本；它们不代表真实仓库任务成功率、所有模型或长期费用目标。当前系统没有 Session 级摘要复用。
+- 手动压缩由当前 Run 或下一 Run 在安全边界执行。系统不会在任务空闲时另建后台模型请求。原任务中断后，用户可以重新安排压缩。占用数字只有在生成新 Snapshot 后才更新；压缩记录中的前后预算会先返回。
 - 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
 - MemoryStore 已经提供独立 `memories.sqlite` 和 content-addressed Markdown 存储，但当前 ContextCompactor、用户长期记忆和跨 Session 检索尚未接入这个 Store。
 - Context Usage Desktop 展示当前选中 Model 对应 Run 最新 ContextSnapshot 的持久化统计。Runtime 只读取关联 Plan 的预算和该 Snapshot 的 ModelAttempt usage。Provider `input_tokens` 为正数时，Runtime 使用该次请求的值；否则 Runtime 使用 `projected_input_tokens` 的 estimated 值。正文撤销或清理后，统计仍表示最近一次已构建或请求的大小，不证明撤销后的下一次输入已经重新计算。新 Run 在产生自己的 Snapshot 前显示无数据状态，刷新返回无数据时清空旧读数。estimated 值仍然是本地启发式估算，不是 Provider tokenizer 的精确结果。

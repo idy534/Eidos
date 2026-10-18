@@ -197,6 +197,41 @@ pnpm test:runtime:bundled
 pnpm test:runtime:bundled-seatbelt
 ```
 
+上下文清理与压缩的定向验证入口如下。测试使用隔离数据和脚本模型，不访问真实 Provider 或用户聊天。
+
+```bash
+uv run --locked pytest runtime/tests/test_context_history_pruning.py runtime/tests/test_runtime_context.py runtime/tests/test_verified_compaction.py runtime/tests/test_verified_compaction_persistence.py runtime/tests/test_read_tool_output.py runtime/tests/test_read_tool_output_runtime.py runtime/tests/test_context_plan.py runtime/tests/test_model_attempt_context_snapshot.py runtime/tests/test_model_reasoning_replay.py runtime/tests/test_context_usage_protocol.py runtime/tests/test_session_fork_application.py
+```
+
+Runtime Bundle 必须包含 `resources/tokenizers/cl100k_base.tiktoken`。构建脚本检查该资源，词表加载器核对固定 Hash。`test:runtime:bundled` 在空 tokenizer 缓存和禁止下载的条件下检查实际计数，避免开发机器已有缓存掩盖资源缺失。维护者更新词表时还需要同步来源、Hash、许可证和离线测试。词表更新不改变启动命令。
+
+上下文模型摘要、Provider 计量与手动压缩的定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_context_model_compaction.py runtime/tests/test_pydantic_ai_client.py runtime/tests/test_model_reasoning_replay.py runtime/tests/test_model_attempt_context_snapshot.py
+node scripts/generate-context-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-context.test.js dist/shared/context-management.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/ContextIndicator.behavior.test.tsx desktop/renderer/src/app/useContextUsageController.behavior.test.tsx
+pnpm exec electron scripts/test-context-details.cjs
+```
+
+Electron 验证使用隔离 userData，检查 320、768、1024、1440 四种宽度、键盘打开、焦点返回和手动请求。`EIDOS_CONTEXT_SCREENSHOT` 可以指定截图路径。
+
+离线回放使用六类合成资料与五种长度，共 30 组，每组默认连续压缩三次。脚本检查约束、路径与 Symbol、失败和未验证状态、累计来源与原始结果 Hash。脚本不读取真实聊天，也不代表真实仓库任务成功率：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py --output /absolute/path/context-offline.json
+```
+
+真实模型回放只读取已配置模型，资料与 SQLite 都使用临时合成数据。脚本禁用隐藏 HTTP 重试，单次摘要与续接各有 60 秒期限，并保存 Provider Usage。以下例子最多产生六次模型请求，会产生实际费用：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py --model deepseek-v4.1-flash --case chinese_correction --scales 1 --output /absolute/path/context-model.json
+```
+
+维护者可以重复 `--case`，选择其他样本；`--max-calls` 默认限制为 12。报告明确区分合成保留测试、模型续接结果、模型摘要采用与回退、实测 Token 和耗时。脚本不推算货币费用，费用以提供商账单为准。
+
 输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。locked production dependencies 包含 Workspace artifact 任务使用的 `python-docx` 和 `lark`。打包 Runtime 会复制 `eidos_runtime/workspace/apply_patch.lark`，并检查这个资源存在。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
 
 `pnpm test:runtime:bundled` 会在 Bundle 内导入 `lark`，检查 grammar 文件来自 Bundle，并同时验证结构化 `ApplyPatchInput → CodexPatchEncoder → Lark parser` compatibility 链路和 raw Custom `Codex Patch → parse_patch → verified Workspace action` 链路。这个 smoke 不执行真实 Provider 请求，也不代表 Provider capability 或 wire schema 已经验证。Responses native wire contract 由 Runtime mocked provider tests 验证。

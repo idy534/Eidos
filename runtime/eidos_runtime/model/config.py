@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -250,6 +251,10 @@ class ModelProfileSpec(EidosFrozenStrictModel):
             supports_images=supports_images,
             supports_custom_tools=self.supports_custom_tools,
             supports_tool_grammar=self.supports_tool_grammar,
+            connection_fingerprint=(hashlib.sha256(json.dumps(
+                config.model_dump(mode="json", exclude={"api_key", "name"}),
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ).encode()).hexdigest() if isinstance(config, ModelConfig) else None),
         )
 
 

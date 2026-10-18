@@ -13,6 +13,10 @@ from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
 from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
+from eidos_runtime.persistence.context_management import ContextManagementRepository
+from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord
+from eidos_runtime.db.errors import ResourceNotFoundError
+from eidos_runtime.application.errors import ApplicationError
 
 
 class ContextApplication:
@@ -25,11 +29,31 @@ class ContextApplication:
         compaction_verifier: ContextCompactionVerifier | None = None,
         snapshots: ContextSnapshotRepository | None = None,
         verified_compactions: VerifiedCompactionRepository | None = None,
+        management: ContextManagementRepository | None = None,
     ) -> None:
         self.planner = planner or ContextPlanner()
         self.compaction_verifier = compaction_verifier or ContextCompactionVerifier()
         self.snapshots = snapshots
         self.verified_compactions = verified_compactions
+        self.management = management
+
+    def details(self, run_id: str) -> ContextDetails:
+        if self.management is None:
+            raise RuntimeError("context management is not configured")
+        from eidos_runtime.db.repositories.runs import RunRepository
+        try:
+            profile = RunRepository(self.management.database).read_model_profile(run_id)
+            return self.management.details(run_id, profile)
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", "任务不存在。") from error
+
+    def request_compaction(self, run_id: str) -> ContextCompactionRecord:
+        if self.management is None:
+            raise RuntimeError("context management is not configured")
+        try:
+            return self.management.request(run_id)
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", "任务不存在。") from error
 
     def verify_compaction(
         self,

@@ -641,11 +641,13 @@ def test_responses_preserves_encrypted_reasoning_item():
 
 
 @pytest.mark.parametrize("supports_reasoning", [True, False])
+@pytest.mark.parametrize("required_tool", [None, "submit_summary"])
 def test_stateless_responses_requests_encrypted_reasoning_when_supported(
     supports_reasoning,
+    required_tool,
 ):
     from types import SimpleNamespace
-    from eidos_runtime.model.client import ModelProfileSnapshot
+    from eidos_runtime.model.client import ModelProfileSnapshot, FunctionToolDefinition
     from eidos_runtime.model.config import ModelProfileSpec
     from eidos_runtime.model.native_custom import OpenAIResponsesModelClient
     from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -701,9 +703,14 @@ def test_stateless_responses_requests_encrypted_reasoning_when_supported(
             threading.Event(),
             lambda _: None,
             instructions="fixture",
-            allow_tools=False,
+            allow_tools=required_tool is not None,
+            tool_definitions=(FunctionToolDefinition(name=required_tool, description="Output", parameters_json_schema={"type": "object"}),) if required_tool else (),
+            required_tool=required_tool,
+            max_output_tokens=128,
         )
         assert captured[0]["store"] is False
+        assert captured[0]["max_output_tokens"] == 128
+        assert captured[0].get("tool_choice") == ({"type": "function", "name": required_tool} if required_tool else None)
         assert (
             captured[0].get("include") == ["reasoning.encrypted_content"]
         ) == supports_reasoning

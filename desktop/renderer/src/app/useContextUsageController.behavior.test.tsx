@@ -24,6 +24,21 @@ const usage = {
 const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
 
 describe("useContextUsageController", () => {
+  it("rejects late usage after disabling the selected model and ignores older Run notifications", async () => {
+    let resolve!: (value: typeof usage) => void;
+    const readContextUsage = vi.fn().mockReturnValueOnce(new Promise<typeof usage>((done) => { resolve = done; })).mockResolvedValue(null);
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readContextUsage } });
+    const { result, rerender } = renderHook((props: { modelId: string | undefined; runId: string | undefined }) => useContextUsageController({ ready: true, sessionId: "session-1", ...props }),
+      { initialProps: { modelId: "deepseek-v4-flash", runId: "run-1" } as { modelId: string | undefined; runId: string | undefined } });
+    rerender({ modelId: undefined, runId: "run-1" });
+    await act(async () => { resolve(usage); });
+    expect(result.current[0].usage).toBeUndefined();
+    rerender({ modelId: "deepseek-v4-flash", runId: "run-2" });
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current[1].handleNotification({ method: "run/completed", params: { sessionId: "session-1", run: { ...run, status: "succeeded" } } }));
+    expect(readContextUsage).toHaveBeenCalledTimes(2);
+    expect(result.current[0].usage).toBeUndefined();
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);

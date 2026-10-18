@@ -50,6 +50,8 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - 聊天正文使用独立的 `.eidos-chat-prose` 样式。用户消息、过程文字和最终回答优先使用系统字体；正文保持 14px，代码块保持 12.5px，标题和行内代码也保留原字号。正文行高为 23px，相邻段落间距为 14px，列表缩进为 24px，列表项间距为 4px。标题和加粗文字使用 600 字重，代码保留等宽字体与原始空白。现有颜色、背景、消息宽度和气泡结构保持不变；文件预览、计划面板、技能详情和其他 UI 不启用这组样式。侧栏中的项目名称（`.workspace-name`）、Session 名称（`.session-title`）与悬停详情标题（`.sidebar-hover-card__title`）统一使用正文字体（`--font-prose`），字号、行高与字重等其他样式保持不变。
 - Composer 可以选择已配置 Model，并显示当前选中 Model 最新 ContextSnapshot 对应的持久化 Context Usage。Runtime 直接查询关联 Plan 的预算和 ModelAttempt usage，不加载快照正文。该 Snapshot 有正数 Provider `input_tokens` 时显示 Provider 值，否则显示该 Plan 的 `projected_input_tokens` 估算值。快照正文撤销或清理后，这些统计仍可查询。
 - Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。新的 Run 在产生自己的 ContextSnapshot 前显示无数据状态，刷新返回无数据时会清空旧读数。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
+- 用户可以点击上下文圆环查看计量来源、参考分项、旧工具正文清理数量、近期请求误差和最近压缩结果。Provider 实测优先；系统把根据实测推算和纯词表估算分别标记。切换模型或 Run 后，迟到统计不能覆盖当前选择。
+- 用户可以手动安排上下文压缩。系统会在下一次安全采样前处理；当前任务已结束时，系统会在下次发送后处理。系统保留原始历史。在线摘要会请求当前模型提供结构化、带来源引句的说明，并保留确定性关键事实和失败回退。
 - Quit 流程会先处理活动 Run，再关闭 Runtime 和窗口资源。
 
 ## Session / Run
@@ -130,11 +132,15 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 
 - ContextBuilder 从 SQLite facts、当前 Run、Model Profile、Project Rule Snapshot、Selected Skill、历史 Item、Tool Result、Workspace state 和额外上下文构建模型 Context。
 - Context Budget 记录 active tokens、模型窗口、百分比和 `provider`/`estimated` 来源。
-- Runtime 会在输入投影超过 65,536 tokens 且有足够新历史时尝试主动压缩，保留近期 16 条候选 Item、用户消息和 Skill 正文。这个阈值只减少历史重发，不终止 Run。原始证据仍保存在 SQLite 和 Context Snapshot 中。
+- Runtime 使用随应用提供的 cl100k 词表和 tiktoken 进行离线参考计数。校准只使用同一已完成请求的冻结估算和 Provider usage，并可在重启后恢复。旧估算器不会混入新校准，思考回放按模型响应只计一次。
+- ContextBuilder 在摘要前尝试清理旧的大段成功读取、搜索和已结束 Shell 结果。系统保留近期完整交互、结果状态、来源和回读入口；原始事实仍在 SQLite。
+- `read_tool_output` 新增 `stream="result"` 和可选 `itemId`，支持分页读取当前 Session 和分叉历史中的允许工具结果。系统不会为了恢复旧输出再次运行工具。
+- Runtime 会在输入投影超过 65,536 tokens 且有足够新历史时尝试主动压缩，按 Token 预算保留完整近期响应，并保留用户消息和 Skill 正文。这个阈值只减少历史重发，不终止 Run。原始证据仍保存在 SQLite 和 Context Snapshot 中。
 - Provider Usage 只有提供正的 input tokens 时才作为 active Context truth。Provider Usage 缺失或返回 0 时，Runtime 使用有界 estimated fallback。
 - ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。内部去重计数只由投影历史本身决定，不进入模型提示，也不随 Run 级 `workspaceVersion` 漂移。
 - `workspace-environment` 只包含 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 不进入模型输入，因此 Workspace 写入不会只因版本计数变化而使后续历史失去缓存。
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
+- 摘要按窗口使用 512～4,096 个参考 Tokens，正文最多 24 KiB。摘要不再把 Assistant 的计划直接记为已完成动作，也不会裁掉明确约束和运行控制事实来强行满足预算。系统核对实际摘要来源，并在提交时拒绝已经请求取消的 Run。
 - Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
 - 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已经收到尚未持久化的 provisional text，也会先失败当前 Attempt，再创建独立 Attempt 并复用同一 Snapshot；已有文本或 ToolCall 进度不会自动重放。
 

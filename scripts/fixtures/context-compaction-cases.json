@@ -1,0 +1,8 @@
+[
+  {"name":"chinese_correction","goal":"检查上下文模块。必须保留用户文件。","correction":"用户更正：必须保留中文说明；缓存方案尚未采纳；测试尚未运行。","adopted":false,"verified":false},
+  {"name":"proposal_not_decision","goal":"评估一个缓存方案。不要把讨论当作决定。","correction":"用户确认：必须继续比较方案；缓存方案尚未采纳；测试尚未运行。","adopted":false,"verified":false},
+  {"name":"verified_tests","goal":"检查测试结果。必须区分日志事实和 Assistant 自述。","correction":"用户更正：必须保留失败记录；团队已采用缓存方案；测试结果以工具记录为准。","adopted":true,"verified":true},
+  {"name":"english_constraints","goal":"Inspect context projection. Do not commit or delete user files.","correction":"Correction: preserve the source evidence. The cache proposal has not been adopted. Tests have not been run.","adopted":false,"verified":false},
+  {"name":"mixed_code_logs","goal":"检查 Python Symbol 与 TypeScript 调用链。必须保留文件路径。","correction":"用户确认：必须继续验证边界；团队已采用缓存方案；测试尚未运行。","adopted":true,"verified":false},
+  {"name":"long_negative_evidence","goal":"分析大量日志。不要重试已失败的命令。","correction":"用户确认：必须保留失败与未验证状态；缓存方案尚未采纳；测试结果以工具记录为准。","adopted":false,"verified":true}
+]

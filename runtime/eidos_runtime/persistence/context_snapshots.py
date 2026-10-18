@@ -7,6 +7,8 @@ from pydantic import ValidationError
 from eidos_runtime.memory.context import context_epochs
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.context.budget import ContextBudget
+from eidos_runtime.context.tokens import TOKEN_ESTIMATOR
+from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.context.plan import ContextPlan, ContextSnapshot
 from eidos_runtime.db.database import Database, Repository
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
@@ -240,6 +242,36 @@ class ContextSnapshotRepository(Repository):
             raise PersistenceCorruptionError(
                 "persistence_record_invalid", record="context_snapshot"
             ) from None
+
+    def latest_token_calibration(self, run_id: str, *, profile_hash: str | None = None, allow_session_reuse: bool = False) -> tuple[ModelUsage, int] | None:
+        """Pair usage with its own frozen estimate; never with a preview/rebuild."""
+        with self.lock:
+            row = self._connection().execute(
+                """
+                SELECT a.usage_json, p.plan_json
+                FROM model_attempts a
+                JOIN context_snapshots c ON c.id = a.context_snapshot_id
+                JOIN context_plans p ON p.id = c.plan_id
+                WHERE (c.run_id = ? OR (? AND c.run_id IN (
+                    SELECT id FROM runs WHERE session_id=(SELECT session_id FROM runs WHERE id=?)
+                ))) AND a.status = 'completed'
+                  AND json_extract(a.usage_json, '$.input_tokens') > 0
+                  AND (? IS NULL OR json_extract(p.plan_json,'$.model_profile_snapshot_hash')=?)
+                ORDER BY a.creation_seq DESC LIMIT 1
+                """, (run_id, allow_session_reuse, run_id, profile_hash, profile_hash),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            plan = ContextPlan.model_validate_json(row["plan_json"])
+            usage = ModelUsage.model_validate_json(row["usage_json"])
+        except (ValueError, TypeError):
+            raise PersistenceCorruptionError("persistence_record_invalid", record="context_calibration") from None
+        if f"token-estimator:{TOKEN_ESTIMATOR}" not in plan.diagnostics:
+            return None
+        if profile_hash is not None and plan.model_profile_snapshot_hash != profile_hash:
+            return None
+        return usage, plan.token_budget.estimated_input_tokens
 
     def read_latest_budget_for_run(
         self, run_id: str

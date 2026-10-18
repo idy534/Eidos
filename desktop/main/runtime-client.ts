@@ -985,6 +985,14 @@ export class RuntimeClient {
       : null;
   }
 
+  readContextDetails(runId: string): Promise<ContextDetails> {
+    return this.validatedRequest("context/details", { runId }, isContextDetails);
+  }
+
+  requestContextCompaction(runId: string): Promise<ContextCompactionRecord> {
+    return this.validatedRequest("context/compact", { runId }, isContextCompactionRecord);
+  }
+
   discoverCustomModels(input: CustomProviderRequest): Promise<CustomProviderResult> {
     return this.validatedRequest("model/discoverCustom", { ...input }, isCustomProviderResult);
   }
@@ -2705,3 +2713,5 @@ function approvalRequestFrom(
   }
   return undefined;
 }
+import { isContextDetails, isContextCompactionRecord } from "../shared/context-management.js";
+import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";

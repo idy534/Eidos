@@ -358,6 +358,8 @@ const api: EidosRuntimeAPI = {
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
   readContextUsage: (runId: string): Promise<ContextUsage | null> =>
     ipcRenderer.invoke(IPC.CONTEXT_USAGE, runId),
+  readContextDetails: (runId: string): Promise<ContextDetails> => ipcRenderer.invoke(IPC.CONTEXT_DETAILS, runId),
+  requestContextCompaction: (runId: string): Promise<ContextCompactionRecord> => ipcRenderer.invoke(IPC.CONTEXT_COMPACT, runId),
   reviseRun: (sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult> =>
     ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput, references),
 
@@ -438,3 +440,4 @@ const api: EidosRuntimeAPI = {
 
 contextBridge.exposeInMainWorld("eidosRuntime", api);
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "../shared/automation.js";
+import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";

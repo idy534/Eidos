@@ -112,6 +112,8 @@ export const IPC = {
   RUN_DELETE_QUEUED: "run:delete-queued",
   RUN_REVISE: "run:revise",
   CONTEXT_USAGE: "context:usage",
+  CONTEXT_DETAILS: "context:details",
+  CONTEXT_COMPACT: "context:compact",
 
   // Response actions
   RESPONSE_ACTION_STATE: "response-action:state",

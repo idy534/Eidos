@@ -1663,6 +1663,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   }}
                   reasoningSelection={modelState.reasoningSelection}
                   contextUsage={contextUsageState.usage}
+                  contextRunId={contextRun?.id}
                   showContextIndicator={Boolean(contextRun)}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}

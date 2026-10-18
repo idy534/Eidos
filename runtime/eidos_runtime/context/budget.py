@@ -12,6 +12,9 @@ from eidos_runtime.model.client import (
     ModelUsage,
 )
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
+from eidos_runtime.context.tokens import estimate_text_tokens
+from eidos_runtime.model.replay import group_response_context
+from eidos_runtime.domain.context_management import ContextTokenSection
 
 
 class ContextUsageSnapshot(EidosFrozenStrictModel):
@@ -35,6 +38,13 @@ class ContextBudget(BaseModel):
     usable_input_budget: int
     context_usage: ContextUsageSnapshot
     fits: bool
+    # Omitted defaults preserve the hashes of already persisted ContextPlans.
+    measurement: Literal["provider", "provider_calibrated", "tokenizer_estimate"] | None = Field(default=None, exclude_if=lambda value: value is None)
+    sections: tuple[ContextTokenSection, ...] | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @property
+    def projection_is_estimated(self) -> bool:
+        return self.measurement != "provider" if self.measurement is not None else self.context_usage.source == "estimated"
 
 
 def estimate_context_budget(
@@ -79,19 +89,17 @@ def estimate_context_budget(
     active_tokens = (
         provider_active_tokens if provider_active_tokens is not None else estimated
     )
-    projected = estimated
+    projected = provider_active_tokens if provider_active_tokens is not None else estimated
     if (
         provider_active_tokens is not None
         and provider_calibration_estimate is not None
     ):
-        projected = max(
-            0,
-            round(
-                provider_active_tokens
-                * estimated
-                / provider_calibration_estimate
-            ),
-        )
+        # Provider usage anchors the known request. The tokenizer estimates only
+        # changes to that request. Growth uses a conservative scale; reductions
+        # retain the observed provider/reference ratio.
+        delta = estimated - provider_calibration_estimate
+        scale = provider_active_tokens / provider_calibration_estimate
+        projected = max(0, provider_active_tokens + math.ceil(delta * (max(1.0, scale) if delta > 0 else scale)))
     source: Literal["provider", "estimated"] = (
         "provider" if provider_active_tokens is not None else "estimated"
     )
@@ -114,6 +122,8 @@ def estimate_context_budget(
         usable_input_budget=usable,
         context_usage=context_usage,
         fits=projected <= usable,
+        measurement=("provider_calibrated" if provider_active_tokens is not None and provider_calibration_estimate is not None
+                     else "provider" if provider_active_tokens is not None else "tokenizer_estimate"),
     )
 
 
@@ -130,12 +140,12 @@ def estimate_model_request_budget(
 ) -> ContextBudget:
     """Estimate the exact structured request used by ContextBuilder/Sampling."""
 
-    return estimate_context_budget(
+    budget = estimate_context_budget(
         {
             "instructions": instructions,
             "messages": tuple(
                 _text_budget_item(item)
-                for item in model_context
+                for item in group_response_context(model_context)
             ),
             "tools": [
                 tool.model_dump(mode="json") for tool in tool_definitions
@@ -160,6 +170,22 @@ def estimate_model_request_budget(
         provider_calibration_estimate=provider_calibration_estimate,
         usage_updated_at=usage_updated_at,
     )
+    # These are reference-token shares, never provider item-level measurements.
+    weights: dict[str, int] = {
+        "instructions": estimate_text_tokens(instructions),
+        "tools": estimate_text_tokens(json.dumps([tool.model_dump(mode="json") for tool in tool_definitions], ensure_ascii=False)),
+    }
+    for item in group_response_context(model_context):
+        kind = item.get("type")
+        name = ("tool_results" if kind == "tool_result" else
+                "summary" if str(item.get("content", "")).startswith("Compact summary:") else
+                "conversation" if kind in {"user", "assistant", "model_response", "tool_call"} else "other")
+        weights[name] = weights.get(name, 0) + estimate_text_tokens(json.dumps(_text_budget_item(item), ensure_ascii=False)) + _tool_media_tokens(item)
+    # Allocate the canonical payload count across independently estimated shares.
+    total = max(1, sum(weights.values()))
+    sections = [ContextTokenSection(name=name, tokens=value * budget.payload_estimate_tokens // total) for name, value in weights.items()]
+    sections.append(ContextTokenSection(name="overhead", tokens=budget.estimated_input_tokens - sum(value.tokens for value in sections)))
+    return budget.model_copy(update={"sections": tuple(sections)})
 
 
 def _text_budget_item(item: ModelContextItem) -> ModelContextItem:
@@ -187,15 +213,7 @@ def _tool_media_tokens(item: ModelContextItem) -> int:
 
 
 def _estimate_serialized_tokens(value: str) -> int:
-    """Use a bounded character heuristic only when the provider is unavailable.
-
-    This deliberately does not treat UTF-8 bytes as tokens: ASCII text is
-    estimated conservatively at one character per token, while non-ASCII code points
-    conservatively count as one token each.
-    """
-    ascii_characters = sum(ord(character) < 128 for character in value)
-    non_ascii_characters = len(value) - ascii_characters
-    return max(1, ascii_characters + non_ascii_characters)
+    return estimate_text_tokens(value)
 
 
 __all__ = [

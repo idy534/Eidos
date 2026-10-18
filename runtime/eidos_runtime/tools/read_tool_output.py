@@ -34,7 +34,8 @@ _JSON_SAFE_INTEGER_MAX = 9_007_199_254_740_991
 
 class ReadToolOutputInput(StrictToolModel):
     callId: StrictStr = Field(min_length=1, max_length=256)
-    stream: Literal["stdout", "stderr"] = "stdout"
+    stream: Literal["stdout", "stderr", "result"] = "stdout"
+    itemId: StrictStr | None = Field(default=None, min_length=1, max_length=256)
     offsetBytes: StrictInt = Field(
         default=0, ge=0, le=_JSON_SAFE_INTEGER_MAX
     )
@@ -58,7 +59,7 @@ class ReadToolOutputResultData(StrictToolModel):
         "nextOffset", "totalBytes", "hasMoreBefore", "hasMoreAfter",
     )
     callId: StrictStr | None = None
-    stream: Literal["stdout", "stderr"] | None = None
+    stream: Literal["stdout", "stderr", "result"] | None = None
     content: StrictStr | None = None
     startByte: StrictInt | None = Field(default=None, ge=0)
     endByte: StrictInt | None = Field(default=None, ge=0)
@@ -128,6 +129,7 @@ class ReadToolOutputAdapter:
                 offset_bytes=request.offsetBytes,
                 max_bytes=min(request.maxBytes, READ_TOOL_OUTPUT_MODEL_PAGE_BYTES),
                 from_end=request.fromEnd,
+                item_id=request.itemId,
                 live_output_reader=(self.shell_process_manager.read_output if self.shell_process_manager is not None else None),
             )
         except ToolOutputReadError as error:
@@ -137,7 +139,7 @@ class ReadToolOutputAdapter:
         except Exception:
             return _error(
                 "tool_output_unavailable",
-                "The persisted shell output is unavailable",
+                "The persisted tool output is unavailable",
             )
         if cancel.is_set():
             return _error("tool_canceled", "Output reading was canceled")
@@ -164,7 +166,10 @@ def read_tool_output_entry(
             "current Session, including live output in this Run. Pass its outputCallId as callId "
             "(the original provider callId, never a Shell sessionId). "
             "Set fromEnd=true for the tail; raw bytes omitted by the Shell output "
-            "limit are not recoverable."
+            "limit are not recoverable. Use stream='result' and the itemId/callId "
+            "from a contextCleared marker to page the original saved JSON result "
+            "of file reads, file lists, searches or completed Shell calls, including fork history. "
+            "Reading saved output does not execute the operation again."
         ),
         "sideEffect": "none",
         "approvalRequired": False,
@@ -181,7 +186,7 @@ def read_tool_output_entry(
         provenance=ToolProvenance.model_validate({
             "kind": "builtin",
             "sourceId": "eidos.read-tool-output",
-            "sourceVersion": "1",
+            "sourceVersion": "2",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         }),
         adapter=ReadToolOutputAdapter(store, run_id, shell_process_manager),
@@ -199,7 +204,7 @@ def _page_result(
         "toolName": "read_tool_output",
         "outcome": "success",
         "code": "ok",
-        "summary": "Persisted shell output page read",
+        "summary": "Persisted tool output page read",
         "data": {
             "callId": page.call_id,
             "stream": page.stream,
@@ -235,16 +240,16 @@ def _error(code: str, summary: str) -> dict[str, object]:
 
 def _summary_for_code(code: str) -> str:
     if code == "ambiguous_tool_call":
-        return "The shell callId is ambiguous"
+        return "The tool callId is ambiguous; use the source itemId"
     if code == "invalid_output_offset":
         return "The output offset is not at a UTF-8 character boundary"
     if code == "tool_output_not_available":
         return (
-            "No available run_shell output matches this provider callId in the current Session. "
+            "No available output matches this provider callId and itemId in the current Session. "
             "Use the original run_shell outputCallId, not its Shell sessionId. "
             "Live output belongs to its original Run; use write_stdin to wait for new output."
         )
-    return "The persisted shell output could not be read"
+    return "The persisted tool output could not be read"
 
 
 __all__ = [

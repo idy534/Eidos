@@ -355,12 +355,19 @@ class OpenAIResponsesModelClient:
         instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
+        max_output_tokens: int | None = None,
+        required_tool: str | None = None,
     ) -> ModelResponse:
         with self._lock:
             if self._closed:
                 raise RuntimeError("model client is closed")
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
+        limit = self._profile_spec.max_output_tokens if max_output_tokens is None else max_output_tokens
+        if not 1 <= limit <= self._profile_spec.max_output_tokens:
+            raise ValueError("model_output_limit_invalid")
+        if required_tool is not None and (not allow_tools or not any(isinstance(tool, FunctionToolDefinition) and tool.name == required_tool for tool in tool_definitions)):
+            raise ValueError("model_output_tool_invalid")
         tracker = RetryTracker()
         try:
             return self._async_kernel.call(
@@ -372,6 +379,8 @@ class OpenAIResponsesModelClient:
                 allow_tools,
                 tool_definitions,
                 tracker,
+                limit,
+                required_tool,
             )
         except RetryBackoffCanceled:
             raise ModelRequestError(
@@ -409,12 +418,14 @@ class OpenAIResponsesModelClient:
         allow_tools: bool,
         tool_definitions: tuple[ModelToolDefinitionLike, ...],
         retry_tracker: RetryTracker,
+        max_output_tokens: int,
+        required_tool: str | None,
     ) -> ModelResponse:
         request_kwargs: dict[str, object] = {
             "model": self._profile_spec.model_id,
             "input": encode_responses_context(context, reasoning_required=self._reasoning_effort not in (None, "none"), provider_name=self._profile_spec.provider_id, supports_images=self._profile_snapshot.supports_images),
             "instructions": instructions,
-            "max_output_tokens": self._profile_spec.max_output_tokens,
+            "max_output_tokens": max_output_tokens,
             "stream": True,
             "store": False,
         }
@@ -438,6 +449,8 @@ class OpenAIResponsesModelClient:
             ]
         else:
             request_kwargs["tools"] = []
+        if required_tool is not None:
+            request_kwargs["tool_choice"] = {"type": "function", "name": required_tool}
         if self._parallel_tool_calls is not None:
             request_kwargs["parallel_tool_calls"] = self._parallel_tool_calls
         if self._reasoning_effort is not None:

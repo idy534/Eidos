@@ -270,12 +270,19 @@ class PydanticAIModelClient:
         instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
+        max_output_tokens: int | None = None,
+        required_tool: str | None = None,
     ) -> ModelResponse:
         with self._lock:
             if self._closed:
                 raise RuntimeError("model client is closed")
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
+        limit = self._profile_spec.max_output_tokens if max_output_tokens is None else max_output_tokens
+        if not 1 <= limit <= self._profile_spec.max_output_tokens:
+            raise ValueError("model_output_limit_invalid")
+        if required_tool is not None and (not allow_tools or not any(isinstance(tool, FunctionToolDefinition) and tool.name == required_tool for tool in tool_definitions)):
+            raise ValueError("model_output_tool_invalid")
         retry_tracker = RetryTracker()
         try:
             return self._async_kernel.call(
@@ -287,6 +294,8 @@ class PydanticAIModelClient:
                 allow_tools,
                 tool_definitions,
                 retry_tracker,
+                limit,
+                required_tool,
             )
         except RetryBackoffCanceled:
             raise ModelRequestError(
@@ -335,10 +344,12 @@ class PydanticAIModelClient:
         allow_tools: bool,
         tool_definitions: tuple[ModelToolDefinitionLike, ...],
         retry_tracker: RetryTracker,
+        max_output_tokens: int,
+        required_tool: str | None,
     ) -> ModelResponse:
         hit_fault("model_stream_block")
         settings_values: dict[str, object] = {
-            "max_tokens": self._profile_spec.max_output_tokens,
+            "max_tokens": max_output_tokens,
             "timeout": self._profile_spec.request_timeout_seconds,
         }
         if self._parallel_tool_calls is not None:
@@ -347,6 +358,9 @@ class PydanticAIModelClient:
             settings_values["extra_body"] = self._settings_extra_body
         if self._reasoning_effort is not None:
             settings_values["openai_reasoning_effort"] = self._reasoning_effort
+        if required_tool is not None:
+            # Pydantic AI handles provider support and wire tool_choice mapping.
+            settings_values["tool_choice"] = [required_tool]
         settings = ModelSettings(**settings_values)
         parameters = ModelRequestParameters(
             function_tools=(

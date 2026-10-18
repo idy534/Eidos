@@ -6,6 +6,7 @@ from eidos_runtime.domain.planning import PlanningSuspended
 from eidos_runtime.domain.collaboration import AgentSuspended, CollaborationState, WaitAgents
 from eidos_runtime.db.errors import RunCompletionDeferred
 from eidos_runtime.persistence.planning import PlanningRepository
+from eidos_runtime.persistence.context_management import ContextManagementRepository
 
 import logging
 import json
@@ -19,8 +20,8 @@ from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.context.compactor import (
     ContextCompactionError, ContextCompactor,
-    SOFT_CONTEXT_TARGET_TOKENS, SOFT_COMPACTION_KEEP_ITEMS,
 )
+from eidos_runtime.context.policy import SOFT_CONTEXT_TARGET_TOKENS, SOFT_COMPACTION_KEEP_ITEMS
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
@@ -348,7 +349,8 @@ class RuntimeEngine:
         context_application = ContextApplication(
             snapshots=self.store.context_snapshot_repository()
         )
-        compactor = ContextCompactor(self.store)
+        compactor = ContextCompactor(self.store, self.model)
+        context_management = ContextManagementRepository(self.store.database)
         step_factory = StepContextFactory(self.store)
         rule_resolver = ProjectRuleResolver()
         projectless = self.store.session_is_projectless(run.session_id)
@@ -471,17 +473,37 @@ class RuntimeEngine:
                 self.store.run_permission_grants(run.run_id),
             )
             agent_baseline = self.collaboration.repository.state(run.run_id) if self.collaboration else None
-            built = context_builder.build(
-                run.run_id,
-                tool_definitions=tool_definitions,
-                retained_context=resources.retained_context,
-                selected_skill_context=resources.selected_skill_context,
-                extra_context=run.model_context,
-                rule_resolution_snapshot=rule_snapshot,
-                step_policy=step_policy,
-                repository_context=None if projectless else repository_context,
-                projectless=projectless,
-            )
+            def build_current_context() -> ContextBuild:
+                return context_builder.build(
+                    run.run_id, tool_definitions=tool_definitions,
+                    retained_context=resources.retained_context,
+                    selected_skill_context=resources.selected_skill_context,
+                    extra_context=run.model_context, rule_resolution_snapshot=rule_snapshot,
+                    step_policy=step_policy,
+                    repository_context=None if projectless else repository_context,
+                    projectless=projectless,
+                )
+
+            built = build_current_context()
+
+            def compact_context(phase: str, trigger: str, *, keep_recent_items: int = 0, request_id: str | None = None):
+                return compactor.compact(
+                    run.run_id, phase, trigger=trigger, cancel=cancel,
+                    keep_recent_items=keep_recent_items, request_id=request_id,
+                    recent_token_budget=min(16_384, max(1_024, built.budget.usable_input_budget // 8)) if keep_recent_items else None,
+                    before_tokens=built.budget.projected_input_tokens,
+                    measure=lambda: build_current_context().budget.projected_input_tokens,
+                )
+
+            manual = context_management.pending(run.run_id)
+            if manual is not None and not built.facts.pending_approval_ids and not built.facts.reconciliation_required:
+                try:
+                    compact_context("mid_turn", "manual", request_id=manual.request_id)
+                except ContextCompactionError:
+                    if cancel.is_set():
+                        raise RuntimeCancelled
+                else:
+                    continue
             if pending_compaction_baseline is not None:
                 if built.budget.projected_input_tokens >= pending_compaction_baseline:
                     if pending_provider_recovery:
@@ -493,7 +515,7 @@ class RuntimeEngine:
                             instructions=built.instructions,
                         )
                         return
-                    if built.budget.context_usage.source == "estimated":
+                    if built.budget.projection_is_estimated:
                         estimated_pressure_states.add(_context_state(built))
                     else:
                         finalizer.finalize(
@@ -522,7 +544,7 @@ class RuntimeEngine:
                         LoopStage.BEFORE_COMPACT, run.run_id,
                         reason="projection_overflow",
                     )
-                    compactor.compact(run.run_id, phase)
+                    compact_context(phase, "projection_limit")
                 except ContextCompactionError as error:
                     raise ContextLimitExceeded(
                         "internal_projection_limit"
@@ -549,14 +571,14 @@ class RuntimeEngine:
                         LoopStage.BEFORE_COMPACT, run.run_id,
                         reason="soft_context_target",
                     )
-                    compactor.compact(
-                        run.run_id, "mid_turn",
+                    compact_context(
+                        "mid_turn", "soft_target",
                         keep_recent_items=SOFT_COMPACTION_KEEP_ITEMS,
                     )
-                except ContextCompactionError:
+                except ContextCompactionError as error:
                     # Preserve the original facts and continue within the real
                     # window budget. Do not repeatedly compact the same frontier.
-                    pass
+                    logger.warning("Soft context compaction skipped run_id=%s reason=%s", run.run_id, str(error))
                 else:
                     continue
             decision_budget = (
@@ -585,11 +607,11 @@ class RuntimeEngine:
                         LoopStage.BEFORE_COMPACT, run.run_id,
                         reason="context_over_budget",
                     )
-                    compactor.compact(run.run_id, phase)
+                    compact_context(phase, "window_pressure")
                 except ContextLimitExceeded:
                     raise
                 except ContextCompactionError:
-                    if built.budget.context_usage.source == "estimated":
+                    if built.budget.projection_is_estimated:
                         pending_compaction_baseline = None
                         estimated_pressure_states.add(context_state)
                         continue
@@ -714,7 +736,7 @@ class RuntimeEngine:
                             step_id=step.step_id,
                             reason="provider_context_exceeded",
                         )
-                        compacted = compactor.compact(run.run_id, phase)
+                        compacted = compact_context(phase, "provider_limit")
                     except ContextCompactionError:
                         finalizer.finalize(
                             run.run_id,

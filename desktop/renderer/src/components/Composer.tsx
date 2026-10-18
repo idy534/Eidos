@@ -26,6 +26,7 @@ export interface ComposerProps {
   approvalMode?: ApprovalMode | undefined;
   onApprovalModeChange?: ((mode: ApprovalMode) => void) | undefined;
   contextUsage: ContextUsage | undefined;
+  contextRunId?: string | undefined;
   modelConfigured: boolean;
   modelLoading: boolean;
   isSubmitting: boolean;
@@ -66,6 +67,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   approvalMode = "manual",
   onApprovalModeChange,
   contextUsage,
+  contextRunId,
   modelConfigured,
   modelLoading,
   isSubmitting,
@@ -384,7 +386,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         </div>
 
         <div className="composer-options">
-          {showContextIndicator && <ContextIndicator usage={contextUsage} />}
+          {showContextIndicator && <ContextIndicator key={contextRunId} usage={contextUsage} runId={contextRunId} />}
           {modelList && modelList.models.length > 0 && (
             <ModelSelector
               models={modelList.models}

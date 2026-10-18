@@ -819,6 +819,7 @@ class SessionStore:
         max_bytes: int,
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
+        item_id: str | None = None,
     ) -> ToolOutputPage:
         return self._repository(self._execution).read_tool_output(
             run_id,
@@ -828,6 +829,7 @@ class SessionStore:
             max_bytes=max_bytes,
             from_end=from_end,
             live_output_reader=live_output_reader,
+            item_id=item_id,
         )
 
     def read_tool_text(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
+from eidos_runtime.domain.tool_output import RECOVERABLE_RESULT_TOOLS
 
 import hashlib
 import json
@@ -183,7 +184,7 @@ def _attempt_metadata(
 
 class ToolOutputPage(EidosFrozenStrictModel):
     call_id: str
-    stream: Literal["stdout", "stderr"]
+    stream: Literal["stdout", "stderr", "result"]
     content: str
     # The adapter scans this complete persisted stream before exposing the
     # bounded page. This field stays inside the Runtime repository boundary.
@@ -202,6 +203,34 @@ class ToolOutputReadError(LookupError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _output_page(
+    call_id: str, stream: Literal["stdout", "stderr", "result"], content: str,
+    offset_bytes: int, max_bytes: int, from_end: bool, *,
+    raw_truncated: bool | None, raw_omitted_bytes: int | None, output_complete: bool | None,
+) -> ToolOutputPage:
+    encoded = content.encode("utf-8")
+    total_bytes = len(encoded)
+    if from_end:
+        start_byte = max(0, total_bytes - max_bytes)
+        while start_byte < total_bytes and _is_utf8_continuation_byte(encoded[start_byte]):
+            start_byte += 1
+    else:
+        if offset_bytes > total_bytes or (
+            offset_bytes < total_bytes and _is_utf8_continuation_byte(encoded[offset_bytes])
+        ):
+            raise ToolOutputReadError("invalid_output_offset")
+        start_byte = offset_bytes
+    end_byte = min(total_bytes, start_byte + max_bytes)
+    while end_byte > start_byte and end_byte < total_bytes and _is_utf8_continuation_byte(encoded[end_byte]):
+        end_byte -= 1
+    return ToolOutputPage(
+        call_id=call_id, stream=stream, content=encoded[start_byte:end_byte].decode("utf-8"),
+        source_content=content, start_byte=start_byte, end_byte=end_byte, total_bytes=total_bytes,
+        has_more_before=start_byte > 0, has_more_after=end_byte < total_bytes,
+        raw_truncated=raw_truncated, raw_omitted_bytes=raw_omitted_bytes, output_complete=output_complete,
+    )
 
 
 class ExecutionRepository(Repository):
@@ -223,13 +252,14 @@ class ExecutionRepository(Repository):
         run_id: str,
         *,
         tool_call_id: str,
-        stream: Literal["stdout", "stderr"],
+        stream: Literal["stdout", "stderr", "result"],
         offset_bytes: int,
         max_bytes: int,
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
+        item_id: str | None = None,
     ) -> ToolOutputPage:
-        if stream not in {"stdout", "stderr"}:
+        if stream not in {"stdout", "stderr", "result"}:
             raise ToolOutputReadError("invalid_output_stream")
         if (
             offset_bytes < 0
@@ -237,6 +267,10 @@ class ExecutionRepository(Repository):
             or max_bytes > 16 * 1024
         ):
             raise ToolOutputReadError("invalid_output_range")
+        if stream == "result":
+            content = self._historical_context_result(run_id, tool_call_id, item_id)
+            return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
+                                raw_truncated=None, raw_omitted_bytes=None, output_complete=True)
         with self.lock:
             connection = self._connection()
             run = connection.execute(
@@ -256,10 +290,11 @@ class ExecutionRepository(Repository):
                   AND items.status IN ('in_progress', 'completed', 'failed', 'canceled')
                   AND tool_calls.status IN ('running', 'completed', 'failed', 'canceled')
                   AND tool_calls.result_json IS NOT NULL
+                  AND (? IS NULL OR items.id = ?)
                 ORDER BY tool_calls.creation_seq ASC
                 LIMIT 2
                 """,
-                (run["session_id"], tool_call_id),
+                (run["session_id"], tool_call_id, item_id, item_id),
             ).fetchall()
         if not rows:
             raise ToolOutputReadError("tool_output_not_available")
@@ -296,44 +331,46 @@ class ExecutionRepository(Repository):
             or raw_omitted_bytes > 9_007_199_254_740_991
         ):
             raise ToolOutputReadError("output_unavailable")
-        encoded = content.encode("utf-8")
-        total_bytes = len(encoded)
-        if from_end:
-            start_byte = max(0, total_bytes - max_bytes)
-            while (
-                start_byte < total_bytes
-                and _is_utf8_continuation_byte(encoded[start_byte])
-            ):
-                start_byte += 1
-        else:
-            if offset_bytes > total_bytes or (
-                offset_bytes < total_bytes
-                and _is_utf8_continuation_byte(encoded[offset_bytes])
-            ):
-                raise ToolOutputReadError("invalid_output_offset")
-            start_byte = offset_bytes
-        end_byte = min(total_bytes, start_byte + max_bytes)
-        while (
-            end_byte > start_byte
-            and end_byte < total_bytes
-            and _is_utf8_continuation_byte(encoded[end_byte])
-        ):
-            end_byte -= 1
-        page = encoded[start_byte:end_byte].decode("utf-8")
-        return ToolOutputPage(
-            call_id=str(rows[0]["provider_call_id"]),
-            stream=stream,
-            content=page,
-            source_content=content,
-            start_byte=start_byte,
-            end_byte=end_byte,
-            total_bytes=total_bytes,
-            has_more_before=start_byte > 0,
-            has_more_after=end_byte < total_bytes,
-            raw_truncated=raw_truncated,
-            raw_omitted_bytes=raw_omitted_bytes,
-            output_complete=output_complete,
-        )
+        return _output_page(str(rows[0]["provider_call_id"]), stream, content,
+                            offset_bytes, max_bytes, from_end, raw_truncated=raw_truncated,
+                            raw_omitted_bytes=raw_omitted_bytes, output_complete=output_complete)
+
+    def _historical_context_result(self, run_id: str, call_id: str, item_id: str | None) -> str:
+        allowed = tuple(sorted(RECOVERABLE_RESULT_TOOLS))
+        placeholders = ",".join("?" for _ in allowed)
+        with self.lock:
+            connection = self._connection()
+            run = connection.execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if run is None:
+                raise ToolOutputReadError("tool_output_not_available")
+            rows = connection.execute(f"""
+                SELECT t.tool_name, COALESCE(t.model_result_json,t.result_json) AS result_json
+                FROM tool_calls t JOIN items i ON i.id=t.item_id
+                WHERE i.session_id=? AND t.provider_call_id=? AND (? IS NULL OR i.id=?)
+                  AND t.tool_name IN ({placeholders})
+                  AND i.status IN ('completed','failed','canceled')
+                  AND t.status IN ('completed','failed','canceled')
+                ORDER BY t.creation_seq LIMIT 2
+            """, (run["session_id"], call_id, item_id, item_id, *allowed)).fetchall()
+            if len(rows) > 1:
+                raise ToolOutputReadError("ambiguous_tool_call")
+            if rows:
+                if rows[0]["tool_name"] not in RECOVERABLE_RESULT_TOOLS or not isinstance(rows[0]["result_json"], str):
+                    raise ToolOutputReadError("tool_output_not_available")
+                return str(rows[0]["result_json"])
+            if item_id is not None:
+                from eidos_runtime.persistence.session_history import SessionHistoryRepository
+                records = SessionHistoryRepository(self.database).verification_records(run["session_id"], {item_id})
+                if records:
+                    record = records[0]
+                    tool = record.item.tool_call
+                    if (tool is not None and tool.provider_call_id == call_id
+                            and tool.tool_name in RECOVERABLE_RESULT_TOOLS
+                            and tool.status in {"completed", "failed", "canceled"}):
+                        value = record.model_result_json or tool.result_json
+                        if isinstance(value, str):
+                            return value
+        raise ToolOutputReadError("tool_output_not_available")
 
     def get_user_item(self, run_id: str) -> dict[str, object]:
         with self.lock:

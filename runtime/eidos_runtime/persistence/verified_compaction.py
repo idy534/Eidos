@@ -22,6 +22,7 @@ from eidos_runtime.db.repositories.context import ContextRepository
 from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
 from eidos_runtime.runtime.state_machine import EventType
+from eidos_runtime.domain.context_management import ContextCompactionRecord
 
 
 class VerifiedCompactionRepository(Repository):
@@ -37,6 +38,8 @@ class VerifiedCompactionRepository(Repository):
         pending_approval_facts: tuple[str, ...] = (),
         reconciliation_facts: tuple[str, ...] = (),
         phase: str = "mid_turn",
+        expected_guard: tuple[int, ...] | None = None,
+        compaction: ContextCompactionRecord | None = None,
     ) -> VerifiedCompactSummary:
         if phase not in {"pre_turn", "mid_turn"}:
             raise ValueError("invalid compaction phase")
@@ -62,6 +65,10 @@ class VerifiedCompactionRepository(Repository):
         )
         identifier = f"compact_{verified.summary_hash}"
         with self.lock, self._connection() as connection:
+            if expected_guard is not None:
+                from eidos_runtime.persistence.context_management import ContextManagementRepository
+                if ContextManagementRepository(self.database).guard(run_id) != expected_guard:
+                    raise CompactionVerificationError("compaction source state changed")
             existing = connection.execute(
                 "SELECT 1 FROM verified_compact_summaries WHERE id = ?",
                 (identifier,),
@@ -82,7 +89,7 @@ class VerifiedCompactionRepository(Repository):
                     ),
                 )
                 run = connection.execute(
-                    "SELECT session_id FROM runs WHERE id = ? AND status = 'running'",
+                    "SELECT session_id FROM runs WHERE id = ? AND status = 'running' AND cancel_requested_at IS NULL",
                     (run_id,),
                 ).fetchone()
                 if run is None:
@@ -129,7 +136,7 @@ class VerifiedCompactionRepository(Repository):
                     """
                     UPDATE runs
                     SET compaction_count = compaction_count + 1, updated_at = ?
-                    WHERE id = ? AND status = 'running'
+                    WHERE id = ? AND status = 'running' AND cancel_requested_at IS NULL
                     """,
                     (now, run_id),
                 )
@@ -143,6 +150,7 @@ class VerifiedCompactionRepository(Repository):
                         "summaryId": summary_id,
                         "sourceItemCount": len(verified.summary.source_item_ids),
                         "phase": phase,
+                        **({"compaction": compaction.to_wire_dict()} if compaction else {}),
                     },
                     session_id=run["session_id"],
                     run_id=run_id,

@@ -65,6 +65,37 @@ def git(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def test_forked_context_can_read_saved_result_without_accessing_original_session(tmp_path):
+    import json
+    import threading
+    from eidos_runtime.tools.read_tool_output import read_tool_output_entry
+
+    store, sessions, forks = applications(tmp_path)
+    root = tmp_path / "workspace"
+    root.mkdir()
+    try:
+        source = sessions.create(SessionCreateRequestDto(workspaceRoot=str(root))).root
+        old, _ = store.create_run(source["id"], "inspect")
+        tool = store.create_tool_item(old["id"], 1, 0, "original-read", "read_file", "{}")
+        raw = json.dumps({"outcome": "success", "data": {"path": "old.txt", "content": "原始读取证据"}}, ensure_ascii=False)
+        store.complete_tool_item(tool["id"], raw, model_result_json=raw)
+        store.fail_run(old["id"], "fixture")
+        anchor = completed_answer(store, source["id"])
+        target = forks.fork(SessionForkRequest(operationId=str(uuid4()), sourceSessionId=source["id"],
+            sourceItemId=anchor, target={"kind": "same_workspace"})).session
+        current, _ = store.create_run(target.id, "recover historical output")
+        fact = next(item for item in store.context_projection_facts(current["id"]).items if item.provider_call_id == "original-read")
+        assert fact.item_id != tool["id"]
+        entry = read_tool_output_entry(store, current["id"])
+        result = entry.adapter.execute({"callId": "original-read", "itemId": fact.item_id, "stream": "result"}, threading.Event())
+        assert result["outcome"] == "success"
+        assert result["data"]["content"] == raw
+        rejected = entry.adapter.execute({"callId": "original-read", "itemId": tool["id"], "stream": "result"}, threading.Event())
+        assert rejected["code"] == "tool_output_not_available"
+    finally:
+        store.close()
+
+
 def test_projectless_fork_preserves_the_same_directory_and_remains_projectless(
     tmp_path, monkeypatch
 ):

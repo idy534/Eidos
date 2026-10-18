@@ -1,12 +1,16 @@
 import type { ContextUsage } from "../contracts.js";
 import { formatContextUsage } from "../context-usage.js";
+import { useState } from "react";
+import { ContextDetailsPanel } from "./ContextDetailsPanel.js";
 
 export interface ContextIndicatorProps {
   usage: ContextUsage | undefined;
   className?: string;
+  runId?: string | undefined;
 }
 
-export function ContextIndicator({ usage, className }: ContextIndicatorProps) {
+export function ContextIndicator({ usage, className, runId }: ContextIndicatorProps) {
+  const [open, setOpen] = useState(false);
   const percent = usage ? Math.min(100, Math.max(0, usage.percentUsed)) : 0;
   const size = 18;
   const strokeWidth = 2.5;
@@ -25,12 +29,13 @@ export function ContextIndicator({ usage, className }: ContextIndicatorProps) {
   return (
     <div
       className={`composer-context-usage${className ? ` ${className}` : ""}`}
-      tabIndex={0}
+      tabIndex={runId ? undefined : 0}
       role="region"
       aria-label={formattedUsage}
       aria-live="polite"
       title="当前模型当前上下文使用量"
     >
+      <button className="context-indicator-trigger" type="button" disabled={!runId} aria-label="查看上下文详情" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
       <svg
         className="context-progress-ring"
         width={size}
@@ -60,9 +65,11 @@ export function ContextIndicator({ usage, className }: ContextIndicatorProps) {
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
       </svg>
+      </button>
       <div className="composer-context-tooltip" role="tooltip">
         {formattedUsage}
       </div>
+      {open && runId && <ContextDetailsPanel key={runId} runId={runId} usage={usage} onClose={() => setOpen(false)} />}
     </div>
   );
 }

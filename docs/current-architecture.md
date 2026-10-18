@@ -207,9 +207,23 @@ CLAUDE.md
 
 Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否适合当前窗口。Context Usage RPC 从 `context_snapshots` 选取当前 Run 最新的 Snapshot ID，并从关联的 `context_plans.plan_json` 读取已持久化预算，再读取与该 Snapshot 绑定的 ModelAttempt usage。该 Attempt 有正的 Provider `input_tokens` 时，RPC 返回 Provider 值；否则 RPC 返回该 Plan 的 `projected_input_tokens`，并标记为 `estimated`。RPC 不加载 Snapshot 正文或 Blob，也不使用当前 Snapshot 以前的 Attempt usage。正文撤销或清理不删除这些统计数字；数字表示最近一次已构建或请求的上下文大小，新合法上下文生成后再更新。完整 Snapshot 的读取和模型使用继续执行撤销检查。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发 deterministic bounded compaction 或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
-Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,536 tokens、仍符合真实模型窗口、没有待处理 Approval 或 reconciliation，且距离上次尝试已有至少 32 条新的未压缩 Item 时，Runtime 尝试压缩旧历史。这个路径保留最近 16 条候选 Item、用户消息和 Skill 读取正文。它复用现有事实验证与事务提交，不删除原始历史。主动压缩失败后，Runtime 保留原投影并继续正常的窗口判断；65,536 不是 Run 停止阈值。
+Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,536 tokens、仍符合真实模型窗口、没有待处理 Approval 或 reconciliation，且距离上次尝试已有至少 32 条新的未压缩 Item 时，Runtime 尝试压缩旧历史。这个路径按 Token 预算保留完整近期响应，并保留用户消息和 Skill 读取正文。它复用现有事实验证与事务提交，不删除原始历史。主动压缩失败后，Runtime 保留原投影并继续正常的窗口判断；65,536 不是 Run 停止阈值。
 
-当前默认 compactor 先生成确定性的有界候选摘要。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载 Item、Tool Result、Workspace change、Approval 和 reconciliation 事实，再执行 `ContextCompactionVerifier`。Tool provenance 由候选摘要的 source Item IDs 解析到真实 ToolCall IDs，所以 pre-turn compaction 可以准确引用以前 Run 的 Tool facts，也不会附加无关 ToolCall。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生一条 `context.compacted` Event。Outbox 会把该 Event 投影为 `context/compacted` 通知，Desktop 收到通知后重新读取当前 Context Usage。原始 Item 和 Tool 事实仍保存在 `state.sqlite`。验证失败会保留上一份 verified summary。
+ContextBuilder 在窗口压力下先清理旧工具正文，再交给摘要路径。清理阈值是 65,536 与可用输入预算 75% 中的较小值，目标是阈值的 75%。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～16,384。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。系统只清理较大的、已完成且成功的文件读取、文件列表、搜索和已结束 Shell 结果。失败、运行中、需要 reconciliation、Skill、记忆、MCP 和带图片正文的结果保持原样。模型输入保留结果状态、文件版本、来源 Item、原文 Hash 和 `read_tool_output` 回读参数。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线软摘要使用 Token 预算。
+
+`read_tool_output(stream="result", itemId=..., callId=...)` 对允许的历史工具结果提供 UTF-8 字节分页。读取范围只包含当前 Session 和该 Session 已冻结的分叉历史。源 Session 的原始 Item ID 不授权访问其他 Session。原有 stdout/stderr 和活动 Shell 读取保持兼容；记忆、Skill、MCP 和写入工具正文不进入这个回读出口。
+
+Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应的已发请求，不能直接当作缩减或增长后的新请求大小。下一请求的预算以最近一次匹配请求的 Provider 输入量为起点，再估算内容变化量。增长部分至少采用一倍参考 Token 变化量；缩减部分采用已观察的 Provider/参考值比例。缺少 Provider Usage 时，系统才完全使用词表估算。所有未来请求的推算仍属于 estimated。
+
+本地辅助计数使用已锁定的 `tiktoken==0.13.0` 和随应用提供、带固定 SHA-256 的 cl100k 词表。Runtime 不下载词表，也不按模型名称猜测 tokenizer。系统按完整模型响应只计一次思考回放。校准读取同一已完成 ModelAttempt 的 Provider Usage 和冻结 Plan 估算，并核对估算器版本及完整 ModelProfile Hash。同 Session 的新 Run 可以复用同配置请求的配对；不同模型、协议、推理和请求配置不能混用。预览、重复构建和重启不改变配对。旧估算器的 Plan 仍可读取，但不参与新校准。新 Plan 的 diagnostics 记录估算器版本，omissions 记录清理的工具调用。Plan 的可选计量来源与分项预算在缺省时不写入序列化，因此旧 Plan/Snapshot Hash 保持兼容。
+
+在线 compactor 先生成确定性的有界候选，再通过当前 Run 已持有的 ModelClient 请求模型辅助说明。这个独立请求只暴露 `submit_context_summary` 输出 Schema，不提供可执行工具。请求最多等待 60 秒，输出上限不超过 4,096 Tokens，输入有 96 KiB 和模型窗口双重限制。模型逐条返回分类、来源 Item ID 与精确引句。事实、决定和验证说明必须摘取原文；模型只能改写明确标记的提议、计划和未验证报告。Runtime 拒绝未知来源、无效引句、把 Assistant 自述作为确认事实、把工具内容作为用户决定，以及不符合 Schema 的结果。模型请求失败、超时、不支持结构化工具输出或预算不够时，Runtime 使用规则候选。
+
+模型不能改写确定性的目标、明确约束、成功工具、工作区变更、失败记录、待审批和不确定副作用字段。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载事实，再执行 `ContextCompactionVerifier`。Tool provenance 由 source Item IDs 解析到真实 ToolCall IDs。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生 `context.compacted` Event。Outbox 会投影 `context/compacted` 通知，Desktop 随后重新读取 Context Usage。事务再次核对取消、工作区版本、reconciliation epoch、上一摘要计数和新用户输入。原始历史与上一份有效摘要会在验证失败、取消或来源过期时保留。
+
+`context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项只表示参考词表下的构成，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未结束记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
+
+Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果；Assistant 的决定自述明确标记为报告，普通将来计划不会成为已完成事项。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。
 
 ## 7. Model Gateway
 

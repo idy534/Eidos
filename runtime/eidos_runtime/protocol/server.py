@@ -29,6 +29,8 @@ from eidos_runtime.application.approvals import (
     ApprovalDecision as ApplicationApprovalDecision,
 )
 from eidos_runtime.application.context import ContextApplication
+from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord
+from eidos_runtime.persistence.context_management import ContextManagementRepository
 from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.extensions import (
     DeferredPluginImport,
@@ -1212,6 +1214,10 @@ class RuntimeServer:
                     request
                 ),
             ),
+            ("context/details", method_dtos.ContextDetailsRequestDto, ContextDetails,
+             lambda _id, request: self._applications_or_error().context.details(request.run_id)),
+            ("context/compact", method_dtos.ContextCompactRequestDto, ContextCompactionRecord,
+             lambda _id, request: self._applications_or_error().context.request_compaction(request.run_id)),
             (
                 "run/pause",
                 method_dtos.RunPauseRequestDto,
@@ -1772,6 +1778,7 @@ class RuntimeServer:
             context=ContextApplication(
                 snapshots=self.store.context_snapshot_repository(),
                 verified_compactions=self.store.verified_compaction_repository(),
+                management=ContextManagementRepository(self.store.database),
             ),
             checkpoints=CheckpointApplication(
                 self.store,

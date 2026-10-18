@@ -1362,6 +1362,14 @@ ipcMain.handle(IPC.CONTEXT_USAGE, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Context Usage 参数无效。");
   return clientOrThrow().readContextUsage(runId);
 });
+ipcMain.handle(IPC.CONTEXT_DETAILS, (_event, runId: unknown) => {
+  if (typeof runId !== "string") throw new Error("上下文参数无效。");
+  return clientOrThrow().readContextDetails(runId);
+});
+ipcMain.handle(IPC.CONTEXT_COMPACT, (_event, runId: unknown) => {
+  if (typeof runId !== "string") throw new Error("上下文参数无效。");
+  return clientOrThrow().requestContextCompaction(runId);
+});
 ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown, references: unknown) => {
   inputOwner(_event);
   if (
