@@ -215,13 +215,13 @@ ContextBuilder 在窗口压力下先清理旧工具正文，再交给摘要路�
 
 Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应的已发请求，不能直接当作缩减或增长后的新请求大小。下一请求的预算以最近一次匹配请求的 Provider 输入量为起点，再估算内容变化量。增长部分至少采用一倍参考 Token 变化量；缩减部分采用已观察的 Provider/参考值比例。缺少 Provider Usage 时，系统才完全使用词表估算。所有未来请求的推算仍属于 estimated。
 
-本地辅助计数使用已锁定的 `tiktoken==0.13.0` 和随应用提供、带固定 SHA-256 的 cl100k 词表。Runtime 不下载词表，也不按模型名称猜测 tokenizer。系统按完整模型响应只计一次思考回放。校准读取同一已完成 ModelAttempt 的 Provider Usage 和冻结 Plan 估算，并核对估算器版本及完整 ModelProfile Hash。同 Session 的新 Run 可以复用同配置请求的配对；不同模型、协议、推理和请求配置不能混用。预览、重复构建和重启不改变配对。旧估算器的 Plan 仍可读取，但不参与新校准。新 Plan 的 diagnostics 记录估算器版本，omissions 记录清理的工具调用。Plan 的可选计量来源与分项预算在缺省时不写入序列化，因此旧 Plan/Snapshot Hash 保持兼容。
+本地辅助计数使用已锁定的 `tiktoken==0.13.0` 和随应用提供、带固定 SHA-256 的 cl100k 词表。Runtime 不下载词表，也不按模型名称猜测 tokenizer。系统按完整模型响应只计一次思考回放。校准读取同一已完成 ModelAttempt 的 Provider Usage 和冻结 Plan 估算，并核对估算器版本及完整 ModelProfile Hash。新快照还保存连接配置指纹，指纹不包含 API Key 或展示名称。同 Session 的新 Run 可以复用同配置请求的配对；不同模型、端点、协议、推理和请求配置不能混用。缺少连接指纹的旧快照只在当前 Run 内配对。预览、重复构建和重启不改变配对。旧估算器的 Plan 仍可读取，但不参与新校准。新 Plan 的 diagnostics 记录估算器版本，omissions 记录清理的工具调用。Plan 的可选计量来源与分项预算在缺省时不写入序列化，因此旧 Plan/Snapshot Hash 保持兼容。
 
-在线 compactor 先生成确定性的有界候选，再通过当前 Run 已持有的 ModelClient 请求模型辅助说明。这个独立请求只暴露 `submit_context_summary` 输出 Schema，不提供可执行工具。请求最多等待 60 秒，输出上限不超过 4,096 Tokens，输入有 96 KiB 和模型窗口双重限制。模型逐条返回分类、来源 Item ID 与精确引句。事实、决定和验证说明必须摘取原文；模型只能改写明确标记的提议、计划和未验证报告。Runtime 拒绝未知来源、无效引句、把 Assistant 自述作为确认事实、把工具内容作为用户决定，以及不符合 Schema 的结果。模型请求失败、超时、不支持结构化工具输出或预算不够时，Runtime 使用规则候选。
+在线 compactor 先生成确定性的有界候选，再通过当前 Run 已持有的 ModelClient 请求模型辅助说明。这个独立请求只暴露 `submit_context_summary` 输出 Schema，不提供可执行工具。请求最多等待 60 秒，请求中的输出参数最多为 4,096 Tokens，输入有 96 KiB 和模型窗口双重限制。Provider 对思考 Tokens 的统计方式仍以实际 Usage 为准。模型逐条返回分类、来源 Item ID 与精确引句。事实、决定和验证说明必须摘取原文；模型只能改写明确标记的提议、计划和未验证报告。Runtime 拒绝未知来源、无效引句和不符合 Schema 的结果。Runtime 会把 Assistant 自述、失败工具的确认声明和来自非用户消息的决定降为未验证说明。模型请求失败、超时、不支持结构化工具输出或预算不够时，Runtime 使用规则候选。
 
 模型不能改写确定性的目标、明确约束、成功工具、工作区变更、失败记录、待审批和不确定副作用字段。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载事实，再执行 `ContextCompactionVerifier`。Tool provenance 由 source Item IDs 解析到真实 ToolCall IDs。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生 `context.compacted` Event。Outbox 会投影 `context/compacted` 通知，Desktop 随后重新读取 Context Usage。事务再次核对取消、工作区版本、reconciliation epoch、上一摘要计数和新用户输入。原始历史与上一份有效摘要会在验证失败、取消或来源过期时保留。
 
-`context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项只表示参考词表下的构成，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未结束记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
+`context/details` 返回计量来源、参考分项、近期请求误差样本及最近压缩记录。分项只表示参考词表下的构成，不冒充 Provider 的分项实测。`context/compact` 把手动请求写入既有 SQLite Event/Outbox，同 Session 的重复待处理请求会去重。Engine 在下一次安全采样前处理；终态 Run 的请求由同 Session 下一 Run 处理。请求不创建额外 Run 或 Worker。开始与结束记录包含触发原因、策略、回退原因、前后完整投影预算、耗时和摘要模型 Usage。成功摘要与成功结果在同一个事务内提交；摘要已提交、后续统计未完成时，系统仍显示成功，后预算可以为空。Runtime 中断后，未提交摘要不会重放。Desktop 会把终态 Run 的未提交记录显示为中断，并允许重新请求。以上信息复用 Event JSON，不增加 DB Schema 或第二套状态机。
 
 Compactor 只向验证层提供摘要覆盖的 ToolCall 与工作区变更来源，并按完整响应保留近期记录。摘要的 completed_actions 只记录已成功的工具结果；Assistant 的决定自述明确标记为报告，普通将来计划不会成为已完成事项。摘要预算随输入窗口调整到 512～4,096 个参考 Tokens，并受 24 KiB 正文上限约束。裁剪优先保留新事实，不通过删除明确约束、未解决问题、待审批或不确定副作用来强行满足预算。关键事实放不下时，系统保留上一份摘要。持久化事务再次检查取消请求，迟到摘要不能在取消后提交。软压缩失败日志只包含 Run ID 和受控原因。
 

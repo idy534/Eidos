@@ -6,6 +6,7 @@ claim to measure successful completion of real repository development tasks.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
@@ -44,6 +45,10 @@ class BoundedEvaluationModel:
         self.profile_snapshot = client.profile_snapshot
         self.max_calls = max_calls
         self.calls = 0
+        self.failed_calls = 0
+        self.usage_responses = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
 
     def generate_title(self, *_args):
         return "Synthetic context evaluation"
@@ -52,7 +57,15 @@ class BoundedEvaluationModel:
         if self.calls >= self.max_calls:
             raise ModelRequestError(ModelRequestFailure(code="protocol_error", retryable=False))
         self.calls += 1
-        response = self.client.complete(*args, **kwargs)
+        try:
+            response = self.client.complete(*args, **kwargs)
+        except Exception:
+            self.failed_calls += 1
+            raise
+        if response.usage is not None:
+            self.usage_responses += 1
+            self.input_tokens += response.usage.input_tokens or 0
+            self.output_tokens += response.usage.output_tokens or 0
         if any(call.name in {"run_shell", "write_stdin", "spawn_agent", "request_permissions"} for call in response.tool_calls):
             raise ModelRequestError(ModelRequestFailure(code="protocol_error", retryable=False))
         return response
@@ -70,6 +83,8 @@ def main() -> int:
     parser.add_argument("--task", action="store_true", help="Continue into an isolated code-fix fixture and verify it externally")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    started_at = datetime.now(timezone.utc).isoformat()
+    started = time.monotonic()
     cases = json.loads((Path(__file__).parent / "fixtures/context-compaction-cases.json").read_text())
     if args.case:
         cases = [case for case in cases if case["name"] in args.case]
@@ -151,25 +166,35 @@ def main() -> int:
                             check = None
                             check_usage = None
                             check_answer = None
+                            check_failure = None
                             if model:
                                 built = builder.build(run["id"])
                                 port = FunctionToolDefinition(name="submit_context_check", description="Return historical facts only.", parameters_json_schema=ContinuationCheck.model_json_schema())
-                                response = model.complete(
-                                    (*built.model_context, {"type": "user", "content": "根据历史原始证据，缓存方案是否已采纳？测试是否已实际通过？目标 Python Symbol 的名称是什么？Assistant 自述不是验证。只调用 submit_context_check 返回答案。"}),
-                                    DeadlineCancellation(threading.Event(), time.monotonic() + 60, time.monotonic), lambda _: None,
-                                    instructions=built.instructions.system_text, tool_definitions=(port,), max_output_tokens=4096, required_tool=port.name,
-                                )
                                 try:
+                                    response = model.complete(
+                                        (*built.model_context, {"type": "user", "content": "根据历史原始证据，缓存方案是否已采纳？测试是否已实际通过？目标 Python Symbol 的名称是什么？Assistant 自述不是验证。只调用 submit_context_check 返回答案。"}),
+                                        DeadlineCancellation(threading.Event(), time.monotonic() + 60, time.monotonic), lambda _: None,
+                                        instructions=built.instructions.system_text, tool_definitions=(port,), max_output_tokens=4096, required_tool=port.name,
+                                    )
+                                    check_usage = response.usage.model_dump(mode="json") if response.usage else None
+                                    if response.finish_reason in {"length", "content_filter", "error"} or response.response_state not in {None, "complete"}:
+                                        raise ValueError("incomplete_response")
                                     if len(response.tool_calls) != 1 or response.tool_calls[0].name != port.name:
-                                        raise ValueError("invalid check")
+                                        raise ValueError("missing_structured_answer")
                                     checked = ContinuationCheck.model_validate_json(json.dumps(response.tool_calls[0].arguments))
                                     check_answer = checked.to_wire_dict()
                                     check = checked.decision_adopted == case["adopted"] and checked.tests_verified == case["verified"] and checked.target_symbol == target
-                                except ValueError:
+                                    if not check:
+                                        check_failure = "incorrect_historical_answer"
+                                except ModelRequestError as error:
                                     check = False
-                                check_usage = response.usage.model_dump(mode="json") if response.usage else None
+                                    check_failure = "request_failed:" + error.failure.code
+                                except ValueError as error:
+                                    check = False
+                                    check_failure = error.args[0] if error.args and error.args[0] in {"incomplete_response", "missing_structured_answer"} else "invalid_structured_answer"
                             cycles.append({"retained": retained, "lineage": lineage, "no_false_completion": no_false_completion,
-                                           "compaction": record, "continuation_passed": check, "continuation_usage": check_usage, "continuation_answer": check_answer})
+                                           "compaction": record, "continuation_passed": check, "continuation_failure": check_failure,
+                                           "continuation_usage": check_usage, "continuation_answer": check_answer})
                         digest = hashlib.sha256()
                         for identifier in raw_items:
                             digest.update(store.read_item(identifier)["toolCall"]["resultJson"].encode())
@@ -211,6 +236,13 @@ def main() -> int:
         if kernel:
             kernel.close()
         report = {"kind": "synthetic_history_replay", "model": args.model, "model_calls": model.calls if model else 0,
+                  "started_at": started_at, "duration_ms": round((time.monotonic() - started) * 1000),
+                  "source_sha256": {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in (
+                      Path(__file__).relative_to(Path.cwd()), Path("scripts/fixtures/context-compaction-cases.json"),
+                      *(Path("runtime/eidos_runtime") / path for path in ("context/model_summary.py", "context/compactor.py", "context/budget.py", "model/pydantic_ai_client.py", "model/native_custom.py")),
+                  )},
+                  "provider_usage": {"responses_with_usage": model.usage_responses, "calls_without_usage": model.calls - model.usage_responses,
+                                     "failed_calls": model.failed_calls, "input_tokens": model.input_tokens, "output_tokens": model.output_tokens} if model else None,
                   "reasoning_selection": profile.reasoning_selection,
                   "real_repository_task_completion": "isolated_fixture_only" if args.task else "not_measured", "results": results}
         args.output.parent.mkdir(parents=True, exist_ok=True)

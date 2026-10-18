@@ -230,7 +230,9 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py
 PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py --model deepseek-v4.1-flash --case chinese_correction --scales 1 --output /absolute/path/context-model.json
 ```
 
-维护者可以重复 `--case`，选择其他样本；`--max-calls` 默认限制为 12。报告明确区分合成保留测试、模型续接结果、模型摘要采用与回退、实测 Token 和耗时。脚本不推算货币费用，费用以提供商账单为准。
+维护者可以用已配置模型的 ID 替换例子中的 `deepseek-v4.1-flash`，也可以用 `--reasoning low` 选择该模型已声明的档位。维护者可以重复 `--case`，选择其他样本；`--max-calls` 默认限制为 12。`--task` 会在压缩后通过正常 Runtime 执行一次隔离代码修复，并由评测脚本在外部运行四项单元测试。默认三轮压缩、三次续接和一次修复合计最多 12 次模型请求；这项验证仍不代表真实仓库长任务成功率。
+
+报告记录源码 Hash、Provider 返回的输入与输出 Tokens、缺少 Usage 的调用数量和耗时。续接失败会区分请求失败、格式不完整和历史事实回答错误。脚本不推算货币费用，费用以提供商账单为准。
 
 输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。locked production dependencies 包含 Workspace artifact 任务使用的 `python-docx` 和 `lark`。打包 Runtime 会复制 `eidos_runtime/workspace/apply_patch.lark`，并检查这个资源存在。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
 

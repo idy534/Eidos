@@ -153,7 +153,7 @@
 
 ### Run 并发与资源模型
 
-- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 当前工作区的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩、PTY、用户 Hooks 和流式工具调度仍属后续工作。
+- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。这个历史结果不代表后续改动已通过完整回归。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩现已接入；PTY、用户 Hooks 和流式工具调度仍属后续工作。
 
 - 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
