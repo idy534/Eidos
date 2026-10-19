@@ -18,6 +18,23 @@
 }
 .feed[data-following-bottom="true"] { overflow-anchor: none; }
 .feed-content { display: flow-root; }
+.feed-loading-older {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption, 0.75rem);
+}
+.feed-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
 .feed-jump-to-bottom {
   position: absolute;
   z-index: 10;

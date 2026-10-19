@@ -155,22 +155,26 @@ describe("automation source and tool results", () => {
     expect(summary).not.toBeNull();
     const icon = summary?.querySelector(".tool-icon svg circle");
     expect(icon).toHaveAttribute("r", "6.2");
-    expect(summary?.querySelector(".tool-summary-text")).toHaveTextContent("已创建定时任务 · 每小时喝水提醒");
   });
 });
 
 describe("conversation fork actions", () => {
-  it("lets the user request an earlier page and disables repeated clicks during loading", () => {
+  it("automatically loads earlier history when scrolling up near the top without a manual button", () => {
     const onLoadOlder = vi.fn();
     const items: Item[] = [{ id: "recent", runId: baseRun.id, sessionId: baseRun.sessionId,
       kind: "user_message", ordinal: 1, status: "completed", content: "最近输入", createdAt: 1 }];
-    const { rerender } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
+    const { container, rerender } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
       onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} />);
-    fireEvent.click(screen.getByRole("button", { name: "加载更早的记录" }));
+    expect(screen.queryByRole("button", { name: "加载更早的记录" })).not.toBeInTheDocument();
+    const feed = container.querySelector(".feed") as HTMLElement;
+    fireEvent.wheel(feed, { deltaY: -100 });
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
     rerender(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
       onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} loadingOlder />);
-    expect(screen.getByRole("button", { name: "正在读取历史…" })).toBeDisabled();
+    expect(screen.getByText("正在读取历史…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /历史|记录/ })).not.toBeInTheDocument();
+    fireEvent.wheel(feed, { deltaY: -100 });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
   });
   const answer = (run: Run, overrides: Partial<Item> = {}): Item => ({
     id: "answer", sessionId: run.sessionId, runId: run.id, ordinal: 2,

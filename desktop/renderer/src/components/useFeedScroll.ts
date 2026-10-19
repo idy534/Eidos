@@ -1,12 +1,18 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent, TouchEvent, UIEvent, WheelEvent } from "react";
 
 export function isFeedAtBottom(feed: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">): boolean {
   return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 16;
 }
 
+export interface UseFeedScrollOptions {
+  onLoadOlder?: (() => void) | undefined;
+  loadingOlder?: boolean | undefined;
+  firstItemId?: string | undefined;
+}
+
 /** Following is user intent; distance from the bottom is only a layout measurement. */
-export function useFeedScroll(hasContent: boolean) {
+export function useFeedScroll(hasContent: boolean, options?: UseFeedScrollOptions) {
   const feedRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -17,6 +23,29 @@ export function useFeedScroll(hasContent: boolean) {
   const frameRef = useRef<number | null>(null);
   const [following, setFollowing] = useState(true);
   const [atBottom, setAtBottom] = useState(true);
+
+  const onLoadOlderRef = useRef(options?.onLoadOlder);
+  onLoadOlderRef.current = options?.onLoadOlder;
+  const loadingOlderRef = useRef(options?.loadingOlder);
+  loadingOlderRef.current = options?.loadingOlder;
+  const loadTriggeredRef = useRef(false);
+  const previousFirstItemIdRef = useRef<string | undefined>(options?.firstItemId);
+
+  useEffect(() => {
+    if (!options?.loadingOlder) {
+      loadTriggeredRef.current = false;
+    }
+  }, [options?.loadingOlder, options?.onLoadOlder]);
+
+  const checkAutoLoad = useCallback((element?: HTMLElement | null) => {
+    const feed = element ?? feedRef.current;
+    if (!feed) return;
+    if (!onLoadOlderRef.current || loadingOlderRef.current || loadTriggeredRef.current) return;
+    if (feed.scrollTop <= 150) {
+      loadTriggeredRef.current = true;
+      onLoadOlderRef.current();
+    }
+  }, []);
 
   const changeFollowing = useCallback((value: boolean) => {
     followingRef.current = value;
@@ -44,6 +73,33 @@ export function useFeedScroll(hasContent: boolean) {
 
   useLayoutEffect(() => {
     const feed = feedRef.current;
+    if (!feed) return;
+    const currentFirstId = options?.firstItemId;
+    const previousFirstId = previousFirstItemIdRef.current;
+    previousFirstItemIdRef.current = currentFirstId;
+
+    if (
+      !followingRef.current &&
+      previousFirstId !== undefined &&
+      currentFirstId !== undefined &&
+      currentFirstId !== previousFirstId
+    ) {
+      const oldHeight = previousSizeRef.current.height;
+      const newHeight = feed.scrollHeight;
+      const heightDiff = newHeight - oldHeight;
+      if (heightDiff > 0) {
+        if (Math.abs(feed.scrollTop - previousTopRef.current) < 5) {
+          feed.scrollTop = previousTopRef.current + heightDiff;
+        }
+        previousTopRef.current = feed.scrollTop;
+        previousSizeRef.current = { height: newHeight, client: feed.clientHeight };
+        setAtBottom(isFeedAtBottom(feed));
+      }
+    }
+  }, [options?.firstItemId]);
+
+  useLayoutEffect(() => {
+    const feed = feedRef.current;
     const content = contentRef.current;
     if (!feed || !content) return;
     // Observe the content as well as the viewport: details animations and late
@@ -68,28 +124,37 @@ export function useFeedScroll(hasContent: boolean) {
     // Layout growth must not cancel following. A decreasing scrollTop away
     // from the bottom also covers scrollbar drags and assistive navigation.
     const movedDown = feed.scrollTop > previousTopRef.current + 1;
+    const movedUp = feed.scrollTop < previousTopRef.current - 1;
     if (bottom && (followingRef.current || userScrollRef.current || (movedDown && !resized))) changeFollowing(true);
-    else if (feed.scrollTop < previousTopRef.current - 1) changeFollowing(false);
+    else if (movedUp) changeFollowing(false);
     previousTopRef.current = feed.scrollTop;
     previousSizeRef.current = { height: feed.scrollHeight, client: feed.clientHeight };
     userScrollRef.current = false;
     setAtBottom(bottom);
-  }, [changeFollowing]);
+
+    if (movedUp || !followingRef.current) {
+      checkAutoLoad(feed);
+    }
+  }, [changeFollowing, checkAutoLoad]);
 
   const handleWheel = useCallback((event: WheelEvent<HTMLElement>) => {
     userScrollRef.current = true;
-    if (event.deltaY < 0) changeFollowing(false);
-  }, [changeFollowing]);
+    if (event.deltaY < 0) {
+      changeFollowing(false);
+      checkAutoLoad(event.currentTarget);
+    }
+  }, [changeFollowing, checkAutoLoad]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
     if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable=true]")) return;
     if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
       userScrollRef.current = true;
       changeFollowing(false);
+      checkAutoLoad(event.currentTarget);
     } else if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) {
       userScrollRef.current = true;
     }
-  }, [changeFollowing]);
+  }, [changeFollowing, checkAutoLoad]);
 
   const handlePointerDown = useCallback((event: PointerEvent<HTMLElement>) => {
     const feed = event.currentTarget;
@@ -107,9 +172,12 @@ export function useFeedScroll(hasContent: boolean) {
   const handleTouchMove = useCallback((event: TouchEvent<HTMLElement>) => {
     userScrollRef.current = true;
     const y = event.touches[0]?.clientY;
-    if (y !== undefined && touchYRef.current !== undefined && y > touchYRef.current) changeFollowing(false);
+    if (y !== undefined && touchYRef.current !== undefined && y > touchYRef.current) {
+      changeFollowing(false);
+      checkAutoLoad(event.currentTarget);
+    }
     touchYRef.current = y;
-  }, [changeFollowing]);
+  }, [changeFollowing, checkAutoLoad]);
 
   const jumpToBottom = useCallback(() => {
     changeFollowing(true);

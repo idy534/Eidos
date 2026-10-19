@@ -147,7 +147,11 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   const {
     feedRef, contentRef, atBottom, following, scheduleFollow, jumpToBottom,
     handleScroll, handleWheel, handleKeyDown, handlePointerDown, handleTouchStart, handleTouchMove,
-  } = useFeedScroll(items.length > 0);
+  } = useFeedScroll(items.length > 0, {
+    onLoadOlder,
+    loadingOlder,
+    firstItemId: items[0]?.id,
+  });
 
   useLayoutEffect(scheduleFollow, [items, runs, contextCompactions, responseActionState.revisions, scheduleFollow]);
 
@@ -203,9 +207,12 @@ export const ExecutionFeed = memo(function ExecutionFeed({
         onTouchMove={handleTouchMove}
       >
         <div className="feed-content" ref={contentRef}>
-          {onLoadOlder && <button type="button" className="btn btn--ghost" disabled={loadingOlder} onClick={onLoadOlder}>
-            {loadingOlder ? "正在读取历史…" : "加载更早的记录"}
-          </button>}
+          {loadingOlder && (
+            <div className="feed-loading-older" role="status" aria-live="polite">
+              <span className="feed-loading-spinner" aria-hidden="true" />
+              <span>正在读取历史…</span>
+            </div>
+          )}
           {itemGroups.map(({ runId, items: runItems }) => {
             const run = runsById.get(runId);
             if (!run) return null;

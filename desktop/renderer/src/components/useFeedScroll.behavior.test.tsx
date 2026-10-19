@@ -3,8 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useLayoutEffect } from "react";
 import { useFeedScroll } from "./useFeedScroll.js";
 
-function Feed({ empty = false }: { empty?: boolean }) {
-  const scroll = useFeedScroll(!empty);
+function Feed({
+  empty = false,
+  onLoadOlder,
+  loadingOlder,
+  firstItemId,
+}: {
+  empty?: boolean;
+  onLoadOlder?: () => void;
+  loadingOlder?: boolean;
+  firstItemId?: string;
+} = {}) {
+  const scroll = useFeedScroll(!empty, { onLoadOlder, loadingOlder, firstItemId });
   useLayoutEffect(scroll.scheduleFollow, [empty, scroll.scheduleFollow]);
   if (empty) return <p>Empty</p>;
   return <>
@@ -164,5 +174,53 @@ describe("feed following intent and layout", () => {
     unmount();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(frames.size).toBe(0);
+  });
+
+  it("automatically calls onLoadOlder when user scrolls up near the top", () => {
+    const onLoadOlder = vi.fn();
+    render(<Feed onLoadOlder={onLoadOlder} firstItemId="item-2" />);
+    const feed = screen.getByTestId("feed");
+    metrics(feed, 2_000, 1_400);
+    flush();
+    // Scrolling down does not trigger
+    metrics(feed, 2_000, 1_400);
+    fireEvent.scroll(feed);
+    expect(onLoadOlder).not.toHaveBeenCalled();
+
+    // Scrolling up away from bottom to near top (<= 150px) triggers onLoadOlder
+    metrics(feed, 2_000, 100);
+    fireEvent.scroll(feed);
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call onLoadOlder while loadingOlder is true", () => {
+    const onLoadOlder = vi.fn();
+    const { rerender } = render(<Feed onLoadOlder={onLoadOlder} loadingOlder firstItemId="item-2" />);
+    const feed = screen.getByTestId("feed");
+    metrics(feed, 2_000, 100);
+    fireEvent.wheel(feed, { deltaY: -50 });
+    expect(onLoadOlder).not.toHaveBeenCalled();
+
+    rerender(<Feed onLoadOlder={onLoadOlder} loadingOlder={false} firstItemId="item-2" />);
+    fireEvent.wheel(feed, { deltaY: -50 });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves viewport scroll position when older items are prepended", () => {
+    const { rerender } = render(<Feed firstItemId="item-2" />);
+    const feed = screen.getByTestId("feed");
+    metrics(feed, 1_000, 400);
+    flush();
+
+    // User scrolls up to 50
+    fireEvent.wheel(feed, { deltaY: -100 });
+    metrics(feed, 1_000, 50);
+    fireEvent.scroll(feed);
+    expect(feed).toHaveAttribute("data-following", "false");
+
+    // Older items prepended: firstItemId changes from item-2 to item-1, height grows by 1000
+    metrics(feed, 2_000, 50);
+    rerender(<Feed firstItemId="item-1" />);
+    expect(feed.scrollTop).toBe(1_050);
   });
 });

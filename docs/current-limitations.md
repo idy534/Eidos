@@ -38,7 +38,7 @@
 - 共享目录分叉使用当前文件。独立 Worktree 保存分叉时的 HEAD、staged、unstaged 和 untracked 状态。该功能不恢复历史回答时的文件状态，也不复制 ignored 文件。Managed Session 只允许独立 Worktree 分叉。
 - 历史记录不授权新 Run。Runtime 不复制 Approval、Run Grant、写入证据、Worker 或子 Agent。Desktop 不从继承 Run 恢复权限模式。用户的新输入仍走现有 Run 创建流程。
 - Worktree 创建后、历史提交前的失败会保留 durable lifecycle 和快照。相同 `operationId` 的重试复用原目标身份与快照。Runtime 不发布半份历史。来源已删除或环境需要对账时，操作明确失败。
-- 来源回答定位最多自动读取 20,000 条展示记录。用户仍可以手动分页加载更早记录。
+- 来源回答定位最多自动读取 20,000 条展示记录。Session 正文向上滑动时自动分页加载更早历史。
 - 本次 Runtime 定向测试通过 75 项。Renderer 行为测试通过 75 项，ExecutionFeed 静态测试通过 42 项。Main/Runtime 分叉与共享 Fixture 测试通过 2 项，现有 Desktop 契约检查通过。测试覆盖长历史、响应分组、工具回放、来源删除、重启、Worktree 重试、迁移回滚、界面分页与迟到响应。
 - 本次 `pnpm test` 全量通过：Runtime 2,404 项通过、2 项按配置排除；Desktop 合约 4 项、Renderer 状态 166 项、Main 84 项、Renderer 行为 533 项通过。首次运行中有 6 项 Schema 26 迁移夹具和固定版本断言失败。我更新了旧版数据库夹具并改为核对实际迁移版本；6 项定向复测、相关 Ruff 检查和第二次全量运行都通过。本次没有重新执行构建、Seatbelt 原生测试或打包测试，也没有做真实产品窗口的人工验收。
 
