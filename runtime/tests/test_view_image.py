@@ -313,7 +313,10 @@ def test_view_image_projection_keeps_metadata_without_binary_data() -> None:
 
     projection = project_tool_result("view_image", canonical)
 
-    assert projection.model_result["data"] == canonical["data"]
+    assert projection.model_result["data"] == {
+        key: value for key, value in canonical["data"].items() if key != "sha256"
+    }
+    assert "sha256" not in projection.model_result["data"]
     assert "base64" not in json.dumps(projection.model_result)
 
 

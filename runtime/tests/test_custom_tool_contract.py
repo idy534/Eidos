@@ -911,24 +911,40 @@ def test_responses_stream_requires_a_completed_terminal_event() -> None:
             return event
 
     client = OpenAIResponsesModelClient.__new__(OpenAIResponsesModelClient)
+    client._profile_spec = SimpleNamespace(provider_id="openai")
     output_item_done = SimpleNamespace(
         type="response.output_item.done", item=SimpleNamespace()
     )
     cases = (
-        (output_item_done, SimpleNamespace(type="response.failed")),
-        (output_item_done, SimpleNamespace(type="response.incomplete")),
         (
-            SimpleNamespace(type="response.output_text.delta", delta="partial"),
-            SimpleNamespace(type="error"),
+            (output_item_done, SimpleNamespace(
+                type="response.failed",
+                response=SimpleNamespace(error=SimpleNamespace(code="server_error")),
+            )),
+            "provider_unavailable",
         ),
-        (SimpleNamespace(type="response.output_item.done", item=SimpleNamespace()),),
+        (
+            (output_item_done, SimpleNamespace(type="response.incomplete")),
+            "protocol_error",
+        ),
+        (
+            (
+                SimpleNamespace(type="response.output_text.delta", delta="partial"),
+                SimpleNamespace(type="error", error=SimpleNamespace(code="server_error")),
+            ),
+            "provider_unavailable",
+        ),
+        (
+            (SimpleNamespace(type="response.output_item.done", item=SimpleNamespace()),),
+            "protocol_error",
+        ),
     )
-    for events in cases:
+    for events, expected_code in cases:
         with pytest.raises(ModelRequestError) as raised:
             asyncio.run(client._consume_stream(
                 FakeStream(events), threading.Event(), lambda _delta: None
             ))
-        assert raised.value.failure.code == "protocol_error"
+        assert raised.value.failure.code == expected_code
 
 
 def test_responses_stream_cancel_before_request_is_not_sent() -> None:
@@ -1043,7 +1059,12 @@ def test_responses_direct_noncompleted_status_is_not_executable() -> None:
     from eidos_runtime.model.client import ModelRequestError
     from eidos_runtime.model.native_custom import map_responses_response
 
-    for status in ("failed", "incomplete"):
+    cases = (
+        ("failed", SimpleNamespace(code="server_error"), None, "provider_unavailable"),
+        ("incomplete", None, SimpleNamespace(reason="other"), "protocol_error"),
+        ("incomplete", None, SimpleNamespace(reason="max_output_tokens"), "capacity_exceeded"),
+    )
+    for status, error, incomplete_details, expected_code in cases:
         with pytest.raises(ModelRequestError) as raised:
             map_responses_response(SimpleNamespace(
                 output=(SimpleNamespace(
@@ -1056,9 +1077,11 @@ def test_responses_direct_noncompleted_status_is_not_executable() -> None:
                 id="resp-1",
                 model="gpt-test",
                 status=status,
+                error=error,
+                incomplete_details=incomplete_details,
                 usage=None,
             ))
-        assert raised.value.failure.code == "protocol_error"
+        assert raised.value.failure.code == expected_code
 
 
 def test_completed_responses_map_to_the_runtime_completion_state() -> None:

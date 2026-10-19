@@ -276,10 +276,12 @@ class ContextBuilderInstructionTests(unittest.TestCase):
             sum(item.get("sectionId") == "skill-catalog" for item in built.model_context),
             1,
         )
-        self.assertIn(
-            {"type": "user", "content": "Implement the request"},
-            built.model_context,
-        )
+        self.assertTrue(any(
+            item.get("type") == "user"
+            and item.get("content") == "Implement the request"
+            and isinstance(item.get("sourceItemId"), str)
+            for item in built.model_context
+        ))
         self.assertNotIn("Keep changes focused.", built.instructions.system_text)
         self.assertNotIn("Use the review checklist.", built.instructions.system_text)
 

@@ -446,7 +446,7 @@ def test_v28_migration_keeps_builtin_rows_and_rolls_back_orphaned_rows(tmp_path)
     broken.close()
 
 
-def test_unknown_custom_type_cannot_bypass_parent_side_effect_barrier(setup):
+def test_unknown_parent_side_effect_does_not_block_custom_agent_spawn(setup):
     store, session, root, catalog = setup
     write_definition(root, model=False)
     parent = parent_run(store, session, catalog)
@@ -454,8 +454,11 @@ def test_unknown_custom_type_cannot_bypass_parent_side_effect_barrier(setup):
         "UPDATE runs SET reconciliation_required=1 WHERE id=?", (parent["id"],)
     )
     store.connection.commit()
-    with pytest.raises(CollaborationRejected, match="reconciliation_required"):
-        spawn(store, parent)
+    child, _item, _request = spawn(store, parent)
+
+    assert child.parent_run_id == parent["id"]
+    assert store.read_run(parent["id"])["reconciliationRequired"]
+    assert not store.side_effects_blocked(parent["id"])
 
 
 def test_shared_custom_agent_fixture_matches_python_contracts():

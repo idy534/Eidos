@@ -263,7 +263,7 @@ def test_search_queue_owns_no_waiting_thread_and_starts_when_a_slot_is_free(tmp_
     assert executor._search_sessions == {}
 
 
-def test_mixed_batch_parallel_reads_keep_persisted_order_and_skip_recovery(state, monkeypatch):
+def test_mixed_batch_parallel_reads_keep_persisted_order_around_plan_write(state, monkeypatch):
     from types import SimpleNamespace
     from eidos_runtime.model.client import ModelToolCall, ModelResponse
     from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -296,9 +296,6 @@ def test_mixed_batch_parallel_reads_keep_persisted_order_and_skip_recovery(state
             store.connection.execute("UPDATE runs SET work_mode='plan' WHERE id=?", (run['id'],))
             resources._set_registry()
             runtime = ToolCallRuntime(store, resources.dispatcher, None, RuntimeEvents(lambda _: None), default_scanner(), RuntimePhaseTracker(), async_kernel=kernel, shell_available=False, base_permissions=BasePermissionProfile.for_workspace(workspace_root=store.workspace_for_run(run['id']).path))
-            def unexpected(**_kwargs):
-                raise AssertionError('ordinary reads or a local Plan write must not scan the workspace')
-            monkeypatch.setattr(runtime, '_refresh_reconciliation', unexpected)
             snapshot = resources.dispatcher.snapshot()
             index = store.increment_model_step(run['id'], tool_snapshot=snapshot.as_dict())
             step = SimpleNamespace(run_id=run['id'], step_index=index, tool_snapshot=snapshot)

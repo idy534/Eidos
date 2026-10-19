@@ -344,28 +344,40 @@ class ModelPersistenceTests(unittest.TestCase):
             {"type": "protocol_error", "code": "length"}, model.contexts[1]
         )
 
-    def test_repeated_length_finish_stops_after_one_repair(self) -> None:
+    def test_repeated_length_finish_uses_protocol_repair_then_capacity_recovery(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "length repeatedly")
         model = ScriptedModel([
             ModelResponse(text="first", finish_reason="length"),
             ModelResponse(text="second", finish_reason="length"),
-            ModelResponse(text="third", finish_reason="length"),
+            ModelResponse(text="continued", response_state="complete"),
         ])
 
         RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+        self.assertEqual(model._index, 3)
+        attempts = self.store.read_model_attempts(run["id"])
         self.assertEqual(
-            self.store.read_run(run["id"])["errorCode"], "MODEL_PROTOCOL_ERROR"
+            [attempt["status"] for attempt in attempts],
+            ["failed", "failed", "completed"],
         )
-        self.assertEqual(model._index, 2)
+        self.assertEqual([attempt["finishReason"] for attempt in attempts[:2]], ["length", "length"])
+        self.assertIn(
+            {"type": "protocol_error", "code": "length"}, model.contexts[1]
+        )
+        self.assertIn("model_output_capacity", str(model.contexts[2]))
         self.assertEqual(
-            [
-                attempt["status"]
-                for attempt in self.store.read_model_attempts(run["id"])
-            ],
-            ["failed", "failed"],
+            [attempt["retryDecision"]["reason"] for attempt in attempts],
+            ["invalid_completion", "invalid_completion", "completed"],
+        )
+        self.assertEqual(
+            [attempt["retryDecision"]["transportRetryCount"] for attempt in attempts],
+            [0, 0, 0],
+        )
+        self.assertEqual(
+            len({attempt["contextSnapshotId"] for attempt in attempts}), 3
         )
 
     def test_content_filter_remains_terminal_without_repair(self) -> None:

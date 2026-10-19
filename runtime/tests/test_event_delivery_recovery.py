@@ -293,7 +293,7 @@ class FinalizingRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
 
-    def test_finalizing_with_interrupted_intent_requires_reconciliation(self) -> None:
+    def test_finalizing_with_interrupted_intent_preserves_uncertainty_without_gate(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "write")
         item = self.store.create_tool_item(
             run["id"], 1, 0, "call", "write_file", "{}"
@@ -307,8 +307,17 @@ class FinalizingRecoveryTests(unittest.TestCase):
 
         recovered = self.store.read_run(run["id"])
         self.assertEqual(recovered["status"], "interrupted")
-        self.assertTrue(self.store.side_effects_blocked(run["id"]))
         self.assertTrue(recovered["sideEffectsMayExist"])
+        self.assertTrue(recovered["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(run["id"]))
+        assert self.store.connection is not None
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT status FROM durable_intents WHERE tool_call_id = "
+                "(SELECT id FROM tool_calls WHERE provider_call_id = 'call')"
+            ).fetchone()[0],
+            "interrupted",
+        )
 
     def test_recovery_event_failure_rolls_back_the_whole_transaction(self) -> None:
         run, item_id = self._finalizing_run(active_item=True)

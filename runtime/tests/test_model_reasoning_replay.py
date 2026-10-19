@@ -229,11 +229,18 @@ def test_reasoning_survives_restart_and_stays_out_of_session_items():
             store.close()
 
 
-def test_reasoning_record_rejects_oversized_payload():
-    with pytest.raises(ValueError, match="reasoning_replay_too_large"):
-        ModelResponseReplay(
-            reasoning_parts=(ModelReasoningPart(content="x" * (4 * 1024 * 1024)),)
-        )
+def test_reasoning_record_omits_oversized_provider_parts_whole():
+    replay = ModelResponseReplay.model_validate({
+        "reasoning_parts": (
+            ModelReasoningPart(content="small retained part", id="reasoning-1"),
+            ModelReasoningPart(content="x" * (4 * 1024 * 1024), id="oversized"),
+        ),
+    })
+
+    assert replay.reasoning_parts == (
+        ModelReasoningPart(content="small retained part", id="reasoning-1"),
+    )
+    assert len(replay.model_dump_json().encode("utf-8")) <= 4 * 1024 * 1024
 
 
 def test_signatures_and_provider_metadata_survive_chat_replay():

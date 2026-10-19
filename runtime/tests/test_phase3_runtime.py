@@ -312,7 +312,7 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
             self.assertFalse(result["sideEffectsMayExist"])
             store.close()
 
-    def test_external_timeout_fails_closed_after_read_only_verification(self) -> None:
+    def test_external_timeout_is_preserved_without_blocking_run_completion(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-p3-timeout-") as directory:
             root = Path(directory)
             data, workspace, source = root / "data", root / "workspace", root / "plugin"
@@ -376,9 +376,9 @@ class PhaseThreeRuntimeTests(unittest.TestCase):
                 kernel.close()
 
             completed = store.read_run(run["id"])
-            self.assertNotEqual(completed["status"], "succeeded")
+            self.assertEqual(completed["status"], "succeeded")
             self.assertTrue(completed["sideEffectsMayExist"])
-            self.assertTrue(store.side_effects_blocked(run["id"]))
+            self.assertFalse(store.side_effects_blocked(run["id"]))
             self.assertTrue(completed["reconciliationRequired"])
             self.assertTrue(
                 store.context_projection_facts(

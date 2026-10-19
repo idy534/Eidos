@@ -208,7 +208,7 @@ class RuntimeLoopTests(unittest.TestCase):
         self.assertEqual(stopped["stopReason"], "repeated_empty_response")
         self.assertEqual(len(model.contexts), 3)
 
-    def test_repeated_tool_calls_finalize_the_run(self) -> None:
+    def test_repeated_tool_calls_are_reported_and_model_can_continue(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Keep reading")
         model = ScriptedModel(
             [
@@ -221,19 +221,27 @@ class RuntimeLoopTests(unittest.TestCase):
                         ),
                     )
                 )
-                for index in range(20)
+                for index in range(3)
             ]
+            + [ModelResponse(text="The saved file result is enough to continue.")]
         )
 
         RuntimeLoop(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
-        stopped = self.store.read_run(run["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "repeated_tool_call")
-        self.assertEqual(stopped["modelStepCount"], 3)
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
         self.assertEqual(len(model.contexts), 4)
+        self.assertTrue(any(
+            "Repeated tools did not advance the task" in str(item.get("content"))
+            or "Do not repeat the same action" in str(item.get("content"))
+            for item in model.contexts[2]
+        ))
+        results = self.store.connection.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE tool_name='read_file'"
+        ).fetchone()[0]
+        self.assertLessEqual(results, 2)
 
     def test_second_active_run_is_rejected(self) -> None:
         self.store.create_run(self.session["id"], "First")
@@ -241,7 +249,7 @@ class RuntimeLoopTests(unittest.TestCase):
         with self.assertRaises(ActiveRunError):
             self.store.create_run(self.session["id"], "Second")
 
-    def test_projection_safety_overflow_compacts_before_sampling(self) -> None:
+    def test_projection_safety_uses_bounded_history_without_forcing_compaction(self) -> None:
         for index in range(13):
             historical, _ = self.store.create_run(
                 self.session["id"], f"{index}:" + "x" * (64 * 1024 - 3)
@@ -257,8 +265,12 @@ class RuntimeLoopTests(unittest.TestCase):
 
         completed = self.store.read_run(run["id"])
         self.assertEqual(completed["status"], "succeeded")
-        self.assertGreaterEqual(self.store.compaction_count(run["id"]), 1)
+        self.assertEqual(self.store.compaction_count(run["id"]), 0)
         self.assertEqual(len(model.contexts), 1)
+        self.assertLessEqual(
+            sum(len(str(item.get("content", "")).encode("utf-8")) for item in model.contexts[0]),
+            8 * 1024 * 1024,
+        )
 
     def test_cancel_prevents_a_late_model_result_from_succeeding_the_run(self) -> None:
         run, _user_item = self.store.create_run(self.session["id"], "Wait")
