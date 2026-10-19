@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { AgentDefinition, AgentDefinitionDocument, AgentModelSelection } from "../../../../shared/collaboration.generated.js";
 import type { ModelOption } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { Tooltip } from "../Tooltip.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { userFacingError } from "../../session-state.js";
@@ -318,39 +319,45 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
 
                 <div className="agent-editor__instructions-toolbar">
                   <div className="agent-editor__segmented-bar agent-editor__segmented-bar--sm" role="tablist" aria-label="查看方式">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={viewMode === "edit"}
-                      className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
-                      onClick={() => setViewMode("edit")}
-                      title="查看与编辑源码"
-                    >
-                      <CodeIcon className="agent-editor__tab-icon" />
-                      <span>源码</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={viewMode === "preview"}
-                      className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
-                      onClick={() => setViewMode("preview")}
-                      title="预览 Markdown 效果"
-                    >
-                      <PreviewIcon className="agent-editor__tab-icon" />
-                      <span>预览</span>
-                    </button>
+                    <Tooltip content="查看与编辑源码">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={viewMode === "edit"}
+                        className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
+                        onClick={() => setViewMode("edit")}
+                        title="查看与编辑源码"
+                      >
+                        <CodeIcon className="agent-editor__tab-icon" />
+                        <span>源码</span>
+                      </button>
+                    </Tooltip>
+                    <Tooltip content="预览 Markdown 效果">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={viewMode === "preview"}
+                        className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
+                        onClick={() => setViewMode("preview")}
+                        title="预览 Markdown 效果"
+                      >
+                        <PreviewIcon className="agent-editor__tab-icon" />
+                        <span>预览</span>
+                      </button>
+                    </Tooltip>
                   </div>
 
-                  <button
-                    type="button"
-                    className="agent-editor__icon-btn"
-                    onClick={() => setExpandedMd(true)}
-                    title="放大编辑"
-                    aria-label="放大编辑"
-                  >
-                    <ExpandIcon />
-                  </button>
+                  <Tooltip content="放大编辑">
+                    <button
+                      type="button"
+                      className="agent-editor__icon-btn"
+                      onClick={() => setExpandedMd(true)}
+                      title="放大编辑"
+                      aria-label="放大编辑"
+                    >
+                      <ExpandIcon />
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -464,39 +471,45 @@ function AgentMdExpandedDialog({
 
           <div className="agent-editor__instructions-toolbar">
             <div className="agent-editor__segmented-bar agent-editor__segmented-bar--sm" role="tablist" aria-label="查看方式">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewMode === "edit"}
-                className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
-                onClick={() => onChangeViewMode("edit")}
-                title="查看与编辑源码"
-              >
-                <CodeIcon className="agent-editor__tab-icon" />
-                <span>源码</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewMode === "preview"}
-                className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
-                onClick={() => onChangeViewMode("preview")}
-                title="预览 Markdown 效果"
-              >
-                <PreviewIcon className="agent-editor__tab-icon" />
-                <span>预览</span>
-              </button>
+              <Tooltip content="查看与编辑源码">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === "edit"}
+                  className={`agent-editor__toolbar-tab ${viewMode === "edit" ? "agent-editor__toolbar-tab--active" : ""}`}
+                  onClick={() => onChangeViewMode("edit")}
+                  title="查看与编辑源码"
+                >
+                  <CodeIcon className="agent-editor__tab-icon" />
+                  <span>源码</span>
+                </button>
+              </Tooltip>
+              <Tooltip content="预览 Markdown 效果">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === "preview"}
+                  className={`agent-editor__toolbar-tab ${viewMode === "preview" ? "agent-editor__toolbar-tab--active" : ""}`}
+                  onClick={() => onChangeViewMode("preview")}
+                  title="预览 Markdown 效果"
+                >
+                  <PreviewIcon className="agent-editor__tab-icon" />
+                  <span>预览</span>
+                </button>
+              </Tooltip>
             </div>
 
-            <button
-              type="button"
-              className="agent-editor__icon-btn"
-              onClick={onClose}
-              title="收起"
-              aria-label="收起"
-            >
-              <CompressIcon />
-            </button>
+            <Tooltip content="收起">
+              <button
+                type="button"
+                className="agent-editor__icon-btn"
+                onClick={onClose}
+                title="收起"
+                aria-label="收起"
+              >
+                <CompressIcon />
+              </button>
+            </Tooltip>
           </div>
         </header>
 

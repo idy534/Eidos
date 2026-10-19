@@ -10,6 +10,7 @@ import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
 import type { ContextDetails } from "../../../shared/context-management.js";
 import { ModelSelector } from "./ModelSelector.js";
+import { Tooltip } from "./Tooltip.js";
 import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
 
 export interface ComposerProps {
@@ -354,9 +355,11 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       />
       <div className="composer-actions">
         <div className="composer-meta">
-          <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
-            disabled={!draftReady || isSubmitting || !context}
-            onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
+          <Tooltip content="添加文件、扩展或历史对话">
+            <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
+              disabled={!draftReady || isSubmitting || !context}
+              onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
+          </Tooltip>
           {onApprovalModeChange && (
             <ApprovalModeSelector
               mode={approvalMode}
@@ -365,20 +368,22 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             />
           )}
           {workMode === "plan" && (
-            <button
-              type="button"
-              className="composer-plan-badge"
-              disabled={isSubmitting}
-              onClick={() => onWorkModeChange?.("execute")}
-              aria-label="退出 Plan 模式"
-              title="退出 Plan 模式"
-            >
-              <span className="composer-plan-badge__icon" aria-hidden="true">
-                <LightbulbIcon className="composer-plan-badge__bulb" />
-                <CloseIcon className="composer-plan-badge__close" />
-              </span>
-              <span className="composer-plan-badge__text">Plan 模式</span>
-            </button>
+            <Tooltip content="退出 Plan 模式">
+              <button
+                type="button"
+                className="composer-plan-badge"
+                disabled={isSubmitting}
+                onClick={() => onWorkModeChange?.("execute")}
+                aria-label="退出 Plan 模式"
+                title="退出 Plan 模式"
+              >
+                <span className="composer-plan-badge__icon" aria-hidden="true">
+                  <LightbulbIcon className="composer-plan-badge__bulb" />
+                  <CloseIcon className="composer-plan-badge__close" />
+                </span>
+                <span className="composer-plan-badge__text">Plan 模式</span>
+              </button>
+            </Tooltip>
           )}
           {!isIdle && <span>{statusLabel}</span>}
           {!modelConfigured && (
@@ -402,38 +407,42 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           )}
 
           {showCancelButton ? (
-            <Button
-              type="button"
-              variant="primary"
-              size="medium"
-              className="composer-submit-btn composer-cancel-btn"
-              disabled={Boolean(cancelingRunId)}
-              loading={Boolean(cancelingRunId)}
-              onClick={onCancel}
-              aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
-              title={cancelingRunId ? "取消中…" : "取消 Run"}
-              icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
-            >
-              <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
-            </Button>
+            <Tooltip content={cancelingRunId ? "取消中…" : "取消 Run"}>
+              <Button
+                type="button"
+                variant="primary"
+                size="medium"
+                className="composer-submit-btn composer-cancel-btn"
+                disabled={Boolean(cancelingRunId)}
+                loading={Boolean(cancelingRunId)}
+                onClick={onCancel}
+                aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
+                title={cancelingRunId ? "取消中…" : "取消 Run"}
+                icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
+              >
+                <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
+              </Button>
+            </Tooltip>
           ) : (
-            <Button
-              type="submit"
-              variant="primary"
-              size="medium"
-              className={`composer-submit-btn${!hasDraft ? " composer-submit-btn--empty" : ""}`}
-              disabled={isSubmitDisabled}
-              loading={isSubmitting || composerMode === "starting"}
-              aria-label={buttonLabel}
-              title={buttonLabel}
-              icon={
-                !isSubmitting && composerMode !== "starting" ? (
-                  <UpArrowIcon />
-                ) : undefined
-              }
-            >
-              <span className="sr-only">{buttonLabel}</span>
-            </Button>
+            <Tooltip content={buttonLabel}>
+              <Button
+                type="submit"
+                variant="primary"
+                size="medium"
+                className={`composer-submit-btn${!hasDraft ? " composer-submit-btn--empty" : ""}`}
+                disabled={isSubmitDisabled}
+                loading={isSubmitting || composerMode === "starting"}
+                aria-label={buttonLabel}
+                title={buttonLabel}
+                icon={
+                  !isSubmitting && composerMode !== "starting" ? (
+                    <UpArrowIcon />
+                  ) : undefined
+                }
+              >
+                <span className="sr-only">{buttonLabel}</span>
+              </Button>
+            </Tooltip>
           )}
         </div>
       </div>

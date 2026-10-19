@@ -305,17 +305,17 @@ test("every terminal run state has a user-facing presentation", () => {
   assert.equal(terminalRunPresentation(run("running")), undefined);
 });
 
-test("does not present a succeeded run with an unresolved reconciliation barrier as complete", () => {
+test("presents completed conversation status independently of unknown tool outcomes", () => {
   const unresolved = {
     ...run("succeeded"),
     reconciliationRequired: true,
   };
 
   assert.deepEqual(terminalRunPresentation(unresolved), {
-    label: "部分操作结果尚未确认，请查看操作记录",
-    tone: "warning",
+    label: "已完成",
+    tone: "success",
   });
-  assert.equal(taskStatusFromRun(unresolved), "failed");
+  assert.equal(taskStatusFromRun(unresolved), "completed");
 });
 
 test("uses generic stop messages for removed causes without explaining old mechanisms", () => {
@@ -327,10 +327,10 @@ test("uses generic stop messages for removed causes without explaining old mecha
   });
 });
 
-test("maps a completed run notification with a reconciliation barrier to a failed session", () => {
+test("maps a completed run with unknown operation evidence to a completed session", () => {
   assert.equal(
     taskStatusFromRun({ status: "succeeded", reconciliationRequired: true }),
-    "failed",
+    "completed",
   );
 });
 

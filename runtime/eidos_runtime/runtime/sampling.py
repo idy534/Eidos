@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.capacity import CapacityExceeded
+
 import threading
 
 from eidos_runtime.model.replay import ModelResponseReplay
@@ -61,6 +63,10 @@ class SamplingAuthenticationFailed(SamplingError):
 
 
 class SamplingInvalidRequest(SamplingError):
+    pass
+
+
+class SamplingCapacityExceeded(SamplingError):
     pass
 
 
@@ -414,6 +420,8 @@ def _diagnostic_code(value: object) -> str:
 def _sampling_error(
     error: Exception | None, *, had_progress: bool
 ) -> SamplingError | SensitiveScanError:
+    if isinstance(error, CapacityExceeded):
+        return SamplingCapacityExceeded(error.reason, had_progress=had_progress)
     if isinstance(error, SensitiveScanError):
         return error
     if isinstance(error, SamplingError):
@@ -434,6 +442,8 @@ def _sampling_error(
             return SamplingContextExceeded(failure.code, **options)
         if failure.code == "invalid_request":
             return SamplingInvalidRequest(failure.code, **options)
+        if failure.code == "capacity_exceeded":
+            return SamplingCapacityExceeded(failure.reason or failure.code, **options)
         if failure.code == "protocol_error":
             return SamplingProtocolError(failure.code, **options)
         if failure.retryable:

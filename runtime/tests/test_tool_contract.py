@@ -382,7 +382,9 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertEqual(
             description,
-            "Run a shell command in the macOS workspace sandbox. "
+            "Run a shell command in cwd under the current Run permissions. "
+            "Each call starts a new shell in cwd; cd does not carry over to later calls. "
+            "Use cwd to select the working directory instead of prepending cd to command. "
             "Returns command output, or a sessionId if the command is still running.",
         )
         for fragment in (
@@ -404,6 +406,19 @@ class ToolContractTests(unittest.TestCase):
             self.assertNotIn(fragment, description)
 
         properties = RunShellInput.model_json_schema(by_alias=True)["properties"]
+        self.assertEqual(properties["cwd"]["default"], ".")
+        self.assertEqual(
+            properties["cwd"]["description"],
+            "Workspace-relative or canonical absolute working directory. "
+            "Defaults to '.', the current Session's workspace root, including "
+            "projectless and full_access Runs.",
+        )
+        model_shell = next(
+            definition["function"] for definition in model_tool_definitions()
+            if definition["function"]["name"] == "run_shell"
+        )
+        self.assertEqual(model_shell["description"], description)
+        self.assertEqual(model_shell["parameters"]["properties"]["cwd"], properties["cwd"])
         self.assertEqual(
             properties["gitWriteAccess"]["description"],
             'Set to "request" when the current Run needs Git metadata write '

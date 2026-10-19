@@ -1622,6 +1622,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 {!isDraft && <QueuedMessages
                   key={`queue-${currentSnapshot.session.id}`}
                   sessionId={currentSnapshot.session.id}
+                  activeRunId={activeRun && ["running", "waiting_approval", "waiting_input", "waiting_agents"].includes(activeRun.status) ? activeRun.id : undefined}
                   ready={isStorageReady && runtimeStatus.state === "ready"}
                   onChanged={(change) => {
                     sessionActions.setSnapshot((previous) => applyQueuedRunChange(previous, change));

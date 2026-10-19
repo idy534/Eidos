@@ -40,7 +40,19 @@ export function useDialogFocusLifecycle({
       const target = triggerRef.current?.isConnected
         ? triggerRef.current
         : getFallbackFocus?.();
-      if (target?.isConnected) target.focus();
+      if (target?.isConnected) {
+        target.setAttribute("data-restored-focus", "true");
+        target.focus();
+        if (typeof queueMicrotask === "function") {
+          queueMicrotask(() => {
+            if (target?.isConnected) {
+              target.removeAttribute("data-restored-focus");
+            }
+          });
+        } else {
+          target.removeAttribute("data-restored-focus");
+        }
+      }
       triggerRef.current = null;
     }
 

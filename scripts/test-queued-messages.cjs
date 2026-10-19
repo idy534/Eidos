@@ -65,7 +65,7 @@ app.whenReady().then(async () => {
     await script("new Promise(resolve => setTimeout(resolve, 100))");
     assert.equal(await script("document.querySelector('.queued-message-preview').textContent"), "修改后的排队消息");
     assert.equal(await script("document.querySelector('.composer textarea').value"), "主输入框中的草稿");
-    for (const width of [600, 420]) {
+    for (const width of [320, 768, 1024, 1440, 420]) {
       win.setContentSize(width, 700);
       await script("new Promise(resolve => setTimeout(resolve, 100))");
       await script(`(${check.toString()})()`);
@@ -83,12 +83,28 @@ app.whenReady().then(async () => {
     await script("document.querySelector('[aria-label=\"删除第 2 条排队消息\"]').click()");
     await script("new Promise(resolve => setTimeout(resolve, 100))");
     assert.equal(await script("document.querySelectorAll('.queued-message').length"), 7);
+    await script(`document.querySelector('[aria-label="将第 1 条排队消息用于引导当前任务"]').focus()`);
+    win.show();
+    win.focus();
+    win.webContents.focus();
+    await script("new Promise(resolve => setTimeout(resolve, 250))");
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
+    win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
+    await script("new Promise(resolve => setTimeout(resolve, 100))");
+    assert.equal(await script("document.querySelectorAll('.queued-message').length"), 6);
+    assert.equal(await script("document.querySelector('.process-group .process-steering .feed-label').textContent"), "引导对话 · 等待下一步读取");
+    assert.equal(await script("document.querySelector('.composer textarea').value"), "主输入框中的草稿");
+    await script("window.consumeSteering()");
+    await script("new Promise(resolve => setTimeout(resolve, 100))");
+    assert.equal(await script("document.querySelector('.process-steering .feed-label').textContent"), "引导对话 · 已加入当前对话");
+    if (process.env.EIDOS_QUEUE_SCREENSHOT_DIR) await writeFile(path.join(process.env.EIDOS_QUEUE_SCREENSHOT_DIR, "queued-steering.png"), (await win.webContents.capturePage()).toPNG());
     await script("window.setQueuedMessages([])");
     await script("new Promise(resolve => setTimeout(resolve, 100))");
     assert.equal(await script("Boolean(document.querySelector('.queued-messages'))"), false);
     assert.deepEqual(errors, [], "queue fixture must have no renderer errors");
     console.log(JSON.stringify({ desktop, narrow }));
-    console.log("Queued message native layout, editing, deletion and draft isolation passed.");
+    console.log("Queued message native layout, editing, deletion, keyboard steering and draft isolation passed.");
   } catch (error) { console.error(error); code = 1; }
   finally { clearTimeout(deadline); win?.destroy(); await server?.close(); await rm(temporaryRoot, { recursive: true, force: true }); app.exit(code); }
 });

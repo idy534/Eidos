@@ -727,7 +727,7 @@ test("distinguishes a reconciliation gate for a non-shell tool", () => {
   assert.doesNotMatch(html, /失败 output\.txt/);
 });
 
-test("does not show a succeeded run with a reconciliation barrier as complete", () => {
+test("does not override completed Run status with unknown operation evidence", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "检查" })]}
@@ -740,8 +740,7 @@ test("does not show a succeeded run with a reconciliation barrier as complete", 
     />,
   );
 
-  assert.match(html, /部分操作结果尚未确认，请查看操作记录/);
-  assert.doesNotMatch(html, /已完成/);
+  assert.doesNotMatch(html, /部分操作结果尚未确认，请查看操作记录/);
 });
 
 test("shows pending approval history without decision buttons", () => {

@@ -4,7 +4,7 @@
 
 本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](current-automations.md)。
 
-> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
+> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。
 
@@ -211,9 +211,11 @@ Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否
 
 统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。新的 Run 在产生自己的投影前显示暂无统计。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
 
-Runtime 另有减少历史重发的主动压缩路径。输入投影超过 65,536 tokens、仍符合真实模型窗口、没有待处理 Approval 或 reconciliation，且距离上次尝试已有至少 32 条新的未压缩 Item 时，Runtime 尝试压缩旧历史。这个路径按 Token 预算保留完整近期响应，并保留用户消息和 Skill 读取正文。它复用现有事实验证与事务提交，不删除原始历史。主动压缩失败后，Runtime 保留原投影并继续正常的窗口判断；65,536 不是 Run 停止阈值。
+Runtime 在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自动摘要压缩。系统直接比较未取整的 Token 数量，不使用界面四舍五入后的百分比。系统不再使用固定 65,536 Tokens 或新增 32 条 Item 作为摘要触发条件。这个路径在输入仍符合请求预算、没有待处理 Approval 或 reconciliation 时执行，并按 Token 预算保留完整近期响应、用户消息和 Skill 读取正文。系统复用现有事实验证与事务提交，不删除原始历史。自动摘要失败后，Runtime 保留原投影；同一上下文状态不会重复尝试这个提前压缩路径。输入预算已经不足时，系统继续执行原有窗口压力保护。
 
-ContextBuilder 在窗口压力下先清理旧工具正文，再交给摘要路径。清理阈值是 65,536 与可用输入预算 75% 中的较小值，目标是阈值的 75%。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～16,384。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。系统只清理较大的、已完成且成功的文件读取、文件列表、搜索和已结束 Shell 结果。失败、运行中、需要 reconciliation、Skill、记忆、MCP 和带图片正文的结果保持原样。模型输入保留结果状态、文件版本、来源 Item、原文 Hash 和 `read_tool_output` 回读参数。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线软摘要使用 Token 预算。
+在线历史投影继续使用有界数据库读取与完整响应分组。摘要候选批次和在线资源预算保持独立；系统不会删除原始 Item、Blob 或冻结历史。投影资源不足时，Engine 尝试摘要恢复；必需事实仍装不下或恢复没有进展时，系统暂停 Run，保留继续和取消入口。
+
+ContextBuilder 在摘要前独立清理旧工具正文。清理阈值是 65,536 与可用输入预算 75% 中的较小值，目标是阈值的 75%；这个阈值只控制工具正文清理，不触发摘要请求或压缩过程记录。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～16,384。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。系统只清理较大的、已完成且成功的文件读取、文件列表、搜索和已结束 Shell 结果。失败、运行中、需要 reconciliation、Skill、记忆、MCP 和带图片正文的结果保持原样。模型输入保留结果状态、文件版本、来源 Item、原文 Hash 和 `read_tool_output` 回读参数。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线百分比摘要使用 Token 预算。
 
 `read_tool_output(stream="result", itemId=..., callId=...)` 对允许的历史工具结果提供 UTF-8 字节分页。读取范围只包含当前 Session 和该 Session 已冻结的分叉历史。源 Session 的原始 Item ID 不授权访问其他 Session。原有 stdout/stderr 和活动 Shell 读取保持兼容；记忆、Skill、MCP 和写入工具正文不进入这个回读出口。
 
@@ -324,11 +326,11 @@ ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与�
 
 `apply_patch.lark` 的语法来源是 `openai/codex` 的 `codex-rs/core/assets/tools/apply_patch.lark`。本地 grammar 将上游的 `add_line+` 改为 `add_line*`，因为 Codex Rust streaming parser 允许没有内容行的 Add File；显式的 `+` 仍表示一条空内容行。上游 grammar 中的部分空行正则不能直接交给 Lark，所以本地 grammar 也对这些 token 做了 Lark 兼容适配。Parser 可以规范化 CRLF 和外层空白，也支持首个 Update 片段不带 `@@`。Parser 不会猜测缺失的 `*** Begin Patch`、`*** End Patch` 或 `+`/`-` 前缀。Function 使用 `{ "patch": "..." }` 包装，Custom 不使用 JSON 包装。
 
-Tool Result 的 `reconciliationRequired` 是本次执行是否建立 reconciliation barrier 的权威结果。`sideEffectsMayExist` 只保留历史证据。它不是完成条件。Runtime 只有在 Tool Result 缺少显式 reconciliation 判断时，才为旧结果使用保守兼容规则。敏感扫描或结果超限导致 projection 重建时，Runtime 仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。未清除的 barrier 会阻止 Run 提交 `succeeded`。Runtime 不会自动重放有副作用的 Tool。
+Tool Result 的 `reconciliationRequired` 只记录本次执行的未知结果。`sideEffectsMayExist` 保留可能副作用的证据。系统不会用这两个字段阻止后续工具、正常完成或取消。系统保留原始事实，不猜测成功，也不自动重放可能已执行的操作。
 
 Shell 每次 ToolCall 只等待一个窗口。Shell 输出会持续追加到原命令 Item。命令退出后，Runtime 更新原命令的完整 `executionStatus`、`exitCode`、`stdout`、`stderr` 和 `termination`。普通且确定的 Shell 退出会把 Item 按命令结果标记为 `completed` 或 `failed`。确定的 `shell_exit_nonzero` 会把 Item 标记为 `failed`，但会把 ToolCall 标记为 `completed`。Workspace observation 不完整只影响 observation metadata，不会把已退出的 Shell 变成只读 reconciliation。`reconciliationRequired = true`、timeout、background child 清理未完成和真正的 Shell 启动失败仍然把 ToolCall 标记为 `failed` 并保持 fail closed。
 
-只有执行最终状态未知时，Shell 才会建立 reconciliation barrier。不确定状态只由持久 Intent 与 reconciliation 事实表达，不增加“下一步必须只读”的执行状态。Barrier 允许只读、安全协作、独立 Plan 写入和权限申请；内置文件变更按已知冲突路径判断，范围未知的副作用返回 `reconciliation_required`。Workspace refresh 只会清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。Runtime 不会自动重放原 Shell。unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
+Runtime 会记录 Shell 和其他工具的未知结果。系统不会因此建立后续操作的核验门，也不会同步扫描 Workspace 来解除这类执行限制。系统不会自动重放未知操作。后续操作仍执行各自的权限、身份、版本和结果校验。
 
 Runtime 内部维护经过校验的 Python、ripgrep、Python import roots 和受支持包版本的 Catalog。内置依赖发现工具已移除。`run_shell` 对识别到的 Skill 脚本自动选择该 Skill 声明的 binding，并复用现有校验、权限和启动前复检。普通项目命令保留原环境，激活 Skill 本身不会切换环境。`dependencyBindingId` 输入保留兼容，显式值仍校验 Run 和 Skill 归属。
 
@@ -446,7 +448,7 @@ ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。
 
 当前 `SCHEMA_VERSION` 是 27。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
-Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或进入 reconciliation。其他数据库和文件不参与跨库业务 transaction。
+Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或记录实际中断与未知结果。其他数据库和文件不参与跨库业务 transaction。
 
 RuntimeEngine 在退出时会发布最后一次 effective-time mutation。计时更新和其他事件一样走 RuntimeEvents 与 Outbox，不会仅提交到数据库而等待下一次业务调用触发投递。
 
@@ -618,11 +620,11 @@ Renderer 构建前只清理 `dist/renderer/assets`，以移除上次构建遗留
 
 ## 16. Runtime Recovery
 
-Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。对于没有未完成 Tool 执行或不确定副作用的 active Run，只有在没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent，且没有 running ToolAttempt 时，Runtime 才会把 Run 和执行段重新排回队列。其他不确定执行仍然进入 `interrupted`。Pending Approval 仍按既有的结构化待批规则恢复。Cancellation 在 SQLite 中先记录 request，再通过 Run Worker、Model request、Tool process、Approval wait 和 Async Task 传播。取消会停止执行。未清除的 reconciliation barrier 会使 Run 返回 `interrupted`，并保留副作用事实；Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。迟到结果不能把已取消 Run 改回成功。
+Runtime 启动时会收敛未完成的 Run、ToolCall、Approval、Outbox 和资源状态。没有未完成执行、未决副作用 Intent 或运行中 ToolAttempt 的 active Run 可以重新排队。未知结果兼容字段本身不阻止恢复。真正失去执行结果的活动调用仍记录为 interrupted，系统不会自动重放。Pending Approval 保留原有恢复规则。取消先写入 SQLite，再传播给所属 Worker、模型请求、工具进程、审批等待和异步任务。未知结果不会把用户取消改成 interrupted。
 
 Long Task 控制事实写入 `operations` 的 `long_task/control` scope。`run/pause` 在模型、工具和 Approval 安全点生效。`run/resume` 需要重新记录 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 reconciliation 检查结果。未确认副作用不会自动重放。
 
-Workspace-local 的 reconciliation 可以在当前 Run 中继续。Runtime 自动尝试 refresh，模型无需先调用只读 Tool；范围明确时允许不冲突的内置文件变更。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。未清除的 reconciliation barrier 仍然阻止成功终态。没有安全核验路径的 timeout、background child、unsandboxed、additional permission、MCP、external 和 Eidos-state 未知结果仍然 fail closed。
+Runtime 会记录 Shell 和其他工具的未知结果。系统不会因此建立后续操作的核验门，也不会同步扫描 Workspace 来解除这类执行限制。系统不会自动重放未知操作。后续操作仍执行各自的权限、身份、版本和结果校验。
 
 Checkpoint create/list 和 rewind/fork action lineage 通过 typed RPC 暴露。Checkpoint 保存规则、Repository、Context、compaction、Workspace identity、Git、permission、Model snapshot 和 reconciliation 引用。Managed 和 Local Git Checkpoint 都复用 `worktree_snapshots` metadata、Git patch artifact、checksum 和 hidden ref，保存 HEAD、staged、unstaged 和 untracked 状态。Managed Fork 创建新的 detached managed Worktree，并恢复完整 Checkpoint Git 状态。Local Fork 仍使用同一个 Project 和同一个 `workspace_root` 创建新的 Local Session、Run 和 lineage，所以两个 Local Thread 共享真实目录。Managed 和 Local Rewind 会在原 checkout 中恢复完整 Checkpoint Git 状态；Local Rewind 只允许用户显式调用。Non-Git Local Workspace 仍不提供 filesystem snapshot、copy-on-write 或 rewind。
 
@@ -717,7 +719,7 @@ Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受�
 
 `record_workspace_change` 在同一 SQLite 事务内记录准备后的 Diff 和 `item.updated` Event。Event/Outbox 将更新后的 Item 投影为 `item/updated`。Desktop 的“最近一轮”从已有 Item/ToolCall 读取，不维护另一个 Run 成功状态。准备中、完成和失败仍使用原 ToolCall 状态。原始模型参数流不作为可执行补丁展示。
 
-Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组。卡片和两种审查入口共用 `projectNetFileDiff`，按补丁顺序显示范围开始到结束的净增删，不显示“累计”标签。新建 5 行后替换其中 1 行仍显示 +5/-0；已有内容改回原样显示 +0/-0。系统保留完成状态、改名后的路径和最后一条记录的定位。补丁缺失、内容衔接冲突、未完成或待核验时，统计保持未知。产物标题来自声明中的可选标题或文件名。`OutputContent` 按执行目录和相对路径保留当前 Session 最新声明。Files 只负责文件树和预览。
+Desktop 的 `TurnResults` 在每个 Run 的最终回答文本之后、回复复制和反馈操作之前投影文本修改和产物。它从分页后的 Session Item/ToolCall 记录读取，不创建 Artifact 表或第二套执行状态。Projectless Session 同样投影文本修改卡。文本卡通过独立 text-review 面板审查持久化补丁，不依赖 Git；面板不列入工作区工具菜单。文本修改按路径归组。卡片和两种审查入口共用 `projectNetFileDiff`，按补丁顺序显示范围开始到结束的净增删，不显示“累计”标签。新建 5 行后替换其中 1 行仍显示 +5/-0；已有内容改回原样显示 +0/-0。系统保留完成状态、改名后的路径和最后一条记录的定位。补丁缺失、内容衔接冲突、未完成或结果未知时，统计保持未知。产物标题来自声明中的可选标题或文件名。`OutputContent` 按执行目录和相对路径保留当前 Session 最新声明。Files 只负责文件树和预览。
 
 Runtime 的 `project_tool_text → display_file_diff` 为内联普通 Unified Diff 补充展示文件头。适配器使用已锁定的 `unidiff` 校验补丁和定位每个文件，不依赖文件头中的时间戳。它保留原来的新增、删除、改名路径和所有修改块，并将 Eidos 换行说明移到展示文件头中，使仅换行变化也能显示零行增删。Session 快照、继承历史和实时 Item 通知共用这个入口。SQLite 中的原始补丁不变；大补丁或展示头使文本超出内联上限时，系统仍使用原始文本的大小、Hash 和分页读取。卡片没有内联补丁时仍保持统计未知。Python 和 Renderer 共用 `protocol/fixtures/text-diffs-v1.json` 验证展示格式与统计。
 
@@ -865,7 +867,7 @@ v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，�
 
 ### Loop 门控精简（PR #102）
 
-- Workspace 对账由 Runtime 在真实文件冲突、最终提交和恢复挂起调用时自动尝试，普通读取、协调消息和无关文件操作不等待整库扫描，不以模型先调用只读工具为条件；只有完整 refresh 与匹配 epoch 能清除可核验的 Workspace Intent。Shell、外部与未知来源不会被扫描目录误清除。
+- Runtime 保留 Durable Intent 和未知结果，但不要求用户核验，不阻止后续操作或 Run 完成，也不自动重放未知操作。
 - 内置文件变更对已持久化、来源可信且范围明确的 Workspace 不确定 Intent 按真实准备路径判定冲突，覆盖多文件、移动目标与父子路径；提交窗口内再次检查。未知范围或外部文件 Intent 继续保守阻止变更；其他路径可以继续，不新增跨 Run 锁。
 - `send_message`、`stop_agent` 和忙碌子任务的续派消息不因已有不确定副作用被统一阻断；三个角色均有执行工具，新子任务均受屏障约束。`spawn_agent` 和空闲子任务的 `followup_task` 在创建事务中检查屏障，避免角色名或状态竞态绕过限制。权限申请仍遵守现有审批，不清除旧 Intent。
 - 所有控制工具可以同批顺序执行。混合批次、Plan 提问和子任务等待有活动 Shell 时保留 Worker 与原资源所有者。只有无剩余批次且没有活动 Shell 的控制等待才释放 Worker；不强制模型改变调用顺序。
@@ -876,11 +878,18 @@ v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，�
 
 Runtime 按 Session FIFO 执行已接受的 Run。Run 执行期间，Composer 只显示一个操作按钮：草稿有可提交内容时显示发送并将输入排队；草稿为空且 Run 可取消时显示停止。审批和澄清期间，ApprovalComposer 或 ClarificationComposer 替换普通输入框，Session 草稿会在等待结束后继续显示。工作模式、模型、思考强度和审批模式用于下一轮草稿，当前 Run 快照保持不可变。安全的连续只读调用可以在混合批次中并行，副作用仍按顺序执行。搜索保留每 Run 四个实际执行者和十六个会话边界，超出执行槽位的请求进入可取消队列。延迟工具按最近激活顺序保留，再按稳定名称排序冻结。
 
-`QueuedMessages → typed IPC → run/listQueued、run/updateQueued、run/deleteQueued → QueuedRunApplication → QueuedRunRepository → SQLite` 是队列列表的调用链。列表直接投影尚未开始的 queued Run 和关联用户消息，不依赖聊天记录的分页窗口。每页最多读取 100 条，并按 512 KiB 预算分页。Renderer 只保存当前投影和临时编辑内容。队列变化通过同事务的 `run.queue_changed` Event / Outbox 投影为 `run/queueChanged`，执行状态通知也会刷新队列。
+`QueuedMessages → typed IPC → run/listQueued、run/updateQueued、run/deleteQueued、run/steerQueued → QueuedRunApplication → QueuedRunRepository → SQLite` 是队列列表的调用链。列表直接投影尚未开始的 queued Run 和关联用户消息，不依赖聊天记录的分页窗口。每页最多读取 100 条，并按 512 KiB 预算分页。Renderer 只保存当前投影和临时编辑内容。队列变化通过同事务的 `run.queue_changed` Event / Outbox 投影为 `run/queueChanged`，执行状态通知也会刷新队列。
 
 AppShell 只在已持久化的 Session 中挂载 QueuedMessages。`draft-…` 是未保存草稿的 ID，不能传入只接受 Session UUID 的队列接口。首次发送沿用现有草稿物化流程；Session 创建成功后，队列组件才开始读取。切回草稿会卸载队列组件，并使旧读取结果失效。
 
 队列修改和 FIFO claim 使用同一数据库锁与短事务。修改先检查 Session 归属、未开始状态和原消息文字；文字冲突返回 `QUEUED_RUN_INPUT_CONFLICT`，已经开始、取消或恢复的消息返回 `QUEUED_RUN_ALREADY_STARTED`。编辑同时更新 Run 输入和用户 Item，并保留引用及执行快照。删除移除未执行 Run、用户 Item、执行前快照及其旧 Run 事件，记录新的队列删除事件；删除消息不会作为用户输入进入后续 Run。两种写操作复用现有 Operation 幂等记录，不新增数据库表或第二套调度器。
+
+运行中发送的普通消息默认创建独立 queued Run。当前 Run 的上下文和压缩候选只读取本 Run，以及创建顺序不晚于本 Run 且已经开始的历史 Run。后续排队消息不会提前进入普通采样、最终采样或摘要候选。
+
+用户可以点击队列行的箭头，把指定消息转为当前 Run 的引导。`run/steerQueued` 要求明确的 `targetRunId` 和原消息文字，并在同一事务中检查源消息、目标 Run 和取消状态，创建 `input_mailbox` pending 记录与同 ID 的可见用户 Item，移除源 queued Run，再提交 Item 与队列 Event/Outbox。目标可以处于 running、waiting_approval、waiting_input 或 waiting_agents；finalizing、已经结束或正在取消的目标拒绝转换，原消息继续排队。重复请求复用 Operation 结果。目标 Run 的模型、权限和工作模式快照保持不变。
+
+引导 Item 在“正在处理”内显示“引导对话 · 等待下一步读取”。Runtime 在下一次采样边界消费邮箱，并把同一 Item 标为 completed，界面改为“已加入当前对话”。消费会把 Item 的 ordinal 与 creation_seq 移到之前采样产生的结果之后，保持模型消息顺序。待消费或取消后仍未消费的 Item 不进入上下文。邮箱、Item 和剩余 FIFO 队列都保存在 SQLite 中，不新增 Schema。普通内容引用随消息保留；扩展 selection、已关联计划和当前模型不支持的图片会拒绝转换并保留队列消息，避免改变已冻结的运行配置。
+
 
 新 Run 持久保存内部 Skill 元数据快照，公共 Run DTO 不发送该快照；内部恢复读取保持完整。只有实际选择、读取或激活的 Skill 建立租约，其他 Skill 可删除；旧 Run 继续按目录引用保护。资源激活重新检查冻结身份和内容版本，已移除且未使用的 Skill 以普通工具错误反馈，不破坏整个 Run 的恢复。
 
@@ -893,3 +902,13 @@ Renderer 的 `components/ModelSelector.tsx` 与 `ModelSelector.css` 统一维护
 Desktop 的 `terminalRunPresentation` 统一呈现任务结束原因。提示优先使用持久化的 `termination.reason`，再使用 Run 错误码。文案直接说明已知原因，不重复添加“任务无法继续”，并且不以句号结尾。参数 JSON 解析失败、工具字段不符合要求、输出达到 Token 上限、请求超时、认证失败和访问被拒绝分别呈现。未知原因使用通用说明，不推断网络、凭据或重试结果。部分操作结果尚未确认时，提示继续保留检查操作记录的要求。
 
 Pydantic AI Adapter 在解析工具参数前检查响应完成状态。遇到 `length`、`content_filter`、`error` 或非完成状态时，Adapter 保留结束原因、用量与响应 ID，并且不返回可执行工具调用。SamplingRuntime 继续通过原有失败路径持久化这些信息。`length` 的一次有界纠错明确说明输出达到上限，要求模型返回更短且完整的回复，并说明前次回复的工具调用未执行。其他参数解析错误继续使用 `invalid_tool_arguments`。本次不新增依赖，不改变协议、SQLite Schema、权限或纠错次数。
+
+## 容量恢复与未知结果（2026-10-19）
+
+Runtime 不再因为未知副作用要求用户核验，也不限制后续工具、子任务、定时任务、分叉、正常完成或取消。SQLite 继续保留未知 ToolResult、Durable Intent 和来源。旧 `reconciliationRequired` 字段只作为未知结果的兼容记录；该字段不再是执行门。Runtime 不自动重放已经可能执行的操作，也不把未知结果改成成功。权限、Sandbox、当前文件身份、版本、取消、事务与真实执行结果校验继续生效。
+
+Runtime 将容量超限与协议错误分开。模型服务的请求频率限制、请求等待超时和自动重试预算用完后也会暂停 Run，系统保留请求记录，用户可以稍后继续。模型输出、推理回放和工具参数超限时，系统先允许一次更短回复或更小调用；再次遇到同类容量问题时，系统使用既有 LongTask 暂停状态保存工作，不设置 Run 失败终态。在线投影无法保留必需事实、请求窗口恢复没有进展或工具容量错误反复出现时，系统也暂停。Desktop 显示暂停说明和“继续任务”按钮。用户仍可取消。系统不通过无界内存或无限重试绕过真实资源限制。
+
+模型回复扫描与 Assistant 保存不再统一限制到 512 KiB。两条路径按本次模型最大输出分配有界字节空间；该空间是资源保护，不代表 Token 精确换算。安全扫描规则仍然生效。单条大型 Assistant 正文完整保存在 SQLite，通知与历史页只携带有界预览和原文 Hash。`toolCall/readText` 的 `field=content` 使用 Item ID，通过当前 Session 或冻结分叉历史分页读取原文，并核对 Hash。Runtime 对超过单帧预算的 RPC 结果返回 `RESPONSE_TOO_LARGE`，不输出超大协议帧。Main 仍拒绝真正损坏或超限的外部协议输入。
+
+普通模型协议损坏、真实权限拒绝、身份或版本错误、存储失败与进程异常不属于内容容量恢复。系统不会伪造操作成功。本文描述实现行为；本次定向验证结果在任务交付中单独报告。

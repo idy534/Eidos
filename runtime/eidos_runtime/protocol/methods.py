@@ -203,7 +203,7 @@ class SessionReadRequestDto(_CanonicalIdRequest):
 class ToolTextReadRequestDto(_CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     tool_call_id: StrictStr = Field(alias="toolCallId")
-    field: Literal["diff", "result"]
+    field: Literal["diff", "result", "content"]
     sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     offset: StrictInt = Field(default=0, ge=0, le=9_007_199_254_740_991)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "tool_call_id")

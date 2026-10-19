@@ -15,6 +15,7 @@ import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } fr
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { PdfViewer } from "./PdfViewer.js";
+import { Tooltip } from "./Tooltip.js";
 
 
 interface WorkspaceTreeNode extends WorkspaceDirectoryEntry {
@@ -758,21 +759,23 @@ function WorkspaceTreeRow({
       <span className="workspace-tree-name">{node.data.name}</span>
       {loading && <span className="workspace-tree-loading" aria-label="正在读取">…</span>}
       {inputContext && (
-        <button
-          type="button"
-          className="workspace-reference-button"
-          aria-label={`引用 ${node.data.name}`}
-          title="添加到当前输入"
-          onClick={(event) => {
-            event.stopPropagation();
-            void inputContext.add({
-              kind: node.data.kind === "directory" ? "directory" : "file",
-              source: `${inputContext.workspaceRoot}/${node.id}`,
-            });
-          }}
-        >
-          ＋
-        </button>
+        <Tooltip content="添加到当前输入">
+          <button
+            type="button"
+            className="workspace-reference-button"
+            aria-label={`引用 ${node.data.name}`}
+            title="添加到当前输入"
+            onClick={(event) => {
+              event.stopPropagation();
+              void inputContext.add({
+                kind: node.data.kind === "directory" ? "directory" : "file",
+                source: `${inputContext.workspaceRoot}/${node.id}`,
+              });
+            }}
+          >
+            ＋
+          </button>
+        </Tooltip>
       )}
     </div>
   );

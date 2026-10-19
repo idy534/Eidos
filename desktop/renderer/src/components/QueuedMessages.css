@@ -13,6 +13,8 @@
 }
 
 .queued-message + .queued-message { border-top: 1px solid var(--line); }
+.queued-message-heading { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; padding: 0.625rem 0.875rem 0.25rem; color: var(--muted); font-size: var(--font-size-caption); }
+.queued-message-heading span:first-child { color: var(--text); font-weight: 500; }
 .queued-messages:has(.queued-message-editor) { max-height: min(26rem, 45vh); }
 .queued-message-row { display: flex; align-items: center; gap: 0.625rem; min-height: 2.75rem; padding: 0.25rem 0.875rem; }
 .queued-message-row svg { width: 1rem; height: 1rem; flex: none; }

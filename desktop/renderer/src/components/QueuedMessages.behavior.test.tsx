@@ -24,14 +24,42 @@ beforeEach(() => {
       rows = rows.filter((row) => row.runId !== request.runId);
       return { change: { kind: "deleted", sessionId: request.sessionId, runId: request.runId } };
     }),
+    steerQueuedRun: vi.fn(async (request) => {
+      rows = rows.filter((row) => row.runId !== request.runId);
+      return { change: { kind: "steered", sessionId: request.sessionId, runId: request.runId, targetRunId: request.targetRunId, itemId: "steering-item" } };
+    }),
   } as unknown as typeof window.eidosRuntime;
 });
 
-function show() {
-  return render(<><QueuedMessages sessionId="s" ready onChanged={onChanged} onRefresh={vi.fn()} /><textarea aria-label="Session 草稿" defaultValue="未发送的草稿" /></>);
+function show(activeRunId: string | undefined = "active") {
+  return render(<><QueuedMessages sessionId="s" ready activeRunId={activeRunId} onChanged={onChanged} onRefresh={vi.fn()} /><textarea aria-label="Session 草稿" defaultValue="未发送的草稿" /></>);
 }
 
 describe("queued message list", () => {
+  it("steers only the chosen queued message and retains the main draft", async () => {
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "将第 2 条排队消息用于引导当前任务" }));
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+    expect(window.eidosRuntime.steerQueuedRun).toHaveBeenCalledWith(expect.objectContaining({ runId: "second", targetRunId: "active", expectedUserInput: second.userInput }));
+    expect(onChanged).toHaveBeenCalledWith(expect.objectContaining({ kind: "steered", runId: "second" }));
+    expect(screen.getByText(first.userInput)).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Session 草稿" })).toHaveValue("未发送的草稿");
+  });
+
+  it("retains the queued message when its steering target has ended", async () => {
+    vi.mocked(window.eidosRuntime.steerQueuedRun).mockRejectedValue(new Error("EIDOS_RUNTIME_ERROR:STEER_TARGET_UNAVAILABLE"));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "将第 1 条排队消息用于引导当前任务" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("消息仍保留在队列中");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("disables steering while editing to retain unsaved text", async () => {
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "编辑第 1 条排队消息", exact: true }));
+    expect(screen.getByRole("button", { name: "将第 1 条排队消息用于引导当前任务" })).toBeDisabled();
+  });
   it("lists messages in order and edits inline without overwriting the Session draft", async () => {
     show();
     await screen.findByRole("list", { name: "待发送消息" });

@@ -93,8 +93,7 @@ export function terminalRunPresentation(run: RunOutcome): RunStatusPresentation 
   let presentation: RunStatusPresentation;
   switch (run.status) {
     case "succeeded":
-      if (!run.reconciliationRequired) return { label: "已完成", tone: "success" };
-      return { label: "部分操作结果尚未确认，请查看操作记录", tone: "warning" };
+      return { label: "已完成", tone: "success" };
     case "failed":
       presentation = { label: failureMessage(run), tone: "error" };
       break;

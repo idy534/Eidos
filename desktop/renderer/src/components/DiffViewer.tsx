@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { parsePatch } from "diff";
 import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
+import { Tooltip } from "./Tooltip.js";
 
 export interface DiffViewerProps {
   diff?: string | undefined;
@@ -243,25 +244,29 @@ export const DiffViewer = memo(function DiffViewer({ diff = "", title = "代码�
             <div className="diff-file-header diff-viewer-header">
               <div className="diff-file-meta">
                 <span className="diff-file-name">{onOpenFile && file.filename !== title ? (
-                  <button type="button" className="diff-file-name-link" title={`打开当前文件：${file.filename}`}
-                    onClick={() => onOpenFile(file.filename)}>{file.filename}</button>
+                  <Tooltip content={`打开当前文件：${file.filename}`}>
+                    <button type="button" className="diff-file-name-link" title={`打开当前文件：${file.filename}`}
+                      onClick={() => onOpenFile(file.filename)}>{file.filename}</button>
+                  </Tooltip>
                 ) : file.filename}</span>
                 <span className="diff-stat-add">+{file.additions}</span>
                 <span className="diff-stat-del">-{file.deletions}</span>
               </div>
-              <button
-                type="button"
-                className="code-copy-btn"
-                onClick={() => handleCopyFile(file.rawDiff || diff, fileIdx)}
-                aria-label={isCopied ? "已复制代码差异" : "复制代码差异"}
-                title={isCopied ? "已复制代码差异" : "复制代码差异"}
-              >
-                {isCopied ? (
-                  <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
-                ) : (
-                  <CopyIcon className="copy-icon-svg" />
-                )}
-              </button>
+              <Tooltip content={isCopied ? "已复制代码差异" : "复制代码差异"}>
+                <button
+                  type="button"
+                  className="code-copy-btn"
+                  onClick={() => handleCopyFile(file.rawDiff || diff, fileIdx)}
+                  aria-label={isCopied ? "已复制代码差异" : "复制代码差异"}
+                  title={isCopied ? "已复制代码差异" : "复制代码差异"}
+                >
+                  {isCopied ? (
+                    <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
+                  ) : (
+                    <CopyIcon className="copy-icon-svg" />
+                  )}
+                </button>
+              </Tooltip>
             </div>
             <pre className="diff-file-body diff-viewer-content">
               <code>

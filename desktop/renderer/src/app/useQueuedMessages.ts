@@ -67,7 +67,7 @@ export function useQueuedMessages(sessionId: string, ready: boolean) {
 
   const project = useCallback((change: QueuedRunChange) => {
     if (change.sessionId !== sessionId) return;
-    setPage((previous) => ({ ...previous, items: change.kind === "deleted"
+    setPage((previous) => ({ ...previous, items: change.kind !== "updated"
       ? previous.items.filter((item) => item.runId !== change.runId)
       : previous.items.map((item) => item.runId === change.runId ? { ...item, userInput: change.userInput } : item) }));
     void load();

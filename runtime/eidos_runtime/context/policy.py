@@ -1,4 +1,5 @@
-"""Eidos working-context targets, independent of provider window limits."""
+"""Eidos context compaction and recoverable tool-output clearing policy."""
 
-SOFT_CONTEXT_TARGET_TOKENS = 64 * 1024
-SOFT_COMPACTION_KEEP_ITEMS = 16
+AUTO_COMPACTION_THRESHOLD_PERCENT = 85
+AUTO_COMPACTION_KEEP_ITEMS = 16
+TOOL_RESULT_CLEARING_TARGET_TOKENS = 64 * 1024

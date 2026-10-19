@@ -64,7 +64,6 @@ from eidos_runtime.protocol.methods import (
 )
 from eidos_runtime.runtime.supervisor import (
     RunCancelTimeout,
-    RunReconciliationRequired,
 )
 from eidos_runtime.sandbox.sensitive import (
     SensitiveContentDenied,
@@ -601,8 +600,6 @@ class RunApplication:
                 raise ApplicationError("INVALID_STATE", "run cannot be canceled")
         except RunCancelTimeout as error:
             raise ApplicationError("RUN_CANCEL_TIMEOUT", str(error)) from error
-        except RunReconciliationRequired as error:
-            raise ApplicationError("RUN_RECONCILIATION_REQUIRED", str(error)) from error
         except OperationConflictError as error:
             raise ApplicationError("OPERATION_ID_REUSED", str(error)) from error
         except OperationInProgressError as error:

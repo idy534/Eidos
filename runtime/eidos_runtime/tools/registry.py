@@ -766,8 +766,6 @@ def _validate_entry(entry: ToolRegistryEntry) -> None:
         and not _valid_schema(entry.spec.result_schema)
     ):
         raise ValueError("invalid_tool_schema")
-    if _definition_size(entry.model_definition()) > MAX_SINGLE_DEFINITION_BYTES:
-        raise ValueError("tool_definition_too_large")
     if entry.provenance.kind == "mcp":
         if (
             not entry.provenance.plugin_id

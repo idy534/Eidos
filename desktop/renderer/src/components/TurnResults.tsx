@@ -8,6 +8,7 @@ import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { PreviewIcon, ExternalLinkIcon, FinderIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
+import { Tooltip } from "./Tooltip.js";
 
 type ChangeState = "committed" | "partial" | "planned";
 type ArtifactKind = "document" | "pdf" | "presentation" | "spreadsheet" | "image" | "html" | "file";
@@ -491,13 +492,15 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
   return (
     <>
       <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>
-        <button type="button" className="artifact-result-card__main" disabled={!actions || wrongWorkspace || opening} onClick={() => { void open(); }} title={artifact.path} aria-label={`打开 ${displayName}`}>
-          <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
-          <span className="artifact-result-card__copy">
-            <strong>{displayName}</strong>
-            <small>{ArtifactLabel({ artifact })}{artifact.title ? ` · ${fileName(artifact.path)}` : ""}</small>
-          </span>
-        </button>
+        <Tooltip content={artifact.path}>
+          <button type="button" className="artifact-result-card__main" disabled={!actions || wrongWorkspace || opening} onClick={() => { void open(); }} title={artifact.path} aria-label={`打开 ${displayName}`}>
+            <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
+            <span className="artifact-result-card__copy">
+              <strong>{displayName}</strong>
+              <small>{ArtifactLabel({ artifact })}{artifact.title ? ` · ${fileName(artifact.path)}` : ""}</small>
+            </span>
+          </button>
+        </Tooltip>
         {!compact && !wrongWorkspace && !opening && openItems.length > 0 && (
           <DropdownMenu
             trigger="打开方式"
@@ -532,7 +535,9 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
 function ChangeStats({ additions, deletions }: { additions: number | undefined; deletions: number | undefined }) {
   return additions === undefined || deletions === undefined
     ? <span className="turn-result__stats turn-result__stats--unknown">行数未完整统计</span>
-    : <span className="turn-result__stats" title="本轮开始到结束的净变化。"><ins className="git-review-stat">+{additions}</ins><del className="git-review-stat">-{deletions}</del></span>;
+    : <Tooltip content="本轮开始到结束的净变化。">
+        <span className="turn-result__stats" title="本轮开始到结束的净变化。"><ins className="git-review-stat">+{additions}</ins><del className="git-review-stat">-{deletions}</del></span>
+      </Tooltip>;
 }
 
 function ChangePath({ path }: { path: string }) {
@@ -559,42 +564,50 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
   return (
     <article className={`turn-result-card turn-result-card--changes${isSingle ? " turn-result-card--single" : ""}`}>
       <header className="turn-result-card__header">
-        <button
-          type="button"
-          className="turn-result-card__main"
-          disabled={!canReview}
-          onClick={() => review(isSingle ? first : undefined)}
-          title="打开文本修改审查"
-          aria-label={title}
-        >
-          <span className="turn-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={first.path} /></span>
-          <span className="turn-result-card__title">
-            <strong>{title}</strong>
-            <ChangeStats additions={projection.additions} deletions={projection.deletions} />
-          </span>
-        </button>
-        <div className="turn-result-card__actions">
-          <Button variant="ghost" size="small" className="turn-result-card__undo" disabled title={undoReason}>撤销</Button>
-          <Button
-            variant="secondary"
-            size="small"
-            className="turn-result-card__review"
+        <Tooltip content="打开文本修改审查">
+          <button
+            type="button"
+            className="turn-result-card__main"
             disabled={!canReview}
-            title={canReview ? "在右侧打开本轮修改" : "当前会话没有可用的文本审查面板。"}
-            onClick={() => review()}
+            onClick={() => review(isSingle ? first : undefined)}
+            title="打开文本修改审查"
+            aria-label={title}
           >
-            审核
-          </Button>
+            <span className="turn-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={first.path} /></span>
+            <span className="turn-result-card__title">
+              <strong>{title}</strong>
+              <ChangeStats additions={projection.additions} deletions={projection.deletions} />
+            </span>
+          </button>
+        </Tooltip>
+        <div className="turn-result-card__actions">
+          <Tooltip content={undoReason}>
+            <Button variant="ghost" size="small" className="turn-result-card__undo" disabled title={undoReason}>撤销</Button>
+          </Tooltip>
+          <Tooltip content={canReview ? "在右侧打开本轮修改" : "当前会话没有可用的文本审查面板。"}>
+            <Button
+              variant="secondary"
+              size="small"
+              className="turn-result-card__review"
+              disabled={!canReview}
+              title={canReview ? "在右侧打开本轮修改" : "当前会话没有可用的文本审查面板。"}
+              onClick={() => review()}
+            >
+              审核
+            </Button>
+          </Tooltip>
         </div>
       </header>
       {projection.textChanges.length > 1 && (
         <>
           <div className="turn-result-card__files">
             {files.map((change) => (
-              <button type="button" className="turn-result-file" key={`${change.path}:${change.itemId}`} onClick={() => review(change)} title={`审核 ${change.path}`} aria-label={`审核 ${change.path}`}>
-                <ChangePath path={change.path} />
-                <ChangeStats additions={change.additions} deletions={change.deletions} />
-              </button>
+              <Tooltip key={`${change.path}:${change.itemId}`} content={`审核 ${change.path}`}>
+                <button type="button" className="turn-result-file" onClick={() => review(change)} title={`审核 ${change.path}`} aria-label={`审核 ${change.path}`}>
+                  <ChangePath path={change.path} />
+                  <ChangeStats additions={change.additions} deletions={change.deletions} />
+                </button>
+              </Tooltip>
             ))}
           </div>
           {(hidden > 0 || expanded) && (
@@ -605,7 +618,7 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
         </>
       )}
       {projection.textChanges.some((change) => change.state !== "committed") && (
-        <p className="turn-result-card__note">本轮包含未完整提交或待核验的文件修改。</p>
+        <p className="turn-result-card__note">本轮包含未完整提交或结果未知的文件修改。</p>
       )}
     </article>
   );

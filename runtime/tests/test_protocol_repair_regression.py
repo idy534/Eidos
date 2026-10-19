@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -60,13 +61,16 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     truncated,
                     ModelResponse(text="Recovered") if recover else truncated,
                 ])
-                RuntimeLoop(self.store, model, lambda _message: None).run(
-                    run["id"], threading.Event()
-                )
+                cancel = threading.Event()
+                if recover:
+                    RuntimeLoop(self.store, model, lambda _: None).run(run["id"], cancel)
+                else:
+                    with patch.object(RuntimeLoop, "_wait_for_capacity", side_effect=lambda _run, _reason, token: token.set()) as paused:
+                        RuntimeLoop(self.store, model, lambda _: None).run(run["id"], cancel)
+                    self.assertEqual(paused.call_args.args[1], "model_output_capacity")
                 result = self.store.read_run(run["id"])
-                self.assertEqual(result["status"], "succeeded" if recover else "failed")
-                if not recover:
-                    self.assertEqual(result["termination"]["reason"], "length")
+                self.assertEqual(result["status"], "succeeded" if recover else "canceled")
+                self.assertNotIn("errorCode", result)
                 attempts = self.store.read_model_attempts(run["id"])
                 self.assertEqual(len(attempts), 2)
                 self.assertEqual(attempts[0]["finishReason"], "length")

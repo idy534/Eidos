@@ -203,7 +203,10 @@ def write_message(output: TextIO, message: dict[str, Any]) -> None:
         message = JsonRpcResponse.model_validate(message).to_json_value()
     serialized = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
     if len(serialized.encode("utf-8")) > MAX_MESSAGE_BYTES:
-        raise ValueError("outbound protocol message exceeds 1 MiB")
+        if "id" not in message:
+            raise ValueError("outbound protocol notification exceeds 1 MiB")
+        message = business_error(message["id"], "RESPONSE_TOO_LARGE")
+        serialized = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
     output.write(serialized)
     output.write("\n")
     output.flush()
@@ -892,6 +895,12 @@ class RuntimeServer:
                 queued_run_dtos.QueuedRunUpdateRequest,
                 queued_run_dtos.QueuedRunChangeResponse,
                 lambda _id, request: self._applications_or_error().queued_runs.update(request),
+            ),
+            (
+                "run/steerQueued",
+                queued_run_dtos.QueuedRunSteerRequest,
+                queued_run_dtos.QueuedRunChangeResponse,
+                lambda _id, request: self._applications_or_error().queued_runs.steer(request),
             ),
             (
                 "run/deleteQueued",

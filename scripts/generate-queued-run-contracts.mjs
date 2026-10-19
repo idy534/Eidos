@@ -9,11 +9,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schema = JSON.parse(execFileSync(path.join(root, ".venv/bin/python"), ["-c", `
 import json
 from eidos_runtime.protocol.schemas import ClosedModel
-from eidos_runtime.protocol.queued_runs import QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse
+from eidos_runtime.protocol.queued_runs import QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse, QueuedRunSteerRequest
 class QueuedRunContract(ClosedModel):
     response: QueuedRunChangeResponse
     delete: QueuedRunDeleteRequest
     update: QueuedRunUpdateRequest
+    steer: QueuedRunSteerRequest
     list_request: QueuedRunListRequest
     list_response: QueuedRunListResponse
 print(json.dumps(QueuedRunContract.model_json_schema(by_alias=True)))

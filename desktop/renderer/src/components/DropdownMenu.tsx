@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 
 
 import { CheckmarkIcon } from "./MenuIcons.js";
+import { Tooltip } from "./Tooltip.js";
 
 function renderPortal(children: ReactNode): ReactNode {
   if (typeof document === "undefined") {
@@ -207,25 +208,27 @@ export function DropdownMenu({
 
   return (
     <div className={`dropdown-wrapper ${className}`.trim()}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="icon-button dropdown-trigger"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title={title}
-        aria-label={triggerAriaLabel}
-        onClick={() => {
-          if (open) {
-            setOpen(false);
-          } else {
-            openWithIndex(enabledIndices[0] ?? 0);
-          }
-        }}
-        onKeyDown={handleTriggerKeyDown}
-      >
-        {trigger}
-      </button>
+      <Tooltip content={title} disabled={open}>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="icon-button dropdown-trigger"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title={title}
+          aria-label={triggerAriaLabel}
+          onClick={() => {
+            if (open) {
+              setOpen(false);
+            } else {
+              openWithIndex(enabledIndices[0] ?? 0);
+            }
+          }}
+          onKeyDown={handleTriggerKeyDown}
+        >
+          {trigger}
+        </button>
+      </Tooltip>
 
       {open && renderPortal(
         <div

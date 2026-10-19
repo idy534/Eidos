@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+
+from eidos_runtime.domain.capacity import CapacityExceeded
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -27,14 +29,14 @@ class ModelResponseReplay(BaseModel):
     schema_version: Literal[1] = 1
     wire_api: Literal["chat_completions", "openai_responses"] = "chat_completions"
     provider_name: str | None = None
-    reasoning_parts: tuple[ModelReasoningPart, ...] = Field(default=(), max_length=256)
-    tool_call_ids: tuple[str, ...] = Field(default=(), max_length=256)
+    reasoning_parts: tuple[ModelReasoningPart, ...] = Field(default=())
+    tool_call_ids: tuple[str, ...] = Field(default=())
     response_text_present: bool = False
 
     @model_validator(mode="after")
     def bounded(self) -> ModelResponseReplay:
         if len(self.model_dump_json().encode("utf-8")) > MAX_REASONING_REPLAY_BYTES:
-            raise ValueError("reasoning_replay_too_large")
+            raise CapacityExceeded("reasoning_replay_capacity")
         return self
 
 

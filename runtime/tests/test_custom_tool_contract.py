@@ -282,8 +282,7 @@ def test_custom_registry_definition_fingerprint_and_budget_include_grammar() -> 
         first.provenance,
         first.adapter,
     )
-    with pytest.raises(ValueError, match="tool_definition_too_large"):
-        ToolRegistry((oversized,))
+    assert ToolRegistry((oversized,)).get(oversized.spec.name) is not None
 
 
 def test_custom_contract_fingerprint_input_has_grammar_without_redundant_digest() -> None:
@@ -332,11 +331,9 @@ def test_dispatcher_keeps_custom_input_raw_and_rejects_function_payload() -> Non
             "c3", "echo", CustomToolPayload(input="x" * (MAX_PATCH_BYTES + 1))
         ),),
     ))
-    assert oversized.error_code is None
-    assert oversized.protocol_diagnostic is None
-    assert oversized.tool_calls[0].payload == CustomToolPayload(
-        input="x" * (MAX_PATCH_BYTES + 1)
-    )
+    assert oversized.error_code == "request_capacity"
+    assert oversized.protocol_diagnostic is not None
+    assert oversized.tool_calls == ()
     plan = dispatcher.plan(response.tool_calls[0])
     assert dispatcher.validate_execution(response.tool_calls[0], plan)
 

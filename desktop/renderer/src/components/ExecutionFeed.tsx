@@ -18,7 +18,7 @@ import type {
   ToolCall,
 } from "../contracts.js";
 import type { AgentSummary } from "../../../shared/collaboration.generated.js";
-import { terminalRunPresentation } from "../session-state.js";
+import { terminalRunPresentation, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
@@ -29,6 +29,7 @@ import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
+import { Tooltip } from "./Tooltip.js";
 import { SparklesIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
@@ -409,6 +410,7 @@ const RunSegment = memo(function RunSegment({
             feedbackPending={pendingFeedbackItemIds.has(item.id)}
             canRegenerate={allowRegenerate && isLast && index === segment.response.length - 1 && canReviseRun}
             allowFeedback={allowFeedback && !item.inherited}
+            isLatestResponse={isLast && index === segment.response.length - 1}
             isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
             showTurnResults={isLast
               && index === segment.response.length - 1
@@ -479,34 +481,36 @@ function CopyButton({ content }: { content: string }) {
   };
 
   return (
-    <button
-      type="button"
-      className="response-action-button feed-item-copy-btn"
-      onClick={handleCopy}
-      title={copied ? "已复制" : "复制内容"}
-      aria-label={copied ? "已复制" : "复制内容"}
-    >
-      <svg
-        width="15"
-        height="15"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
+    <Tooltip content={copied ? "已复制" : "复制内容"}>
+      <button
+        type="button"
+        className="response-action-button feed-item-copy-btn"
+        onClick={handleCopy}
+        title={copied ? "已复制" : "复制内容"}
+        aria-label={copied ? "已复制" : "复制内容"}
       >
-        {copied ? (
-          <polyline points="20 6 9 17 4 12" />
-        ) : (
-          <>
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </>
-        )}
-      </svg>
-    </button>
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {copied ? (
+            <polyline points="20 6 9 17 4 12" />
+          ) : (
+            <>
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </>
+          )}
+        </svg>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -528,34 +532,36 @@ function ShellCopyButton({ command }: { command: string }) {
   };
 
   return (
-    <button
-      type="button"
-      className={`shell-copy-button${copied ? " is-copied" : ""}`}
-      onClick={handleCopy}
-      title={copied ? "已复制命令" : "复制命令"}
-      aria-label={copied ? "已复制命令" : "复制命令"}
-    >
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
+    <Tooltip content={copied ? "已复制命令" : "复制命令"}>
+      <button
+        type="button"
+        className={`shell-copy-button${copied ? " is-copied" : ""}`}
+        onClick={handleCopy}
+        title={copied ? "已复制命令" : "复制命令"}
+        aria-label={copied ? "已复制命令" : "复制命令"}
       >
-        {copied ? (
-          <polyline points="20 6 9 17 4 12" />
-        ) : (
-          <>
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </>
-        )}
-      </svg>
-    </button>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {copied ? (
+            <polyline points="20 6 9 17 4 12" />
+          ) : (
+            <>
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </>
+          )}
+        </svg>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -664,6 +670,7 @@ function AssistantMessage({
   feedbackPending,
   canRegenerate,
   allowFeedback = true,
+  isLatestResponse,
   isFinal,
   showTurnResults,
   resultItems,
@@ -681,6 +688,7 @@ function AssistantMessage({
   feedbackPending: boolean;
   canRegenerate: boolean;
   allowFeedback?: boolean | undefined;
+  isLatestResponse: boolean;
   isFinal: boolean;
   showTurnResults: boolean;
   resultItems: Item[];
@@ -706,6 +714,12 @@ function AssistantMessage({
   return (
     <article id={`item-${item.id}`} className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent className="eidos-chat-prose" content={item.content || ""} isStreaming={isStreaming} />
+      {!isStreaming && item.contentBytes !== undefined && item.contentHash && <ToolTextView
+        sessionId={item.sessionId} toolCallId={item.id} field="content"
+        sha256={item.contentHash} totalBytes={item.contentBytes} />}
+      {isLatestResponse && item.content?.includes("任务已暂停。系统保留了执行记录") && run.status === "running"
+        && <CapacityResume runId={run.id} />}
+
       {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
       {isFinal && item.content && (
@@ -722,6 +736,7 @@ function AssistantMessage({
                 <ActionButton
                   label={feedback === "up" ? "取消点赞" : "点赞"}
                   active={feedback === "up"}
+                  className="response-action-button--thumb-up"
                   disabled={!canFeedback || feedbackPending}
                   onClick={() => void onFeedback(item.id, feedback === "up" ? null : "up")}
                 >
@@ -730,6 +745,7 @@ function AssistantMessage({
                 <ActionButton
                   label={feedback === "down" ? "取消差评" : "差评"}
                   active={feedback === "down"}
+                  className="response-action-button--thumb-down"
                   disabled={!canFeedback || feedbackPending}
                   onClick={() => void onFeedback(item.id, feedback === "down" ? null : "down")}
                 >
@@ -741,6 +757,7 @@ function AssistantMessage({
               <>
                 <ActionButton
                   label="重新回答"
+                  className="response-action-button--regenerate"
                   disabled={revisionSubmitting}
                   onClick={() => setConfirmRegenerateOpen(true)}
                 >
@@ -772,7 +789,9 @@ function AssistantMessage({
             />}
           </div>
           <div className="response-meta">
-            <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
+            <Tooltip content={`本次回复模型：${modelName}`}>
+              <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
+            </Tooltip>
             {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
           </div>
         </div>
@@ -863,27 +882,31 @@ function ActionButton({
   label,
   active = false,
   disabled = false,
+  className = "",
   onClick,
   children,
 }: {
   label: string;
   active?: boolean;
   disabled?: boolean;
+  className?: string;
   onClick: () => void;
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      className={`response-action-button${active ? " response-action-button--active" : ""}`}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      aria-pressed={active || undefined}
-      onClick={onClick}
-    >
-      {children}
-    </button>
+    <Tooltip content={label}>
+      <button
+        type="button"
+        className={`response-action-button${active ? " response-action-button--active" : ""}${className ? ` ${className}` : ""}`}
+        disabled={disabled}
+        title={label}
+        aria-label={label}
+        aria-pressed={active || undefined}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -908,8 +931,10 @@ function ThumbDownIcon() {
 function RegenerateIcon() {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 7v5h-5" />
-      <path d="M19 12a7 7 0 1 1-2-5" />
+      <path d="M20 11a8 8 0 0 0-14.9-4" />
+      <path d="M4 4v4h4" />
+      <path d="M4 13a8 8 0 0 0 14.9 4" />
+      <path d="M20 20v-4h-4" />
     </svg>
   );
 }
@@ -950,9 +975,21 @@ function ProcessItem({
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
+  if (item.kind === "user_message") {
+    const state = item.status === "completed" ? "已加入当前对话"
+      : item.status === "in_progress" && ACTIVE_RUN_STATUSES.has(run.status) ? "等待下一步读取" : "未加入当前对话";
+    return <div className="process-steering">
+      <p className="feed-label">引导对话 · {state}</p>
+      {item.content && <MarkdownContent className="eidos-chat-prose" content={item.content} />}
+      {!!item.references?.length && <InputReferenceCards references={item.references} />}
+    </div>;
+  }
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
-    return <div className="process-text"><MarkdownContent className="eidos-chat-prose" content={item.content} isStreaming={item.status === "in_progress"} /></div>;
+    return <div className="process-text"><MarkdownContent className="eidos-chat-prose" content={item.content} isStreaming={item.status === "in_progress"} />
+      {item.status !== "in_progress" && item.contentBytes !== undefined && item.contentHash && <ToolTextView
+        sessionId={item.sessionId} toolCallId={item.id} field="content" sha256={item.contentHash} totalBytes={item.contentBytes} />}
+    </div>;
   }
   if (!item.toolCall) return null;
 
@@ -1046,7 +1083,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
     : gateRejected
       ? "未执行"
       : pendingVerification
-        ? "待核验"
+        ? "结果未知"
         : success
           ? "✓ 成功"
           : failed
@@ -1745,7 +1782,7 @@ function ProcessLabel({ run }: { run: Run }) {
 }
 
 function RunNotice({ run }: { run: Run }) {
-  if (run.status === "succeeded" && run.reconciliationRequired !== true) return null;
+  if (run.status === "succeeded") return null;
   const presentation = terminalRunPresentation(run);
   const active = presentation ?? activeRunPresentation(run);
   if (!active || ["queued", "running", "finalizing"].includes(run.status)) return null;
@@ -1773,16 +1810,16 @@ function groupItemsByRun(items: Item[]): Array<{ runId: string; items: Item[] }>
 
 function splitRunIntoSegments(items: Item[], activities: readonly ContextCompactionActivity[] = []): Segment[] {
   const sourceSegments: Item[][] = [];
-  for (const item of items) {
-    if (item.kind === "user_message" || sourceSegments.length === 0) {
+  for (const item of [...items].sort((a, b) => a.ordinal - b.ordinal)) {
+    if ((item.kind === "user_message" && item.ordinal <= 1) || sourceSegments.length === 0) {
       sourceSegments.push([]);
     }
     const current = sourceSegments.at(-1);
     if (current) current.push(item);
   }
   return sourceSegments.map((segmentItems, index) => {
-    const user = segmentItems.find((item) => item.kind === "user_message");
-    const body = segmentItems.filter((item) => item.kind !== "user_message");
+    const user = segmentItems.find((item) => item.kind === "user_message" && item.ordinal <= 1);
+    const body = segmentItems.filter((item) => item !== user);
     const nextUserAt = sourceSegments[index + 1]?.[0]?.createdAt ?? Infinity;
     const compactions = activities.filter((activity) => activity.startedAt >= (user?.createdAt ?? 0) && activity.startedAt < nextUserAt);
     const lastCompactionAt = Math.max(-Infinity, ...compactions.map((activity) => activity.startedAt));
@@ -2336,4 +2373,21 @@ function LightbulbIcon() {
       <path d="M6.5 14h3" />
     </svg>
   );
+}
+
+function CapacityResume({ runId }: { runId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [resumed, setResumed] = useState(false);
+  const [error, setError] = useState("");
+  if (resumed) return <p role="status">任务已继续</p>;
+  return <div>
+    <button type="button" disabled={busy} onClick={() => {
+      setBusy(true); setError("");
+      void window.eidosRuntime.resumeRun(runId)
+        .then(() => setResumed(true))
+        .catch((cause: unknown) => setError(userFacingError(cause)))
+        .finally(() => setBusy(false));
+    }}>{busy ? "正在继续…" : "继续任务"}</button>
+    {error && <p role="alert">{error}</p>}
+  </div>;
 }

@@ -1363,8 +1363,8 @@ class ExecutionRepository(Repository):
                 current = CollaborationRepository(self.database).state_in_connection(connection, run_id)
                 if current != expected_collaboration:
                     raise RunCompletionDeferred("collaboration_changed")
-            interrupted = bool(run_state["reconciliation_required"]) or shell_stopped
-            reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else None
+            interrupted = shell_stopped
+            reason = "active_shell_stopped" if shell_stopped else None
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -2180,19 +2180,34 @@ class ExecutionRepository(Repository):
                 (run_id,),
             ).fetchall()
             for entry in pending:
-                item_id = str(uuid.uuid4())
-                connection.execute(
-                    """
-                    INSERT INTO items (
-                        id, session_id, run_id, ordinal, kind, status,
-                        content, created_at, completed_at
-                    ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
-                    """,
-                    (
-                        item_id, run["session_id"], run_id,
-                        self._next_ordinal(connection, run_id), entry["content"], now, now,
-                    ),
-                )
+                visible = connection.execute(
+                    "SELECT id FROM items WHERE id = ? AND run_id = ? AND kind = 'user_message'",
+                    (entry["id"], run_id),
+                ).fetchone()
+                item_id = entry["id"] if visible is not None else str(uuid.uuid4())
+                if visible is not None:
+                    # The input was displayed when accepted. Place its model
+                    # fact after every result from the preceding sampling step.
+                    connection.execute(
+                        "UPDATE items SET status = 'completed', completed_at = ?, ordinal = ?, "
+                        "creation_seq = (SELECT COALESCE(MAX(creation_seq), 0) + 1 FROM items) WHERE id = ?",
+                        (now, self._next_ordinal(connection, run_id), item_id),
+                    )
+                    append_event(connection, EventType.ITEM_COMPLETED, now, {"itemId": item_id},
+                                 session_id=run["session_id"], run_id=run_id)
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO items (
+                            id, session_id, run_id, ordinal, kind, status,
+                            content, created_at, completed_at
+                        ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
+                        """,
+                        (
+                            item_id, run["session_id"], run_id,
+                            self._next_ordinal(connection, run_id), entry["content"], now, now,
+                        ),
+                    )
                 updated = connection.execute(
                     """
                     UPDATE input_mailbox SET status = 'injected', injected_at = ?

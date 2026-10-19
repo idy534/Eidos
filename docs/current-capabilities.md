@@ -4,7 +4,7 @@ Eidos 已增加钉钉应用机器人接入。用户可以在设置的“渠道�
 
 本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](current-automations.md)。
 
-> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
+> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 本文描述当前源码中的能力。每项能力都对应生产代码；尚未验证的修改会单独标注。能力存在但没有进入默认 Run 的部分会明确标注。
 
@@ -20,7 +20,7 @@ Session 正文最上方已移除“加载更早的记录”按钮。当存在更
 
 Runtime 已移除额外模型完成审查。普通工具任务的最终答复不会再因为内部评估失败或答复去重被停止；原生继续信号、输入、协作和最终事务检查继续生效。旧审查 Event 与 ModelProfile 仍可读取。
 
-执行屏障使用实际执行事实。准备失败和未启动命令不会产生未知副作用；已知结果后的输出过滤、格式校验和投影失败不会单独建立屏障。完全访问 Shell 可以使用已核验的 Workspace 外 cwd。已知文件操作的恢复只观察受影响目标，并在 SQLite 中核对 epoch 和目标集合，避免无关目录扫描阻断恢复。
+Runtime 按实际执行事实记录结果。准备失败和未启动命令不会产生未知副作用；未知结果保留在 SQLite，但不建立执行屏障。完全访问 Shell 可以使用已核验的 Workspace 外 cwd。新操作仍核对当前路径、身份和版本。
 
 文件内容已经相同时，单文件或多文件 Update Patch 返回成功的 `no_changes`。Runtime 不为这次无改动操作创建审批、Durable Intent 或未知副作用屏障。manual、auto_review 和 full_access 都支持随后继续执行 Shell，并正常完成 Run。同批次和下一轮调用遵循相同规则，模型无需补做只读核验。
 
@@ -72,6 +72,7 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - `session/handoff` 在不创建新 Session 的情况下切换同一个 Session 的 execution binding。Session 保存 `associatedWorktreeId`，因此 Worktree → Local → Worktree 会回到同一个 Worktree。Handoff 会保存 current HEAD、committed movement、staged、unstaged、untracked、binary 和 dirty fingerprint，并拒绝 active Run、Local conflict、source/target drift、Git common directory mismatch 和缺失 Worktree。
 - `session/restoreWorktree` 只恢复 Session 的 `associatedWorktreeId`。Deleted Worktree 会返回 `WORKTREE_RESTORE_REQUIRED`，invalid Worktree 会返回 `WORKTREE_RECOVERY_REQUIRED`。Restore 成功后，Run admission 可以重新使用原 Worktree；Runtime 不创建第二个 Worktree。
 - Runtime 可以创建、排队、执行、取消、暂停、恢复和查询 Run。
+- 运行中发送默认排队，当前 Run 不读取后续 queued 输入。队列行的箭头可以把单条消息转为当前 Run 的引导，其余消息继续按 FIFO 执行。“正在处理”会显示引导内容、等待读取和已加入状态。
 - Git 观察、标题生成和其他 Managed Task 共用的入口已把执行与清理统一放到 AnyIO worker。该修订移除了任务清理在事件循环上等待 Supervisor 锁的路径，保留资源登记、协作取消和异常传播。该修订尚未通过回归测试，不能据此宣称 Runtime 无响应问题已完成验收。
 - Run 按 Session 分别使用持久 FIFO。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
@@ -136,7 +137,8 @@ Runtime 已移除额外模型完成审查。普通工具任务的最终答复不
 - Runtime 使用随应用提供的 cl100k 词表和 tiktoken 进行离线参考计数。校准只使用同一已完成请求的冻结估算和 Provider usage，并可在重启后恢复。旧估算器不会混入新校准，思考回放按模型响应只计一次。
 - ContextBuilder 在摘要前尝试清理旧的大段成功读取、搜索和已结束 Shell 结果。系统保留近期完整交互、结果状态、来源和回读入口；原始事实仍在 SQLite。
 - `read_tool_output` 新增 `stream="result"` 和可选 `itemId`，支持分页读取当前 Session 和分叉历史中的允许工具结果。系统不会为了恢复旧输出再次运行工具。
-- Runtime 会在输入投影超过 65,536 tokens 且有足够新历史时尝试主动压缩，按 Token 预算保留完整近期响应，并保留用户消息和 Skill 正文。这个阈值只减少历史重发，不终止 Run。原始证据仍保存在 SQLite 和 Context Snapshot 中。
+- Runtime 会在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自动摘要压缩。系统已移除固定 64K 和新增 32 条历史的触发条件。系统按 Token 预算保留完整近期响应、用户消息和 Skill 正文。手动压缩、请求输出预留、内部投影超限和 Provider 超限保护继续生效。原始证据仍保存在 SQLite 和 Context Snapshot 中。
+- 在线历史与每批摘要候选使用不同的读取预算。在线历史受 8 MiB / 2,000 条资源保护，768 KiB / 200 条只限制摘要候选批次。系统按实际 JSON 大小优先保留近期事实，并让旧历史溢出进入既有恢复路径。分叉历史使用同一套预算。
 - Provider Usage 只有提供正的 input tokens 时才作为 active Context truth。Provider Usage 缺失或返回 0 时，Runtime 使用有界 estimated fallback。
 - ContextBuilder 对 Workspace state 未变化时完全相同的部分只读 Tool Result 做去重。内部去重计数只由投影历史本身决定，不进入模型提示，也不随 Run 级 `workspaceVersion` 漂移。
 - `workspace-environment` 只包含 Run 内不变的 Workspace 路径和 platform。Run 级 `workspaceVersion` 不进入模型输入，因此 Workspace 写入不会只因版本计数变化而使后续历史失去缓存。
@@ -231,18 +233,19 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 已有普通文件通过 stdin 把有界候选内容交给受控 helper，原地写入并保留 inode；这条路径不创建候选临时文件，系统管理 xattr 和 ACL。Runtime 不再克隆、复制或逐项比较元数据。helper 在截断前检查普通文件、owner、链接和 Base Hash，写入后执行 fsync 和最终验证。hardlink、symlink、特殊文件、异常 owner、特殊 mode 和文件 flags 仍然 fail closed。
 - 工作区外的普通文件写入复用现有扩权审批和 Run Grant。审批包含目标路径、权限范围、完整 Diff 和版本；审批通过后重新核验身份和版本。沙盒不可用时，无沙盒写入需要单独明确批准；受保护路径需要高危人工确认后才可扩权。
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
-- 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立待核验状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
+- 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - Runtime 可以在共同的工具结果提交边界保存已取得的文字和二进制内容。`view_image` 已使用该边界保存读取时的 PNG/JPEG；后续请求与重启恢复从保存的内容组装，源文件删除或替换不会触发重新读取或源文件 Hash 比对。内容快照没有新增 Hash 字段。公共 ToolResult 与 UI 契约保持不变，模型内容引用只进入内部持久投影。
-- 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未清除的 reconciliation barrier 会阻止成功终态。
+- 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未知结果不会阻止成功终态。
 - 普通 Tool Error 不会单独终止 Run。模型可以根据错误事实修正参数或选择替代 Tool。
 - 只有安全只读的 `parallel_safe` Tool 批次可以在自身的有界范围内并发。每个 Run 的 Workspace write、Shell、MCP、external 和 Eidos-state Tool 使用自己的提交/启动窗口门；同一 Run 的活动 Shell 不持续占有该门，不同 Session 也可以在同一 Workspace 并行。等待 Approval 不占用该 Run 的门。结果按模型声明顺序提交。同一个 Workspace 的并发修改可能让 Workspace observation 或 diff 包含其他 Session 的变化。
 
 ## Shell
 
-- Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；持久化失败仍保留屏障。
-- Runtime 会投影未决 Intent 的对账来源。对账恢复不设固定轮数，仍使用语义无进展检测；有效 Shell 空输入等待保持中性。系统不会通过删除缓存、申请新权限或换一条命令解除未知 Shell Intent。
+- `run_shell` 的工具说明明确：每次调用都在 `cwd` 中启动新的 Shell，上次命令中的 `cd` 不会影响下次调用。`cwd` 默认为 `.`，表示当前 Session 的工作区根目录，无项目和完全访问 Run 也遵循这一规则。模型应通过 `cwd` 选择工作目录，避免在命令前重复添加 `cd`。
+- Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；持久化失败仍保留未知结果记录。
+- Runtime 会投影未决 Intent 的对账来源。未知结果不设核验门；有效 Shell 空输入等待保持中性。系统不会通过删除缓存、申请新权限或换一条命令解除未知 Shell Intent。
 
 - `HostShellResolver` 先使用账户 login shell，再使用 `SHELL`，最后使用 `/bin/zsh`、`/bin/bash`、`/bin/sh`。Resolver 只接受有效的绝对可执行 shell 路径。
 - `ShellEnvironmentSnapshotProvider` 对每个 shell executable、canonical cwd 和 capture launch identity 做一次 `-lc` 环境捕获。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。
@@ -262,10 +265,10 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以组合，所以 `git push` 可以用一次审批同时获得 Git metadata 写入和 network。Runtime 使用现有 GitBackend 重新解析并核验 `git_dir` 与 `git_common_dir`，模型不能提交路径。获批后的命令仍在 macOS Seatbelt 中运行；`.agents`、`.eidos`、Runtime、系统 Skill 和其他 repository 的 Git metadata 继续拒写。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。其他 additional write 需要 Approval。显式裸 Shell unsandboxed 请求需要高危人工确认；用户可以允许本次命令使用系统直接权限。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
 - Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。Workspace 外的 absolute cwd 返回普通 Tool Error。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
-- Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。真正未知的执行结果仍会 fail closed。
+- Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。系统仍如实记录真正未知的执行结果。
 - 默认 sandboxed attempt 出现明确的 network denial 时，Runtime 会保留首次 attempt 和 denial 证据，但不会把它升级成 unsandboxed retry。Runtime 也不会自动重放可能已经产生 Workspace 副作用的命令。
-- 未清除的 reconciliation barrier 会阻止 Run 提交成功终态。Runtime 不会把 `sideEffectsMayExist` 当作清除条件，也不会自动重放有副作用的 Tool。
-- 不确定结果由 Durable Intent 和 reconciliation 事实记录，不增加“下一步必须只读”的执行状态。Barrier 允许只读、安全协作、独立 Plan 写入和权限申请；内置文件变更按已知冲突路径判断，范围未知的副作用返回 `reconciliation_required`。Workspace refresh 只清除来源属于 Workspace mutation、且可以由该 refresh 核验的 barrier。Shell、MCP、external、Eidos-state 和 unknown barrier 不能由 Workspace refresh 清除。
+- Runtime 保留 Durable Intent 和未知结果，但不要求用户核验，不阻止后续操作或 Run 完成，也不自动重放未知操作。
+- Runtime 保留 Durable Intent 和未知结果，但不要求用户核验，不阻止后续操作或 Run 完成，也不自动重放未知操作。
 - Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。
 
 ## Approval / Sandbox
@@ -313,12 +316,12 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Recovery
 
-- Runtime 重启时会从 SQLite 收敛未完成 Run、ToolCall、Approval、Outbox、Long Task 和资源状态。没有未完成 Tool 执行或不确定副作用的 active Run，只有在没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent，且没有 running ToolAttempt 时才会重新排回队列。带有不确定执行的 Run 仍然进入 `interrupted`。Pending Approval 仍按既有的结构化待批规则恢复。
+- Runtime 重启时会从 SQLite 恢复 Run、ToolCall、Approval、Outbox 和 Long Task。未知结果兼容字段本身不阻止恢复。真正未完成的副作用调用仍进入 interrupted，系统不会自动重放。
 - Runtime 启动时会读取 Worktree lifecycle intent、Snapshot metadata、Snapshot artifact、hidden ref 和 Session Handoff operation，并在业务应用暴露前执行 bounded reconciliation。Worktree Session create、Session delete、Managed Checkpoint Fork、Branch attach、retention cleanup、Restore 和 Session Handoff 可以在 restart 后恢复或进入 cleanup required。Managed 和 Local Checkpoint Rewind 会保留 durable lifecycle；同一 `operationId` 在 Runtime restart 后可以继续收敛，且不会重复记录 Checkpoint action。
 - Runtime 支持 cancel、pause、resume 和 restart verification 的 typed boundary。
 - Resume 前会检查 Workspace identity、规则、Repository/Context snapshot、permission snapshot、Git 和 side-effect reconciliation 字段。
 - Cancel、Tool timeout、Shell cleanup、MCP shutdown 和 Runtime shutdown 都有资源跟踪和有界等待。
-- Runtime 自动尝试核验 Workspace-local 的不确定副作用，不要求模型先读取文件；已知范围允许不冲突的内置文件变更和安全协作控制。已移除未被执行链消费的 reconciliation disposition 分类器。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果继续 fail closed。
+- Runtime 保留 Durable Intent 和未知结果，但不要求用户核验，不阻止后续操作或 Run 完成，也不自动重放未知操作。
 - 不确定副作用不会自动重放。需要核验的事实会进入 reconciliation。
 
 ## Checkpoint
@@ -511,7 +514,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 ### Loop 校验与协作放行（PR #102）
 
 - 移除“先只读核验”的模型硬要求，Runtime 自动尝试恢复可核验的 Workspace 副作用；明确文件范围只阻止冲突路径，未知范围继续保守处理。
-- 所有控制工具允许与其他工具同批顺序执行；有剩余批次时原 Worker 保持等待，避免剩余调用丢失或重放。消息、停止子任务和忙碌子任务的续派消息不受已有不确定副作用屏障阻断；未知副作用下不创建任何角色的新子 Run。
+- 所有控制工具允许与其他工具同批顺序执行；有剩余批次时原 Worker 保持等待，避免剩余调用丢失或重放。消息、停止子任务和忙碌子任务的续派消息不受已有不确定副作用屏障阻断；未知结果不再阻止创建任何已授权角色的新子 Run。
 
 ### 执行门控整体整改
 
@@ -536,3 +539,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 支持全局/Project 记忆、来源证据、不可变版本、无向量检索、常驻摘要与四个模型工具、独立使用/生成控制、临时会话、当前 Run 即时自动保存、无二次模型审核的前台保存与更正、事实来源解析、版本更正与去重，以及两阶段有限历史整理和预算恢复。Desktop 提供候选确认、来源跳转、纠正、固定、归档、遗忘、显式历史学习、任务重试、索引重建、导出和完整 ZIP 备份。详见 [current-memory.md](current-memory.md)。
 
 审批支持高危人工确认。manual 与 auto_review 遇到受保护数据、Runtime、系统 Skill、非专用 Git 路径扩权或显式取消沙盒保护时，展示 danger 样式和具体范围，由用户决定。批准后系统执行对应操作；相邻路径、身份和版本核验继续生效。full_access 不请求或记录逐项审批，模型使用默认工具参数直接执行。
+
+## 容量恢复与未知结果（2026-10-19）
+
+系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。容量超限优先反馈与恢复；无法继续时，Run 使用既有持久暂停和继续入口，不进入失败终态。权限、身份、版本和真实结果校验继续生效。长回答支持有界预览及 Hash 校验后的完整分页。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。

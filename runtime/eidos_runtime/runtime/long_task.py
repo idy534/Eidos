@@ -5,6 +5,8 @@ import json
 import time
 
 from eidos_runtime.db.database import Repository
+from eidos_runtime.db.events import append_event
+from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.domain.long_task import (
     LongTaskProgress,
     LongTaskStatus,
@@ -294,6 +296,13 @@ class LongTaskRepository(Repository):
             )
             if changed.rowcount != 1:
                 raise ConditionalUpdateFailed("long task compare-and-set failed")
+            if updated.status is not current.status:
+                run = connection.execute("SELECT session_id FROM runs WHERE id=?", (current.run_id,)).fetchone()
+                if run is not None:
+                    append_event(connection, EventType.RUN_UPDATED, updated.updated_at,
+                        {"reason": "long_task_status_changed"},
+                        session_id=run["session_id"], run_id=current.run_id)
+
         return updated
 
     def _require(self, run_id: str) -> LongTaskProgress:
@@ -343,12 +352,8 @@ class ResumeVerifier:
             reasons.append("context_plan_changed")
         if expected_permission_snapshot_hash != current_permission_snapshot_hash:
             reasons.append("permission_snapshot_changed")
-        if side_effects_may_exist:
-            reasons.append("reconciliation_required")
         if pending_approval:
             reasons.append("approval_required")
-        if unfinished_side_effecting_tool or durable_intent_unfinished:
-            reasons.append("reconciliation_required")
         if not model_available or not credential_available:
             reasons.append("model_unavailable")
         if not seatbelt_ready:
@@ -359,9 +364,7 @@ class ResumeVerifier:
             reasons.append("checkpoint_integrity_failed")
         reasons = list(dict.fromkeys(reasons))
         outcome = ResumeOutcome.SAFE_RESUME
-        if "reconciliation_required" in reasons:
-            outcome = ResumeOutcome.RECONCILIATION_REQUIRED
-        elif "permission_snapshot_changed" in reasons:
+        if "permission_snapshot_changed" in reasons:
             outcome = ResumeOutcome.PERMISSION_CHANGED
         elif "permission_changed" in reasons:
             outcome = ResumeOutcome.PERMISSION_CHANGED
@@ -392,16 +395,7 @@ class RestartVerifier:
     def verify(
         progress: LongTaskProgress, verification: ResumeVerification
     ) -> ResumeVerification:
-        if (
-            progress.side_effects_may_exist
-            and "reconciliation_required" not in verification.reasons
-        ):
-            return verification.model_copy(
-                update={
-                    "outcome": ResumeOutcome.RECONCILIATION_REQUIRED,
-                    "reasons": (*verification.reasons, "reconciliation_required"),
-                }
-            )
+        # Restart does not replay an uncertain operation or impose a verification gate.
         return verification
 
 

@@ -897,26 +897,39 @@ class SessionRepository(Repository):
             raise SessionActiveError("session has an active run")
 
     def read_tool_text(
-        self, session_id: str, tool_call_id: str, field: Literal["diff", "result"],
+        self, session_id: str, tool_call_id: str, field: Literal["diff", "result", "content"],
         sha256: str, offset: int,
     ) -> ToolTextPage:
-        if field not in {"diff", "result"} or offset < 0:
+        if field not in {"diff", "result", "content"} or offset < 0:
             raise InvalidCursorError("invalid tool text page")
-        column = "approval_diff" if field == "diff" else "ui_result_json"
-        with self.lock:
-            row = self._connection().execute(
-                f"SELECT tool_calls.{column} AS content, tool_calls.result_json "
-                "FROM tool_calls JOIN items ON items.id = tool_calls.item_id "
-                "WHERE tool_calls.id = ? AND items.session_id = ?",
-                (tool_call_id, session_id),
-            ).fetchone()
-        if row is None:
-            from eidos_runtime.persistence.session_history import SessionHistoryRepository
-            historical = SessionHistoryRepository(self.database).tool_record(session_id, tool_call_id)
-            if historical is None or historical.item.tool_call is None:
-                raise ResourceNotFoundError("tool call not found in session")
-            tool = historical.item.tool_call
-            row = {"content": tool.change_diff if field == "diff" else tool.result_json, "result_json": tool.result_json}
+        if field == "content":
+            with self.lock:
+                row = self._connection().execute(
+                    "SELECT content FROM items WHERE id=? AND session_id=? AND kind='assistant_message'",
+                    (tool_call_id, session_id),
+                ).fetchone()
+            if row is None:
+                from eidos_runtime.persistence.session_history import SessionHistoryRepository
+                record = SessionHistoryRepository(self.database).item_record(session_id, tool_call_id)
+                if record is None or record.item.kind != "assistant_message":
+                    raise ResourceNotFoundError("assistant item not found in session")
+                row = {"content": record.item.content}
+        else:
+            column = "approval_diff" if field == "diff" else "ui_result_json"
+            with self.lock:
+                row = self._connection().execute(
+                    f"SELECT tool_calls.{column} AS content, tool_calls.result_json "
+                    "FROM tool_calls JOIN items ON items.id = tool_calls.item_id "
+                    "WHERE tool_calls.id = ? AND items.session_id = ?",
+                    (tool_call_id, session_id),
+                ).fetchone()
+            if row is None:
+                from eidos_runtime.persistence.session_history import SessionHistoryRepository
+                historical = SessionHistoryRepository(self.database).tool_record(session_id, tool_call_id)
+                if historical is None or historical.item.tool_call is None:
+                    raise ResourceNotFoundError("tool call not found in session")
+                tool = historical.item.tool_call
+                row = {"content": tool.change_diff if field == "diff" else tool.result_json, "result_json": tool.result_json}
         content = row["content"]
         if content is None and field == "result":
             content = row["result_json"]

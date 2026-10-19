@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CustomModelSettings, CustomProviderResult, DiscoveredModel } from "../../../../shared/custom-models.js";
 import type { ModelDraft } from "./ModelDialog.js";
 import { Button } from "../Button.js";
+import { Tooltip } from "../Tooltip.js";
 import { ModelIdCombobox } from "./ModelIdCombobox.js";
 import { CustomReasoningFields } from "./CustomReasoningFields.js";
 import { TokenLimitField } from "./TokenLimitField.js";
@@ -102,8 +103,10 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
       <input aria-label="API Key" type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false} maxLength={512}
         placeholder={draft.originalId && !draft.apiKeyEdited ? "留空表示保持原值" : ""} value={draft.apiKey} disabled={busy}
         onChange={event => { setShowKey(false); onChange({ ...draft, apiKey: event.target.value, apiKeyEdited: true }); }} />
-      <Button type="button" variant="ghost" size="small" className="custom-model-secret-toggle" aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
-        title={showKey ? "隐藏 API Key" : "显示 API Key"} aria-pressed={showKey} disabled={busy || !draft.apiKey} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOffIcon /> : <EyeIcon />}</Button>
+      <Tooltip content={showKey ? "隐藏 API Key" : "显示 API Key"}>
+        <Button type="button" variant="ghost" size="small" className="custom-model-secret-toggle" aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
+          title={showKey ? "隐藏 API Key" : "显示 API Key"} aria-pressed={showKey} disabled={busy || !draft.apiKey} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOffIcon /> : <EyeIcon />}</Button>
+      </Tooltip>
       </div>
     </div></label>
       <div className="custom-model-test-actions">

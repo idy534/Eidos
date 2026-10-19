@@ -240,7 +240,7 @@ class SessionStorePort(Protocol):
     def data_directory(self) -> Path | None: ...
 
     def read_tool_text(
-        self, session_id: str, tool_call_id: str, field: Literal["diff", "result"],
+        self, session_id: str, tool_call_id: str, field: Literal["diff", "result", "content"],
         sha256: str, offset: int,
     ) -> ToolTextPage: ...
 

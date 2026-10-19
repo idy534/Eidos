@@ -233,6 +233,14 @@ _APPLY_PATCH_DESCRIPTION = (
 )
 
 
+_RUN_SHELL_DESCRIPTION = (
+    "Run a shell command in cwd under the current Run permissions. "
+    "Each call starts a new shell in cwd; cd does not carry over to later calls. "
+    "Use cwd to select the working directory instead of prepending cd to command. "
+    "Returns command output, or a sessionId if the command is still running."
+)
+
+
 _BUILTIN_CONTRACTS = (
     ("list_files", "List regular files under a workspace or active Skill directory.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
     ("read_file", "Read a UTF-8 text file from the workspace or an active Skill root. For truncated results, continue with read_file_range.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
@@ -240,7 +248,7 @@ _BUILTIN_CONTRACTS = (
     ("search_text", "Search text across workspace or active Skill files.", "none", False, 35, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("search_text_wait", "Wait for additional results from a running search_text session.", "none", False, 65, "single", SearchTextWaitInput, SearchTextResultData, "search_text"),
     ("apply_patch", _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
-    ("run_shell", "Run a shell command in the macOS workspace sandbox. Returns command output, or a sessionId if the command is still running.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
+    ("run_shell", _RUN_SHELL_DESCRIPTION, "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
     ("write_stdin", "Write input to a running shell session or wait for additional output. Use empty input to poll for output.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({

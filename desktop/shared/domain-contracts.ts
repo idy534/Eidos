@@ -380,6 +380,8 @@ export interface Item {
   status: "in_progress" | "completed" | "failed" | "declined" | "canceled";
   createdAt: number;
   content?: string;
+  contentBytes?: number;
+  contentHash?: string;
   incomplete?: boolean;
   completedAt?: number;
   toolCall?: ToolCall;

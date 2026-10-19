@@ -2,6 +2,7 @@ import { memo, useEffect, useState, type ReactNode } from "react";
 import { DiffViewer } from "./DiffViewer.js";
 import { MermaidBlock } from "./MermaidBlock.js";
 import { CopyIcon, CheckmarkIcon } from "./MenuIcons.js";
+import { Tooltip } from "./Tooltip.js";
 
 const LANGUAGE_LABELS: Record<string, string> = {
   ts: "TypeScript",
@@ -159,19 +160,21 @@ export const CodeBlock = memo(function CodeBlock({
     <div className="code-block-card" role="region" aria-label={`${lang || "代码"}片段`}>
       <div className="code-block-header">
         <span className="code-block-language">{formatLanguage(lang || "text")}</span>
-        <button
-          type="button"
-          className="code-copy-btn"
-          onClick={handleCopy}
-          aria-label={copied ? "已复制代码" : "复制代码"}
-          title={copied ? "已复制代码" : "复制代码"}
-        >
-          {copied ? (
-            <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
-          ) : (
-            <CopyIcon className="copy-icon-svg" />
-          )}
-        </button>
+        <Tooltip content={copied ? "已复制代码" : "复制代码"}>
+          <button
+            type="button"
+            className="code-copy-btn"
+            onClick={handleCopy}
+            aria-label={copied ? "已复制代码" : "复制代码"}
+            title={copied ? "已复制代码" : "复制代码"}
+          >
+            {copied ? (
+              <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
+            ) : (
+              <CopyIcon className="copy-icon-svg" />
+            )}
+          </button>
+        </Tooltip>
       </div>
       <div className="code-block-content">
         {shikiHtml ? (

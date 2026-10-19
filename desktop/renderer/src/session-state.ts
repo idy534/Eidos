@@ -99,10 +99,10 @@ export function taskStatusFromRun(
   if (["queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing"].includes(run.status)) {
     return "in_progress";
   }
-  if (run.status === "succeeded" && run.reconciliationRequired !== true) {
+  if (run.status === "succeeded") {
     return "completed";
   }
-  if (run.status === "succeeded" || ["failed", "stopped", "interrupted"].includes(run.status)) {
+  if (["failed", "stopped", "interrupted"].includes(run.status)) {
     return "failed";
   }
   return "canceled";
@@ -320,7 +320,7 @@ export function applyQueuedRunChange(
   change: import("../../shared/queued-runs.js").QueuedRunChange,
 ): SessionSnapshot | undefined {
   if (!snapshot || snapshot.session.id !== change.sessionId) return snapshot;
-  if (change.kind === "deleted") {
+  if (change.kind !== "updated") {
     return {
       ...snapshot,
       runs: snapshot.runs.filter((run) => run.id !== change.runId),
@@ -370,7 +370,9 @@ const RUNTIME_ERROR_MESSAGES: Record<string, string> = {
   RUN_ALREADY_ACTIVE: "当前已有一个 Run 正在执行，请先等待完成或取消。",
   RESOURCE_NOT_FOUND: "请求的 Session、Project 或 Run 已不存在，请刷新后重试。",
   INVALID_STATE: "当前状态不允许执行这个操作，请刷新后重试。",
-  QUEUED_RUN_ALREADY_STARTED: "这条消息已开始执行，无法继续编辑或删除。",
+  QUEUED_RUN_ALREADY_STARTED: "这条消息已开始执行，无法修改队列",
+  STEER_TARGET_UNAVAILABLE: "当前任务已结束或正在停止，消息仍保留在队列中",
+  QUEUED_RUN_STEER_UNSUPPORTED: "当前任务无法接收这条消息的引用或计划，消息仍保留在队列中",
   QUEUED_RUN_INPUT_CONFLICT: "这条排队消息已被修改，请重新打开后编辑。",
   APPROVAL_NO_LONGER_PENDING: "这个审批已经失效，无需再次处理。",
   WORKSPACE_BOUNDARY_VIOLATION: "所选路径超出 Workspace 安全边界，操作已拒绝。",

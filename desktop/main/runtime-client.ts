@@ -13,7 +13,7 @@ import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../s
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
 import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
 import { isQueuedRunChangeResponse, isQueuedRunListResponse } from "../shared/queued-runs.js";
-import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import { isInputReference, isInputDraft, isInputPreview, isInputAssetChunk, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference, type InputAssetChunk } from "../shared/input-context.js";
@@ -568,7 +568,7 @@ export class RuntimeClient {
     return result.session;
   }
 
-  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset = 0): Promise<ToolTextPage> {
+  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result" | "content", sha256: string, offset = 0): Promise<ToolTextPage> {
     return this.validatedRequest("toolCall/readText", { sessionId, toolCallId, field, sha256, offset },
       (value): value is ToolTextPage => isToolTextPage(value)
         && value.sha256 === sha256
@@ -952,6 +952,12 @@ export class RuntimeClient {
     );
   }
 
+  async resumeRun(runId: string, operationId: string = randomUUID()): Promise<Run> {
+    const result = await this.validatedRequest("run/resume", { runId, operationId },
+      (value): value is { run: Run } => isRecord(value) && isRun(value.run));
+    return result.run;
+  }
+
   cancelRun(runId: string, operationId = randomUUID()): Promise<Run> {
     return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
   }
@@ -961,6 +967,10 @@ export class RuntimeClient {
   }
   listQueuedRuns(request: QueuedRunListRequest): Promise<QueuedRunListResponse> {
     return this.validatedRequest("run/listQueued", { ...request }, isQueuedRunListResponse);
+  }
+
+  steerQueuedRun(request: QueuedRunSteerRequest): Promise<QueuedRunChangeResponse> {
+    return this.validatedRequest("run/steerQueued", { ...request, operationId: request.operationId ?? randomUUID() }, isQueuedRunChangeResponse);
   }
 
   deleteQueuedRun(request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse> {
@@ -2209,6 +2219,8 @@ function isItem(value: unknown): value is Item {
       "status",
       "content",
       "incomplete",
+      "contentBytes",
+      "contentHash",
       "createdAt",
       "completedAt",
       "toolCall",
@@ -2228,6 +2240,8 @@ function isItem(value: unknown): value is Item {
     && isNonNegativeInteger(value.createdAt)
     && (value.modelStepIndex === undefined || isNonNegativeInteger(value.modelStepIndex))
     && (value.content === undefined || typeof value.content === "string")
+    && (value.contentBytes === undefined || isNonNegativeInteger(value.contentBytes))
+    && (value.contentHash === undefined || (typeof value.contentHash === "string" && /^[a-f0-9]{64}$/.test(value.contentHash)))
     && (value.incomplete === undefined || typeof value.incomplete === "boolean")
     && (value.completedAt === undefined || isNonNegativeInteger(value.completedAt))
   );

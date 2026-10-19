@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.capacity import CapacityExceeded
+
 import base64
 
 import asyncio
@@ -303,6 +305,11 @@ class PydanticAIModelClient:
             ) from None
         except ModelRequestError:
             raise
+        except CapacityExceeded as error:
+            raise ModelRequestError(ModelRequestFailure(
+                code="capacity_exceeded", reason=error.reason, retryable=False,
+                provider_name=self._profile_spec.provider_id,
+            )) from None
         except (
             ModelHTTPError,
             ModelAPIError,
@@ -401,7 +408,7 @@ class PydanticAIModelClient:
                             elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta):
                                 reasoning_bytes += len((event.delta.content_delta or "").encode("utf-8"))
                             if reasoning_bytes > MAX_REASONING_REPLAY_BYTES:
-                                raise ModelRequestError(ModelRequestFailure(code="protocol_error", retryable=False))
+                                raise ModelRequestError(ModelRequestFailure(code="capacity_exceeded", reason="reasoning_replay_capacity", retryable=False))
                             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                                 if event.part.content:
                                     await anyio.to_thread.run_sync(
@@ -611,6 +618,13 @@ def encode_context(
         elif item_type == "protocol_error":
             code = item.get("code")
             if isinstance(code, str):
+                if code == "request_capacity":
+                    messages.append(PAIModelRequest([UserPromptPart(
+                        "Your previous tool call exceeded a request capacity limit. "
+                        "Split the operation into smaller calls and use paginated reads. "
+                        "No tools from that response were executed."
+                    )]))
+                    continue
                 if code == "length":
                     messages.append(PAIModelRequest([UserPromptPart(
                         "Your previous response reached the output token limit "
@@ -834,16 +848,24 @@ def map_model_response(
         call_id = call.tool_call_id or _stable_call_id(index, call.tool_name, encoded)
         if (
             not call_id
-            or len(call_id.encode("utf-8")) > MAX_TOOL_CALL_ID_BYTES
             or not call.tool_name
-            or len(call.tool_name.encode("utf-8")) > MAX_TOOL_NAME_BYTES
-            or len(encoded) > function_argument_limit(call.tool_name)
         ):
             raise ModelRequestError(ModelRequestFailure(
                 code="protocol_error",
                 retryable=False,
                 provider_name=response.provider_name,
                 reason="invalid_tool_call",
+            ))
+        if (len(call_id.encode("utf-8")) > MAX_TOOL_CALL_ID_BYTES
+                or len(call.tool_name.encode("utf-8")) > MAX_TOOL_NAME_BYTES):
+            raise ModelRequestError(ModelRequestFailure(
+                code="capacity_exceeded", reason="tool_identifier_capacity",
+                retryable=False, provider_name=response.provider_name,
+            ))
+        if len(encoded) > function_argument_limit(call.tool_name):
+            raise ModelRequestError(ModelRequestFailure(
+                code="capacity_exceeded", reason="tool_arguments_capacity",
+                retryable=False, provider_name=response.provider_name,
             ))
         calls.append(ModelToolCall(call_id, call.tool_name, arguments))
     text = response.text or ""

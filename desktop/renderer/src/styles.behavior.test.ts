@@ -79,6 +79,8 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.feed\s*\{[^}]*padding: 1\.25rem max\(1\.75rem, calc\(\(100% - var\(--session-content-width\)\) \/ 2\)\);/s);
     expect(styles).toMatch(/\.feed-item--assistant\s*\{[^}]*width: min\(100%, var\(--session-content-width\)\);[^}]*max-width: var\(--session-content-width\);[^}]*margin-inline: auto;[^}]*padding-left: 0\.75rem;/s);
     expect(styles).toMatch(/\.composer\s*\{[^}]*width: min\(calc\(100% - 3\.5rem\), var\(--session-content-width\)\);/s);
+    expect(styles).toMatch(/\.composer\s*\{[^}]*border:\s*1px solid rgba\(0,\s*0,\s*0,\s*0\.09\);/s);
+    expect(styles).not.toMatch(/\.composer:focus-within/);
   });
 
   it("keeps a narrow dock beside the session and aligns its header controls", () => {

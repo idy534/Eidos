@@ -17,10 +17,9 @@ from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.model.response_phase import AssistantMessagePhase
 from eidos_runtime.model.replay import ModelResponseReplay
 
-# The soft limits bound unprotected history selected in one projection. Recent
-# facts are protected from compaction and may exceed the soft limit when the
-# model-visible projection still fits the separate hard serialization ceiling.
-# Neither limit is the provider model context window.
+# Summary candidates use small batches. Online history uses the separate hard
+# resource ceiling; the model's token budget decides when normal compaction is
+# due. A summary batch size must not become a small model-independent window.
 CONTEXT_PROJECTION_MAX_BYTES = 768 * 1024
 CONTEXT_PROJECTION_MAX_ITEMS = 200
 # Compaction candidates are never sent to the model. Keep their payloads
@@ -49,6 +48,8 @@ class ContextRepository(Repository):
     def _bounded_context_facts(
         self, run_id: str, *, newest: bool
     ) -> ContextFacts:
+        item_limit = CONTEXT_PROJECTION_HARD_MAX_ITEMS if newest else CONTEXT_PROJECTION_MAX_ITEMS
+        byte_limit = CONTEXT_PROJECTION_HARD_MAX_BYTES if newest else CONTEXT_PROJECTION_MAX_BYTES
         with self.lock:
             connection = self._connection()
             run = connection.execute(
@@ -88,13 +89,17 @@ class ContextRepository(Repository):
                 SELECT * FROM items
                 WHERE session_id = ? AND kind = 'user_message'
                   AND status = 'completed'
+                  AND run_id IN (
+                    SELECT id FROM runs WHERE creation_seq <= ?
+                      AND (id = ? OR started_at IS NOT NULL)
+                  )
                   AND NOT EXISTS (
                     SELECT 1 FROM run_revisions
                     WHERE run_revisions.source_run_id = items.run_id
                   )
                 ORDER BY creation_seq DESC LIMIT 1
                 """,
-                (run["session_id"],),
+                (run["session_id"], run["creation_seq"], run_id),
             ).fetchone()
             recent_steps = connection.execute(
                 """
@@ -156,7 +161,15 @@ class ContextRepository(Repository):
                 FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
                 {replay_join}
                 WHERE items.session_id = ?
+                  AND items.run_id IN (
+                    SELECT id FROM runs WHERE creation_seq <= ?
+                      AND (id = ? OR started_at IS NOT NULL)
+                  )
                   AND items.status IN ('completed', 'failed', 'declined')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM input_mailbox pending
+                    WHERE pending.id = items.id AND pending.status = 'pending'
+                  )
                   AND NOT (items.kind = 'assistant_message' AND items.incomplete = 1)
                   AND NOT EXISTS (
                     SELECT 1 FROM run_revisions
@@ -187,7 +200,7 @@ class ContextRepository(Repository):
                 """
             aggregate = connection.execute(
                 f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
-                (run["session_id"], *excluded_values),
+                (run["session_id"], run["creation_seq"], run_id, *excluded_values),
             ).fetchone()
             metadata = connection.execute(
                 f"""
@@ -197,8 +210,9 @@ class ContextRepository(Repository):
                 """,
                 (
                     run["session_id"],
+                    run["creation_seq"], run_id,
                     *excluded_values,
-                    CONTEXT_PROJECTION_MAX_ITEMS + 1,
+                    item_limit + 1,
                 ),
             ).fetchall()
             goal_size = (
@@ -226,10 +240,10 @@ class ContextRepository(Repository):
             ):
                 raise ContextLimitExceeded("internal_projection_limit")
             selection_item_limit = max(
-                CONTEXT_PROJECTION_MAX_ITEMS, len(protected_ids)
+                item_limit, len(protected_ids)
             )
             selection_byte_limit = max(
-                CONTEXT_PROJECTION_MAX_BYTES, protected_bytes
+                byte_limit, protected_bytes
             )
             selected_bytes = protected_bytes
             if (
@@ -319,7 +333,7 @@ class ContextRepository(Repository):
             candidate_overflow = (
                 int(aggregate[0]) > base_selected
                 or int(aggregate[1])
-                > max(0, CONTEXT_PROJECTION_MAX_BYTES - protected_bytes)
+                > max(0, byte_limit - protected_bytes)
             )
             latest_signature = connection.execute(
                 """
@@ -352,13 +366,17 @@ class ContextRepository(Repository):
                 (run_id,),
             ).fetchall() if run["reconciliation_required"] else ()
         tools_by_item = {row["item_id"]: row for row in tool_rows}
+        item_order = {str(row["id"]): int(row["creation_seq"]) for row in item_rows}
+        if newest:
+            # Metadata only bounds loading. Reserve the actual serialized bytes
+            # of protected facts before older history can consume their space.
+            # Prefer newer unprotected history, then restore conversation order.
+            item_rows.sort(key=lambda row: (
+                str(row["id"]) not in protected_ids,
+                int(row["creation_seq"]) if str(row["id"]) in protected_ids else -int(row["creation_seq"]),
+            ))
         items: list[ContextItemFact] = []
         serialized_bytes = 2
-        serialization_limit = (
-            CONTEXT_PROJECTION_HARD_MAX_BYTES
-            if protected_bytes > CONTEXT_PROJECTION_MAX_BYTES
-            else CONTEXT_PROJECTION_MAX_BYTES
-        )
         projected_candidate_bytes = 0
         projected_candidate_count = 0
         replay_cache: dict[str, ModelResponseReplay] = {}
@@ -406,12 +424,8 @@ class ContextRepository(Repository):
                 ),
                 model_result_json=model_result_json,
             )
-            size = len(json.dumps(
-                fact.model_dump(exclude_none=True),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")) + 1
-            if serialized_bytes + size > serialization_limit:
+            size = len(fact.model_dump_json(exclude_none=True).encode("utf-8")) + 1
+            if serialized_bytes + size > byte_limit:
                 candidate_overflow = True
                 if goal_row is not None and row["id"] == goal_row["id"]:
                     raise ContextLimitExceeded("current_user_goal_too_large")
@@ -425,6 +439,7 @@ class ContextRepository(Repository):
             if str(row["id"]) not in protected_ids:
                 projected_candidate_bytes += size
                 projected_candidate_count += 1
+        items.sort(key=lambda fact: item_order[fact.item_id])
         candidate_count = int(aggregate[0])
         candidate_bytes = int(aggregate[1])
         omitted_count = max(0, candidate_count - projected_candidate_count)

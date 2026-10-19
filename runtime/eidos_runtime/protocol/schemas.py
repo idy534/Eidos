@@ -348,6 +348,8 @@ class ItemDto(ClosedModel):
     status: Literal["in_progress", "completed", "failed", "declined", "canceled"]
     created_at: StrictInt = Field(alias="createdAt")
     content: StrictStr | None = None
+    content_bytes: StrictInt | None = Field(default=None, alias="contentBytes", ge=0)
+    content_hash: StrictStr | None = Field(default=None, alias="contentHash", pattern=r"^[0-9a-f]{64}$")
     incomplete: bool = False
     completed_at: StrictInt | None = Field(default=None, alias="completedAt")
     tool_call: ToolCallDto | None = Field(default=None, alias="toolCall")

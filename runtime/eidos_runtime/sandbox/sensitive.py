@@ -10,6 +10,8 @@ from typing import Callable, Literal
 
 from pydantic import Field
 
+from eidos_runtime.domain.capacity import CapacityExceeded
+
 from eidos_runtime.protocol.schemas import ClosedModel
 
 
@@ -25,6 +27,10 @@ _PRESENTATION_AWS_ACCESS_KEY_ID = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 
 
 class SensitiveScanError(RuntimeError):
+    pass
+
+
+class SensitiveScanCapacityError(SensitiveScanError, CapacityExceeded):
     pass
 
 
@@ -87,7 +93,7 @@ class SensitiveScanner:
             raise SensitiveScanError("text is invalid")
         encoded = value.encode("utf-8", errors="strict")
         if len(encoded) > max_bytes:
-            raise SensitiveScanError("sensitive scan capacity exceeded")
+            raise SensitiveScanCapacityError("sensitive_scan_capacity")
         deadline = time.monotonic() + SCAN_TIMEOUT_SECONDS * max(1, len(encoded) / MAX_SCAN_BYTES)
         safe = value
         audited: list[str] = []
@@ -143,8 +149,10 @@ class StreamingSensitiveScanner:
         self,
         scanner: SensitiveScanner,
         on_safe_text: Callable[[str], None] | None = None,
+        *, max_bytes: int = MAX_SCAN_BYTES,
     ) -> None:
         self.scanner = scanner
+        self.max_bytes = max_bytes
         self.on_safe_text = on_safe_text
         self.parts: list[str] = []
         self.safe_parts: list[str] = []
@@ -157,14 +165,14 @@ class StreamingSensitiveScanner:
         except UnicodeError as error:
             raise SensitiveScanError("stream encoding is invalid") from error
         self.bytes += size
-        if self.bytes > MAX_SCAN_BYTES:
-            raise SensitiveScanError("sensitive scan capacity exceeded")
+        if self.bytes > self.max_bytes:
+            raise SensitiveScanCapacityError("sensitive_scan_capacity")
         self.parts.append(chunk)
         if self.on_safe_text is not None and "\n" in chunk:
             self._release_complete_lines()
 
     def finish(self) -> ScanResult:
-        result = self.scanner.scan_text("".join(self.parts))
+        result = self.scanner.scan_text("".join(self.parts), max_bytes=self.max_bytes)
         self.parts.clear()
         self._release(result)
         return ScanResult(
@@ -184,7 +192,7 @@ class StreamingSensitiveScanner:
             boundary = incomplete.start()
         if boundary == 0:
             return
-        result = self.scanner.scan_text(pending[:boundary])
+        result = self.scanner.scan_text(pending[:boundary], max_bytes=self.max_bytes)
         self.parts[:] = [pending[boundary:]]
         self._release(result)
 

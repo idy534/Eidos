@@ -283,7 +283,11 @@ class RunShellInput(StrictToolModel):
     command: StrictStr = Field(min_length=1, max_length=16 * 1024)
     cwd: StrictStr = Field(
         default=".",
-        description="Workspace-relative or Workspace canonical absolute directory path.",
+        description=(
+            "Workspace-relative or canonical absolute working directory. "
+            "Defaults to '.', the current Session's workspace root, including "
+            "projectless and full_access Runs."
+        ),
     )
     yieldTimeMs: StrictInt = Field(
         default=10_000,

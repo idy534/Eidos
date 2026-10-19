@@ -82,7 +82,6 @@ class SessionForkApplication:
                     self.history.anchor(
                         request.source_session_id, request.source_item_id
                     )
-                    self.history.assert_reconciled(request.source_session_id)
                     source = SessionRepository(
                         self.history.database
                     ).read_session_projection(request.source_session_id)

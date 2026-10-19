@@ -1,20 +1,121 @@
 {
   "validRequests": [
-    {"sessionId":"00000000-0000-0000-0000-000000000001","runId":"00000000-0000-0000-0000-000000000002","expectedUserInput":"old","userInput":"new"},
-    {"sessionId":"00000000-0000-0000-0000-000000000001","runId":"00000000-0000-0000-0000-000000000002","expectedUserInput":"old"}
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old",
+      "userInput": "new"
+    },
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old"
+    }
   ],
   "invalidRequests": [
-    {"sessionId":"invalid","runId":"00000000-0000-0000-0000-000000000002","expectedUserInput":"old"},
-    {"sessionId":"00000000-0000-0000-0000-000000000001","runId":"00000000-0000-0000-0000-000000000002","expectedUserInput":"old","userInput":"new","modelId":"changed"},
-    {"sessionId":"00000000-0000-0000-0000-000000000001","runId":"00000000-0000-0000-0000-000000000002","userInput":"new"}
+    {
+      "sessionId": "invalid",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old"
+    },
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old",
+      "userInput": "new",
+      "modelId": "changed"
+    },
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "userInput": "new"
+    }
   ],
   "validResponses": [
-    {"change":{"kind":"updated","sessionId":"s","runId":"r","userInput":"new","updatedAt":1}},
-    {"change":{"kind":"deleted","sessionId":"s","runId":"r"}}
+    {
+      "change": {
+        "kind": "updated",
+        "sessionId": "s",
+        "runId": "r",
+        "userInput": "new",
+        "updatedAt": 1
+      }
+    },
+    {
+      "change": {
+        "kind": "deleted",
+        "sessionId": "s",
+        "runId": "r"
+      }
+    },
+    {
+      "change": {
+        "kind": "steered",
+        "sessionId": "s",
+        "runId": "r",
+        "targetRunId": "active",
+        "itemId": "i"
+      }
+    }
   ],
   "invalidResponses": [
-    {"change":{"kind":"updated","sessionId":"s","runId":"r","userInput":"new"}},
-    {"change":{"kind":"deleted","sessionId":"s","runId":"r","userInput":"old"}},
-    {"change":{"sessionId":"s","runId":"r"}}
+    {
+      "change": {
+        "kind": "updated",
+        "sessionId": "s",
+        "runId": "r",
+        "userInput": "new"
+      }
+    },
+    {
+      "change": {
+        "kind": "deleted",
+        "sessionId": "s",
+        "runId": "r",
+        "userInput": "old"
+      }
+    },
+    {
+      "change": {
+        "sessionId": "s",
+        "runId": "r"
+      }
+    },
+    {
+      "change": {
+        "kind": "steered",
+        "sessionId": "s",
+        "runId": "r",
+        "targetRunId": "active"
+      }
+    }
+  ],
+  "validSteerRequests": [
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old",
+      "targetRunId": "00000000-0000-0000-0000-000000000003"
+    }
+  ],
+  "invalidSteerRequests": [
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old",
+      "targetRunId": "bad"
+    },
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old"
+    },
+    {
+      "sessionId": "00000000-0000-0000-0000-000000000001",
+      "runId": "00000000-0000-0000-0000-000000000002",
+      "expectedUserInput": "old",
+      "targetRunId": "00000000-0000-0000-0000-000000000003",
+      "approvalMode": "full_access"
+    }
   ]
 }

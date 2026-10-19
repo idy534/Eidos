@@ -523,6 +523,36 @@ class LoopGuardTests(unittest.TestCase):
 
 
 class ContextPersistenceTests(unittest.TestCase):
+    def _run_until_capacity_pause(self, run_id, model):
+        from eidos_runtime.domain.long_task import LongTaskStatus
+        cancel = threading.Event()
+        errors = []
+        def drive():
+            try:
+                RuntimeEngine(self.store, model, lambda _: None).run(run_id, cancel)
+            except BaseException as error:
+                errors.append(error)
+        worker = threading.Thread(target=drive)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                progress = self.store.long_task_repository().read(run_id)
+                if progress is not None and progress.status is LongTaskStatus.PAUSED:
+                    state = self.store.read_run(run_id)
+                    self.assertEqual(state["status"], "running")
+                    self.assertNotIn("errorCode", state)
+                    return state
+                if not worker.is_alive():
+                    break
+                time.sleep(0.01)
+            self.fail(f"Run did not pause: {errors}")
+        finally:
+            cancel.set()
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-context-")
         root = Path(self.temporary.name)
@@ -892,6 +922,7 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertIn('"reconciliationRequired":true', state["content"])
         self.assertNotIn("unresolvedErrorFingerprints", state["content"])
 
+    @patch("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", 768 * 1024)
     def test_projection_overflow_compacts_all_eligible_history_without_loss(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")
         assert self.store.connection is not None
@@ -963,7 +994,8 @@ class ContextPersistenceTests(unittest.TestCase):
 
         self.assertIn(item["id"], summary.source_item_ids)
 
-    def test_projection_overflow_without_durable_progress_fails_explicitly(self) -> None:
+    @patch("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", 768 * 1024)
+    def test_projection_overflow_without_durable_progress_pauses(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")
         assert self.store.connection is not None
         now = int(time.time() * 1000)
@@ -990,15 +1022,7 @@ class ContextPersistenceTests(unittest.TestCase):
             "eidos_runtime.runtime.engine.ContextCompactor.compact",
             return_value=None,
         ):
-            RuntimeEngine(
-                self.store,
-                ScriptedModel([ModelResponse(text="unreachable")]),
-                lambda _message: None,
-            ).run(current["id"], threading.Event())
-
-        stopped = self.store.read_run(current["id"])
-        self.assertEqual(stopped["status"], "failed")
-        self.assertEqual(stopped["errorCode"], "CONTEXT_PROJECTION_OVERFLOW")
+            self._run_until_capacity_pause(current["id"], ScriptedModel([ModelResponse(text="unreachable")]))
 
     def test_provider_context_exceeded_compacts_and_retries(self) -> None:
         old, _ = self.store.create_run(
@@ -1020,23 +1044,18 @@ class ContextPersistenceTests(unittest.TestCase):
         # Rejected request, bounded summary attempt (invalid -> fallback), retry.
         self.assertEqual(model.calls, 3)
 
-    def test_provider_context_exceeded_without_compactable_history_stops_clearly(self) -> None:
+    def test_provider_context_exceeded_without_compactable_history_pauses(self) -> None:
         current, _ = self.store.create_run(self.session["id"], "continue")
         model = ContextRejectingModel(
             reject_count=10,
             success=ModelResponse(text="unreachable"),
         )
 
-        RuntimeEngine(self.store, model, lambda _message: None).run(
-            current["id"], threading.Event()
-        )
+        self._run_until_capacity_pause(current["id"], model)
 
-        stopped = self.store.read_run(current["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "context_still_over_budget")
         self.assertEqual(self.store.compaction_count(current["id"]), 0)
 
-    def test_provider_context_exceeded_without_projection_progress_stops_clearly(self) -> None:
+    def test_provider_context_exceeded_without_projection_progress_pauses(self) -> None:
         current, _ = self.store.create_run(self.session["id"], "continue")
         model = ContextRejectingModel(
             reject_count=1,
@@ -1047,13 +1066,8 @@ class ContextPersistenceTests(unittest.TestCase):
             "eidos_runtime.runtime.engine.ContextCompactor.compact",
             return_value=None,
         ):
-            RuntimeEngine(self.store, model, lambda _message: None).run(
-                current["id"], threading.Event()
-            )
+            self._run_until_capacity_pause(current["id"], model)
 
-        stopped = self.store.read_run(current["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "context_still_over_budget")
         self.assertEqual(self.store.compaction_count(current["id"]), 0)
 
     def test_pre_turn_compaction_persists_and_restores_structured_summary(self) -> None:

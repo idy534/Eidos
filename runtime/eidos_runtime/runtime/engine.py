@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 import threading
 import time
+
+from eidos_runtime.domain.capacity import CapacityExceeded, is_capacity_error
 from typing import TYPE_CHECKING, Callable, Protocol
 
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
@@ -21,7 +23,7 @@ from eidos_runtime.context.project_rules import ProjectRuleResolver
 from eidos_runtime.context.compactor import (
     ContextCompactionError, ContextCompactor,
 )
-from eidos_runtime.context.policy import SOFT_CONTEXT_TARGET_TOKENS, SOFT_COMPACTION_KEEP_ITEMS
+from eidos_runtime.context.policy import AUTO_COMPACTION_THRESHOLD_PERCENT, AUTO_COMPACTION_KEEP_ITEMS
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import (
     ContextLimitExceeded,
@@ -64,6 +66,7 @@ from eidos_runtime.runtime.resource_registry import ResourceRegistry
 from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.runtime.sampling import (
     SamplingAuthenticationFailed,
+    SamplingCapacityExceeded,
     SamplingCancelled,
     SamplingMemoryRevoked,
     SamplingContextExceeded,
@@ -287,24 +290,17 @@ class RuntimeEngine:
                 runtime_dependency_catalog=self.runtime_dependency_catalog,
                 collaboration=self.collaboration,
             ) as resources:
-                self._drive(run_context, resources, cancel, repository_context)
+                while True:
+                    try:
+                        self._drive(run_context, resources, cancel, repository_context)
+                        break
+                    except CapacityExceeded as error:
+                        self._wait_for_capacity(run_id, error.reason, cancel)
         except (PlanningSuspended, AgentSuspended):
             self.events.deliver_pending()
             return
         except RunResourceError as error:
             self._fail(run_id, str(error))
-        except ContextLimitExceeded as error:
-            current = self.store.read_run(run_id)
-            if cancel.is_set() and current["status"] == "running":
-                self._cancel(run_id)
-            elif current["status"] != "running":
-                pass
-            elif error.reason == "current_user_goal_too_large":
-                self._fail(run_id, "CONTEXT_INPUT_TOO_LARGE")
-            elif error.reason == "internal_projection_limit":
-                self._fail(run_id, "CONTEXT_PROJECTION_OVERFLOW")
-            else:
-                self._fail(run_id, "CONTEXT_LIMIT_EXCEEDED")
         except (RuntimeCancelled, SamplingCancelled):
             if self.terminalize_cancel:
                 self._cancel(run_id)
@@ -360,7 +356,8 @@ class RuntimeEngine:
         pending_compaction_baseline: int | None = None
         pending_provider_recovery = False
         pending_projection_marker: tuple[object, ...] | None = None
-        soft_compaction_frontier: set[str] = set()
+        automatic_compaction_states: set[tuple[object, ...]] = set()
+        capacity_recovery_states: set[str] = set()
         finalizer = RunFinalizer(
             self.store,
             self.model,
@@ -420,14 +417,9 @@ class RuntimeEngine:
                     if resources.tool_executor is not None else None
                 ),
             )
-            tools._refresh_reconciliation(run_id=run.run_id, cancel=cancel)
             tools.controller.execute(
                 run_id=run.run_id, item=item, call=call, plan=plan,
                 cancel=cancel, deadline=None,
-            )
-            tools._refresh_reconciliation(
-                run_id=run.run_id,
-                cancel=cancel,
             )
             if self.store.read_run(run.run_id)["status"] == "waiting_approval":
                 raise InvalidRunStateError("pending action could not be restored")
@@ -512,7 +504,7 @@ class RuntimeEngine:
                 )
 
             manual = context_management.pending(run.run_id)
-            if manual is not None and not built.facts.pending_approval_ids and not built.facts.reconciliation_required:
+            if manual is not None and not built.facts.pending_approval_ids:
                 try:
                     compact_context("mid_turn", "manual", request_id=manual.request_id)
                 except ContextCompactionError:
@@ -523,25 +515,11 @@ class RuntimeEngine:
             if pending_compaction_baseline is not None:
                 if built.budget.projected_input_tokens >= pending_compaction_baseline:
                     if pending_provider_recovery:
-                        finalizer.finalize(
-                            run.run_id,
-                            built.model_context,
-                            "context_still_over_budget",
-                            cancel,
-                            instructions=built.instructions,
-                        )
-                        return
+                        raise CapacityExceeded("context_window_capacity")
                     if built.budget.projection_is_estimated:
                         estimated_pressure_states.add(_context_state(built))
                     else:
-                        finalizer.finalize(
-                            run.run_id,
-                            built.model_context,
-                            "context_still_over_budget",
-                            cancel,
-                            instructions=built.instructions,
-                        )
-                        return
+                        raise CapacityExceeded("context_window_capacity")
                 pending_compaction_baseline = None
                 pending_provider_recovery = False
             if pending_projection_marker is not None:
@@ -567,34 +545,29 @@ class RuntimeEngine:
                     ) from error
                 continue
             context_state = _context_state(built)
-            # A roomy model window is not a reason to resend an entire long Run.
-            # This is best effort: a soft target never turns into a Run limit.
-            summarized_ids = set(
-                built.facts.compact_summary.source_item_ids
-                if built.facts.compact_summary else ()
-            )
-            uncompressed_ids = {item.item_id for item in built.facts.items} - summarized_ids
+            # Compare unrounded projected input against the frozen model window.
+            # A failed early attempt never blocks a request that still fits.
             if (
                 built.budget.fits
-                and built.budget.projected_input_tokens > SOFT_CONTEXT_TARGET_TOKENS
-                and not built.facts.reconciliation_required
+                and built.budget.projected_input_tokens * 100
+                >= built.budget.context_usage.context_window_tokens * AUTO_COMPACTION_THRESHOLD_PERCENT
                 and not built.facts.pending_approval_ids
-                and len(uncompressed_ids - soft_compaction_frontier) >= 2 * SOFT_COMPACTION_KEEP_ITEMS
+                and context_state not in automatic_compaction_states
             ):
-                soft_compaction_frontier = uncompressed_ids
+                automatic_compaction_states.add(context_state)
                 try:
                     self.lifecycle.emit(
                         LoopStage.BEFORE_COMPACT, run.run_id,
-                        reason="soft_context_target",
+                        reason="context_window_threshold",
                     )
                     compact_context(
-                        "mid_turn", "soft_target",
-                        keep_recent_items=SOFT_COMPACTION_KEEP_ITEMS,
+                        "mid_turn", "window_pressure",
+                        keep_recent_items=AUTO_COMPACTION_KEEP_ITEMS,
                     )
                 except ContextCompactionError as error:
                     # Preserve the original facts and continue within the real
-                    # window budget. Do not repeatedly compact the same frontier.
-                    logger.warning("Soft context compaction skipped run_id=%s reason=%s", run.run_id, str(error))
+                    # window budget. Do not repeatedly compact the same state.
+                    logger.warning("Automatic context compaction skipped run_id=%s reason=%s", run.run_id, str(error))
                 else:
                     continue
             decision_budget = (
@@ -631,14 +604,7 @@ class RuntimeEngine:
                         pending_compaction_baseline = None
                         estimated_pressure_states.add(context_state)
                         continue
-                    finalizer.finalize(
-                        run.run_id,
-                        built.model_context,
-                        "context_still_over_budget",
-                        cancel,
-                        instructions=built.instructions,
-                    )
-                    return
+                    raise CapacityExceeded("context_window_capacity")
                 continue
             if context_decision.action == LoopAction.PAUSE:
                 reason = context_decision.reason or "context_over_budget"
@@ -696,6 +662,7 @@ class RuntimeEngine:
             self._resume_effective_time()
 
             context_recovered = False
+            capacity_retry = False
             while True:
                 try:
                     self._pause_at(run.run_id, SafePoint.BEFORE_MODEL, cancel)
@@ -732,14 +699,7 @@ class RuntimeEngine:
                     )
                     recovery_state = _context_state(built)
                     if recovery_state in provider_recovery_states:
-                        finalizer.finalize(
-                            run.run_id,
-                            built.model_context,
-                            "context_still_over_budget",
-                            cancel,
-                            instructions=built.instructions,
-                        )
-                        return
+                        raise CapacityExceeded("context_window_capacity")
                     provider_recovery_states.add(recovery_state)
                     phase = (
                         "mid_turn"
@@ -754,28 +714,30 @@ class RuntimeEngine:
                         )
                         compacted = compact_context(phase, "provider_limit")
                     except ContextCompactionError:
-                        finalizer.finalize(
-                            run.run_id,
-                            built.model_context,
-                            "context_still_over_budget",
-                            cancel,
-                            instructions=built.instructions,
-                        )
-                        return
+                        raise CapacityExceeded("context_window_capacity")
                     if compacted is None:
-                        finalizer.finalize(
-                            run.run_id,
-                            built.model_context,
-                            "context_still_over_budget",
-                            cancel,
-                            instructions=built.instructions,
-                        )
-                        return
+                        raise CapacityExceeded("context_window_capacity")
                     context_recovered = True
                     pending_compaction_baseline = built.budget.projected_input_tokens
                     pending_provider_recovery = True
                     break
                 except SamplingError as error:
+                    if isinstance(error, SamplingCapacityExceeded):
+                        self.store.complete_current_step(run.run_id, "failed", reason="request_capacity")
+                        reason = str(error)
+                        if reason in capacity_recovery_states:
+                            raise CapacityExceeded(reason) from error
+                        capacity_recovery_states.add(reason)
+                        capacity_retry = True
+                        run = run.model_copy(update={"model_context": (*run.model_context, {
+                            "type": "user", "content": (
+                                "The previous response exceeded a request resource budget. No tool from that "
+                                "response was executed. Continue with shorter replies and smaller tool calls; "
+                                "split large writes and read existing results by page."
+                            ),
+                        })})
+                        context_recovered = True
+                        break
                     if (
                         isinstance(error, SamplingRetryableError)
                         and error.retry_decision is not None
@@ -821,6 +783,14 @@ class RuntimeEngine:
                                 context_recovered = True
                                 break
                             continue
+                    if str(error) == "length":
+                        raise CapacityExceeded("model_output_capacity") from error
+                    if isinstance(error, SamplingRateLimited):
+                        raise CapacityExceeded("provider_rate_limit") from error
+                    if error.failure is not None and error.failure.code == "provider_timeout":
+                        raise CapacityExceeded("provider_request_timeout") from error
+                    if error.retry_decision is not None and error.retry_decision.reason == "transport_retries_exhausted":
+                        raise CapacityExceeded("provider_retry_budget") from error
                     self._handle_sampling_failure(run.run_id, error, step=step)
                     return
 
@@ -866,6 +836,8 @@ class RuntimeEngine:
                     self.store.complete_current_step(
                         run.run_id, "failed", reason=reason
                     )
+                    if reason == "request_capacity":
+                        raise CapacityExceeded("tool_arguments_capacity")
                     diagnostic = validation.protocol_diagnostic
                     self._fail(run.run_id, "MODEL_PROTOCOL_ERROR", termination=RunTermination(
                         stage="tool_validation" if diagnostic and diagnostic.stage == "tool_validation" else "model",
@@ -941,7 +913,8 @@ class RuntimeEngine:
                 break
 
             if context_recovered:
-                run = run.model_copy(update={"model_context": ()})
+                if not capacity_retry:
+                    run = run.model_copy(update={"model_context": ()})
                 continue
 
             pending_user_input = self.store.has_pending_input(run.run_id)
@@ -959,7 +932,6 @@ class RuntimeEngine:
             sample_action = self._settle_sample_boundary(
                 run.run_id, decision, sampled, validation, built, resources,
                 finalizer, cancel, agent_baseline=agent_baseline,
-                completion_recovery=tools._refresh_reconciliation,
             )
             if sample_action == SampleBoundaryAction.REBUILD_CONTEXT:
                 run = run.model_copy(update={"model_context": ()})
@@ -995,7 +967,7 @@ class RuntimeEngine:
                     ),
                 )
             )
-            repeated = None if managed_poll or built.facts.reconciliation_required else guard.observe_tool_calls(
+            repeated = None if managed_poll else guard.observe_tool_calls(
                 validation.tool_calls,
                 step.workspace_version,
                 step.reconciliation_epoch,
@@ -1030,6 +1002,8 @@ class RuntimeEngine:
                 })
                 continue
             if repeated is not None:
+                if self._last_tool_hit_capacity(run.run_id):
+                    raise CapacityExceeded("tool_capacity")
                 self.store.complete_current_step(run.run_id, "failed", reason=repeated)
                 finalizer.finalize(
                     run.run_id,
@@ -1131,6 +1105,8 @@ class RuntimeEngine:
                 cancelled=cancel.is_set(),
             )
             if tool_decision.action == LoopAction.PAUSE:
+                if self._last_tool_hit_capacity(run.run_id):
+                    raise CapacityExceeded("tool_capacity")
                 if self.store.read_run(run.run_id)["status"] == "interrupted":
                     return
                 finalizer.finalize(
@@ -1165,7 +1141,6 @@ class RuntimeEngine:
         finalizer: RunFinalizer,
         cancel: threading.Event,
         agent_baseline: CollaborationState | None = None,
-        completion_recovery: Callable[..., None] | None = None,
     ) -> SampleBoundaryAction:
         """Commit the sampling boundary before allowing another step or a tool."""
         if decision.action == LoopAction.CANCEL:
@@ -1222,8 +1197,6 @@ class RuntimeEngine:
             # final transaction. Settle processes but keep the owner reusable;
             # RunResources closes admission when this Worker actually exits.
             shell_stopped = resources.shell_process_manager.cleanup(close=False)
-            if completion_recovery is not None:
-                completion_recovery(run_id=run_id, cancel=cancel)
             self.store.complete_current_step(run_id, "completed")
             try:
                 mutation = self.store.complete_assistant_and_run_committed(
@@ -1328,6 +1301,55 @@ class RuntimeEngine:
             "interrupted",
         }:
             raise RuntimeCancelled
+
+    def _last_tool_hit_capacity(self, run_id: str) -> bool:
+        facts = self.store.context_projection_facts(run_id)
+        for fact in reversed(facts.items):
+            if fact.provider_call_id is None:
+                continue
+            try:
+                result = json.loads(fact.result_json or fact.model_result_json or "{}")
+            except ValueError:
+                return False
+            return isinstance(result, dict) and is_capacity_error(str(result.get("code", "")), str(result.get("outcome", "")))
+        return False
+
+    def _wait_for_capacity(self, run_id: str, reason: str, cancel: threading.Event) -> None:
+        self._check_cancel(run_id, cancel)
+        logger.info("Run paused for capacity run_id=%s reason=%s", run_id, reason)
+        self.store.complete_current_step(run_id, "failed", reason="request_capacity")
+        mutation = self._pause_effective_time(run_id)
+        if mutation is not None:
+            self.events.publish(mutation, run=mutation.value)
+        repository = self.store.long_task_repository()
+        progress = repository.read(run_id)
+        if progress is None:
+            workspace = self.store.workspace_for_run(run_id)
+            repository.initialize(
+                run_id=run_id, workspace_path=str(workspace.path),
+                workspace_device=workspace.device, workspace_inode=workspace.inode,
+                workspace_owner=workspace.owner,
+            )
+        progress = repository.read(run_id)
+        if progress is not None and progress.status is LongTaskStatus.RUNNING:
+            progress = repository.request_pause(run_id)
+        if progress is not None and progress.status is LongTaskStatus.PAUSE_REQUESTED:
+            repository.mark_paused(run_id, SafePoint.BEFORE_MODEL)
+        mutation = self.store.create_finalization_assistant_item_committed(run_id)
+        item = mutation.value
+        self.events.publish(mutation, item=item)
+        notices = {
+            "provider_rate_limit": "模型服务暂时限制请求频率，任务已暂停。系统保留了执行记录，你可以稍后继续或取消",
+            "provider_request_timeout": "模型请求超过等待时间，任务已暂停。系统保留了执行记录，你可以稍后继续或取消",
+            "provider_retry_budget": "模型请求的自动重试次数已用完，任务已暂停。系统保留了执行记录，你可以稍后继续或取消",
+        }
+        notice = notices.get(reason,
+            "当前请求超过处理预算，任务已暂停。系统保留了执行记录，你可以调整任务后继续或取消")
+        mutation = self.store.append_item_deltas_committed(str(item["id"]), (notice,), 1)
+        self.events.publish(mutation, item=mutation.value)
+        mutation = self.store.complete_assistant_item_committed(str(item["id"]))
+        self.events.publish(mutation, item=mutation.value)
+        self._pause_at(run_id, SafePoint.BEFORE_MODEL, cancel)
 
     def _pause_at(
         self, run_id: str, safe_point: SafePoint, cancel: threading.Event

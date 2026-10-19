@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, Fragment } from "react";
 import type { InputPrepareRequest } from "../../../shared/input-context.js";
 import { useInputContext } from "./InputContext.js";
 import { userFacingError } from "../session-state.js";
+import { Tooltip } from "./Tooltip.js";
 
 export type InputPickerMode = "all" | "skill" | "commands";
 interface Candidate { id: string; label: string; detail: string; request?: InputPrepareRequest; action?: string; unavailable?: boolean }
@@ -232,99 +233,113 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
               onKeyDown={handleSearchKeyDown}
             />
             {query ? (
-              <button
-                type="button"
-                className="input-picker__clear-btn"
-                onClick={() => {
-                  onQuery("");
-                  searchInputRef.current?.focus();
-                }}
-                aria-label="清空搜索"
-                title="清空搜索"
-                tabIndex={-1}
-              >
-                <ClearIcon />
-              </button>
+              <Tooltip content="清空搜索">
+                <button
+                  type="button"
+                  className="input-picker__clear-btn"
+                  onClick={() => {
+                    onQuery("");
+                    searchInputRef.current?.focus();
+                  }}
+                  aria-label="清空搜索"
+                  title="清空搜索"
+                  tabIndex={-1}
+                >
+                  <ClearIcon />
+                </button>
+              </Tooltip>
             ) : (
-              <button
-                type="button"
-                className="input-picker__collapse-btn"
-                onClick={() => {
-                  setSearchExpanded(false);
-                  onQuery("");
-                }}
-                aria-label="收起搜索"
-                title="收起搜索"
-              >
-                收起
-              </button>
+              <Tooltip content="收起搜索">
+                <button
+                  type="button"
+                  className="input-picker__collapse-btn"
+                  onClick={() => {
+                    setSearchExpanded(false);
+                    onQuery("");
+                  }}
+                  aria-label="收起搜索"
+                  title="收起搜索"
+                >
+                  收起
+                </button>
+              </Tooltip>
             )}
           </div>
         </div>
       ) : (
         <div className="input-picker__header input-picker__header--actions">
           <div className="input-picker__actions">
-            <button
-              type="button"
-              className="input-picker__action-btn"
-              aria-label="添加文件"
-              title="添加文件"
-              onClick={() => {
-                void window.eidosRuntime.pickInputPaths().then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
-              }}
-            >
-              <UploadFileIcon />
-              <span>文件</span>
-            </button>
-            <button
-              type="button"
-              className="input-picker__action-btn"
-              aria-label="添加文件夹"
-              title="添加文件夹"
-              onClick={() => {
-                void window.eidosRuntime.pickInputPaths(true).then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
-              }}
-            >
-              <FolderPlusIcon />
-              <span>文件夹</span>
-            </button>
+            <Tooltip content="添加文件">
+              <button
+                type="button"
+                className="input-picker__action-btn"
+                aria-label="添加文件"
+                title="添加文件"
+                onClick={() => {
+                  void window.eidosRuntime.pickInputPaths().then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
+                }}
+              >
+                <UploadFileIcon />
+                <span>文件</span>
+              </button>
+            </Tooltip>
+            <Tooltip content="添加文件夹">
+              <button
+                type="button"
+                className="input-picker__action-btn"
+                aria-label="添加文件夹"
+                title="添加文件夹"
+                onClick={() => {
+                  void window.eidosRuntime.pickInputPaths(true).then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
+                }}
+              >
+                <FolderPlusIcon />
+                <span>文件夹</span>
+              </button>
+            </Tooltip>
 
             <span className="input-picker__actions-divider" aria-hidden="true" />
 
-            <button
-              type="button"
-              className="input-picker__action-btn input-picker__action-btn--plan"
-              aria-label="Plan 模式"
-              title="开始 Plan 模式"
-              onClick={() => {
-                onSelectPlanMode?.();
-                onClose();
-              }}
-            >
-              <LightbulbIcon />
-              <span>Plan</span>
-            </button>
-            <button
-              type="button"
-              className="input-picker__action-btn input-picker__action-btn--goal"
-              aria-label="目标模式"
-              title="目标模式 (即将推出)"
-              disabled
-            >
-              <TargetGoalIcon />
-              <span>目标</span>
-            </button>
+            <Tooltip content="开始 Plan 模式">
+              <button
+                type="button"
+                className="input-picker__action-btn input-picker__action-btn--plan"
+                aria-label="Plan 模式"
+                title="开始 Plan 模式"
+                onClick={() => {
+                  onSelectPlanMode?.();
+                  onClose();
+                }}
+              >
+                <LightbulbIcon />
+                <span>Plan</span>
+              </button>
+            </Tooltip>
+            <Tooltip content="目标模式 (即将推出)">
+              <button
+                type="button"
+                className="input-picker__action-btn input-picker__action-btn--goal"
+                aria-label="目标模式"
+                title="目标模式 (即将推出)"
+                disabled
+              >
+                <TargetGoalIcon />
+                <span>目标</span>
+              </button>
+            </Tooltip>
           </div>
 
-          <button
-            type="button"
-            className="input-picker__search-trigger"
-            aria-label="搜索引用"
-            title="搜索引用"
-            onClick={() => setSearchExpanded(true)}
-          >
-            <SearchIcon />
-          </button>
+          <Tooltip content="搜索引用">
+            <button
+              type="button"
+              className="input-picker__search-trigger"
+              aria-label="搜索引用"
+              title="搜索引用"
+              onClick={() => setSearchExpanded(true)}
+            >
+              <SearchIcon />
+            </button>
+          </Tooltip>
         </div>
       )}
 
@@ -410,23 +425,24 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                   )}
                 </button>
                 {candidate.request?.kind === "history" && !candidate.request.itemIds && history === null && (
-                  <button
-                    type="button"
-                    className="input-picker__drilldown-btn"
-                    title="选择消息"
-                    aria-label="选择消息"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const source = candidate.request!.source;
-                      void window.eidosRuntime.readSession(source, { itemLimit: 100 }).then((snapshot) => {
-                        setCategory("all");
-                        onQuery("");
-                        setHistory([
-                          { ...candidate, label: "引用最近 20 条消息" },
-                          ...snapshot.items
-                            .filter((item) => ["user_message", "assistant_message"].includes(item.kind) && item.content)
-                            .map((item) => ({
-                              id: item.id,
+                  <Tooltip content="选择消息">
+                    <button
+                      type="button"
+                      className="input-picker__drilldown-btn"
+                      title="选择消息"
+                      aria-label="选择消息"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const source = candidate.request!.source;
+                        void window.eidosRuntime.readSession(source, { itemLimit: 100 }).then((snapshot) => {
+                          setCategory("all");
+                          onQuery("");
+                          setHistory([
+                            { ...candidate, label: "引用最近 20 条消息" },
+                            ...snapshot.items
+                              .filter((item) => ["user_message", "assistant_message"].includes(item.kind) && item.content)
+                              .map((item) => ({
+                                id: item.id,
                               label: (item.content ?? "").slice(0, 100),
                               detail: item.kind === "user_message" ? "用户" : "Eidos",
                               request: {
@@ -442,7 +458,8 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                   >
                     <ChevronRightIcon />
                   </button>
-                )}
+                </Tooltip>
+              )}
               </div>
             </Fragment>
           );

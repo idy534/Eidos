@@ -72,7 +72,6 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         SELECT r.id, r.creation_seq
         FROM runs r
         WHERE r.status = 'running'
-          AND r.reconciliation_required = 0
           AND r.cancel_requested_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM approvals a
@@ -106,7 +105,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         CREATE TEMP TABLE resumable_input_runs AS
         SELECT r.id FROM runs r JOIN user_input_requests q ON q.run_id=r.id
         WHERE r.status IN ('running', 'waiting_input', 'queued')
-          AND r.cancel_requested_at IS NULL AND r.reconciliation_required=0
+          AND r.cancel_requested_at IS NULL
           AND q.status IN ('pending', 'answered', 'skipped')
           AND EXISTS (SELECT 1 FROM tool_calls t WHERE t.item_id=q.item_id AND t.status='running')
           AND NOT EXISTS (SELECT 1 FROM tool_calls t JOIN items i ON i.id=t.item_id
@@ -122,7 +121,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         CREATE TEMP TABLE resumable_agent_runs AS
         SELECT r.id FROM runs r JOIN agent_waits w ON w.run_id=r.id
         WHERE r.status IN ('waiting_agents','running','queued') AND w.status IN ('pending','ready')
-          AND r.cancel_requested_at IS NULL AND r.reconciliation_required=0
+          AND r.cancel_requested_at IS NULL
           AND (w.item_id IS NULL OR EXISTS (SELECT 1 FROM tool_calls t WHERE t.item_id=w.item_id AND t.status='running' AND t.tool_name='wait_agents'))
           AND NOT EXISTS (SELECT 1 FROM tool_calls t JOIN items i ON i.id=t.item_id
               WHERE i.run_id=r.id AND t.status='running' AND (w.item_id IS NULL OR t.item_id != w.item_id))
@@ -139,7 +138,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         CREATE TEMP TABLE resumable_approval_runs AS
         SELECT r.id FROM runs r JOIN approvals a ON a.run_id = r.id
         WHERE r.status = 'waiting_approval' AND a.status = 'pending'
-          AND r.cancel_requested_at IS NULL AND r.reconciliation_required = 0
+          AND r.cancel_requested_at IS NULL
           AND json_type(a.request_json, '$.permissionBlockFingerprint') = 'text'
           AND NOT EXISTS (SELECT 1 FROM tool_attempts t
               JOIN tool_calls c ON c.id = t.tool_call_id JOIN items i ON i.id = c.item_id
@@ -237,11 +236,11 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             str(row["id"]),
             frozenset({current}),
             RunStatus.INTERRUPTED,
-            "side_effect_reconciliation_required",
+            "runtime_restart",
         )
         connection.execute(
             """
-            UPDATE runs SET cancel_failure_code = 'RECONCILIATION_REQUIRED'
+            UPDATE runs SET cancel_failure_code = NULL
             WHERE id = ? AND cancel_requested_at IS NOT NULL
             """,
             (row["id"],),
@@ -285,7 +284,6 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         SELECT id, status FROM runs
         WHERE cancel_requested_at IS NOT NULL
           AND cancel_completed_at IS NULL
-          AND reconciliation_required = 0
           AND status IN (
               'queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'
           )

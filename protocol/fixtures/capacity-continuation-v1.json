@@ -1,0 +1,46 @@
+{
+  "item": {
+    "id": "66666666-6666-4666-8666-666666666666",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "runId": "22222222-2222-4222-8222-222222222222",
+    "ordinal": 2,
+    "modelStepIndex": 1,
+    "kind": "assistant_message",
+    "status": "completed",
+    "createdAt": 1,
+    "completedAt": 2,
+    "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentBytes": 70000,
+    "contentHash": "66915c0872933db504e7578828dd85b7e74a4e0a061f9756793b89c4151bd4b5"
+  },
+  "pageRequest": {
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "toolCallId": "66666666-6666-4666-8666-666666666666",
+    "field": "content",
+    "sha256": "66915c0872933db504e7578828dd85b7e74a4e0a061f9756793b89c4151bd4b5",
+    "offset": 0
+  },
+  "page": {
+    "content": "aaaaaaaaaaaaaaaa",
+    "nextOffset": 16,
+    "totalCharacters": 70000,
+    "sha256": "66915c0872933db504e7578828dd85b7e74a4e0a061f9756793b89c4151bd4b5"
+  },
+  "resumeRequest": {
+    "runId": "22222222-2222-4222-8222-222222222222",
+    "operationId": "11111111-1111-4111-8111-111111111111"
+  },
+  "resumeResponse": {
+    "run": {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "sessionId": "11111111-1111-4111-8111-111111111111",
+      "userInput": "Inspect README.md",
+      "status": "running",
+      "modelId": "deepseek-v4-flash",
+      "modelStepCount": 0,
+      "createdAt": 1,
+      "startedAt": 1,
+      "updatedAt": 1
+    }
+  }
+}

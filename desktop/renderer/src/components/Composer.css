@@ -13,12 +13,6 @@
   border-radius: 1rem;
   background: var(--surface);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 4px 20px rgba(49, 95, 74, 0.15), 0 0 0 3px var(--accent-glow);
 }
 
 .composer textarea {

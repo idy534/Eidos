@@ -56,6 +56,20 @@ function renderFeed(item: Item, run: Run = baseRun) {
 }
 
 describe("automation source and tool results", () => {
+  it("keeps steering input inside the running process and updates its receipt in place", () => {
+    const initial = shellItem({ id: "user", kind: "user_message", ordinal: 1, content: "原任务", status: "completed", toolCall: undefined });
+    const steering = shellItem({ id: "steer", kind: "user_message", ordinal: 3, content: "补充要求", toolCall: undefined });
+    const props = { runs: [baseRun], approvals: [], onApprove: vi.fn(), onReject: vi.fn() };
+    const { rerender } = render(<ExecutionFeed {...props} items={[initial, shellItem({ ordinal: 2 }), steering]} />);
+    const process = screen.getByText(/^正在处理/).closest("details")!;
+    expect(within(process).getByText("补充要求")).toBeInTheDocument();
+    expect(within(process).getByText("引导对话 · 等待下一步读取")).toBeInTheDocument();
+    expect(screen.getAllByText("原任务")).toHaveLength(1);
+    rerender(<ExecutionFeed {...props} items={[initial, shellItem({ ordinal: 2 }), { ...steering, status: "completed", completedAt: 2_000 }]} />);
+    expect(within(process).getByText("引导对话 · 已加入当前对话")).toBeInTheDocument();
+    expect(screen.getAllByText("补充要求")).toHaveLength(1);
+  });
+
   it("identifies scheduled input in the conversation", () => {
     const run = { ...baseRun, automationOrigin: { automationId: "task", revision: 1, occurrenceId: "occurrence", scheduledFor: "2026-10-15T01:00:00Z" } };
     renderFeed(shellItem({ kind: "user_message", content: "检查状态。", toolCall: undefined }), run);
@@ -1190,11 +1204,12 @@ describe("ExecutionFeed regenerate confirmation", () => {
     expect(screen.getByText("重新回答？")).toBeInTheDocument();
     expect(screen.getByText("重新回答将放弃当前的回答并重新生成。确定要继续吗？")).toBeInTheDocument();
 
-    // 2. Click cancel button -> dialog closes, onRegenerate still not called
+    // 2. Click cancel button -> dialog closes, onRegenerate still not called, and tooltip does not linger
     const cancelBtn = screen.getByRole("button", { name: "取消" });
     fireEvent.click(cancelBtn);
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(onRegenerate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     // 3. Open dialog again, click confirm button -> dialog closes, onRegenerate called with run
     fireEvent.click(retryBtn);
@@ -1830,3 +1845,48 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
 });
 
 
+
+
+describe("capacity continuation", () => {
+  it("keeps a paused task resumable after a failed resume request", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const resumeRun = vi.fn().mockRejectedValueOnce(new Error("temporary failure")).mockResolvedValue(baseRun);
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { resumeRun } });
+    try {
+      renderFeed(shellItem({ kind: "assistant_message", status: "completed", toolCall: undefined,
+        content: "当前请求超过处理预算，任务已暂停。系统保留了执行记录，你可以调整任务后继续或取消" }));
+      fireEvent.click(screen.getByRole("button", { name: "继续任务" }));
+      await screen.findByRole("alert");
+      expect(resumeRun).toHaveBeenCalledWith(baseRun.id);
+      fireEvent.click(screen.getByRole("button", { name: "继续任务" }));
+      expect(await screen.findByText("任务已继续")).toBeInTheDocument();
+      expect(resumeRun).toHaveBeenCalledTimes(2);
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+
+  it("pages the full assistant answer through its Session and original hash", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const sha256 = "a".repeat(64);
+    const readToolText = vi.fn()
+      .mockResolvedValueOnce({ content: "first page", nextOffset: 10, totalCharacters: 19, sha256 })
+      .mockResolvedValueOnce({ content: "last page", nextOffset: 19, totalCharacters: 19, sha256 });
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readToolText } });
+    try {
+      renderFeed(shellItem({ kind: "assistant_message", status: "completed", toolCall: undefined,
+        content: "preview", contentBytes: 70000, contentHash: sha256 }), { ...baseRun, status: "succeeded" });
+      fireEvent.click(screen.getByRole("button", { name: "查看完整回答" }));
+      expect(await screen.findByText("first page")).toBeInTheDocument();
+      expect(readToolText).toHaveBeenLastCalledWith(baseRun.sessionId, "shell-item", "content", sha256, 0);
+      fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+      expect(await screen.findByText("last page")).toBeInTheDocument();
+      expect(readToolText).toHaveBeenLastCalledWith(baseRun.sessionId, "shell-item", "content", sha256, 10);
+      expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+});

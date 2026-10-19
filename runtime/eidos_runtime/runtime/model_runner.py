@@ -5,6 +5,8 @@ import threading
 import time
 from typing import Callable, Literal
 
+from eidos_runtime.domain.capacity import model_output_byte_budget
+
 from eidos_runtime.model.client import (
     AssistantMessagePhase,
     ResponsePhaseSource,
@@ -96,7 +98,11 @@ class ModelRunner:
                 first_safe = self._monotonic()
             on_text(delta)
 
-        stream = StreamingSensitiveScanner(self._sensitive, on_safe_text)
+        profile = getattr(self._model, "profile_snapshot", None)
+        stream = StreamingSensitiveScanner(
+            self._sensitive, on_safe_text,
+            max_bytes=model_output_byte_budget(profile.max_output_tokens if profile is not None else 8192),
+        )
         try:
             response = self._model.complete(
                 context,

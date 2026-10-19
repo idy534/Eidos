@@ -21,7 +21,7 @@ from eidos_runtime.persistence.tool_content import ToolContentRepository
 from eidos_runtime.domain.tool_content import MAX_CONTEXT_CONTENT_BYTES, ToolContentSnapshot
 from eidos_runtime.context.facts import ContextFacts
 from eidos_runtime.context.tool_history import clear_old_tool_results
-from eidos_runtime.context.policy import SOFT_CONTEXT_TARGET_TOKENS
+from eidos_runtime.context.policy import TOOL_RESULT_CLEARING_TARGET_TOKENS
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
 from eidos_runtime.context.repository import RunRepositoryContext
 from eidos_runtime.db.storage import SessionStore
@@ -385,14 +385,10 @@ class ContextBuilder:
             context.append({
                 "type": "user",
                 "content": (
-                    "Runtime attempts verifiable Workspace recovery automatically; no preliminary read-only call is required. "
-                    "The listed origins come from unresolved durable intents, not from cache directories. "
-                    "Workspace refresh can only reconcile verifiable Workspace file mutations. "
-                    "They cannot clear Shell, MCP, external or unknown intents. Deleting caches or "
-                    "requesting permissions cannot clear those intents either. Unrelated file targets may proceed "
-                    "when Runtime can prove the affected paths; messages and stopping agents remain available. "
-                    "Continue useful independent work and report unresolved effects honestly. Do not replay "
-                    "an uncertain operation. An empty origin list does not prove resolution."
+                    "Some earlier operations have unknown outcomes. This is evidence, not a verification gate. "
+                    "Continue the task using the recorded results. Do not claim those operations succeeded "
+                    "or automatically replay them. New operations remain subject to normal permissions "
+                    "and current file identity/version checks."
                 ),
             })
         from eidos_runtime.runtime.resolution import canonical_sha256
@@ -437,7 +433,7 @@ class ContextBuilder:
             )
         # Clear old recoverable tool bodies before asking the compactor to
         # summarize conversation history. Preserve the recent working set.
-        clearing_threshold = min(SOFT_CONTEXT_TARGET_TOKENS, max(1, budget.usable_input_budget * 3 // 4))
+        clearing_threshold = min(TOOL_RESULT_CLEARING_TARGET_TOKENS, max(1, budget.usable_input_budget * 3 // 4))
         if budget.projected_input_tokens > clearing_threshold:
             target = clearing_threshold * 3 // 4
             ratio = budget.projected_input_tokens / max(1, budget.estimated_input_tokens)

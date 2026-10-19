@@ -45,7 +45,6 @@ from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
 from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolConcurrencyPolicy,
-    WorkspaceMutationRuntime,
     VerifiedToolOutput,
 )
 from eidos_runtime.telemetry.tracing import (
@@ -133,23 +132,6 @@ class ToolInfrastructureError(RuntimeError):
     pass
 
 
-def _uses_local_reconciliation_policy(plan: ToolDispatchPlan, call: ModelToolCall) -> bool:
-    descriptor = plan.descriptor
-    if descriptor is None or descriptor.provenance.kind != "builtin":
-        return False
-    if (
-        descriptor.provenance.source_id == "eidos"
-        and isinstance(descriptor.runtime, WorkspaceMutationRuntime)
-        and descriptor.spec.name in {"apply_patch", "write_file", "delete_file"}
-    ):
-        # The file handler checks actual prepared targets, again at commit.
-        return True
-    if descriptor.provenance.source_id == "eidos.planning":
-        return descriptor.spec.name == "write_plan"
-    return (
-        descriptor.provenance.source_id == "eidos.collaboration"
-        and descriptor.spec.name in {"send_message", "stop_agent", "followup_task"}
-    )
 
 
 class ToolConcurrencyGate:
@@ -564,21 +546,6 @@ class ToolExecutionController:
                         "then retry the tool in a subsequent step after receiving the search result.",
                     ),
                     "completed",
-                )
-            elif (
-                plan.side_effect != "none"
-                and self.store.side_effects_blocked(run_id)
-                and not _uses_local_reconciliation_policy(plan, call)
-            ):
-                outcome = HandlerOutcome(
-                    tool_error(
-                        call.name,
-                        "reconciliation_required",
-                        "An unresolved side effect has unknown scope. Runtime recovery does not require a preliminary read. "
-                        "Inspect reconciliationOrigins; do not replay the uncertain operation. Unrelated reads and agent messages or cancellation remain available.",
-                    ),
-                    "failed",
-                    "failed",
                 )
             elif not self.dispatcher.validate_execution(call, plan):
                 argument_validation = getattr(

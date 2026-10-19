@@ -109,7 +109,7 @@
 
 - Runtime Loop 目前只有内部、非权威的生命周期观察点。它们不持久化为业务 Event，也不提供用户可配置或可阻断的 Hook；诊断观察者失败不会改变 Run 结果。
 
-> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和 Reconciliation。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
+> 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 - `session/read` 不提供 Step Resolution Review 内容，兼容字段 `stepResolutions` 固定为空数组。Desktop 当前不展示这些信息，Runtime 也未新增按需详情 RPC。完整执行快照仍持久化并由执行读取入口校验；打开 Session 不承担这些 Blob 的完整性检查。本项代码修订尚未验证，不能据此宣称 UI 打开耗时已经达标。
 
@@ -183,7 +183,7 @@
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
 - 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
 - 延迟工具仍须先通过 `tool_search` 激活，再在后续 Step 使用。当前目录中的未激活工具会返回可恢复的 `tool_not_activated`，Runtime 不自动激活或重放该调用。同一批次内的搜索结果不会修改该 Step 已固定的可用工具集合。
-- Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，异常才建立未知副作用屏障。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
+- Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，系统才记录未知副作用；该记录不建立执行屏障。未知事实不阻塞后续执行。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
 - 无改动文件操作不会创建新的副作用屏障，但它不能清除其他操作的未知结果。Runtime 不修改历史 Run 的错误标记，也不根据工具返回的 `no_changes` 字符串推断已经安全跳过执行。
 - MCP 的有效响应表示调用已经返回，不证明外部业务目标已经达成。Runtime 在收到响应后做有界内容和固定输出 Schema 校验；校验失败仍报告工具错误，并保留可能已经发生的副作用。SDK 调用已进入但没有有效响应时，Runtime 仍按未知结果处理。当前提交标记是 SDK 调用边界，不是远端业务执行的确认。
 - 2026-10-09 测试记录：`pnpm test` 在默认外层沙盒下运行 Runtime Full。Runtime Full 结果为 90 failed、2112 passed、31 skipped、2 deselected。
@@ -232,18 +232,19 @@
 - Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前仍不提供 Permanent Worktree、Pinned Chat、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
 - Linked Worktree 的 Git metadata read 和获批后的精确 write 已在真实 macOS Seatbelt 中验证。默认 write、原始 repository working-tree access 和不匹配的 Worktree recovery 仍会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
 - 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。独立 Worktree 交付与合并、跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
-- Runtime 不会恢复内存中的 Model request、Process 或 ToolCall。可能有副作用且执行状态未知的操作必须先进入 reconciliation，Runtime 不会自动重放。已明确 `termination=exit` 且有 `exitCode` 的 Shell 即使 Workspace observation 不完整，也不会因此进入只读模式或阻止后续 ToolCall。取消已停止的 Run 正常返回。未清除的 reconciliation barrier 保留在 `interrupted` 终态中；`sideEffectsMayExist` 不会单独阻断取消。Workspace refresh 只能清除 Workspace mutation 的可核验 barrier，不能清除 Shell、MCP、external、Eidos-state 或 unknown barrier。Timeout、background child 清理未完成、unsandboxed 或 additional permission 失败，以及 MCP、external、Eidos-state 的未知结果仍然 fail closed。
+- Runtime 不恢复已消失的 Model request、Process 或 ToolCall。重启时，系统记录实际中断与未知结果，并禁止自动重放不确定操作。旧未知结果不再成为后续 Run、工具、正常完成或取消的核验门。
 
 ### Compaction 与 Context
 
-- 主动压缩是减少旧历史重发的软策略，不保证固定 token 成本或最优任务步骤。Runtime 保留用户消息、Skill 正文和近期证据，因此有些输入仍会超过软阈值。候选摘要未通过验证时，Runtime 保留原投影。新的有效读取仍可构成进展；LoopGuard 不判断任意任务的业务完成比例。
+- 自动摘要阈值为当前 Run 冻结模型窗口的 85%，系统使用 Provider 实测值及新内容估算后的预计输入进行判断。系统不再按固定 64K 或新增历史数量触发摘要。界面百分比经过取整，显示 85.0% 不代表未取整值已经达到阈值。请求输出预留、安全余量、内部投影限制或 Provider 超限仍可能更早触发保护性压缩。手动压缩不受 85% 限制。Runtime 保留用户消息、Skill 正文和近期证据，因此压缩不保证固定压后比例。候选摘要未通过验证时，Runtime 保留原投影；同一上下文状态不会重复尝试尚未超出输入预算的自动摘要。旧工具正文清理是独立步骤，不产生摘要压缩记录。
+- 在线历史投影仍有 8 MiB / 2,000 条资源保护；768 KiB / 200 条只限制摘要候选批次。超出资源预算不再让 Run 直接失败。系统无法通过摘要恢复时会暂停，不会静默删除必需事实。损坏的回放和真实存储错误继续按错误事实处理。
 
 - 在线 ContextCompactor 在规则候选之上请求结构化模型说明。模型只使用有界来源，因此它可能没有看到全部历史正文。关键事实继续由规则与持久事实提供。Schema、引句与来源校验不能证明所有语义完整，系统仍需要真实任务评测。
 - 离线 cl100k 计数是参考估算，不是所有自定义模型的真实 tokenizer。消息协议、图片和 Provider 私有开销仍有估算误差。词表缺失或损坏时，Runtime 使用保守字节上界，不隐式联网。真实端点的误差分布和长期任务质量仍需单独评测。
 - 旧工具清理只作用于模型输入。系统保留近期完整响应、失败与不确定结果，因此它不保证将所有请求压到目标值。内部候选数量或字节上限仍可能先触发摘要恢复。回读入口只覆盖明确允许的工具，不是任意 Session 或任意工具结果的读取能力。
 - 明确约束仍有规则提取，当前系统没有完整语义证明。模型说明不决定授权或操作完成状态。连续压缩、重启、取消、分页回读与分叉范围有定向测试。合成长历史回放与受控真实模型续接只能验证指定样本；它们不代表真实仓库任务成功率、所有模型或长期费用目标。当前系统没有 Session 级摘要复用。
 - 手动压缩由当前 Run 或下一 Run 在安全边界执行。系统不会在任务空闲时另建后台模型请求。原任务中断后，用户可以重新安排压缩。系统在压缩后发布新的 ContextPlan，并通过既有 Event/Outbox 刷新当前统计。
-- 处理过程展示已加载历史页中的压缩时间点。单页最多返回 500 条记录，并继续受 Session 响应字节预算限制；事件元数据读取最多 2,000 行。旧事件缺少触发来源时，界面使用“上下文已压缩”，不推断自动或手动。过程记录表示摘要提交状态，不证明压后达到了某个 Token 目标。本次显示改动没有调整触发阈值或压缩策略。
+- 处理过程展示已加载历史页中的压缩时间点。单页最多返回 500 条记录，并继续受 Session 响应字节预算限制；事件元数据读取最多 2,000 行。旧事件缺少触发来源时，界面使用“上下文已压缩”，不推断自动或手动。过程记录表示摘要提交状态，不证明压后达到了某个 Token 目标。旧的 `soft_target` 记录继续可读，新自动摘要使用 `window_pressure` 来源。
 - 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
 - MemoryStore 已经提供独立 `memories.sqlite` 和 content-addressed Markdown 存储，但当前 ContextCompactor、用户长期记忆和跨 Session 检索尚未接入这个 Store。
 - Context Usage 展示当前 Run 最新已构建投影的大小。系统优先使用这个投影对应请求的 Provider 输入量；系统不会使用累计 Tokens。压缩后，Engine 会发布新投影估算，下一请求返回后再使用其 Provider 实测值。分项是按当前总量分配的估算，不是 Provider 提供的精确分项。系统在重建投影失败时显示暂无统计。系统没有为尚未构建的新输入预先生成读数。旧 Plan 没有分项时，系统不会补造各项数值。
@@ -323,7 +324,7 @@
 - 文件链接和产物卡打开当前 Workspace 内容。历史 ToolCall 保留执行时的 Diff；预览不提供历史文件字节快照。卡片在打开时比较声明版本与当前版本，并显示变化或打开失败信息；当前文件可能在核验后再次变化，图片和 HTML 预览仍使用已有版本授权检查。环境输出汇总已加载的成功声明，不代表完整目录或内容质量。删除不会抹除交付历史，缺失状态在点击时核验。执行目录不同的历史卡片禁止打开。Projectless 对话支持产物声明和文本修改卡。卡片标题使用声明标题或文件名。
 - 旧会话没有 `declare_outputs` 记录时不会显示推断的产物卡。工具记录、最终回复中的文件链接和 Files 文件树继续可用；旧 Skill 的 `purpose="output"` 文本和普通路径不会自动补成声明。
 - 支持内置预览的产物卡同时提供内置预览、系统应用打开和在 Finder 中显示。文档、演示文稿和 Excel 文件已有专属产物分类，DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM 提供受控的系统应用打开与在 Finder 中显示，暂不提供内置预览。CSV/TSV 使用文本预览，尚无电子表格网格、公式计算或幻灯片内置查看器。对应的分类、图标和 Workspace Reader 测试已经覆盖这些边界。
-- 文本修改卡会区分已完成、部分失败和待核验记录。重复修改同一路径时，卡片与审查入口显示净变化，不再相加各次补丁。缺少可用内联补丁、只有大补丁分页引用、内容衔接不一致或操作未核验时，卡片仍显示“行数未完整统计”。当前没有可精确恢复本轮修改的用户级 Checkpoint 入口，所以“撤销”按钮只显示不可用原因。
+- 文本修改卡会区分已完成、部分失败和结果未知记录。重复修改同一路径时，卡片与审查入口显示净变化，不再相加各次补丁。缺少可用内联补丁、只有大补丁分页引用、内容衔接不一致或操作未核验时，卡片仍显示“行数未完整统计”。当前没有可精确恢复本轮修改的用户级 Checkpoint 入口，所以“撤销”按钮只显示不可用原因。
 - 2026-10-13 修复了文本修改卡被 Git Review 可用性挡住的入口。33 项 Renderer 定向测试、Renderer 类型检查与构建通过。真实 Desktop 已使用非 Git `Office-Test` 会话验证文件名和“审核”按钮均可打开已有 Run 的持久化补丁；Git 和 Projectless 入口由自动测试覆盖，尚未补做人工验收。该次修复未运行 Full Suite，也未修改统计逻辑。2026-10-14 的后续修复在 Runtime 公共展示入口补充文件头，解决普通 Unified Diff 的路径丢失和行数未知问题；该修复不改写历史补丁，不改变大补丁分页边界。
 - “最近一轮”展示文件工具记录的补丁。Shell 的文件观察只能给出路径变化，不能证明每条变化都由该 Shell 独占造成；完整仓库差异仍在仓库范围查看。
 - 未提交文件列表为只读审查，不提供暂存、取消暂存、丢弃或按修改块操作；需要变更 Index 时使用提交弹层的暂存后提交，或在外部终端操作。
@@ -366,7 +367,7 @@
 - 历史引用正文与图片受上下文预算限制。超出时，Context 会保留说明，原始快照仍在存储中。用户可以重新引用当前需要的内容。
 - 尚未创建 Session 的输入共用一个持久草稿槽。Session 草稿相互独立。保存失败时，界面保留当前文字并提示重试；应用异常退出前尚未完成持久化的编辑仍可能丢失。
 - Runtime 在添加新引用时清理超过 7 天、且没有被消息或草稿引用的记录。物理 Blob 回收沿用现有 GC 时机。界面暂未提供附件存储管理页。
-- MCP、Plugin 选择只使用已安装、已启用且已授权的扩展。安装、配置和授权继续在设置中完成。Composer 使用现有 Run FIFO 接收下一轮输入，输入框上方的列表支持编辑排队消息文字和删除消息。队列编辑保留已有引用，目前没有修改引用或拖动排序的入口。运行中消息追加和网页引用不在本批范围内。
+- MCP、Plugin 选择只使用已安装、已启用且已授权的扩展。安装、配置和授权继续在设置中完成。Composer 使用现有 Run FIFO 接收下一轮输入，输入框上方的列表支持编辑排队消息文字和删除消息。队列编辑保留已有引用，目前没有修改引用或拖动排序的入口。用户可以通过队列行的箭头追加运行中引导。引导在下一次采样边界生效，不打断正在执行的模型请求、Shell 或审批。涉及扩展 selection、已关联计划或当前模型不支持的图片时，消息会保留在队列中。网页引用不在本批范围内。
 
 ## Plan 模式验证状态
 
@@ -501,3 +502,7 @@ Renderer 定向测试 19 项、Renderer 构建和 Diff 检查通过。真实 Ele
 本地接口使用 `modalities.input` 声明图像输入能力，原发现解析器没有读取这个字段。当前解析器补充了该来源，并保留已有 `input_modalities` 和 `architecture.input_modalities` 的优先级。空列表表示没有声明图像输入；缺少或无效的字段继续读取后续来源。系统不会根据输出图像能力或模型名称推断输入能力。创建和编辑共用原有回填逻辑，刷新同一个模型保留本次表单中的手动修改，切换模型则使用新模型的声明。
 
 定向验证通过 Renderer 26 项、Runtime 发现 24 项、Main/Runtime 集成 2 项，以及 Main 构建、Ruff、Deptry 与 Diff 检查。回归覆盖新建、编辑同一模型、手动覆盖、模型切换、缺失与无效字段、能力来源优先级，以及图像声明保存和重启读取。本轮还使用现有发现函数只读获取本地接口的 5 个模型，均正确识别了接口声明的图像输入。修复没有新增依赖、协议字段或数据库迁移，没有修改界面布局，也没有运行 Full Suite、真实图片输入请求、Electron 界面或安装包验收。
+
+## 容量恢复与未知结果（2026-10-19）
+
+系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。容量超限优先反馈与恢复；无法继续时，Run 使用既有持久暂停和继续入口，不进入失败终态。权限、身份、版本和真实结果校验继续生效。长回答支持有界预览及 Hash 校验后的完整分页。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from eidos_runtime.domain.capacity import is_argument_capacity
+
 from eidos_runtime.model.client import (
     CustomToolPayload,
     FunctionToolPayload,
@@ -129,17 +131,6 @@ class ToolDispatcher:
                     stage="response_validation", code="provider_control_syntax"
                 ),
             )
-        if len(response.tool_calls) > 16:
-            return ToolValidationResult(
-                (),
-                "too_many_tool_calls",
-                ProtocolDiagnostic(
-                    stage="tool_validation",
-                    code="too_many_tool_calls",
-                    tool_call_count=min(len(response.tool_calls), 1024),
-                    tool_calls_truncated=len(response.tool_calls) > 1024,
-                ),
-            )
         provider_ids: set[str] = set()
         effective_calls: list[ModelToolCall] = []
         for call in response.tool_calls:
@@ -155,6 +146,12 @@ class ToolDispatcher:
                 and (entry is None or entry.spec.visibility != "deferred")
             ):
                 entry = None
+            if isinstance(call, ModelToolCall) and isinstance(call.provider_call_id, str) and len(call.provider_call_id) > 256:
+                return ToolValidationResult((), "request_capacity", _tool_validation_diagnostic(
+                    code="request_capacity", tool_call_index=len(effective_calls),
+                    tool_call_count=len(response.tool_calls), call=call, entry=entry,
+                    contract=None, tool_set_hash=tool_set_hash,
+                ))
             if (
                 not isinstance(call, ModelToolCall)
                 or not isinstance(call.provider_call_id, str)
@@ -197,6 +194,15 @@ class ToolDispatcher:
                         if contract.valid and contract.normalized_input is not None
                         else call.payload
                     )
+            if contract is not None and not contract.valid and is_argument_capacity(contract.reason_code):
+                return ToolValidationResult(
+                    (), "request_capacity",
+                    _tool_validation_diagnostic(
+                        code="request_capacity", tool_call_index=len(effective_calls),
+                        tool_call_count=len(response.tool_calls), call=call,
+                        entry=entry, contract=contract, tool_set_hash=tool_set_hash,
+                    ),
+                )
             if effective_payload is None:
                 contract = ToolArgumentValidationResult(
                     valid=False,

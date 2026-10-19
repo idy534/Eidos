@@ -96,7 +96,6 @@ class AutomationRepository(Repository):
                     return CommittedMutation(current, ())
             if task.deleted_at is None and task.status == "ACTIVE":
                 self.validate_binding_in(connection, task.target)
-                self.require_verified(connection, task.id)
             event = self.save_in(connection, task)
             return CommittedMutation(task, (event,))
         return self._write_committed(
@@ -129,14 +128,6 @@ class AutomationRepository(Repository):
                     return run_id
                 run_id = row[0]
         raise AutomationError("automation_source_not_allowed", "请求来源无法核验。")
-
-    @staticmethod
-    def require_verified(connection: sqlite3.Connection, task_id: str) -> None:
-        if connection.execute(
-            "SELECT 1 FROM automation_run_origins a JOIN runs r ON r.id=a.run_id "
-            "WHERE json_extract(a.origin_json,'$.automationId')=? AND r.reconciliation_required=1 LIMIT 1", (task_id,),
-        ).fetchone():
-            raise AutomationError("automation_verification_required", "上次执行的操作结果需要核验，请先处理原执行记录。")
 
     @staticmethod
     def active_run_in(connection: sqlite3.Connection, task_id: str) -> bool:
@@ -174,11 +165,6 @@ class AutomationRepository(Repository):
             if connection.execute("SELECT 1 FROM scheduled_occurrences WHERE task_id=? AND scheduled_for=?", (task_id, scheduled_for)).fetchone():
                 return None
             reason: str | None = None
-            try:
-                self.require_verified(connection, task_id)
-            except AutomationError:
-                self.pause_in(connection, task, "上次执行的操作结果需要核验，请先处理原执行记录。")
-                return None
             if self.active_run_in(connection, task_id) or connection.execute(
                 "SELECT 1 FROM scheduled_occurrences WHERE task_id=? AND status='preparing' LIMIT 1", (task_id,),
             ).fetchone():
@@ -242,7 +228,6 @@ class AutomationRepository(Repository):
             if occurrence.status != "preparing" or task.revision != occurrence.revision or task.status != "ACTIVE" or task.deleted_at is not None:
                 raise AutomationError("automation_revision_conflict", "准备期间任务配置已改变，本次执行已停止。")
             self.validate_binding_in(connection, task.target)
-            self.require_verified(connection, task.id)
             if self.active_run_in(connection, task.id):
                 raise AutomationError("automation_session_busy", "上次执行未结束，本次执行已跳过。")
             if connection.execute(f"SELECT 1 FROM runs WHERE session_id=? AND status IN {ACTIVE_SQL}", (session_id,)).fetchone():

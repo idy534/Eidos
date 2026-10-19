@@ -5,6 +5,7 @@ import { committedFileDiff, projectNetFileDiff } from "../persisted-file-diff.js
 import { userFacingError } from "../session-state.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
+import { Tooltip } from "./Tooltip.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { WorkspaceFileIcon, WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 
@@ -391,30 +392,34 @@ export function TextReviewPanel({
         </div>
 
         <div className="git-changes-toolbar-right">
-          <Button
-            variant="ghost"
-            size="small"
-            className="git-icon-button"
-            icon={<ExpandIcon collapse={allFilesExpanded} />}
-            aria-label={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
-            title={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
-            disabled={fileSummaries.length === 0}
-            onClick={toggleAllExpanded}
-          >
-            <span className="sr-only">{allFilesExpanded ? "折叠全部差异" : "展开全部差异"}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="small"
-            className="git-icon-button"
-            icon={<RefreshIcon />}
-            loading={loading}
-            aria-label="刷新修改记录"
-            title="刷新修改记录"
-            onClick={onRefresh}
-          >
-            <span className="sr-only">刷新修改记录</span>
-          </Button>
+          <Tooltip content={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}>
+            <Button
+              variant="ghost"
+              size="small"
+              className="git-icon-button"
+              icon={<ExpandIcon collapse={allFilesExpanded} />}
+              aria-label={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
+              title={allFilesExpanded ? "折叠全部差异" : "展开全部差异"}
+              disabled={fileSummaries.length === 0}
+              onClick={toggleAllExpanded}
+            >
+              <span className="sr-only">{allFilesExpanded ? "折叠全部差异" : "展开全部差异"}</span>
+            </Button>
+          </Tooltip>
+          <Tooltip content="刷新修改记录">
+            <Button
+              variant="ghost"
+              size="small"
+              className="git-icon-button"
+              icon={<RefreshIcon />}
+              loading={loading}
+              aria-label="刷新修改记录"
+              title="刷新修改记录"
+              onClick={onRefresh}
+            >
+              <span className="sr-only">刷新修改记录</span>
+            </Button>
+          </Tooltip>
         </div>
       </header>
 
@@ -470,34 +475,38 @@ export function TextReviewPanel({
                       </span>
                     </button>
                     {hasRealPath && (
+                      <Tooltip content={`在编辑器中打开 ${file.path}`}>
+                        <Button
+                          size="small"
+                          variant="ghost"
+                          className="git-icon-button"
+                          icon={<OpenInEditorIcon />}
+                          aria-label={`在编辑器中打开 ${file.path}`}
+                          title={`在编辑器中打开 ${file.path}`}
+                          onClick={() => {
+                            setOpenError("");
+                            void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.path).catch((cause: unknown) => {
+                              setOpenError(userFacingError(cause));
+                            });
+                          }}
+                        >
+                          <span className="sr-only">{`在编辑器中打开 ${file.path}`}</span>
+                        </Button>
+                      </Tooltip>
+                    )}
+                    <Tooltip content={`在工作区打开 ${file.path}`}>
                       <Button
                         size="small"
                         variant="ghost"
                         className="git-icon-button"
-                        icon={<OpenInEditorIcon />}
-                        aria-label={`在编辑器中打开 ${file.path}`}
-                        title={`在编辑器中打开 ${file.path}`}
-                        onClick={() => {
-                          setOpenError("");
-                          void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.path).catch((cause: unknown) => {
-                            setOpenError(userFacingError(cause));
-                          });
-                        }}
+                        icon={<WorkspaceFolderIcon />}
+                        aria-label={`在工作区打开 ${file.path}`}
+                        title={`在工作区打开 ${file.path}`}
+                        onClick={() => actions?.openFile(file.path)}
                       >
-                        <span className="sr-only">{`在编辑器中打开 ${file.path}`}</span>
+                        <span className="sr-only">{`在工作区打开 ${file.path}`}</span>
                       </Button>
-                    )}
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      className="git-icon-button"
-                      icon={<WorkspaceFolderIcon />}
-                      aria-label={`在工作区打开 ${file.path}`}
-                      title={`在工作区打开 ${file.path}`}
-                      onClick={() => actions?.openFile(file.path)}
-                    >
-                      <span className="sr-only">{`在工作区打开 ${file.path}`}</span>
-                    </Button>
+                    </Tooltip>
                   </header>
 
                   {isFileExpanded && (

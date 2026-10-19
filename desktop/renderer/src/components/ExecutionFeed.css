@@ -230,6 +230,7 @@
 .process-content { padding-top: 0.75rem; color: #727772; }
 .process-text { max-width: 48rem; margin: 0 0 0.75rem; color: var(--text); }
 .process-text .markdown-body { color: var(--text); }
+.process-steering { margin: 0 0 0.75rem; padding: 0.5rem 0.75rem; border-left: 2px solid var(--line); color: var(--text); overflow-wrap: anywhere; }
 .feed-content > .turn-results { margin-bottom: 1.25rem; }
 .run-notice { max-width: 48rem; margin: -0.25rem 0 1.25rem; color: var(--muted); font-size: var(--font-size-caption); }
 .run-notice--error { color: var(--danger); }

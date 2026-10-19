@@ -11,6 +11,7 @@ import anyio
 from eidos_runtime.model.tool_content import encode_responses_tool_content
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
+from eidos_runtime.domain.capacity import CapacityExceeded
 from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES, function_argument_limit
 from eidos_runtime.model.client import (
     CustomToolDefinition,
@@ -194,6 +195,8 @@ def map_responses_response(
     provider_name: str | None = None,
 ) -> ModelResponse:
     if _field(response, "status") != "completed":
+        if _field(_field(response, "incomplete_details"), "reason") == "max_output_tokens":
+            raise _capacity_error("model_output_capacity", provider_name)
         raise _protocol_error(_field(response, "provider_name"))
     custom_inputs = custom_inputs or {}
     calls: list[ModelToolCall] = []
@@ -232,9 +235,10 @@ def map_responses_response(
                 or not isinstance(name, str)
                 or not isinstance(raw_input, str)
                 or not _valid_call_identity(call_id, name)
-                or not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES)
             ):
                 raise _protocol_error(_field(response, "provider_name"))
+            if not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES):
+                raise _capacity_error("custom_tool_input_capacity", provider_name)
             calls.append(ModelToolCall(
                 call_id, name, CustomToolPayload(input=raw_input)
             ))
@@ -259,9 +263,10 @@ def map_responses_response(
                 or not isinstance(call_id, str)
                 or not isinstance(name, str)
                 or not _valid_call_identity(call_id, name)
-                or len(encoded) > function_argument_limit(name)
             ):
                 raise _protocol_error(_field(response, "provider_name"))
+            if len(encoded) > function_argument_limit(name):
+                raise _capacity_error("tool_arguments_capacity", provider_name)
             calls.append(ModelToolCall(
                 call_id, name, FunctionToolPayload(arguments=parsed)
             ))
@@ -402,6 +407,8 @@ class OpenAIResponsesModelClient:
             raise ModelRequestError(
                 _with_retry_diagnostics(failure, tracker)
             ) from None
+        except CapacityExceeded as error:
+            raise _capacity_error(error.reason, self._profile_spec.provider_id) from None
         except (ValueError, AssertionError):
             raise ModelRequestError(ModelRequestFailure(
                 code="protocol_error",
@@ -558,7 +565,7 @@ class OpenAIResponsesModelClient:
                     if isinstance(item_id, str) and isinstance(delta, str):
                         size = custom_bytes.get(item_id, 0) + len(delta.encode("utf-8"))
                         if size > MAX_CUSTOM_TOOL_INPUT_BYTES:
-                            raise ValueError("custom_tool_input_too_large")
+                            raise _capacity_error("custom_tool_input_capacity", None)
                         custom_bytes[item_id] = size
                         custom_parts.setdefault(item_id, []).append(delta)
                 elif event_type == "response.custom_tool_call_input.done":
@@ -566,7 +573,7 @@ class OpenAIResponsesModelClient:
                     raw_input = _field(event, "input")
                     if isinstance(item_id, str) and isinstance(raw_input, str):
                         if not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES):
-                            raise ValueError("custom_tool_input_too_large")
+                            raise _capacity_error("custom_tool_input_capacity", None)
                         custom_parts[item_id] = [raw_input]
                         custom_bytes[item_id] = len(raw_input.encode("utf-8"))
                 elif event_type == "response.function_call_arguments.delta":
@@ -575,7 +582,7 @@ class OpenAIResponsesModelClient:
                     if isinstance(item_id, str) and isinstance(delta, str):
                         size = function_bytes.get(item_id, 0) + len(delta.encode("utf-8"))
                         if size > MAX_PATCH_ARGUMENT_BYTES:
-                            raise ValueError("function_arguments_too_large")
+                            raise _capacity_error("tool_arguments_capacity", None)
                         function_bytes[item_id] = size
                         function_parts.setdefault(item_id, []).append(delta)
                 elif event_type == "response.function_call_arguments.done":
@@ -583,7 +590,7 @@ class OpenAIResponsesModelClient:
                     arguments = _field(event, "arguments")
                     if isinstance(item_id, str) and isinstance(arguments, str):
                         if not _valid_utf8_size(arguments, MAX_PATCH_ARGUMENT_BYTES):
-                            raise ValueError("function_arguments_too_large")
+                            raise _capacity_error("tool_arguments_capacity", None)
                         function_parts[item_id] = [arguments]
                         function_bytes[item_id] = len(arguments.encode("utf-8"))
                 elif event_type == "response.output_item.done":
@@ -596,6 +603,9 @@ class OpenAIResponsesModelClient:
                 elif event_type in {
                     "response.failed", "response.incomplete", "error"
                 }:
+                    incomplete = _field(_field(event, "response"), "incomplete_details")
+                    if _field(incomplete, "reason") == "max_output_tokens":
+                        raise _capacity_error("model_output_capacity", None)
                     raise _protocol_error(_field(event, "provider_name"))
         finally:
             await close_stream(suppress_errors=cancel.is_set())
@@ -674,10 +684,10 @@ def _set_field(value: object, name: str, field_value: object) -> None:
 
 def _valid_call_identity(call_id: str, name: str) -> bool:
     try:
-        return bool(call_id and name) and (
-            len(call_id.encode("utf-8")) <= MAX_TOOL_CALL_ID_BYTES
-            and len(name.encode("utf-8")) <= MAX_TOOL_NAME_BYTES
-        )
+        if (len(call_id.encode("utf-8")) > MAX_TOOL_CALL_ID_BYTES
+                or len(name.encode("utf-8")) > MAX_TOOL_NAME_BYTES):
+            raise _capacity_error("tool_identifier_capacity", None)
+        return bool(call_id and name)
     except UnicodeEncodeError:
         return False
 
@@ -687,6 +697,12 @@ def _valid_utf8_size(value: str, maximum: int) -> bool:
         return len(value.encode("utf-8")) <= maximum
     except UnicodeEncodeError:
         return False
+
+
+def _capacity_error(reason: str, provider_name: str | None) -> ModelRequestError:
+    return ModelRequestError(ModelRequestFailure(
+        code="capacity_exceeded", reason=reason, retryable=False, provider_name=provider_name,
+    ))
 
 
 def _protocol_error(provider_name: object) -> ModelRequestError:

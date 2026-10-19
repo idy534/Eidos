@@ -78,7 +78,7 @@ import type {
 export type Unsubscribe = () => void;
 
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js";
-import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
   readChannel(request?: ChannelReadRequest): Promise<ChannelResponse>;
@@ -142,6 +142,7 @@ export interface EidosRuntimeAPI {
   listSidebarPins(): Promise<SidebarPinsResponse>;
   updateQueuedRun(request: QueuedRunUpdateRequest): Promise<QueuedRunChangeResponse>;
   listQueuedRuns(request: QueuedRunListRequest): Promise<QueuedRunListResponse>;
+  steerQueuedRun(request: QueuedRunSteerRequest): Promise<QueuedRunChangeResponse>;
   deleteQueuedRun(request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse>;
   setSidebarPinned(request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse>;
   createProject(name: string | undefined, workspaceRoot: string): Promise<Project>;
@@ -149,7 +150,7 @@ export interface EidosRuntimeAPI {
   deleteProject(projectId: string): Promise<DeleteProjectResult>;
   listSessions(cursor?: string): Promise<SessionListResult>;
   readSession(sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot>;
-  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset?: number): Promise<ToolTextPage>;
+  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result" | "content", sha256: string, offset?: number): Promise<ToolTextPage>;
   listEvents(sessionId: string, afterEventId: number): Promise<EventListResult>;
   createSession(
     workspaceRoot: string | null,
@@ -287,6 +288,7 @@ export interface EidosRuntimeAPI {
     planning?: RunPlanningOptions,
   ): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
+  resumeRun(runId: string): Promise<Run>;
   readContextUsage(runId: string): Promise<ContextUsage | null>;
   readContextDetails(runId: string): Promise<ContextDetails>;
   requestContextCompaction(runId: string): Promise<ContextCompactionRecord>;

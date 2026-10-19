@@ -4,7 +4,7 @@ import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
-import { isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
+import { isQueuedRunSteerRequest, isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
@@ -631,6 +631,10 @@ ipcMain.handle(IPC.RUN_LIST_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunListRequest(request)) throw new Error("排队消息参数无效。");
   return clientOrThrow().listQueuedRuns(request);
 });
+ipcMain.handle(IPC.RUN_STEER_QUEUED, (_event, request: unknown) => {
+  if (!isQueuedRunSteerRequest(request)) throw new Error("引导消息参数无效");
+  return clientOrThrow().steerQueuedRun(request);
+});
 ipcMain.handle(IPC.RUN_DELETE_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunDeleteRequest(request)) throw new Error("排队消息参数无效。");
   return clientOrThrow().deleteQueuedRun(request);
@@ -667,7 +671,7 @@ ipcMain.handle(IPC.SESSION_LIST, (_event, cursor: unknown) => {
 ipcMain.handle(IPC.TOOL_TEXT_READ, (_event, sessionId: unknown, toolCallId: unknown, field: unknown, sha256: unknown, offset: unknown) => {
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256
     || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 256
-    || (field !== "diff" && field !== "result")
+    || (field !== "diff" && field !== "result" && field !== "content")
     || typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)
     || typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) {
     throw new Error("工具文本读取参数无效。");
@@ -1352,6 +1356,10 @@ ipcMain.handle(IPC.RUN_START, async (
     references as string[] | undefined,
     planning as RunPlanningOptions | undefined,
   );
+});
+ipcMain.handle(IPC.RUN_RESUME, (_event, runId: unknown) => {
+  if (typeof runId !== "string" || !runId || runId.length > 256) throw new Error("任务参数无效");
+  return clientOrThrow().resumeRun(runId);
 });
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Run 参数无效。");

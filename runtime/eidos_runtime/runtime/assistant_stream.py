@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+
+from eidos_runtime.domain.capacity import CapacityExceeded, model_output_byte_budget
 from typing import Callable
 
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
@@ -8,12 +10,11 @@ from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.provider_control import contains_provider_control_syntax
 
 
-MAX_ASSISTANT_BYTES = 512 * 1024
 DELTA_BATCH_BYTES = 4 * 1024
 DELTA_BATCH_SECONDS = 0.1
 
 
-class AssistantStreamTooLarge(RuntimeError):
+class AssistantStreamTooLarge(CapacityExceeded):
     pass
 
 
@@ -31,6 +32,7 @@ class AssistantStreamWriter:
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store = store
+        self.max_bytes = model_output_byte_budget(store.read_model_profile(run_id).max_output_tokens)
         self.events = events
         self.run_id = run_id
         self.model_step_index = model_step_index
@@ -51,8 +53,8 @@ class AssistantStreamWriter:
         if self._control_rejected:
             return
         text = self._text_tail + delta
-        if len(text.encode("utf-8")) > MAX_ASSISTANT_BYTES:
-            raise AssistantStreamTooLarge("assistant output is too large")
+        if len(text.encode("utf-8")) > self.max_bytes:
+            raise AssistantStreamTooLarge("assistant_output_capacity")
         if contains_provider_control_syntax(text):
             self._control_rejected = True
             self._text_tail = ""
@@ -81,8 +83,8 @@ class AssistantStreamWriter:
             return
         size = len(delta.encode("utf-8"))
         self._bytes += size
-        if self._bytes > MAX_ASSISTANT_BYTES:
-            raise AssistantStreamTooLarge("assistant output is too large")
+        if self._bytes > self.max_bytes:
+            raise AssistantStreamTooLarge("assistant_output_capacity")
         if self.item is None:
             mutation = (
                 self.store.create_finalization_assistant_item_committed(self.run_id)

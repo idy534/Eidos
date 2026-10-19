@@ -22,6 +22,7 @@ import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { FileDiffIcon, HistoryIcon, TaskScopeIcon, GitBranchIcon, SendIcon } from "./MenuIcons.js";
 import { LastTurnChanges, type ItemReviewStats } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
+import { Tooltip } from "./Tooltip.js";
 
 
 type ReviewGroup = "staged" | "changes" | "untracked" | "conflicts";
@@ -512,46 +513,50 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
             trigger={<MoreHorizontalIcon />}
             items={moreMenuItems}
           />
-          <Button
-            variant="ghost"
-            size="small"
-            className="git-icon-button"
-            icon={<ExpandIcon collapse={toolbarAllExpanded} />}
-            aria-label={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
-            title={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
-            disabled={toolbarExpandDisabled}
-            onClick={() => {
-              if (isItemTab) {
-                setItemExpandSignal((current) => ({
-                  id: (current?.id ?? 0) + 1,
-                  expand: !itemStats.allExpanded,
-                }));
-                return;
-              }
-              if (allFilesExpanded) {
-                setExpandedKeys(new Set());
-                return;
-              }
-              setExpandedKeys(new Set(selections.map(selectionKey)));
-              void (async () => {
-                for (const selection of selections) await loadFile(selection);
-              })();
-            }}
-          >
-            <span className="sr-only">{toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="small"
-            className="git-icon-button"
-            icon={<RefreshIcon />}
-            loading={loading || summaryLoading}
-            aria-label="刷新 Git 变更"
-            title="刷新 Git 变更"
-            onClick={onRefresh}
-          >
-            <span className="sr-only">刷新 Git 变更</span>
-          </Button>
+          <Tooltip content={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}>
+            <Button
+              variant="ghost"
+              size="small"
+              className="git-icon-button"
+              icon={<ExpandIcon collapse={toolbarAllExpanded} />}
+              aria-label={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
+              title={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
+              disabled={toolbarExpandDisabled}
+              onClick={() => {
+                if (isItemTab) {
+                  setItemExpandSignal((current) => ({
+                    id: (current?.id ?? 0) + 1,
+                    expand: !itemStats.allExpanded,
+                  }));
+                  return;
+                }
+                if (allFilesExpanded) {
+                  setExpandedKeys(new Set());
+                  return;
+                }
+                setExpandedKeys(new Set(selections.map(selectionKey)));
+                void (async () => {
+                  for (const selection of selections) await loadFile(selection);
+                })();
+              }}
+            >
+              <span className="sr-only">{toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}</span>
+            </Button>
+          </Tooltip>
+          <Tooltip content="刷新 Git 变更">
+            <Button
+              variant="ghost"
+              size="small"
+              className="git-icon-button"
+              icon={<RefreshIcon />}
+              loading={loading || summaryLoading}
+              aria-label="刷新 Git 变更"
+              title="刷新 Git 变更"
+              onClick={onRefresh}
+            >
+              <span className="sr-only">刷新 Git 变更</span>
+            </Button>
+          </Tooltip>
           {expanded && onSendReviewFeedback && (
             <Button
               variant="secondary"
@@ -641,33 +646,37 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                         </span>
                       )}
                     </button>
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      className="git-icon-button"
-                      icon={<OpenInEditorIcon />}
-                      aria-label={`在编辑器中打开 ${path}`}
-                      title={`在编辑器中打开 ${path}`}
-                      onClick={() => {
-                        setLocalError(undefined);
-                        void openInEditor(sessionId, path).catch((cause: unknown) => {
-                          setLocalError(userFacingError(cause));
-                        });
-                      }}
-                    >
-                      <span className="sr-only">{`在编辑器中打开 ${path}`}</span>
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      className="git-icon-button"
-                      icon={<WorkspaceFolderIcon />}
-                      aria-label={`在工作区打开 ${path}`}
-                      title={`在工作区打开 ${path}`}
-                      onClick={() => actions?.openFile(path)}
-                    >
-                      <span className="sr-only">{`在工作区打开 ${path}`}</span>
-                    </Button>
+                    <Tooltip content={`在编辑器中打开 ${path}`}>
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        className="git-icon-button"
+                        icon={<OpenInEditorIcon />}
+                        aria-label={`在编辑器中打开 ${path}`}
+                        title={`在编辑器中打开 ${path}`}
+                        onClick={() => {
+                          setLocalError(undefined);
+                          void openInEditor(sessionId, path).catch((cause: unknown) => {
+                            setLocalError(userFacingError(cause));
+                          });
+                        }}
+                      >
+                        <span className="sr-only">{`在编辑器中打开 ${path}`}</span>
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content={`在工作区打开 ${path}`}>
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        className="git-icon-button"
+                        icon={<WorkspaceFolderIcon />}
+                        aria-label={`在工作区打开 ${path}`}
+                        title={`在工作区打开 ${path}`}
+                        onClick={() => actions?.openFile(path)}
+                      >
+                        <span className="sr-only">{`在工作区打开 ${path}`}</span>
+                      </Button>
+                    </Tooltip>
                   </header>
                   {expanded && (
                     <div

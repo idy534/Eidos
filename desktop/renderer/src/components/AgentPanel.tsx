@@ -160,7 +160,7 @@ export function formatAgentTooltip(agent: AgentSummary, models?: readonly ModelO
     parts.push(`交付成果：${agent.result.trim()}`);
   }
   const outcome = terminalRunPresentation(agent);
-  if (outcome && (agent.status !== "succeeded" || agent.reconciliationRequired)) {
+  if (outcome && agent.status !== "succeeded") {
     parts.push(`结束原因：${outcome.label}`);
   }
   return parts.join("\n");

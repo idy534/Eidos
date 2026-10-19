@@ -688,7 +688,6 @@ export function useSessionController(): [SessionControllerState, SessionControll
       const next = new Set(prev);
       if (
         run.status === "succeeded"
-        && run.reconciliationRequired !== true
         && selectedSessionIdRef.current === run.sessionId
       ) {
         next.add(run.sessionId);

@@ -34,6 +34,14 @@ class QueuedRunDeleted(EidosFrozenStrictModel):
     run_id: str
 
 
+class QueuedRunSteered(EidosFrozenStrictModel):
+    kind: Literal["steered"]
+    session_id: str
+    run_id: str
+    target_run_id: str
+    item_id: str
+
+
 QueuedRunChange = Annotated[
-    QueuedRunUpdated | QueuedRunDeleted, Field(discriminator="kind")
+    QueuedRunUpdated | QueuedRunDeleted | QueuedRunSteered, Field(discriminator="kind")
 ]

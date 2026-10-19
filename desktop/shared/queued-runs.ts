@@ -1,8 +1,8 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { queuedRunSchema } from "./queued-runs-schema.generated.js";
-import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.generated.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.generated.js";
 
-export type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.generated.js";
+export type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.generated.js";
 export type QueuedMessage = QueuedRunListResponse["items"][number];
 export type QueuedRunChange = QueuedRunChangeResponse["change"];
 
@@ -21,4 +21,8 @@ export const isQueuedRunListRequest = ajv.compile<QueuedRunListRequest>({
 });
 export const isQueuedRunListResponse = ajv.compile<QueuedRunListResponse>({
   $defs: queuedRunSchema.$defs, $ref: "#/$defs/QueuedRunListResponse",
+});
+
+export const isQueuedRunSteerRequest = ajv.compile<QueuedRunSteerRequest>({
+  $defs: queuedRunSchema.$defs, $ref: "#/$defs/QueuedRunSteerRequest",
 });

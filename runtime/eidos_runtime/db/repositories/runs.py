@@ -697,7 +697,8 @@ class RunRepository(Repository):
             ).fetchone()
         if row is None:
             raise ResourceNotFoundError("run not found")
-        return bool(row["reconciliation_required"])
+        # Kept for older callers; uncertain outcomes are evidence, never a gate.
+        return False
 
     def record_protocol_error(self, run_id: str) -> int:
         with self.lock, self._connection() as connection:
@@ -853,15 +854,8 @@ class RunRepository(Repository):
                 raise ResourceNotFoundError("run not found")
             if run_row["status"] != RunStatus.FINALIZING.value:
                 raise InvalidRunStateError("run status changed")
-            reconciliation_required = bool(run_row["reconciliation_required"])
-            terminal_status = (
-                RunStatus.INTERRUPTED if reconciliation_required else RunStatus.STOPPED
-            )
-            terminal_reason = (
-                "side_effect_reconciliation_required"
-                if reconciliation_required
-                else stop_reason
-            )
+            terminal_status = RunStatus.STOPPED
+            terminal_reason = stop_reason
             item: dict[str, object] | None = None
             item_event: dict[str, object] | None = None
             attempt_event: dict[str, object] | None = None
@@ -947,11 +941,7 @@ class RunRepository(Repository):
                 connection,
                 run_id,
                 frozenset({SegmentStatus.RUNNING}),
-                (
-                    SegmentStatus.FAILED
-                    if reconciliation_required
-                    else SegmentStatus.COMPLETED
-                ),
+                SegmentStatus.COMPLETED,
                 now,
                 terminal_reason,
             )
@@ -1126,19 +1116,6 @@ class RunRepository(Repository):
             if current not in expected:
                 raise InvalidRunStateError("run cannot finish cancellation")
             now = _now_ms()
-            if row["reconciliation_required"]:
-                events = list(settle_run_children(
-                    connection, run_id, RunStatus.INTERRUPTED, now
-                ))
-                run, event = transition_run(
-                    connection,
-                    run_id,
-                    frozenset({current}),
-                    RunStatus.INTERRUPTED,
-                    "side_effect_reconciliation_required",
-                )
-                events.append(event)
-                return CommittedMutation(run, tuple(events))
             events = list(settle_run_children(
                 connection, run_id, RunStatus.CANCELED, now
             ))
@@ -1216,9 +1193,7 @@ class RunRepository(Repository):
             """,
             (now, run_id),
         )
-        target = (
-            RunStatus.INTERRUPTED if row["reconciliation_required"] else RunStatus.CANCELED
-        )
+        target = RunStatus.CANCELED
         events = list(settle_run_children(
             connection, run_id, target, now
         ))
