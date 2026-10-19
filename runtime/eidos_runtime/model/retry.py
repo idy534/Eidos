@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import httpx2 as httpx
 from pydantic import Field
+from pydantic_ai.retries import wait_retry_after
+from tenacity import RetryCallState, wait_exponential, wait_random
 
-from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.model.errors import EidosModelError
 from eidos_runtime.model.gateway_types import RetryPolicy
 
@@ -31,12 +33,22 @@ class RetryState(EidosFrozenStrictModel):
     canceled: bool = False
 
 
+class ModelRetryRecord(EidosFrozenStrictModel):
+    attempt_id: str
+    request_group_id: str
+    retry_index: JsonSafeInt = Field(ge=0, le=9)
+    deadline_at: JsonSafeInt | None = None
+    next_retry_at: JsonSafeInt | None = None
+
+
 class RetryDecision(EidosFrozenStrictModel):
     retry: bool
     reason: str
     # Backoff selection belongs to Tenacity.  This field remains in the durable
     # decision DTO for backwards-compatible diagnostics only.
     backoff_seconds: float = Field(default=0, ge=0)
+    deadline_at: JsonSafeInt | None = None
+    next_retry_at: JsonSafeInt | None = None
 
 
 def is_retryable_http_status(status_code: int) -> bool:
@@ -54,7 +66,7 @@ def retry_decision(
     state: RetryState,
     policy: RetryPolicy | None = None,
 ) -> RetryDecision:
-    """Classify whether a pre-stream transport failure is safe to retry.
+    """Allow a fresh response while this request has executed no tools.
 
     Tenacity owns timing and execution.  Eidos owns the policy and stream safety
     boundary so the same classification is used by the transport and terminal
@@ -64,8 +76,7 @@ def retry_decision(
     if state.canceled:
         return RetryDecision(retry=False, reason="canceled")
     if (
-        state.visible_output_emitted
-        or state.complete_tool_call_emitted
+        state.complete_tool_call_emitted
         or state.tool_result_committed
     ):
         return RetryDecision(retry=False, reason="unsafe_stream_progress")
@@ -74,6 +85,29 @@ def retry_decision(
     if state.attempt_number >= policy.max_attempts:
         return RetryDecision(retry=False, reason="retry_budget_exhausted")
     return RetryDecision(retry=True, reason="transport_retry")
+
+
+def retry_after_seconds(headers: object) -> float | None:
+    """Delegate both Retry-After formats to the locked Pydantic AI parser."""
+    if not hasattr(headers, "get"):
+        return None
+    value = headers.get("retry-after")
+    if not isinstance(value, str) or len(value) > 256:
+        return None
+    response = httpx.Response(429, headers={"retry-after": value}, request=httpx.Request("POST", "https://retry.invalid"))
+    state = RetryCallState(None, None, (), {})
+    error = httpx.HTTPStatusError("retry", request=response.request, response=response)
+    state.set_exception((type(error), error, None))
+    delay = wait_retry_after(lambda _: -1, max_wait=float("inf"))(state)
+    return delay if delay >= 0 else None
+
+
+def select_retry_delay(policy: RetryPolicy, attempt_number: int, server_delay: float | None) -> float:
+    state = RetryCallState(None, None, (), {})
+    state.attempt_number = attempt_number
+    delay = wait_exponential(multiplier=policy.initial_backoff_seconds, max=policy.max_backoff_seconds)(state)
+    jitter = wait_random(0, min(0.5, policy.initial_backoff_seconds / 4))(state)
+    return max(delay, server_delay or 0) + jitter
 
 
 def _is_transport_retryable(error: EidosModelError | BaseException | object) -> bool:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 
-from eidos_runtime.domain.capacity import CapacityExceeded
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -35,9 +34,21 @@ class ModelResponseReplay(BaseModel):
 
     @model_validator(mode="after")
     def bounded(self) -> ModelResponseReplay:
-        if len(self.model_dump_json().encode("utf-8")) > MAX_REASONING_REPLAY_BYTES:
-            raise CapacityExceeded("reasoning_replay_capacity")
-        return self
+        if len(self.model_dump_json().encode("utf-8")) <= MAX_REASONING_REPLAY_BYTES:
+            return self
+        # Signed/encrypted provider parts must remain exact or be omitted whole.
+        # Historical tool results remain available without replaying operations.
+        parts: list[ModelReasoningPart] = []
+        remaining = MAX_REASONING_REPLAY_BYTES // 2
+        for part in self.reasoning_parts:
+            size = len(part.model_dump_json().encode("utf-8"))
+            if size <= remaining:
+                parts.append(part)
+                remaining -= size
+        result = self.model_copy(update={"reasoning_parts": tuple(parts)})
+        if len(result.model_dump_json().encode("utf-8")) > MAX_REASONING_REPLAY_BYTES:
+            result = result.model_copy(update={"tool_call_ids": ()})
+        return result
 
 
 def read_response_replay(value: object) -> ModelResponseReplay | None:

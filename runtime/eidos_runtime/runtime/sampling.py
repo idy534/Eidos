@@ -3,6 +3,7 @@ from __future__ import annotations
 from eidos_runtime.domain.capacity import CapacityExceeded
 
 import threading
+import time
 
 from eidos_runtime.model.replay import ModelResponseReplay
 
@@ -14,7 +15,8 @@ from eidos_runtime.model.client import (
     ModelRequestError,
     ModelRequestFailure,
 )
-from eidos_runtime.model.retry import RetryDecision, RetryState, retry_decision
+from eidos_runtime.model.retry import RetryDecision, RetryState, retry_decision, select_retry_delay
+from eidos_runtime.model.request_scope import foreground_request
 from eidos_runtime.model.gateway_types import RetryPolicy
 from eidos_runtime.runtime.assistant_stream import AssistantStreamWriter
 from eidos_runtime.runtime.contracts import SamplingOutcome, StepContext, ToolBatchOutcome
@@ -112,10 +114,16 @@ class SamplingRuntime:
         ) as span:
             self._writer = AssistantStreamWriter(
                 self.store, self.events, step.run_id, step.step_index,
+                model_attempt_id=step.model_attempt_id,
                 check_cancel=lambda: self._check_cancel(cancel),
             )
             try:
-                outcome = self._sample(step, cancel)
+                record = self.store.read_model_retry_record(step.model_attempt_id)
+                if record.next_retry_at is not None:
+                    if cancel.wait(max(0, (record.next_retry_at - time.time_ns() // 1_000_000) / 1000)):
+                        raise SamplingCancelled("sampling_canceled")
+                with foreground_request(record.deadline_at):
+                    outcome = self._sample(step, cancel)
             except Exception:
                 self._writer.abort()
                 raise
@@ -137,7 +145,7 @@ class SamplingRuntime:
             if not revoked:
                 raise
             self.store.complete_current_model_attempt(step.run_id, "failed", error_code="memory_snapshot_revoked",
-                                                      retry_decision={"retry": False, "reason": "memory_snapshot_revoked"})
+                                                      retry_decision={"retry": False, "reason": "memory_snapshot_revoked"}, expected_attempt_id=step.model_attempt_id)
             raise SamplingMemoryRevoked("memory_snapshot_revoked") from None
 
     def _sample_unprotected(
@@ -153,7 +161,9 @@ class SamplingRuntime:
 
         try:
             frozen = self.store.read_running_context_snapshot(step.run_id)
-            if frozen is None or frozen.model_attempt_id != step.model_attempt_id:
+            self.store.check_model_attempt_active(step.run_id, step.model_attempt_id)
+            bound = self.store.context_snapshot_repository().read_for_model_attempt(step.model_attempt_id)
+            if frozen is None or bound is None or frozen.snapshot_id != bound.snapshot_id:
                 raise RuntimeError("running model attempt context snapshot is required")
             result = self.runner.run(
                 frozen.model_context,
@@ -183,6 +193,7 @@ class SamplingRuntime:
                         stage="sensitive_scan", code="sensitive_scan_failed"
                     ),
                     retry_decision={"retry": False, "reason": "sensitive_scan_failed"},
+                    expected_attempt_id=step.model_attempt_id,
                 )
                 raise error
             failure = error.failure if isinstance(error, SamplingError) else None
@@ -191,8 +202,14 @@ class SamplingRuntime:
                 failure,
                 had_progress=had_progress,
                 canceled=isinstance(error, SamplingCancelled),
-                max_attempts=step.model_profile.retry_max_attempts,
-                attempt_number=_current_attempt_number(self.store, step),
+                policy=RetryPolicy(
+                    max_attempts=min(6, step.model_profile.retry_max_attempts),
+                    initial_backoff_seconds=step.model_profile.retry_initial_backoff_seconds,
+                    max_backoff_seconds=step.model_profile.retry_max_backoff_seconds,
+                    recovery_window_seconds=step.model_profile.retry_recovery_window_seconds,
+                ),
+                attempt_number=self.store.read_model_retry_record(step.model_attempt_id).retry_index + 1,
+                deadline_at=self.store.read_model_retry_record(step.model_attempt_id).deadline_at,
                 visible_output_emitted=writer.item is not None,
             )
             self.store.complete_current_model_attempt(
@@ -213,7 +230,10 @@ class SamplingRuntime:
                     ),
                 ),
                 retry_decision=_retry_decision_payload(decision, failure),
+                expected_attempt_id=step.model_attempt_id,
+                retry_deadline_at=decision.deadline_at,
             )
+            self.events.deliver_pending()
             error.retry_decision = decision
             raise error
 
@@ -259,6 +279,7 @@ class SamplingRuntime:
                     ),
                 ),
                 retry_decision=_retry_decision_payload_from_result(decision, result),
+                expected_attempt_id=step.model_attempt_id,
             )
             self._check_cancel(cancel)
             raise SamplingProtocolError(
@@ -267,6 +288,7 @@ class SamplingRuntime:
             )
 
         self._check_cancel(cancel)
+        self.store.check_model_attempt_active(step.run_id, step.model_attempt_id)
         return SamplingOutcome(
             text=result.text,
             tool_calls=result.tool_calls,
@@ -336,6 +358,7 @@ class SamplingRuntime:
                 "lastBackoffSeconds": None,
                 "retryAfterApplied": False,
             },
+            expected_attempt_id=step.model_attempt_id,
         )
 
     def accept_validated_response(
@@ -462,31 +485,29 @@ def _terminal_retry_decision(
     *,
     had_progress: bool,
     canceled: bool,
-    max_attempts: int,
+    policy: RetryPolicy,
     attempt_number: int,
+    deadline_at: int | None,
     visible_output_emitted: bool = False,
 ) -> RetryDecision:
     decision = retry_decision(
         failure or error,
         RetryState(
-            attempt_number=max(
-                attempt_number,
-                (failure.transport_attempt_count if failure else 1) or 1,
-            ),
+            attempt_number=attempt_number,
             visible_output_emitted=visible_output_emitted,
             canceled=canceled,
         ),
-        RetryPolicy(max_attempts=max_attempts),
+        policy,
     )
-    if decision.reason == "retry_budget_exhausted":
-        return RetryDecision(retry=False, reason="transport_retries_exhausted")
-    return decision
-
-
-def _current_attempt_number(store: SessionStore, step: StepContext) -> int:
-    attempts = store.read_model_attempts(step.run_id)
-    current = [attempt for attempt in attempts if attempt["stepId"] == step.step_id]
-    return max((int(attempt["ordinal"]) for attempt in current), default=1)
+    if not decision.retry:
+        return decision.model_copy(update={"deadline_at": deadline_at})
+    now = time.time_ns() // 1_000_000
+    deadline = deadline_at if deadline_at is not None else now + int(policy.recovery_window_seconds * 1000)
+    delay = select_retry_delay(policy, attempt_number, failure.retry_after_seconds if failure else None)
+    next_at = now + int(delay * 1000)
+    if next_at >= deadline or (failure is not None and failure.reason == "retry_window_exhausted"):
+        return RetryDecision(retry=False, reason="retry_window_exhausted", deadline_at=deadline)
+    return decision.model_copy(update={"backoff_seconds": delay, "deadline_at": deadline, "next_retry_at": next_at})
 
 
 def _retry_decision_payload(
@@ -496,6 +517,9 @@ def _retry_decision_payload(
     return {
         "retry": decision.retry,
         "reason": decision.reason,
+        "nextRetryAt": decision.next_retry_at,
+        "backoffSeconds": decision.backoff_seconds,
+        "deadlineAt": decision.deadline_at,
         "transportAttemptCount": failure.transport_attempt_count if failure else 0,
         "transportRetryCount": failure.transport_retry_count if failure else 0,
         "lastRetryReason": failure.last_retry_reason if failure else None,

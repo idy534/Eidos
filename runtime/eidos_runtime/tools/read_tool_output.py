@@ -34,7 +34,7 @@ _JSON_SAFE_INTEGER_MAX = 9_007_199_254_740_991
 
 class ReadToolOutputInput(StrictToolModel):
     callId: StrictStr = Field(min_length=1, max_length=256)
-    stream: Literal["stdout", "stderr", "result"] = "stdout"
+    stream: Literal["stdout", "stderr", "result", "context"] = "stdout"
     itemId: StrictStr | None = Field(default=None, min_length=1, max_length=256)
     offsetBytes: StrictInt = Field(
         default=0, ge=0, le=_JSON_SAFE_INTEGER_MAX
@@ -59,7 +59,7 @@ class ReadToolOutputResultData(StrictToolModel):
         "nextOffset", "totalBytes", "hasMoreBefore", "hasMoreAfter",
     )
     callId: StrictStr | None = None
-    stream: Literal["stdout", "stderr", "result"] | None = None
+    stream: Literal["stdout", "stderr", "result", "context"] | None = None
     content: StrictStr | None = None
     startByte: StrictInt | None = Field(default=None, ge=0)
     endByte: StrictInt | None = Field(default=None, ge=0)
@@ -168,7 +168,7 @@ def read_tool_output_entry(
             "Set fromEnd=true for the tail; raw bytes omitted by the Shell output "
             "limit are not recoverable. Use stream='result' and the itemId/callId "
             "from a contextCleared marker to page the original saved JSON result "
-            "of file reads, file lists, searches or completed Shell calls, including fork history. "
+            "of any completed tool call, including fork history. Use stream='context' and a saved message itemId as callId to page the original user or assistant text. "
             "Reading saved output does not execute the operation again."
         ),
         "sideEffect": "none",

@@ -855,6 +855,12 @@ class ToolExecutionController:
                 projection = GENERIC_PROJECTOR.project(
                     plan.descriptor, outcome.result
                 )
+            if len(json.dumps(outcome.result, ensure_ascii=False).encode("utf-8")) > 16 * 1024:
+                projection = projection.model_copy(update={"model_result": {
+                    **projection.model_result,
+                    "readBack": {"tool": "read_tool_output", "callId": call.provider_call_id,
+                        "itemId": str(item["id"]), "stream": "result"},
+                }})
             outcome = replace(
                 outcome,
                 progress_fingerprint=projection.progress_fingerprint,

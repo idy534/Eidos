@@ -410,7 +410,6 @@ const RunSegment = memo(function RunSegment({
             feedbackPending={pendingFeedbackItemIds.has(item.id)}
             canRegenerate={allowRegenerate && isLast && index === segment.response.length - 1 && canReviseRun}
             allowFeedback={allowFeedback && !item.inherited}
-            isLatestResponse={isLast && index === segment.response.length - 1}
             isFinal={isLast && index === segment.response.length - 1 && TERMINAL_RUN_STATUSES.has(run.status)}
             showTurnResults={isLast
               && index === segment.response.length - 1
@@ -670,7 +669,6 @@ function AssistantMessage({
   feedbackPending,
   canRegenerate,
   allowFeedback = true,
-  isLatestResponse,
   isFinal,
   showTurnResults,
   resultItems,
@@ -688,7 +686,6 @@ function AssistantMessage({
   feedbackPending: boolean;
   canRegenerate: boolean;
   allowFeedback?: boolean | undefined;
-  isLatestResponse: boolean;
   isFinal: boolean;
   showTurnResults: boolean;
   resultItems: Item[];
@@ -717,8 +714,7 @@ function AssistantMessage({
       {!isStreaming && item.contentBytes !== undefined && item.contentHash && <ToolTextView
         sessionId={item.sessionId} toolCallId={item.id} field="content"
         sha256={item.contentHash} totalBytes={item.contentBytes} />}
-      {isLatestResponse && item.content?.includes("任务已暂停。系统保留了执行记录") && run.status === "running"
-        && <CapacityResume runId={run.id} />}
+
 
       {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
@@ -2373,21 +2369,4 @@ function LightbulbIcon() {
       <path d="M6.5 14h3" />
     </svg>
   );
-}
-
-function CapacityResume({ runId }: { runId: string }) {
-  const [busy, setBusy] = useState(false);
-  const [resumed, setResumed] = useState(false);
-  const [error, setError] = useState("");
-  if (resumed) return <p role="status">任务已继续</p>;
-  return <div>
-    <button type="button" disabled={busy} onClick={() => {
-      setBusy(true); setError("");
-      void window.eidosRuntime.resumeRun(runId)
-        .then(() => setResumed(true))
-        .catch((cause: unknown) => setError(userFacingError(cause)))
-        .finally(() => setBusy(false));
-    }}>{busy ? "正在继续…" : "继续任务"}</button>
-    {error && <p role="alert">{error}</p>}
-  </div>;
 }

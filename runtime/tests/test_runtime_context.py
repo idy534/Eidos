@@ -523,35 +523,10 @@ class LoopGuardTests(unittest.TestCase):
 
 
 class ContextPersistenceTests(unittest.TestCase):
-    def _run_until_capacity_pause(self, run_id, model):
-        from eidos_runtime.domain.long_task import LongTaskStatus
-        cancel = threading.Event()
-        errors = []
-        def drive():
-            try:
-                RuntimeEngine(self.store, model, lambda _: None).run(run_id, cancel)
-            except BaseException as error:
-                errors.append(error)
-        worker = threading.Thread(target=drive)
-        worker.start()
-        try:
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                progress = self.store.long_task_repository().read(run_id)
-                if progress is not None and progress.status is LongTaskStatus.PAUSED:
-                    state = self.store.read_run(run_id)
-                    self.assertEqual(state["status"], "running")
-                    self.assertNotIn("errorCode", state)
-                    return state
-                if not worker.is_alive():
-                    break
-                time.sleep(0.01)
-            self.fail(f"Run did not pause: {errors}")
-        finally:
-            cancel.set()
-            worker.join(5)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(errors, [])
+    def _run_through_context_recovery(self, run_id, model):
+        RuntimeEngine(self.store, model, lambda _: None).run(run_id, threading.Event())
+        self.assertEqual(self.store.read_run(run_id)["status"], "succeeded")
+        self.assertIsNone(self.store.long_task_repository().read(run_id))
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-context-")
@@ -912,15 +887,11 @@ class ContextPersistenceTests(unittest.TestCase):
 
         built = ContextBuilder(self.store).build(run["id"])
 
-        state = next(
-            item for item in built.model_context
-            if item.get("type") == "user"
-            and "recentToolErrorFingerprints" in item.get("content", "")
-        )
-        self.assertIn("error-a", state["content"])
-        self.assertIn('"recentToolErrorFingerprints":["error-a"]', state["content"])
+        state = next(item for item in built.model_context
+            if item.get("type") == "user" and "Runtime state" in item.get("content", ""))
         self.assertIn('"reconciliationRequired":true', state["content"])
-        self.assertNotIn("unresolvedErrorFingerprints", state["content"])
+        self.assertNotIn("recentToolErrorFingerprints", state["content"])
+        self.assertNotIn("error-a", state["content"])
 
     @patch("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", 768 * 1024)
     def test_projection_overflow_compacts_all_eligible_history_without_loss(self) -> None:
@@ -995,7 +966,7 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertIn(item["id"], summary.source_item_ids)
 
     @patch("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", 768 * 1024)
-    def test_projection_overflow_without_durable_progress_pauses(self) -> None:
+    def test_projection_overflow_without_durable_progress_continues(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")
         assert self.store.connection is not None
         now = int(time.time() * 1000)
@@ -1022,7 +993,7 @@ class ContextPersistenceTests(unittest.TestCase):
             "eidos_runtime.runtime.engine.ContextCompactor.compact",
             return_value=None,
         ):
-            self._run_until_capacity_pause(current["id"], ScriptedModel([ModelResponse(text="unreachable")]))
+            self._run_through_context_recovery(current["id"], ScriptedModel([ModelResponse(text="unreachable")]))
 
     def test_provider_context_exceeded_compacts_and_retries(self) -> None:
         old, _ = self.store.create_run(
@@ -1044,18 +1015,18 @@ class ContextPersistenceTests(unittest.TestCase):
         # Rejected request, bounded summary attempt (invalid -> fallback), retry.
         self.assertEqual(model.calls, 3)
 
-    def test_provider_context_exceeded_without_compactable_history_pauses(self) -> None:
+    def test_provider_context_exceeded_without_compactable_history_continues(self) -> None:
         current, _ = self.store.create_run(self.session["id"], "continue")
         model = ContextRejectingModel(
-            reject_count=10,
+            reject_count=2,
             success=ModelResponse(text="unreachable"),
         )
 
-        self._run_until_capacity_pause(current["id"], model)
+        self._run_through_context_recovery(current["id"], model)
 
         self.assertEqual(self.store.compaction_count(current["id"]), 0)
 
-    def test_provider_context_exceeded_without_projection_progress_pauses(self) -> None:
+    def test_provider_context_exceeded_without_projection_progress_continues(self) -> None:
         current, _ = self.store.create_run(self.session["id"], "continue")
         model = ContextRejectingModel(
             reject_count=1,
@@ -1066,7 +1037,7 @@ class ContextPersistenceTests(unittest.TestCase):
             "eidos_runtime.runtime.engine.ContextCompactor.compact",
             return_value=None,
         ):
-            self._run_until_capacity_pause(current["id"], model)
+            self._run_through_context_recovery(current["id"], model)
 
         self.assertEqual(self.store.compaction_count(current["id"]), 0)
 

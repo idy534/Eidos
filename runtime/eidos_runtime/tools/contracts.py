@@ -14,6 +14,7 @@ from typing import Annotated, ClassVar, Literal, Protocol, Union, get_args, get_
 from pydantic import (
     AliasChoices,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     RootModel,
@@ -26,6 +27,7 @@ from pydantic import (
 from pydantic.fields import PydanticUndefined
 
 from eidos_runtime.file_limits import MAX_PATCH_BYTES
+from eidos_runtime.model.context_projection import without_verification_metadata
 
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
@@ -42,6 +44,14 @@ LIST_FILES_MAX_DEPTH = 5
 LIST_FILES_MAX_ENTRIES = 2_000
 SEARCH_TEXT_MAX_RESULTS = 100
 SEARCH_TEXT_MAX_INCLUDE_GLOBS = 32
+
+
+def _cap_initial_wait(value: object) -> object:
+    return min(value, 30_000) if type(value) is int else value
+
+
+def _cap_followup_wait(value: object) -> object:
+    return min(value, 60_000) if type(value) is int else value
 
 
 def _relative_path(value: str, *, allow_dot: bool = False) -> str:
@@ -179,11 +189,11 @@ class SearchTextInput(StrictToolModel):
         le=SEARCH_TEXT_MAX_RESULTS,
         description="Maximum matching lines to return.",
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_initial_wait)] = Field(
         default=10_000,
         ge=250,
         le=30_000,
-        description="How long to wait for this search before returning a sessionId.",
+        description="How long to wait for this search before returning a sessionId. Values above 30000 are capped; the search continues.",
     )
 
     @field_validator("path")
@@ -222,11 +232,11 @@ class SearchTextWaitInput(StrictToolModel):
         max_length=128,
         description="Running search session returned by search_text.",
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_followup_wait)] = Field(
         default=30_000,
         ge=250,
         le=60_000,
-        description="How long to wait for additional search results.",
+        description="How long to wait for additional search results. Values above 60000 are capped; the search continues.",
     )
 
 
@@ -289,14 +299,14 @@ class RunShellInput(StrictToolModel):
             "projectless and full_access Runs."
         ),
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_initial_wait)] = Field(
         default=10_000,
         validation_alias=AliasChoices("yieldTimeMs", "yield_time_ms"),
         ge=250,
         le=30_000,
         description=(
             "Maximum initial wait. A running result includes sessionId for write_stdin; "
-            "this window does not limit the process lifetime."
+            "values above 30000 are capped. This window does not limit the process lifetime."
         ),
     )
     dependencyBindingId: StrictStr | None = Field(
@@ -411,11 +421,11 @@ class WriteStdinInput(StrictToolModel):
         max_length=16 * 1024,
         description="Input to write to the session. Empty input polls for additional output; \u0003 interrupts the command.",
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_followup_wait)] = Field(
         default=30_000,
         ge=250,
         le=60_000,
-        description="How long to wait for the running shell session before returning.",
+        description="How long to wait for the running shell session before returning. Values above 60000 are capped; the process continues.",
     )
 
     @field_validator("chars")
@@ -1081,13 +1091,15 @@ def _project_tool_result(
 ) -> ToolResultProjection:
     data = canonical_result.get("data")
     safe_data = dict(data) if isinstance(data, dict) else {}
+    model_data = without_verification_metadata(safe_data)
+    assert isinstance(model_data, dict)
     if tool_name in {"run_shell", "write_stdin"}:
         (
             projected,
             model_projection_truncated,
             stream_omitted,
             raw_streams,
-        ) = _project_shell_data(safe_data)
+        ) = _project_shell_data(model_data)
         if model_projection_truncated:
             _set_shell_projection_markers(projected, stream_omitted)
         model_result = {
@@ -1110,12 +1122,12 @@ def _project_tool_result(
         projected = {}
         truncated = False
         budget = _ProjectionBudget()
-        for key in sorted(safe_data):
+        for key in sorted(model_data):
             if budget.keys >= _MODEL_MAX_KEYS:
                 truncated = True
                 break
             budget.keys += 1
-            value = safe_data[key]
+            value = model_data[key]
             if key in {"durationMs"}:
                 continue
             value, value_truncated = _bounded_projection_value(

@@ -181,7 +181,7 @@
 - Workspace discovery 只读取 Workspace root 的 `.gitignore` 和 `.eidosignore`。当前不支持 nested `.gitignore`。
 - Ignore 规则只影响普通 `list_files`/`search_text` 发现结果。`.git`、`.agents` 和 `.eidos` 等 hard discovery 目录默认隐藏，但显式只读路径仍可读取。Ignore 规则不是权限。
 - `search_text` 没有 LSP、AST 查询和基于 Repo Intelligence 的默认搜索路径。它仍然使用受管 Ripgrep，结果、preview、单文件和查询大小都有界。首次等待和后续等待不会结束搜索进程，但搜索不能跨 Run 或 Runtime 重启恢复。每个 Run 最多同时运行 4 个搜索，最多保留 16 个未领取的搜索会话；单个搜索进程最多运行 600 秒。
-- 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=yieldTimeMs, reason=less_than_equal, maximum=30000, actual=60000`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
+- 已声明 Tool 的参数错误会返回 `invalid_arguments` Tool Result。Runtime 只保留有界字段路径、稳定原因码和有限数值约束，例如 `field=maxResults, reason=less_than_equal, maximum=100, actual=101`，不返回原始参数值。敏感或超大的结果在 projection 重建为错误时仍保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。
 - 延迟工具仍须先通过 `tool_search` 激活，再在后续 Step 使用。当前目录中的未激活工具会返回可恢复的 `tool_not_activated`，Runtime 不自动激活或重放该调用。同一批次内的搜索结果不会修改该 Step 已固定的可用工具集合。
 - Tool 的准备异常与授权成功分别记录。只有实际执行已开始且没有可信结果时，系统才记录未知副作用；该记录不建立执行屏障。未知事实不阻塞后续执行。可信结果之后的格式校验、投影、输出过滤和迟到取消不单独改变执行确定性。完全访问 Shell 的绝对 cwd 在准备和启动两层遵循同一模式，目录身份仍需核验。
 - 无改动文件操作不会创建新的副作用屏障，但它不能清除其他操作的未知结果。Runtime 不修改历史 Run 的错误标记，也不根据工具返回的 `no_changes` 字符串推断已经安全跳过执行。
@@ -505,4 +505,11 @@ Renderer 定向测试 19 项、Renderer 构建和 Diff 检查通过。真实 Ele
 
 ## 容量恢复与未知结果（2026-10-19）
 
-系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。容量超限优先反馈与恢复；无法继续时，Run 使用既有持久暂停和继续入口，不进入失败终态。权限、身份、版本和真实结果校验继续生效。长回答支持有界预览及 Hash 校验后的完整分页。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。
+系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。
+
+
+## 模型有限重试与断流恢复的验证范围（2026-10-20）
+
+普通模型采样已实现共享次数与恢复窗口、结构化错误分类、断流独立草稿及重启预算延续。Schema 30→31 为请求组和草稿归属增加字段。特殊收尾、审批、压缩等辅助调用仍使用原策略；前台没有新增重试倒计时或手动继续入口。
+
+验证使用隔离 SQLite、ScriptedModel、真实 Adapter 与模拟 HTTP/SSE，不读取实际 Provider 凭据，不产生模型费用。模拟流可以证明请求次数、流关闭、草稿隔离、残缺工具不执行和已执行文件操作不重放，但不能替代真实断网、各 Provider 端点或安装包验收。测试命令和实际结果由本次交付单独记录。本轮未运行 Full Suite。

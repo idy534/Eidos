@@ -15,6 +15,11 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 @pytest.fixture
 def downgrade_channel_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP INDEX IF EXISTS model_request_retry_index")
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")}
+        for column in ("request_group_id", "retry_index", "retry_deadline_at", "assistant_item_id"):
+            if column in columns:
+                connection.execute(f"ALTER TABLE model_attempts DROP COLUMN {column}")
         for name in ("channel_memory_insert", "channel_origin_memory"):
             connection.execute(f"DROP TRIGGER IF EXISTS {name}")
         for name in ("channel_deliveries", "channel_run_origins", "channel_inbound", "channel_sessions", "channel_connections"):

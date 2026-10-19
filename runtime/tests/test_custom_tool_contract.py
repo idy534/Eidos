@@ -331,9 +331,8 @@ def test_dispatcher_keeps_custom_input_raw_and_rejects_function_payload() -> Non
             "c3", "echo", CustomToolPayload(input="x" * (MAX_PATCH_BYTES + 1))
         ),),
     ))
-    assert oversized.error_code == "request_capacity"
-    assert oversized.protocol_diagnostic is not None
-    assert oversized.tool_calls == ()
+    assert oversized.error_code is None
+    assert dispatcher.argument_validation(oversized.tool_calls[0], dispatcher.plan(oversized.tool_calls[0])).valid is False
     plan = dispatcher.plan(response.tool_calls[0])
     assert dispatcher.validate_execution(response.tool_calls[0], plan)
 

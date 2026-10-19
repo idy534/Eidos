@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import threading
@@ -9,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from eidos_runtime.context.builder import ContextBuilder
+from eidos_runtime.model.context_projection import model_result_json
 from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.context.compactor import (
     ContextCompactor,
@@ -108,10 +108,7 @@ def test_old_outputs_clear_before_summary_and_keep_pairing_and_recent_results():
         "itemId": "item-0",
         "stream": "result",
     }
-    assert (
-        marker["originalResultSha256"]
-        == hashlib.sha256(context[1]["result"].encode()).hexdigest()
-    )
+    assert "originalResultSha256" not in marker
     assert cleared[2:] == context[2:]
     assert clear_old_tool_results(context, facts, target_reduction=1) == cleared
     assert "contextCleared" not in context[1]["result"]
@@ -278,7 +275,7 @@ def test_builder_clears_old_output_without_deleting_and_can_page_it_back(history
         offset = page["nextOffset"]
         if not page["hasMoreAfter"]:
             break
-    assert "".join(parts) == raw
+    assert "".join(parts) == model_result_json(raw)
     assert store.compaction_count(run["id"]) == 0
 
 

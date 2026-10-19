@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from eidos_runtime.domain.capacity import is_argument_capacity
 
 from eidos_runtime.model.client import (
     CustomToolPayload,
@@ -194,15 +193,6 @@ class ToolDispatcher:
                         if contract.valid and contract.normalized_input is not None
                         else call.payload
                     )
-            if contract is not None and not contract.valid and is_argument_capacity(contract.reason_code):
-                return ToolValidationResult(
-                    (), "request_capacity",
-                    _tool_validation_diagnostic(
-                        code="request_capacity", tool_call_index=len(effective_calls),
-                        tool_call_count=len(response.tool_calls), call=call,
-                        entry=entry, contract=contract, tool_set_hash=tool_set_hash,
-                    ),
-                )
             if effective_payload is None:
                 contract = ToolArgumentValidationResult(
                     valid=False,

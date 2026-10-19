@@ -149,10 +149,12 @@ class StreamingSensitiveScanner:
         self,
         scanner: SensitiveScanner,
         on_safe_text: Callable[[str], None] | None = None,
-        *, max_bytes: int = MAX_SCAN_BYTES,
+        *, max_bytes: int = MAX_SCAN_BYTES, truncate: bool = False,
     ) -> None:
         self.scanner = scanner
         self.max_bytes = max_bytes
+        self.truncate = truncate
+        self.truncated = False
         self.on_safe_text = on_safe_text
         self.parts: list[str] = []
         self.safe_parts: list[str] = []
@@ -164,9 +166,12 @@ class StreamingSensitiveScanner:
             size = len(chunk.encode("utf-8", errors="strict"))
         except UnicodeError as error:
             raise SensitiveScanError("stream encoding is invalid") from error
-        self.bytes += size
-        if self.bytes > self.max_bytes:
-            raise SensitiveScanCapacityError("sensitive_scan_capacity")
+        if self.bytes + size > self.max_bytes:
+            if not self.truncate:
+                raise SensitiveScanCapacityError("sensitive_scan_capacity")
+            chunk = chunk.encode("utf-8")[:max(0, self.max_bytes - self.bytes)].decode("utf-8", errors="ignore")
+            self.truncated = True
+        self.bytes += len(chunk.encode("utf-8"))
         self.parts.append(chunk)
         if self.on_safe_text is not None and "\n" in chunk:
             self._release_complete_lines()

@@ -72,6 +72,36 @@ class LongTaskRepository(Repository):
         self._insert(progress)
         return progress
 
+    def clear_legacy_capacity_pause(self, run_id: str) -> LongTaskProgress | None:
+        current = self.read(run_id)
+        if current is None or current.status is not LongTaskStatus.PAUSED:
+            return current
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT i.id,i.content FROM items i JOIN runs r ON r.id=i.run_id "
+                "WHERE i.run_id=? AND r.status='running' AND r.cancel_requested_at IS NULL "
+                "AND i.kind='assistant_message' AND i.model_step_index IS NULL "
+                "ORDER BY i.creation_seq DESC LIMIT 1", (run_id,),
+            ).fetchone()
+        if row is None or "任务已暂停。系统保留了执行记录" not in (row["content"] or ""):
+            return current
+        with self.lock:
+            latest_pause = self._connection().execute(
+                "SELECT MAX(id) FROM events WHERE run_id=? AND event_type=? "
+                "AND json_extract(payload_json,'$.reason')='long_task_status_changed'",
+                (run_id, EventType.RUN_UPDATED.value),
+            ).fetchone()[0]
+            notice_event = self._connection().execute(
+                "SELECT MAX(id) FROM events WHERE run_id=? AND event_type=? "
+                "AND json_extract(payload_json,'$.itemId')=?",
+                (run_id, EventType.ITEM_COMPLETED.value, row["id"]),
+            ).fetchone()[0]
+        if latest_pause is None or notice_event is None or latest_pause > notice_event:
+            return current
+        # Event ordering identifies the old machine pause. A later user pause
+        # remains untouched, including after the legacy pause was cleared once.
+        return self._update(current, status=LongTaskStatus.RUNNING)
+
     def read(self, run_id: str) -> LongTaskProgress | None:
         with self.lock:
             row = (

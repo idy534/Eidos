@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import Field
 
 from eidos_runtime.context.budget import estimate_model_request_budget
+from eidos_runtime.model.context_projection import model_result_json, generated_summary_view
 from eidos_runtime.context.facts import CompactSummary, ContextItemFact
 from eidos_runtime.model.client import FunctionToolDefinition, ModelClient, ModelUsage
 from eidos_runtime.models import EidosFrozenStrictModel
@@ -62,7 +63,7 @@ MAX_OUTPUT_BYTES = 24 * 1024
 def _source_text(item: ContextItemFact) -> str:
     if item.provider_call_id is None:
         return item.content or ""
-    raw = item.model_result_json or item.result_json or "{}"
+    raw = model_result_json(item.model_result_json or item.result_json or "{}")
     try:
         result = json.loads(raw)
     except ValueError:
@@ -130,7 +131,7 @@ def assist_summary(
     records.reverse()
     previous = baseline.model_dump(mode="json", include={"task_goal", "constraints", "important_decisions", "unresolved_problems", "next_actions"})
     previous["important_facts"] = [value for value in baseline.important_facts if value.startswith(("Model note", "Assistant report", "Historical user request"))]
-    payload = json.dumps({"previousSummary": previous,
+    payload = json.dumps({"previousSummary": generated_summary_view(previous),
                           "sources": records}, ensure_ascii=False)
     context = ({"type": "user", "content": payload},)
     budget = estimate_model_request_budget(

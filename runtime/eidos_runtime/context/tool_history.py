@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 
 from eidos_runtime.context.facts import ContextFacts
@@ -95,7 +94,6 @@ def clear_old_tool_results(
             key: data[key]
             for key in (
                 "path",
-                "sha256",
                 "sizeBytes",
                 "startLine",
                 "endLine",
@@ -127,7 +125,6 @@ def clear_old_tool_results(
                 "data": metadata,
                 "contextCleared": True,
                 "originalResultBytes": len(raw.encode("utf-8")),
-                "originalResultSha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
                 "readBack": {
                     "tool": "read_tool_output",
                     "callId": call_id,

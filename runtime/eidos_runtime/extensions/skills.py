@@ -822,10 +822,10 @@ def _skill_entry(name: str, adapter: object) -> ToolRegistryEntry:
                 "Read a UTF-8 resource from an enabled local Skill. Pass its "
                 "qualifiedId and a resourcePath relative to that Skill; do "
                 "not pass an absolute path or a path containing '..'. Continue with "
-                "offset=nextOffset while nextOffset is present. contentHash identifies the full resource."
+                "offset=nextOffset while nextOffset is present. Read subsequent pages by offset without repeating completed work."
                 if is_resource else
                 "Read paged instructions for an enabled local Skill. Continue with offset=nextOffset "
-                "while nextOffset is present. contentHash identifies the full resource."
+                "while nextOffset is present. Read subsequent pages by offset without repeating completed work."
             ),
             "sideEffect": "none",
             "approvalRequired": False,

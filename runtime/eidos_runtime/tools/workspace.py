@@ -20,7 +20,7 @@ import json
 from pydantic import BaseModel, ValidationError
 
 from eidos_runtime.file_limits import (
-    MAX_FILE_BYTES as MAX_EDIT_FILE_BYTES, MAX_PATCH_WORKING_BYTES, tool_result_limit,
+    MAX_FILE_BYTES as MAX_EDIT_FILE_BYTES, MAX_PATCH_WORKING_BYTES, MAX_PATCH_RESULT_BYTES, tool_result_limit,
 )
 from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
@@ -432,7 +432,7 @@ def canonical_tool_result(
     encoded = json.dumps(
         validated, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
-    if len(encoded) > tool_result_limit(tool_name):
+    if len(encoded) > max(tool_result_limit(tool_name), MAX_PATCH_RESULT_BYTES):
         return _error(tool_name, "tool_result_too_large", "Tool result exceeded the safe size limit")
     return validated
 

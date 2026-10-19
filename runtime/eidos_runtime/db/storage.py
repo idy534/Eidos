@@ -77,6 +77,7 @@ from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.domain.session import Session
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
+from eidos_runtime.model.retry import ModelRetryRecord
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_to_legacy_dict,
@@ -982,6 +983,8 @@ class SessionStore:
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
+        expected_attempt_id: str | None = None,
+        retry_deadline_at: int | None = None,
     ) -> bool:
         return self._repository(self._execution).complete_current_model_attempt(
             run_id,
@@ -1004,7 +1007,18 @@ class SessionStore:
             response_text_bytes=response_text_bytes,
             protocol_diagnostic=protocol_diagnostic,
             retry_decision=retry_decision,
+            expected_attempt_id=expected_attempt_id,
+            retry_deadline_at=retry_deadline_at,
         )
+
+    def read_model_retry_record(self, attempt_id: str) -> ModelRetryRecord:
+        return self._repository(self._execution).read_model_retry_record(attempt_id)
+
+    def has_recovered_model_retry(self, run_id: str) -> bool:
+        return self._repository(self._execution).has_recovered_model_retry(run_id)
+
+    def check_model_attempt_active(self, run_id: str, attempt_id: str) -> None:
+        self._repository(self._execution).check_model_attempt_active(run_id, attempt_id)
 
     def start_retry_model_attempt(
         self, run_id: str, *, context_snapshot_id: str | None = None
@@ -1035,11 +1049,12 @@ class SessionStore:
         )
 
     def create_assistant_item_committed(
-        self, run_id: str, model_step_index: int
+        self, run_id: str, model_step_index: int, *, model_attempt_id: str | None = None
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).create_assistant_item_committed(
             run_id,
             model_step_index,
+            model_attempt_id=model_attempt_id,
         )
 
     def create_finalization_assistant_item(self, run_id: str) -> dict[str, object]:

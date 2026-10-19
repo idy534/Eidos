@@ -165,7 +165,7 @@ class ContextCompactor:
         source_facts = repository.load_facts(run_id, required_item_ids=source_ids)
         users = [item.content or "" for item in eligible if item.kind == "user_message"]
         input_references = tuple(
-            f"用户引用：{reference.label}；来源：{reference.source}；ID：{reference.id}；SHA256：{reference.sha256}"
+            f"用户引用：{reference.label}；来源：{reference.source}"
             for item in eligible for reference in item.input_references
         )
         assistants = [item.content or "" for item in eligible if item.kind == "assistant_message"]
@@ -228,10 +228,7 @@ class ContextCompactor:
             )),
             unresolved_problems=_merge(
                 existing.unresolved_problems if existing else (),
-                (*failed_tools, *(
-                    f"active runtime error: {value}"
-                    for value in facts.active_error_fingerprints
-                ), *(("workspace reconciliation required",)
+                (*failed_tools, *(("workspace result unknown",)
                      if facts.reconciliation_required else ())),
             ),
             next_actions=_merge(existing.next_actions if existing else (), next_actions),
@@ -326,7 +323,7 @@ def _tool_text(item: ContextItemFact) -> str:
         if matches:
             parts.append(f"matches={'; '.join(matches)}")
         for key in (
-            "sha256", "sizeBytes", "scannedBytes", "exitCode", "termination",
+            "sizeBytes", "scannedBytes", "exitCode", "termination",
             "workspaceChanged", "workspaceChangeState", "truncated", "truncationReason",
         ):
             value = data.get(key)
@@ -441,8 +438,6 @@ def _workspace_state(facts: ContextFacts) -> str:
         f"workspace state: version={facts.workspace_version}",
         f"reconciliationEpoch={facts.reconciliation_epoch}",
     ]
-    if facts.last_diff_hash:
-        values.append(f"diffHash={facts.last_diff_hash}")
     if facts.reconciliation_required:
         values.append("reconciliationRequired=true")
     if facts.side_effects_may_exist:

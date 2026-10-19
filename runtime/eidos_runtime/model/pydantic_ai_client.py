@@ -35,7 +35,6 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -48,7 +47,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from eidos_runtime.file_limits import function_argument_limit
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     FunctionToolDefinition,
@@ -73,7 +71,7 @@ from eidos_runtime.model.config import (
 from eidos_runtime.model.prompts import TITLE_PROMPT, TITLE_SYSTEM_INSTRUCTIONS
 from eidos_runtime.model.response_phase import resolve_response_phase, validate_end_turn
 from eidos_runtime.model.replay import (
-    MAX_REASONING_REPLAY_BYTES, ModelReasoningPart, ModelResponseReplay,
+    ModelReasoningPart, ModelResponseReplay,
     group_response_context, read_response_replay, response_history_text,
 )
 from eidos_runtime.model.retry_transport import (
@@ -81,6 +79,8 @@ from eidos_runtime.model.retry_transport import (
     RetryTracker,
     RetryTransportClient,
 )
+from eidos_runtime.model.request_scope import run_model_request
+from eidos_runtime.model.retry import retry_after_seconds
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
@@ -288,6 +288,7 @@ class PydanticAIModelClient:
         retry_tracker = RetryTracker()
         try:
             return self._async_kernel.call(
+                run_model_request,
                 self._complete,
                 context,
                 cancel,
@@ -317,6 +318,7 @@ class PydanticAIModelClient:
             IncompleteToolCall,
             httpx.TimeoutException,
             httpx.NetworkError,
+            httpx.RemoteProtocolError,
             httpx.HTTPStatusError,
             APITimeoutError,
             APIConnectionError,
@@ -401,14 +403,7 @@ class PydanticAIModelClient:
                 ) as stream:
                     stream_ref[0] = stream
                     try:
-                        reasoning_bytes = 0
                         async for event in stream:
-                            if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
-                                reasoning_bytes += len(event.part.content.encode("utf-8"))
-                            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta):
-                                reasoning_bytes += len((event.delta.content_delta or "").encode("utf-8"))
-                            if reasoning_bytes > MAX_REASONING_REPLAY_BYTES:
-                                raise ModelRequestError(ModelRequestFailure(code="capacity_exceeded", reason="reasoning_replay_capacity", retryable=False))
                             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                                 if event.part.content:
                                     await anyio.to_thread.run_sync(
@@ -862,18 +857,13 @@ def map_model_response(
                 code="capacity_exceeded", reason="tool_identifier_capacity",
                 retryable=False, provider_name=response.provider_name,
             ))
-        if len(encoded) > function_argument_limit(call.tool_name):
-            raise ModelRequestError(ModelRequestFailure(
-                code="capacity_exceeded", reason="tool_arguments_capacity",
-                retryable=False, provider_name=response.provider_name,
-            ))
         calls.append(ModelToolCall(call_id, call.tool_name, arguments))
     text = response.text or ""
     reasoning_parts = tuple(ModelReasoningPart(
         content=part.content, id=part.id, signature=part.signature,
         provider_name=part.provider_name, provider_details=part.provider_details,
     ) for part in response.parts if isinstance(part, ThinkingPart))
-    ModelResponseReplay(reasoning_parts=reasoning_parts, tool_call_ids=tuple(call.provider_call_id for call in calls))
+    reasoning_parts = ModelResponseReplay(reasoning_parts=reasoning_parts, tool_call_ids=tuple(call.provider_call_id for call in calls)).reasoning_parts
     finish_reason = response.finish_reason or ("tool_call" if calls else "unknown")
     phase, phase_source = resolve_response_phase(
         ((part.provider_details or {}).get("phase") for part in response.parts if isinstance(part, TextPart)),
@@ -939,20 +929,24 @@ def _map_usage(usage: RequestUsage) -> ModelUsage:
 def map_model_error(error: BaseException) -> ModelRequestFailure:
     if isinstance(error, APITimeoutError | httpx.TimeoutException):
         return ModelRequestFailure(code="provider_timeout", retryable=True)
-    if isinstance(error, APIConnectionError | httpx.NetworkError):
+    if isinstance(error, APIConnectionError | httpx.NetworkError | httpx.RemoteProtocolError):
         return ModelRequestFailure(code="provider_unavailable", retryable=True)
     if isinstance(error, httpx.HTTPStatusError):
         _log_provider_request_rejection(error, error.response.status_code)
-        return _http_failure(error.response.status_code)
+        try:
+            body = error.response.json() if len(error.response.content) <= 16 * 1024 else None
+        except (ValueError, httpx.ResponseNotRead):
+            body = None
+        return _http_failure(error.response.status_code, body=body, headers=error.response.headers)
     if isinstance(error, APIStatusError):
         _log_provider_request_rejection(error, error.status_code)
-        return _http_failure(error.status_code)
+        return _http_failure(error.status_code, body=error.body, headers=error.response.headers)
     if isinstance(error, ModelHTTPError):
         _log_provider_request_rejection(error, error.status_code)
         context_exceeded = error.status_code == 413 or (
             error.status_code == 400 and _looks_like_context_error(error.body)
         )
-        return _http_failure(error.status_code, context_exceeded=context_exceeded)
+        return _http_failure(error.status_code, context_exceeded=context_exceeded, body=error.body, headers=error.headers)
     if isinstance(error, UnexpectedModelBehavior | ModelAPIError):
         if _looks_like_stream_transport_error(error):
             return ModelRequestFailure(
@@ -1058,8 +1052,21 @@ def _http_failure(
     status_code: int,
     *,
     context_exceeded: bool = False,
+    body: object = None,
+    headers: object = None,
 ) -> ModelRequestFailure:
-    if context_exceeded or status_code == 413:
+    details = body.get("error", body) if isinstance(body, dict) else None
+    markers = {str(details.get(key, "")).lower() for key in ("code", "type")} if isinstance(details, dict) else set()
+    quota = bool(markers & {
+        "insufficient_quota", "insufficient_balance", "quota_exceeded", "quota_exhausted",
+        "credit_balance_exhausted", "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
+        "billing_hard_limit_reached", "account_deactivated", "account_disabled",
+    })
+    reason = None
+    if quota or status_code == 402:
+        code, retryable, reason = "invalid_request", False, "insufficient_quota"
+    elif context_exceeded or status_code == 413 or (status_code in {400, 422} and _looks_like_context_error(body)):
         code, retryable = "context_exceeded", False
     elif status_code in {401, 403}:
         code, retryable = "authentication_failed", False
@@ -1075,6 +1082,8 @@ def _http_failure(
         code=code,
         retryable=retryable,
         status_code=status_code,
+        reason=reason,
+        retry_after_seconds=retry_after_seconds(headers),
     )
 
 

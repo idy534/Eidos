@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from eidos_runtime.domain.capacity import is_argument_capacity
 
 from dataclasses import dataclass, field, replace
 from contextlib import ExitStack
@@ -1729,12 +1728,9 @@ class ToolCallRuntime:
             step.tool_snapshot.tool_set_hash,
         )
         if result.error_code is not None:
-            detail = result.protocol_diagnostic
-            reason = detail.validation_code if detail is not None else None
-            capacity = is_argument_capacity(reason)
             return ToolBatchOutcome(
                 status="validation_failed",
-                error_code="request_capacity" if capacity else result.error_code,
+                error_code=result.error_code,
                 protocol_diagnostic=result.protocol_diagnostic,
             )
         if not result.tool_calls:
@@ -1794,8 +1790,7 @@ class ToolCallRuntime:
                 )
                 if failures >= 2:
                     return ToolBatchOutcome(
-                        status="paused",
-                        pause_reason="repeated_sensitive_tool_input",
+                        status="sensitive_rejected",
                     )
                 self.state_machine.track(RuntimeState.THINKING, "safe_tool_feedback")
                 return ToolBatchOutcome(

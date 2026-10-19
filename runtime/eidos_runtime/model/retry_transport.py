@@ -24,6 +24,7 @@ from tenacity import (
 
 from eidos_runtime.model.config import MODEL_CATALOG, ModelConfig
 from eidos_runtime.model.gateway_types import RetryPolicy
+from eidos_runtime.model.request_scope import foreground_request_active
 from eidos_runtime.model.retry import (
     RetryState,
     is_retryable_transport_exception,
@@ -82,7 +83,7 @@ class RetryTransportClient:
             max=self._policy.max_backoff_seconds,
         )
         retry_config: RetryConfig = {
-            "retry": retry_if_exception(is_retryable_transport_exception),
+            "retry": retry_if_exception(lambda error: not foreground_request_active() and is_retryable_transport_exception(error)),
             "stop": stop_after_attempt(self._policy.max_attempts),
             "wait": wait_retry_after(
                 fallback_strategy=fallback,
@@ -124,7 +125,7 @@ class RetryTransportClient:
         await self.http_client.aclose()
 
     def _validate_response(self, response: httpx.Response) -> None:
-        if response.status_code in _retryable_statuses():
+        if not foreground_request_active() and response.status_code in _retryable_statuses():
             response.raise_for_status()
 
     def _before_attempt(self, state: RetryCallState) -> None:

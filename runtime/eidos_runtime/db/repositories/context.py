@@ -7,8 +7,8 @@ import sqlite3
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact, ReconciliationOrigin
 from eidos_runtime.db.database import Repository
+from eidos_runtime.model.context_projection import text_preview, model_result_json as project_result_json
 from eidos_runtime.db.errors import (
-    ContextLimitExceeded,
     ResourceNotFoundError,
     StorageError,
 )
@@ -142,7 +142,10 @@ class ContextRepository(Repository):
                 )
                 if row is not None
             }
-            protected_ids = set(protected_rows)
+            ordered_protected = sorted(protected_rows.values(), key=lambda row: int(row["creation_seq"]), reverse=True)
+            protected_ids = {str(row["id"]) for row in ordered_protected[:max(0, item_limit - 1)]}
+            if goal_row is not None:
+                protected_ids.add(str(goal_row["id"]))
             excluded = source_ids | protected_ids
             excluded_sql = ""
             excluded_values: tuple[object, ...] = ()
@@ -215,12 +218,6 @@ class ContextRepository(Repository):
                     item_limit + 1,
                 ),
             ).fetchall()
-            goal_size = (
-                len(str(goal_row["content"] or "").encode("utf-8")) + 256
-                if goal_row is not None else 0
-            )
-            if goal_size > CONTEXT_PROJECTION_MAX_BYTES:
-                raise ContextLimitExceeded("current_user_goal_too_large")
             selected_ids = list(protected_ids) if newest else []
             protected_bytes = 0
             if newest and protected_ids:
@@ -238,19 +235,19 @@ class ContextRepository(Repository):
                 len(protected_ids) > CONTEXT_PROJECTION_HARD_MAX_ITEMS
                 or protected_bytes > CONTEXT_PROJECTION_HARD_MAX_BYTES
             ):
-                raise ContextLimitExceeded("internal_projection_limit")
+                protected_bytes = min(protected_bytes, byte_limit)
             selection_item_limit = max(
                 item_limit, len(protected_ids)
             )
             selection_byte_limit = max(
-                byte_limit, protected_bytes
+                byte_limit, min(protected_bytes, byte_limit)
             )
-            selected_bytes = protected_bytes
+            selected_bytes = min(protected_bytes, byte_limit)
             if (
                 len(selected_ids) > selection_item_limit
                 or selected_bytes > selection_byte_limit
             ):
-                raise ContextLimitExceeded("internal_projection_limit")
+                protected_bytes = min(protected_bytes, byte_limit)
             base_selected = 0
             for row in metadata:
                 fact_bytes = int(row["fact_bytes"])
@@ -424,13 +421,33 @@ class ContextRepository(Repository):
                 ),
                 model_result_json=model_result_json,
             )
+            text_limit = max(256, min(2 * 1024 * 1024, byte_limit // 4))
+            updates = {}
+            if fact.content:
+                updates["content"] = text_preview(fact.content, text_limit,
+                    continuation=f"Original item {fact.item_id}: read_tool_output(callId='{fact.item_id}', stream='context') supports byte pages.")
+            if fact.arguments_json and len(fact.arguments_json.encode("utf-8")) > text_limit:
+                updates["arguments_json"] = json.dumps({"historicalArgumentsOmitted": True,
+                    "notice": "Historical arguments are omitted; do not replay this operation to recover its result."})
+            for field in ("result_json", "model_result_json"):
+                raw = getattr(fact, field)
+                if raw:
+                    raw = project_result_json(raw)
+                    if len(raw.encode("utf-8")) > text_limit:
+                        parsed = json.loads(raw)
+                        raw = json.dumps({"outcome": parsed.get("outcome"), "code": parsed.get("code"),
+                            "summary": parsed.get("summary"), "contextCleared": True,
+                            "sideEffectsMayExist": parsed.get("sideEffectsMayExist", False),
+                            "reconciliationRequired": parsed.get("reconciliationRequired", False),
+                            "data": {key: value for key, value in (parsed.get("data") or {}).items()
+                                if key in {"sessionId", "executionStatus", "exitCode", "termination", "path", "nextOffset", "nextLine", "outputCallId", "outputComplete", "workspaceChangeState"}},
+                            "readBack": {"tool": "read_tool_output", "callId": fact.provider_call_id,
+                                "itemId": fact.item_id, "stream": "result"}}, ensure_ascii=False)
+                    updates[field] = raw
+            fact = fact.model_copy(update=updates)
             size = len(fact.model_dump_json(exclude_none=True).encode("utf-8")) + 1
             if serialized_bytes + size > byte_limit:
                 candidate_overflow = True
-                if goal_row is not None and row["id"] == goal_row["id"]:
-                    raise ContextLimitExceeded("current_user_goal_too_large")
-                if str(row["id"]) in protected_ids:
-                    raise ContextLimitExceeded("internal_projection_limit")
                 continue
             items.append(fact)
             if replay is not None:

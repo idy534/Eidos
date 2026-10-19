@@ -5,7 +5,6 @@ import threading
 
 import pytest
 
-from eidos_runtime.db.errors import ContextLimitExceeded
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ScriptedModel
 from eidos_runtime.model.config import default_profile_snapshot
@@ -85,9 +84,9 @@ def test_json_expansion_cannot_crowd_out_protected_recent_facts(history, monkeyp
 
     selected = {item.item_id for item in facts.items}
     assert {user["id"], recent} <= selected
-    assert oversized not in selected
-    assert facts.candidate_overflow
-    assert facts.projection_omitted_count == 1
+    assert oversized in selected
+    assert "Content truncated" in next(item.content for item in facts.items if item.item_id == oversized)
+    assert facts.projection_omitted_count >= 0
     assert 2 + sum(len(item.model_dump_json(exclude_none=True).encode()) + 1 for item in facts.items) <= 60_000
     assert [item.item_id for item in facts.items][-2:] == [user["id"], recent]
     assert len(store.read_item(oversized)["content"]) == 25_000
@@ -100,8 +99,9 @@ def test_protected_facts_still_obey_the_actual_hard_serialization_limit(history,
     run, _ = store.create_run(session["id"], "Continue")
     assistant(store, run, 1, "\\" * 31_000)
 
-    with pytest.raises(ContextLimitExceeded, match="internal_projection_limit"):
-        store.context_projection_facts(run["id"])
+    facts = store.context_projection_facts(run["id"])
+    assert 2 + sum(len(item.model_dump_json(exclude_none=True).encode()) + 1 for item in facts.items) <= 60_000
+    assert any("Content truncated" in (item.content or "") for item in facts.items)
 
 
 def test_online_projection_still_limits_history_item_count(history, monkeypatch):

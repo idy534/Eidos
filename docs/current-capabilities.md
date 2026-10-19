@@ -145,7 +145,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - ContextCompactor 使用 deterministic bounded extraction 保存任务目标、约束、动作、证据、修改、失败尝试、决定、待处理 Approval、未解决问题和下一步。
 - 摘要按窗口使用 512～4,096 个参考 Tokens，正文最多 24 KiB。摘要不再把 Assistant 的计划直接记为已完成动作，也不会裁掉明确约束和运行控制事实来强行满足预算。系统核对实际摘要来源，并在提交时拒绝已经请求取消的 Run。
 - Compaction Summary metadata 与主体一起持久化。原始历史不会被摘要替换。
-- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已经收到尚未持久化的 provisional text，也会先失败当前 Attempt，再创建独立 Attempt 并复用同一 Snapshot；已有文本或 ToolCall 进度不会自动重放。
+- 默认在线 Run 会在每个 ModelAttempt Sampling 前持久化并绑定精确 ContextSnapshot。该 Snapshot 原样保存结构化消息、resolved instructions 和 tools。协议修复使用新 Snapshot，Provider transport retry 复用原 Snapshot。可重试的 transport failure 即使已显示文字，也会先结束当前 Attempt 与失败草稿，再创建独立 Attempt、新草稿并复用同一 Snapshot。首次请求加最多 5 次重试共用持久预算，首次临时失败后默认最多恢复 180 秒。系统不拼接旧草稿，不执行残缺工具调用，也不重新执行已有工具操作。明确余额、配额、认证与参数错误不重试。预算耗尽后记录失败，不重新进入容量恢复。
 
 ## Project Rules
 
@@ -542,4 +542,4 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ## 容量恢复与未知结果（2026-10-19）
 
-系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。容量超限优先反馈与恢复；无法继续时，Run 使用既有持久暂停和继续入口，不进入失败终态。权限、身份、版本和真实结果校验继续生效。长回答支持有界预览及 Hash 校验后的完整分页。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。
+系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。

@@ -324,7 +324,7 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(properties["yieldTimeMs"]["minimum"], 250)
         self.assertEqual(properties["yieldTimeMs"]["maximum"], 30_000)
-        for value in (249, 30_001):
+        for value in (249,):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
 
@@ -337,11 +337,30 @@ class ToolContractTests(unittest.TestCase):
                     })).model_dump(mode="json", by_alias=True)
                     self.assertEqual(arguments["yieldTimeMs"], value)
                     self.assertNotIn("yield_time_ms", arguments)
-            for value in (249, 30_001, True, "1000", 1000.5, None):
+            for value in (249, True, "1000", 1000.5, None):
                 with self.subTest(name=name, value=value), self.assertRaises(ValidationError):
                     RunShellInput.model_validate_json(json.dumps({
                         "command": "true", name: value,
                     }))
+
+    def test_polling_waits_cap_large_integers_without_relaxing_input_types(self) -> None:
+        for contract, arguments, limit in (
+            (RunShellInput, {"command": "true"}, 30_000),
+            (SearchTextInput, {"query": "test"}, 30_000),
+            (WriteStdinInput, {"sessionId": "shell"}, 60_000),
+            (SearchTextWaitInput, {"sessionId": "search"}, 60_000),
+        ):
+            for value in (limit + 1, 120_000):
+                with self.subTest(contract=contract.__name__, value=value):
+                    self.assertEqual(contract.model_validate_json(json.dumps({
+                        **arguments, "yieldTimeMs": value,
+                    })).yieldTimeMs, limit)
+            for invalid in (True, "120000", 120000.5, None, -1, 249):
+                with self.subTest(contract=contract.__name__, invalid=invalid), self.assertRaises(ValidationError):
+                    contract.model_validate_json(json.dumps({**arguments, "yieldTimeMs": invalid}))
+        self.assertEqual(RunShellInput.model_validate_json(json.dumps({
+            "command": "true", "yield_time_ms": 120_000,
+        })).yieldTimeMs, 30_000)
 
     def test_run_shell_json_prefers_canonical_yield_and_rejects_unknown_fields(self) -> None:
         arguments = RunShellInput.model_validate_json(json.dumps({
@@ -548,7 +567,7 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(
             wait_properties["yieldTimeMs"]["description"],
-            "How long to wait for additional search results.",
+            "How long to wait for additional search results. Values above 60000 are capped; the search continues.",
         )
         patch_properties = ApplyPatchInput.model_json_schema(by_alias=True)[
             "properties"

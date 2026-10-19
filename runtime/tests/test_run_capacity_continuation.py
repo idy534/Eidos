@@ -10,7 +10,7 @@ import pytest
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.db.errors import ResourceNotFoundError
-from eidos_runtime.domain.long_task import LongTaskStatus, ResumeOutcome, ResumeVerification
+from eidos_runtime.domain.long_task import LongTaskStatus, ResumeOutcome
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.runtime.engine import RuntimeEngine
 from eidos_runtime.runtime.long_task import ResumeVerifier
@@ -95,56 +95,37 @@ def test_long_answer_is_saved_and_paged_without_overflowing_control_messages(run
         store.read_tool_text(foreign["id"], row["id"], "content", digest, 0)
 
 
-def test_repeated_output_capacity_pauses_then_resumes_same_run(run_store, monkeypatch):
+def test_long_output_is_truncated_and_run_continues_without_pause(run_store, monkeypatch):
     store, _, run, _ = run_store
-    allowance = [1024]
-    monkeypatch.setattr("eidos_runtime.runtime.model_runner.model_output_byte_budget", lambda _: allowance[0])
-    model = ScriptedModel([ModelResponse(text="x" * 2048), ModelResponse(text="x" * 2048), ModelResponse(text="Done")])
-    cancel, worker, errors = background_run(store, run, model)
-    try:
-        repository = store.long_task_repository()
-        wait_until(lambda: repository.read(run["id"]) is not None and repository.read(run["id"]).status is LongTaskStatus.PAUSED)
-        current = store.read_run(run["id"])
-        assert current["status"] == "running"
-        assert not current.get("errorCode")
-        assert model._index == 2
-        allowance[0] = 4096
-        repository.request_resume(run["id"])
-        repository.record_verification(run["id"], ResumeVerification(
-            run_id=run["id"], outcome=ResumeOutcome.SAFE_RESUME, reasons=(), checked_at=0,
-        ))
-        repository.mark_resumed(run["id"])
-        worker.join(5)
-        assert not worker.is_alive()
-        assert not errors
-        assert model._index == 3
-        assert store.read_run(run["id"])["status"] == "succeeded"
-    finally:
-        cancel.set()
-        worker.join(5)
+    monkeypatch.setattr("eidos_runtime.runtime.model_runner.model_output_byte_budget", lambda _: 1024)
+    model = ScriptedModel([ModelResponse(text="x" * 2048), ModelResponse(text="y" * 2048), ModelResponse(text="Done")])
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    assert store.read_run(run["id"])["status"] == "succeeded"
+    assert model._index == 3
+    assert store.long_task_repository().read(run["id"]) is None
+    bodies = [r[0] for r in store.connection.execute("SELECT content FROM items WHERE run_id=? AND kind='assistant_message'", (run["id"],))]
+    assert any("Response preview truncated" in body for body in bodies)
+    assert all(len(body.encode()) <= 1024 for body in bodies)
 
 
-def test_projection_capacity_pauses_and_cancel_still_works(run_store, monkeypatch):
+def test_persistent_projection_failure_remains_cancelable_without_machine_pause(run_store, monkeypatch):
+    from eidos_runtime.domain.capacity import CapacityExceeded
     store, _, run, _ = run_store
-    monkeypatch.setattr("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", 6000)
-    item = store.create_assistant_item(run["id"], 1)
-    store.append_item_content(item["id"], "x" * 7000)
-    store.complete_assistant_item(item["id"])
-    model = ScriptedModel([ModelResponse(text="Must not be called")])
-    cancel, worker, errors = background_run(store, run, model)
+    calls = []
+    def fail(_):
+        calls.append(1)
+        raise CapacityExceeded("internal_projection_limit")
+    monkeypatch.setattr(store, "context_projection_facts", fail)
+    cancel, worker, errors = background_run(store, run, ScriptedModel([]))
     try:
-        repository = store.long_task_repository()
-        wait_until(lambda: repository.read(run["id"]) is not None and repository.read(run["id"]).status is LongTaskStatus.PAUSED)
+        wait_until(lambda: len(calls) >= 2)
         assert store.read_run(run["id"])["status"] == "running"
-        assert not model.contexts
-        cancel.set()
-        worker.join(5)
-        assert not worker.is_alive()
-        assert not errors
-        assert store.read_run(run["id"])["status"] == "canceled"
+        assert store.long_task_repository().read(run["id"]) is None
     finally:
         cancel.set()
         worker.join(5)
+    assert not worker.is_alive() and not errors
+    assert store.read_run(run["id"])["status"] == "canceled"
 
 
 def test_unknown_effect_does_not_block_following_write_or_completion(run_store):
@@ -203,24 +184,17 @@ def test_tool_batch_larger_than_sixteen_executes_in_declared_order(run_store):
     assert [row[0] for row in rows] == [f"read-{i}" for i in range(20)]
 
 
-def test_repeated_argument_capacity_pauses_before_any_tool_execution(run_store):
+def test_oversized_tool_arguments_are_local_errors_and_alternative_tool_can_finish(run_store):
     store, _, run, workspace = run_store
-    oversized = ModelResponse(tool_calls=(ModelToolCall("oversized", "read_file", {
-        "path": "x" * (70 * 1024),
-    }),))
-    model = ScriptedModel([oversized, oversized])
-    cancel, worker, errors = background_run(store, run, model)
-    try:
-        repository = store.long_task_repository()
-        wait_until(lambda: repository.read(run["id"]) is not None and repository.read(run["id"]).status is LongTaskStatus.PAUSED)
-        assert store.read_run(run["id"])["status"] == "running"
-        assert not (workspace / "must-not-exist.txt").exists()
-        assert store.connection.execute("SELECT count(*) FROM tool_calls JOIN items ON items.id=tool_calls.item_id WHERE items.run_id=?", (run["id"],)).fetchone()[0] == 0
-    finally:
-        cancel.set()
-        worker.join(5)
-        assert not worker.is_alive()
-        assert not errors
+    bad = ModelResponse(tool_calls=(ModelToolCall("oversized", "read_file", {"path": "x" * (70 * 1024)}),))
+    model = ScriptedModel([bad, bad, ModelResponse(tool_calls=(ModelToolCall("alternative", "list_files", {}),)), ModelResponse(text="Done")])
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    assert store.read_run(run["id"])["status"] == "succeeded"
+    assert store.long_task_repository().read(run["id"]) is None
+    rows = store.connection.execute("SELECT t.result_json FROM tool_calls t JOIN items i ON i.id=t.item_id WHERE i.run_id=? ORDER BY i.creation_seq", (run["id"],)).fetchall()
+    assert json.loads(rows[0][0])["code"] == "invalid_arguments"
+    assert json.loads(rows[-1][0])["outcome"] == "success"
+    assert not (workspace / "must-not-exist.txt").exists()
 
 
 def test_reasoning_replay_does_not_reject_small_content_by_part_count():
@@ -252,33 +226,26 @@ def test_capacity_continuation_uses_the_shared_closed_protocol_fixture():
     assert RunResumeResponseDto.model_validate(fixture["resumeResponse"]).run.status == "running"
 
 
-@pytest.mark.parametrize("code,retryable,attempts,notice", [
-    ("rate_limited", False, 1, "模型服务暂时限制请求频率"),
-    ("provider_timeout", False, 1, "模型请求超过等待时间"),
-    ("provider_unavailable", True, 3, "模型请求的自动重试次数已用完"),
+@pytest.mark.parametrize("code,retryable,attempts,expected_status,failures", [
+    ("rate_limited", False, 1, "failed", 1),
+    ("provider_timeout", False, 1, "failed", 1),
+    ("provider_unavailable", True, 3, "succeeded", 2),
 ])
-def test_provider_limits_pause_without_terminating_the_run(run_store, code, retryable, attempts, notice):
+def test_provider_failures_use_retry_policy_without_capacity_reentry(run_store, code, retryable, attempts, expected_status, failures):
     from eidos_runtime.model.client import ModelRequestError, ModelRequestFailure
-
     class LimitedModel(ScriptedModel):
+        failures = 0
         def complete(self, *args, **kwargs):
-            raise ModelRequestError(ModelRequestFailure(
-                code=code, retryable=retryable, transport_attempt_count=attempts,
-            ))
-
-    store, session, run, _ = run_store
-    cancel, worker, errors = background_run(store, run, LimitedModel([]))
-    try:
-        repository = store.long_task_repository()
-        wait_until(lambda: repository.read(run["id"]) is not None and repository.read(run["id"]).status is LongTaskStatus.PAUSED)
-        assert store.read_run(run["id"])["status"] == "running"
-        wait_until(lambda: any(notice in (item.get("content") or "") for item in store.read_session_snapshot(session["id"])["items"]))
-    finally:
-        cancel.set()
-        worker.join(5)
-        assert not worker.is_alive()
-        assert not errors
-    assert store.read_run(run["id"])["status"] == "canceled"
+            if self.failures < 2:
+                self.failures += 1
+                raise ModelRequestError(ModelRequestFailure(code=code, retryable=retryable, transport_attempt_count=attempts))
+            return super().complete(*args, **kwargs)
+    store, _, run, _ = run_store
+    model = LimitedModel([ModelResponse(text="Done")])
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    assert store.read_run(run["id"])["status"] == expected_status
+    assert model.failures == failures
+    assert store.long_task_repository().read(run["id"]) is None
 
 
 @pytest.mark.parametrize("kind", ["custom", "function", "identifier", "output"])
@@ -295,9 +262,12 @@ def test_native_responses_capacity_is_distinct_from_protocol_errors(monkeypatch,
         item.update(call_id="x" * 257, input="small")
     elif kind == "output":
         response.update(status="incomplete", incomplete_details=SimpleNamespace(reason="max_output_tokens"))
-    with pytest.raises(ModelRequestError) as raised:
-        native_custom.map_responses_response(response)
-    assert raised.value.failure.code == "capacity_exceeded"
+    if kind == "function":
+        assert native_custom.map_responses_response(response).tool_calls
+    else:
+        with pytest.raises(ModelRequestError) as raised:
+            native_custom.map_responses_response(response)
+        assert raised.value.failure.code == "capacity_exceeded"
 
 
 def test_native_stream_capacity_closes_the_response_without_exposing_tools(monkeypatch):
@@ -322,3 +292,44 @@ def test_native_stream_capacity_closes_the_response_without_exposing_tools(monke
         asyncio.run(client._consume_stream(stream, threading.Event(), lambda _: None))
     assert raised.value.failure.code == "capacity_exceeded"
     assert stream.closed
+
+
+def test_oversized_shell_wait_is_capped_and_run_completes(run_store):
+    store, _, run, _ = run_store
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("long-wait", "run_shell", {
+            "command": "/usr/bin/printf 'wait-value-accepted\\n'", "yieldTimeMs": 120_000,
+        }),)),
+        ModelResponse(text="Done"),
+    ])
+    RuntimeEngine(store, model, lambda _: None, shell_available=True).run(run["id"], threading.Event())
+    assert store.read_run(run["id"])["status"] == "succeeded"
+    row = store.connection.execute(
+        "SELECT t.arguments_json,t.result_json FROM tool_calls t JOIN items i ON i.id=t.item_id WHERE i.run_id=?",
+        (run["id"],),
+    ).fetchone()
+    assert json.loads(row["arguments_json"])["yieldTimeMs"] == 30_000
+    result = json.loads(row["result_json"])
+    assert result["outcome"] == "success"
+    assert result["data"]["stdout"].strip() == "wait-value-accepted"
+    progress = store.long_task_repository().read(run["id"])
+    assert progress is None or progress.status is not LongTaskStatus.PAUSED
+
+
+def test_numeric_tool_bound_is_local_feedback_and_model_can_correct_it(run_store):
+    store, _, run, _ = run_store
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("bad-limit", "list_files", {"maxEntries": 2001}),)),
+        ModelResponse(tool_calls=(ModelToolCall("corrected-limit", "list_files", {"maxEntries": 10}),)),
+        ModelResponse(text="Done"),
+    ])
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    assert store.read_run(run["id"])["status"] == "succeeded"
+    rows = store.connection.execute(
+        "SELECT t.result_json FROM tool_calls t JOIN items i ON i.id=t.item_id WHERE i.run_id=? ORDER BY i.creation_seq",
+        (run["id"],),
+    ).fetchall()
+    first, corrected = (json.loads(row[0]) for row in rows)
+    assert first["code"] == "invalid_arguments"
+    assert "field=maxEntries" in first["summary"] and "maximum=2000" in first["summary"]
+    assert corrected["outcome"] == "success"

@@ -11,6 +11,7 @@ from eidos_runtime.db.transitions import (
     transition_run,
 )
 from eidos_runtime.db.invariants import verify_runtime_invariants
+from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.runtime.state_machine import (
     ApprovalStatus,
     EventType,
@@ -265,6 +266,24 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     ).fetchall()
     for row in requeue_runs:
         run_id = str(row["id"])
+        attempt = connection.execute(
+            "SELECT a.* FROM model_attempts a JOIN steps s ON s.id=a.step_id "
+            "WHERE s.run_id=? ORDER BY a.creation_seq DESC LIMIT 1", (run_id,),
+        ).fetchone()
+        if attempt is not None and attempt["request_group_id"] is not None and attempt["status"] in {"running", "failed"}:
+            decision = json.loads(attempt["retry_decision_json"] or "{}")
+            if attempt["status"] == "running" or decision.get("retry") is True:
+                profile_json = connection.execute("SELECT model_profile_json FROM runs WHERE id=?", (run_id,)).fetchone()[0]
+                profile = ModelProfileSnapshot.model_validate_json(profile_json)
+                if attempt["retry_index"] >= min(6, profile.retry_max_attempts) - 1 or (attempt["retry_deadline_at"] is not None and attempt["retry_deadline_at"] <= now):
+                    settle_run_children(connection, run_id, RunStatus.INTERRUPTED, now)
+                    transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.INTERRUPTED, "model_retry_exhausted_on_restart")
+                    continue
+                decision["resumeAfterRestart"] = True
+                connection.execute(
+                    "UPDATE model_attempts SET retry_decision_json=?,retry_deadline_at=COALESCE(retry_deadline_at,?) WHERE id=?",
+                    (json.dumps(decision), now + int(profile.retry_recovery_window_seconds * 1000), attempt["id"]),
+                )
         requeue_run_children(
             connection,
             run_id,

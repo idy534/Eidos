@@ -794,13 +794,19 @@ class ToolExecutionControllerTests(unittest.TestCase):
             deadline=None,
         )
 
-        self.assertEqual(outcome.result["code"], "TOOL_OUTPUT_TOO_LARGE")
+        self.assertEqual(outcome.result["code"], "ok")
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
         persisted = json.loads(
             self.store.read_item(item["id"])["toolCall"]["resultJson"]
         )
-        self.assertNotIn("x" * 1_024, json.dumps(persisted))
+        self.assertEqual(persisted["data"]["content"], "x" * 300_000)
+        model_result = json.loads(self.store.connection.execute(
+            "SELECT model_result_json FROM tool_calls WHERE item_id=?", (item["id"],)
+        ).fetchone()[0])
+        self.assertLess(len(json.dumps(model_result).encode()), 50 * 1024)
+        self.assertEqual(model_result["readBack"]["itemId"], item["id"])
+        self.assertNotIn("sha256", model_result.get("data", {}))
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_unknown_result_does_not_block_authorized_mutation(self) -> None:

@@ -14,7 +14,7 @@ from pathlib import Path
 import threading
 import time
 
-from eidos_runtime.domain.capacity import CapacityExceeded, is_capacity_error
+from eidos_runtime.domain.capacity import CapacityExceeded
 from typing import TYPE_CHECKING, Callable, Protocol
 
 from eidos_runtime.context.builder import ContextBuild, ContextBuilder
@@ -290,12 +290,25 @@ class RuntimeEngine:
                 runtime_dependency_catalog=self.runtime_dependency_catalog,
                 collaboration=self.collaboration,
             ) as resources:
+                recovery_level = 0
+                self.context_recovery_level = 0
                 while True:
                     try:
                         self._drive(run_context, resources, cancel, repository_context)
                         break
                     except CapacityExceeded as error:
-                        self._wait_for_capacity(run_id, error.reason, cancel)
+                        self.store.complete_current_step(run_id, "failed", reason="request_capacity")
+                        recovery_level += 1
+                        run_context = run_context.model_copy(update={"model_context": ({
+                            "type": "user", "content": (
+                                "The last request could not be processed (" + error.reason + "). "
+                                "No tool from that response was executed. Continue with a smaller request, "
+                                "read saved output by page, or use another approach. Do not repeat uncertain side effects."
+                            ),
+                        },)})
+                        self.context_recovery_level = recovery_level
+                        if cancel.wait(1):
+                            raise RuntimeCancelled
         except (PlanningSuspended, AgentSuspended):
             self.events.deliver_pending()
             return
@@ -357,7 +370,6 @@ class RuntimeEngine:
         pending_provider_recovery = False
         pending_projection_marker: tuple[object, ...] | None = None
         automatic_compaction_states: set[tuple[object, ...]] = set()
-        capacity_recovery_states: set[str] = set()
         finalizer = RunFinalizer(
             self.store,
             self.model,
@@ -431,7 +443,9 @@ class RuntimeEngine:
         while True:
             self._check_cancel(run.run_id, cancel)
             self._pause_effective_time(run.run_id)
-            injected = self.store.consume_pending_input_facts(run.run_id)
+            # A recovered request still uses its original input. Leave steering
+            # unread until that request finishes and the next normal Step begins.
+            injected = () if self.store.has_recovered_model_retry(run.run_id) else self.store.consume_pending_input_facts(run.run_id)
             resources.refresh(tuple(content for _item_id, content in injected))
             dispatcher = resources.dispatcher
             if dispatcher is None:
@@ -474,6 +488,7 @@ class RuntimeEngine:
                     step_policy=step_policy,
                     repository_context=None if projectless else repository_context,
                     projectless=projectless,
+                    recovery_level=getattr(self, "context_recovery_level", 0),
                 )
 
             built = build_current_context()
@@ -526,7 +541,7 @@ class RuntimeEngine:
                 if _projection_state(built) == pending_projection_marker:
                     raise ContextLimitExceeded("internal_projection_limit")
                 pending_projection_marker = None
-            if built.facts.candidate_overflow:
+            if built.facts.candidate_overflow and not getattr(self, "context_recovery_level", 0):
                 pending_projection_marker = _projection_state(built)
                 phase = (
                     "mid_turn"
@@ -583,7 +598,7 @@ class RuntimeEngine:
             )
             if context_decision.action == LoopAction.CANCEL:
                 raise RuntimeCancelled
-            if context_decision.action == LoopAction.COMPACT:
+            if context_decision.action == LoopAction.COMPACT and not getattr(self, "context_recovery_level", 0):
                 pending_compaction_baseline = built.budget.projected_input_tokens
                 pending_provider_recovery = False
                 phase = (
@@ -606,16 +621,6 @@ class RuntimeEngine:
                         continue
                     raise CapacityExceeded("context_window_capacity")
                 continue
-            if context_decision.action == LoopAction.PAUSE:
-                reason = context_decision.reason or "context_over_budget"
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    reason,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
             step = step_factory.create(
                 run,
                 resources,
@@ -628,9 +633,14 @@ class RuntimeEngine:
                 new_user_input_ids=tuple(item_id for item_id, _content in injected),
             )
             try:
-                self._capture_model_attempt_context(
-                    context_application, step, rule_snapshot, repository_context,
-                )
+                recovered_snapshot = self.store.read_running_context_snapshot(run.run_id)
+                if recovered_snapshot is None:
+                    self._capture_model_attempt_context(
+                        context_application, step, rule_snapshot, repository_context,
+                    )
+                elif recovered_snapshot.tool_definitions != step.tool_definitions:
+                    self._fail(run.run_id, "MODEL_REQUEST_FAILED")
+                    return
             except MemoryRejected:
                 self.store.complete_current_model_attempt(run.run_id, "failed", error_code="memory_snapshot_revoked")
                 self.store.complete_current_step(run.run_id, "failed", reason="memory_snapshot_revoked")
@@ -724,18 +734,14 @@ class RuntimeEngine:
                 except SamplingError as error:
                     if isinstance(error, SamplingCapacityExceeded):
                         self.store.complete_current_step(run.run_id, "failed", reason="request_capacity")
-                        reason = str(error)
-                        if reason in capacity_recovery_states:
-                            raise CapacityExceeded(reason) from error
-                        capacity_recovery_states.add(reason)
                         capacity_retry = True
-                        run = run.model_copy(update={"model_context": (*run.model_context, {
+                        run = run.model_copy(update={"model_context": ({
                             "type": "user", "content": (
                                 "The previous response exceeded a request resource budget. No tool from that "
                                 "response was executed. Continue with shorter replies and smaller tool calls; "
                                 "split large writes and read existing results by page."
                             ),
-                        })})
+                        },)})
                         context_recovered = True
                         break
                     if (
@@ -750,10 +756,26 @@ class RuntimeEngine:
                             context_recovered = True
                             break
                         if frozen is not None:
-                            self.store.start_retry_model_attempt(
-                                run.run_id,
-                                context_snapshot_id=frozen.snapshot_id,
-                            )
+                            self._check_cancel(run.run_id, cancel)
+                            delay = max(0, ((error.retry_decision.next_retry_at or 0) - time.time_ns() // 1_000_000) / 1000)
+                            if cancel.wait(delay):
+                                raise RuntimeCancelled
+                            self._check_cancel(run.run_id, cancel)
+                            if time.time_ns() // 1_000_000 >= (error.retry_decision.deadline_at or 2**53 - 1):
+                                self._handle_sampling_failure(run.run_id, error, step=step)
+                                return
+                            try:
+                                attempt_id = self.store.start_retry_model_attempt(
+                                    run.run_id,
+                                    context_snapshot_id=frozen.snapshot_id,
+                                )
+                            except InvalidRunStateError:
+                                self._check_cancel(run.run_id, cancel)
+                                if error.retry_decision.deadline_at is not None and time.time_ns() // 1_000_000 >= error.retry_decision.deadline_at:
+                                    self._handle_sampling_failure(run.run_id, error, step=step)
+                                    return
+                                raise
+                            step = step.model_copy(update={"model_attempt_id": attempt_id})
                             continue
                     repair_code = _sampling_protocol_repair_code(error)
                     if repair_code is not None:
@@ -785,12 +807,6 @@ class RuntimeEngine:
                             continue
                     if str(error) == "length":
                         raise CapacityExceeded("model_output_capacity") from error
-                    if isinstance(error, SamplingRateLimited):
-                        raise CapacityExceeded("provider_rate_limit") from error
-                    if error.failure is not None and error.failure.code == "provider_timeout":
-                        raise CapacityExceeded("provider_request_timeout") from error
-                    if error.retry_decision is not None and error.retry_decision.reason == "transport_retries_exhausted":
-                        raise CapacityExceeded("provider_retry_budget") from error
                     self._handle_sampling_failure(run.run_id, error, step=step)
                     return
 
@@ -836,17 +852,14 @@ class RuntimeEngine:
                     self.store.complete_current_step(
                         run.run_id, "failed", reason=reason
                     )
-                    if reason == "request_capacity":
-                        raise CapacityExceeded("tool_arguments_capacity")
-                    diagnostic = validation.protocol_diagnostic
-                    self._fail(run.run_id, "MODEL_PROTOCOL_ERROR", termination=RunTermination(
-                        stage="tool_validation" if diagnostic and diagnostic.stage == "tool_validation" else "model",
-                        reason=reason,
-                        step_id=step.step_id,
-                        tool_name=diagnostic.tool_name if diagnostic else None,
-                        validation_path=diagnostic.validation_path if diagnostic else None,
-                    ))
-                    return
+                    run = run.model_copy(update={"model_context": ({
+                        "type": "user", "content": (
+                            "The last tool call was rejected (" + reason + "). No tool in that response was executed. "
+                            "Correct the arguments, activate the tool, split the request, or choose another available tool."
+                        ),
+                    },)})
+                    context_recovered = True
+                    break
 
                 if validation.status == "no_tools" and not sampled.text:
                     protocol_errors = self.store.record_protocol_error(run.run_id)
@@ -1002,17 +1015,11 @@ class RuntimeEngine:
                 })
                 continue
             if repeated is not None:
-                if self._last_tool_hit_capacity(run.run_id):
-                    raise CapacityExceeded("tool_capacity")
-                self.store.complete_current_step(run.run_id, "failed", reason=repeated)
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    repeated,
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
+                self.store.complete_current_step(run.run_id, "completed", reason="tool_recovery")
+                run = run.model_copy(update={"model_context": (_loop_recovery_context(
+                    "Repeated tools did not advance the task. Skip this unsuccessful route and choose another tool or method."
+                ),)})
+                continue
             self._pause_at(run.run_id, SafePoint.BEFORE_TOOL, cancel)
             self.lifecycle.emit(
                 LoopStage.BEFORE_TOOL_BATCH, run.run_id,
@@ -1085,7 +1092,7 @@ class RuntimeEngine:
                     signature = signature.model_copy(update={
                         "recovery_state_fingerprint": recovery_state,
                     })
-            if outcome.status in {"completed", "paused"}:
+            if outcome.status in {"completed", "paused", "sensitive_rejected"}:
                 self.store.complete_current_step(
                     run.run_id, "completed", progress_signature=signature
                 )
@@ -1105,18 +1112,12 @@ class RuntimeEngine:
                 cancelled=cancel.is_set(),
             )
             if tool_decision.action == LoopAction.PAUSE:
-                if self._last_tool_hit_capacity(run.run_id):
-                    raise CapacityExceeded("tool_capacity")
                 if self.store.read_run(run.run_id)["status"] == "interrupted":
                     return
-                finalizer.finalize(
-                    run.run_id,
-                    built.model_context,
-                    tool_decision.reason or "loop_guard",
-                    cancel,
-                    instructions=built.instructions,
-                )
-                return
+                run = run.model_copy(update={"model_context": (_loop_recovery_context(
+                    "The previous tool route did not work. Respect its error and permissions; try an alternative or explain the remaining limitation."
+                ),)})
+                continue
             if tool_decision.action == LoopAction.FAIL:
                 self._fail(run.run_id, "INTERNAL_ERROR")
                 return
@@ -1302,60 +1303,11 @@ class RuntimeEngine:
         }:
             raise RuntimeCancelled
 
-    def _last_tool_hit_capacity(self, run_id: str) -> bool:
-        facts = self.store.context_projection_facts(run_id)
-        for fact in reversed(facts.items):
-            if fact.provider_call_id is None:
-                continue
-            try:
-                result = json.loads(fact.result_json or fact.model_result_json or "{}")
-            except ValueError:
-                return False
-            return isinstance(result, dict) and is_capacity_error(str(result.get("code", "")), str(result.get("outcome", "")))
-        return False
-
-    def _wait_for_capacity(self, run_id: str, reason: str, cancel: threading.Event) -> None:
-        self._check_cancel(run_id, cancel)
-        logger.info("Run paused for capacity run_id=%s reason=%s", run_id, reason)
-        self.store.complete_current_step(run_id, "failed", reason="request_capacity")
-        mutation = self._pause_effective_time(run_id)
-        if mutation is not None:
-            self.events.publish(mutation, run=mutation.value)
-        repository = self.store.long_task_repository()
-        progress = repository.read(run_id)
-        if progress is None:
-            workspace = self.store.workspace_for_run(run_id)
-            repository.initialize(
-                run_id=run_id, workspace_path=str(workspace.path),
-                workspace_device=workspace.device, workspace_inode=workspace.inode,
-                workspace_owner=workspace.owner,
-            )
-        progress = repository.read(run_id)
-        if progress is not None and progress.status is LongTaskStatus.RUNNING:
-            progress = repository.request_pause(run_id)
-        if progress is not None and progress.status is LongTaskStatus.PAUSE_REQUESTED:
-            repository.mark_paused(run_id, SafePoint.BEFORE_MODEL)
-        mutation = self.store.create_finalization_assistant_item_committed(run_id)
-        item = mutation.value
-        self.events.publish(mutation, item=item)
-        notices = {
-            "provider_rate_limit": "模型服务暂时限制请求频率，任务已暂停。系统保留了执行记录，你可以稍后继续或取消",
-            "provider_request_timeout": "模型请求超过等待时间，任务已暂停。系统保留了执行记录，你可以稍后继续或取消",
-            "provider_retry_budget": "模型请求的自动重试次数已用完，任务已暂停。系统保留了执行记录，你可以稍后继续或取消",
-        }
-        notice = notices.get(reason,
-            "当前请求超过处理预算，任务已暂停。系统保留了执行记录，你可以调整任务后继续或取消")
-        mutation = self.store.append_item_deltas_committed(str(item["id"]), (notice,), 1)
-        self.events.publish(mutation, item=mutation.value)
-        mutation = self.store.complete_assistant_item_committed(str(item["id"]))
-        self.events.publish(mutation, item=mutation.value)
-        self._pause_at(run_id, SafePoint.BEFORE_MODEL, cancel)
-
     def _pause_at(
         self, run_id: str, safe_point: SafePoint, cancel: threading.Event
     ) -> None:
         repository = self.store.long_task_repository()
-        progress = repository.read(run_id)
+        progress = repository.clear_legacy_capacity_pause(run_id)
         if progress is None:
             return
         progress = repository.record_safe_point(run_id, safe_point)

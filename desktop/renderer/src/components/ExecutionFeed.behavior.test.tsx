@@ -1847,24 +1847,11 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
 
 
 
-describe("capacity continuation", () => {
-  it("keeps a paused task resumable after a failed resume request", async () => {
-    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
-    const resumeRun = vi.fn().mockRejectedValueOnce(new Error("temporary failure")).mockResolvedValue(baseRun);
-    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { resumeRun } });
-    try {
-      renderFeed(shellItem({ kind: "assistant_message", status: "completed", toolCall: undefined,
-        content: "当前请求超过处理预算，任务已暂停。系统保留了执行记录，你可以调整任务后继续或取消" }));
-      fireEvent.click(screen.getByRole("button", { name: "继续任务" }));
-      await screen.findByRole("alert");
-      expect(resumeRun).toHaveBeenCalledWith(baseRun.id);
-      fireEvent.click(screen.getByRole("button", { name: "继续任务" }));
-      expect(await screen.findByText("任务已继续")).toBeInTheDocument();
-      expect(resumeRun).toHaveBeenCalledTimes(2);
-    } finally {
-      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
-      else delete (window as Partial<Window>).eidosRuntime;
-    }
+describe("saved output projection", () => {
+  it("does not offer a system capacity pause button for old notices", () => {
+    renderFeed(shellItem({ kind: "assistant_message", status: "completed", toolCall: undefined,
+      content: "当前请求超过处理预算，任务已暂停。系统保留了执行记录，你可以调整任务后继续或取消" }));
+    expect(screen.queryByRole("button", { name: "继续任务" })).not.toBeInTheDocument();
   });
 
   it("pages the full assistant answer through its Session and original hash", async () => {

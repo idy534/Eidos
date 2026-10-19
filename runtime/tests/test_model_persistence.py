@@ -148,7 +148,7 @@ class ModelPersistenceTests(unittest.TestCase):
         self.assertEqual(attempt["usage"].input_tokens, 5)
         self.assertEqual(attempt["finishReason"], "stop")
 
-    def test_stream_progress_stops_before_an_unsafe_retry(self) -> None:
+    def test_stream_progress_retries_in_an_independent_item(self) -> None:
         class RetryThenSuccess:
             calls = 0
 
@@ -179,22 +179,22 @@ class ModelPersistenceTests(unittest.TestCase):
         )
 
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual(model.calls, 1)
-        self.assertEqual(self.store.read_run(run["id"])["status"], "failed")
+        self.assertEqual(model.calls, 2)
+        self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
         self.assertEqual(self.store.read_run(run["id"])["modelStepCount"], 1)
-        self.assertEqual([attempt["status"] for attempt in attempts], ["failed"])
+        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "completed"])
         self.assertEqual(attempts[0]["errorCode"], "provider_unavailable")
         self.assertEqual(attempts[0]["httpStatus"], 503)
         self.assertTrue(attempts[0]["hadProgress"])
         self.assertIsNone(attempts[0]["usage"])
         self.assertEqual(
-            attempts[0]["retryDecision"]["reason"], "unsafe_stream_progress"
+            attempts[0]["retryDecision"]["reason"], "transport_retry"
         )
         snapshot = self.store.read_session_snapshot(self.session["id"])
         assistant_items = [item for item in snapshot["items"]
                            if item["kind"] == "assistant_message"]
-        self.assertEqual([item.get("content") for item in assistant_items], ["safe progress"])
-        self.assertEqual([item["status"] for item in assistant_items], ["failed"])
+        self.assertEqual([item.get("content") for item in assistant_items], ["safe progress", "done"])
+        self.assertEqual([item["status"] for item in assistant_items], ["failed", "completed"])
 
     def test_normalization_protocol_error_repairs_after_provisional_text(self) -> None:
         class NormalizationFailureThenSuccess:

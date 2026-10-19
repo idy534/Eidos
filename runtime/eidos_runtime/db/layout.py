@@ -25,6 +25,7 @@ from eidos_runtime.db.schema import (
     V27_SCHEMA_VERSION,
     V28_SCHEMA_VERSION,
     V29_SCHEMA_VERSION,
+    V30_SCHEMA_VERSION,
     V18_SCHEMA_VERSION,
     V17_SCHEMA_VERSION,
     V16_SCHEMA_VERSION,
@@ -853,6 +854,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V29_SCHEMA_VERSION:
                 from eidos_runtime.db.channel_migration import migrate_channels
                 migrate_channels(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V30_SCHEMA_VERSION:
+                from eidos_runtime.db.model_retry_migration import migrate_model_retries
+                migrate_model_retries(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

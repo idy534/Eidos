@@ -7,7 +7,6 @@ import sys
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
 
 
 RUNTIME_ROOT = Path(__file__).resolve().parents[1]
@@ -61,18 +60,14 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     truncated,
                     ModelResponse(text="Recovered") if recover else truncated,
                 ])
-                cancel = threading.Event()
-                if recover:
-                    RuntimeLoop(self.store, model, lambda _: None).run(run["id"], cancel)
-                else:
-                    with patch.object(RuntimeLoop, "_wait_for_capacity", side_effect=lambda _run, _reason, token: token.set()) as paused:
-                        RuntimeLoop(self.store, model, lambda _: None).run(run["id"], cancel)
-                    self.assertEqual(paused.call_args.args[1], "model_output_capacity")
+                if not recover:
+                    model.responses = (*model.responses, ModelResponse(text="Recovered after truncation"))
+                RuntimeLoop(self.store, model, lambda _: None).run(run["id"], threading.Event())
                 result = self.store.read_run(run["id"])
-                self.assertEqual(result["status"], "succeeded" if recover else "canceled")
+                self.assertEqual(result["status"], "succeeded")
                 self.assertNotIn("errorCode", result)
                 attempts = self.store.read_model_attempts(run["id"])
-                self.assertEqual(len(attempts), 2)
+                self.assertEqual(len(attempts), 2 if recover else 3)
                 self.assertEqual(attempts[0]["finishReason"], "length")
                 self.assertEqual(attempts[0]["usage"].output_tokens, 16000)
                 self.assertEqual(attempts[0]["providerResponseId"], "truncated-response")
@@ -629,28 +624,23 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(assistant_text, ["Recovered from provider protocol output."])
         self.assertFalse(any("DSML" in str(value) for value in assistant_text))
 
-    def test_repeated_protocol_failure_is_a_failed_run_not_loop_stop(self) -> None:
+    def test_repeated_invalid_tool_calls_allow_a_corrected_response(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Keep returning bad tools")
         bad = ModelResponse(tool_calls=(
             ModelToolCall("bad-write", "write_file", {"path": "go.mod"}),
         ))
-        model = ScriptedModel([bad, bad])
+        model = ScriptedModel([bad, bad, ModelResponse(text="Recovered without executing invalid tools")])
 
         RuntimeLoop(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
-        failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
-        self.assertIsNone(failed.get("stopReason"))
-        self.assertEqual(failed["modelStepCount"], 1)
+        finished = self.store.read_run(run["id"])
+        self.assertEqual(finished["status"], "succeeded")
+        self.assertNotIn("errorCode", finished)
+        self.assertEqual(finished["modelStepCount"], 2)
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed"])
-        self.assertEqual(failed["termination"]["reason"], "invalid_tool_call")
-        self.assertEqual(failed["termination"]["stage"], "tool_validation")
-        self.assertEqual(failed["termination"]["modelAttemptId"], attempts[-1]["id"])
-        self.assertEqual(failed["termination"]["toolName"], "write_file")
+        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed", "completed"])
         diagnostic = attempts[0]["protocolDiagnostics"]
         assert isinstance(diagnostic, dict)
         self.assertNotIn("argumentsSha256", diagnostic)
