@@ -1,4 +1,6 @@
-import { useEffect, useId, useRef, useState, Fragment } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, Fragment } from "react";
+import type { RefObject } from "react";
+import { createPortal } from "react-dom";
 import type { InputPrepareRequest } from "../../../shared/input-context.js";
 import { useInputContext } from "./InputContext.js";
 import { userFacingError } from "../session-state.js";
@@ -20,12 +22,66 @@ const CATEGORIES = [
   { id: "plugin", label: "插件" },
   { id: "history", label: "会话" },
 ] as const;
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onCreateAgent }: {
+
+const PICKER_MARGIN = 8;
+const PICKER_GAP = 10;
+const PICKER_WIDTH = 390;
+const PICKER_HEIGHT = 400;
+const PICKER_MIN_HEIGHT = 120;
+const PICKER_PREFERRED_ABOVE = 260;
+
+type PickerPlacement = "above" | "below";
+interface PickerLayout {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  placement: PickerPlacement;
+}
+
+const PICKER_FALLBACK_LAYOUT: PickerLayout = {
+  top: PICKER_MARGIN,
+  left: PICKER_MARGIN,
+  width: PICKER_WIDTH,
+  height: PICKER_HEIGHT,
+  placement: "above",
+};
+
+/**
+ * Keeps the picker inside the surface that would otherwise clip it: preferred above the trigger,
+ * flipped or shrunk when the session canvas has less room, and always inside the canvas bounds.
+ */
+function measurePickerLayout(surface: HTMLElement, boundary: HTMLElement | null): PickerLayout {
+  const anchor = surface.getBoundingClientRect();
+  const bounds = boundary?.getBoundingClientRect();
+  const limitTop = (bounds?.top ?? 0) + PICKER_MARGIN;
+  const limitBottom = (bounds?.bottom ?? window.innerHeight) - PICKER_MARGIN;
+  const limitLeft = (bounds?.left ?? 0) + PICKER_MARGIN;
+  const limitRight = (bounds?.right ?? window.innerWidth) - PICKER_MARGIN;
+  const width = Math.min(PICKER_WIDTH, Math.max(0, limitRight - limitLeft));
+  const left = Math.max(limitLeft, Math.min(anchor.left, limitRight - width));
+  const desired = Math.min(PICKER_HEIGHT, window.innerHeight * 0.6);
+  const aboveBottom = anchor.top - PICKER_GAP;
+  const belowTop = anchor.bottom + PICKER_GAP;
+  const spaceAbove = Math.max(0, aboveBottom - limitTop);
+  const spaceBelow = Math.max(0, limitBottom - belowTop);
+  const placement: PickerPlacement =
+    spaceAbove >= Math.min(desired, PICKER_PREFERRED_ABOVE) || spaceAbove >= spaceBelow ? "above" : "below";
+  const available = placement === "above" ? spaceAbove : spaceBelow;
+  if (available < PICKER_MIN_HEIGHT) {
+    return { top: limitTop, left, width, placement, height: Math.min(desired, Math.max(0, limitBottom - limitTop)) };
+  }
+  const height = Math.min(desired, available);
+  return { top: placement === "above" ? aboveBottom - height : belowTop, left, width, height, placement };
+}
+
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onCreateAgent, anchor }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
   onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
   onSelectPlanMode?(): void;
   onCreateAgent?: (() => void) | undefined;
+  anchor?: RefObject<HTMLElement | null> | undefined;
 }) {
   const context = useInputContext();
   const [catalog, setCatalog] = useState<Candidate[]>([]);
@@ -49,6 +105,35 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
   }, [searchExpanded]);
   const listId = useId();
   const root = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<PickerLayout>(PICKER_FALLBACK_LAYOUT);
+  useLayoutEffect(() => {
+    const surface = anchor?.current ?? document.querySelector<HTMLElement>(".composer");
+    if (!surface) return;
+    const boundary = surface.closest<HTMLElement>(".session-canvas") ?? surface.closest<HTMLElement>(".workspace-content");
+    const update = () => {
+      const next = measurePickerLayout(surface, boundary);
+      setLayout((previous) => (
+        previous.top === next.top
+        && previous.left === next.left
+        && previous.width === next.width
+        && previous.height === next.height
+        && previous.placement === next.placement
+          ? previous
+          : next
+      ));
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update);
+    observer?.observe(surface);
+    if (boundary) observer?.observe(boundary);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+      observer?.disconnect();
+    };
+  }, [anchor]);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -209,8 +294,13 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
     return () => document.removeEventListener("pointerdown", outside);
   }, [onClose]);
 
-  return (
-    <div className="input-picker" ref={root}>
+  return createPortal(
+    <div
+      className="input-picker"
+      ref={root}
+      data-placement={layout.placement}
+      style={{ top: layout.top, left: layout.left, width: layout.width, height: layout.height }}
+    >
       {inline ? (
         <div className="input-picker__header">
           <div className="input-picker__inline-header">
@@ -476,7 +566,8 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
         <button type="button" className="btn btn--ghost btn--small" disabled={!onCreateAgent} onClick={onCreateAgent}>+ 创建智能体</button>
         <button type="button" className="btn btn--ghost btn--small" onClick={() => onCommand("agents")}>管理智能体</button>
       </div>}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

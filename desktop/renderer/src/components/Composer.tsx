@@ -102,6 +102,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const [list, setList] = useState<{ id: string; active: string | undefined }>();
   const [showStatus, setShowStatus] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
   const pickerList = useCallback((id: string, active: string | undefined) => setList((previous) => previous?.id === id && previous.active === active ? previous : { id, active }), []);
   const closePicker = useCallback(() => { setPicker(undefined); textareaRef.current?.focus(); }, []);
   useEffect(() => { setPicker(undefined); setShowStatus(false); setAgentCreator(undefined); }, [context?.sessionId]);
@@ -210,6 +211,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   return (
     <form
       className="composer"
+      ref={composerRef}
       onSubmit={(e) => { e.preventDefault(); if (!isSubmitDisabled) onSubmit(); }}
     >
       {hasProjectContext && (
@@ -303,6 +305,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       {context?.error && <p className="input-reference-error" role="alert">{context.error}</p>}
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
+        anchor={composerRef}
         onCreateAgent={context ? () => { setAgentCreator({ owner: context.sessionId, add: context.add }); closePicker(); } : undefined}
         onQuery={(query) => setPicker((previous) => previous ? { ...previous, query } : previous)}
         onListId={pickerList} onClose={closePicker}
