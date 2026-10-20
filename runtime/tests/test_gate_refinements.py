@@ -64,7 +64,7 @@ def test_messages_over_one_page_are_delivered_before_completion(state, monkeypat
         item = store.create_tool_item(child.run_id, 1, index, f'message-{index}', 'send_message', '{}')
         repository.send(child.run_id, item['id'], 'parent', f'Evidence number {index}')
     store.fail_run(child.run_id, 'fixture_complete')
-    assert len(repository.model_state(run['id']).messages) == 16
+    assert len(repository.model_state(run['id']).messages) == 32
     # Preparing or previewing the context must not consume messages.
     repository.model_state(run['id'])
     repository.record_model_delivery(run['id'], 'unaccepted-attempt')
@@ -82,10 +82,10 @@ def test_messages_over_one_page_are_delivered_before_completion(state, monkeypat
     assert store.read_run(run['id'])['status'] == 'succeeded'
     assert not repository.has_unread_messages(run['id'])
     pages = [next(value['content'] for value in context if value.get('sectionId') == 'agent-evidence') for context in model.contexts]
-    assert len(pages) == 3
+    assert len(pages) == 2
     import json
     assert [[message['content'] for message in json.loads(page.split('\n', 1)[1])['messages']] for page in pages] == [
-        [f'Evidence number {index}' for index in range(start, end)] for start, end in ((0, 16), (16, 32), (32, 33))
+        [f'Evidence number {index}' for index in range(start, end)] for start, end in ((0, 32), (32, 33))
     ]
     assert store.connection.execute('SELECT COUNT(*) FROM agent_message_receipts').fetchone()[0] == 33
 

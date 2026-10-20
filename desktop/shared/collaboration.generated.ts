@@ -63,7 +63,7 @@ export type Recipientsessionid = string;
 export type Content = string;
 export type Createdat1 = number;
 /**
- * @maxItems 16
+ * @maxItems 32
  */
 export type Messages = AgentMessage[];
 export type Parentrunid2 = string;

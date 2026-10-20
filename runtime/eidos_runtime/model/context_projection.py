@@ -48,6 +48,10 @@ def project_context(context: tuple[dict[str, object], ...], *, text_bytes: int =
     projected = []
     for original in context:
         item = dict(original)
+        if item.get('sectionId') == 'agent-evidence':
+            from eidos_runtime.context.agent_evidence import project_agent_evidence
+            projected.append(project_agent_evidence(item, text_bytes))
+            continue
         if item.get("type") == "tool_result" and isinstance(item.get("result"), str):
             item["result"] = model_result_json(str(item["result"]))
         elif item.get("type") == "user" and item.get("sectionId") == "runtime-state":
@@ -76,6 +80,9 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int) ->
     # Keep task inputs/corrections and the latest runtime guidance. System-level
     # permission and policy instructions live outside this working set.
     retained = messages[:2] + messages[-10:] if len(messages) > 12 else messages
+    for item in messages:
+        if item.get('sectionId') == 'agent-evidence' and item not in retained:
+            retained.insert(0, item)
     tool_results = [item for item in context if item.get("type") == "tool_result"][-12:]
     evidence = []
     for item in tool_results:
@@ -90,6 +97,10 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int) ->
     per_message = max(256, byte_limit // max(1, len(retained)))
     result = []
     for item in retained:
+        if item.get('sectionId') == 'agent-evidence':
+            from eidos_runtime.context.agent_evidence import project_agent_evidence
+            result.append(project_agent_evidence(item, per_message))
+            continue
         # Starting fresh avoids orphan tool returns and missing opaque reasoning.
         text = text_preview(str(item.get("content", "")), per_message,
             continuation=(f"Original item {item['sourceItemId']}: read_tool_output(callId='{item['sourceItemId']}', stream='context')." if item.get("sourceItemId") else "The complete original remains in the saved session; use read_tool_output stream='context' with its itemId."))

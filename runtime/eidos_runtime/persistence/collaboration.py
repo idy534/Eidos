@@ -14,8 +14,9 @@ from eidos_runtime.db.events import append_event
 from eidos_runtime.db.repositories.runs import RunRepository
 from eidos_runtime.db.transitions import transition_run
 from eidos_runtime.domain.collaboration import (
-    ACTIVE_STATUSES, MAX_AGENTS, AgentMessage, AgentRole, AgentSummary, AgentWait,
-    CollaborationRejected, CollaborationState, SpawnAgent, WaitAgents,
+    ACTIVE_STATUSES, MAX_AGENTS, MAX_AGENT_MESSAGES, MAX_AGENT_MESSAGE_BYTES,
+    AgentMessage, AgentRole, AgentSummary, AgentTextPage, AgentWait,
+    CollaborationRejected, CollaborationState, ReadAgentResult, SpawnAgent, WaitAgents,
 )
 from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.domain.run import RunStatus as DomainRunStatus
@@ -113,12 +114,69 @@ class CollaborationRepository:
                 'SELECT m.id,m.sender_session_id,m.recipient_session_id,m.content,m.created_at FROM agent_messages m '
                 'WHERE m.parent_run_id=? AND m.recipient_session_id=? AND NOT EXISTS '
                 '(SELECT 1 FROM agent_message_receipts a WHERE a.message_id=m.id) '
-                'ORDER BY m.sequence LIMIT 16', (parent_id, run['session_id']),
+                'ORDER BY m.sequence LIMIT ?', (parent_id, run['session_id'], MAX_AGENT_MESSAGES),
             ).fetchall()
-        if not messages:
-            messages = connection.execute('SELECT id,sender_session_id,recipient_session_id,content,created_at FROM (SELECT id,sender_session_id,recipient_session_id,content,created_at,sequence FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence DESC LIMIT 16) ORDER BY sequence', (parent_id, run['session_id'])).fetchall()
+        if not messages and not unread_first:
+            messages = connection.execute("SELECT id,sender_session_id,recipient_session_id,CASE WHEN length(content)>2000 THEN substr(content,1,2000)||' …[message preview]' ELSE content END AS content,created_at FROM (SELECT id,sender_session_id,recipient_session_id,content,created_at,sequence FROM agent_messages WHERE parent_run_id=? AND recipient_session_id=? ORDER BY sequence DESC LIMIT 16) ORDER BY sequence", (parent_id, run['session_id'])).fetchall()
         return CollaborationState(parent_run_id=parent_id if rows else None,
             agents=[self._summary(connection, row) for row in rows if child is None or row["id"] == child["id"]], messages=[AgentMessage(**dict(row)) for row in messages])
+
+    def read_result(self, run_id: str, request: ReadAgentResult) -> AgentTextPage:
+        """Page a completed answer owned by this parent; never load a tool transcript."""
+        with self.database.lock:
+            connection = self.database.connection()
+            target = self._target(connection, run_id, request.agent_id)
+            row = connection.execute(
+                "SELECT id,length(CAST(content AS BLOB)) AS total FROM items "
+                "WHERE session_id=? AND kind='assistant_message' AND status='completed' AND incomplete=0 "
+                "AND (? IS NOT NULL OR run_id=?) AND (? IS NULL OR id=?) "
+                "ORDER BY ordinal DESC LIMIT 1",
+                (target['child_session_id'], request.item_id, target['child_run_id'],
+                 request.item_id, request.item_id),
+            ).fetchone()
+            if row is None:
+                raise CollaborationRejected('agent_result_not_available')
+            if request.from_end and request.offset_bytes:
+                raise CollaborationRejected('invalid_agent_output_range')
+            offset = max(0, row['total'] - request.max_bytes) if request.from_end else request.offset_bytes
+            body = connection.execute('SELECT substr(CAST(content AS BLOB),?,?) FROM items WHERE id=?',
+                (offset + 1, request.max_bytes, row['id'])).fetchone()[0] or b''
+            if request.from_end:
+                while body and body[0] & 0xC0 == 0x80:
+                    body, offset = body[1:], offset + 1
+            return self._text_page(row['id'], body, row['total'], offset)
+
+    def read_message(self, run_id: str, message_id: str) -> AgentTextPage:
+        with self.database.lock:
+            row = self.database.connection().execute(
+                'SELECT substr(CAST(m.content AS BLOB),1,?) AS body,length(CAST(m.content AS BLOB)) AS total '
+                'FROM agent_messages m JOIN runs r ON r.session_id=m.recipient_session_id '
+                'WHERE r.id=? AND m.id=? AND (m.parent_run_id=r.id OR EXISTS '
+                '(SELECT 1 FROM agent_delegations d WHERE d.parent_run_id=m.parent_run_id AND d.child_session_id=r.session_id))',
+                (MAX_AGENT_MESSAGE_BYTES + 1, run_id, message_id),
+            ).fetchone()
+            if row is None:
+                raise CollaborationRejected('agent_message_not_available')
+            if row['total'] > MAX_AGENT_MESSAGE_BYTES:
+                raise CollaborationRejected('agent_message_too_large')
+            encoded = row['body'] or b''
+            return self._text_page(message_id, encoded, len(encoded), 0)
+
+    @staticmethod
+    def _text_page(source_id: str, raw: bytes, total: int, offset: int) -> AgentTextPage:
+        if offset > total:
+            raise CollaborationRejected('invalid_agent_output_range')
+        try:
+            # Only a trailing partial code point is allowed. Offsets must come
+            # from nextOffset, never from the middle of an encoded character.
+            content = raw.decode('utf-8')
+        except UnicodeDecodeError as error:
+            if error.reason != 'unexpected end of data':
+                raise CollaborationRejected('invalid_agent_output_range') from None
+            content = raw[:error.start].decode('utf-8')
+        end = offset + len(content.encode('utf-8'))
+        return AgentTextPage(source_id=source_id, content=content, start_byte=offset,
+            next_offset=end, total_bytes=total, has_more=end < total)
 
     def model_state(self, run_id: str) -> CollaborationState:
         with self.database.lock:
@@ -146,10 +204,17 @@ class CollaborationRepository:
             return
         ids: set[str] = set()
         for section in snapshot.model_context:
+            delivered = section.get('agentMessageIds')
+            if isinstance(delivered, list):
+                ids.update(value for value in delivered if isinstance(value, str))
+                continue
             if section.get('sectionId') == 'agent-evidence':
                 content = section.get('content', '')
                 if isinstance(content, str) and '\n' in content:
-                    state = CollaborationState.model_validate_json(content.split('\n', 1)[1])
+                    try:
+                        state = CollaborationState.model_validate_json(content.split('\n', 1)[1])
+                    except ValueError:
+                        continue  # Legacy recovery previews are not delivery receipts.
                     ids.update(message.id for message in state.messages)
         if not ids:
             return
@@ -157,7 +222,8 @@ class CollaborationRepository:
             # Only a successfully accepted response proves delivery. A failed,
             # canceled or merely prepared request does not consume messages.
             attempt = connection.execute(
-                "SELECT 1 FROM model_attempts a JOIN steps s ON s.id=a.step_id WHERE a.id=? AND s.run_id=? AND a.status='completed'",
+                "SELECT 1 FROM model_attempts a JOIN steps s ON s.id=a.step_id JOIN runs r ON r.id=s.run_id "
+                "WHERE a.id=? AND s.run_id=? AND a.status='completed' AND r.cancel_requested_at IS NULL AND r.status='running'",
                 (model_attempt_id, run_id),
             ).fetchone()
             if attempt is None:
@@ -247,6 +313,8 @@ class CollaborationRepository:
             return
         if not message.strip():
             raise CollaborationRejected('empty_agent_message')
+        if len(message.encode('utf-8')) > MAX_AGENT_MESSAGE_BYTES:
+            raise CollaborationRejected('agent_message_too_large')
         connection.execute('INSERT INTO agent_messages (id,parent_run_id,sender_session_id,recipient_session_id,content,created_at) VALUES (?,?,?,?,?,?)',
             (item_id, owner_id, parent['session_id'], recipient, message, now_ms()))
         self._event(connection, owner_id)

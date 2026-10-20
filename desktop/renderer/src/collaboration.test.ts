@@ -21,3 +21,15 @@ test("the collaboration boundary accepts custom types and rejects invalid names"
   state.agents[0].role = "../reviewer";
   assert.equal(isCollaborationState(state), false);
 });
+
+test("Python and Desktop agree on long messages and a 32-message batch", () => {
+  assert.equal(fixture.result.messages.length, 32);
+  assert.ok(fixture.result.messages[0].content.length > 2000);
+  assert.equal(isCollaborationState(fixture.result), true);
+  const oversized = structuredClone(fixture.result);
+  oversized.messages[0].content = "中".repeat(21846);
+  assert.equal(isCollaborationState(oversized), false);
+  const tooMany = structuredClone(fixture.result);
+  tooMany.messages.push({ ...tooMany.messages[0], id: "extra-message" });
+  assert.equal(isCollaborationState(tooMany), false);
+});

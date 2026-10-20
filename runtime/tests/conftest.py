@@ -117,6 +117,7 @@ def downgrade_session_fork_schema(downgrade_automation_schema):
 INTEGRATION_FILES = frozenset(
     {
         "test_agent_roles_migration.py",
+        "test_agent_result_delivery.py",
         "test_application_boundary.py",
         "test_application_protocol_routing.py",
         "test_approval_application.py",

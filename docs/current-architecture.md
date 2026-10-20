@@ -877,7 +877,11 @@ v20→v21 重建 `agent_delegations` 的角色 CHECK，允许三个内置角色�
 
 SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当前子 Run、角色、任务和创建 ToolCall。`agent_messages` 保存来源明确的 Agent 消息。`agent_waits` 保存等待目标、原 ToolCall 和到期时间。委派创建、子 Run 入队和 Event/Outbox 在同一事务提交。创建 ToolCall ID 和后续委派的确定性 Run ID 防止同一操作重复派生任务。消息不会进入用户输入邮箱，也不会成为用户授权。结果正文仍来自子 Run 的持久 Item，不额外保存第二份结果状态。
 
-父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents` 和 `stop_agent`。`send_message` 只存消息。活跃任务在下一次 Context 构建时读到消息，已结束任务不会因此重启。`followup_task` 对活跃任务送达消息，对已结束任务启动新 Run，操作身份保持幂等。每个父 Run 最多创建 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。消息每条最多 2,000 字符，历史持久保存，模型上下文优先按顺序提供最早 16 条未送达消息，成功接受模型响应后写入来自冻结 ContextSnapshot 的投递回执，后续上下文继续提供剩余页。失败、取消和预览不消费消息；无未读消息时展示最近 16 条。摘要最多包含 512 字符任务文本和 2,000 字符结果；完整任务和结果保留在子会话记录中。
+父任务可以调用 `send_message`、`followup_task`、`list_agents`、`wait_agents`、`stop_agent`、`read_agent_result` 和 `read_agent_message`。创建任务、发送消息和续派正文统一限制为 64 KiB UTF-8，三个入口的 JSON 参数预算为 512 KiB。`send_message` 返回消息 ID 和 queued 状态，只保存消息，不重启已结束任务；`followup_task` 才会启动空闲子任务。每个父 Run 最多创建 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数。
+
+主模型默认读取最终结果、简要状态和明确发送的未读消息，不读取子任务的工具轨迹或中间回答。协作工具使用独立投影，只返回简要状态和结果 Item ID；`agent-evidence` 从子会话的原始结果 Item 构建正文，避免在工具返回中重复正文。单结果预览最多 8,192 个估算 token 和 64 KiB；协作正文总目标为 `min(32,768, 可用输入预算 / 4)` 个 token，序列化上限为 512 KiB。预算不足时仍返回状态、原始字节数、截断标记和结果 Item ID。大结果保留开头和结尾，父任务通过 `read_agent_result(agentId,itemId,offsetBytes,maxBytes)` 读取剩余正文，默认每页 16 KiB、最大 64 KiB，也可用 fromEnd 读取尾部。Item ID 固定具体回答，续派后仍能读取该子会话的旧回答。读取入口校验父 Run 对子任务的所有权，只读取完整助手消息，不读取工具参数或工具结果。
+
+模型按顺序读取最早 32 条未读消息，消息也受协作正文预算控制；截断消息通过 `read_agent_message(messageId)` 读取完整正文。成功接受模型响应后，Runtime 从冻结 ContextSnapshot 的结构化消息 ID 元数据保存投递回执；只有完整正文进入请求的消息才获得回执。失败、取消和截断预览不消费消息。已读消息不在后续模型请求中反复注入。容量恢复按结构裁剪正文并重新生成有效 JSON，不再依赖解析已截坏的文本生成回执。Desktop 的状态摘要继续保留 512 字符任务、2,000 字符结果和最近 16 条消息预览；完整会话记录沿用原分页接口。本次不改变 SQLite Schema、并发调度、权限、取消、Durable Intent 或未知副作用语义，也不新增依赖。
 
 `wait_agents` 在没有活动 Shell 且没有后续批次调用时将 Run 原子转为 `waiting_agents`，然后退出 Worker 并释放模型资源。有活动 Shell 时保留其原 Worker，以可取消、有期限的本地等待继续托管进程；等待时不持有数据库事务或执行锁，不占用其他 Run 的名额。等待范围为当前父 Run 的子任务，空列表代表全部子任务。超时范围是 1 秒到 5 分钟。Supervisor 在调度时检查持久等待记录。一个由现有 AnyIO Kernel 管理的定时任务每 500 毫秒补查到期和孤立子任务；持久挂起不占用模型调用或专属等待线程；活动 Shell 的等待只保留原有资源所有者。条件满足后，Runtime 将同一 Run 重新入队，并继续原 ToolCall。父任务结束时等待必需的子任务；`required_for_completion=false` 的补充任务会被停止并等待资源清理。默认值 true 保留原有行为。采样期间若子任务状态或消息发生变化，父任务会重新读取上下文再结束。Plan 提交只等待必需子任务，再停止可选任务并完成资源清理。
 

@@ -29,9 +29,10 @@ function agent(value: unknown): value is AgentSummary {
 export function isCollaborationState(value: unknown): value is CollaborationState {
   return record(value) && optionalText(value.parentRunId)
     && Array.isArray(value.agents) && value.agents.length <= 16 && value.agents.every(agent)
-    && Array.isArray(value.messages) && value.messages.length <= 16 && value.messages.every((message) =>
+    && Array.isArray(value.messages) && value.messages.length <= 32 && value.messages.every((message) =>
       record(message) && [message.id, message.senderSessionId, message.recipientSessionId].every((v) => text(v) && v.length > 0)
-      && text(message.content, 2000) && Number.isSafeInteger(message.createdAt));
+      && text(message.content, 64 * 1024) && new TextEncoder().encode(message.content).byteLength <= 64 * 1024
+      && Number.isSafeInteger(message.createdAt));
 }
 
 export function isAgentCatalog(value: unknown): value is AgentCatalogResponse {
