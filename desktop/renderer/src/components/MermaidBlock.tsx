@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import mermaid from "mermaid";
 import { DropdownMenu } from "./DropdownMenu.js";
+import { Tooltip } from "./Tooltip.js";
 import {
   CopyIcon,
   CheckmarkIcon,
@@ -195,78 +196,92 @@ export function MermaidModal({
         <div className="mermaid-modal-header">
           <span className="mermaid-badge">Mermaid 预览</span>
           <div className="mermaid-modal-zoom-bar" role="toolbar" aria-label="缩放控制">
-            <button
-              type="button"
-              className="code-copy-btn mermaid-zoom-btn"
-              onClick={handleZoomOut}
-              disabled={zoom <= ZOOM_MIN}
-              aria-label="缩小"
-              title="缩小 (- / Cmd -)"
-            >
-              <ZoomOutIcon className="copy-icon-svg" />
-            </button>
-            <button
-              type="button"
-              className="mermaid-zoom-indicator"
-              onClick={handleResetZoom}
-              aria-label={`当前缩放 ${Math.round(zoom * 100)}%，点击重置为 100%`}
-              title="重置缩放为 100% (0 / Cmd 0)"
-            >
-              {Math.round(zoom * 100)}%
-            </button>
-            <button
-              type="button"
-              className="code-copy-btn mermaid-zoom-btn"
-              onClick={handleZoomIn}
-              disabled={zoom >= ZOOM_MAX}
-              aria-label="放大"
-              title="放大 (+ / Cmd +)"
-            >
-              <ZoomInIcon className="copy-icon-svg" />
-            </button>
-            <button
-              type="button"
-              className="code-copy-btn mermaid-zoom-btn"
-              onClick={handleResetZoom}
-              disabled={zoom === ZOOM_DEFAULT}
-              aria-label="重置缩放"
-              title="重置为 100% (0 / Cmd 0)"
-            >
-              <ResetZoomIcon className="copy-icon-svg" />
-            </button>
+            <Tooltip content="缩小" shortcut="Cmd -">
+              <button
+                type="button"
+                className="code-copy-btn mermaid-zoom-btn"
+                onClick={handleZoomOut}
+                disabled={zoom <= ZOOM_MIN}
+                aria-label="缩小"
+                title="缩小 (- / Cmd -)"
+              >
+                <ZoomOutIcon className="copy-icon-svg" />
+              </button>
+            </Tooltip>
+            <Tooltip content="重置缩放为 100%" shortcut="Cmd 0">
+              <button
+                type="button"
+                className="mermaid-zoom-indicator"
+                onClick={handleResetZoom}
+                aria-label={`当前缩放 ${Math.round(zoom * 100)}%，点击重置为 100%`}
+                title="重置缩放为 100% (0 / Cmd 0)"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+            </Tooltip>
+            <Tooltip content="放大" shortcut="Cmd +">
+              <button
+                type="button"
+                className="code-copy-btn mermaid-zoom-btn"
+                onClick={handleZoomIn}
+                disabled={zoom >= ZOOM_MAX}
+                aria-label="放大"
+                title="放大 (+ / Cmd +)"
+              >
+                <ZoomInIcon className="copy-icon-svg" />
+              </button>
+            </Tooltip>
+            <Tooltip content="重置为 100%">
+              <button
+                type="button"
+                className="code-copy-btn mermaid-zoom-btn"
+                onClick={handleResetZoom}
+                disabled={zoom === ZOOM_DEFAULT}
+                aria-label="重置缩放"
+                title="重置为 100% (0 / Cmd 0)"
+              >
+                <ResetZoomIcon className="copy-icon-svg" />
+              </button>
+            </Tooltip>
           </div>
           <div className="mermaid-actions">
-            <button
-              type="button"
-              className="code-copy-btn"
-              onClick={handleDownload}
-              aria-label="下载图像"
-              title="下载图像"
-            >
-              <DownloadIcon className="copy-icon-svg" />
-            </button>
-            <button
-              type="button"
-              className="code-copy-btn"
-              onClick={handleCopy}
-              aria-label={copied ? "已复制代码" : "复制为代码"}
-              title={copied ? "已复制代码" : "复制为代码"}
-            >
-              {copied ? (
-                <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
-              ) : (
-                <CopyIcon className="copy-icon-svg" />
-              )}
-            </button>
-            <button
-              type="button"
-              className="code-copy-btn"
-              onClick={onClose}
-              aria-label="关闭预览"
-              title="关闭预览 (Esc)"
-            >
-              <CloseIcon className="copy-icon-svg" />
-            </button>
+            <Tooltip content="下载图像">
+              <button
+                type="button"
+                className="code-copy-btn"
+                onClick={handleDownload}
+                aria-label="下载图像"
+                title="下载图像"
+              >
+                <DownloadIcon className="copy-icon-svg" />
+              </button>
+            </Tooltip>
+            <Tooltip content={copied ? "已复制代码" : "复制为代码"}>
+              <button
+                type="button"
+                className="code-copy-btn"
+                onClick={handleCopy}
+                aria-label={copied ? "已复制代码" : "复制为代码"}
+                title={copied ? "已复制代码" : "复制为代码"}
+              >
+                {copied ? (
+                  <CheckmarkIcon className="copy-icon-svg copy-icon-svg--copied" />
+                ) : (
+                  <CopyIcon className="copy-icon-svg" />
+                )}
+              </button>
+            </Tooltip>
+            <Tooltip content="关闭预览" shortcut="Esc">
+              <button
+                type="button"
+                className="code-copy-btn"
+                onClick={onClose}
+                aria-label="关闭预览"
+                title="关闭预览 (Esc)"
+              >
+                <CloseIcon className="copy-icon-svg" />
+              </button>
+            </Tooltip>
           </div>
         </div>
         <div
@@ -405,15 +420,17 @@ export const MermaidBlock = memo(function MermaidBlock({ code }: { code: string 
                 },
               ]}
             />
-            <button
-              type="button"
-              className="mermaid-action-btn"
-              onClick={() => setIsModalOpen(true)}
-              aria-label="全屏放大查看"
-              title="全屏放大查看"
-            >
-              <ExpandIcon className="mermaid-action-icon" />
-            </button>
+            <Tooltip content="全屏放大查看">
+              <button
+                type="button"
+                className="mermaid-action-btn"
+                onClick={() => setIsModalOpen(true)}
+                aria-label="全屏放大查看"
+                title="全屏放大查看"
+              >
+                <ExpandIcon className="mermaid-action-icon" />
+              </button>
+            </Tooltip>
           </div>
         )}
         {svg ? (

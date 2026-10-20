@@ -6,6 +6,7 @@ import { ExecutionFeed, formatItemTime } from "./ExecutionFeed.js";
 import { userFacingError } from "../session-state.js";
 import { terminalRunPresentation } from "../run-presentation.js";
 import { getProviderName } from "./ProviderLogo.js";
+import { mergeContextCompactions } from "../context-compaction.js";
 
 const active = new Set([
   "queued",
@@ -159,7 +160,7 @@ export function formatAgentTooltip(agent: AgentSummary, models?: readonly ModelO
     parts.push(`交付成果：${agent.result.trim()}`);
   }
   const outcome = terminalRunPresentation(agent);
-  if (outcome && (agent.status !== "succeeded" || agent.reconciliationRequired)) {
+  if (outcome && agent.status !== "succeeded") {
     parts.push(`结束原因：${outcome.label}`);
   }
   return parts.join("\n");
@@ -331,6 +332,7 @@ function AgentTranscript({
         setSnapshot((previous) => previous ?? latest);
         const pages: Item[][] = [latest.items];
         const runs = new Map(latest.runs.map((run) => [run.id, run]));
+        let compactions = latest.contextCompactions ?? [];
         const visited = new Set<string>();
         let cursor = latest.previousItemId;
         while (cursor && !disposed) {
@@ -341,6 +343,7 @@ function AgentTranscript({
             beforeItemId: cursor,
           });
           pages.push(page.items);
+          compactions = mergeContextCompactions(compactions, page.contextCompactions);
           for (const run of page.runs) runs.set(run.id, run);
           cursor = page.previousItemId;
         }
@@ -350,6 +353,7 @@ function AgentTranscript({
           ...latest,
           items: [...items.values()],
           runs: [...runs.values()].sort((a, b) => a.createdAt - b.createdAt),
+          contextCompactions: compactions,
         };
         delete complete.previousItemId;
         setSnapshot(complete);
@@ -453,6 +457,7 @@ function AgentTranscript({
       <div className="agent-transcript__feed-wrapper">
         <ExecutionFeed
           items={displayItems}
+          contextCompactions={snapshot?.contextCompactions}
           runs={runs}
           stepResolutions={snapshot?.stepResolutions}
           approvals={childApprovals}

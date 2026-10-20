@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.protocol.tool_text import project_tool_text
+from eidos_runtime.domain.context_management import ContextCompactionActivity, ContextCompactionRecord
 
 
 class EventProjector:
@@ -15,6 +16,20 @@ class EventProjector:
     ) -> tuple[dict[str, object], ...]:
         event_type = event.get("eventType")
         payload = event.get("payload")
+        compaction_notifications: tuple[dict[str, object], ...] = ()
+        if event_type in {"run.updated", "context.compacted"} and isinstance(payload, dict):
+            raw = payload.get("compaction")
+            if isinstance(raw, dict) and raw.get("stage") in {"started", "finished"}:
+                record = ContextCompactionRecord.model_validate(raw)
+                activity = ContextCompactionActivity(
+                    request_id=record.request_id, run_id=event["runId"], event_id=event["eventId"],
+                    started_at=payload.get("compactionStartedAt", event["occurredAt"]),
+                    updated_at=event["occurredAt"], status=record.status,
+                    trigger=record.trigger, reason=record.reason,
+                )
+                compaction_notifications = (self._notification("context/compactionUpdated", {
+                    "sessionId": event["sessionId"], "activity": activity.to_wire_dict(),
+                }),)
         if event_type == "run.queue_changed" and isinstance(payload, dict):
             return (self._notification("run/queueChanged", payload),)
         if event_type == "channel.changed":
@@ -44,7 +59,7 @@ class EventProjector:
             and isinstance(payload.get("sourceItemCount"), int)
             and isinstance(payload.get("phase"), str)
         ):
-            return (self._notification("context/compacted", {
+            return (*compaction_notifications, self._notification("context/compacted", {
                 "sessionId": event["sessionId"],
                 "runId": event["runId"],
                 "summaryId": payload["summaryId"],
@@ -94,9 +109,11 @@ class EventProjector:
                 "queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing",
             }
         ):
-            return (self._notification("run/updated", {
+            return (*compaction_notifications, self._notification("run/updated", {
                 "sessionId": run["sessionId"], "run": run,
             }),)
+        if compaction_notifications:
+            return compaction_notifications
         if event_type == "run.status_changed" and run is not None and isinstance(payload, dict):
             if payload.get("current") != run.get("status"):
                 return ()

@@ -9,6 +9,7 @@ import type {
   SessionSnapshot,
 } from "../contracts.js";
 import { SnapshotReadCoordinator, taskStatusFromRun, upsertRun, userFacingError } from "../session-state.js";
+import { mergeContextCompactions } from "../context-compaction.js";
 
 const READ_COMPLETIONS_KEY = "eidos.readCompletedSessionIds";
 
@@ -122,6 +123,7 @@ function mergeOlderHistory(current: SessionSnapshot, older: SessionSnapshot): Se
     ...base,
     runs: [...new Map([...older.runs, ...current.runs].map((run) => [run.id, run])).values()],
     items: [...new Map([...older.items, ...current.items].map((item) => [item.id, item])).values()],
+    contextCompactions: mergeContextCompactions(older.contextCompactions, current.contextCompactions),
     ...(older.previousItemId ? { previousItemId: older.previousItemId } : {}),
     ...(history.length ? { inheritedHistory: history } : {}),
   };
@@ -273,7 +275,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     if (
       selectedSessionIdRef.current === session.id
       && snapshot?.session.id === session.id
-      && !focusItemId
+      && (!focusItemId || snapshot.items.some((item) => item.id === focusItemId))
     ) {
       if (session.taskStatus === "completed") {
         updateReadCompleted((prev) => new Set(prev).add(session.id));
@@ -295,14 +297,10 @@ export function useSessionController(): [SessionControllerState, SessionControll
       try {
         let loaded = await loadAuthoritativeSnapshot(session.id);
         if (activeSelectionRef.current?.token !== tokenSymbol) return undefined;
-        const seenCursors = new Set<string>();
-        while (focusItemId && !loaded.items.some((item) => item.id === focusItemId)) {
-          const cursor = loaded.previousItemId;
-          if (!cursor || seenCursors.has(cursor) || loaded.items.length >= 20_000) throw new Error("Source answer unavailable");
-          seenCursors.add(cursor);
-          const older = await window.eidosRuntime.readSession(session.id, { itemLimit: 500, beforeItemId: cursor });
+        if (focusItemId && !loaded.items.some((item) => item.id === focusItemId)) {
+          const around = await window.eidosRuntime.readSessionAround({ sessionId: session.id, itemId: focusItemId });
           if (activeSelectionRef.current?.token !== tokenSymbol) return undefined;
-          loaded = mergeOlderHistory(loaded, older);
+          loaded = mergeOlderHistory(loaded, around);
         }
         if (activeSelectionRef.current?.token !== tokenSymbol) {
           return undefined;
@@ -664,7 +662,11 @@ export function useSessionController(): [SessionControllerState, SessionControll
       : s));
     setSnapshot((prev) => {
       if (!prev || prev.session.id !== sessionId) return prev;
-      return { ...prev, runs: upsertRun(prev.runs, run) };
+      return {
+        ...prev,
+        session: { ...prev.session, taskStatus },
+        runs: upsertRun(prev.runs, run),
+      };
     });
   }, []);
 
@@ -682,11 +684,14 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setSessions((prev) => prev.map((s) => s.id === run.sessionId
       ? { ...s, taskStatus, activeRunStatus: activeStatus(run.status), updatedAt: run.updatedAt }
       : s));
+    setSnapshot((prev) => {
+      if (!prev || prev.session.id !== run.sessionId) return prev;
+      return { ...prev, session: { ...prev.session, taskStatus } };
+    });
     updateReadCompleted((prev) => {
       const next = new Set(prev);
       if (
         run.status === "succeeded"
-        && run.reconciliationRequired !== true
         && selectedSessionIdRef.current === run.sessionId
       ) {
         next.add(run.sessionId);

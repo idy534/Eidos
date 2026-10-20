@@ -3,6 +3,7 @@ import type { Channel, ChannelConfig, ChannelPublicConnection, ChannelSaveReques
 import type { ModelOption, Project } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
+import { Tooltip } from "../Tooltip.js";
 import { StatusBadge, type StatusTone } from "./StatusBadge.js";
 import { Toggle } from "./Toggle.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -132,16 +133,18 @@ export function ChannelForm({
             />
           </div>
           {onRefresh && (
-            <button
-              type="button"
-              className="channel-topbar-refresh-btn"
-              disabled={busy || refreshing}
-              onClick={onRefresh}
-              title="刷新状态"
-              aria-label="刷新状态"
-            >
-              <RefreshIcon spinning={refreshing} size={15} />
-            </button>
+            <Tooltip content="刷新状态">
+              <button
+                type="button"
+                className="channel-topbar-refresh-btn"
+                disabled={busy || refreshing}
+                onClick={onRefresh}
+                title="刷新状态"
+                aria-label="刷新状态"
+              >
+                <RefreshIcon spinning={refreshing} size={15} />
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -189,16 +192,18 @@ export function ChannelForm({
                     placeholder={connection?.hasSecret ? "留空保留已保存的凭证" : `请输入 ${secretLabel}`}
                     onChange={(event) => setSecret(event.target.value)}
                   />
-                  <button
-                    type="button"
-                    className="channel-action-icon-btn"
-                    title={showSecret ? "隐藏密码" : "显示密码"}
-                    aria-label={showSecret ? "隐藏密码" : "显示密码"}
-                    onClick={() => setShowSecret(!showSecret)}
-                    tabIndex={-1}
-                  >
-                    {showSecret ? <EyeOffIcon /> : <EyeIcon />}
-                  </button>
+                  <Tooltip content={showSecret ? "隐藏密码" : "显示密码"}>
+                    <button
+                      type="button"
+                      className="channel-action-icon-btn"
+                      title={showSecret ? "隐藏密码" : "显示密码"}
+                      aria-label={showSecret ? "隐藏密码" : "显示密码"}
+                      onClick={() => setShowSecret(!showSecret)}
+                      tabIndex={-1}
+                    >
+                      {showSecret ? <EyeOffIcon /> : <EyeIcon />}
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
             </div>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { parse as parseDomain } from "tldts";
 import type { BrowserPageState } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
+import { Tooltip } from "./Tooltip.js";
 
 function isIpv4(hostname: string): boolean {
   const parts = hostname.split(".");
@@ -113,15 +114,21 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
   return <section className="browser-panel" aria-label="网页预览">
     <form className="browser-navigation" onSubmit={(event) => { event.preventDefault(); void open(address); }}>
       <div className="browser-navigation__history" aria-label="网页历史导航">
-        <button type="button" className="browser-navigation__button" aria-label="后退" title="后退" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 7.5 10l5 5" /></svg>
-        </button>
-        <button type="button" className="browser-navigation__button" aria-label="前进" title="前进" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
-        </button>
-        <button type="button" className="browser-navigation__button browser-navigation__button--refresh" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={refresh}>
-          <svg key={refreshVersion} className={refreshVersion > 0 ? "browser-navigation__refresh-icon--refreshing" : undefined} viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 10.5a8.5 8.5 0 0 0-15.2-4L3 8" /><path d="M3 4.5V8h3.5" /><path d="M3.5 13.5a8.5 8.5 0 0 0 15.2 4L21 16" /><path d="M21 19.5V16h-3.5" /></svg>
-        </button>
+        <Tooltip content="后退">
+          <button type="button" className="browser-navigation__button" aria-label="后退" title="后退" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 7.5 10l5 5" /></svg>
+          </button>
+        </Tooltip>
+        <Tooltip content="前进">
+          <button type="button" className="browser-navigation__button" aria-label="前进" title="前进" disabled>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
+          </button>
+        </Tooltip>
+        <Tooltip content="刷新">
+          <button type="button" className="browser-navigation__button browser-navigation__button--refresh" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={refresh}>
+            <svg key={refreshVersion} className={refreshVersion > 0 ? "browser-navigation__refresh-icon--refreshing" : undefined} viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 10.5a8.5 8.5 0 0 0-15.2-4L3 8" /><path d="M3 4.5V8h3.5" /><path d="M3.5 13.5a8.5 8.5 0 0 0 15.2 4L21 16" /><path d="M21 19.5V16h-3.5" /></svg>
+          </button>
+        </Tooltip>
       </div>
       <input
         aria-label="网页地址"

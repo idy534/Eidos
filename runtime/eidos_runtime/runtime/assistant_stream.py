@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+
+from eidos_runtime.domain.capacity import model_output_byte_budget
 from typing import Callable
 
 from eidos_runtime.db.storage import InvalidRunStateError, SessionStore
@@ -8,13 +10,8 @@ from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.provider_control import contains_provider_control_syntax
 
 
-MAX_ASSISTANT_BYTES = 512 * 1024
 DELTA_BATCH_BYTES = 4 * 1024
 DELTA_BATCH_SECONDS = 0.1
-
-
-class AssistantStreamTooLarge(RuntimeError):
-    pass
 
 
 class AssistantStreamWriter:
@@ -27,14 +24,18 @@ class AssistantStreamWriter:
         run_id: str,
         model_step_index: int | None,
         *,
+        model_attempt_id: str | None = None,
         check_cancel: Callable[[], None] = lambda: None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store = store
+        self.max_bytes = model_output_byte_budget(store.read_model_profile(run_id).max_output_tokens)
         self.events = events
         self.run_id = run_id
         self.model_step_index = model_step_index
         self.check_cancel = check_cancel
+        self.model_attempt_id = model_attempt_id
+        self._closed = False
         self.monotonic = monotonic
         self.item: dict[str, object] | None = None
         self._bytes = 0
@@ -47,12 +48,16 @@ class AssistantStreamWriter:
 
     def stream(self, delta: str) -> None:
         """Publish scanned text, retaining unfinished markup until it is known."""
+        if self._closed:
+            return
         self.check_cancel()
+        if self.model_attempt_id is not None:
+            self.store.check_model_attempt_active(self.run_id, self.model_attempt_id)
         if self._control_rejected:
             return
         text = self._text_tail + delta
-        if len(text.encode("utf-8")) > MAX_ASSISTANT_BYTES:
-            raise AssistantStreamTooLarge("assistant output is too large")
+        if len(text.encode("utf-8")) > self.max_bytes:
+            text = text.encode("utf-8")[:self.max_bytes].decode("utf-8", errors="ignore")
         if contains_provider_control_syntax(text):
             self._control_rejected = True
             self._text_tail = ""
@@ -79,23 +84,23 @@ class AssistantStreamWriter:
         self.check_cancel()
         if not isinstance(delta, str) or not delta:
             return
-        size = len(delta.encode("utf-8"))
-        self._bytes += size
-        if self._bytes > MAX_ASSISTANT_BYTES:
-            raise AssistantStreamTooLarge("assistant output is too large")
+        delta = delta.encode("utf-8")[:max(0, self.max_bytes - self._bytes)].decode("utf-8", errors="ignore")
+        if not delta:
+            return
+        self._bytes += len(delta.encode("utf-8"))
         if self.item is None:
             mutation = (
                 self.store.create_finalization_assistant_item_committed(self.run_id)
                 if self.model_step_index is None
                 else self.store.create_assistant_item_committed(
-                    self.run_id, self.model_step_index
+                    self.run_id, self.model_step_index, model_attempt_id=self.model_attempt_id
                 )
             )
             self.item = mutation.value
             self.events.publish(mutation, item=self.item)
         self._sequence += 1
         self._pending.append(delta)
-        self._pending_bytes += size
+        self._pending_bytes += len(delta.encode("utf-8"))
         if (
             self._pending_bytes >= DELTA_BATCH_BYTES
             or self.monotonic() - self._last_flush >= DELTA_BATCH_SECONDS
@@ -117,6 +122,7 @@ class AssistantStreamWriter:
         self._last_flush = self.monotonic()
 
     def complete(self) -> dict[str, object] | None:
+        self._closed = True
         self.flush()
         if self.item is None:
             return None
@@ -126,6 +132,7 @@ class AssistantStreamWriter:
         return self.item
 
     def abort(self) -> dict[str, object] | None:
+        self._closed = True
         if self.item is None:
             return None
         try:

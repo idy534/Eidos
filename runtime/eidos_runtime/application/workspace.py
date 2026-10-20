@@ -9,6 +9,7 @@ import hashlib
 from typing import Protocol
 
 from eidos_runtime.application.errors import ApplicationError
+from eidos_runtime.protocol.search import FileFindRequest, FileFindResponse
 from eidos_runtime.db.database import WorkspaceIdentity
 from eidos_runtime.domain.project import Project
 from eidos_runtime.domain.session import SessionExecutionMode, SessionProjection
@@ -94,6 +95,31 @@ class WorkspaceExplorerApplication:
                     for entry in listing.entries
                 ],
                 "truncated": listing.truncated,
+            })
+        except (WorkspacePathError, DiscoveryScopeError) as error:
+            raise ApplicationError(_workspace_error_code(error)) from error
+
+    def read_file_for_find(self, request: FileFindRequest) -> FileFindResponse:
+        try:
+            identity = self._execution_identity(request.session_id)
+            with WorkspaceReader(identity) as reader:
+                preview = reader.read_preview(request.path, limit=64 * 1024)
+                data, metadata, _, _ = reader.read_file_bytes(
+                    request.path, limit=min(192 * 1024, 2 * 1024 * 1024 - request.offset),
+                    allow_truncation=True, offset=request.offset,
+                )
+            if preview.version != request.version:
+                raise ApplicationError("WORKSPACE_FILE_CHANGED")
+            if file_version(metadata) != request.version:
+                raise ApplicationError("WORKSPACE_FILE_CHANGED")
+            if preview.kind not in {"text", "code", "markdown", "html"}:
+                raise ApplicationError("WORKSPACE_PREVIEW_UNSUPPORTED")
+            return FileFindResponse.model_validate({
+                "path": preview.path, "kind": preview.kind, "sizeBytes": preview.size_bytes,
+                "version": preview.version, "language": preview.language,
+                "data": base64.b64encode(data).decode("ascii"),
+                "nextOffset": request.offset + len(data),
+                "complete": request.offset + len(data) == metadata.st_size,
             })
         except (WorkspacePathError, DiscoveryScopeError) as error:
             raise ApplicationError(_workspace_error_code(error)) from error

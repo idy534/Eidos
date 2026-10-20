@@ -122,8 +122,12 @@ def test_normalization_and_custom_only_request_contract():
     assert normalize_model_base_url("http://localhost:3425/v1/chat/completions/") == "http://localhost:3425/v1"
     with pytest.raises(ValidationError):
         CustomProviderRequest(provider="deepseek", base_url="https://api.deepseek.com")
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="上下文窗口必须大于最大输出"):
         settings(maxOutputTokens=64000)
+    with pytest.raises(ValidationError, match="上下文窗口必须大于最大输出"):
+        settings(contextWindowTokens=4096, maxOutputTokens=4096)
+    with pytest.raises(ValidationError, match="上下文窗口必须大于最大输出"):
+        settings(contextWindowTokens=2048, maxOutputTokens=4096)
     with pytest.raises(ValidationError):
         settings(reasoningFormat="minimax", reasoningControl="configured", reasoning={"defaultSelection": "high", "selections": ["high"]})
 
@@ -190,6 +194,32 @@ async def test_discovery_is_bounded_and_cancellation_closes_request():
     assert result.state == "canceled" and closed.is_set()
     result = await discover_custom_models("https://gateway.invalid", "", threading.Event(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [{"id": str(i)} for i in range(501)]})))
     assert len(result.models) == 500 and result.truncated
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("metadata", "expected"), [
+    ({"modalities": {"input": ["text", "image"], "output": ["text"]}}, True),
+    ({"modalities": {"input": ["text"], "output": ["image"]}}, False),
+    ({"modalities": {"input": []}}, False),
+    ({"modalities": {"output": ["image"]}}, None),
+    ({"modalities": {"input": "image"}}, None),
+    ({"modalities": ["image"]}, None),
+    ({"input_modalities": ["text"], "modalities": {"input": ["text", "image"]}}, False),
+    ({"architecture": {"input_modalities": ["text", "image"]}, "modalities": {"input": ["text"]}}, True),
+    ({"input_modalities": {"invalid": True}, "modalities": {"input": ["text", "image"]}}, True),
+    ({"architecture": {}, "modalities": {"input": ["text", "image"]}}, True),
+    ({"architecture": {"input_modalities": []}, "modalities": {"input": ["text", "image"]}}, False),
+    ({}, None),
+])
+async def test_discovery_reads_image_input_modalities_without_inventing_capabilities(metadata, expected):
+    result = await discover_custom_models("https://gateway.invalid", "", threading.Event(), transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": [
+        {"id": "remote/model", "display_name": "Remote Model", "context_window": 1000000, "max_output_tokens": 128000, **metadata},
+    ]})))
+    assert result.state == "success"
+    model = result.models[0]
+    assert model.supports_images is expected
+    assert model.name == "Remote Model"
+    assert model.context_window_tokens == 1000000 and model.max_output_tokens == 128000
 
 
 def test_stored_credentials_are_only_reused_for_the_same_custom_address(tmp_path):

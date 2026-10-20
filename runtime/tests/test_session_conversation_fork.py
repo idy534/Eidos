@@ -452,19 +452,22 @@ def test_storage_failure_rolls_back_session_history_event_and_operation(
     assert value.pending_outbox_count() == before
 
 
-def test_unknown_side_effects_fail_closed_without_publishing_a_fork(store):
+def test_unknown_side_effect_evidence_does_not_block_a_frozen_history_fork(store):
     value, source = store
     run, item = answer(value, source, "answer")
     with value.database.transaction() as connection:
         connection.execute(
             "UPDATE runs SET reconciliation_required=1 WHERE id=?", (run,)
         )
-    with pytest.raises(InvalidRunStateError, match="reconciliation"):
-        fork(value, request(source, item))
-    assert value.connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 1
+    forked = fork(value, request(source, item))
+    assert forked != source
+    assert value.connection.execute("SELECT count(*) FROM sessions").fetchone()[0] == 2
+    assert value.read_run(run)["reconciliationRequired"]
 
 
-def test_a_large_single_turn_keeps_its_recent_answer_within_context_budget(store):
+@pytest.mark.parametrize("online_bytes", [768 * 1024, 8 * 1024 * 1024])
+def test_a_large_single_turn_keeps_its_recent_answer_within_context_budget(store, monkeypatch, online_bytes):
+    monkeypatch.setattr("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", online_bytes)
     value, source = store
     run, _ = value.enqueue_run(source, "one long turn")
     selected = None
@@ -494,7 +497,9 @@ def test_a_large_single_turn_keeps_its_recent_answer_within_context_budget(store
         for item in facts.items
         if item.kind == "assistant_message"
     )
-    assert facts.candidate_overflow
+    assert facts.candidate_overflow == (online_bytes == 768 * 1024)
+    if not facts.candidate_overflow:
+        assert len(facts.items) == 62
     assert (
         value.connection.execute(
             "SELECT count(*) FROM session_history_entries WHERE session_id=?", (target,)
@@ -503,16 +508,18 @@ def test_a_large_single_turn_keeps_its_recent_answer_within_context_budget(store
     )
 
 
-def test_long_inherited_history_can_be_compacted_without_losing_stored_records(store):
+@pytest.mark.parametrize("online_bytes", [768 * 1024, 8 * 1024 * 1024])
+def test_long_inherited_history_can_be_compacted_without_losing_stored_records(store, monkeypatch, online_bytes):
     from eidos_runtime.context.compactor import ContextCompactor
 
+    monkeypatch.setattr("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", online_bytes)
     value, source = store
     for index in range(45):
         _, item = answer(value, source, str(index) + "x" * 18000)
     target = fork(value, request(source, item))
     run, _ = value.create_run(target, "continue")
     facts = value.context_projection_facts(run["id"])
-    assert facts.candidate_overflow
+    assert facts.candidate_overflow == (online_bytes == 768 * 1024)
     summary = ContextCompactor(value).compact(run["id"], "pre_turn")
     assert summary.source_item_ids
     assert (
@@ -521,3 +528,23 @@ def test_long_inherited_history_can_be_compacted_without_losing_stored_records(s
         ).fetchone()[0]
         == 90
     )
+
+
+def test_inherited_long_assistant_text_can_be_paged_after_source_deletion(store):
+    import hashlib
+    value, source = store
+    text = "完整回答" * 6000
+    _, item = answer(value, source, text)
+    target = fork(value, request(source, item))
+    inherited = value.read_session_snapshot(target)["inheritedHistory"][-1]["item"]
+    assert inherited["contentBytes"] == len(text.encode())
+    item = inherited["id"]
+    value.delete_session(source)
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    offset = 0
+    parts = []
+    while offset < len(text):
+        page = value.read_tool_text(target, item, "content", digest, offset)
+        parts.append(page.content)
+        offset = page.next_offset
+    assert "".join(parts) == text

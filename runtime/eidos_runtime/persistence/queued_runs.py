@@ -2,18 +2,28 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from uuid import uuid4
 
 from pydantic import TypeAdapter
 
 from eidos_runtime.db.database import CommittedMutation, Repository, now_ms
 from eidos_runtime.db.errors import InvalidRunStateError, ResourceNotFoundError
 from eidos_runtime.db.events import append_event
-from eidos_runtime.domain.queued_runs import QueuedMessage, QueuedMessagePage, QueuedRunChange, QueuedRunDeleted, QueuedRunUpdated
+from eidos_runtime.domain.queued_runs import QueuedMessage, QueuedMessagePage, QueuedRunChange, QueuedRunDeleted, QueuedRunSteered, QueuedRunUpdated
 from eidos_runtime.domain.input_reference import InputReference
+from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.runtime.state_machine import EventType
 
 
 class QueuedRunInputConflict(ValueError):
+    pass
+
+
+class SteerTargetUnavailable(ValueError):
+    pass
+
+
+class QueuedSteerUnsupported(ValueError):
     pass
 
 
@@ -52,6 +62,7 @@ class QueuedRunRepository(Repository):
     def change(
         self, session_id: str, run_id: str, expected_user_input: str,
         user_input: str | None, *, operation_id: str | None,
+        target_run_id: str | None = None,
     ) -> CommittedMutation[QueuedRunChange]:
         def write(connection: sqlite3.Connection) -> CommittedMutation[QueuedRunChange]:
             row = connection.execute(
@@ -81,6 +92,42 @@ class QueuedRunRepository(Repository):
                 raise InvalidRunStateError("queued message is unavailable")
             now = max(now_ms(), row["updated_at"] + 1)
             change: QueuedRunChange
+            events = []
+            if target_run_id is not None:
+                target = connection.execute(
+                    "SELECT * FROM runs WHERE id = ? AND session_id = ? "
+                    "AND status IN ('running', 'waiting_approval', 'waiting_input', 'waiting_agents') "
+                    "AND cancel_requested_at IS NULL", (target_run_id, session_id),
+                ).fetchone()
+                if target is None:
+                    raise SteerTargetUnavailable("the selected run is no longer active")
+                references = tuple(InputReference.model_validate(value) for value in json.loads(item["input_references_json"]))
+                # A steering message cannot replace the active Run's frozen
+                # agent/extension catalog or an accepted plan execution.
+                if row["plan_id"] is not None or any(value.status == "selection" for value in references):
+                    raise QueuedSteerUnsupported("selection messages must remain queued")
+                if any(value.kind == "image" for value in references) and not ModelProfileSnapshot.model_validate_json(target["model_profile_json"]).supports_images:
+                    raise QueuedSteerUnsupported("the active model does not support this image")
+                input_id = str(uuid4())
+                connection.execute(
+                    "INSERT INTO input_mailbox (id, run_id, content, status, created_at) "
+                    "VALUES (?, ?, ?, 'pending', ?)",
+                    (input_id, target_run_id, row["user_input"], now),
+                )
+                # The mailbox and its visible Item share one identity. Pending
+                # Items remain out of model context until a sampling boundary.
+                connection.execute(
+                    "INSERT INTO items (id, session_id, run_id, ordinal, kind, status, content, created_at, input_references_json) "
+                    "VALUES (?, ?, ?, ?, 'user_message', 'in_progress', ?, ?, ?)",
+                    (input_id, session_id, target_run_id, self._next_ordinal(connection, target_run_id),
+                     row["user_input"], now, item["input_references_json"]),
+                )
+                for event_type, payload in (
+                    (EventType.INPUT_QUEUED, {"inputId": input_id}),
+                    (EventType.ITEM_STARTED, {"itemId": input_id}),
+                ):
+                    events.append(append_event(connection, event_type, now, payload,
+                                               session_id=session_id, run_id=target_run_id))
             if user_input is None:
                 # These Runs have no execution resources. Remove their input and snapshots,
                 # so a deleted message cannot enter the following Run's context.
@@ -96,7 +143,12 @@ class QueuedRunRepository(Repository):
                     "WHERE execution_run_id = ? AND status = 'accepted'", (now, run_id),
                 )
                 connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
-                change = QueuedRunDeleted(kind="deleted", session_id=session_id, run_id=run_id)
+                change = (
+                    QueuedRunSteered(kind="steered", session_id=session_id, run_id=run_id,
+                                     target_run_id=target_run_id, item_id=input_id)
+                    if target_run_id is not None else
+                    QueuedRunDeleted(kind="deleted", session_id=session_id, run_id=run_id)
+                )
             else:
                 if not user_input.strip() and not json.loads(item["input_references_json"]):
                     raise ValueError("queued message must not be blank")
@@ -114,14 +166,15 @@ class QueuedRunRepository(Repository):
                 connection, EventType.RUN_QUEUE_CHANGED, now,
                 {"change": change.to_wire_dict()}, session_id=session_id,
             )
-            return CommittedMutation(change, (event,))
+            return CommittedMutation(change, (*events, event))
 
         return self._write_committed(
             write, operation_id=operation_id,
-            operation_scope="run/deleteQueued" if user_input is None else "run/updateQueued",
+            operation_scope="run/steerQueued" if target_run_id is not None else "run/deleteQueued" if user_input is None else "run/updateQueued",
             operation_request={
                 "sessionId": session_id, "runId": run_id,
                 "expectedUserInput": expected_user_input, "userInput": user_input,
+                **({"targetRunId": target_run_id} if target_run_id is not None else {}),
             },
             serialize_value=lambda change: change.to_wire_dict(),
             deserialize_value=lambda value: TypeAdapter(QueuedRunChange).validate_python(value),

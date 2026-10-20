@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ContextUsage, RuntimeNotification } from "../contracts.js";
+import type { ContextDetails } from "../../../shared/context-management.js";
+import { contextUsageFromDetails } from "../context-usage.js";
 
 export interface ContextUsageControllerState {
   usage: ContextUsage | undefined;
   loading: boolean;
+  details: ContextDetails | undefined;
 }
 
 export interface ContextUsageControllerActions {
@@ -36,15 +39,22 @@ export function useContextUsageController({
 ] {
   const [usage, setUsage] = useState<ContextUsage | undefined>(undefined);
   const [loading, setLoading] = useState(false);
+  const [details, setDetails] = useState<ContextDetails>();
   const requestSequence = useRef(0);
+  const refreshInFlight = useRef<number | undefined>(undefined);
+  const refreshAgain = useRef(false);
   const current = useRef({ ready, sessionId, modelId, runId });
   const prevIds = useRef({ sessionId, modelId, runId });
 
   current.current = { ready, sessionId, modelId, runId };
 
   useEffect(() => {
+    const sequence = ++requestSequence.current;
+    refreshInFlight.current = undefined;
+    refreshAgain.current = false;
     if (!ready || !sessionId || !modelId) {
       setUsage(undefined);
+      setDetails(undefined);
       setLoading(false);
       prevIds.current = { sessionId, modelId, runId };
       return;
@@ -56,16 +66,17 @@ export function useContextUsageController({
       || prevIds.current.runId !== runId
     ) {
       setUsage(undefined);
+      setDetails(undefined);
       prevIds.current = { sessionId, modelId, runId };
     }
 
-    if (!runId) return;
+    if (!runId) { setLoading(false); return; }
 
-    const sequence = ++requestSequence.current;
     setLoading(true);
-    void window.eidosRuntime.readContextUsage(runId).then((next) => {
+    void window.eidosRuntime.readContextDetails(runId).then((next) => {
       if (sequence !== requestSequence.current) return;
-      setUsage(next ?? undefined);
+      setDetails(next);
+      setUsage(contextUsageFromDetails(next));
     }).catch(() => {
       // preserve current usage on error
     }).finally(() => {
@@ -79,25 +90,40 @@ export function useContextUsageController({
       !state.ready
       || state.sessionId !== targetSessionId
       || state.modelId !== targetModelId
+      || state.runId !== targetRunId
     ) {
       return;
     }
+    if (refreshInFlight.current !== undefined) {
+      refreshAgain.current = true;
+      return;
+    }
     const sequence = ++requestSequence.current;
+    refreshInFlight.current = sequence;
     setLoading(true);
-    void window.eidosRuntime.readContextUsage(targetRunId).then((next) => {
+    void window.eidosRuntime.readContextDetails(targetRunId).then((next) => {
       const latest = current.current;
       if (
         sequence !== requestSequence.current
         || latest.sessionId !== targetSessionId
         || latest.modelId !== targetModelId
+        || latest.runId !== targetRunId
       ) {
         return;
       }
-      setUsage(next ?? undefined);
+      setDetails(next);
+      setUsage(contextUsageFromDetails(next));
     }).catch(() => {
       // preserve current usage
     }).finally(() => {
-      if (sequence === requestSequence.current) setLoading(false);
+      if (refreshInFlight.current === sequence) {
+        refreshInFlight.current = undefined;
+        if (sequence === requestSequence.current) setLoading(false);
+        if (refreshAgain.current) {
+          refreshAgain.current = false;
+          refreshFromRunId(targetRunId, targetSessionId, targetModelId);
+        }
+      }
     });
   }, []);
 
@@ -137,5 +163,5 @@ export function useContextUsageController({
     }
   }, [refreshFromRunId]);
 
-  return [{ usage, loading }, { handleNotification }];
+  return [{ usage, details, loading }, { handleNotification }];
 }

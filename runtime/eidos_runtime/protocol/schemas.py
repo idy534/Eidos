@@ -302,7 +302,7 @@ class RunDto(ClosedModel):
 class ContextUsageSnapshotDto(ClosedModel):
     active_tokens: StrictInt = Field(alias="activeTokens", ge=0)
     context_window_tokens: StrictInt = Field(alias="contextWindowTokens", gt=0)
-    percent_used: float = Field(alias="percentUsed", ge=0, le=100)
+    percent_used: float = Field(alias="percentUsed", ge=0)
     source: Literal["provider", "estimated"]
     updated_at: StrictInt = Field(default=0, alias="updatedAt", ge=0)
 
@@ -348,6 +348,8 @@ class ItemDto(ClosedModel):
     status: Literal["in_progress", "completed", "failed", "declined", "canceled"]
     created_at: StrictInt = Field(alias="createdAt")
     content: StrictStr | None = None
+    content_bytes: StrictInt | None = Field(default=None, alias="contentBytes", ge=0)
+    content_hash: StrictStr | None = Field(default=None, alias="contentHash", pattern=r"^[0-9a-f]{64}$")
     incomplete: bool = False
     completed_at: StrictInt | None = Field(default=None, alias="completedAt")
     tool_call: ToolCallDto | None = Field(default=None, alias="toolCall")

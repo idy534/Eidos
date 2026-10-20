@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.agents import AgentCatalogSnapshot
+from eidos_runtime.domain.context_management import ContextDetails
 
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
 
@@ -76,6 +77,7 @@ from eidos_runtime.db.repositories.sessions import DEFAULT_LIST_LIMIT
 from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.domain.session import Session
 from eidos_runtime.model.client import ModelProfileSnapshot, ModelUsage
+from eidos_runtime.model.retry import ModelRetryRecord
 from eidos_runtime.model.config import DEFAULT_MODEL_ID
 from eidos_runtime.persistence.mappers.session import (
     deleted_session_to_legacy_dict,
@@ -298,6 +300,10 @@ class SessionStore:
         self, run_id: str
     ) -> tuple[str, ContextBudget] | None:
         return self.context_snapshot_repository().read_latest_budget_for_run(run_id)
+
+    def read_context_details(self, run_id: str) -> ContextDetails:
+        from eidos_runtime.persistence.context_management import ContextManagementRepository
+        return ContextManagementRepository(self.database).details(run_id, self.read_model_profile(run_id))
 
     def runtime_dependency_repository(self) -> RuntimeDependencyRepository:
         self._repository(self._sessions)
@@ -819,6 +825,7 @@ class SessionStore:
         max_bytes: int,
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
+        item_id: str | None = None,
     ) -> ToolOutputPage:
         return self._repository(self._execution).read_tool_output(
             run_id,
@@ -828,10 +835,11 @@ class SessionStore:
             max_bytes=max_bytes,
             from_end=from_end,
             live_output_reader=live_output_reader,
+            item_id=item_id,
         )
 
     def read_tool_text(
-        self, session_id: str, tool_call_id: str, field: Literal["diff", "result"],
+        self, session_id: str, tool_call_id: str, field: Literal["diff", "result", "content"],
         sha256: str, offset: int,
     ) -> ToolTextPage:
         return self._repository(self._sessions).read_tool_text(
@@ -975,6 +983,8 @@ class SessionStore:
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
+        expected_attempt_id: str | None = None,
+        retry_deadline_at: int | None = None,
     ) -> bool:
         return self._repository(self._execution).complete_current_model_attempt(
             run_id,
@@ -997,7 +1007,18 @@ class SessionStore:
             response_text_bytes=response_text_bytes,
             protocol_diagnostic=protocol_diagnostic,
             retry_decision=retry_decision,
+            expected_attempt_id=expected_attempt_id,
+            retry_deadline_at=retry_deadline_at,
         )
+
+    def read_model_retry_record(self, attempt_id: str) -> ModelRetryRecord:
+        return self._repository(self._execution).read_model_retry_record(attempt_id)
+
+    def has_recovered_model_retry(self, run_id: str) -> bool:
+        return self._repository(self._execution).has_recovered_model_retry(run_id)
+
+    def check_model_attempt_active(self, run_id: str, attempt_id: str) -> None:
+        self._repository(self._execution).check_model_attempt_active(run_id, attempt_id)
 
     def start_retry_model_attempt(
         self, run_id: str, *, context_snapshot_id: str | None = None
@@ -1028,11 +1049,12 @@ class SessionStore:
         )
 
     def create_assistant_item_committed(
-        self, run_id: str, model_step_index: int
+        self, run_id: str, model_step_index: int, *, model_attempt_id: str | None = None
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).create_assistant_item_committed(
             run_id,
             model_step_index,
+            model_attempt_id=model_attempt_id,
         )
 
     def create_finalization_assistant_item(self, run_id: str) -> dict[str, object]:

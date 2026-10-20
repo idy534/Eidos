@@ -11,6 +11,7 @@ from eidos_runtime.db.transitions import (
     transition_run,
 )
 from eidos_runtime.db.invariants import verify_runtime_invariants
+from eidos_runtime.model.client import ModelProfileSnapshot
 from eidos_runtime.runtime.state_machine import (
     ApprovalStatus,
     EventType,
@@ -72,7 +73,6 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         SELECT r.id, r.creation_seq
         FROM runs r
         WHERE r.status = 'running'
-          AND r.reconciliation_required = 0
           AND r.cancel_requested_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM approvals a
@@ -106,7 +106,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         CREATE TEMP TABLE resumable_input_runs AS
         SELECT r.id FROM runs r JOIN user_input_requests q ON q.run_id=r.id
         WHERE r.status IN ('running', 'waiting_input', 'queued')
-          AND r.cancel_requested_at IS NULL AND r.reconciliation_required=0
+          AND r.cancel_requested_at IS NULL
           AND q.status IN ('pending', 'answered', 'skipped')
           AND EXISTS (SELECT 1 FROM tool_calls t WHERE t.item_id=q.item_id AND t.status='running')
           AND NOT EXISTS (SELECT 1 FROM tool_calls t JOIN items i ON i.id=t.item_id
@@ -122,7 +122,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         CREATE TEMP TABLE resumable_agent_runs AS
         SELECT r.id FROM runs r JOIN agent_waits w ON w.run_id=r.id
         WHERE r.status IN ('waiting_agents','running','queued') AND w.status IN ('pending','ready')
-          AND r.cancel_requested_at IS NULL AND r.reconciliation_required=0
+          AND r.cancel_requested_at IS NULL
           AND (w.item_id IS NULL OR EXISTS (SELECT 1 FROM tool_calls t WHERE t.item_id=w.item_id AND t.status='running' AND t.tool_name='wait_agents'))
           AND NOT EXISTS (SELECT 1 FROM tool_calls t JOIN items i ON i.id=t.item_id
               WHERE i.run_id=r.id AND t.status='running' AND (w.item_id IS NULL OR t.item_id != w.item_id))
@@ -139,7 +139,7 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         CREATE TEMP TABLE resumable_approval_runs AS
         SELECT r.id FROM runs r JOIN approvals a ON a.run_id = r.id
         WHERE r.status = 'waiting_approval' AND a.status = 'pending'
-          AND r.cancel_requested_at IS NULL AND r.reconciliation_required = 0
+          AND r.cancel_requested_at IS NULL
           AND json_type(a.request_json, '$.permissionBlockFingerprint') = 'text'
           AND NOT EXISTS (SELECT 1 FROM tool_attempts t
               JOIN tool_calls c ON c.id = t.tool_call_id JOIN items i ON i.id = c.item_id
@@ -237,11 +237,11 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
             str(row["id"]),
             frozenset({current}),
             RunStatus.INTERRUPTED,
-            "side_effect_reconciliation_required",
+            "runtime_restart",
         )
         connection.execute(
             """
-            UPDATE runs SET cancel_failure_code = 'RECONCILIATION_REQUIRED'
+            UPDATE runs SET cancel_failure_code = NULL
             WHERE id = ? AND cancel_requested_at IS NOT NULL
             """,
             (row["id"],),
@@ -266,6 +266,24 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     ).fetchall()
     for row in requeue_runs:
         run_id = str(row["id"])
+        attempt = connection.execute(
+            "SELECT a.* FROM model_attempts a JOIN steps s ON s.id=a.step_id "
+            "WHERE s.run_id=? ORDER BY a.creation_seq DESC LIMIT 1", (run_id,),
+        ).fetchone()
+        if attempt is not None and attempt["request_group_id"] is not None and attempt["status"] in {"running", "failed"}:
+            decision = json.loads(attempt["retry_decision_json"] or "{}")
+            if attempt["status"] == "running" or decision.get("retry") is True:
+                profile_json = connection.execute("SELECT model_profile_json FROM runs WHERE id=?", (run_id,)).fetchone()[0]
+                profile = ModelProfileSnapshot.model_validate_json(profile_json)
+                if attempt["retry_index"] >= min(6, profile.retry_max_attempts) - 1 or (attempt["retry_deadline_at"] is not None and attempt["retry_deadline_at"] <= now):
+                    settle_run_children(connection, run_id, RunStatus.INTERRUPTED, now)
+                    transition_run(connection, run_id, frozenset({RunStatus.RUNNING}), RunStatus.INTERRUPTED, "model_retry_exhausted_on_restart")
+                    continue
+                decision["resumeAfterRestart"] = True
+                connection.execute(
+                    "UPDATE model_attempts SET retry_decision_json=?,retry_deadline_at=COALESCE(retry_deadline_at,?) WHERE id=?",
+                    (json.dumps(decision), now + int(profile.retry_recovery_window_seconds * 1000), attempt["id"]),
+                )
         requeue_run_children(
             connection,
             run_id,
@@ -285,7 +303,6 @@ def recover_runtime_facts(connection: sqlite3.Connection) -> None:
         SELECT id, status FROM runs
         WHERE cancel_requested_at IS NOT NULL
           AND cancel_completed_at IS NULL
-          AND reconciliation_required = 0
           AND status IN (
               'queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'
           )

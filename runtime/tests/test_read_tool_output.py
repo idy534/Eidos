@@ -436,7 +436,7 @@ class ReadToolOutputTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ReadToolOutputInput.model_validate({
                 "callId": "x",
-                "itemId": "y",
+                "itemId": "",
                 "maxBytes": 4,
             })
 

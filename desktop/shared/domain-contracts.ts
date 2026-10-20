@@ -1,4 +1,5 @@
 import type { CustomModelSettings } from "./custom-models.js";
+import type { ContextCompactionActivity } from "./context.generated.js";
 import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
 import type { ModelId } from "./constants.js";
 import type { RunTermination } from "./run-termination.generated.js";
@@ -379,12 +380,15 @@ export interface Item {
   status: "in_progress" | "completed" | "failed" | "declined" | "canceled";
   createdAt: number;
   content?: string;
+  contentBytes?: number;
+  contentHash?: string;
   incomplete?: boolean;
   completedAt?: number;
   toolCall?: ToolCall;
 }
 
 export interface SessionSnapshot {
+  contextCompactions?: ContextCompactionActivity[];
   inheritedHistory?: InheritedHistoryEntry[];
   session: Session;
   runs: Run[];
@@ -694,6 +698,7 @@ export interface ExtensionSnapshot {
 }
 
 export type RuntimeNotification =
+  | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
   | { method: "automation/changed"; params: { id: string } }
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }
   | { method: "run/queueChanged"; params: import("./queued-runs.js").QueuedRunChangeResponse }

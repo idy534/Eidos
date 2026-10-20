@@ -64,6 +64,28 @@ class FileWriteApprovalTests(unittest.TestCase):
             "run", {"id": "item"}, self.prepared, threading.Event(), self.runtime, execute,
         )
 
+    def test_patch_preflight_keeps_parser_line_and_recovery_without_side_effects(self) -> None:
+        from eidos_runtime.model.client import ModelToolCall
+
+        for custom in (False, True):
+            text = "*** Begin Patch\n*** Add File: page.html\n+<html>\n\n+</html>\n*** End Patch\n"
+            if custom:
+                from eidos_runtime.model.client import CustomToolPayload
+                call = ModelToolCall("patch", "apply_patch", CustomToolPayload(input=text))
+            else:
+                call = ModelToolCall("patch", "apply_patch", {"patch": text})
+            outcome = self.handler.execute("run", {"id": "item"}, call, threading.Event(), self.runtime)
+            self.assertEqual(outcome.result["code"], "patch_format_error")
+            self.assertIn("line 4", outcome.result["summary"])
+            self.assertIn("page.html", outcome.result["summary"])
+            self.assertIn("start with '+'", outcome.result["summary"])
+            self.assertIn("No files were changed", outcome.result["summary"])
+            self.assertIn("line prefixes", outcome.result["summary"])
+            self.assertFalse((self.workspace / "page.html").exists())
+        self.dependencies.store.run_permission_grants.assert_not_called()
+        self.dependencies.execute_workspace_side_effect.assert_not_called()
+        self.dependencies.execute_side_effect.assert_not_called()
+
     def test_external_rejection_never_invokes_write(self) -> None:
         self.dependencies.execute_side_effect.return_value = (SimpleNamespace(decision="reject"), None)
         execute = Mock()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
+from eidos_runtime.model.context_projection import model_result_json
 
 import hashlib
 import json
@@ -41,7 +42,9 @@ from eidos_runtime.db.transitions import (
 from eidos_runtime.db.repositories.workspace import execution_workspace_for_session
 from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES
 from eidos_runtime.model.client import ModelUsage
+from eidos_runtime.model.retry import ModelRetryRecord
 from eidos_runtime.model.instructions import InstructionResolver
+from eidos_runtime.persistence.step_snapshots import read_step_snapshot, store_step_snapshot
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.domain.collaboration import ACTIVE_STATUSES, CollaborationState
 from eidos_runtime.runtime.contracts import ProgressSignature
@@ -182,7 +185,7 @@ def _attempt_metadata(
 
 class ToolOutputPage(EidosFrozenStrictModel):
     call_id: str
-    stream: Literal["stdout", "stderr"]
+    stream: Literal["stdout", "stderr", "result", "context"]
     content: str
     # The adapter scans this complete persisted stream before exposing the
     # bounded page. This field stays inside the Runtime repository boundary.
@@ -201,6 +204,34 @@ class ToolOutputReadError(LookupError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _output_page(
+    call_id: str, stream: Literal["stdout", "stderr", "result", "context"], content: str,
+    offset_bytes: int, max_bytes: int, from_end: bool, *,
+    raw_truncated: bool | None, raw_omitted_bytes: int | None, output_complete: bool | None,
+) -> ToolOutputPage:
+    encoded = content.encode("utf-8")
+    total_bytes = len(encoded)
+    if from_end:
+        start_byte = max(0, total_bytes - max_bytes)
+        while start_byte < total_bytes and _is_utf8_continuation_byte(encoded[start_byte]):
+            start_byte += 1
+    else:
+        if offset_bytes > total_bytes or (
+            offset_bytes < total_bytes and _is_utf8_continuation_byte(encoded[offset_bytes])
+        ):
+            raise ToolOutputReadError("invalid_output_offset")
+        start_byte = offset_bytes
+    end_byte = min(total_bytes, start_byte + max_bytes)
+    while end_byte > start_byte and end_byte < total_bytes and _is_utf8_continuation_byte(encoded[end_byte]):
+        end_byte -= 1
+    return ToolOutputPage(
+        call_id=call_id, stream=stream, content=encoded[start_byte:end_byte].decode("utf-8"),
+        source_content=content, start_byte=start_byte, end_byte=end_byte, total_bytes=total_bytes,
+        has_more_before=start_byte > 0, has_more_after=end_byte < total_bytes,
+        raw_truncated=raw_truncated, raw_omitted_bytes=raw_omitted_bytes, output_complete=output_complete,
+    )
 
 
 class ExecutionRepository(Repository):
@@ -222,13 +253,14 @@ class ExecutionRepository(Repository):
         run_id: str,
         *,
         tool_call_id: str,
-        stream: Literal["stdout", "stderr"],
+        stream: Literal["stdout", "stderr", "result", "context"],
         offset_bytes: int,
         max_bytes: int,
         from_end: bool,
         live_output_reader: Callable[[str], dict[str, object]] | None = None,
+        item_id: str | None = None,
     ) -> ToolOutputPage:
-        if stream not in {"stdout", "stderr"}:
+        if stream not in {"stdout", "stderr", "result", "context"}:
             raise ToolOutputReadError("invalid_output_stream")
         if (
             offset_bytes < 0
@@ -236,6 +268,30 @@ class ExecutionRepository(Repository):
             or max_bytes > 16 * 1024
         ):
             raise ToolOutputReadError("invalid_output_range")
+        if stream == "context":
+            with self.lock:
+                row = self._connection().execute(
+                    "SELECT i.content FROM items i JOIN runs r ON r.session_id=i.session_id "
+                    "WHERE r.id=? AND i.id=? AND i.kind IN ('user_message','assistant_message')",
+                    (run_id, item_id or tool_call_id),
+                ).fetchone()
+                current = self._connection().execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is not None:
+                content = row["content"] or ""
+            elif current is not None:
+                from eidos_runtime.persistence.session_history import SessionHistoryRepository
+                record = SessionHistoryRepository(self.database).item_record(current["session_id"], item_id or tool_call_id)
+                if record is None or record.item.kind not in {"user_message", "assistant_message"}:
+                    raise ToolOutputReadError("tool_output_not_available")
+                content = record.item.content or ""
+            else:
+                raise ToolOutputReadError("tool_output_not_available")
+            return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
+                                raw_truncated=None, raw_omitted_bytes=None, output_complete=True)
+        if stream == "result":
+            content = self._historical_context_result(run_id, tool_call_id, item_id)
+            return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
+                                raw_truncated=None, raw_omitted_bytes=None, output_complete=True)
         with self.lock:
             connection = self._connection()
             run = connection.execute(
@@ -255,10 +311,11 @@ class ExecutionRepository(Repository):
                   AND items.status IN ('in_progress', 'completed', 'failed', 'canceled')
                   AND tool_calls.status IN ('running', 'completed', 'failed', 'canceled')
                   AND tool_calls.result_json IS NOT NULL
+                  AND (? IS NULL OR items.id = ?)
                 ORDER BY tool_calls.creation_seq ASC
                 LIMIT 2
                 """,
-                (run["session_id"], tool_call_id),
+                (run["session_id"], tool_call_id, item_id, item_id),
             ).fetchall()
         if not rows:
             raise ToolOutputReadError("tool_output_not_available")
@@ -295,44 +352,42 @@ class ExecutionRepository(Repository):
             or raw_omitted_bytes > 9_007_199_254_740_991
         ):
             raise ToolOutputReadError("output_unavailable")
-        encoded = content.encode("utf-8")
-        total_bytes = len(encoded)
-        if from_end:
-            start_byte = max(0, total_bytes - max_bytes)
-            while (
-                start_byte < total_bytes
-                and _is_utf8_continuation_byte(encoded[start_byte])
-            ):
-                start_byte += 1
-        else:
-            if offset_bytes > total_bytes or (
-                offset_bytes < total_bytes
-                and _is_utf8_continuation_byte(encoded[offset_bytes])
-            ):
-                raise ToolOutputReadError("invalid_output_offset")
-            start_byte = offset_bytes
-        end_byte = min(total_bytes, start_byte + max_bytes)
-        while (
-            end_byte > start_byte
-            and end_byte < total_bytes
-            and _is_utf8_continuation_byte(encoded[end_byte])
-        ):
-            end_byte -= 1
-        page = encoded[start_byte:end_byte].decode("utf-8")
-        return ToolOutputPage(
-            call_id=str(rows[0]["provider_call_id"]),
-            stream=stream,
-            content=page,
-            source_content=content,
-            start_byte=start_byte,
-            end_byte=end_byte,
-            total_bytes=total_bytes,
-            has_more_before=start_byte > 0,
-            has_more_after=end_byte < total_bytes,
-            raw_truncated=raw_truncated,
-            raw_omitted_bytes=raw_omitted_bytes,
-            output_complete=output_complete,
-        )
+        return _output_page(str(rows[0]["provider_call_id"]), stream, content,
+                            offset_bytes, max_bytes, from_end, raw_truncated=raw_truncated,
+                            raw_omitted_bytes=raw_omitted_bytes, output_complete=output_complete)
+
+    def _historical_context_result(self, run_id: str, call_id: str, item_id: str | None) -> str:
+        with self.lock:
+            connection = self._connection()
+            run = connection.execute("SELECT session_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if run is None:
+                raise ToolOutputReadError("tool_output_not_available")
+            rows = connection.execute("""
+                SELECT t.tool_name, COALESCE(t.result_json,t.model_result_json) AS result_json
+                FROM tool_calls t JOIN items i ON i.id=t.item_id
+                WHERE i.session_id=? AND t.provider_call_id=? AND (? IS NULL OR i.id=?)
+                  AND i.status IN ('completed','failed','canceled')
+                  AND t.status IN ('completed','failed','canceled')
+                ORDER BY t.creation_seq LIMIT 2
+            """, (run["session_id"], call_id, item_id, item_id)).fetchall()
+            if len(rows) > 1:
+                raise ToolOutputReadError("ambiguous_tool_call")
+            if rows:
+                if rows[0]["tool_name"].startswith("memory_") or not isinstance(rows[0]["result_json"], str):
+                    raise ToolOutputReadError("tool_output_not_available")
+                return model_result_json(str(rows[0]["result_json"]))
+            if item_id is not None:
+                from eidos_runtime.persistence.session_history import SessionHistoryRepository
+                records = SessionHistoryRepository(self.database).verification_records(run["session_id"], {item_id})
+                if records:
+                    record = records[0]
+                    tool = record.item.tool_call
+                    if (tool is not None and not tool.tool_name.startswith("memory_") and tool.provider_call_id == call_id
+                            and tool.status in {"completed", "failed", "canceled"}):
+                        value = tool.result_json or record.model_result_json
+                        if isinstance(value, str):
+                            return model_result_json(value)
+        raise ToolOutputReadError("tool_output_not_available")
 
     def get_user_item(self, run_id: str) -> dict[str, object]:
         with self.lock:
@@ -527,10 +582,7 @@ class ExecutionRepository(Repository):
                     resolution_snapshot.run_snapshot_id,
                     resolution_snapshot.rule_resolution_snapshot_id,
                     resolution_snapshot.snapshot_hash,
-                    self.database.json_blobs.put_json(
-                        "step-resolution",
-                        canonical_json(resolution_snapshot.model_dump(mode="json")),
-                    ),
+                    store_step_snapshot(self.database.json_blobs, resolution_snapshot),
                     resolution_snapshot.created_at,
                 ),
             )
@@ -550,21 +602,35 @@ class ExecutionRepository(Repository):
                     tool_set_hash, now,
                 ),
             )
+            recovered = connection.execute(
+                "SELECT a.* FROM model_attempts a JOIN steps s ON s.id=a.step_id WHERE s.run_id=? "
+                "ORDER BY a.creation_seq DESC LIMIT 1", (run_id,),
+            ).fetchone()
+            resume_retry = recovered is not None and json.loads(recovered["retry_decision_json"] or "{}").get("resumeAfterRestart") is True
             connection.execute(
                 """
                 INSERT INTO model_attempts (
                     id, step_id, ordinal, status, lease_id,
                     configured_provider_id, wire_api, model_id,
-                    request_timeout, started_at
-                ) VALUES (?, ?, 1, 'running', ?, ?, ?, ?, ?, ?)
+                    request_timeout, started_at, request_group_id, retry_index, retry_deadline_at, context_snapshot_id, retry_decision_json
+                ) VALUES (?, ?, 1, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attempt_id,
                     step_id,
                     *_attempt_metadata(connection, run_id),
                     now,
+                    recovered["request_group_id"] if resume_retry else attempt_id,
+                    recovered["retry_index"] + 1 if resume_retry else 0,
+                    recovered["retry_deadline_at"] if resume_retry else None,
+                    recovered["context_snapshot_id"] if resume_retry else None,
+                    json.dumps({"nextRetryAt": json.loads(recovered["retry_decision_json"]).get("nextRetryAt")}) if resume_retry else None,
                 ),
             )
+            if resume_retry:
+                decision = json.loads(recovered["retry_decision_json"])
+                decision.pop("resumeAfterRestart")
+                connection.execute("UPDATE model_attempts SET retry_decision_json=? WHERE id=?", (json.dumps(decision), recovered["id"]))
             updated = connection.execute(
                 """
                 UPDATE runs
@@ -637,11 +703,7 @@ class ExecutionRepository(Repository):
             ).fetchall()
         try:
             return tuple(
-                StepResolutionSnapshot.model_validate_json(
-                    self.database.json_blobs.read_json(
-                        row["snapshot_json"], expected_kind="step-resolution"
-                    )
-                )
+                read_step_snapshot(self.database.json_blobs, row["snapshot_json"])
                 for row in rows
             )
         except (TypeError, ValueError):
@@ -979,6 +1041,8 @@ class ExecutionRepository(Repository):
         response_text_bytes: int = 0,
         protocol_diagnostic: ProtocolDiagnostic | None = None,
         retry_decision: dict[str, object] | None = None,
+        expected_attempt_id: str | None = None,
+        retry_deadline_at: int | None = None,
     ) -> bool:
         if status not in {"completed", "failed", "canceled"}:
             raise ValueError("invalid model attempt status")
@@ -993,8 +1057,17 @@ class ExecutionRepository(Repository):
                 """,
                 (run_id,),
             ).fetchone()
-            if attempt is None:
+            if attempt is None or (expected_attempt_id is not None and attempt["id"] != expected_attempt_id):
                 return False
+            if status != "completed":
+                draft = connection.execute("SELECT assistant_item_id FROM model_attempts WHERE id=?", (attempt["id"],)).fetchone()
+                if draft[0] is not None:
+                    item = connection.execute("SELECT session_id FROM items WHERE id=?", (draft[0],)).fetchone()
+                    changed = connection.execute(
+                        "UPDATE items SET status='failed',incomplete=1,completed_at=? WHERE id=? AND status='in_progress'", (now, draft[0]),
+                    )
+                    if changed.rowcount:
+                        append_event(connection, EventType.ITEM_COMPLETED, now, {"item_id": draft[0]}, session_id=item[0], run_id=run_id)
             changed = connection.execute(
                 """
                 UPDATE model_attempts
@@ -1005,7 +1078,7 @@ class ExecutionRepository(Repository):
                     response_state = ?, phase = ?, tool_call_count = ?,
                     response_text_sha256 = ?, response_text_bytes = ?,
                     protocol_diagnostics_json = ?, retry_decision_json = ?,
-                    response_replay_json = ?
+                    response_replay_json = ?, retry_deadline_at = COALESCE(?, retry_deadline_at)
                 WHERE id = ? AND status = 'running'
                 """,
                 (
@@ -1036,6 +1109,7 @@ class ExecutionRepository(Repository):
                         self.database.json_blobs.put_json("model-response-replay", response_replay.model_dump_json())
                         if response_replay is not None else None
                     ),
+                    retry_deadline_at,
                     attempt["id"],
                 ),
             )
@@ -1078,6 +1152,9 @@ class ExecutionRepository(Repository):
                 ).fetchone()
                 if snapshot is None:
                     raise InvalidRunStateError("model attempt context snapshot is invalid")
+            previous = connection.execute(
+                "SELECT * FROM model_attempts WHERE step_id=? ORDER BY ordinal DESC LIMIT 1", (step["id"],),
+            ).fetchone()
             last = connection.execute(
                 """
                 SELECT COALESCE(MAX(ordinal), 0) AS ordinal FROM model_attempts
@@ -1086,13 +1163,21 @@ class ExecutionRepository(Repository):
                 (step["id"],),
             ).fetchone()
             attempt_id = str(uuid.uuid4())
+            same_request = context_snapshot_id is not None and previous["context_snapshot_id"] == context_snapshot_id
+            if context_snapshot_id is not None and not same_request:
+                raise InvalidRunStateError("model retry context changed")
+            group_id = (previous["request_group_id"] or previous["id"]) if same_request else attempt_id
+            retry_index = previous["retry_index"] + 1 if same_request else 0
+            deadline = previous["retry_deadline_at"] if same_request else None
+            if retry_index >= 6 or (deadline is not None and deadline <= now):
+                raise InvalidRunStateError("model retry budget exhausted")
             connection.execute(
                 """
                 INSERT INTO model_attempts (
                     id, step_id, ordinal, status, context_snapshot_id, lease_id,
                     configured_provider_id, wire_api, model_id,
-                    request_timeout, started_at
-                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+                    request_timeout, started_at, request_group_id, retry_index, retry_deadline_at
+                ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     attempt_id,
@@ -1101,9 +1186,40 @@ class ExecutionRepository(Repository):
                     context_snapshot_id,
                     *_attempt_metadata(connection, run_id),
                     now,
+                    group_id, retry_index, deadline,
                 ),
             )
         return attempt_id
+
+    def read_model_retry_record(self, attempt_id: str) -> ModelRetryRecord:
+        with self.lock:
+            row = self._connection().execute("SELECT * FROM model_attempts WHERE id=?", (attempt_id,)).fetchone()
+        if row is None:
+            raise ResourceNotFoundError("model attempt not found")
+        decision = json.loads(row["retry_decision_json"] or "{}")
+        return ModelRetryRecord(
+            attempt_id=row["id"], request_group_id=row["request_group_id"] or row["id"],
+            retry_index=row["retry_index"], deadline_at=row["retry_deadline_at"],
+            next_retry_at=decision.get("nextRetryAt"),
+        )
+
+    def has_recovered_model_retry(self, run_id: str) -> bool:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT a.retry_decision_json FROM model_attempts a JOIN steps s ON s.id=a.step_id "
+                "WHERE s.run_id=? ORDER BY a.creation_seq DESC LIMIT 1", (run_id,),
+            ).fetchone()
+        return row is not None and json.loads(row[0] or "{}").get("resumeAfterRestart") is True
+
+    def check_model_attempt_active(self, run_id: str, attempt_id: str) -> None:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT 1 FROM model_attempts a JOIN steps s ON s.id=a.step_id JOIN runs r ON r.id=s.run_id "
+                "WHERE a.id=? AND s.run_id=? AND a.status='running' AND s.status='running' "
+                "AND r.status='running' AND r.cancel_requested_at IS NULL", (attempt_id, run_id),
+            ).fetchone()
+        if row is None:
+            raise InvalidRunStateError("model attempt is no longer active")
 
     def read_model_attempts(self, run_id: str) -> list[dict[str, object]]:
         with self.lock:
@@ -1157,9 +1273,9 @@ class ExecutionRepository(Repository):
         return self.create_assistant_item_committed(run_id, model_step_index).value
 
     def create_assistant_item_committed(
-        self, run_id: str, model_step_index: int
+        self, run_id: str, model_step_index: int, *, model_attempt_id: str | None = None
     ) -> CommittedMutation[dict[str, object]]:
-        return self._create_item_committed(run_id, "assistant_message", model_step_index)
+        return self._create_item_committed(run_id, "assistant_message", model_step_index, model_attempt_id=model_attempt_id)
 
     def create_finalization_assistant_item(
         self, run_id: str
@@ -1332,8 +1448,8 @@ class ExecutionRepository(Repository):
                 current = CollaborationRepository(self.database).state_in_connection(connection, run_id)
                 if current != expected_collaboration:
                     raise RunCompletionDeferred("collaboration_changed")
-            interrupted = bool(run_state["reconciliation_required"]) or shell_stopped
-            reason = "side_effect_reconciliation_required" if run_state["reconciliation_required"] else "active_shell_stopped" if shell_stopped else None
+            interrupted = shell_stopped
+            reason = "active_shell_stopped" if shell_stopped else None
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -2149,19 +2265,34 @@ class ExecutionRepository(Repository):
                 (run_id,),
             ).fetchall()
             for entry in pending:
-                item_id = str(uuid.uuid4())
-                connection.execute(
-                    """
-                    INSERT INTO items (
-                        id, session_id, run_id, ordinal, kind, status,
-                        content, created_at, completed_at
-                    ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
-                    """,
-                    (
-                        item_id, run["session_id"], run_id,
-                        self._next_ordinal(connection, run_id), entry["content"], now, now,
-                    ),
-                )
+                visible = connection.execute(
+                    "SELECT id FROM items WHERE id = ? AND run_id = ? AND kind = 'user_message'",
+                    (entry["id"], run_id),
+                ).fetchone()
+                item_id = entry["id"] if visible is not None else str(uuid.uuid4())
+                if visible is not None:
+                    # The input was displayed when accepted. Place its model
+                    # fact after every result from the preceding sampling step.
+                    connection.execute(
+                        "UPDATE items SET status = 'completed', completed_at = ?, ordinal = ?, "
+                        "creation_seq = (SELECT COALESCE(MAX(creation_seq), 0) + 1 FROM items) WHERE id = ?",
+                        (now, self._next_ordinal(connection, run_id), item_id),
+                    )
+                    append_event(connection, EventType.ITEM_COMPLETED, now, {"itemId": item_id},
+                                 session_id=run["session_id"], run_id=run_id)
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO items (
+                            id, session_id, run_id, ordinal, kind, status,
+                            content, created_at, completed_at
+                        ) VALUES (?, ?, ?, ?, 'user_message', 'completed', ?, ?, ?)
+                        """,
+                        (
+                            item_id, run["session_id"], run_id,
+                            self._next_ordinal(connection, run_id), entry["content"], now, now,
+                        ),
+                    )
                 updated = connection.execute(
                     """
                     UPDATE input_mailbox SET status = 'injected', injected_at = ?
@@ -2185,11 +2316,13 @@ class ExecutionRepository(Repository):
         return self._create_item_committed(run_id, kind, model_step_index).value
 
     def _create_item_committed(
-        self, run_id: str, kind: str, model_step_index: int | None
+        self, run_id: str, kind: str, model_step_index: int | None, *, model_attempt_id: str | None = None
     ) -> CommittedMutation[dict[str, object]]:
         item_id = str(uuid.uuid4())
         now = _now_ms()
         with self.lock, self._connection() as connection:
+            if model_attempt_id is not None:
+                self.check_model_attempt_active(run_id, model_attempt_id)
             run = connection.execute(
                 "SELECT session_id FROM runs WHERE id = ? AND status IN ('running', 'finalizing')",
                 (run_id,),
@@ -2222,6 +2355,13 @@ class ExecutionRepository(Repository):
                 session_id=run["session_id"],
                 run_id=run_id,
             )
+            if model_attempt_id is not None:
+                changed = connection.execute(
+                    "UPDATE model_attempts SET assistant_item_id=? WHERE id=? AND assistant_item_id IS NULL",
+                    (item_id, model_attempt_id),
+                )
+                if changed.rowcount != 1:
+                    raise InvalidRunStateError("model attempt already owns an assistant item")
         return CommittedMutation(self.read_item(item_id), (event,))
 
     def _complete_item(self, item_id: str, status_value: str) -> dict[str, object]:

@@ -20,7 +20,7 @@ import json
 from pydantic import BaseModel, ValidationError
 
 from eidos_runtime.file_limits import (
-    MAX_FILE_BYTES as MAX_EDIT_FILE_BYTES, MAX_PATCH_WORKING_BYTES, tool_result_limit,
+    MAX_FILE_BYTES as MAX_EDIT_FILE_BYTES, MAX_PATCH_WORKING_BYTES, MAX_PATCH_RESULT_BYTES, tool_result_limit,
 )
 from eidos_runtime.protocol.schemas import ToolResultDto
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
@@ -44,6 +44,7 @@ from eidos_runtime.workspace.codex_patch import (
     DeleteFile,
     MAX_PATCH_BYTES,
     PatchError as CodexPatchError,
+    format_patch_error,
     UpdateFile,
     apply_update,
     patch_grammar,
@@ -232,6 +233,12 @@ _APPLY_PATCH_DESCRIPTION = (
 )
 
 
+_RUN_SHELL_DESCRIPTION = (
+    "Run a shell command and return its output or a sessionId for ongoing interaction. "
+    "Each call starts a new shell."
+)
+
+
 _BUILTIN_CONTRACTS = (
     ("list_files", "List regular files under a workspace or active Skill directory.", "none", False, 5, "parallel", ListFilesInput, ListFilesResultData, "list_files"),
     ("read_file", "Read a UTF-8 text file from the workspace or an active Skill root. For truncated results, continue with read_file_range.", "none", False, 5, "parallel", ReadFileInput, ReadFileResultData, "read_file"),
@@ -239,8 +246,8 @@ _BUILTIN_CONTRACTS = (
     ("search_text", "Search text across workspace or active Skill files.", "none", False, 35, "parallel", SearchTextInput, SearchTextResultData, "search_text"),
     ("search_text_wait", "Wait for additional results from a running search_text session.", "none", False, 65, "single", SearchTextWaitInput, SearchTextResultData, "search_text"),
     ("apply_patch", _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
-    ("run_shell", "Run a shell command in the macOS workspace sandbox. Returns command output, or a sessionId if the command is still running.", "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
-    ("write_stdin", "Write input to a running shell session or wait for additional output. Use empty input to poll for output.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
+    ("run_shell", _RUN_SHELL_DESCRIPTION, "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
+    ("write_stdin", "Write input to a running shell session and return recent output.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,
@@ -423,7 +430,7 @@ def canonical_tool_result(
     encoded = json.dumps(
         validated, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
-    if len(encoded) > tool_result_limit(tool_name):
+    if len(encoded) > max(tool_result_limit(tool_name), MAX_PATCH_RESULT_BYTES):
         return _error(tool_name, "tool_result_too_large", "Tool result exceeded the safe size limit")
     return validated
 
@@ -1008,20 +1015,7 @@ class ToolExecutor:
         except ToolCancelled:
             return _error(tool_name, "canceled", "Tool was canceled")
         except CodexPatchError as error:
-            if error.code == "patch_format_error":
-                location = f" at line {error.line_number}" if error.line_number else ""
-                target = f" for {error.target_path}" if error.target_path else ""
-                summary = f"Patch format error{location}{target}: {error.message}"
-            else:
-                summary = error.message
-            if error.code in {"patch_format_error", "patch_context_mismatch"}:
-                recovery = (
-                    "Correct the Patch markers and line prefixes, then resubmit."
-                    if error.code == "patch_format_error" else
-                    "Read the current target lines and correct the Patch context."
-                )
-                summary += f" No files were changed by this call. {recovery}"
-            return _error(tool_name, error.code, summary)
+            return _error(tool_name, error.code, format_patch_error(error))
         except WorkspacePathError as error:
             return _error(
                 tool_name,

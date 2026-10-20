@@ -13,8 +13,25 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def downgrade_channel_schema():
+def downgrade_search_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'search_%'").fetchall():
+            connection.execute(f'DROP TRIGGER "{row[0]}"')
+        for name in ("search_fts", "search_documents", "search_pending", "search_index_state"):
+            connection.execute(f'DROP TABLE IF EXISTS "{name}"')
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_channel_schema(downgrade_search_schema):
+    def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_search_schema(connection)
+        connection.execute("DROP INDEX IF EXISTS steps_run_ordinal")
+        connection.execute("DROP INDEX IF EXISTS model_request_retry_index")
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")}
+        for column in ("request_group_id", "retry_index", "retry_deadline_at", "assistant_item_id"):
+            if column in columns:
+                connection.execute(f"ALTER TABLE model_attempts DROP COLUMN {column}")
         for name in ("channel_memory_insert", "channel_origin_memory"):
             connection.execute(f"DROP TRIGGER IF EXISTS {name}")
         for name in ("channel_deliveries", "channel_run_origins", "channel_inbound", "channel_sessions", "channel_connections"):

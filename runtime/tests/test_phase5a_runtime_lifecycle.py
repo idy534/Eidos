@@ -294,7 +294,7 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
             "canceled",
         )
 
-    def test_recovery_does_not_requeue_reconciliation_barrier(self) -> None:
+    def test_recovery_requeues_run_while_preserving_unknown_result(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "barrier")
         connection = self.store.connection
         assert connection is not None
@@ -306,7 +306,10 @@ class RuntimeRecoveryInvariantTests(unittest.TestCase):
 
         self._restart()
 
-        self.assertEqual(self.store.read_run(run["id"])["status"], "interrupted")
+        recovered = self.store.read_run(run["id"])
+        self.assertEqual(recovered["status"], "queued")
+        self.assertTrue(recovered["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(run["id"]))
 
     def test_recovery_does_not_requeue_finalization(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "finalize")
@@ -900,7 +903,7 @@ class ReliableCancelTests(unittest.TestCase):
         _StuckEngine.release.set()
         supervisor.wait(1)
 
-    def test_cancel_with_uncertain_side_effect_returns_interrupted_and_replays(self) -> None:
+    def test_cancel_with_uncertain_side_effect_returns_canceled_and_replays(self) -> None:
         run, supervisor = self._started()
         connection = self.store.connection
         assert connection is not None
@@ -916,16 +919,17 @@ class ReliableCancelTests(unittest.TestCase):
         _CancelAwareEngine.allow_exit.set()
 
         operation_id = "cancel-uncertain-1"
-        interrupted = supervisor.cancel_run(run["id"], operation_id=operation_id)
+        canceled = supervisor.cancel_run(run["id"], operation_id=operation_id)
 
         current = self.store.read_run(run["id"])
-        self.assertEqual(current["status"], "interrupted")
-        self.assertEqual(interrupted, current)
+        self.assertEqual(current["status"], "canceled")
+        self.assertEqual(canceled, current)
         self.assertIsNotNone(current["cancelCompletedAt"])
         self.assertIsNone(current.get("cancelFailureCode"))
         self.assertTrue(current["reconciliationRequired"])
+        self.assertTrue(current["sideEffectsMayExist"])
         replay = supervisor.cancel_run(run["id"], operation_id=operation_id)
-        self.assertEqual(replay, interrupted)
+        self.assertEqual(replay, canceled)
 
     def test_cancel_without_active_handle_preserves_uncertainty(self) -> None:
         run, _ = self.store.enqueue_run(self.session["id"], "cancel queued")
@@ -942,12 +946,13 @@ class ReliableCancelTests(unittest.TestCase):
         )
         connection.commit()
 
-        interrupted = self._supervisor(_CancelAwareEngine).cancel_run(run["id"])
+        canceled = self._supervisor(_CancelAwareEngine).cancel_run(run["id"])
 
-        self.assertEqual(interrupted["status"], "interrupted")
-        self.assertIsNotNone(interrupted["cancelCompletedAt"])
-        self.assertIsNone(interrupted.get("cancelFailureCode"))
-        self.assertTrue(interrupted["reconciliationRequired"])
+        self.assertEqual(canceled["status"], "canceled")
+        self.assertIsNotNone(canceled["cancelCompletedAt"])
+        self.assertIsNone(canceled.get("cancelFailureCode"))
+        self.assertTrue(canceled["reconciliationRequired"])
+        self.assertTrue(canceled["sideEffectsMayExist"])
 
     def test_cancel_queued_without_active_handle_preserves_uncertainty(self) -> None:
         run, _ = self.store.enqueue_run(self.session["id"], "cancel queued")
@@ -960,14 +965,15 @@ class ReliableCancelTests(unittest.TestCase):
         )
         connection.commit()
 
-        interrupted = self._supervisor(_CancelAwareEngine).cancel_run(
+        canceled = self._supervisor(_CancelAwareEngine).cancel_run(
             run["id"], operation_id="cancel-queued-uncertain-1"
         )
 
-        self.assertEqual(interrupted["status"], "interrupted")
-        self.assertIsNotNone(interrupted["cancelCompletedAt"])
-        self.assertIsNone(interrupted.get("cancelFailureCode"))
-        self.assertTrue(interrupted["reconciliationRequired"])
+        self.assertEqual(canceled["status"], "canceled")
+        self.assertIsNotNone(canceled["cancelCompletedAt"])
+        self.assertIsNone(canceled.get("cancelFailureCode"))
+        self.assertTrue(canceled["reconciliationRequired"])
+        self.assertTrue(canceled["sideEffectsMayExist"])
 
     def test_cancel_ignores_cleared_side_effect_evidence(self) -> None:
         run, supervisor = self._started()

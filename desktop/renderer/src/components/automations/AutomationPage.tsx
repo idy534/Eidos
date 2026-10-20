@@ -600,7 +600,7 @@ export function AutomationPage({
                             <span>
                               {record.scheduledFor.startsWith("manual:") ? "手动执行" : new Date(record.scheduledFor).toLocaleString()} ·{" "}
                               {(record.reconciliationRequired
-                                ? "操作结果待核验"
+                                ? "操作结果未知"
                                 : record.runStatus
                                 ? ({
                                     queued: "等待执行",

@@ -193,8 +193,6 @@ class CollaborationRepository:
                 raise CollaborationRejected('agent_model_unavailable')
             if self.is_child(parent['session_id']):
                 raise CollaborationRejected('nested_delegation_not_supported')
-            if parent['reconciliation_required']:
-                raise CollaborationRejected('reconciliation_required')
             if connection.execute('SELECT COUNT(*) FROM agent_delegations WHERE parent_run_id=?', (run_id,)).fetchone()[0] >= MAX_AGENTS:
                 raise CollaborationRejected('agent_task_limit')
             if connection.execute('SELECT 1 FROM agent_delegations WHERE parent_run_id=? AND task_name=?', (run_id, request.task_name)).fetchone():
@@ -267,8 +265,6 @@ class CollaborationRepository:
                 if current['status'] in ACTIVE_STATUSES:
                     self._send(connection, run_id, item_id, agent_id, message)
                     return self._summary(connection, target)
-                if parent['reconciliation_required']:
-                    raise CollaborationRejected('reconciliation_required')
                 previous = connection.execute('SELECT model_profile_json FROM runs WHERE id=?', (target['child_run_id'],)).fetchone()
                 self._create_run(connection, parent, target['child_session_id'], child_id, message,
                     model_profile=ModelProfileSnapshot.model_validate_json(previous[0]))

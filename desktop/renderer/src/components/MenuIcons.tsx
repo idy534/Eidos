@@ -133,6 +133,10 @@ export function SendIcon(props: IconProps) {
   );
 }
 
+export function SteerIcon(props: IconProps) {
+  return <svg {...defaultIconProps} {...props}><path d="M2 8h12M9 3l5 5-5 5" /></svg>;
+}
+
 /**
  * Checkmark icon for single-select or checkable items
  */
@@ -164,6 +168,18 @@ export function CloseOthersIcon(props: IconProps) {
       <rect x="2" y="3" width="9" height="10" rx="1.5" />
       <path d="M5 1h7a1.5 1.5 0 0 1 1.5 1.5V11" />
       <path d="m4.5 6.5 4 4M8.5 6.5l-4 4" />
+    </svg>
+  );
+}
+
+/**
+ * Message Queue / Stacked Bubbles icon for prompt queue
+ */
+export function MessageQueueIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="M5 2.5h6.5a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5H10" />
+      <path d="M2.5 5.5h6A1.5 1.5 0 0 1 10 7v4a1.5 1.5 0 0 1-1.5 1.5H5.2L2.8 14v-1.5H2.5A1.5 1.5 0 0 1 1 11V7a1.5 1.5 0 0 1 1.5-1.5Z" />
     </svg>
   );
 }

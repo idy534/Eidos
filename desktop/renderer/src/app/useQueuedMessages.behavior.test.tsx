@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from "vitest";
 import { useQueuedMessages } from "./useQueuedMessages.js";
 
 describe("queued message reads", () => {
+  it("refreshes a superseded failure before displaying it and keeps current failures visible", async () => {
+    let notify: ((notice: unknown) => void) | undefined;
+    let fail!: (reason: Error) => void;
+    const error = new Error("EIDOS_RUNTIME_ERROR:RESOURCE_NOT_FOUND");
+    const list = vi.fn().mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }))
+      .mockResolvedValueOnce({ items: [] }).mockRejectedValue(error);
+    window.eidosRuntime = { listQueuedRuns: list, onNotification: (callback: typeof notify) => { notify = callback; return () => {}; } } as unknown as typeof window.eidosRuntime;
+    const { result } = renderHook(() => useQueuedMessages("s", true));
+    act(() => notify?.({ method: "run/queueChanged", params: { change: { sessionId: "s" } } }));
+    await act(async () => fail(error));
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    expect(result.current.error).toBeUndefined();
+    await act(async () => result.current.refresh());
+    expect(result.current.error).toBe("系统暂时无法读取当前会话的待发送消息，请刷新后重试。");
+  });
   it("does not let an obsolete Session response overwrite the selected queue", async () => {
     let finish: ((value: { items: [] }) => void) | undefined;
     window.eidosRuntime = { listQueuedRuns: vi.fn((request) => request.sessionId === "a"

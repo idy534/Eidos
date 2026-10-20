@@ -151,7 +151,9 @@ pnpm build
 
 `pnpm test:composer-layout` 使用真实 Electron、隔离的临时 user-data 和本地 Vite 测试页面。该定向测试检查输入框自动高度和历史记录滚动位置，不启动 Runtime，也不读取真实 Session 数据。测试记录包含代码块和图片，预览上下文随草稿编辑更新。测试覆盖单行输入、全选删除、等高编辑、多行删除、组合输入事件、窄窗口换行、窗口宽度变化和输入框内部滚动。该入口不属于完整测试套件。
 
-`node_modules/.bin/electron scripts/test-queued-messages.cjs` 使用真实 Electron 和隔离页面检查输入框上方的消息队列。该定向测试覆盖 1100px、600px、420px 下的对齐、长消息、队列内部滚动、编辑、删除和主草稿保留，不读取真实 Session。`EIDOS_QUEUE_SCREENSHOT_DIR` 可以指定截图目录。Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_queued_runs.py`；Main → Runtime 验证在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-queued-runs.test.js`。这项跨进程测试使用临时工作区和测试模型，原生环境需要可用的 Seatbelt，测试不会放行等待中的网络 Shell。
+`node_modules/.bin/electron scripts/test-feed-scroll.cjs` 使用隔离的真实 Electron 页面验证 Session 滚动。该定向测试覆盖 320、768、1024、1440 四种宽度，检查空列表首次加载、处理过程和嵌套工具展开、动画期间持续输出、历史阅读、折叠后的暂停状态、向下滚动、到底按钮、延迟图片和 Run 结束自动折叠。测试不启动 Runtime，不读取真实 Session，也不调用模型。定向行为测试入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/useFeedScroll.behavior.test.tsx desktop/renderer/src/components/ExecutionFeed.behavior.test.tsx`。
+
+`node_modules/.bin/electron scripts/test-queued-messages.cjs` 使用真实 Electron 和隔离页面检查输入框上方的消息队列。该定向测试覆盖 320、420、768、1024、1100、1440px 下的对齐、长消息、队列内部滚动、编辑、删除、键盘转为引导、引导消费状态和主草稿保留，不读取真实 Session。`EIDOS_QUEUE_SCREENSHOT_DIR` 可以指定截图目录。Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_queued_runs.py`；Main → Runtime 验证在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-queued-runs.test.js`。这项跨进程测试使用临时工作区和测试模型，原生环境需要可用的 Seatbelt，测试不会放行等待中的网络 Shell。
 
 `pnpm test:sidebar-pinning` 使用真实 Electron、隔离的临时 user-data 和生产侧栏组件。该定向测试检查项目右键置顶、Session 的 Shift+F10 置顶、混合显示、无 Run 分叉的即时显示和悬停图标、分叉气泡的来源名称与点击跳转、取消置顶、唯一高亮、状态图标、项目浏览时的滚动位置，以及 1100px 和 420px 窗口中的菜单边界。测试页沿用禁止 JavaScript eval 的 CSP。该页面使用测试 API，不启动 Runtime，也不读取真实 Project 或 Session。Main → Runtime 持久化验证使用 `pnpm build:main` 后的 `node --test dist/main/runtime-client-sidebar.test.js`。开发者可以通过 `EIDOS_SIDEBAR_SCREENSHOT` 指定置顶截图输出路径，也可以通过 `EIDOS_FORK_HOVER_SCREENSHOT` 指定分叉来源气泡截图路径。这两个入口不属于完整测试套件。
 
@@ -177,6 +179,20 @@ pnpm test:packaging
 
 `pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录。该测试不需要真实 Model API Key。
 
+### 搜索定向验证
+
+搜索定向验证使用以下入口。这些入口不运行 Full Suite：
+
+```bash
+uv run --locked pytest runtime/tests/test_chat_search.py runtime/tests/test_storage_schema.py runtime/tests/test_context_query_indexes.py runtime/tests/test_session_fork_application.py -m 'not platform' -q
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/Search.behavior.test.tsx desktop/renderer/src/components/WorkspaceExplorer.behavior.test.tsx desktop/renderer/src/app/session-controller.behavior.test.tsx
+pnpm build:main
+node --test dist/main/runtime-client-search.test.js
+node_modules/.bin/electron scripts/test-search.cjs
+```
+
+Electron 搜索页使用临时 user-data、生产 AppShell 和内存 API。该测试检查全局搜索、旧消息定位、文件 Worker、高亮、快捷键、索引刷新、查找与图片预览关闭图标的居中，以及 320、768、1024、1440px 下的单行浮层和正文布局。该页面不读取真实会话或调用模型。开发者可以用 `EIDOS_SEARCH_SCREENSHOT` 指定截图路径。Main 跨进程测试使用真实 Runtime、临时数据库和临时文件，检查共享 Fixture、搜索范围、分块读取、截断与文件版本校验。搜索 DTO 由 `node scripts/generate-search-contracts.mjs` 从 Python Schema 生成。
+
 ## 5. Native Seatbelt test
 
 ```bash
@@ -194,6 +210,51 @@ pnpm build:runtime:mac
 pnpm test:runtime:bundled
 pnpm test:runtime:bundled-seatbelt
 ```
+
+上下文清理与压缩的定向验证入口如下。测试使用隔离数据和脚本模型，不访问真实 Provider 或用户聊天。
+
+```bash
+uv run --locked pytest runtime/tests/test_context_history_pruning.py runtime/tests/test_runtime_context.py runtime/tests/test_verified_compaction.py runtime/tests/test_verified_compaction_persistence.py runtime/tests/test_read_tool_output.py runtime/tests/test_read_tool_output_runtime.py runtime/tests/test_context_plan.py runtime/tests/test_model_attempt_context_snapshot.py runtime/tests/test_model_reasoning_replay.py runtime/tests/test_context_usage_protocol.py runtime/tests/test_session_fork_application.py
+```
+
+Runtime Bundle 必须包含 `resources/tokenizers/cl100k_base.tiktoken`。构建脚本检查该资源，词表加载器核对固定 Hash。`test:runtime:bundled` 在空 tokenizer 缓存和禁止下载的条件下检查实际计数，避免开发机器已有缓存掩盖资源缺失。维护者更新词表时还需要同步来源、Hash、许可证和离线测试。词表更新不改变启动命令。
+
+上下文模型摘要、Provider 计量与手动压缩的定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_context_metrics.py runtime/tests/test_context_usage_protocol.py runtime/tests/test_context_model_compaction.py runtime/tests/test_pydantic_ai_client.py runtime/tests/test_model_reasoning_replay.py runtime/tests/test_model_attempt_context_snapshot.py
+node scripts/generate-context-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-context.test.js dist/shared/context-management.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/ContextIndicator.behavior.test.tsx desktop/renderer/src/app/useContextUsageController.behavior.test.tsx
+pnpm exec electron scripts/test-context-details.cjs
+```
+
+Electron 验证使用隔离 userData，检查 320、768、1024、1440 四种宽度、键盘打开、焦点返回和手动请求。测试还检查 100K 设置上限下的 181.4% 用量、压缩后 18% 用量，以及圆环、详情与分项同步更新。`EIDOS_CONTEXT_SCREENSHOT` 可以指定截图路径。
+
+处理过程中的压缩静态行使用以下定向验证。Runtime 测试覆盖持久事件、开始事件及时交付、重启、取消、分页与原子提交后的中断；Electron 测试覆盖四种宽度的行插入、原位更新与滚动。`EIDOS_FEED_SCREENSHOT` 可以指定过程截图路径。
+
+```bash
+uv run --locked pytest runtime/tests/test_context_compaction_feed.py runtime/tests/test_context_model_compaction.py runtime/tests/test_runtime_state_authority.py
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/ContextCompactionFeed.behavior.test.tsx desktop/renderer/src/components/ExecutionFeed.behavior.test.tsx desktop/renderer/src/app/session-controller.behavior.test.tsx
+pnpm exec electron scripts/test-feed-scroll.cjs
+```
+
+离线回放使用六类合成资料与五种长度，共 30 组，每组默认连续压缩三次。脚本检查约束、路径与 Symbol、失败和未验证状态、累计来源与原始结果 Hash。脚本不读取真实聊天，也不代表真实仓库任务成功率：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py --output /absolute/path/context-offline.json
+```
+
+真实模型回放只读取已配置模型，资料与 SQLite 都使用临时合成数据。脚本禁用隐藏 HTTP 重试，单次摘要与续接各有 60 秒期限，并保存 Provider Usage。以下例子最多产生六次模型请求，会产生实际费用：
+
+```bash
+PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py --model deepseek-v4.1-flash --case chinese_correction --scales 1 --output /absolute/path/context-model.json
+```
+
+维护者可以用已配置模型的 ID 替换例子中的 `deepseek-v4.1-flash`，也可以用 `--reasoning low` 选择该模型已声明的档位。维护者可以重复 `--case`，选择其他样本；`--max-calls` 默认限制为 12。`--task` 会在压缩后通过正常 Runtime 执行一次隔离代码修复，并由评测脚本在外部运行四项单元测试。默认三轮压缩、三次续接和一次修复合计最多 12 次模型请求；这项验证仍不代表真实仓库长任务成功率。
+
+报告记录源码 Hash、Provider 返回的输入与输出 Tokens、缺少 Usage 的调用数量和耗时。续接失败会区分请求失败、格式不完整和历史事实回答错误。脚本不推算货币费用，费用以提供商账单为准。
 
 输出目录是 `build/macos-runtime/`。Bundle 使用 managed CPython `3.12.13`、locked production dependencies、Eidos Runtime、Seatbelt 资源和受管 Ripgrep。locked production dependencies 包含 Workspace artifact 任务使用的 `python-docx` 和 `lark`。打包 Runtime 会复制 `eidos_runtime/workspace/apply_patch.lark`，并检查这个资源存在。打包 Runtime 不依赖目标机的系统 Python、uv、仓库 `.venv` 或 Xcode Command Line Tools Python。
 

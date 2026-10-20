@@ -15,6 +15,35 @@ export function SessionCanvas({ sessionId, welcome, feed, children }: SessionCan
   const animation = useRef<Animation | undefined>(undefined);
 
   useLayoutEffect(() => {
+    if (!welcome) return;
+    const wrapper = composerRef.current;
+    const canvas = wrapper?.closest<HTMLElement>(".session-canvas");
+    const surface = wrapper?.querySelector<HTMLElement>(".composer");
+    const input = surface?.querySelector("textarea");
+    if (!wrapper || !canvas || !surface || !input) return;
+    const updateLimit = () => {
+      if (!canvas.clientHeight) return;
+      // Measure layout rather than the animated surface. The existing Composer
+      // owns its chrome and native field sizing; only the available space varies.
+      const chromeHeight = surface.offsetHeight - input.offsetHeight;
+      const bottomGap = parseFloat(getComputedStyle(canvas).paddingBottom);
+      const minimum = parseFloat(getComputedStyle(input).minHeight);
+      const limit = Math.max(minimum, canvas.clientHeight - surface.offsetTop - chromeHeight - bottomGap);
+      wrapper.style.setProperty("--welcome-input-max-height", `${limit}px`);
+    };
+    updateLimit();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateLimit) : undefined;
+    observer?.observe(canvas);
+    observer?.observe(surface);
+    window.addEventListener("resize", updateLimit);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateLimit);
+      wrapper.style.removeProperty("--welcome-input-max-height");
+    };
+  }, [welcome, sessionId]);
+
+  useLayoutEffect(() => {
     const composer = composerRef.current;
     if (!composer) return;
     const before = previous.current;

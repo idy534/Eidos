@@ -51,6 +51,7 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
 
 
 EXPECTED_TABLES = {
+    "search_documents", "search_pending", "search_index_state", "search_fts",
     "channel_connections", "channel_sessions", "channel_inbound", "channel_run_origins", "channel_deliveries",
     "scheduled_tasks", "scheduled_occurrences", "automation_run_origins",
     "sessions",
@@ -456,6 +457,7 @@ class StorageSchemaTests(unittest.TestCase):
             )
             if not row[0].startswith("repository_fts_")
             and not row[0].startswith("memory_fts_")
+            and not row[0].startswith("search_fts_")
         }
         indexes = {
             row[0]
@@ -476,7 +478,10 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_segment_per_run",
                 "one_active_segment_per_run",
                 "one_running_step_per_run",
+                "steps_run_ordinal",
+                "search_documents_session",
                 "one_running_attempt_per_step",
+                "model_request_retry_index",
                 "one_running_finalization_attempt_per_run",
                 "one_running_async_operation_per_operation_id",
                 "one_pending_outbox_delivery_per_event",
@@ -550,8 +555,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 30)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 29)
+        self.assertEqual(SCHEMA_VERSION, 33)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 32)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

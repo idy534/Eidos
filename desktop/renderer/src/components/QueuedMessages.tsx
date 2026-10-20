@@ -2,23 +2,29 @@ import { useRef, useState } from "react";
 import type { QueuedMessage as QueuedMessageData, QueuedRunChange } from "../../../shared/queued-runs.js";
 import { userFacingError } from "../session-state.js";
 import { useQueuedMessages } from "../app/useQueuedMessages.js";
-import { EditIcon, HistoryIcon, TrashIcon } from "./MenuIcons.js";
+import { EditIcon, MessageQueueIcon, SteerIcon, TrashIcon } from "./MenuIcons.js";
+import { Tooltip } from "./Tooltip.js";
 import { Button } from "./Button.js";
 
 export interface QueuedMessagesProps {
   sessionId: string;
   ready: boolean;
+  activeRunId?: string | undefined;
   onChanged: (change: QueuedRunChange) => void;
   onRefresh: () => void;
 }
 
-export function QueuedMessages({ sessionId, ready, onChanged, onRefresh }: QueuedMessagesProps) {
+export function QueuedMessages({ sessionId, ready, activeRunId, onChanged, onRefresh }: QueuedMessagesProps) {
   const queue = useQueuedMessages(sessionId, ready);
   if (!queue.items.length && !queue.error) return null;
   return (
     <ol className="queued-messages" aria-label="待发送消息">
+      {queue.items.length > 0 && <li role="presentation" className="queued-message-heading">
+        <span>待发送消息 · {queue.items.length}{queue.nextSequence != null ? "+" : ""}</span>
+        <span>当前任务结束后依次发送</span>
+      </li>}
       {queue.items.map((message, index) => (
-        <QueuedMessage key={message.runId} message={message} position={index + 1} ready={ready}
+        <QueuedMessage key={message.runId} message={message} position={index + 1} ready={ready} activeRunId={activeRunId}
           onChanged={(change) => { queue.project(change); onChanged(change); }}
           onRefresh={() => { void queue.refresh(); onRefresh(); }} />
       ))}
@@ -28,9 +34,9 @@ export function QueuedMessages({ sessionId, ready, onChanged, onRefresh }: Queue
   );
 }
 
-function QueuedMessage({ message, position, ready, onChanged, onRefresh }: {
+function QueuedMessage({ message, position, ready, activeRunId, onChanged, onRefresh }: {
   message: QueuedMessageData; position: number;
-} & Pick<QueuedMessagesProps, "ready" | "onChanged" | "onRefresh">) {
+} & Pick<QueuedMessagesProps, "ready" | "activeRunId" | "onChanged" | "onRefresh">) {
   const text = message.userInput;
   const references = message.references;
   const [edit, setEdit] = useState<{ original: string; text: string }>();
@@ -39,9 +45,10 @@ function QueuedMessage({ message, position, ready, onChanged, onRefresh }: {
   const lock = useRef(false);
   const preview = text.trim() || references.map((reference) => reference.label).join("、") || "引用消息";
 
-  async function change(kind: "updated" | "deleted") {
+  async function change(kind: "updated" | "deleted" | "steered") {
     if (lock.current || !ready) return;
     if (kind === "updated" && (!edit || (!edit.text.trim() && !references.length))) return;
+    if (kind === "steered" && (!activeRunId || edit)) return;
     lock.current = true;
     setBusy(true);
     setError(undefined);
@@ -50,7 +57,9 @@ function QueuedMessage({ message, position, ready, onChanged, onRefresh }: {
       expectedUserInput: edit?.original ?? text, operationId: crypto.randomUUID(),
     };
     try {
-      const response = kind === "deleted"
+      const response = kind === "steered"
+        ? await window.eidosRuntime.steerQueuedRun({ ...request, targetRunId: activeRunId! })
+        : kind === "deleted"
         ? await window.eidosRuntime.deleteQueuedRun(request)
         : await window.eidosRuntime.updateQueuedRun({ ...request, userInput: edit!.text.trim() });
       onChanged(response.change);
@@ -68,7 +77,7 @@ function QueuedMessage({ message, position, ready, onChanged, onRefresh }: {
     <li className="queued-message">
       <div className="queued-message-row">
         <span className="queued-message-position" title={`第 ${position} 条待发送消息`}>
-          <HistoryIcon />
+          <MessageQueueIcon />
           <span className="sr-only">第 {position} 条待发送消息</span>
         </span>
         <button type="button" className="queued-message-preview" title={preview}
@@ -78,15 +87,25 @@ function QueuedMessage({ message, position, ready, onChanged, onRefresh }: {
           {preview}
         </button>
         <div className="queued-message-actions">
-          <button type="button" title="编辑" aria-label={`编辑第 ${position} 条排队消息`}
-            disabled={!ready || busy}
-            onClick={() => { setEdit({ original: text, text }); setError(undefined); }}>
-            <EditIcon /><span>编辑</span>
-          </button>
-          <button type="button" title="删除" aria-label={`删除第 ${position} 条排队消息`}
-            disabled={!ready || busy} onClick={() => void change("deleted")}>
-            <TrashIcon />
-          </button>
+          <Tooltip content="引导当前任务">
+            <button type="button" title="引导当前任务" aria-label={`将第 ${position} 条排队消息用于引导当前任务`}
+              disabled={!ready || busy || !activeRunId || !!edit} onClick={() => void change("steered")}>
+              <SteerIcon />
+            </button>
+          </Tooltip>
+          <Tooltip content="编辑">
+            <button type="button" title="编辑" aria-label={`编辑第 ${position} 条排队消息`}
+              disabled={!ready || busy}
+              onClick={() => { setEdit({ original: text, text }); setError(undefined); }}>
+              <EditIcon /><span>编辑</span>
+            </button>
+          </Tooltip>
+          <Tooltip content="删除">
+            <button type="button" title="删除" aria-label={`删除第 ${position} 条排队消息`}
+              disabled={!ready || busy} onClick={() => void change("deleted")}>
+              <TrashIcon />
+            </button>
+          </Tooltip>
         </div>
       </div>
       {edit && (

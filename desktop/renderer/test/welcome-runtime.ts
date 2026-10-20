@@ -18,6 +18,7 @@ export function createWelcomeRuntime() {
     listSidebarPins: async () => ({ items: [], throughEventId: 0 }),
     listModels: async () => models,
     readContextUsage: async () => null,
+    readContextDetails: async () => ({ runId: "test-run", measurement: "unavailable" as const, contextWindowTokens: 100000, activeTokens: null, sections: [] }),
     listPendingApprovals: async () => [],
     readResponseActionState: async () => ({ feedback: [], revisions: [] }),
     listQueuedRuns: async () => ({ items: [] }),

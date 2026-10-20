@@ -46,6 +46,16 @@ def display_file_diff(content: str) -> str:
 
 
 def project_tool_text(item: dict[str, object]) -> dict[str, object]:
+    content = item.get("content")
+    if isinstance(content, str) and item.get("kind") == "assistant_message":
+        encoded = content.encode("utf-8")
+        if len(encoded) > INLINE_TOOL_TEXT_BYTES and "contentHash" not in item:
+            item = {
+                **item, "content": encoded[:INLINE_TOOL_TEXT_BYTES].decode("utf-8", errors="ignore"),
+                "contentBytes": len(encoded), "contentHash": hashlib.sha256(encoded).hexdigest(),
+            }
+    if isinstance(content, str) and item.get("kind") != "assistant_message" and item.get("toolCall") is not None:
+        item = {**item, "content": content.encode("utf-8")[:INLINE_TOOL_TEXT_BYTES].decode("utf-8", errors="ignore")}
     call = item.get("toolCall")
     if not isinstance(call, dict):
         return item

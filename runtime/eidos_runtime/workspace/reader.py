@@ -312,10 +312,10 @@ class WorkspaceReader:
             raise WorkspacePathError("workspace_identity_changed")
         return tuple(observations)
 
-    def read_preview(self, path: str) -> WorkspaceFilePreview:
+    def read_preview(self, path: str, *, limit: int = MAX_PREVIEW_BYTES) -> WorkspaceFilePreview:
         content_bytes, metadata, normalized, truncated = self.read_file_bytes(
             path,
-            limit=MAX_PREVIEW_BYTES,
+            limit=limit,
             allow_truncation=True,
         )
         suffix = Path(normalized).suffix.lower()

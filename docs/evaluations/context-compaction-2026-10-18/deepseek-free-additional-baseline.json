@@ -1,0 +1,245 @@
+{
+  "kind": "synthetic_history_replay",
+  "model": "custom-e82a79fe-9e6a-420e-9a3f-e21f1e8fbf7d",
+  "model_calls": 12,
+  "started_at": "2026-10-18T09:05:15.871470+00:00",
+  "duration_ms": 114852,
+  "source_sha256": {
+    "scripts/evaluate-context-compaction.py": "da5e445a1b77aa24f4fd6ad2156183e5ffdf387b6b9f1650cdd093f89f9839b2",
+    "scripts/fixtures/context-compaction-cases.json": "1ac6d21fb62742950e7617dc75303e2997f6775bfa52b11b488c484f0e991e17",
+    "runtime/eidos_runtime/context/model_summary.py": "aefa13d4b4f24201096ee1510ae0f432a96e0081a781ae60da5879364ece967f",
+    "runtime/eidos_runtime/context/compactor.py": "bad2a6918524a7eb1f36721484e51d21c3e6bc2cd8a507c82d3bed2a61019eac",
+    "runtime/eidos_runtime/context/budget.py": "aa9a3346b4e91e395ddeca823219e6df8106fab2a0a3238187dcd52fba011021",
+    "runtime/eidos_runtime/model/pydantic_ai_client.py": "b3751d53bbe315d0f5594920321e8693fb530cf56ac78ff750d002339e50b4b0",
+    "runtime/eidos_runtime/model/native_custom.py": "6989abe1fce1955631245f9eeda34e5b4e826c7dd0236d2a4cab75ffc282ba59"
+  },
+  "provider_usage": {
+    "responses_with_usage": 12,
+    "calls_without_usage": 0,
+    "failed_calls": 0,
+    "input_tokens": 102592,
+    "output_tokens": 23766
+  },
+  "reasoning_selection": "low",
+  "real_repository_task_completion": "not_measured",
+  "results": [
+    {
+      "case": "verified_tests",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "46cb9ca9-76cf-4c70-a62f-42728d9f2257",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "model",
+            "reason": null,
+            "durationMs": 8071,
+            "beforeTokens": 27016,
+            "afterTokens": 5765,
+            "inputTokens": 3462,
+            "outputTokens": 2318,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": false,
+          "continuation_failure": "incomplete_response",
+          "continuation_usage": {
+            "input_tokens": 12512,
+            "output_tokens": 8192,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 8192
+            }
+          },
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "08c04235-e8c9-4242-9196-efb7aef60adf",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "model",
+            "reason": "summary_claims_downgraded",
+            "durationMs": 8003,
+            "beforeTokens": 29155,
+            "afterTokens": 6392,
+            "inputTokens": 3352,
+            "outputTokens": 2086,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": true,
+          "continuation_failure": null,
+          "continuation_usage": {
+            "input_tokens": 13828,
+            "output_tokens": 338,
+            "cache_read_tokens": 4352,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 178
+            }
+          },
+          "continuation_answer": {
+            "decisionAdopted": true,
+            "testsVerified": true,
+            "targetSymbol": "inspect_verified_tests"
+          }
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "81dba6e6-cbae-4ddd-8fe6-bc93b5752a0e",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "model",
+            "reason": null,
+            "durationMs": 7397,
+            "beforeTokens": 29782,
+            "afterTokens": 6289,
+            "inputTokens": 3490,
+            "outputTokens": 2246,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": true,
+          "continuation_failure": null,
+          "continuation_usage": {
+            "input_tokens": 13658,
+            "output_tokens": 398,
+            "cache_read_tokens": 4352,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 238
+            }
+          },
+          "continuation_answer": {
+            "decisionAdopted": true,
+            "testsVerified": true,
+            "targetSymbol": "inspect_verified_tests"
+          }
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "mixed_code_logs",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "4b155b9a-5a23-4d45-83be-66c0aa353bd0",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "model",
+            "reason": null,
+            "durationMs": 7444,
+            "beforeTokens": 27047,
+            "afterTokens": 5670,
+            "inputTokens": 3466,
+            "outputTokens": 2364,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": true,
+          "continuation_failure": null,
+          "continuation_usage": {
+            "input_tokens": 12268,
+            "output_tokens": 642,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 480
+            }
+          },
+          "continuation_answer": {
+            "decisionAdopted": true,
+            "testsVerified": false,
+            "targetSymbol": "inspect_mixed_code_logs"
+          }
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "4ba0806a-d1b5-429d-8fa7-fc80a7b7a854",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "model",
+            "reason": "summary_claims_downgraded",
+            "durationMs": 7982,
+            "beforeTokens": 29085,
+            "afterTokens": 6700,
+            "inputTokens": 3588,
+            "outputTokens": 2546,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": true,
+          "continuation_failure": null,
+          "continuation_usage": {
+            "input_tokens": 14416,
+            "output_tokens": 352,
+            "cache_read_tokens": 4352,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 190
+            }
+          },
+          "continuation_answer": {
+            "decisionAdopted": true,
+            "testsVerified": false,
+            "targetSymbol": "inspect_mixed_code_logs"
+          }
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "de74d6d9-93a3-4a5d-bdf2-837a16e830a5",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "model",
+            "reason": "summary_claims_downgraded",
+            "durationMs": 6893,
+            "beforeTokens": 30114,
+            "afterTokens": 6826,
+            "inputTokens": 3954,
+            "outputTokens": 1916,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": false,
+          "continuation_failure": "invalid_structured_answer",
+          "continuation_usage": {
+            "input_tokens": 14598,
+            "output_tokens": 368,
+            "cache_read_tokens": 4096,
+            "cache_write_tokens": 0,
+            "details": {
+              "reasoning_tokens": 210
+            }
+          },
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    }
+  ]
+}

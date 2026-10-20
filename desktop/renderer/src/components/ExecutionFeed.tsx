@@ -1,7 +1,8 @@
+import { highlightText, clearHighlights } from "./find-text.js";
 import { InputReferenceCards } from "./InputContext.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import stripAnsi from "strip-ansi";
@@ -18,19 +19,24 @@ import type {
   ToolCall,
 } from "../contracts.js";
 import type { AgentSummary } from "../../../shared/collaboration.generated.js";
-import { terminalRunPresentation } from "../session-state.js";
+import { terminalRunPresentation, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
-import { CopyIcon, CheckmarkIcon, AutomationsIcon } from "./MenuIcons.js";
+import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon } from "./MenuIcons.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
+import { Tooltip } from "./Tooltip.js";
 import { SparklesIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
+import { useFeedScroll } from "./useFeedScroll.js";
+import { ContextCompactionRow } from "./ContextCompactionRow.js";
+import type { ContextCompactionActivity } from "../../../shared/context.generated.js";
+export { isFeedAtBottom } from "./useFeedScroll.js";
 
 
 type FeedbackHandler = (
@@ -41,6 +47,8 @@ type RegenerateHandler = (run: Run) => Promise<void>;
 type EditResendHandler = (run: Run, editedInput: string, references?: string[]) => Promise<boolean | void>;
 
 interface Props {
+  searchTarget?: { itemId: string; query: string; occurrence: number; revision: number } | undefined;
+  contextCompactions?: readonly ContextCompactionActivity[] | undefined;
   items: Item[];
   resultItems?: Item[];
   projectless?: boolean;
@@ -78,9 +86,12 @@ interface Props {
 
 interface Segment {
   user: Item | undefined;
-  process: Item[];
+  process: ProcessEntry[];
   response: Item[];
 }
+
+type ProcessEntry = { kind: "item"; item: Item } | { kind: "compaction"; activity: ContextCompactionActivity };
+const EMPTY_COMPACTIONS: readonly ContextCompactionActivity[] = [];
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>([
   "queued", "running", "waiting_input", "waiting_agents", "waiting_approval", "finalizing",
@@ -101,6 +112,8 @@ const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
 
 
 export const ExecutionFeed = memo(function ExecutionFeed({
+  searchTarget,
+  contextCompactions = EMPTY_COMPACTIONS,
   items,
   resultItems = items,
   projectless = false,
@@ -135,55 +148,16 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   allowRegenerate = true,
   allowEditResend = true,
 }: Props) {
-  const feedRef = useRef<HTMLElement>(null);
-  const isAtBottomRef = useRef(true);
-  const followRafRef = useRef<number | null>(null);
-  const [atBottom, setAtBottom] = useState(true);
+  const {
+    feedRef, contentRef, atBottom, following, scheduleFollow, jumpToBottom, pauseFollowing,
+    handleScroll, handleWheel, handleKeyDown, handlePointerDown, handleTouchStart, handleTouchMove,
+  } = useFeedScroll(items.length > 0, {
+    onLoadOlder,
+    loadingOlder,
+    firstItemId: items[0]?.id,
+  });
 
-  const handleScroll = useCallback((event: React.UIEvent<HTMLElement>) => {
-    const bottom = isFeedAtBottom(event.currentTarget);
-    isAtBottomRef.current = bottom;
-    setAtBottom(bottom);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (followRafRef.current !== null) {
-        cancelAnimationFrame(followRafRef.current);
-        followRafRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    const feed = feedRef.current;
-    if (!feed) return;
-    const handleToggle = () => {
-      requestAnimationFrame(() => {
-        const target = feedRef.current;
-        if (!target) return;
-        const bottom = isFeedAtBottom(target);
-        isAtBottomRef.current = bottom;
-        setAtBottom(bottom);
-      });
-    };
-    feed.addEventListener("toggle", handleToggle, true);
-    return () => {
-      feed.removeEventListener("toggle", handleToggle, true);
-    };
-  }, []);
-
-  useLayoutEffect(() => {
-    const feed = feedRef.current;
-    if (!feed || !isAtBottomRef.current) return;
-    if (followRafRef.current !== null) return;
-    followRafRef.current = requestAnimationFrame(() => {
-      followRafRef.current = null;
-      const target = feedRef.current;
-      if (!target || !isAtBottomRef.current) return;
-      target.scrollTop = target.scrollHeight;
-    });
-  }, [items, runs, responseActionState.revisions]);
+  useLayoutEffect(scheduleFollow, [items, runs, contextCompactions, responseActionState.revisions, scheduleFollow]);
 
   const supersededRunIds = useMemo(
     () => new Set(responseActionState.revisions.map((revision) => revision.sourceRunId)),
@@ -196,23 +170,21 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   const latestVisibleRun = [...runs].reverse().find((run) => !supersededRunIds.has(run.id));
   const hasActiveRun = runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
 
-  if (items.length === 0) {
-    return (
-      <div className="feed-empty" role="status">
-        {approvalLoadError && onRetryLoadPending && (
-          <ApprovalRecoveryBanner
-            error={approvalLoadError}
-            loading={loadingPendingApprovals}
-            onRetry={onRetryLoadPending}
-          />
-        )}
-        <p>这个 Session 还没有执行记录。</p>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!searchTarget) { clearHighlights("eidos-chat-find"); return; }
+    pauseFollowing();
+    const element = document.getElementById(`item-${searchTarget.itemId}`);
+    if (!element) return;
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+    }
+    const body = element.querySelector<HTMLElement>(".eidos-chat-prose");
+    if (body) highlightText(body, searchTarget.query, searchTarget.occurrence);
+    return () => clearHighlights("eidos-chat-find");
+  }, [searchTarget, items]);
 
   const runsById = new Map(runs.map((run) => [run.id, run]));
-  const itemGroups = groupItemsByRun(items).filter(({ runId }) => !supersededRunIds.has(runId));
+  const itemGroups = groupItemsByRun(items).filter(({ runId }) => (!supersededRunIds.has(runId) || items.some((item) => item.runId === runId && item.id === searchTarget?.itemId)));
 
   return (
     <div className="feed-shell">
@@ -226,85 +198,86 @@ export const ExecutionFeed = memo(function ExecutionFeed({
       <section
         ref={feedRef}
         className="feed"
+        data-following-bottom={following}
         aria-label="Execution Feed"
         aria-live="polite"
         onScroll={handleScroll}
+        onWheel={handleWheel}
+        onKeyDown={handleKeyDown}
+        onPointerDown={handlePointerDown}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
       >
-        {onLoadOlder && <button type="button" className="btn btn--ghost" disabled={loadingOlder} onClick={onLoadOlder}>
-          {loadingOlder ? "正在读取历史…" : "加载更早的记录"}
-        </button>}
-        {itemGroups.map(({ runId, items: runItems }) => {
-          const run = runsById.get(runId);
-          if (!run) return null;
-          const segments = splitRunIntoSegments(runItems);
-          const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
-            && TERMINAL_RUN_STATUSES.has(run.status)
-            && !hasActiveRun
-            && !revisionSubmitting;
-          const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.modelId;
-          return (
-            <Fragment key={runId}>
-              {segments.map((segment, index) => (
-                <RunSegment
-                  key={`${runId}:${segment.user?.id ?? index}`}
-                  segment={segment}
-                  run={run}
-                  resultItems={resultItems}
-                  projectless={projectless}
-                  modelName={modelName}
-                  workspaceRoot={workspaceRoot}
-                  isLast={index === segments.length - 1}
-                  canReviseRun={canReviseRun}
-                  feedbackByItemId={feedbackByItemId}
-                  pendingFeedbackItemIds={pendingFeedbackItemIds}
-                  revisionSubmitting={revisionSubmitting}
-                  approvals={approvals}
-                  respondingApprovalIds={respondingApprovalIds}
-                  respondingKindByApprovalId={respondingKindByApprovalId}
-                  expiredApprovalIds={expiredApprovalIds}
-                  errorsByApprovalId={errorsByApprovalId}
-                  onApprove={onApprove}
-                  onReject={onReject}
-                  onFeedback={onFeedback}
-                  onFork={onFork}
-                  onRegenerate={onRegenerate}
-                  onEditResend={onEditResend}
-                  onOpenFile={onOpenFile}
-                  onOpenPlan={onOpenPlan}
-                  agents={agents}
-                  onOpenSubagent={onOpenSubagent}
-                  allowFeedback={allowFeedback}
-                  allowRegenerate={allowRegenerate}
-                  allowEditResend={allowEditResend}
-                />
-              ))}
-              <RunNotice run={run} />
-            </Fragment>
-          );
-        })}
+        <div className="feed-content" ref={contentRef}>
+          {loadingOlder && (
+            <div className="feed-loading-older" role="status" aria-live="polite">
+              <span className="feed-loading-spinner" aria-hidden="true" />
+              <span>正在读取历史…</span>
+            </div>
+          )}
+          {itemGroups.map(({ runId, items: runItems }) => {
+            const run = runsById.get(runId);
+            if (!run) return null;
+            const segments = splitRunIntoSegments(runItems, contextCompactions.filter((activity) => activity.runId === runId));
+            const canReviseRun = !run.inherited && latestVisibleRun?.id === run.id
+              && TERMINAL_RUN_STATUSES.has(run.status)
+              && !hasActiveRun
+              && !revisionSubmitting;
+            const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.modelId;
+            return (
+              <Fragment key={runId}>
+                {segments.map((segment, index) => (
+                  <RunSegment
+                    key={`${runId}:${segment.user?.id ?? index}`}
+                    segment={segment}
+                    run={run}
+                    resultItems={resultItems}
+                    projectless={projectless}
+                    modelName={modelName}
+                    workspaceRoot={workspaceRoot}
+                    isLast={index === segments.length - 1}
+                    canReviseRun={canReviseRun}
+                    feedbackByItemId={feedbackByItemId}
+                    pendingFeedbackItemIds={pendingFeedbackItemIds}
+                    revisionSubmitting={revisionSubmitting}
+                    approvals={approvals}
+                    respondingApprovalIds={respondingApprovalIds}
+                    respondingKindByApprovalId={respondingKindByApprovalId}
+                    expiredApprovalIds={expiredApprovalIds}
+                    errorsByApprovalId={errorsByApprovalId}
+                    onApprove={onApprove}
+                    onReject={onReject}
+                    onFeedback={onFeedback}
+                    onFork={onFork}
+                    onRegenerate={onRegenerate}
+                    onEditResend={onEditResend}
+                    onOpenFile={onOpenFile}
+                    onOpenPlan={onOpenPlan}
+                    agents={agents}
+                    onOpenSubagent={onOpenSubagent}
+                    allowFeedback={allowFeedback}
+                    allowRegenerate={allowRegenerate}
+                    allowEditResend={allowEditResend}
+                  />
+                ))}
+                <RunNotice run={run} />
+              </Fragment>
+            );
+          })}
+        </div>
       </section>
       <button
         className="feed-jump-to-bottom"
         type="button"
         aria-label="滚动到最新内容"
         hidden={atBottom}
-        onClick={() => {
-          isAtBottomRef.current = true;
-          setAtBottom(true);
-          feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
-        }}
+        onClick={jumpToBottom}
       >
         <span aria-hidden="true">↓</span>
       </button>
     </div>
   );
 });
-
-export function isFeedAtBottom(
-  feed: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
-): boolean {
-  return feed.scrollHeight - feed.scrollTop - feed.clientHeight <= 16;
-}
 
 const RunSegment = memo(function RunSegment({
   segment,
@@ -368,7 +341,9 @@ const RunSegment = memo(function RunSegment({
   allowEditResend?: boolean | undefined;
 }) {
   // Hidden observations still determine which assistant messages are progress.
-  const visibleProcess = segment.process.filter((item) => {
+  const visibleProcess = segment.process.filter((entry) => {
+    if (entry.kind === "compaction") return true;
+    const item = entry.item;
     if (item.toolCall?.toolName !== "write_stdin") return true;
     const data = objectField(parseObject(item.toolCall.resultJson), "data");
     return item.status === "failed" && !stringField(data, "executionStatus");
@@ -393,12 +368,14 @@ const RunSegment = memo(function RunSegment({
         <ProcessGroup
           run={run}
         >
-          {visibleProcess.map((item) => (
+          {visibleProcess.map((entry) => entry.kind === "compaction" ? (
+            <ContextCompactionRow key={`compaction:${entry.activity.requestId}`} activity={entry.activity} run={run} />
+          ) : (
             <ProcessItem
-              key={item.id}
-              item={item}
+              key={entry.item.id}
+              item={entry.item}
               run={run}
-              approval={approvals.find((request) => request.itemId === item.id)}
+              approval={approvals.find((request) => request.itemId === entry.item.id)}
               respondingApprovalIds={respondingApprovalIds}
               respondingKindByApprovalId={respondingKindByApprovalId}
               expiredApprovalIds={expiredApprovalIds}
@@ -504,34 +481,36 @@ function CopyButton({ content }: { content: string }) {
   };
 
   return (
-    <button
-      type="button"
-      className="response-action-button feed-item-copy-btn"
-      onClick={handleCopy}
-      title={copied ? "已复制" : "复制内容"}
-      aria-label={copied ? "已复制" : "复制内容"}
-    >
-      <svg
-        width="15"
-        height="15"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
+    <Tooltip content={copied ? "已复制" : "复制内容"}>
+      <button
+        type="button"
+        className="response-action-button feed-item-copy-btn"
+        onClick={handleCopy}
+        title={copied ? "已复制" : "复制内容"}
+        aria-label={copied ? "已复制" : "复制内容"}
       >
-        {copied ? (
-          <polyline points="20 6 9 17 4 12" />
-        ) : (
-          <>
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </>
-        )}
-      </svg>
-    </button>
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {copied ? (
+            <polyline points="20 6 9 17 4 12" />
+          ) : (
+            <>
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </>
+          )}
+        </svg>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -553,34 +532,36 @@ function ShellCopyButton({ command }: { command: string }) {
   };
 
   return (
-    <button
-      type="button"
-      className={`shell-copy-button${copied ? " is-copied" : ""}`}
-      onClick={handleCopy}
-      title={copied ? "已复制命令" : "复制命令"}
-      aria-label={copied ? "已复制命令" : "复制命令"}
-    >
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
+    <Tooltip content={copied ? "已复制命令" : "复制命令"}>
+      <button
+        type="button"
+        className={`shell-copy-button${copied ? " is-copied" : ""}`}
+        onClick={handleCopy}
+        title={copied ? "已复制命令" : "复制命令"}
+        aria-label={copied ? "已复制命令" : "复制命令"}
       >
-        {copied ? (
-          <polyline points="20 6 9 17 4 12" />
-        ) : (
-          <>
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </>
-        )}
-      </svg>
-    </button>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          {copied ? (
+            <polyline points="20 6 9 17 4 12" />
+          ) : (
+            <>
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </>
+          )}
+        </svg>
+      </button>
+    </Tooltip>
   );
 }
 
@@ -614,7 +595,7 @@ function UserMessage({
   }
 
   return (
-    <div className="feed-item feed-item--user">
+    <div id={`item-${item.id}`} className="feed-item feed-item--user">
       {run.channelOrigin && <p className="feed-label">{run.channelOrigin.channel === "feishu" ? "飞书" : run.channelOrigin.channel === "wecom" ? "企业微信" : "钉钉"}消息</p>}
       {run.automationOrigin && <p className="feed-label">定时任务自动执行</p>}
       <div className="user-message-bubble">
@@ -731,6 +712,11 @@ function AssistantMessage({
   return (
     <article id={`item-${item.id}`} className="feed-item feed-item--assistant" ref={contentRef}>
       <MarkdownContent className="eidos-chat-prose" content={item.content || ""} isStreaming={isStreaming} />
+      {!isStreaming && item.contentBytes !== undefined && item.contentHash && <ToolTextView
+        sessionId={item.sessionId} toolCallId={item.id} field="content"
+        sha256={item.contentHash} totalBytes={item.contentBytes} />}
+
+
       {(item.incomplete || item.status === "canceled") && <p role="status">回答未完成</p>}
       {showTurnResults && <TurnResults run={run} items={resultItems} showTextChanges={showTextChanges} />}
       {isFinal && item.content && (
@@ -747,6 +733,7 @@ function AssistantMessage({
                 <ActionButton
                   label={feedback === "up" ? "取消点赞" : "点赞"}
                   active={feedback === "up"}
+                  className="response-action-button--thumb-up"
                   disabled={!canFeedback || feedbackPending}
                   onClick={() => void onFeedback(item.id, feedback === "up" ? null : "up")}
                 >
@@ -755,6 +742,7 @@ function AssistantMessage({
                 <ActionButton
                   label={feedback === "down" ? "取消差评" : "差评"}
                   active={feedback === "down"}
+                  className="response-action-button--thumb-down"
                   disabled={!canFeedback || feedbackPending}
                   onClick={() => void onFeedback(item.id, feedback === "down" ? null : "down")}
                 >
@@ -766,6 +754,7 @@ function AssistantMessage({
               <>
                 <ActionButton
                   label="重新回答"
+                  className="response-action-button--regenerate"
                   disabled={revisionSubmitting}
                   onClick={() => setConfirmRegenerateOpen(true)}
                 >
@@ -797,7 +786,9 @@ function AssistantMessage({
             />}
           </div>
           <div className="response-meta">
-            <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
+            <Tooltip content={`本次回复模型：${modelName}`}>
+              <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
+            </Tooltip>
             {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}
           </div>
         </div>
@@ -888,27 +879,31 @@ function ActionButton({
   label,
   active = false,
   disabled = false,
+  className = "",
   onClick,
   children,
 }: {
   label: string;
   active?: boolean;
   disabled?: boolean;
+  className?: string;
   onClick: () => void;
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      className={`response-action-button${active ? " response-action-button--active" : ""}`}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      aria-pressed={active || undefined}
-      onClick={onClick}
-    >
-      {children}
-    </button>
+    <Tooltip content={label}>
+      <button
+        type="button"
+        className={`response-action-button${active ? " response-action-button--active" : ""}${className ? ` ${className}` : ""}`}
+        disabled={disabled}
+        title={label}
+        aria-label={label}
+        aria-pressed={active || undefined}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -933,8 +928,10 @@ function ThumbDownIcon() {
 function RegenerateIcon() {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 7v5h-5" />
-      <path d="M19 12a7 7 0 1 1-2-5" />
+      <path d="M20 11a8 8 0 0 0-14.9-4" />
+      <path d="M4 4v4h4" />
+      <path d="M4 13a8 8 0 0 0 14.9 4" />
+      <path d="M20 20v-4h-4" />
     </svg>
   );
 }
@@ -975,9 +972,28 @@ function ProcessItem({
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
+  if (item.kind === "user_message") {
+    return (
+      <div id={`item-${item.id}`} className="process-steering" data-status={item.status}>
+        <p className="feed-label">引导对话</p>
+        <div className="user-message-bubble">
+          {item.references?.length ? (
+            <InputReferenceCards
+              references={item.references}
+              variant="bubble"
+            />
+          ) : null}
+          {item.content && <MarkdownContent className="eidos-chat-prose" content={item.content} />}
+        </div>
+      </div>
+    );
+  }
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
-    return <div className="process-text"><MarkdownContent className="eidos-chat-prose" content={item.content} isStreaming={item.status === "in_progress"} /></div>;
+    return <div id={`item-${item.id}`} className="process-text"><MarkdownContent className="eidos-chat-prose" content={item.content} isStreaming={item.status === "in_progress"} />
+      {item.status !== "in_progress" && item.contentBytes !== undefined && item.contentHash && <ToolTextView
+        sessionId={item.sessionId} toolCallId={item.id} field="content" sha256={item.contentHash} totalBytes={item.contentBytes} />}
+    </div>;
   }
   if (!item.toolCall) return null;
 
@@ -1071,7 +1087,7 @@ function ShellItem({ item, toolCall }: { item: Item; toolCall: ToolCall }) {
     : gateRejected
       ? "未执行"
       : pendingVerification
-        ? "待核验"
+        ? "结果未知"
         : success
           ? "✓ 成功"
           : failed
@@ -1331,7 +1347,7 @@ function ViewImageViewer({
             autoFocus
             onClick={() => setLightboxOpen(false)}
           >
-            ×
+            <CloseIcon />
           </button>
           {previewUrl ? (
             <img src={previewUrl} alt={displayName} />
@@ -1770,7 +1786,7 @@ function ProcessLabel({ run }: { run: Run }) {
 }
 
 function RunNotice({ run }: { run: Run }) {
-  if (run.status === "succeeded" && run.reconciliationRequired !== true) return null;
+  if (run.status === "succeeded") return null;
   const presentation = terminalRunPresentation(run);
   const active = presentation ?? activeRunPresentation(run);
   if (!active || ["queued", "running", "finalizing"].includes(run.status)) return null;
@@ -1796,22 +1812,25 @@ function groupItemsByRun(items: Item[]): Array<{ runId: string; items: Item[] }>
   return groups;
 }
 
-function splitRunIntoSegments(items: Item[]): Segment[] {
+function splitRunIntoSegments(items: Item[], activities: readonly ContextCompactionActivity[] = []): Segment[] {
   const sourceSegments: Item[][] = [];
-  for (const item of items) {
-    if (item.kind === "user_message" || sourceSegments.length === 0) {
+  for (const item of [...items].sort((a, b) => a.ordinal - b.ordinal)) {
+    if ((item.kind === "user_message" && item.ordinal <= 1) || sourceSegments.length === 0) {
       sourceSegments.push([]);
     }
     const current = sourceSegments.at(-1);
     if (current) current.push(item);
   }
-  return sourceSegments.map((segmentItems) => {
-    const user = segmentItems.find((item) => item.kind === "user_message");
-    const body = segmentItems.filter((item) => item.kind !== "user_message");
+  return sourceSegments.map((segmentItems, index) => {
+    const user = segmentItems.find((item) => item.kind === "user_message" && item.ordinal <= 1);
+    const body = segmentItems.filter((item) => item !== user);
+    const nextUserAt = sourceSegments[index + 1]?.[0]?.createdAt ?? Infinity;
+    const compactions = activities.filter((activity) => activity.startedAt >= (user?.createdAt ?? 0) && activity.startedAt < nextUserAt);
+    const lastCompactionAt = Math.max(-Infinity, ...compactions.map((activity) => activity.startedAt));
     const processTools = body.filter(
       (item) => item.kind !== "assistant_message" && item.toolCall?.toolName !== "write_plan",
     );
-    if (processTools.length === 0) {
+    if (processTools.length === 0 && compactions.length === 0) {
       return {
         user,
         process: [],
@@ -1821,17 +1840,20 @@ function splitRunIntoSegments(items: Item[]): Segment[] {
       };
     }
     const lastProcessToolOrdinal = Math.max(...processTools.map((item) => item.ordinal));
+    const inProcess = (item: Item) => item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal || item.createdAt <= lastCompactionAt;
+    const process: ProcessEntry[] = body.filter((item) => item.toolCall?.toolName !== "write_plan" && inProcess(item))
+      .map((item) => ({ kind: "item", item }));
+    for (const activity of [...compactions].sort((a, b) => a.startedAt - b.startedAt || a.eventId - b.eventId)) {
+      const at = process.findIndex((entry) => entry.kind === "item" && entry.item.createdAt > activity.startedAt);
+      process.splice(at === -1 ? process.length : at, 0, { kind: "compaction", activity });
+    }
     return {
       user,
-      process: body.filter(
-        (item) =>
-          item.toolCall?.toolName !== "write_plan" &&
-          (item.kind !== "assistant_message" || item.ordinal <= lastProcessToolOrdinal),
-      ),
+      process,
       response: body.filter(
         (item) =>
           item.toolCall?.toolName === "write_plan" ||
-          (item.kind === "assistant_message" && item.ordinal > lastProcessToolOrdinal),
+          (item.kind === "assistant_message" && !inProcess(item)),
       ),
     };
   });

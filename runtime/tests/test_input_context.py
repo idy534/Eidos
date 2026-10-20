@@ -186,6 +186,6 @@ def test_context_builder_projects_current_input_reference(tmp_path: Path) -> Non
 
         assert len(reference_items) == 1
         assert "Use this context." in reference_items[0]["content"]
-        assert prepared.reference.sha256 in reference_items[0]["content"]
+        assert prepared.reference.sha256 not in reference_items[0]["content"]
     finally:
         store.close()

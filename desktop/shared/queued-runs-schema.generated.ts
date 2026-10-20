@@ -18,7 +18,8 @@ export const queuedRunSchema = {
             "mcp",
             "plugin",
             "history",
-            "excerpt"
+            "excerpt",
+            "agent"
           ],
           "title": "Kind",
           "type": "string"
@@ -106,6 +107,7 @@ export const queuedRunSchema = {
           "discriminator": {
             "mapping": {
               "deleted": "#/$defs/QueuedRunDeleted",
+              "steered": "#/$defs/QueuedRunSteered",
               "updated": "#/$defs/QueuedRunUpdated"
             },
             "propertyName": "kind"
@@ -116,6 +118,9 @@ export const queuedRunSchema = {
             },
             {
               "$ref": "#/$defs/QueuedRunDeleted"
+            },
+            {
+              "$ref": "#/$defs/QueuedRunSteered"
             }
           ],
           "title": "Change"
@@ -246,6 +251,87 @@ export const queuedRunSchema = {
       "title": "QueuedRunListResponse",
       "type": "object"
     },
+    "QueuedRunSteerRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operationid"
+        },
+        "sessionId": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "runId": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Runid",
+          "type": "string"
+        },
+        "expectedUserInput": {
+          "maxLength": 65536,
+          "title": "Expecteduserinput",
+          "type": "string"
+        },
+        "targetRunId": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Targetrunid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "runId",
+        "expectedUserInput",
+        "targetRunId"
+      ],
+      "title": "QueuedRunSteerRequest",
+      "type": "object"
+    },
+    "QueuedRunSteered": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "steered",
+          "title": "Kind",
+          "type": "string"
+        },
+        "sessionId": {
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "runId": {
+          "title": "Runid",
+          "type": "string"
+        },
+        "targetRunId": {
+          "title": "Targetrunid",
+          "type": "string"
+        },
+        "itemId": {
+          "title": "Itemid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "sessionId",
+        "runId",
+        "targetRunId",
+        "itemId"
+      ],
+      "title": "QueuedRunSteered",
+      "type": "object"
+    },
     "QueuedRunUpdateRequest": {
       "additionalProperties": false,
       "properties": {
@@ -341,6 +427,9 @@ export const queuedRunSchema = {
     "update": {
       "$ref": "#/$defs/QueuedRunUpdateRequest"
     },
+    "steer": {
+      "$ref": "#/$defs/QueuedRunSteerRequest"
+    },
     "list_request": {
       "$ref": "#/$defs/QueuedRunListRequest"
     },
@@ -352,6 +441,7 @@ export const queuedRunSchema = {
     "response",
     "delete",
     "update",
+    "steer",
     "list_request",
     "list_response"
   ],

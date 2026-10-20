@@ -127,17 +127,19 @@ def test_transport_retry_keeps_context_identity_but_links_the_last_failed_attemp
     assert cause["modelAttemptId"] != attempts[0]["id"]
 
 
-def test_tool_input_kind_failure_preserves_tool_and_actual_terminal_attempt(store):
+def test_tool_input_kind_failure_is_returned_and_model_can_continue(store):
     value, session, _ = store
     run, _ = value.create_run(session["id"], "invalid tool input")
     bad = ModelResponse(tool_calls=(ModelToolCall("bad-read", "read_file", CustomToolPayload(input="invalid")),))
-    RuntimeEngine(value, ScriptedModel([bad, bad]), lambda _: None).run(run["id"], threading.Event())
-    failed = value.read_run(run["id"])
-    cause = failed["termination"]
-    assert failed["status"] == "failed"
-    assert cause["reason"] == "TOOL_ARGUMENT_CONTRACT_VIOLATION"
-    assert cause["toolName"] == "read_file"
-    assert cause["modelAttemptId"] == value.read_model_attempts(run["id"])[-1]["id"]
+    model = ScriptedModel([bad, bad, ModelResponse(text="I will continue without that invalid call.")])
+    RuntimeEngine(value, model, lambda _: None).run(run["id"], threading.Event())
+    completed = value.read_run(run["id"])
+    assert completed["status"] == "succeeded"
+    assert model._index == 3
+    assert value.connection.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
+    attempts = value.read_model_attempts(run["id"])
+    assert [attempt["status"] for attempt in attempts] == ["failed", "failed", "completed"]
+    assert "TOOL_ARGUMENT_CONTRACT_VIOLATION" in str(model.contexts[1])
 
 
 def test_v23_upgrade_preserves_state_and_adds_no_invented_causes(

@@ -128,7 +128,8 @@ def test_protocol_repair_creates_a_new_exact_context_snapshot(tmp_path: Path) ->
                 for item in second.model_context
             ),
         )
-        assert second.plan.token_budget == expected_budget
+        assert second.plan.token_budget.model_dump(exclude={"sections"}) == expected_budget.model_dump(exclude={"sections"})
+        assert sum(section.tokens for section in second.plan.token_budget.sections) == expected_budget.estimated_input_tokens
         assert (
             second.plan.token_budget.estimated_input_tokens
             > first.plan.token_budget.estimated_input_tokens

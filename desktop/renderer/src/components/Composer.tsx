@@ -8,7 +8,9 @@ import { formatContextUsage } from "../context-usage.js";
 import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
+import type { ContextDetails } from "../../../shared/context-management.js";
 import { ModelSelector } from "./ModelSelector.js";
+import { Tooltip } from "./Tooltip.js";
 import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
 
 export interface ComposerProps {
@@ -26,6 +28,8 @@ export interface ComposerProps {
   approvalMode?: ApprovalMode | undefined;
   onApprovalModeChange?: ((mode: ApprovalMode) => void) | undefined;
   contextUsage: ContextUsage | undefined;
+  contextRunId?: string | undefined;
+  contextDetails?: ContextDetails | undefined;
   modelConfigured: boolean;
   modelLoading: boolean;
   isSubmitting: boolean;
@@ -66,6 +70,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   approvalMode = "manual",
   onApprovalModeChange,
   contextUsage,
+  contextRunId,
+  contextDetails,
   modelConfigured,
   modelLoading,
   isSubmitting,
@@ -96,6 +102,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const [list, setList] = useState<{ id: string; active: string | undefined }>();
   const [showStatus, setShowStatus] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
   const pickerList = useCallback((id: string, active: string | undefined) => setList((previous) => previous?.id === id && previous.active === active ? previous : { id, active }), []);
   const closePicker = useCallback(() => { setPicker(undefined); textareaRef.current?.focus(); }, []);
   useEffect(() => { setPicker(undefined); setShowStatus(false); setAgentCreator(undefined); }, [context?.sessionId]);
@@ -204,6 +211,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   return (
     <form
       className="composer"
+      ref={composerRef}
       onSubmit={(e) => { e.preventDefault(); if (!isSubmitDisabled) onSubmit(); }}
     >
       {hasProjectContext && (
@@ -297,6 +305,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       {context?.error && <p className="input-reference-error" role="alert">{context.error}</p>}
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
+        anchor={composerRef}
         onCreateAgent={context ? () => { setAgentCreator({ owner: context.sessionId, add: context.add }); closePicker(); } : undefined}
         onQuery={(query) => setPicker((previous) => previous ? { ...previous, query } : previous)}
         onListId={pickerList} onClose={closePicker}
@@ -349,9 +358,11 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       />
       <div className="composer-actions">
         <div className="composer-meta">
-          <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
-            disabled={!draftReady || isSubmitting || !context}
-            onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
+          <Tooltip content="添加文件、扩展或历史对话">
+            <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
+              disabled={!draftReady || isSubmitting || !context}
+              onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
+          </Tooltip>
           {onApprovalModeChange && (
             <ApprovalModeSelector
               mode={approvalMode}
@@ -360,20 +371,22 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             />
           )}
           {workMode === "plan" && (
-            <button
-              type="button"
-              className="composer-plan-badge"
-              disabled={isSubmitting}
-              onClick={() => onWorkModeChange?.("execute")}
-              aria-label="退出 Plan 模式"
-              title="退出 Plan 模式"
-            >
-              <span className="composer-plan-badge__icon" aria-hidden="true">
-                <LightbulbIcon className="composer-plan-badge__bulb" />
-                <CloseIcon className="composer-plan-badge__close" />
-              </span>
-              <span className="composer-plan-badge__text">Plan 模式</span>
-            </button>
+            <Tooltip content="退出 Plan 模式">
+              <button
+                type="button"
+                className="composer-plan-badge"
+                disabled={isSubmitting}
+                onClick={() => onWorkModeChange?.("execute")}
+                aria-label="退出 Plan 模式"
+                title="退出 Plan 模式"
+              >
+                <span className="composer-plan-badge__icon" aria-hidden="true">
+                  <LightbulbIcon className="composer-plan-badge__bulb" />
+                  <CloseIcon className="composer-plan-badge__close" />
+                </span>
+                <span className="composer-plan-badge__text">Plan 模式</span>
+              </button>
+            </Tooltip>
           )}
           {!isIdle && <span>{statusLabel}</span>}
           {!modelConfigured && (
@@ -384,7 +397,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         </div>
 
         <div className="composer-options">
-          {showContextIndicator && <ContextIndicator usage={contextUsage} />}
+          {showContextIndicator && <ContextIndicator key={contextRunId} usage={contextUsage} details={contextDetails} runId={contextRunId} />}
           {modelList && modelList.models.length > 0 && (
             <ModelSelector
               models={modelList.models}
@@ -397,38 +410,42 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           )}
 
           {showCancelButton ? (
-            <Button
-              type="button"
-              variant="primary"
-              size="medium"
-              className="composer-submit-btn composer-cancel-btn"
-              disabled={Boolean(cancelingRunId)}
-              loading={Boolean(cancelingRunId)}
-              onClick={onCancel}
-              aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
-              title={cancelingRunId ? "取消中…" : "取消 Run"}
-              icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
-            >
-              <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
-            </Button>
+            <Tooltip content={cancelingRunId ? "取消中…" : "取消 Run"}>
+              <Button
+                type="button"
+                variant="primary"
+                size="medium"
+                className="composer-submit-btn composer-cancel-btn"
+                disabled={Boolean(cancelingRunId)}
+                loading={Boolean(cancelingRunId)}
+                onClick={onCancel}
+                aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
+                title={cancelingRunId ? "取消中…" : "取消 Run"}
+                icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
+              >
+                <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
+              </Button>
+            </Tooltip>
           ) : (
-            <Button
-              type="submit"
-              variant="primary"
-              size="medium"
-              className={`composer-submit-btn${!hasDraft ? " composer-submit-btn--empty" : ""}`}
-              disabled={isSubmitDisabled}
-              loading={isSubmitting || composerMode === "starting"}
-              aria-label={buttonLabel}
-              title={buttonLabel}
-              icon={
-                !isSubmitting && composerMode !== "starting" ? (
-                  <UpArrowIcon />
-                ) : undefined
-              }
-            >
-              <span className="sr-only">{buttonLabel}</span>
-            </Button>
+            <Tooltip content={buttonLabel}>
+              <Button
+                type="submit"
+                variant="primary"
+                size="medium"
+                className={`composer-submit-btn${!hasDraft ? " composer-submit-btn--empty" : ""}`}
+                disabled={isSubmitDisabled}
+                loading={isSubmitting || composerMode === "starting"}
+                aria-label={buttonLabel}
+                title={buttonLabel}
+                icon={
+                  !isSubmitting && composerMode !== "starting" ? (
+                    <UpArrowIcon />
+                  ) : undefined
+                }
+              >
+                <span className="sr-only">{buttonLabel}</span>
+              </Button>
+            </Tooltip>
           )}
         </div>
       </div>

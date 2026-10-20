@@ -179,6 +179,7 @@ import time
 
 import eidos_runtime
 import lark
+from eidos_runtime.context.tokens import estimate_text_tokens
 from eidos_runtime.infrastructure.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.tools.contracts import ApplyPatchInput
 from eidos_runtime.tools.workspace import ToolExecutor
@@ -196,6 +197,11 @@ dependency_root = Path(sys.argv[3]).resolve()
 bundle_root = Path(sys.argv[4]).resolve()
 assert Path(sys.executable).resolve().is_relative_to(python_root)
 assert Path(eidos_runtime.__file__).resolve().is_relative_to(app_root)
+from unittest.mock import patch
+with tempfile.TemporaryDirectory(prefix="eidos-offline-tokenizer-") as token_cache:
+    with patch.dict(os.environ, {"TIKTOKEN_CACHE_DIR": token_cache}):
+        with patch("requests.get", side_effect=AssertionError("tokenizer must be offline")):
+            assert estimate_text_tokens("Read source and preserve user constraints.") < 15
 snapshot = RuntimeDependencyCatalog.from_manifest(bundle_root / "runtime.json").snapshot()
 assert snapshot.python_path == (str(dependency_root),), snapshot.python_path
 for module in ("anyio", "httpx", "lark", "mcp", "openai", "pydantic", "pydantic_ai", "pydantic_core", "tree_sitter", "dingtalk_stream", "aibot", "lark_channel", "Crypto.Cipher.AES", "eidos_runtime.infrastructure.feishu_stream"):

@@ -67,7 +67,7 @@ def test_long_task_pause_resume_cancel_uses_conditional_sqlite_facts(
         database.close()
 
 
-def test_resume_verification_blocks_changed_workspace_or_uncertain_side_effects() -> (
+def test_resume_verification_preserves_workspace_and_permission_checks() -> (
     None
 ):
     verification = ResumeVerifier.verify(
@@ -87,12 +87,12 @@ def test_resume_verification_blocks_changed_workspace_or_uncertain_side_effects(
         side_effects_may_exist=True,
     )
 
-    assert verification.outcome is ResumeOutcome.RECONCILIATION_REQUIRED
+    assert verification.outcome is ResumeOutcome.PERMISSION_CHANGED
     assert "workspace_identity_changed" in verification.reasons
     assert "git_head_changed" in verification.reasons
     assert "context_plan_changed" in verification.reasons
     assert "permission_snapshot_changed" in verification.reasons
-    assert "reconciliation_required" in verification.reasons
+    assert "reconciliation_required" not in verification.reasons
 
 
 @pytest.mark.parametrize(
@@ -104,7 +104,7 @@ def test_resume_verification_blocks_changed_workspace_or_uncertain_side_effects(
         ({"model_available": False}, ResumeOutcome.MODEL_UNAVAILABLE),
         ({"seatbelt_ready": False}, ResumeOutcome.PERMISSION_CHANGED),
         ({"checkpoint_integrity_valid": False}, ResumeOutcome.CANNOT_RESUME),
-        ({"durable_intent_unfinished": True}, ResumeOutcome.RECONCILIATION_REQUIRED),
+        ({"durable_intent_unfinished": True}, ResumeOutcome.SAFE_RESUME),
     ],
 )
 def test_resume_verification_has_typed_recovery_outcomes(

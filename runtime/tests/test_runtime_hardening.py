@@ -722,12 +722,13 @@ class RuntimeHardeningTests(unittest.TestCase):
             separators=(",", ":"),
         ).encode("utf-8")
 
-        self.assertTrue(facts.candidate_overflow)
-        self.assertLessEqual(len(facts.items), 200)
-        self.assertLessEqual(len(encoded), 768 * 1024)
+        self.assertFalse(facts.candidate_overflow)
+        self.assertLessEqual(len(facts.items), 2_000)
+        self.assertLessEqual(len(encoded), 8 * 1024 * 1024)
         self.assertIn("current goal", [item.content for item in facts.items])
+        self.assertEqual(self.store.read_item("old-0")["content"], "x" * 5_000)
 
-    def test_oversized_current_goal_fails_with_context_input_too_large(self) -> None:
+    def test_large_current_goal_that_fits_the_model_budget_is_preserved(self) -> None:
         run, item = self.store.create_run(self.session["id"], "small")
         assert self.store.connection is not None
         oversized = "x" * (800 * 1024)
@@ -739,13 +740,21 @@ class RuntimeHardeningTests(unittest.TestCase):
         )
         self.store.connection.commit()
 
-        RuntimeEngine(self.store, ScriptedModel([]), lambda _message: None).run(
+        model = ScriptedModel([ModelResponse(text="I used the bounded request context.")])
+        RuntimeEngine(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
-        failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["errorCode"], "CONTEXT_INPUT_TOO_LARGE")
+        completed = self.store.read_run(run["id"])
+        self.assertEqual(completed["status"], "succeeded")
+        self.assertIsNone(completed.get("errorCode"))
+        projected_user_input = next(
+            value["content"]
+            for value in model.contexts[0]
+            if value.get("sourceItemId") == item["id"]
+        )
+        self.assertEqual(projected_user_input, oversized)
+        self.assertEqual(self.store.read_item(item["id"])["content"], oversized)
 
     def test_compaction_count_does_not_terminate_a_run(self) -> None:
         run, _ = self.store.create_run(

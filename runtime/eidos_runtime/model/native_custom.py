@@ -8,10 +8,12 @@ import threading
 from typing import Callable
 
 import anyio
+import httpx2 as httpx
 from eidos_runtime.model.tool_content import encode_responses_tool_content
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
-from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES, function_argument_limit
+from eidos_runtime.domain.capacity import CapacityExceeded
+from eidos_runtime.file_limits import MAX_PATCH_ARGUMENT_BYTES
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     CustomToolPayload,
@@ -33,6 +35,7 @@ from eidos_runtime.model.config import ModelProfileSpec
 from eidos_runtime.model.pydantic_ai_client import (
     _cancelled_failure,
     _with_retry_diagnostics,
+    _http_failure,
     map_model_error,
 )
 from eidos_runtime.model.response_phase import resolve_response_phase, validate_end_turn
@@ -45,6 +48,7 @@ from eidos_runtime.model.retry_transport import (
     RetryTracker,
     RetryTransportClient,
 )
+from eidos_runtime.model.request_scope import run_model_request
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 
 
@@ -194,6 +198,10 @@ def map_responses_response(
     provider_name: str | None = None,
 ) -> ModelResponse:
     if _field(response, "status") != "completed":
+        if _field(response, "status") == "failed":
+            raise _response_failure(_field(response, "error"), provider_name)
+        if _field(_field(response, "incomplete_details"), "reason") == "max_output_tokens":
+            raise _capacity_error("model_output_capacity", provider_name)
         raise _protocol_error(_field(response, "provider_name"))
     custom_inputs = custom_inputs or {}
     calls: list[ModelToolCall] = []
@@ -232,9 +240,10 @@ def map_responses_response(
                 or not isinstance(name, str)
                 or not isinstance(raw_input, str)
                 or not _valid_call_identity(call_id, name)
-                or not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES)
             ):
                 raise _protocol_error(_field(response, "provider_name"))
+            if not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES):
+                raise _capacity_error("custom_tool_input_capacity", provider_name)
             calls.append(ModelToolCall(
                 call_id, name, CustomToolPayload(input=raw_input)
             ))
@@ -248,25 +257,18 @@ def map_responses_response(
                 parsed = json.loads(arguments)
             except (TypeError, ValueError):
                 raise _protocol_error(_field(response, "provider_name")) from None
-            encoded = json.dumps(
-                parsed,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
             if (
                 not isinstance(parsed, dict)
                 or not isinstance(call_id, str)
                 or not isinstance(name, str)
                 or not _valid_call_identity(call_id, name)
-                or len(encoded) > function_argument_limit(name)
             ):
                 raise _protocol_error(_field(response, "provider_name"))
             calls.append(ModelToolCall(
                 call_id, name, FunctionToolPayload(arguments=parsed)
             ))
     text = _response_text(response)
-    ModelResponseReplay(wire_api="openai_responses", reasoning_parts=tuple(reasoning_parts))
+    reasoning_parts = list(ModelResponseReplay(wire_api="openai_responses", reasoning_parts=tuple(reasoning_parts)).reasoning_parts)
     finish_reason = "tool_call" if calls else "stop"
     usage = _responses_usage(_field(response, "usage"))
     phase, phase_source = resolve_response_phase(
@@ -355,15 +357,23 @@ class OpenAIResponsesModelClient:
         instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
+        max_output_tokens: int | None = None,
+        required_tool: str | None = None,
     ) -> ModelResponse:
         with self._lock:
             if self._closed:
                 raise RuntimeError("model client is closed")
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
+        limit = self._profile_spec.max_output_tokens if max_output_tokens is None else max_output_tokens
+        if not 1 <= limit <= self._profile_spec.max_output_tokens:
+            raise ValueError("model_output_limit_invalid")
+        if required_tool is not None and (not allow_tools or not any(isinstance(tool, FunctionToolDefinition) and tool.name == required_tool for tool in tool_definitions)):
+            raise ValueError("model_output_tool_invalid")
         tracker = RetryTracker()
         try:
             return self._async_kernel.call(
+                run_model_request,
                 self._complete,
                 context,
                 cancel,
@@ -372,6 +382,8 @@ class OpenAIResponsesModelClient:
                 allow_tools,
                 tool_definitions,
                 tracker,
+                limit,
+                required_tool,
             )
         except RetryBackoffCanceled:
             raise ModelRequestError(
@@ -384,6 +396,7 @@ class OpenAIResponsesModelClient:
             APIConnectionError,
             APIStatusError,
             OSError,
+            httpx.TransportError,
         ) as error:
             failure = _cancelled_failure() if cancel.is_set() else map_model_error(error)
             if failure.provider_name is None:
@@ -393,6 +406,8 @@ class OpenAIResponsesModelClient:
             raise ModelRequestError(
                 _with_retry_diagnostics(failure, tracker)
             ) from None
+        except CapacityExceeded as error:
+            raise _capacity_error(error.reason, self._profile_spec.provider_id) from None
         except (ValueError, AssertionError):
             raise ModelRequestError(ModelRequestFailure(
                 code="protocol_error",
@@ -409,12 +424,14 @@ class OpenAIResponsesModelClient:
         allow_tools: bool,
         tool_definitions: tuple[ModelToolDefinitionLike, ...],
         retry_tracker: RetryTracker,
+        max_output_tokens: int,
+        required_tool: str | None,
     ) -> ModelResponse:
         request_kwargs: dict[str, object] = {
             "model": self._profile_spec.model_id,
             "input": encode_responses_context(context, reasoning_required=self._reasoning_effort not in (None, "none"), provider_name=self._profile_spec.provider_id, supports_images=self._profile_snapshot.supports_images),
             "instructions": instructions,
-            "max_output_tokens": self._profile_spec.max_output_tokens,
+            "max_output_tokens": max_output_tokens,
             "stream": True,
             "store": False,
         }
@@ -438,6 +455,8 @@ class OpenAIResponsesModelClient:
             ]
         else:
             request_kwargs["tools"] = []
+        if required_tool is not None:
+            request_kwargs["tool_choice"] = {"type": "function", "name": required_tool}
         if self._parallel_tool_calls is not None:
             request_kwargs["parallel_tool_calls"] = self._parallel_tool_calls
         if self._reasoning_effort is not None:
@@ -545,7 +564,7 @@ class OpenAIResponsesModelClient:
                     if isinstance(item_id, str) and isinstance(delta, str):
                         size = custom_bytes.get(item_id, 0) + len(delta.encode("utf-8"))
                         if size > MAX_CUSTOM_TOOL_INPUT_BYTES:
-                            raise ValueError("custom_tool_input_too_large")
+                            raise _capacity_error("custom_tool_input_capacity", None)
                         custom_bytes[item_id] = size
                         custom_parts.setdefault(item_id, []).append(delta)
                 elif event_type == "response.custom_tool_call_input.done":
@@ -553,7 +572,7 @@ class OpenAIResponsesModelClient:
                     raw_input = _field(event, "input")
                     if isinstance(item_id, str) and isinstance(raw_input, str):
                         if not _valid_utf8_size(raw_input, MAX_CUSTOM_TOOL_INPUT_BYTES):
-                            raise ValueError("custom_tool_input_too_large")
+                            raise _capacity_error("custom_tool_input_capacity", None)
                         custom_parts[item_id] = [raw_input]
                         custom_bytes[item_id] = len(raw_input.encode("utf-8"))
                 elif event_type == "response.function_call_arguments.delta":
@@ -562,7 +581,7 @@ class OpenAIResponsesModelClient:
                     if isinstance(item_id, str) and isinstance(delta, str):
                         size = function_bytes.get(item_id, 0) + len(delta.encode("utf-8"))
                         if size > MAX_PATCH_ARGUMENT_BYTES:
-                            raise ValueError("function_arguments_too_large")
+                            raise _capacity_error("tool_arguments_capacity", None)
                         function_bytes[item_id] = size
                         function_parts.setdefault(item_id, []).append(delta)
                 elif event_type == "response.function_call_arguments.done":
@@ -570,7 +589,7 @@ class OpenAIResponsesModelClient:
                     arguments = _field(event, "arguments")
                     if isinstance(item_id, str) and isinstance(arguments, str):
                         if not _valid_utf8_size(arguments, MAX_PATCH_ARGUMENT_BYTES):
-                            raise ValueError("function_arguments_too_large")
+                            raise _capacity_error("tool_arguments_capacity", None)
                         function_parts[item_id] = [arguments]
                         function_bytes[item_id] = len(arguments.encode("utf-8"))
                 elif event_type == "response.output_item.done":
@@ -583,12 +602,19 @@ class OpenAIResponsesModelClient:
                 elif event_type in {
                     "response.failed", "response.incomplete", "error"
                 }:
+                    incomplete = _field(_field(event, "response"), "incomplete_details")
+                    if _field(incomplete, "reason") == "max_output_tokens":
+                        raise _capacity_error("model_output_capacity", None)
+                    if event_type != "response.incomplete":
+                        raise _response_failure(_field(_field(event, "response"), "error") or _field(event, "error") or event, self._profile_spec.provider_id)
                     raise _protocol_error(_field(event, "provider_name"))
         finally:
             await close_stream(suppress_errors=cancel.is_set())
 
         if final_response is None:
-            raise _protocol_error(None)
+            raise ModelRequestError(ModelRequestFailure(
+                code="provider_unavailable", reason="stream_interrupted", retryable=True,
+            ))
         custom_inputs = {key: "".join(parts) for key, parts in custom_parts.items()}
         function_arguments = {key: "".join(parts) for key, parts in function_parts.items()}
         output = _field(final_response, "output", ())
@@ -649,6 +675,17 @@ def _field(value: object, name: str, default: object = None) -> object:
     return getattr(value, name, default)
 
 
+def _response_failure(error: object, provider_name: str | None) -> ModelRequestError:
+    code = _field(error, "code")
+    kind = _field(error, "type")
+    status = {
+        "server_error": 503, "server_is_overloaded": 503,
+        "service_unavailable": 503, "rate_limit_exceeded": 429,
+    }.get(code, 400) if isinstance(code, str) else 400
+    failure = _http_failure(status, body={"error": {"code": code, "type": kind}})
+    return ModelRequestError(failure.model_copy(update={"provider_name": provider_name}))
+
+
 def _set_field(value: object, name: str, field_value: object) -> None:
     if isinstance(value, dict):
         value[name] = field_value
@@ -661,10 +698,10 @@ def _set_field(value: object, name: str, field_value: object) -> None:
 
 def _valid_call_identity(call_id: str, name: str) -> bool:
     try:
-        return bool(call_id and name) and (
-            len(call_id.encode("utf-8")) <= MAX_TOOL_CALL_ID_BYTES
-            and len(name.encode("utf-8")) <= MAX_TOOL_NAME_BYTES
-        )
+        if (len(call_id.encode("utf-8")) > MAX_TOOL_CALL_ID_BYTES
+                or len(name.encode("utf-8")) > MAX_TOOL_NAME_BYTES):
+            raise _capacity_error("tool_identifier_capacity", None)
+        return bool(call_id and name)
     except UnicodeEncodeError:
         return False
 
@@ -674,6 +711,12 @@ def _valid_utf8_size(value: str, maximum: int) -> bool:
         return len(value.encode("utf-8")) <= maximum
     except UnicodeEncodeError:
         return False
+
+
+def _capacity_error(reason: str, provider_name: str | None) -> ModelRequestError:
+    return ModelRequestError(ModelRequestFailure(
+        code="capacity_exceeded", reason=reason, retryable=False, provider_name=provider_name,
+    ))
 
 
 def _protocol_error(provider_name: object) -> ModelRequestError:

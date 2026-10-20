@@ -20,6 +20,7 @@ from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.domain.completion import CompletionCheckRecord
 from eidos_runtime.domain.run_termination import RunTermination
 from eidos_runtime.domain.queued_runs import QueuedRunChange
+from eidos_runtime.domain.context_management import ContextCompactionRecord
 
 
 EVENT_CONTRACT_VERSION = 1
@@ -80,6 +81,8 @@ class RunStatusChangedPayload(ClosedModel):
 
 class RunUpdatedPayload(ClosedModel):
     reason: str
+    compaction: ContextCompactionRecord | None = Field(default=None, exclude_if=lambda value: value is None)
+    compaction_started_at: int | None = Field(default=None, alias="compactionStartedAt", ge=0)
     completion_check: CompletionCheckRecord | None = Field(default=None, alias="completionCheck")
     binding_id: str | None = Field(
         default=None,
@@ -155,6 +158,7 @@ class ContextCompactedPayload(ClosedModel):
     summary_id: str = Field(alias="summaryId")
     source_item_count: int = Field(alias="sourceItemCount")
     phase: str
+    compaction: ContextCompactionRecord | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class InputEventPayload(ClosedModel):

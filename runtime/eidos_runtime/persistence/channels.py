@@ -169,7 +169,7 @@ class ChannelRepository(Repository):
                     else:
                         text = {"failed": "任务执行失败，请在 Eidos 查看原因。", "stopped": "任务已停止。", "canceled": "任务已取消。", "interrupted": "任务因本机中断而停止，请在 Eidos 查看。"}[status]
                     if row["reconciliation_required"]:
-                        text += "\n部分操作结果需要在本机核验。"
+                        text += "\n部分操作结果尚未确认，详情保留在执行记录中。"
                     self._reply(connection, row["id"], "final", text)
 
     @staticmethod

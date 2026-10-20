@@ -79,7 +79,11 @@ class _RemoteEffort(BaseModel):
 
 
 class _RemoteArchitecture(BaseModel):
-    input_modalities: list[str] = Field(default_factory=list, max_length=20)
+    input_modalities: list[str] | None = Field(default=None, max_length=20)
+
+
+class _RemoteModalities(BaseModel):
+    input: list[str] | None = Field(default=None, max_length=20)
 
 
 class _RemoteProvider(BaseModel):
@@ -95,6 +99,7 @@ class _RemoteModel(BaseModel):
     max_output_tokens: int | None = Field(default=None, validation_alias=AliasChoices("max_output_tokens", "maxOutputTokens"))
     input_modalities: list[str] | None = Field(default=None, max_length=20)
     architecture: _RemoteArchitecture | None = None
+    modalities: _RemoteModalities | None = None
     top_provider: _RemoteProvider | None = None
     effort: _RemoteEffort | None = None
     reasoning: _RemoteEffort | None = None
@@ -115,7 +120,7 @@ class _RemoteModel(BaseModel):
         return value
 
     @field_validator("name", "context_window", "context_length", "max_output_tokens", "input_modalities",
-                     "architecture", "top_provider", "effort", "reasoning", "reasoning_selections", "supported_reasoning_levels", "supported_parameters", mode="wrap")
+                     "architecture", "modalities", "top_provider", "effort", "reasoning", "reasoning_selections", "supported_reasoning_levels", "supported_parameters", mode="wrap")
     @classmethod
     def optional_metadata(cls, value: object, handler: ValidatorFunctionWrapHandler) -> object:
         try:
@@ -127,6 +132,8 @@ class _RemoteModel(BaseModel):
         modalities = self.input_modalities
         if modalities is None and self.architecture is not None:
             modalities = self.architecture.input_modalities
+        if modalities is None and self.modalities is not None:
+            modalities = self.modalities.input
         reasoning = None
         levels = tuple(dict.fromkeys(self.reasoning_selections or self.supported_reasoning_levels or ())) or None
         metadata = self.reasoning if self.reasoning and self.reasoning.supported_levels else self.effort

@@ -73,6 +73,61 @@ app.whenReady().then(async () => {
     await evaluate(`new Promise(resolve => {
       const poll = () => document.querySelector('textarea:not(:disabled)') ? resolve() : setTimeout(poll, 20); poll();
     })`);
+    const frame = () => evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const sizing = () => evaluate(`(() => {
+      const form = document.querySelector('.composer');
+      const input = form.querySelector('textarea');
+      const box = form.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, height: box.height,
+        inputHeight: input.getBoundingClientRect().height, scrollable: input.scrollHeight > input.clientHeight,
+        focused: document.activeElement === input };
+    })()`);
+    const normalHeight = await evaluate(`(() => {
+      const form = document.querySelector('.composer');
+      const clone = form.cloneNode(true);
+      clone.inert = true;
+      clone.style.cssText = 'position:fixed;left:-10000px;width:' + form.getBoundingClientRect().width + 'px';
+      document.body.append(clone);
+      const height = clone.getBoundingClientRect().height;
+      clone.remove();
+      return height;
+    })()`);
+    const empty = await sizing();
+    assert.equal(empty.inputHeight, 56, "Welcome must reuse the normal 56px textarea minimum");
+    assert.ok(Math.abs(empty.height - normalHeight) <= 1, "Empty welcome and normal Composers must have the same height");
+    await evaluate("document.querySelector('textarea').focus()");
+    await win.webContents.insertText("短文本");
+    await frame();
+    const short = await sizing();
+    assert.equal(short.height, empty.height, "Short input must retain normal Composer height");
+    await evaluate("document.querySelector('textarea').select()");
+    await win.webContents.insertText(Array.from({ length: 100 }, (_, index) => `第 ${index + 1} 行：这是一段用于验证草稿向下增长的长文本。`).join("\n"));
+    await frame();
+    const long = await sizing();
+    assert.ok(Math.abs(long.top - empty.top) <= 1, "Long drafts must grow downward from the same top edge");
+    assert.ok(Math.abs(long.bottom - (800 - 16)) <= 1, "Long drafts must stop at the normal conversation bottom edge");
+    assert.ok(long.inputHeight > 168 && long.scrollable && long.focused, "Long drafts must use available space and then scroll internally");
+    if (process.env.EIDOS_WELCOME_LONG_SCREENSHOT) {
+      await writeFile(process.env.EIDOS_WELCOME_LONG_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+    }
+    const resized = [];
+    for (const height of [640, 1000]) {
+      win.setContentSize(1024, height);
+      await frame();
+      const current = await sizing();
+      assert.ok(Math.abs(current.bottom - (height - 16)) <= 1, "Resizing must keep the long draft above the normal bottom inset");
+      assert.ok(current.scrollable && current.focused, "Resizing must preserve editable, internally scrolling text");
+      resized.push({ viewportHeight: height, ...current });
+    }
+    win.setContentSize(1024, 800);
+    await frame();
+    await evaluate("document.querySelector('textarea').select()");
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Backspace" });
+    await frame();
+    const cleared = await sizing();
+    assert.equal(cleared.height, empty.height, "Clearing a long draft must restore the normal Composer height");
+    assert.equal(cleared.top, empty.top, "Clearing a long draft must preserve its top edge");
     await evaluate(`window.welcomeInput = document.querySelector('textarea'); welcomeInput.focus();
       window.originalCreate = eidosRuntime.createSession;
       eidosRuntime.createSession = () => new Promise(resolve => { window.finishCreate = async () => resolve(await originalCreate(null)); }); void 0;`);
@@ -99,7 +154,7 @@ app.whenReady().then(async () => {
     await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
     await evaluate(`(${checkWelcome.toString()})()`);
     assert.deepEqual(errors, [], "Welcome flow must have no console errors");
-    console.log(JSON.stringify({ layouts, animation, sameTextarea: true, newConversation: true }));
+    console.log(JSON.stringify({ layouts, sizing: { empty, short, long, resized, cleared }, animation, sameTextarea: true, newConversation: true }));
   } catch (error) { exitCode = 1; console.error(error); }
   finally {
     clearTimeout(deadline);

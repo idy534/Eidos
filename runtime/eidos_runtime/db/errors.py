@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.capacity import CapacityExceeded
+
 from typing import Literal
 
 
@@ -57,7 +59,7 @@ class ReconciliationRequiredError(InvalidRunStateError):
     """The Run cannot succeed until an uncertain side effect is observed."""
 
 
-class ContextLimitExceeded(RuntimeError):
+class ContextLimitExceeded(CapacityExceeded):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)

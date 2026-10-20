@@ -12,12 +12,15 @@ from types import UnionType
 from typing import Annotated, ClassVar, Literal, Protocol, Union, get_args, get_origin
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     RootModel,
     StrictInt,
     StrictStr,
+    ValidationError,
     create_model,
     field_validator,
     model_validator,
@@ -25,6 +28,7 @@ from pydantic import (
 from pydantic.fields import PydanticUndefined
 
 from eidos_runtime.file_limits import MAX_PATCH_BYTES
+from eidos_runtime.model.context_projection import without_verification_metadata
 
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
@@ -41,6 +45,18 @@ LIST_FILES_MAX_DEPTH = 5
 LIST_FILES_MAX_ENTRIES = 2_000
 SEARCH_TEXT_MAX_RESULTS = 100
 SEARCH_TEXT_MAX_INCLUDE_GLOBS = 32
+
+
+def _cap_initial_wait(value: object) -> object:
+    return min(value, 30_000) if type(value) is int else value
+
+
+def _cap_followup_wait(value: object) -> object:
+    return min(value, 60_000) if type(value) is int else value
+
+
+def _floor_shell_wait(value: object) -> object:
+    return max(value, 250) if type(value) is int and value >= 0 else value
 
 
 def _relative_path(value: str, *, allow_dot: bool = False) -> str:
@@ -178,11 +194,11 @@ class SearchTextInput(StrictToolModel):
         le=SEARCH_TEXT_MAX_RESULTS,
         description="Maximum matching lines to return.",
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_initial_wait)] = Field(
         default=10_000,
         ge=250,
         le=30_000,
-        description="How long to wait for this search before returning a sessionId.",
+        description="How long to wait for this search before returning a sessionId. Values above 30000 are capped; the search continues.",
     )
 
     @field_validator("path")
@@ -221,11 +237,11 @@ class SearchTextWaitInput(StrictToolModel):
         max_length=128,
         description="Running search session returned by search_text.",
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_followup_wait)] = Field(
         default=30_000,
         ge=250,
         le=60_000,
-        description="How long to wait for additional search results.",
+        description="How long to wait for additional search results. Values above 60000 are capped; the search continues.",
     )
 
 
@@ -279,18 +295,35 @@ class GitWriteAccess(StrEnum):
 
 
 class RunShellInput(StrictToolModel):
-    command: StrictStr = Field(min_length=1, max_length=16 * 1024)
+    # Keep the advertised contract closed while tolerating unused model arguments.
+    model_config = ConfigDict(
+        extra="ignore", json_schema_extra={"additionalProperties": False}
+    )
+
+    command: StrictStr = Field(
+        min_length=1,
+        max_length=16 * 1024,
+        validation_alias=AliasChoices("command", "cmd"),
+        description="Shell command to execute in the user's default shell.",
+    )
     cwd: StrictStr = Field(
         default=".",
-        description="Workspace-relative or Workspace canonical absolute directory path.",
+        validation_alias=AliasChoices("cwd", "workdir"),
+        description=(
+            "Workspace-relative or canonical absolute working directory. "
+            "Defaults to the current Session workspace."
+        ),
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[
+        StrictInt, BeforeValidator(_cap_initial_wait), BeforeValidator(_floor_shell_wait)
+    ] = Field(
         default=10_000,
+        validation_alias=AliasChoices("yieldTimeMs", "yield_time_ms"),
         ge=250,
         le=30_000,
         description=(
-            "Maximum initial wait. A running result includes sessionId for write_stdin; "
-            "this window does not limit the process lifetime."
+            "Wait before returning output. Defaults to 10000 ms; effective range is 250-30000 ms. "
+            "A running command continues and returns sessionId for write_stdin."
         ),
     )
     dependencyBindingId: StrictStr | None = Field(
@@ -300,8 +333,7 @@ class RunShellInput(StrictToolModel):
         max_length=256,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
         description=(
-            "Optional verified Eidos runtime binding identifier. This selects "
-            "an already-resolved environment; it does not grant paths or env values."
+            "Verified runtime environment binding; normally selected automatically."
         ),
     )
     networkAccess: NetworkAccess = Field(
@@ -319,6 +351,55 @@ class RunShellInput(StrictToolModel):
         max_length=2_000,
         description="Short user-facing reason for the requested permission.",
     )
+
+    @classmethod
+    def _unknown_argument_names(cls, arguments: dict[str, object]) -> tuple[str, ...]:
+        accepted = set(cls.model_fields)
+        for field in cls.model_fields.values():
+            if isinstance(field.validation_alias, AliasChoices):
+                accepted.update(
+                    name for name in field.validation_alias.choices
+                    if isinstance(name, str)
+                )
+        return tuple(sorted(name for name in arguments if name not in accepted))
+
+    @classmethod
+    def filter_arguments_json(cls, value: str) -> tuple[RunShellInput, tuple[str, ...]]:
+        arguments = json.loads(value)
+        if not isinstance(arguments, dict):
+            return cls.model_validate_json(value), ()
+        ignored = set(cls._unknown_argument_names(arguments))
+        arguments = {name: value for name, value in arguments.items() if name not in ignored}
+        required = {name for name, field in cls.model_fields.items() if field.is_required()}
+        while True:
+            try:
+                parsed = cls.model_validate_json(json.dumps(arguments, ensure_ascii=False))
+                return parsed, tuple(sorted(ignored))
+            except ValidationError as error:
+                issues = error.errors(include_url=False, include_input=False)
+                invalid = {issue["loc"][0] for issue in issues if issue["loc"]}
+                if invalid & required:
+                    raise
+                if any(not issue["loc"] for issue in issues):
+                    # Permission fields form one request; discard an invalid combination together.
+                    invalid.update({
+                        "networkAccess", "gitWriteAccess", "sandboxPermissions",
+                        "additionalPermissions", "justification",
+                    })
+                discarded = invalid.intersection(arguments)
+                if not discarded:
+                    raise
+                ignored.update(discarded)
+                arguments = {
+                    name: value for name, value in arguments.items() if name not in discarded
+                }
+
+    @classmethod
+    def ignored_argument_names(cls, arguments: dict[str, object]) -> tuple[str, ...]:
+        try:
+            return cls.filter_arguments_json(json.dumps(arguments, ensure_ascii=False))[1]
+        except ValidationError:
+            return cls._unknown_argument_names(arguments)
 
     @field_validator("command")
     @classmethod
@@ -398,19 +479,39 @@ class WriteStdinInput(StrictToolModel):
     sessionId: StrictStr = Field(
         min_length=1,
         max_length=256,
+        validation_alias=AliasChoices("sessionId", "session_id"),
         description="Running shell session identifier returned by run_shell.",
     )
     chars: StrictStr = Field(
         default="",
         max_length=16 * 1024,
-        description="Input to write to the session. Empty input polls for additional output; \u0003 interrupts the command.",
+        description="Input to write. Defaults to empty, which polls without writing; \u0003 interrupts the command.",
     )
-    yieldTimeMs: StrictInt = Field(
+    yieldTimeMs: Annotated[
+        StrictInt, BeforeValidator(_cap_followup_wait), BeforeValidator(_floor_shell_wait)
+    ] = Field(
         default=30_000,
+        validation_alias=AliasChoices("yieldTimeMs", "yield_time_ms"),
         ge=250,
         le=60_000,
-        description="How long to wait for the running shell session before returning.",
+        description=(
+            "Wait before returning output. Defaults to 250 ms for non-empty input, otherwise 30000 ms; "
+            "effective range is 250-60000 ms. The process continues after this window."
+        ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_input_wait(cls, value: object) -> object:
+        if (
+            isinstance(value, dict)
+            and isinstance(value.get("chars"), str)
+            and value["chars"]
+            and "yieldTimeMs" not in value
+            and "yield_time_ms" not in value
+        ):
+            return {**value, "yieldTimeMs": 250}
+        return value
 
     @field_validator("chars")
     @classmethod
@@ -1075,13 +1176,15 @@ def _project_tool_result(
 ) -> ToolResultProjection:
     data = canonical_result.get("data")
     safe_data = dict(data) if isinstance(data, dict) else {}
+    model_data = without_verification_metadata(safe_data)
+    assert isinstance(model_data, dict)
     if tool_name in {"run_shell", "write_stdin"}:
         (
             projected,
             model_projection_truncated,
             stream_omitted,
             raw_streams,
-        ) = _project_shell_data(safe_data)
+        ) = _project_shell_data(model_data)
         if model_projection_truncated:
             _set_shell_projection_markers(projected, stream_omitted)
         model_result = {
@@ -1104,12 +1207,12 @@ def _project_tool_result(
         projected = {}
         truncated = False
         budget = _ProjectionBudget()
-        for key in sorted(safe_data):
+        for key in sorted(model_data):
             if budget.keys >= _MODEL_MAX_KEYS:
                 truncated = True
                 break
             budget.keys += 1
-            value = safe_data[key]
+            value = model_data[key]
             if key in {"durationMs"}:
                 continue
             value, value_truncated = _bounded_projection_value(

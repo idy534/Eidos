@@ -4,7 +4,7 @@ import { userFacingError } from "../session-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 
 export function ToolTextView({ sessionId, toolCallId, field, sha256, totalBytes, onOpenFile }: {
-  sessionId: string; toolCallId: string; field: "diff" | "result"; sha256: string; totalBytes: number;
+  sessionId: string; toolCallId: string; field: "diff" | "result" | "content"; sha256: string; totalBytes: number;
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
   const [offsets, setOffsets] = useState<number[]>([]);
@@ -22,10 +22,10 @@ export function ToolTextView({ sessionId, toolCallId, field, sha256, totalBytes,
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [sessionId, toolCallId, field, sha256, offset]);
-  return <section aria-label={field === "diff" ? "完整补丁" : "完整工具结果"}>
-    <p>完整{field === "diff" ? "补丁" : "结果"}共 {totalBytes.toLocaleString()} 字节。</p>
+  return <section aria-label={field === "diff" ? "完整补丁" : field === "content" ? "完整回答" : "完整工具结果"}>
+    <p>完整{field === "diff" ? "补丁" : field === "content" ? "回答" : "结果"}共 {totalBytes.toLocaleString()} 字节。</p>
     {offset === undefined
-      ? <button type="button" onClick={() => setOffsets([0])}>查看完整{field === "diff" ? "补丁" : "结果"}</button>
+      ? <button type="button" onClick={() => setOffsets([0])}>查看完整{field === "diff" ? "补丁" : field === "content" ? "回答" : "结果"}</button>
       : <>
         <button type="button" disabled={loading || offsets.length < 2} onClick={() => setOffsets((values) => values.slice(0, -1))}>上一页</button>
         <button type="button" disabled={loading || !page || page.nextOffset >= page.totalCharacters} onClick={() => { if (page) setOffsets((values) => [...values, page.nextOffset]); }}>下一页</button>

@@ -1,0 +1,40 @@
+{
+  "detailsRequest": {"runId": "00000000-0000-4000-8000-000000000001"},
+  "compactRequest": {"runId": "00000000-0000-4000-8000-000000000001"},
+  "details": {
+    "runId": "00000000-0000-4000-8000-000000000001",
+    "measurement": "provider",
+    "activeTokens": 12000,
+    "projectedTokens": 11800,
+    "contextWindowTokens": 128000,
+    "sections": [{"name": "tool_results", "tokens": 8000}, {"name": "conversation", "tokens": 4000}],
+    "planId": "plan_current",
+    "updatedAt": 1700000000000,
+    "clearedToolResults": 3,
+    "calibrationSamples": 4,
+    "lastEstimationErrorPercent": -1.7,
+    "manualPending": false
+  },
+  "activity": {
+    "requestId": "00000000-0000-4000-8000-000000000002",
+    "runId": "00000000-0000-4000-8000-000000000001",
+    "eventId": 42,
+    "startedAt": 1700000000000,
+    "updatedAt": 1700000001500,
+    "status": "succeeded",
+    "trigger": "manual"
+  },
+  "compaction": {
+    "requestId": "00000000-0000-4000-8000-000000000002",
+    "stage": "finished",
+    "trigger": "manual",
+    "status": "succeeded",
+    "strategy": "model",
+    "durationMs": 1500,
+    "beforeTokens": 100000,
+    "afterTokens": 16000,
+    "inputTokens": 20000,
+    "outputTokens": 1200,
+    "sourceItemCount": 52
+  }
+}

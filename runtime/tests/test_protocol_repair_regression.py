@@ -22,6 +22,12 @@ from eidos_runtime.model.client import (  # noqa: E402
 )
 from eidos_runtime.runtime.loop import ApprovalDecision, RuntimeLoop  # noqa: E402
 from eidos_runtime.runtime.protocol_diagnostics import argument_summary  # noqa: E402
+from eidos_runtime.model.pydantic_ai_client import map_model_response  # noqa: E402
+from pydantic_ai.messages import (  # noqa: E402
+    ModelResponse as PAIModelResponse,
+    ToolCallPart,
+)
+from pydantic_ai.usage import RequestUsage  # noqa: E402
 
 
 class ProtocolRepairRegressionTests(unittest.TestCase):
@@ -39,6 +45,47 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.store.close()
         self.temporary.cleanup()
+
+    def test_truncated_tool_json_records_length_and_supports_bounded_repair(self) -> None:
+        truncated = map_model_response(PAIModelResponse(
+            parts=[ToolCallPart("apply_patch", '{"patch":"unfinished', "partial-call")],
+            finish_reason="length", provider_name="fixture-provider",
+            provider_response_id="truncated-response",
+            usage=RequestUsage(output_tokens=16000, details={"reasoning_tokens": 11481}),
+        ))
+        for recover in (False, True):
+            with self.subTest(recover=recover):
+                run, _ = self.store.create_run(self.session["id"], "Write a presentation script")
+                model = ScriptedModel([
+                    truncated,
+                    ModelResponse(text="Recovered") if recover else truncated,
+                ])
+                if not recover:
+                    model.responses = (*model.responses, ModelResponse(text="Recovered after truncation"))
+                RuntimeLoop(self.store, model, lambda _: None).run(run["id"], threading.Event())
+                result = self.store.read_run(run["id"])
+                self.assertEqual(result["status"], "succeeded")
+                self.assertNotIn("errorCode", result)
+                attempts = self.store.read_model_attempts(run["id"])
+                self.assertEqual(len(attempts), 2 if recover else 3)
+                self.assertEqual(attempts[0]["finishReason"], "length")
+                self.assertEqual(attempts[0]["usage"].output_tokens, 16000)
+                self.assertEqual(attempts[0]["providerResponseId"], "truncated-response")
+                self.assertEqual(attempts[0]["protocolDiagnostics"]["code"], "length")
+                self.assertIn({"type": "protocol_error", "code": "length"}, model.contexts[1])
+                self.assertFalse(self.store.side_effects_blocked(run["id"]))
+                assert self.store.connection is not None
+                for table in ("tool_calls JOIN items ON items.id = tool_calls.item_id", "durable_intents", "approvals"):
+                    self.assertEqual(self.store.connection.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE run_id = ?", (run["id"],)
+                    ).fetchone()[0], 0)
+                self.store.close()
+                self.store = SessionStore(self.data)
+                self.store.initialize()
+                persisted = self.store.read_model_attempts(run["id"])[0]
+                self.assertEqual(persisted["finishReason"], "length")
+                self.assertEqual(persisted["usage"].output_tokens, 16000)
+                self.assertEqual(persisted["providerResponseId"], "truncated-response")
 
     def test_multiple_workspace_mutations_are_serialized_not_rejected(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Create a Go skeleton")
@@ -112,6 +159,103 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
             ["I will create the files.", "Created the Go project skeleton."],
         )
         self.assertFalse(any("DSML" in str(value) for value in assistant_text))
+
+    def test_shell_extra_fields_do_not_block_execution_or_hide_nonzero_exit(self) -> None:
+        for exit_code, expected_code in ((0, "ok"), (7, "shell_exit_nonzero")):
+            with self.subTest(exit_code=exit_code):
+                run, _ = self.store.create_run(
+                    self.session["id"], "Run with unused arguments", approval_mode="full_access"
+                )
+                filename = f"executed-{exit_code}.txt"
+                cwd = self.workspace / f"nested-{exit_code}"
+                cwd.mkdir()
+                arguments = {
+                    "command": f"printf x >> {filename}; printf compatibility-ok; exit {exit_code}",
+                    "cwd": cwd.name,
+                    "yield_time_ms": "1500",
+                    "additionalPermissions": "null",
+                    "shell": "/not/a/shell",
+                    "yield_timeMs": -1,
+                    "sandbox_permissions": "require_escalated",
+                }
+                model = ScriptedModel([
+                    ModelResponse(tool_calls=(ModelToolCall("shell-extra", "run_shell", arguments),)),
+                    ModelResponse(text="Command result received."),
+                ])
+
+                RuntimeLoop(self.store, model, lambda _: None).run(run["id"], threading.Event())
+
+                row = self.store.connection.execute(
+                    """SELECT arguments_json, raw_arguments_json, result_json, model_result_json
+                       FROM tool_calls t JOIN items i ON i.id = t.item_id WHERE i.run_id = ?""",
+                    (run["id"],),
+                ).fetchone()
+                effective = json.loads(row["arguments_json"])
+                result = json.loads(row["result_json"])
+                self.assertEqual(json.loads(row["raw_arguments_json"]), arguments)
+                self.assertEqual(effective["command"], arguments["command"])
+                self.assertEqual(effective["cwd"], cwd.name)
+                self.assertEqual(effective, {"command": arguments["command"], "cwd": cwd.name})
+                for name in ("shell", "yield_timeMs", "sandbox_permissions"):
+                    self.assertNotIn(name, effective)
+                    self.assertIn(name, result["summary"])
+                self.assertNotIn("/not/a/shell", result["summary"])
+                for name in ("additionalPermissions", "yield_time_ms"):
+                    self.assertIn(name, result["summary"])
+                self.assertIn("Ignored invalid or unknown run_shell arguments", result["summary"])
+                self.assertEqual(result["code"], expected_code)
+                self.assertEqual(result["data"]["exitCode"], exit_code)
+                self.assertEqual(result["data"]["stdout"], "compatibility-ok")
+                self.assertEqual((cwd / filename).read_text(), "x")
+                feedback = next(item for item in reversed(model.contexts[1]) if item["type"] == "tool_result")
+                self.assertEqual(json.loads(feedback["result"])["summary"], result["summary"])
+                history_call = next(item for item in reversed(model.contexts[1]) if item["type"] == "tool_call")
+                self.assertEqual(json.loads(history_call["arguments"]), effective)
+                self.assertEqual(json.loads(row["model_result_json"])["code"], expected_code)
+                for table in ("tool_attempts a JOIN tool_calls t ON t.id = a.tool_call_id JOIN items i ON i.id = t.item_id", "durable_intents"):
+                    self.assertEqual(self.store.connection.execute(
+                        f"SELECT count(*) FROM {table} WHERE run_id = ?", (run["id"],)
+                    ).fetchone()[0], 1)
+                self.assertEqual(self.store.connection.execute(
+                    "SELECT count(*) FROM approvals WHERE run_id = ?", (run["id"],)
+                ).fetchone()[0], 0)
+                self.assertEqual(self.store.read_run(run["id"])["status"], "succeeded")
+
+                self.store.close()
+                self.store = SessionStore(self.data)
+                self.store.initialize()
+                self.assertEqual((cwd / filename).read_text(), "x")
+                persisted = self.store.connection.execute(
+                    """SELECT raw_arguments_json, result_json FROM tool_calls t
+                       JOIN items i ON i.id = t.item_id WHERE i.run_id = ?""", (run["id"],)
+                ).fetchone()
+                self.assertEqual(json.loads(persisted["raw_arguments_json"]), arguments)
+                self.assertEqual(json.loads(persisted["result_json"]), result)
+
+    def test_shell_extra_field_feedback_has_a_bounded_preview(self) -> None:
+        run, _ = self.store.create_run(
+            self.session["id"], "Run with many unused arguments", approval_mode="full_access"
+        )
+        arguments = {
+            "command": "printf bounded-feedback",
+            "a" * 2000: "unused value",
+            **{f"unknown_{index:02d}": "unused value" for index in range(10)},
+        }
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall("shell-many-extras", "run_shell", arguments),)),
+            ModelResponse(text="Result received."),
+        ])
+        RuntimeLoop(self.store, model, lambda _: None).run(run["id"], threading.Event())
+        feedback = next(item for item in model.contexts[1] if item["type"] == "tool_result")
+        result = json.loads(feedback["result"])
+        self.assertEqual(result["code"], "ok")
+        self.assertEqual(result["data"]["stdout"], "bounded-feedback")
+        self.assertIn("<nonstandard field name>", result["summary"])
+        self.assertIn("unknown_00", result["summary"])
+        self.assertIn(", ...", result["summary"])
+        self.assertNotIn("unknown_09", result["summary"])
+        self.assertNotIn("unused value", result["summary"])
+        self.assertLess(len(result["summary"]), 512)
 
     def test_declared_invalid_arguments_are_tool_errors_and_model_recovers(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Repair invalid tool arguments")
@@ -577,28 +721,23 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
         self.assertEqual(assistant_text, ["Recovered from provider protocol output."])
         self.assertFalse(any("DSML" in str(value) for value in assistant_text))
 
-    def test_repeated_protocol_failure_is_a_failed_run_not_loop_stop(self) -> None:
+    def test_repeated_invalid_tool_calls_allow_a_corrected_response(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "Keep returning bad tools")
         bad = ModelResponse(tool_calls=(
             ModelToolCall("bad-write", "write_file", {"path": "go.mod"}),
         ))
-        model = ScriptedModel([bad, bad])
+        model = ScriptedModel([bad, bad, ModelResponse(text="Recovered without executing invalid tools")])
 
         RuntimeLoop(self.store, model, lambda _message: None).run(
             run["id"], threading.Event()
         )
 
-        failed = self.store.read_run(run["id"])
-        self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["errorCode"], "MODEL_PROTOCOL_ERROR")
-        self.assertIsNone(failed.get("stopReason"))
-        self.assertEqual(failed["modelStepCount"], 1)
+        finished = self.store.read_run(run["id"])
+        self.assertEqual(finished["status"], "succeeded")
+        self.assertNotIn("errorCode", finished)
+        self.assertEqual(finished["modelStepCount"], 2)
         attempts = self.store.read_model_attempts(run["id"])
-        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed"])
-        self.assertEqual(failed["termination"]["reason"], "invalid_tool_call")
-        self.assertEqual(failed["termination"]["stage"], "tool_validation")
-        self.assertEqual(failed["termination"]["modelAttemptId"], attempts[-1]["id"])
-        self.assertEqual(failed["termination"]["toolName"], "write_file")
+        self.assertEqual([attempt["status"] for attempt in attempts], ["failed", "failed", "completed"])
         diagnostic = attempts[0]["protocolDiagnostics"]
         assert isinstance(diagnostic, dict)
         self.assertNotIn("argumentsSha256", diagnostic)

@@ -5,6 +5,8 @@ import threading
 import time
 from typing import Callable, Literal
 
+from eidos_runtime.domain.capacity import model_output_byte_budget
+
 from eidos_runtime.model.client import (
     AssistantMessagePhase,
     ResponsePhaseSource,
@@ -22,6 +24,7 @@ from eidos_runtime.sandbox.sensitive import (
     default_scanner,
 )
 from eidos_runtime.model.replay import ModelReasoningPart
+from eidos_runtime.model.request_scope import check_request_deadline
 
 
 @dataclass(frozen=True)
@@ -92,12 +95,19 @@ class ModelRunner:
 
         def on_safe_text(delta: str) -> None:
             nonlocal first_safe
+            check_request_deadline()
             if first_safe is None:
                 first_safe = self._monotonic()
             on_text(delta)
 
-        stream = StreamingSensitiveScanner(self._sensitive, on_safe_text)
+        profile = getattr(self._model, "profile_snapshot", None)
+        stream = StreamingSensitiveScanner(
+            self._sensitive, on_safe_text,
+            max_bytes=max(256, model_output_byte_budget(profile.max_output_tokens if profile is not None else 8192) - 256),
+            truncate=True,
+        )
         try:
+            check_request_deadline()
             response = self._model.complete(
                 context,
                 cancel,
@@ -106,7 +116,12 @@ class ModelRunner:
                 allow_tools=allow_tools,
                 tool_definitions=tool_definitions,
             )
+            check_request_deadline()
             text = stream.finish().text
+            if stream.truncated:
+                marker = "\n[Response preview truncated. Continue in smaller sections.]"
+                on_safe_text(marker)
+                text += marker
         except Exception as error:
             # Finish the scanner before surfacing the interruption: safe visible
             # progress is retained, while sensitive content still raises normally.
@@ -137,7 +152,7 @@ class ModelRunner:
             wire_api=response.wire_api,
             phase=response.phase,
             phase_source=response.phase_source,
-            end_turn=response.end_turn,
+            end_turn=False if stream.truncated else response.end_turn,
             usage=response.usage,
             provider_name=response.provider_name,
             resolved_model_name=response.resolved_model_name,

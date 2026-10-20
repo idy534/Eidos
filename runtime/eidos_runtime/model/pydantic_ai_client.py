@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from eidos_runtime.domain.capacity import CapacityExceeded
+
 import base64
 
 import asyncio
@@ -33,7 +35,6 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -46,7 +47,6 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from eidos_runtime.file_limits import function_argument_limit
 from eidos_runtime.model.client import (
     CustomToolDefinition,
     FunctionToolDefinition,
@@ -71,7 +71,7 @@ from eidos_runtime.model.config import (
 from eidos_runtime.model.prompts import TITLE_PROMPT, TITLE_SYSTEM_INSTRUCTIONS
 from eidos_runtime.model.response_phase import resolve_response_phase, validate_end_turn
 from eidos_runtime.model.replay import (
-    MAX_REASONING_REPLAY_BYTES, ModelReasoningPart, ModelResponseReplay,
+    ModelReasoningPart, ModelResponseReplay,
     group_response_context, read_response_replay, response_history_text,
 )
 from eidos_runtime.model.retry_transport import (
@@ -79,6 +79,8 @@ from eidos_runtime.model.retry_transport import (
     RetryTracker,
     RetryTransportClient,
 )
+from eidos_runtime.model.request_scope import run_model_request
+from eidos_runtime.model.retry import retry_after_seconds
 from eidos_runtime.runtime.resource_registry import (
     ResourceRegistry,
     RuntimeResource,
@@ -270,15 +272,23 @@ class PydanticAIModelClient:
         instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
+        max_output_tokens: int | None = None,
+        required_tool: str | None = None,
     ) -> ModelResponse:
         with self._lock:
             if self._closed:
                 raise RuntimeError("model client is closed")
         if cancel.is_set():
             raise ModelRequestError(_cancelled_failure())
+        limit = self._profile_spec.max_output_tokens if max_output_tokens is None else max_output_tokens
+        if not 1 <= limit <= self._profile_spec.max_output_tokens:
+            raise ValueError("model_output_limit_invalid")
+        if required_tool is not None and (not allow_tools or not any(isinstance(tool, FunctionToolDefinition) and tool.name == required_tool for tool in tool_definitions)):
+            raise ValueError("model_output_tool_invalid")
         retry_tracker = RetryTracker()
         try:
             return self._async_kernel.call(
+                run_model_request,
                 self._complete,
                 context,
                 cancel,
@@ -287,6 +297,8 @@ class PydanticAIModelClient:
                 allow_tools,
                 tool_definitions,
                 retry_tracker,
+                limit,
+                required_tool,
             )
         except RetryBackoffCanceled:
             raise ModelRequestError(
@@ -294,6 +306,11 @@ class PydanticAIModelClient:
             ) from None
         except ModelRequestError:
             raise
+        except CapacityExceeded as error:
+            raise ModelRequestError(ModelRequestFailure(
+                code="capacity_exceeded", reason=error.reason, retryable=False,
+                provider_name=self._profile_spec.provider_id,
+            )) from None
         except (
             ModelHTTPError,
             ModelAPIError,
@@ -301,6 +318,7 @@ class PydanticAIModelClient:
             IncompleteToolCall,
             httpx.TimeoutException,
             httpx.NetworkError,
+            httpx.RemoteProtocolError,
             httpx.HTTPStatusError,
             APITimeoutError,
             APIConnectionError,
@@ -335,10 +353,12 @@ class PydanticAIModelClient:
         allow_tools: bool,
         tool_definitions: tuple[ModelToolDefinitionLike, ...],
         retry_tracker: RetryTracker,
+        max_output_tokens: int,
+        required_tool: str | None,
     ) -> ModelResponse:
         hit_fault("model_stream_block")
         settings_values: dict[str, object] = {
-            "max_tokens": self._profile_spec.max_output_tokens,
+            "max_tokens": max_output_tokens,
             "timeout": self._profile_spec.request_timeout_seconds,
         }
         if self._parallel_tool_calls is not None:
@@ -347,6 +367,9 @@ class PydanticAIModelClient:
             settings_values["extra_body"] = self._settings_extra_body
         if self._reasoning_effort is not None:
             settings_values["openai_reasoning_effort"] = self._reasoning_effort
+        if required_tool is not None:
+            # Pydantic AI handles provider support and wire tool_choice mapping.
+            settings_values["tool_choice"] = [required_tool]
         settings = ModelSettings(**settings_values)
         parameters = ModelRequestParameters(
             function_tools=(
@@ -371,6 +394,7 @@ class PydanticAIModelClient:
                             context,
                             supports_images=self._profile_snapshot.supports_images,
                             reasoning_required=self._reasoning_selection_active(),
+                            thinking_field=self._model.profile.get("openai_chat_thinking_field"),
                         ),
                         instructions,
                     ),
@@ -380,14 +404,7 @@ class PydanticAIModelClient:
                 ) as stream:
                     stream_ref[0] = stream
                     try:
-                        reasoning_bytes = 0
                         async for event in stream:
-                            if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
-                                reasoning_bytes += len(event.part.content.encode("utf-8"))
-                            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, ThinkingPartDelta):
-                                reasoning_bytes += len((event.delta.content_delta or "").encode("utf-8"))
-                            if reasoning_bytes > MAX_REASONING_REPLAY_BYTES:
-                                raise ModelRequestError(ModelRequestFailure(code="protocol_error", retryable=False))
                             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
                                 if event.part.content:
                                     await anyio.to_thread.run_sync(
@@ -489,6 +506,7 @@ def encode_context(
     *,
     supports_images: bool = False,
     reasoning_required: bool = False,
+    thinking_field: str | None = None,
 ) -> list[ModelMessage]:
     messages: list[ModelMessage] = []
     historical_calls: set[str] = set()
@@ -512,6 +530,11 @@ def encode_context(
                 part.content, id=part.id, signature=part.signature,
                 provider_name=part.provider_name, provider_details=part.provider_details,
             ) for part in (replay.reasoning_parts if replay else ()) if part.kind == "thinking"]
+            if reasoning_required and replay is not None and not parts and thinking_field:
+                # A retained response may have no thinking tokens. Preserve an
+                # empty provider field even for a text-only assistant response;
+                # Pydantic AI currently backfills only tool-calling responses.
+                parts.append(ThinkingPart("", id=thinking_field, provider_name=replay.provider_name))
             content = item.get("content")
             if isinstance(content, str) and content:
                 phase = item.get("phase")
@@ -597,6 +620,20 @@ def encode_context(
         elif item_type == "protocol_error":
             code = item.get("code")
             if isinstance(code, str):
+                if code == "request_capacity":
+                    messages.append(PAIModelRequest([UserPromptPart(
+                        "Your previous tool call exceeded a request capacity limit. "
+                        "Split the operation into smaller calls and use paginated reads. "
+                        "No tools from that response were executed."
+                    )]))
+                    continue
+                if code == "length":
+                    messages.append(PAIModelRequest([UserPromptPart(
+                        "Your previous response reached the output token limit "
+                        "and was incomplete. Return a shorter, complete response. "
+                        "No tool calls from that response were executed."
+                    )]))
+                    continue
                 details: dict[str, object] = {}
                 for key in (
                     "toolName", "toolCallIndex", "toolCallCount",
@@ -788,7 +825,13 @@ def map_model_response(
     retry_tracker: RetryTracker | None = None,
 ) -> ModelResponse:
     calls: list[ModelToolCall] = []
-    for index, call in enumerate(response.tool_calls):
+    invalid_completion = (
+        response.state not in {None, "complete"}
+        or response.finish_reason in {"length", "content_filter", "error"}
+    )
+    # Preserve completion evidence for SamplingRuntime before parsing partial
+    # arguments. Incomplete responses must never expose executable tool calls.
+    for index, call in enumerate(() if invalid_completion else response.tool_calls):
         try:
             arguments = call.args_as_dict(raise_if_invalid=True)
         except (ValueError, AssertionError):
@@ -807,10 +850,7 @@ def map_model_response(
         call_id = call.tool_call_id or _stable_call_id(index, call.tool_name, encoded)
         if (
             not call_id
-            or len(call_id.encode("utf-8")) > MAX_TOOL_CALL_ID_BYTES
             or not call.tool_name
-            or len(call.tool_name.encode("utf-8")) > MAX_TOOL_NAME_BYTES
-            or len(encoded) > function_argument_limit(call.tool_name)
         ):
             raise ModelRequestError(ModelRequestFailure(
                 code="protocol_error",
@@ -818,13 +858,19 @@ def map_model_response(
                 provider_name=response.provider_name,
                 reason="invalid_tool_call",
             ))
+        if (len(call_id.encode("utf-8")) > MAX_TOOL_CALL_ID_BYTES
+                or len(call.tool_name.encode("utf-8")) > MAX_TOOL_NAME_BYTES):
+            raise ModelRequestError(ModelRequestFailure(
+                code="capacity_exceeded", reason="tool_identifier_capacity",
+                retryable=False, provider_name=response.provider_name,
+            ))
         calls.append(ModelToolCall(call_id, call.tool_name, arguments))
     text = response.text or ""
     reasoning_parts = tuple(ModelReasoningPart(
         content=part.content, id=part.id, signature=part.signature,
         provider_name=part.provider_name, provider_details=part.provider_details,
     ) for part in response.parts if isinstance(part, ThinkingPart))
-    ModelResponseReplay(reasoning_parts=reasoning_parts, tool_call_ids=tuple(call.provider_call_id for call in calls))
+    reasoning_parts = ModelResponseReplay(reasoning_parts=reasoning_parts, tool_call_ids=tuple(call.provider_call_id for call in calls)).reasoning_parts
     finish_reason = response.finish_reason or ("tool_call" if calls else "unknown")
     phase, phase_source = resolve_response_phase(
         ((part.provider_details or {}).get("phase") for part in response.parts if isinstance(part, TextPart)),
@@ -890,20 +936,24 @@ def _map_usage(usage: RequestUsage) -> ModelUsage:
 def map_model_error(error: BaseException) -> ModelRequestFailure:
     if isinstance(error, APITimeoutError | httpx.TimeoutException):
         return ModelRequestFailure(code="provider_timeout", retryable=True)
-    if isinstance(error, APIConnectionError | httpx.NetworkError):
+    if isinstance(error, APIConnectionError | httpx.NetworkError | httpx.RemoteProtocolError):
         return ModelRequestFailure(code="provider_unavailable", retryable=True)
     if isinstance(error, httpx.HTTPStatusError):
         _log_provider_request_rejection(error, error.response.status_code)
-        return _http_failure(error.response.status_code)
+        try:
+            body = error.response.json() if len(error.response.content) <= 16 * 1024 else None
+        except (ValueError, httpx.ResponseNotRead):
+            body = None
+        return _http_failure(error.response.status_code, body=body, headers=error.response.headers)
     if isinstance(error, APIStatusError):
         _log_provider_request_rejection(error, error.status_code)
-        return _http_failure(error.status_code)
+        return _http_failure(error.status_code, body=error.body, headers=error.response.headers)
     if isinstance(error, ModelHTTPError):
         _log_provider_request_rejection(error, error.status_code)
         context_exceeded = error.status_code == 413 or (
             error.status_code == 400 and _looks_like_context_error(error.body)
         )
-        return _http_failure(error.status_code, context_exceeded=context_exceeded)
+        return _http_failure(error.status_code, context_exceeded=context_exceeded, body=error.body, headers=error.headers)
     if isinstance(error, UnexpectedModelBehavior | ModelAPIError):
         if _looks_like_stream_transport_error(error):
             return ModelRequestFailure(
@@ -1009,8 +1059,21 @@ def _http_failure(
     status_code: int,
     *,
     context_exceeded: bool = False,
+    body: object = None,
+    headers: object = None,
 ) -> ModelRequestFailure:
-    if context_exceeded or status_code == 413:
+    details = body.get("error", body) if isinstance(body, dict) else None
+    markers = {str(details.get(key, "")).lower() for key in ("code", "type")} if isinstance(details, dict) else set()
+    quota = bool(markers & {
+        "insufficient_quota", "insufficient_balance", "quota_exceeded", "quota_exhausted",
+        "credit_balance_exhausted", "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
+        "billing_hard_limit_reached", "account_deactivated", "account_disabled",
+    })
+    reason = None
+    if quota or status_code == 402:
+        code, retryable, reason = "invalid_request", False, "insufficient_quota"
+    elif context_exceeded or status_code == 413 or (status_code in {400, 422} and _looks_like_context_error(body)):
         code, retryable = "context_exceeded", False
     elif status_code in {401, 403}:
         code, retryable = "authentication_failed", False
@@ -1026,6 +1089,8 @@ def _http_failure(
         code=code,
         retryable=retryable,
         status_code=status_code,
+        reason=reason,
+        retry_after_seconds=retry_after_seconds(headers),
     )
 
 

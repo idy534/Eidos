@@ -229,11 +229,18 @@ def test_reasoning_survives_restart_and_stays_out_of_session_items():
             store.close()
 
 
-def test_reasoning_record_rejects_oversized_payload():
-    with pytest.raises(ValueError, match="reasoning_replay_too_large"):
-        ModelResponseReplay(
-            reasoning_parts=(ModelReasoningPart(content="x" * (4 * 1024 * 1024)),)
-        )
+def test_reasoning_record_omits_oversized_provider_parts_whole():
+    replay = ModelResponseReplay.model_validate({
+        "reasoning_parts": (
+            ModelReasoningPart(content="small retained part", id="reasoning-1"),
+            ModelReasoningPart(content="x" * (4 * 1024 * 1024), id="oversized"),
+        ),
+    })
+
+    assert replay.reasoning_parts == (
+        ModelReasoningPart(content="small retained part", id="reasoning-1"),
+    )
+    assert len(replay.model_dump_json().encode("utf-8")) <= 4 * 1024 * 1024
 
 
 def test_signatures_and_provider_metadata_survive_chat_replay():
@@ -258,6 +265,91 @@ def test_signatures_and_provider_metadata_survive_chat_replay():
     thinking = messages[0].parts[0]
     assert thinking.signature == part.signature
     assert thinking.provider_details == part.provider_details
+
+
+@pytest.mark.parametrize("reasoning_required", [False, True])
+def test_empty_reasoning_uses_provider_field_only_for_retained_reasoning_history(reasoning_required):
+    replay = ModelResponseReplay(provider_name="deepseek", response_text_present=True)
+    messages = encode_context(
+        ({
+            "type": "assistant", "content": "Previous answer", "responseId": "attempt",
+            "responseReplay": replay.model_dump(mode="json"),
+        },),
+        reasoning_required=reasoning_required,
+        thinking_field="reasoning_content",
+    )
+    response = messages[0]
+    assert isinstance(response, PAIResponse)
+    thinking = [part for part in response.parts if isinstance(part, ThinkingPart)]
+    assert [part.content for part in thinking] == ([""] if reasoning_required else [])
+    if thinking:
+        assert thinking[0].id == "reasoning_content"
+        assert thinking[0].provider_name == "deepseek"
+
+
+@pytest.mark.parametrize("reasoning_selection,has_replay", [("high", True), ("none", True), ("high", False)])
+def test_provider_wire_preserves_empty_reasoning_on_previous_final_answer(reasoning_selection, has_replay):
+    import httpx2 as httpx
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from eidos_runtime.model.client import FunctionToolDefinition
+    from eidos_runtime.model.config import MODEL_CATALOG
+    from eidos_runtime.model.pydantic_ai_client import PydanticAIModelClient
+    from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
+
+    captured = []
+
+    def handler(request):
+        captured.append(json.loads(request.content))
+        chunk = {
+            "id": "fixture", "object": "chat.completion.chunk", "created": 0,
+            "model": "deepseek-flash",
+            "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+        }
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content=("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode())
+
+    kernel = RuntimeAsyncKernel()
+    kernel.start()
+    sdk = AsyncOpenAI(
+        api_key="offline-fixture", base_url="https://fixture.invalid", max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    client = PydanticAIModelClient(
+        OpenAIChatModel("deepseek-flash", provider=DeepSeekProvider(openai_client=sdk)),
+        MODEL_CATALOG.profile("deepseek-flash"), openai_client=sdk,
+        reasoning_selection=reasoning_selection, async_kernel=kernel,
+    )
+    assistant = {"type": "assistant", "content": "Original presentation is complete", "responseId": "previous"}
+    if has_replay:
+        assistant["responseReplay"] = ModelResponseReplay(
+            provider_name="deepseek", response_text_present=True,
+        ).model_dump(mode="json")
+    try:
+        client.complete(
+            ({"type": "user", "content": "Create a presentation"}, assistant,
+             {"type": "user", "content": "Add a culture page"}),
+            threading.Event(), lambda _: None, instructions="fixture",
+            tool_definitions=(FunctionToolDefinition(
+                name="list_files", description="fixture", parameters_json_schema={"type": "object"},
+            ),),
+        )
+        messages = captured[0]["messages"]
+        assert messages[-1] == {"role": "user", "content": "Add a culture page"}
+        assistants = [message for message in messages if message["role"] == "assistant"]
+        if reasoning_selection == "high" and has_replay:
+            assert assistants == [{
+                "role": "assistant", "content": "Original presentation is complete", "reasoning_content": "",
+            }]
+        elif reasoning_selection == "none":
+            assert assistants == [{"role": "assistant", "content": "Original presentation is complete"}]
+        else:
+            assert assistants == []
+            assert "Historical model response" in messages[-2]["content"]
+    finally:
+        client.close()
+        kernel.close()
 
 
 def test_partial_response_uses_history_without_orphaned_calls_or_reasoning():
@@ -641,11 +733,13 @@ def test_responses_preserves_encrypted_reasoning_item():
 
 
 @pytest.mark.parametrize("supports_reasoning", [True, False])
+@pytest.mark.parametrize("required_tool", [None, "submit_summary"])
 def test_stateless_responses_requests_encrypted_reasoning_when_supported(
     supports_reasoning,
+    required_tool,
 ):
     from types import SimpleNamespace
-    from eidos_runtime.model.client import ModelProfileSnapshot
+    from eidos_runtime.model.client import ModelProfileSnapshot, FunctionToolDefinition
     from eidos_runtime.model.config import ModelProfileSpec
     from eidos_runtime.model.native_custom import OpenAIResponsesModelClient
     from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
@@ -701,9 +795,14 @@ def test_stateless_responses_requests_encrypted_reasoning_when_supported(
             threading.Event(),
             lambda _: None,
             instructions="fixture",
-            allow_tools=False,
+            allow_tools=required_tool is not None,
+            tool_definitions=(FunctionToolDefinition(name=required_tool, description="Output", parameters_json_schema={"type": "object"}),) if required_tool else (),
+            required_tool=required_tool,
+            max_output_tokens=128,
         )
         assert captured[0]["store"] is False
+        assert captured[0]["max_output_tokens"] == 128
+        assert captured[0].get("tool_choice") == ({"type": "function", "name": required_tool} if required_tool else None)
         assert (
             captured[0].get("include") == ["reasoning.encrypted_content"]
         ) == supports_reasoning

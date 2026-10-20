@@ -20,15 +20,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
-  flex: 0 0 28px;
+  border-radius: var(--radius-sm, 6px);
   padding: 0;
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
   box-shadow: none;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  transition:
+    background-color 150ms var(--apple-spring),
+    color 150ms var(--apple-spring),
+    transform 150ms var(--apple-spring),
+    border-color 150ms var(--apple-spring);
 }
 
 .response-action-button svg {
@@ -37,16 +40,19 @@
   height: 15px;
   flex: none;
   stroke: currentColor;
+  transition: transform 200ms var(--apple-spring);
 }
 
 .response-action-button:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.055);
+  background: var(--surface-hover);
   color: var(--text);
+  transform: scale(1.05);
   box-shadow: none;
 }
 
 .response-action-button:active:not(:disabled) {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--surface-selected);
+  transform: scale(0.94);
   box-shadow: none;
 }
 
@@ -59,11 +65,23 @@
   cursor: default;
   opacity: 0.38;
   box-shadow: none;
+  transform: none;
 }
 
 .response-action-button--active {
   color: var(--text);
-  background: rgba(0, 0, 0, 0.065);
+  background: var(--surface-selected);
+}
+
+/* Semantic hover states for feedback buttons */
+.response-action-button--thumb-up:hover:not(:disabled) {
+  background: var(--status-success-bg);
+  color: var(--status-success);
+}
+
+.response-action-button--thumb-down:hover:not(:disabled) {
+  background: var(--status-danger-bg);
+  color: var(--status-danger);
 }
 
 .response-more-dropdown {
@@ -78,14 +96,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  border-radius: var(--radius-sm, 6px);
   padding: 0;
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
   box-shadow: none;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  transition:
+    background-color 150ms var(--apple-spring),
+    color 150ms var(--apple-spring),
+    transform 150ms var(--apple-spring);
 }
 
 .response-more-dropdown .dropdown-trigger svg {
@@ -97,13 +118,15 @@
 }
 
 .response-more-dropdown .dropdown-trigger:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.055);
+  background: var(--surface-hover);
   color: var(--text);
+  transform: scale(1.05);
   box-shadow: none;
 }
 
 .response-more-dropdown .dropdown-trigger:active:not(:disabled) {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--surface-selected);
+  transform: scale(0.94);
   box-shadow: none;
 }
 
@@ -113,7 +136,7 @@
 }
 
 .response-more-dropdown .dropdown-trigger[aria-expanded="true"] {
-  background: rgba(0, 0, 0, 0.065);
+  background: var(--surface-selected);
   color: var(--text);
 }
 
@@ -135,29 +158,10 @@
   pointer-events: auto;
 }
 
-/* Regenerate uses a balanced two-way refresh glyph rather than the previous
- * open-circle arrow, while keeping the same quiet icon-button surface. */
-.response-action-button[aria-label="重新回答"] {
-  position: relative;
-  border-radius: var(--radius-md);
-}
-
-.response-action-button[aria-label="重新回答"] svg {
-  display: none;
-}
-
-.response-action-button[aria-label="重新回答"]::before {
-  content: "";
-  width: 16px;
-  height: 16px;
-  flex: none;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 0 0-14.9-4'/%3E%3Cpath d='M4 4v4h4'/%3E%3Cpath d='M4 13a8 8 0 0 0 14.9 4'/%3E%3Cpath d='M20 20v-4h-4'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 0 0-14.9-4'/%3E%3Cpath d='M4 4v4h4'/%3E%3Cpath d='M4 13a8 8 0 0 0 14.9 4'/%3E%3Cpath d='M20 20v-4h-4'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
-}
-
-.response-action-button[aria-label="重新回答"]:hover:not(:disabled) {
-  background: var(--surface-muted);
+/* Regenerate uses rotation micro-interaction on hover */
+.response-action-button[aria-label="重新回答"]:hover:not(:disabled) svg {
+  transform: rotate(45deg);
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .response-model {

@@ -22,6 +22,11 @@ class QueuedRunUpdateRequest(QueuedRunDeleteRequest):
     user_input: StrictStr = Field(max_length=64 * 1024)
 
 
+class QueuedRunSteerRequest(QueuedRunDeleteRequest):
+    target_run_id: StrictStr = Field(pattern=UUID_PATTERN)
+    _canonical_id_fields = (*QueuedRunDeleteRequest._canonical_id_fields, "target_run_id")
+
+
 class QueuedRunChangeResponse(MethodResultDto):
     change: QueuedRunChange
 

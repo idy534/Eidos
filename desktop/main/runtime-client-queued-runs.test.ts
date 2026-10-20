@@ -40,6 +40,15 @@ void test("queued messages cross Main and Runtime, retain edits after restart, a
     assert.deepEqual((await client.listQueuedRuns({ sessionId: session.id })).items.map((row) => row.runId), [first.id, second.id]);
     await client.updateQueuedRun({ sessionId: session.id, runId: first.id, expectedUserInput: "first queued message", userInput: "edited queued message" });
     await client.deleteQueuedRun({ sessionId: session.id, runId: second.id, expectedUserInput: "second queued message" });
+    const steering = await client.startRun(session.id, "guide the active run", "deepseek-v4-flash");
+    const receipt = await client.steerQueuedRun({ sessionId: session.id, runId: steering.id, expectedUserInput: "guide the active run", targetRunId: active.id });
+    assert.equal(receipt.change.kind, "steered");
+    if (receipt.change.kind !== "steered") throw new Error("missing steering receipt");
+    const steeringItemId = receipt.change.itemId;
+    const steeredHistory = await client.readSession(session.id);
+    assert.equal(steeredHistory.items.find((item) => item.id === steeringItemId)?.runId, active.id);
+    assert.ok(!steeredHistory.runs.some((run) => run.id === steering.id));
+    assert.deepEqual((await client.listQueuedRuns({ sessionId: session.id })).items.map((row) => row.runId), [first.id]);
     await assert.rejects(client.deleteQueuedRun({ sessionId: session.id, runId: active.id, expectedUserInput: "Wait for network approval" }),
       (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "QUEUED_RUN_ALREADY_STARTED");
     assert.ok(notifications.some((notice) => notice.method === "run/queueChanged" && notice.params.change.kind === "deleted"));

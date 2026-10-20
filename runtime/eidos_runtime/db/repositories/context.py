@@ -7,8 +7,8 @@ import sqlite3
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts, ContextItemFact, ReconciliationOrigin
 from eidos_runtime.db.database import Repository
+from eidos_runtime.model.context_projection import text_preview, model_result_json as project_result_json
 from eidos_runtime.db.errors import (
-    ContextLimitExceeded,
     ResourceNotFoundError,
     StorageError,
 )
@@ -17,10 +17,9 @@ from eidos_runtime.runtime.contracts import ProgressSignature
 from eidos_runtime.model.response_phase import AssistantMessagePhase
 from eidos_runtime.model.replay import ModelResponseReplay
 
-# The soft limits bound unprotected history selected in one projection. Recent
-# facts are protected from compaction and may exceed the soft limit when the
-# model-visible projection still fits the separate hard serialization ceiling.
-# Neither limit is the provider model context window.
+# Summary candidates use small batches. Online history uses the separate hard
+# resource ceiling; the model's token budget decides when normal compaction is
+# due. A summary batch size must not become a small model-independent window.
 CONTEXT_PROJECTION_MAX_BYTES = 768 * 1024
 CONTEXT_PROJECTION_MAX_ITEMS = 200
 # Compaction candidates are never sent to the model. Keep their payloads
@@ -49,6 +48,8 @@ class ContextRepository(Repository):
     def _bounded_context_facts(
         self, run_id: str, *, newest: bool
     ) -> ContextFacts:
+        item_limit = CONTEXT_PROJECTION_HARD_MAX_ITEMS if newest else CONTEXT_PROJECTION_MAX_ITEMS
+        byte_limit = CONTEXT_PROJECTION_HARD_MAX_BYTES if newest else CONTEXT_PROJECTION_MAX_BYTES
         with self.lock:
             connection = self._connection()
             run = connection.execute(
@@ -85,16 +86,20 @@ class ContextRepository(Repository):
             ).fetchone()
             latest_user_row = connection.execute(
                 """
-                SELECT * FROM items
-                WHERE session_id = ? AND kind = 'user_message'
-                  AND status = 'completed'
+                SELECT items.* FROM items JOIN runs ON runs.id = items.run_id
+                WHERE items.session_id = ? AND kind = 'user_message'
+                  AND items.status = 'completed'
+                  AND run_id IN (
+                    SELECT id FROM runs WHERE creation_seq <= ?
+                      AND (id = ? OR started_at IS NOT NULL)
+                  )
                   AND NOT EXISTS (
                     SELECT 1 FROM run_revisions
                     WHERE run_revisions.source_run_id = items.run_id
                   )
-                ORDER BY creation_seq DESC LIMIT 1
+                ORDER BY runs.creation_seq DESC, items.ordinal DESC LIMIT 1
                 """,
-                (run["session_id"],),
+                (run["session_id"], run["creation_seq"], run_id),
             ).fetchone()
             recent_steps = connection.execute(
                 """
@@ -137,7 +142,10 @@ class ContextRepository(Repository):
                 )
                 if row is not None
             }
-            protected_ids = set(protected_rows)
+            ordered_protected = sorted(protected_rows.values(), key=lambda row: int(row["creation_seq"]), reverse=True)
+            protected_ids = {str(row["id"]) for row in ordered_protected[:max(0, item_limit - 1)]}
+            if goal_row is not None:
+                protected_ids.add(str(goal_row["id"]))
             excluded = source_ids | protected_ids
             excluded_sql = ""
             excluded_values: tuple[object, ...] = ()
@@ -153,10 +161,19 @@ class ContextRepository(Repository):
                 )
             """ if newest else ""
             base = f"""
-                FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                FROM items JOIN runs ON runs.id = items.run_id
+                LEFT JOIN tool_calls ON tool_calls.item_id = items.id
                 {replay_join}
                 WHERE items.session_id = ?
+                  AND items.run_id IN (
+                    SELECT id FROM runs WHERE creation_seq <= ?
+                      AND (id = ? OR started_at IS NOT NULL)
+                  )
                   AND items.status IN ('completed', 'failed', 'declined')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM input_mailbox pending
+                    WHERE pending.id = items.id AND pending.status = 'pending'
+                  )
                   AND NOT (items.kind = 'assistant_message' AND items.incomplete = 1)
                   AND NOT EXISTS (
                     SELECT 1 FROM run_revisions
@@ -187,26 +204,22 @@ class ContextRepository(Repository):
                 """
             aggregate = connection.execute(
                 f"SELECT COUNT(*), COALESCE(SUM({size_expression}), 0) {base}",
-                (run["session_id"], *excluded_values),
+                (run["session_id"], run["creation_seq"], run_id, *excluded_values),
             ).fetchone()
             metadata = connection.execute(
                 f"""
-                SELECT items.id, items.creation_seq, {size_expression} AS fact_bytes
+                SELECT items.id, {size_expression} AS fact_bytes
                 {base}
-                ORDER BY items.creation_seq {'DESC' if newest else 'ASC'} LIMIT ?
+                ORDER BY runs.creation_seq {'DESC' if newest else 'ASC'},
+                         items.ordinal {'DESC' if newest else 'ASC'} LIMIT ?
                 """,
                 (
                     run["session_id"],
+                    run["creation_seq"], run_id,
                     *excluded_values,
-                    CONTEXT_PROJECTION_MAX_ITEMS + 1,
+                    item_limit + 1,
                 ),
             ).fetchall()
-            goal_size = (
-                len(str(goal_row["content"] or "").encode("utf-8")) + 256
-                if goal_row is not None else 0
-            )
-            if goal_size > CONTEXT_PROJECTION_MAX_BYTES:
-                raise ContextLimitExceeded("current_user_goal_too_large")
             selected_ids = list(protected_ids) if newest else []
             protected_bytes = 0
             if newest and protected_ids:
@@ -224,19 +237,19 @@ class ContextRepository(Repository):
                 len(protected_ids) > CONTEXT_PROJECTION_HARD_MAX_ITEMS
                 or protected_bytes > CONTEXT_PROJECTION_HARD_MAX_BYTES
             ):
-                raise ContextLimitExceeded("internal_projection_limit")
+                protected_bytes = min(protected_bytes, byte_limit)
             selection_item_limit = max(
-                CONTEXT_PROJECTION_MAX_ITEMS, len(protected_ids)
+                item_limit, len(protected_ids)
             )
             selection_byte_limit = max(
-                CONTEXT_PROJECTION_MAX_BYTES, protected_bytes
+                byte_limit, min(protected_bytes, byte_limit)
             )
-            selected_bytes = protected_bytes
+            selected_bytes = min(protected_bytes, byte_limit)
             if (
                 len(selected_ids) > selection_item_limit
                 or selected_bytes > selection_byte_limit
             ):
-                raise ContextLimitExceeded("internal_projection_limit")
+                protected_bytes = min(protected_bytes, byte_limit)
             base_selected = 0
             for row in metadata:
                 fact_bytes = int(row["fact_bytes"])
@@ -256,21 +269,27 @@ class ContextRepository(Repository):
                 placeholders = ",".join("?" for _ in selected_ids)
                 if newest:
                     item_rows = connection.execute(
-                        f"SELECT * FROM items WHERE id IN ({placeholders})",
+                        f"""
+                        SELECT items.*, runs.creation_seq AS run_creation_seq
+                        FROM items JOIN runs ON runs.id = items.run_id
+                        WHERE items.id IN ({placeholders})
+                        """,
                         selected_ids,
                     ).fetchall()
                 else:
                     item_rows = connection.execute(
                         f"""
-                        SELECT creation_seq, id, session_id, run_id, ordinal,
-                               model_step_index, kind, status, input_references_json,
+                        SELECT items.creation_seq, items.id, items.session_id, run_id, ordinal,
+                               runs.creation_seq AS run_creation_seq,
+                               model_step_index, kind, items.status, input_references_json,
                                substr(content, 1, ?) AS content,
-                               incomplete, created_at, completed_at
-                        FROM items WHERE id IN ({placeholders})
+                               incomplete, items.created_at, items.completed_at
+                        FROM items JOIN runs ON runs.id = items.run_id
+                        WHERE items.id IN ({placeholders})
                         """,
                         (COMPACTION_FACT_VALUE_MAX_CHARS, *selected_ids),
                     ).fetchall()
-            item_rows.sort(key=lambda row: int(row["creation_seq"]))
+            item_rows.sort(key=lambda row: (int(row["run_creation_seq"]), int(row["ordinal"])))
             native_phases = {}
             response_rows = {}
             if selected_ids:
@@ -319,7 +338,7 @@ class ContextRepository(Repository):
             candidate_overflow = (
                 int(aggregate[0]) > base_selected
                 or int(aggregate[1])
-                > max(0, CONTEXT_PROJECTION_MAX_BYTES - protected_bytes)
+                > max(0, byte_limit - protected_bytes)
             )
             latest_signature = connection.execute(
                 """
@@ -352,13 +371,19 @@ class ContextRepository(Repository):
                 (run_id,),
             ).fetchall() if run["reconciliation_required"] else ()
         tools_by_item = {row["item_id"]: row for row in tool_rows}
+        # Queued input is persisted before the preceding Run finishes. Its
+        # insertion sequence must not split that Run's assistant/tool history.
+        item_order = {str(row["id"]): index for index, row in enumerate(item_rows)}
+        if newest:
+            # Metadata only bounds loading. Reserve the actual serialized bytes
+            # of protected facts before older history can consume their space.
+            # Prefer newer unprotected history, then restore conversation order.
+            item_rows.sort(key=lambda row: (
+                str(row["id"]) not in protected_ids,
+                item_order[str(row["id"])] if str(row["id"]) in protected_ids else -item_order[str(row["id"])],
+            ))
         items: list[ContextItemFact] = []
         serialized_bytes = 2
-        serialization_limit = (
-            CONTEXT_PROJECTION_HARD_MAX_BYTES
-            if protected_bytes > CONTEXT_PROJECTION_MAX_BYTES
-            else CONTEXT_PROJECTION_MAX_BYTES
-        )
         projected_candidate_bytes = 0
         projected_candidate_count = 0
         replay_cache: dict[str, ModelResponseReplay] = {}
@@ -406,17 +431,33 @@ class ContextRepository(Repository):
                 ),
                 model_result_json=model_result_json,
             )
-            size = len(json.dumps(
-                fact.model_dump(exclude_none=True),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")) + 1
-            if serialized_bytes + size > serialization_limit:
+            text_limit = max(256, min(2 * 1024 * 1024, byte_limit // 4))
+            updates = {}
+            if fact.content:
+                updates["content"] = text_preview(fact.content, text_limit,
+                    continuation=f"Original item {fact.item_id}: read_tool_output(callId='{fact.item_id}', stream='context') supports byte pages.")
+            if fact.arguments_json and len(fact.arguments_json.encode("utf-8")) > text_limit:
+                updates["arguments_json"] = json.dumps({"historicalArgumentsOmitted": True,
+                    "notice": "Historical arguments are omitted; do not replay this operation to recover its result."})
+            for field in ("result_json", "model_result_json"):
+                raw = getattr(fact, field)
+                if raw:
+                    raw = project_result_json(raw)
+                    if len(raw.encode("utf-8")) > text_limit:
+                        parsed = json.loads(raw)
+                        raw = json.dumps({"outcome": parsed.get("outcome"), "code": parsed.get("code"),
+                            "summary": parsed.get("summary"), "contextCleared": True,
+                            "sideEffectsMayExist": parsed.get("sideEffectsMayExist", False),
+                            "reconciliationRequired": parsed.get("reconciliationRequired", False),
+                            "data": {key: value for key, value in (parsed.get("data") or {}).items()
+                                if key in {"sessionId", "executionStatus", "exitCode", "termination", "path", "nextOffset", "nextLine", "outputCallId", "outputComplete", "workspaceChangeState"}},
+                            "readBack": {"tool": "read_tool_output", "callId": fact.provider_call_id,
+                                "itemId": fact.item_id, "stream": "result"}}, ensure_ascii=False)
+                    updates[field] = raw
+            fact = fact.model_copy(update=updates)
+            size = len(fact.model_dump_json(exclude_none=True).encode("utf-8")) + 1
+            if serialized_bytes + size > byte_limit:
                 candidate_overflow = True
-                if goal_row is not None and row["id"] == goal_row["id"]:
-                    raise ContextLimitExceeded("current_user_goal_too_large")
-                if str(row["id"]) in protected_ids:
-                    raise ContextLimitExceeded("internal_projection_limit")
                 continue
             items.append(fact)
             if replay is not None:
@@ -425,6 +466,7 @@ class ContextRepository(Repository):
             if str(row["id"]) not in protected_ids:
                 projected_candidate_bytes += size
                 projected_candidate_count += 1
+        items.sort(key=lambda fact: item_order[fact.item_id])
         candidate_count = int(aggregate[0])
         candidate_bytes = int(aggregate[1])
         omitted_count = max(0, candidate_count - projected_candidate_count)

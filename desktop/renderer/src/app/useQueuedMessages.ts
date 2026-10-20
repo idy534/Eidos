@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { QueuedRunChange, QueuedRunListResponse } from "../../../shared/queued-runs.js";
-import { userFacingError } from "../session-state.js";
+import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 
 export function useQueuedMessages(sessionId: string, ready: boolean) {
   const [page, setPage] = useState<QueuedRunListResponse>({ items: [] });
@@ -20,7 +20,18 @@ export function useQueuedMessages(sessionId: string, ready: boolean) {
     try {
       do {
         refreshPending.current = false;
-        const result = await window.eidosRuntime.listQueuedRuns({ sessionId, ...(afterSequence ? { afterSequence } : {}) });
+        let result: QueuedRunListResponse;
+        try {
+          result = await window.eidosRuntime.listQueuedRuns({ sessionId, ...(afterSequence ? { afterSequence } : {}) });
+        } catch (cause) {
+          // A notification has superseded this read. Complete the pending
+          // refresh before reporting a failure for the current queue.
+          if (mounted.current && token === generation.current && refreshPending.current) {
+            afterSequence = undefined;
+            continue;
+          }
+          throw cause;
+        }
         if (!mounted.current || token !== generation.current) return;
         if (refreshPending.current) { afterSequence = undefined; continue; }
         setPage((previous) => ({ ...result, items: afterSequence
@@ -29,7 +40,8 @@ export function useQueuedMessages(sessionId: string, ready: boolean) {
         setError(undefined);
       } while (refreshPending.current);
     } catch (cause) {
-      if (mounted.current && token === generation.current) setError(userFacingError(cause));
+      if (mounted.current && token === generation.current) setError(runtimeBusinessCode(cause) === "RESOURCE_NOT_FOUND"
+        ? "系统暂时无法读取当前会话的待发送消息，请刷新后重试。" : userFacingError(cause));
     } finally {
       if (reading.current === token) reading.current = undefined;
       if (mounted.current && token === generation.current) setLoading(false);
@@ -55,7 +67,7 @@ export function useQueuedMessages(sessionId: string, ready: boolean) {
 
   const project = useCallback((change: QueuedRunChange) => {
     if (change.sessionId !== sessionId) return;
-    setPage((previous) => ({ ...previous, items: change.kind === "deleted"
+    setPage((previous) => ({ ...previous, items: change.kind !== "updated"
       ? previous.items.filter((item) => item.runId !== change.runId)
       : previous.items.map((item) => item.runId === change.runId ? { ...item, userInput: change.userInput } : item) }));
     void load();

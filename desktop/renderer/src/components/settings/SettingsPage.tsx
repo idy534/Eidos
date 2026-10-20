@@ -211,7 +211,7 @@ export function SettingsPage({
               <RuntimeSettings runtime={runtime} />
             )}
 
-            {activeCategory === "worktrees" && <WorktreeSettings />}
+            {activeCategory === "worktrees" && <WorktreeSettings onShowToast={showToast} />}
           </section>
         </div>
       </main>

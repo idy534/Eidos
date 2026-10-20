@@ -141,6 +141,7 @@ required_resources=(
   "eidos_runtime/sandbox/mcp_workspace_read.sbpl"
   "eidos_runtime/extensions/mcp_launcher.py"
   "eidos_runtime/workspace/apply_patch.lark"
+  "eidos_runtime/resources/tokenizers/cl100k_base.tiktoken"
   "eidos_runtime/resources/bin/ripgrep/manifest.json"
   "eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg"
   "eidos_runtime/resources/skills/.system"

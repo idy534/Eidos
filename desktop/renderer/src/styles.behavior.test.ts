@@ -24,6 +24,13 @@ describe("renderer style ownership", () => {
   });
 });
 
+describe("focus ring", () => {
+  it("paints no ring for keyboard or pointer focus", () => {
+    expect(styles).toMatch(/--focus-ring:\s*none;/);
+    expect(styles).not.toMatch(/--focus-ring:\s*[^;]*\d+px\s+solid/);
+  });
+});
+
 describe("interactive color tokens", () => {
   it("does not use the dark green hover token", () => {
     expect(styles).not.toContain("--accent-hover");
@@ -79,6 +86,8 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.feed\s*\{[^}]*padding: 1\.25rem max\(1\.75rem, calc\(\(100% - var\(--session-content-width\)\) \/ 2\)\);/s);
     expect(styles).toMatch(/\.feed-item--assistant\s*\{[^}]*width: min\(100%, var\(--session-content-width\)\);[^}]*max-width: var\(--session-content-width\);[^}]*margin-inline: auto;[^}]*padding-left: 0\.75rem;/s);
     expect(styles).toMatch(/\.composer\s*\{[^}]*width: min\(calc\(100% - 3\.5rem\), var\(--session-content-width\)\);/s);
+    expect(styles).toMatch(/\.composer\s*\{[^}]*border:\s*1px solid rgba\(0,\s*0,\s*0,\s*0\.09\);/s);
+    expect(styles).not.toMatch(/\.composer:focus-within/);
   });
 
   it("keeps a narrow dock beside the session and aligns its header controls", () => {
@@ -157,6 +166,13 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.git-file-diff-scroll \.diff-gutter\s*\{[^}]*font-variant-numeric:\s*tabular-nums;/s);
     expect(styles).toMatch(/\.git-file-diff-scroll \.diff-code\s*\{[^}]*tab-size:\s*2;/s);
     expect(styles).toMatch(/\.git-review-stat\s*\{[^}]*font-size:\s*var\(--font-size-sidebar\);[^}]*font-variant-numeric:\s*tabular-nums;/s);
+  });
+
+  it("aligns sidebar project and session name typography with prose font while preserving sizes and weights", () => {
+    expect(styles).toMatch(/--font-prose:\s*-apple-system,\s*BlinkMacSystemFont,\s*"Segoe UI",\s*"PingFang SC",\s*"Microsoft YaHei"/);
+    expect(styles).toMatch(/\.workspace-name\s*\{[^}]*font-family:\s*var\(--font-prose\);[^}]*font-size:\s*var\(--font-size-body\);[^}]*font-weight:\s*500;/s);
+    expect(styles).toMatch(/\.session-title\s*\{[^}]*font-family:\s*var\(--font-prose\);[^}]*font-size:\s*var\(--font-size-body\);[^}]*font-weight:\s*400;/s);
+    expect(styles).toMatch(/\.sidebar-hover-card__title\s*\{[^}]*font-family:\s*var\(--font-prose\);/s);
   });
 
   it("anchors streaming scroll to avoid viewport jumps", () => {

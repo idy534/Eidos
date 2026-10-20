@@ -25,6 +25,9 @@ from eidos_runtime.db.schema import (
     V27_SCHEMA_VERSION,
     V28_SCHEMA_VERSION,
     V29_SCHEMA_VERSION,
+    V30_SCHEMA_VERSION,
+    V31_SCHEMA_VERSION,
+    V32_SCHEMA_VERSION,
     V18_SCHEMA_VERSION,
     V17_SCHEMA_VERSION,
     V16_SCHEMA_VERSION,
@@ -718,9 +721,10 @@ def _externalize_state_snapshots(
                     identifier, stored = str(row[0]), str(row[1])
                     reference = JsonBlobReference.from_json(stored)
                     if reference is not None:
-                        if reference.kind != kind and not (
-                            kind == "context-snapshot" and reference.kind == "context-snapshot-v2"
-                        ):
+                        if reference.kind != kind and (kind, reference.kind) not in {
+                            ("context-snapshot", "context-snapshot-v2"),
+                            ("step-resolution", "step-resolution-v2"),
+                        }:
                             raise StorageError("snapshot_blob_reference_invalid")
                         continue
                     replacement = blobs.put_json(kind, stored)
@@ -770,6 +774,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V27_SCHEMA_VERSION,
         V28_SCHEMA_VERSION,
         V29_SCHEMA_VERSION,
+        V30_SCHEMA_VERSION,
+        V31_SCHEMA_VERSION,
+    V32_SCHEMA_VERSION,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -852,6 +859,15 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == V29_SCHEMA_VERSION:
                 from eidos_runtime.db.channel_migration import migrate_channels
                 migrate_channels(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V30_SCHEMA_VERSION:
+                from eidos_runtime.db.model_retry_migration import migrate_model_retries
+                migrate_model_retries(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V31_SCHEMA_VERSION:
+                from eidos_runtime.db.context_query_migration import migrate_context_query_index
+                migrate_context_query_index(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V32_SCHEMA_VERSION:
+                from eidos_runtime.db.search_migration import migrate_search
+                migrate_search(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from eidos_runtime.model.context_projection import model_result_json
 import json
 import threading
 import time
@@ -51,6 +52,7 @@ class RiskAssessment(EidosFrozenStrictModel):
 def review_approval(
     model: ModelClient, evidence: str, cancel: threading.Event
 ) -> ApprovalReview:
+    evidence = model_result_json(evidence)
     started = time.monotonic()
     deadline = DeadlineCancellation(cancel, started + 60, time.monotonic)
     structured = model.profile_snapshot.supports_tools

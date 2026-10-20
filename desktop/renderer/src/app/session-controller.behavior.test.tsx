@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessionController } from "./useSessionController.js";
-import type { EidosRuntimeAPI, Session, SessionListResult, SessionSnapshot } from "../contracts.js";
+import type { EidosRuntimeAPI, Run, Session, SessionListResult, SessionSnapshot } from "../contracts.js";
 
 const mockSession1: Session = {
   id: "session-1",
@@ -112,6 +112,21 @@ describe("useSessionController real Hook behavior", () => {
     expect(readSession).toHaveBeenLastCalledWith(mockSession1.id, { itemLimit: 500, beforeItemId: "recent" });
   });
 
+  it("merges older compaction points without replacing the latest lifecycle status", async () => {
+    const activity = { requestId: "compact", runId: "run", startedAt: 1, updatedAt: 3, eventId: 3, status: "succeeded" as const };
+    const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent", contextCompactions: [activity] })
+      .mockResolvedValueOnce({ ...mockSnapshot1, contextCompactions: [
+        { ...activity, eventId: 1, updatedAt: 1, status: "running" },
+        { ...activity, requestId: "older", startedAt: 0, eventId: 2 },
+      ] });
+    setupMockRuntime({ readSession });
+    const { result } = renderHook(() => useSessionController());
+    await act(async () => { await result.current[1].selectSession(mockSession1); });
+    await act(async () => { await result.current[1].loadOlderSession(); });
+    expect(result.current[0].snapshot?.contextCompactions?.map((entry) => entry.requestId)).toEqual(["older", "compact"]);
+    expect(result.current[0].snapshot?.contextCompactions?.at(-1)?.status).toBe("succeeded");
+  });
+
   it("ignores a late history page after navigation to another Session", async () => {
     let resolveHistory!: (snapshot: SessionSnapshot) => void;
     const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent" })
@@ -132,11 +147,12 @@ describe("useSessionController real Hook behavior", () => {
       kind: "assistant_message" as const, status: "completed" as const, createdAt: 1 };
     const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent" })
       .mockResolvedValueOnce({ ...mockSnapshot1, items: [selected] });
-    setupMockRuntime({ readSession });
+    const readSessionAround = vi.fn().mockResolvedValue({ ...mockSnapshot1, items: [selected] });
+    setupMockRuntime({ readSession, readSessionAround });
     const { result } = renderHook(() => useSessionController());
     await act(async () => { await result.current[1].selectSession(mockSession1, selected.id); });
     expect(result.current[0].snapshot?.items[0]?.id).toBe(selected.id);
-    expect(readSession).toHaveBeenLastCalledWith(mockSession1.id, { itemLimit: 500, beforeItemId: "recent" });
+    expect(readSessionAround).toHaveBeenCalledWith({ sessionId: mockSession1.id, itemId: selected.id });
   });
 
   it("loads every Session page so older Projects retain their conversations", async () => {
@@ -592,6 +608,63 @@ describe("useSessionController real Hook behavior", () => {
     expect(createSession).toHaveBeenCalledWith(project.workspaceRoot, { executionMode: "local" });
     expect(result.current[0].snapshot).toEqual(mockSnapshot1);
     expect(result.current[0].draft).toBeDefined();
+  });
+
+  it("projects the first Run into the snapshot task status without an authoritative reload", async () => {
+    setupMockRuntime({ createSession: vi.fn().mockResolvedValue(mockSession1) });
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft(null));
+    await act(async () => {
+      await result.current[1].materializeDraft();
+    });
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("new");
+
+    const run: Run = {
+      id: "run-1",
+      sessionId: mockSession1.id,
+      modelId: "model-1",
+      status: "running",
+      approvalMode: "manual",
+      modelStepCount: 0,
+      createdAt: 2,
+      updatedAt: 2,
+      allowedActions: ["cancel"],
+    };
+    act(() => result.current[1].projectRun(mockSession1.id, run));
+
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("in_progress");
+    expect(result.current[0].snapshot?.runs.map((item) => item.id)).toEqual([run.id]);
+  });
+
+  it("keeps the snapshot task status in step with Run notifications", async () => {
+    setupMockRuntime({ createSession: vi.fn().mockResolvedValue(mockSession1) });
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft(null));
+    await act(async () => {
+      await result.current[1].materializeDraft();
+    });
+
+    await act(async () => {
+      result.current[1].handleRunNotification({
+        id: "run-2",
+        sessionId: mockSession1.id,
+        status: "running",
+        updatedAt: 5,
+        reconciliationRequired: false,
+      });
+    });
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("in_progress");
+
+    await act(async () => {
+      result.current[1].handleRunNotification({
+        id: "run-2",
+        sessionId: mockSession1.id,
+        status: "succeeded",
+        updatedAt: 6,
+        reconciliationRequired: false,
+      });
+    });
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("completed");
   });
 
   it("passes the first input hint when materializing a projectless draft", async () => {

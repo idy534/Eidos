@@ -1,3 +1,4 @@
+import { isSearchResponse, isFileFindResponse, type SearchRequest, type SearchResponse, type ReadAroundRequest, type FileFindRequest } from "../shared/search.js";
 import { isCustomModelSettings, isCustomProviderResult } from "../shared/custom-models.js";
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest, type ChannelReadRequest } from "../shared/channels.js";
@@ -13,7 +14,7 @@ import { isPlanningReadResponse, isUserInputRequest, isPlanResponse } from "../s
 import { isSidebarPinsResponse } from "../shared/sidebar.js";
 import { isAutomationResponse, isAutomationOrigin, type AutomationExecuteRequest, type AutomationHistoryRequest, type AutomationRunNowRequest, type AutomationResponse } from "../shared/automation.js";
 import { isQueuedRunChangeResponse, isQueuedRunListResponse } from "../shared/queued-runs.js";
-import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
 import type { RunPlanningOptions, PlanningReadResponse, AnswerInputRequest, UserInputRequest, PlanDocument, PlanEditRequest } from "../shared/planning.generated.js";
 import { isInputReference, isInputDraft, isInputPreview, isInputAssetChunk, type InputDraft, type InputPrepareRequest, type InputPreview, type InputReference, type InputAssetChunk } from "../shared/input-context.js";
@@ -108,6 +109,8 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "WORKSPACE_IDENTITY_CHANGED",
   "WORKSPACE_READ_TIMEOUT",
   "WORKSPACE_FILE_TOO_LARGE",
+  "WORKSPACE_FILE_CHANGED",
+  "WORKSPACE_PREVIEW_UNSUPPORTED",
   "WORKSPACE_FILE_NOT_FOUND",
   "WORKSPACE_SENSITIVE_CONTENT",
   "CHECKPOINT_GIT_STATE_UNAVAILABLE",
@@ -548,6 +551,34 @@ export class RuntimeClient {
     return this.validatedRequest("session/list", options, isSessionListResult);
   }
 
+  async readWorkspaceFileForFind(request: FileFindRequest): Promise<WorkspaceFilePreview> {
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    while (true) {
+      const page = await this.validatedRequest("workspace/readFileForFind", { ...request, offset }, isFileFindResponse);
+      const data = Buffer.from(page.data, "base64");
+      if (page.version !== request.version || page.nextOffset !== offset + data.length || (!page.complete && page.nextOffset <= offset) || chunks.length >= 11) throw new Error("INVALID_RUNTIME_RESPONSE");
+      chunks.push(data); offset = page.nextOffset;
+      if (page.complete || offset >= 2 * 1024 * 1024) {
+        const truncated = !page.complete;
+        const content = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks), { stream: truncated });
+        return { path: page.path, kind: page.kind, sizeBytes: page.sizeBytes, version: page.version, truncated, content,
+          ...(page.language ? { language: page.language } : {}) };
+      }
+    }
+  }
+
+  searchSessions(request: SearchRequest): Promise<SearchResponse> {
+    return this.validatedRequest("search/sessions", { ...request }, isSearchResponse);
+  }
+
+  async readSessionAround(request: ReadAroundRequest): Promise<SessionSnapshot> {
+    const snapshot = await this.validatedRequest("session/readAround", { ...request }, isSessionSnapshot);
+    const history = snapshot.inheritedHistory ?? [];
+    const inheritedRuns = [...new Map(history.map((entry) => [entry.run.id, { ...entry.run, inherited: true }])).values()];
+    return { ...snapshot, runs: [...inheritedRuns, ...snapshot.runs], items: [...history.map((entry) => ({ ...entry.item, inherited: true })), ...snapshot.items] };
+  }
+
   async readSession(
     sessionId: string,
     options: { itemLimit?: number; beforeItemId?: string } = {},
@@ -568,7 +599,7 @@ export class RuntimeClient {
     return result.session;
   }
 
-  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset = 0): Promise<ToolTextPage> {
+  readToolText(sessionId: string, toolCallId: string, field: "diff" | "result" | "content", sha256: string, offset = 0): Promise<ToolTextPage> {
     return this.validatedRequest("toolCall/readText", { sessionId, toolCallId, field, sha256, offset },
       (value): value is ToolTextPage => isToolTextPage(value)
         && value.sha256 === sha256
@@ -952,6 +983,12 @@ export class RuntimeClient {
     );
   }
 
+  async resumeRun(runId: string, operationId: string = randomUUID()): Promise<Run> {
+    const result = await this.validatedRequest("run/resume", { runId, operationId },
+      (value): value is { run: Run } => isRecord(value) && isRun(value.run));
+    return result.run;
+  }
+
   cancelRun(runId: string, operationId = randomUUID()): Promise<Run> {
     return this.validatedRequest("run/cancel", { runId, operationId }, isRun);
   }
@@ -961,6 +998,10 @@ export class RuntimeClient {
   }
   listQueuedRuns(request: QueuedRunListRequest): Promise<QueuedRunListResponse> {
     return this.validatedRequest("run/listQueued", { ...request }, isQueuedRunListResponse);
+  }
+
+  steerQueuedRun(request: QueuedRunSteerRequest): Promise<QueuedRunChangeResponse> {
+    return this.validatedRequest("run/steerQueued", { ...request, operationId: request.operationId ?? randomUUID() }, isQueuedRunChangeResponse);
   }
 
   deleteQueuedRun(request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse> {
@@ -983,6 +1024,14 @@ export class RuntimeClient {
           ...(usage.updatedAt !== undefined ? { updatedAt: usage.updatedAt } : {}),
         }
       : null;
+  }
+
+  readContextDetails(runId: string): Promise<ContextDetails> {
+    return this.validatedRequest("context/details", { runId }, isContextDetails);
+  }
+
+  requestContextCompaction(runId: string): Promise<ContextCompactionRecord> {
+    return this.validatedRequest("context/compact", { runId }, isContextCompactionRecord);
   }
 
   discoverCustomModels(input: CustomProviderRequest): Promise<CustomProviderResult> {
@@ -1413,6 +1462,11 @@ function isNotification(value: unknown): value is RuntimeNotification {
       && typeof params.phase === "string"
       && params.phase.length > 0
     );
+  }
+  if (value.method === "context/compactionUpdated") {
+    return hasOnlyKeys(params, ["sessionId", "activity"])
+      && typeof params.sessionId === "string"
+      && isContextCompactionActivity(params.activity);
   }
   if (value.method === "item/started" || value.method === "item/completed" || value.method === "item/updated") {
     const item = params.item;
@@ -1946,9 +2000,11 @@ function isSessionSnapshot(value: unknown): value is SessionSnapshot {
     isRecord(value)
     && hasOnlyKeys(value, [
       "session", "runs", "items", "stepResolutions",
-      "previousItemId", "throughEventId", "inheritedHistory",
+      "previousItemId", "throughEventId", "inheritedHistory", "contextCompactions",
     ])
     && isSession(value.session)
+    && (value.contextCompactions === undefined || Array.isArray(value.contextCompactions)
+      && value.contextCompactions.every(isContextCompactionActivity))
     && (value.inheritedHistory === undefined || Array.isArray(value.inheritedHistory) && value.inheritedHistory.every((entry) => isInheritedHistoryEntry(entry)))
     && Array.isArray(value.runs)
     && value.runs.every(isRun)
@@ -2150,7 +2206,6 @@ function isContextUsage(value: unknown): value is RuntimeContextUsage {
     && typeof value.percentUsed === "number"
     && Number.isFinite(value.percentUsed)
     && value.percentUsed >= 0
-    && value.percentUsed <= 100
     && ["provider", "estimated"].includes(String(value.source))
     && (value.updatedAt === undefined || isNonNegativeInteger(value.updatedAt))
   );
@@ -2195,6 +2250,8 @@ function isItem(value: unknown): value is Item {
       "status",
       "content",
       "incomplete",
+      "contentBytes",
+      "contentHash",
       "createdAt",
       "completedAt",
       "toolCall",
@@ -2214,6 +2271,8 @@ function isItem(value: unknown): value is Item {
     && isNonNegativeInteger(value.createdAt)
     && (value.modelStepIndex === undefined || isNonNegativeInteger(value.modelStepIndex))
     && (value.content === undefined || typeof value.content === "string")
+    && (value.contentBytes === undefined || isNonNegativeInteger(value.contentBytes))
+    && (value.contentHash === undefined || (typeof value.contentHash === "string" && /^[a-f0-9]{64}$/.test(value.contentHash)))
     && (value.incomplete === undefined || typeof value.incomplete === "boolean")
     && (value.completedAt === undefined || isNonNegativeInteger(value.completedAt))
   );
@@ -2705,3 +2764,5 @@ function approvalRequestFrom(
   }
   return undefined;
 }
+import { isContextDetails, isContextCompactionRecord, isContextCompactionActivity } from "../shared/context-management.js";
+import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";

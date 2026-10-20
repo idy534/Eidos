@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 from dataclasses import dataclass, field, replace
 from contextlib import ExitStack
 import errno
@@ -61,7 +62,6 @@ from eidos_runtime.models.runtime_dependencies import RuntimeDependencyBinding
 from eidos_runtime.runtime.state_machine import RuntimePhaseTracker, RuntimeState
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher
 from eidos_runtime.runtime.tool_execution import (
-    _uses_local_reconciliation_policy,
     HandlerOutcome,
     PreparedToolExecution,
     ToolExecutionController,
@@ -74,7 +74,7 @@ from eidos_runtime.runtime.permission_requests import PermissionRequests, networ
 from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator, PermissionDisposition
 from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, NetworkPermissions
 from eidos_runtime.tools.request_permissions import RequestPermissionsInput
-from eidos_runtime.workspace.codex_patch import PatchError
+from eidos_runtime.workspace.codex_patch import PatchError, format_patch_error
 from eidos_runtime.runtime.shell_orchestration import (
     GitWriteAccessError,
     ShellOrchestrationRequest,
@@ -147,7 +147,6 @@ from eidos_runtime.runtime.shell_process_manager import (
     ShellProcessSessionNotFound,
     ShellSessionFinalizationError,
 )
-from eidos_runtime.workspace.reader import WorkspaceReader
 
 
 logger = logging.getLogger("eidos.runtime")
@@ -165,7 +164,6 @@ _PRESENTATION_ONLY_TOOL_INPUTS = frozenset({
     "read_tool_output",
     "apply_patch",
 })
-_REFRESHABLE_RECONCILIATION_SCOPES = frozenset({"workspace"})
 
 
 def _tool_payload_value(call: ModelToolCall) -> dict[str, object] | str:
@@ -236,7 +234,6 @@ class _HandlerDependencies:
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
     permissions: PermissionRequests | None = None
-    refresh_reconciliation: Callable[..., None] | None = None
 
 
 class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
@@ -369,7 +366,11 @@ class FileChangeToolHandler:
             scope.enter_context(executor.external_write_scope(paths, effective, revalidate_permissions))
             executor.external_write_approved = decision.disposition is PermissionDisposition.ALLOW
             executor.dangerous_write = decision.requires_human_confirmation
-        except (WorkspacePathError, PatchError, ValidationError, OSError, ValueError) as error:
+        except PatchError as error:
+            return HandlerOutcome(tool_error(
+                call.name, error.code, format_patch_error(error),
+            ), "failed", "failed")
+        except (WorkspacePathError, ValidationError, OSError, ValueError) as error:
             return HandlerOutcome(tool_error(
                 call.name, getattr(error, "code", "file_prepare_failed"),
                 "File paths or permissions could not be prepared",
@@ -383,41 +384,6 @@ class FileChangeToolHandler:
         execute: Callable[[], dict[str, object]],
     ) -> VerifiedToolExecutionResult:
         executor = runtime.implementation.executor  # type: ignore[attr-defined]
-
-        def reconciliation_error() -> dict[str, object] | None:
-            unresolved = self.dependencies.store.reconciliation_file_paths(run_id)
-            if unresolved == frozenset():
-                return None
-            targets = prepared.intent_preconditions.get("paths", [prepared.intent_preconditions.get("path")])
-            try:
-                root = Path(executor.workspace.path)
-                blocked = None if unresolved is None else {(root / path).resolve() for path in unresolved}
-                requested = {(root / path).resolve() for path in targets}
-                conflict = blocked is None or not requested or any(
-                    target == origin or target in origin.parents or origin in target.parents
-                    for target in requested for origin in blocked
-                )
-            except (OSError, RuntimeError, TypeError, ValueError):
-                conflict = True
-            if conflict:
-                return tool_error(runtime.spec.name, "reconciliation_required",
-                    "This target overlaps an unresolved file effect, or the affected scope is unknown. "
-                    "Runtime attempts recovery automatically; a read-only tool call is not required.")
-            return None
-
-        error = reconciliation_error()
-        refresh = getattr(self.dependencies, 'refresh_reconciliation', None)
-        if error is not None and refresh is not None:
-            refresh(run_id=run_id, cancel=cancel)
-            error = reconciliation_error()
-        if error is not None:
-            return VerifiedToolExecutionResult(result=error)
-        unchecked_execute = execute
-
-        def execute() -> dict[str, object]:
-            # Approval/prepare may take time. Recheck after acquiring this Run's
-            # commit permit, without holding any cross-Run workspace lock.
-            return reconciliation_error() or unchecked_execute()
 
         external = bool(executor._external_writers)
         permissions = executor.write_permissions
@@ -667,8 +633,6 @@ class ShellToolHandler:
         except ShellProcessSessionNotFound:
             return HandlerOutcome(tool_error(call.name, "shell_session_not_found", "Shell session is unavailable in this Run"), "failed", "failed")
         if arguments.chars:
-            if arguments.chars != "\x03" and self.dependencies.store.side_effects_blocked(run_id):
-                return HandlerOutcome(tool_error(call.name, "reconciliation_required", "The effects of this input cannot be isolated from an unresolved operation"), "failed", "failed")
             self.dependencies.authorize_workspace_side_effect(
                 item=item,
                 prepared=PreparedToolExecution(
@@ -1673,72 +1637,13 @@ class ToolCallRuntime:
             skill_access=self.skill_access,
             runtime_dependencies=runtime_dependencies,
             permissions=self.permissions,
-            refresh_reconciliation=self._refresh_reconciliation,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)
         self.shell_runtime = ShellToolHandler(dependencies)
         self.external_runtime = ExternalToolHandler(dependencies)
         self.eidos_state_runtime = EidosStateToolHandler(dependencies)
-        self._reconciliation_refresh_state: tuple[int, int, int] | None = None
 
-    def _refresh_reconciliation(
-        self,
-        *,
-        run_id: str,
-        cancel: threading.Event,
-    ) -> None:
-        """Runtime-owned recovery; no model-selected read is a prerequisite."""
-        if not self.store.side_effects_blocked(run_id):
-            return
-        try:
-            intent_scopes = self.store.reconciliation_intent_scopes(run_id)
-        except Exception:
-            logger.warning(
-                "reconciliation_intent_scope_lookup_failed",
-                extra={"run_id": run_id},
-                exc_info=logger.isEnabledFor(logging.DEBUG),
-            )
-            return
-        if (
-            not intent_scopes
-            or not intent_scopes.issubset(_REFRESHABLE_RECONCILIATION_SCOPES)
-        ):
-            return
-        facts = self.store.context_projection_facts(run_id)
-        expected_epoch = facts.reconciliation_epoch
-        paths = self.store.reconciliation_file_paths(run_id)
-        if not paths:
-            return
-        refresh_state = (expected_epoch, facts.workspace_version, int(self.store.read_run(run_id)["modelStepCount"]))
-        if getattr(self, "_reconciliation_refresh_state", None) == refresh_state:
-            return
-        # Retry at a new model boundary, without repeatedly reading the same
-        # failed target set inside one batch.
-        self._reconciliation_refresh_state = refresh_state
-        if cancel.is_set():
-            raise RuntimeCancelled
-        try:
-            with WorkspaceReader(self.store.workspace_for_run(run_id)) as reader:
-                reader.observe_files(paths, cancel=cancel)
-        except (RuntimeCancelled, ToolCancelled):
-            raise
-        except Exception:
-            if cancel.is_set():
-                raise RuntimeCancelled
-            logger.warning(
-                "reconciliation_target_observation_failed",
-                extra={"run_id": run_id},
-                exc_info=logger.isEnabledFor(logging.DEBUG),
-            )
-            return
-        if cancel.is_set():
-            raise RuntimeCancelled
-        mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
-            run_id, expected_epoch, observed_paths=paths
-        )
-        if mutation is not None:
-            self.events.publish(mutation, run=mutation.value)
 
     def invoke_read(
         self, runtime: AdapterToolRuntime, run_id: str,
@@ -1885,8 +1790,7 @@ class ToolCallRuntime:
                 )
                 if failures >= 2:
                     return ToolBatchOutcome(
-                        status="paused",
-                        pause_reason="repeated_sensitive_tool_input",
+                        status="sensitive_rejected",
                     )
                 self.state_machine.track(RuntimeState.THINKING, "safe_tool_feedback")
                 return ToolBatchOutcome(
@@ -1913,7 +1817,7 @@ class ToolCallRuntime:
             item = mutation.value
             self.events.publish(mutation, item=item)
             effective_call = ModelToolCall(
-                call.provider_call_id, call.name, payload
+                call.provider_call_id, call.name, payload, raw_payload=raw_payload
             )
             plan = self.dispatcher.plan(
                 effective_call, step.tool_snapshot.binding(call.name),
@@ -1922,12 +1826,6 @@ class ToolCallRuntime:
                     and call.name not in step.tool_snapshot.available_names
                 ),
             )
-            if plan.side_effect != 'none' and not isinstance(plan.descriptor.runtime if plan.descriptor else None, WorkspaceMutationRuntime):
-                # Reads, coordination and unrelated file targets do not wait
-                # for a whole-Workspace recovery scan. File handlers recover
-                # only when their prepared targets actually conflict.
-                if not _uses_local_reconciliation_policy(plan, effective_call):
-                    self._refresh_reconciliation(run_id=step.run_id, cancel=cancel)
             assert (
                 plan.descriptor is not None
                 and plan.descriptor.execution_policy is not None

@@ -793,15 +793,16 @@ class RuntimeProtocolTests(unittest.TestCase):
                 current, _ = store.create_run(session["id"], "continue")
                 built = ContextBuilder(store).build(current["id"])
                 self.assertTrue(built.budget.fits)
-                self.assertTrue(built.facts.candidate_overflow)
-                self.assertLessEqual(len(built.facts.items), 200)
+                self.assertFalse(built.facts.candidate_overflow)
+                self.assertLessEqual(len(built.facts.items), 2_000)
+                self.assertLessEqual(built.facts.projection_candidate_bytes, 8 * 1024 * 1024)
                 self.assertIn(
                     "continue", [item.content for item in built.facts.items]
                 )
             finally:
                 store.close()
 
-    def test_oversized_json_escaped_item_does_not_block_snapshot_pagination(self) -> None:
+    def test_oversized_json_escaped_item_stays_within_snapshot_budget(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-snapshot-data-") as data,
             tempfile.TemporaryDirectory(prefix="eidos-snapshot-workspace-") as workspace,
@@ -815,12 +816,13 @@ class RuntimeProtocolTests(unittest.TestCase):
                 store.append_item_content(item["id"], "\n" * (512 * 1024))
                 store.complete_assistant_and_run(item["id"], run["id"])
                 snapshot = store.read_session_snapshot(session["id"])
+                stored_item = store.read_item(item["id"])
             finally:
                 store.close()
 
             self.assertGreaterEqual(len(snapshot["items"]), 1)
-            assistant = snapshot["items"][-1]
-            self.assertTrue(str(assistant["content"]).endswith("…[history truncated]"))
+            self.assertIn(item["id"], {value["id"] for value in snapshot["items"]})
+            self.assertEqual(stored_item["content"], "\n" * (512 * 1024))
             self.assertLessEqual(
                 len(json.dumps(snapshot, ensure_ascii=False).encode("utf-8")),
                 1024 * 1024,

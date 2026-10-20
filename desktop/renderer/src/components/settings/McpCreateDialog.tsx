@@ -10,6 +10,7 @@ interface McpCreateDialogProps {
   removeBusy?: boolean;
   error?: string | undefined;
   server?: McpServerRecord | null;
+  initialPreset?: Partial<McpCreateInput> | null;
   onSave: (input: McpCreateInput) => Promise<void>;
   onRemove?: (serverId: string) => Promise<void>;
   onCancel: () => void;
@@ -57,6 +58,7 @@ export function McpCreateDialog({
   removeBusy = false,
   error,
   server = null,
+  initialPreset = null,
   onSave,
   onRemove,
   onCancel,
@@ -69,10 +71,25 @@ export function McpCreateDialog({
 
   useEffect(() => {
     if (!open) return;
-    setDraft(server ? draftFromServer(server) : initialDraft());
+    if (server) {
+      setDraft(draftFromServer(server));
+    } else if (initialPreset) {
+      setDraft({
+        ...initialDraft(),
+        ...initialPreset,
+        cwd: initialPreset.cwd ?? "",
+        argv: initialPreset.argv?.length ? [...initialPreset.argv] : [""],
+        env: initialPreset.env
+          ? Object.entries(initialPreset.env).map(([name, value]) => ({ name, value }))
+          : [{ name: "", value: "" }],
+        envNames: initialPreset.envNames?.length ? [...initialPreset.envNames] : [""],
+      });
+    } else {
+      setDraft(initialDraft());
+    }
     setLocalError(undefined);
     setConfirmRemove(false);
-  }, [open, server]);
+  }, [open, server, initialPreset]);
 
   useEffect(() => {
     if (!open) return;

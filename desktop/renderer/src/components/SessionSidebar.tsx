@@ -6,6 +6,7 @@ import { groupSessionsByProject, projectSidebarGroups, sidebarTargetKey, taskSta
 import type { SidebarTarget } from "../../../shared/sidebar.js";
 import { ContextMenu } from "./DropdownMenu.js";
 import { FinderIcon, EditIcon, TrashIcon, PinIcon, AutomationsIcon } from "./MenuIcons.js";
+import { SearchIcon } from "./FindBar.js";
 import { EidosMark } from "./EidosMark.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
@@ -55,6 +56,7 @@ interface Props {
   /** Session ID currently being selected (shows local loading) */
   isSelectingSessionId?: string | undefined;
   gitStatusBySessionId?: ReadonlyMap<string, SessionGitStatus>;
+  onSearch?: (() => void) | undefined;
   onCreate: () => void;
   onCreateInProject: (workspaceRoot: string) => void;
   onSelect: (session: Session) => void;
@@ -91,7 +93,7 @@ export function SessionSidebar({
   pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
-  navigationSlot, onOpenAutomations, onOpenAutomation,
+  navigationSlot, onOpenAutomations, onOpenAutomation, onSearch,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
@@ -576,6 +578,7 @@ export function SessionSidebar({
           <span className="brand-name">Eidos</span>
           <span className="brand-badge">Desktop</span>
         </div>
+        <button className="brand-search" aria-label="搜索所有会话" title="搜索所有会话 ⌘K" disabled={disabled} onClick={onSearch}><SearchIcon /></button>
       </div>
       <PrimaryActionButton
         size="compact"
@@ -923,10 +926,26 @@ function ProjectSessionList({
           className="session-expand-all"
           onClick={() => setShowAll(true)}
         >
+          <ChevronDownIcon />
           展开全部
         </button>
       )}
     </>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg className="session-expand-all-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M4.5 6.5L8 10L11.5 6.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

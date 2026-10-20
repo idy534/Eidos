@@ -80,6 +80,42 @@ describe("Custom provider settings", () => {
     expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({ provider: "custom", modelId: "company/reasoner", apiKey: "", custom: expect.objectContaining({ name: "公司推理模型", contextWindowTokens: 64000, reasoningControl: "configured", reasoning: { defaultSelection: null, selections: ["low", "high", "xhigh"] } }) }));
   });
 
+  it.each([false, true])("fills image input for a discovered model and preserves manual overrides (editing=%s)", async editing => {
+    const custom = { providerId: "company-gateway", providerName: "公司网关", baseUrl: "https://gateway.invalid/v1", name: "已保存模型", contextWindowTokens: 64000, maxOutputTokens: 4096, supportsImages: false };
+    const model: ModelOption = { id: "custom-stable", modelId: "image-model", name: custom.name, provider: "custom", vendor: custom.providerName, url: custom.baseUrl + "/chat/completions", custom, supportsToolCall: true, supportsImages: false, supportsReasoning: false };
+    const user = userEvent.setup();
+    const api = setup({ discoverCustomModels: vi.fn().mockResolvedValue({ state: "success", message: "已获取 3 个模型", models: [
+      { id: "image-model", name: "图像模型", contextWindowTokens: 1000000, maxOutputTokens: 128000, supportsImages: true },
+      { id: "text-only", name: "文本模型", supportsImages: false },
+      { id: "unknown", name: "未知能力" },
+    ] }) }, editing ? [model] : []);
+    if (editing) await user.click(await screen.findByRole("button", { name: "编辑 已保存模型" }));
+    else await customForm(user);
+    const choose = async (id: string) => {
+      await user.click(screen.getByLabelText("模型 ID"));
+      await user.click(screen.getByRole("option", { name: new RegExp(id) }));
+    };
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    await screen.findByText("已获取 3 个模型");
+    await choose("image-model");
+    const images = screen.getByRole("checkbox", { name: "图像" });
+    expect(images).toBeChecked();
+    await user.click(images);
+    await user.click(screen.getByRole("button", { name: "测试连接" }));
+    await screen.findByText("已获取 3 个模型");
+    await choose("image-model");
+    expect(images).not.toBeChecked();
+    await choose("unknown");
+    expect(images).not.toBeChecked();
+    await choose("image-model");
+    expect(images).toBeChecked();
+    await choose("text-only");
+    expect(images).not.toBeChecked();
+    await choose("image-model");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(editing ? api.updateModel : api.createModel).toHaveBeenCalledWith(expect.objectContaining({ modelId: "image-model", custom: expect.objectContaining({ supportsImages: true }) }));
+  });
+
   it("fills a different model and reports missing metadata", async () => {
     const user = userEvent.setup(); setup(); await customForm(user);
     await user.type(screen.getByLabelText("展示名"), "我的名称");
@@ -428,5 +464,96 @@ describe("Custom provider settings", () => {
     setup({}, [builtinModel]);
     expect(await screen.findByRole("button", { name: "编辑 DeepSeek Chat" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "复制 DeepSeek Chat" })).not.toBeInTheDocument();
+  });
+
+  it("validates that context window must be greater than max output when creating a custom model", async () => {
+    const user = userEvent.setup();
+    const api = setup();
+    await customForm(user);
+    await user.type(screen.getByRole("combobox", { name: "模型 ID" }), "test-model");
+    await user.type(screen.getByLabelText("展示名"), "测试模型");
+
+    // Equal (4096 == 4096)
+    await user.type(screen.getByLabelText("上下文窗口"), "4096");
+    await user.type(screen.getByLabelText("最大输出"), "4096");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("上下文窗口必须大于最大输出。");
+    expect(api.createModel).not.toHaveBeenCalled();
+
+    // Less than (2048 < 4096)
+    await user.clear(screen.getByLabelText("上下文窗口"));
+    await user.type(screen.getByLabelText("上下文窗口"), "2048");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("上下文窗口必须大于最大输出。");
+    expect(api.createModel).not.toHaveBeenCalled();
+
+    // Greater than (8192 > 4096) -> succeeds
+    await user.clear(screen.getByLabelText("上下文窗口"));
+    await user.type(screen.getByLabelText("上下文窗口"), "8192");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(api.createModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: "test-model",
+        custom: expect.objectContaining({
+          contextWindowTokens: 8192,
+          maxOutputTokens: 4096,
+        }),
+      }),
+    );
+  });
+
+  it("validates that context window must be greater than max output when editing a custom model", async () => {
+    const custom = {
+      providerId: "company-gateway",
+      providerName: "公司网关",
+      baseUrl: "https://gateway.invalid/v1",
+      name: "已保存模型",
+      contextWindowTokens: 64000,
+      maxOutputTokens: 4096,
+    };
+    const model = {
+      id: "custom-stable",
+      modelId: "remote-id",
+      name: custom.name,
+      provider: "custom",
+      vendor: custom.providerName,
+      url: custom.baseUrl + "/chat/completions",
+      custom,
+      supportsToolCall: true,
+      supportsImages: false,
+      supportsReasoning: false,
+    } satisfies ModelOption;
+    const user = userEvent.setup();
+    const api = setup({}, [model]);
+
+    await user.click(await screen.findByRole("button", { name: "编辑 已保存模型" }));
+
+    // Equal (4096 == 4096)
+    await user.clear(screen.getByLabelText("上下文窗口"));
+    await user.type(screen.getByLabelText("上下文窗口"), "4096");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("上下文窗口必须大于最大输出。");
+    expect(api.updateModel).not.toHaveBeenCalled();
+
+    // Less than (2048 < 4096)
+    await user.clear(screen.getByLabelText("上下文窗口"));
+    await user.type(screen.getByLabelText("上下文窗口"), "2048");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("上下文窗口必须大于最大输出。");
+    expect(api.updateModel).not.toHaveBeenCalled();
+
+    // Greater than (32000 > 4096) -> succeeds
+    await user.clear(screen.getByLabelText("上下文窗口"));
+    await user.type(screen.getByLabelText("上下文窗口"), "32000");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(api.updateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: model.id,
+        custom: expect.objectContaining({
+          contextWindowTokens: 32000,
+          maxOutputTokens: 4096,
+        }),
+      }),
+    );
   });
 });

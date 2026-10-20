@@ -257,6 +257,8 @@
 
 .artifact-image-preview p { margin: 0; color: var(--text-on-accent); }
 .artifact-image-preview__close {
+  display: grid;
+  place-items: center;
   position: absolute;
   top: 1rem;
   right: 1rem;
@@ -268,8 +270,9 @@
   color: var(--text-on-accent);
   background: rgb(255 255 255 / 16%);
   font-size: 1.5rem;
-  line-height: 1;
+  line-height: 0;
 }
+.artifact-image-preview__close > svg { display: block; width: 1.15rem; height: 1.15rem; }
 
 .artifact-image-preview__close:hover:not(:disabled) { background: rgb(255 255 255 / 26%); }
 

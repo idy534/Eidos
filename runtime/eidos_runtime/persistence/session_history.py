@@ -152,19 +152,6 @@ class PreparedHistory(EidosFrozenStrictModel):
 
 
 class SessionHistoryRepository(Repository):
-    def assert_reconciled(self, session_id: str) -> None:
-        with self.lock:
-            if (
-                self._connection()
-                .execute(
-                    "SELECT 1 FROM runs WHERE session_id=? AND reconciliation_required=1 LIMIT 1",
-                    (session_id,),
-                )
-                .fetchone()
-            ):
-                raise InvalidRunStateError(
-                    "source session requires side-effect reconciliation"
-                )
 
     def source(self, session_id: str) -> SessionForkSource | None:
         with self.lock:
@@ -177,6 +164,14 @@ class SessionHistoryRepository(Repository):
                 .fetchone()
             )
             return SessionForkSource.model_validate_json(row[0]) if row else None
+
+    def item_record(self, session_id: str, item_id: str) -> HistoryRecord | None:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT * FROM session_history_entries WHERE session_id=? AND item_id=?",
+                (session_id, item_id),
+            ).fetchone()
+        return self._record(row) if row is not None else None
 
     def _record(self, row: sqlite3.Row) -> HistoryRecord:
         try:
@@ -438,7 +433,6 @@ class SessionHistoryRepository(Repository):
             )
             if current_anchor.item != prepared.anchor.item:
                 raise InvalidRunStateError("source answer changed during capture")
-            self.assert_reconciled(request.source_session_id)
             sessions = SessionRepository(self.database)
             projection = sessions.read_session_projection(request.source_session_id)
             if projection is None:
@@ -648,6 +642,8 @@ class SessionHistoryRepository(Repository):
 
     def with_history(self, facts: ContextFacts, *, newest: bool) -> ContextFacts:
         from eidos_runtime.db.repositories.context import (
+            CONTEXT_PROJECTION_HARD_MAX_BYTES,
+            CONTEXT_PROJECTION_HARD_MAX_ITEMS,
             CONTEXT_PROJECTION_MAX_BYTES,
             CONTEXT_PROJECTION_MAX_ITEMS,
         )
@@ -658,13 +654,14 @@ class SessionHistoryRepository(Repository):
             excluded = set(
                 facts.compact_summary.source_item_ids if facts.compact_summary else ()
             )
-            native_size = len(
-                json.dumps(
-                    [v.model_dump() for v in facts.items], ensure_ascii=False
-                ).encode()
+            byte_limit = CONTEXT_PROJECTION_HARD_MAX_BYTES if newest else CONTEXT_PROJECTION_MAX_BYTES
+            item_limit = CONTEXT_PROJECTION_HARD_MAX_ITEMS if newest else CONTEXT_PROJECTION_MAX_ITEMS
+            native_size = 2 + sum(
+                len(fact.model_dump_json(exclude_none=True).encode("utf-8")) + 1
+                for fact in facts.items
             )
-            remaining = max(0, CONTEXT_PROJECTION_MAX_BYTES - native_size)
-            capacity = max(0, CONTEXT_PROJECTION_MAX_ITEMS - len(facts.items))
+            remaining = max(0, byte_limit - native_size)
+            capacity = max(0, item_limit - len(facts.items))
             rows = self._connection().execute(
                 "SELECT * FROM session_history_entries WHERE session_id=? AND context_eligible=1 ORDER BY sequence "
                 + ("DESC" if newest else "ASC"),
@@ -707,7 +704,7 @@ class SessionHistoryRepository(Repository):
                                 else None,
                             }
                         )
-                    size += len(fact.model_dump_json().encode())
+                    size += len(fact.model_dump_json(exclude_none=True).encode("utf-8")) + 1
                     group_facts.append(fact)
                 if (
                     len(selected) + len(group_facts) > capacity

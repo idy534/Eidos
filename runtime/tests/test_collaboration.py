@@ -18,7 +18,6 @@ from eidos_runtime.domain.collaboration import (
     AgentSuspended,
     SpawnAgent,
     WaitAgents,
-    CollaborationRejected,
 )
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.domain.run_termination import RunTermination
@@ -246,7 +245,7 @@ def test_agent_messages_keep_recent_context_and_archive_beyond_sixteen(tmp_path)
 
 
 @pytest.mark.parametrize("role", ["default", "explorer", "worker"])
-def test_child_followup_checks_unknown_effects_when_creating_a_new_run(tmp_path, role):
+def test_child_followup_preserves_unknown_evidence_without_blocking_new_run(tmp_path, role):
     store, _, parent = _parent(tmp_path)
     try:
         repository = CollaborationRepository(store.database)
@@ -259,22 +258,23 @@ def test_child_followup_checks_unknown_effects_when_creating_a_new_run(tmp_path,
         assert repository.followup(parent['id'], message['id'], child.id, 'Review evidence').run_id == child.run_id
         store.fail_run(child.run_id, 'fixture_done')
         item = store.create_tool_item(parent['id'], 3, 0, 'idle-worker', 'followup_task', '{}')
-        with pytest.raises(CollaborationRejected, match='reconciliation_required'):
-            repository.followup(parent['id'], item['id'], child.id, 'Start new changes')
-        assert store.connection.execute('SELECT COUNT(*) FROM runs WHERE session_id=?', (child.session_id,)).fetchone()[0] == 1
+        followup = repository.followup(parent['id'], item['id'], child.id, 'Start new changes')
+        assert followup.run_id != child.run_id
+        assert store.connection.execute('SELECT COUNT(*) FROM runs WHERE session_id=?', (child.session_id,)).fetchone()[0] == 2
+        assert store.read_run(parent['id'])['reconciliationRequired']
     finally:
         store.close()
 
 
 @pytest.mark.parametrize('role', ['default', 'explorer', 'worker'])
-def test_spawn_transaction_rejects_parent_unknown_effects(tmp_path: Path, role: AgentRole) -> None:
+def test_spawn_transaction_allows_parent_unknown_effects(tmp_path: Path, role: AgentRole) -> None:
     store, _session, parent = _parent(tmp_path)
     try:
         store.connection.execute('UPDATE runs SET reconciliation_required=1 WHERE id=?', (parent['id'],))
         store.connection.commit()
-        with pytest.raises(CollaborationRejected, match='reconciliation_required'):
-            _spawn(store, parent, 0, role=role)
-        assert CollaborationRepository(store.database).state(parent['id']).agents == []
+        _spawn(store, parent, 0, role=role)
+        assert len(CollaborationRepository(store.database).state(parent['id']).agents) == 1
+        assert store.read_run(parent['id'])['reconciliationRequired']
     finally:
         store.close()
 

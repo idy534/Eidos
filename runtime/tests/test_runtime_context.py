@@ -76,19 +76,19 @@ class ContextBudgetTests(unittest.TestCase):
         exact = estimate_context_budget(
             payload,
             context_window_tokens=4_096,
-            request_max_output_tokens=3_006,
+            request_max_output_tokens=3_007,
             message_count=0,
             tool_call_count=0,
             tool_result_count=0,
         )
-        self.assertEqual(exact.estimated_input_tokens, 66)
-        self.assertEqual(exact.usable_input_budget, 66)
+        self.assertEqual(exact.estimated_input_tokens, 65)
+        self.assertEqual(exact.usable_input_budget, 65)
         self.assertTrue(exact.fits)
 
         over = estimate_context_budget(
             payload,
             context_window_tokens=4_096,
-            request_max_output_tokens=3_007,
+            request_max_output_tokens=3_008,
             message_count=0,
             tool_call_count=0,
             tool_result_count=0,
@@ -523,6 +523,11 @@ class LoopGuardTests(unittest.TestCase):
 
 
 class ContextPersistenceTests(unittest.TestCase):
+    def _run_through_context_recovery(self, run_id, model):
+        RuntimeEngine(self.store, model, lambda _: None).run(run_id, threading.Event())
+        self.assertEqual(self.store.read_run(run_id)["status"], "succeeded")
+        self.assertIsNone(self.store.long_task_repository().read(run_id))
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="eidos-context-")
         root = Path(self.temporary.name)
@@ -749,20 +754,17 @@ class ContextPersistenceTests(unittest.TestCase):
             run["id"], 1, 0, "call-large", "read_file", '{"path":"large.txt"}'
         )
 
-        with patch.object(
-            self.store,
-            "latest_model_usage",
-            side_effect=(
-                None,
-                ModelUsage(input_tokens=185_000, output_tokens=1_000),
-            ),
+        before = builder.build(run["id"])
+        self.store.complete_tool_item(
+            tool["id"],
+            json.dumps({"outcome": "success", "data": {"content": "x"}}),
+            model_result_json=json.dumps({"content": "x" * 30_000}),
+        )
+        with patch(
+            "eidos_runtime.context.builder.ContextSnapshotRepository.latest_token_calibration",
+            return_value=(ModelUsage(input_tokens=185_000, output_tokens=1_000),
+                          before.budget.estimated_input_tokens),
         ):
-            before = builder.build(run["id"])
-            self.store.complete_tool_item(
-                tool["id"],
-                json.dumps({"outcome": "success", "data": {"content": "x"}}),
-                model_result_json=json.dumps({"content": "x" * 30_000}),
-            )
             after = builder.build(run["id"])
 
         self.assertEqual(after.budget.context_usage.active_tokens, 185_000)
@@ -885,16 +887,13 @@ class ContextPersistenceTests(unittest.TestCase):
 
         built = ContextBuilder(self.store).build(run["id"])
 
-        state = next(
-            item for item in built.model_context
-            if item.get("type") == "user"
-            and "recentToolErrorFingerprints" in item.get("content", "")
-        )
-        self.assertIn("error-a", state["content"])
-        self.assertIn('"recentToolErrorFingerprints":["error-a"]', state["content"])
+        state = next(item for item in built.model_context
+            if item.get("type") == "user" and "Runtime state" in item.get("content", ""))
         self.assertIn('"reconciliationRequired":true', state["content"])
-        self.assertNotIn("unresolvedErrorFingerprints", state["content"])
+        self.assertNotIn("recentToolErrorFingerprints", state["content"])
+        self.assertNotIn("error-a", state["content"])
 
+    @patch("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", 768 * 1024)
     def test_projection_overflow_compacts_all_eligible_history_without_loss(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")
         assert self.store.connection is not None
@@ -924,20 +923,15 @@ class ContextPersistenceTests(unittest.TestCase):
             ),
         )
 
-        with patch.object(
-            self.store,
-            "latest_model_usage",
-            return_value=ModelUsage(input_tokens=185_000, output_tokens=1_000),
-        ):
-            built = ContextBuilder(self.store).build(current["id"])
-            self.assertTrue(built.facts.candidate_overflow)
-            self.assertEqual(built.budget.context_usage.active_tokens, 185_000)
+        built = ContextBuilder(self.store).build(current["id"])
+        self.assertTrue(built.facts.candidate_overflow)
+        self.assertEqual(built.budget.context_usage.source, "estimated")
 
-            RuntimeEngine(
-                self.store,
-                ScriptedModel([ModelResponse(text="done")]),
-                lambda _message: None,
-            ).run(current["id"], threading.Event())
+        RuntimeEngine(
+            self.store,
+            ScriptedModel([ModelResponse(text="done")]),
+            lambda _message: None,
+        ).run(current["id"], threading.Event())
 
         self.assertEqual(self.store.read_run(current["id"])["status"], "succeeded")
         summary = self.store.latest_compact_summary(current["id"])
@@ -971,7 +965,8 @@ class ContextPersistenceTests(unittest.TestCase):
 
         self.assertIn(item["id"], summary.source_item_ids)
 
-    def test_projection_overflow_without_durable_progress_fails_explicitly(self) -> None:
+    @patch("eidos_runtime.db.repositories.context.CONTEXT_PROJECTION_HARD_MAX_BYTES", 768 * 1024)
+    def test_projection_overflow_without_durable_progress_continues(self) -> None:
         old, _ = self.store.create_run(self.session["id"], "old history")
         assert self.store.connection is not None
         now = int(time.time() * 1000)
@@ -998,15 +993,7 @@ class ContextPersistenceTests(unittest.TestCase):
             "eidos_runtime.runtime.engine.ContextCompactor.compact",
             return_value=None,
         ):
-            RuntimeEngine(
-                self.store,
-                ScriptedModel([ModelResponse(text="unreachable")]),
-                lambda _message: None,
-            ).run(current["id"], threading.Event())
-
-        stopped = self.store.read_run(current["id"])
-        self.assertEqual(stopped["status"], "failed")
-        self.assertEqual(stopped["errorCode"], "CONTEXT_PROJECTION_OVERFLOW")
+            self._run_through_context_recovery(current["id"], ScriptedModel([ModelResponse(text="unreachable")]))
 
     def test_provider_context_exceeded_compacts_and_retries(self) -> None:
         old, _ = self.store.create_run(
@@ -1025,25 +1012,21 @@ class ContextPersistenceTests(unittest.TestCase):
 
         self.assertEqual(self.store.read_run(current["id"])["status"], "succeeded")
         self.assertEqual(self.store.compaction_count(current["id"]), 1)
-        self.assertEqual(model.calls, 2)
+        # Rejected request, bounded summary attempt (invalid -> fallback), retry.
+        self.assertEqual(model.calls, 3)
 
-    def test_provider_context_exceeded_without_compactable_history_stops_clearly(self) -> None:
+    def test_provider_context_exceeded_without_compactable_history_continues(self) -> None:
         current, _ = self.store.create_run(self.session["id"], "continue")
         model = ContextRejectingModel(
-            reject_count=10,
+            reject_count=2,
             success=ModelResponse(text="unreachable"),
         )
 
-        RuntimeEngine(self.store, model, lambda _message: None).run(
-            current["id"], threading.Event()
-        )
+        self._run_through_context_recovery(current["id"], model)
 
-        stopped = self.store.read_run(current["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "context_still_over_budget")
         self.assertEqual(self.store.compaction_count(current["id"]), 0)
 
-    def test_provider_context_exceeded_without_projection_progress_stops_clearly(self) -> None:
+    def test_provider_context_exceeded_without_projection_progress_continues(self) -> None:
         current, _ = self.store.create_run(self.session["id"], "continue")
         model = ContextRejectingModel(
             reject_count=1,
@@ -1054,27 +1037,19 @@ class ContextPersistenceTests(unittest.TestCase):
             "eidos_runtime.runtime.engine.ContextCompactor.compact",
             return_value=None,
         ):
-            RuntimeEngine(self.store, model, lambda _message: None).run(
-                current["id"], threading.Event()
-            )
+            self._run_through_context_recovery(current["id"], model)
 
-        stopped = self.store.read_run(current["id"])
-        self.assertEqual(stopped["status"], "stopped")
-        self.assertEqual(stopped["stopReason"], "context_still_over_budget")
         self.assertEqual(self.store.compaction_count(current["id"]), 0)
 
     def test_pre_turn_compaction_persists_and_restores_structured_summary(self) -> None:
-        old, _ = self.store.create_run(self.session["id"], "x" * 20_000)
+        history = "\n".join(f"Finding {index}: inspect module_{index}.py before continuing." for index in range(2_000))
+        old, _ = self.store.create_run(self.session["id"], history)
         self.store.fail_run(old["id"], "fixture")
         current, _ = self.store.create_run(
             self.session["id"],
             "continue",
             model_profile=default_profile_snapshot("deepseek-flash").model_copy(
-                # System instructions have grown (~6.2K+ chars of layered
-                # instructions + tools), so an 11K window no longer holds
-                # the compacted payload (~10.3K tokens). 14K still proves that compaction
-                # turns a non-fitting context into a fitting one while
-                # staying far below the product default (128K).
+                # Use varied evidence: repetitive "x" text is very small under BPE.
                 update={"context_window_tokens": 14_000, "max_output_tokens": 1_000}
             ),
         )
@@ -1092,7 +1067,8 @@ class ContextPersistenceTests(unittest.TestCase):
         self.assertEqual(restored, summary)
 
     def test_runtime_compacts_old_history_before_first_sampling(self) -> None:
-        old, _ = self.store.create_run(self.session["id"], "x" * 20_000)
+        history = "\n".join(f"Finding {index}: inspect module_{index}.py before continuing." for index in range(2_000))
+        old, _ = self.store.create_run(self.session["id"], history)
         self.store.fail_run(old["id"], "fixture")
         current, _ = self.store.create_run(
             self.session["id"],

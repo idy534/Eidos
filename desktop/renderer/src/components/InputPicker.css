@@ -1,23 +1,31 @@
 /* Input Picker Popover */
 .input-picker {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 10px);
-  z-index: 50;
-  width: min(390px, calc(100vw - 2rem));
-  height: min(400px, 60vh);
+  position: fixed;
+  z-index: 1100;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   background: var(--surface-raised, #ffffff);
   color: var(--text, #20241f);
+  font-size: var(--font-size-body, 14px);
+  line-height: var(--line-height-body, 22px);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg, 14px);
   box-shadow: var(--apple-shadow-lg), 0 0 0 1px rgba(0, 0, 0, 0.04);
   overflow: hidden;
+  transform-origin: bottom left;
   animation: inputPickerAppear 150ms var(--apple-spring, ease);
+}
+.input-picker[data-placement="below"] {
+  transform-origin: top left;
+  animation-name: inputPickerAppearBelow;
 }
 @keyframes inputPickerAppear {
   from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes inputPickerAppearBelow {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .input-picker__header {

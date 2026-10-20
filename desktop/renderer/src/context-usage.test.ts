@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatContextUsage, formatTokenCount, type ContextUsage } from "./context-usage.js";
+import { contextSectionPercentages, contextUsageFromDetails, formatContextUsage, formatTokenCount, type ContextUsage } from "./context-usage.js";
 
 const providerUsage: ContextUsage = {
   activeTokens: 185_000,
@@ -11,7 +11,17 @@ const providerUsage: ContextUsage = {
 };
 
 test("formats provider usage as the active context, not cumulative consumption", () => {
-  assert.equal(formatContextUsage(providerUsage), "上下文 72% · 185K / 258K");
+  assert.equal(formatContextUsage(providerUsage), "上下文 71.7% · 185K / 258K");
+});
+
+test("keeps a reduced window, overflowing usage and rounded section totals consistent", () => {
+  const details = {
+    runId: "run-1", measurement: "provider" as const, activeTokens: 181376, contextWindowTokens: 100000,
+    sections: [{ name: "instructions" as const, tokens: 7001 }, { name: "conversation" as const, tokens: 174375 }],
+  };
+  const usage = contextUsageFromDetails(details)!;
+  assert.equal(formatContextUsage(usage), "上下文 181.4% · 181.4K / 100K");
+  assert.equal([...contextSectionPercentages(details).values()].reduce((a, b) => a + b, 0), usage.percentUsed);
 });
 
 test("marks estimated values so the UI does not present a fallback as fact", () => {

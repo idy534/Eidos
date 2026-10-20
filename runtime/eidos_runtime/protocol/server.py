@@ -29,6 +29,8 @@ from eidos_runtime.application.approvals import (
     ApprovalDecision as ApplicationApprovalDecision,
 )
 from eidos_runtime.application.context import ContextApplication
+from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord
+from eidos_runtime.persistence.context_management import ContextManagementRepository
 from eidos_runtime.application.checkpoints import CheckpointApplication
 from eidos_runtime.application.extensions import (
     DeferredPluginImport,
@@ -39,6 +41,10 @@ from eidos_runtime.application.extensions import (
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.model.discovery import CustomProviderRequest, CustomProviderResult, discover_custom_models
 from eidos_runtime.application.projects import ProjectApplication
+from eidos_runtime.application.search import SearchApplication
+from eidos_runtime.persistence.search import SearchRepository
+from eidos_runtime.protocol import search as search_dtos
+from eidos_runtime.db.repositories.sessions import SessionRepository
 from eidos_runtime.application.sidebar import SidebarApplication
 from eidos_runtime.application.queued_runs import QueuedRunApplication
 from eidos_runtime.application.automations import AutomationApplication
@@ -201,7 +207,10 @@ def write_message(output: TextIO, message: dict[str, Any]) -> None:
         message = JsonRpcResponse.model_validate(message).to_json_value()
     serialized = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
     if len(serialized.encode("utf-8")) > MAX_MESSAGE_BYTES:
-        raise ValueError("outbound protocol message exceeds 1 MiB")
+        if "id" not in message:
+            raise ValueError("outbound protocol notification exceeds 1 MiB")
+        message = business_error(message["id"], "RESPONSE_TOO_LARGE")
+        serialized = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
     output.write(serialized)
     output.write("\n")
     output.flush()
@@ -592,6 +601,7 @@ class _DeferredSessionForkAdapter:
 
 @dataclass(frozen=True)
 class _RuntimeApplications:
+    search: SearchApplication
     queued_runs: QueuedRunApplication
     sidebar: SidebarApplication
     projects: ProjectApplication
@@ -892,6 +902,12 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().queued_runs.update(request),
             ),
             (
+                "run/steerQueued",
+                queued_run_dtos.QueuedRunSteerRequest,
+                queued_run_dtos.QueuedRunChangeResponse,
+                lambda _id, request: self._applications_or_error().queued_runs.steer(request),
+            ),
+            (
                 "run/deleteQueued",
                 queued_run_dtos.QueuedRunDeleteRequest,
                 queued_run_dtos.QueuedRunChangeResponse,
@@ -984,6 +1000,14 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().sessions.read_tool_text(request),
             ),
             (
+                "search/sessions", search_dtos.SearchRequest, search_dtos.SearchResponse,
+                lambda _id, request: self._applications_or_error().search.search(request),
+            ),
+            (
+                "session/readAround", search_dtos.ReadAroundRequest, method_dtos.SessionReadResponseDto,
+                lambda _id, request: self._applications_or_error().search.read_around(request),
+            ),
+            (
                 "session/read",
                 method_dtos.SessionReadRequestDto,
                 method_dtos.SessionReadResponseDto,
@@ -1003,6 +1027,10 @@ class RuntimeServer:
                 method_dtos.WorkspaceReadAssetRequestDto,
                 method_dtos.WorkspaceReadAssetResponseDto,
                 lambda _id, request: self._applications_or_error().workspace.read_asset(request),
+            ),
+            (
+                "workspace/readFileForFind", search_dtos.FileFindRequest, search_dtos.FileFindResponse,
+                lambda _id, request: self._applications_or_error().workspace.read_file_for_find(request),
             ),
             (
                 "workspace/readFilePreview",
@@ -1212,6 +1240,10 @@ class RuntimeServer:
                     request
                 ),
             ),
+            ("context/details", method_dtos.ContextDetailsRequestDto, ContextDetails,
+             lambda _id, request: self._applications_or_error().context.details(request.run_id)),
+            ("context/compact", method_dtos.ContextCompactRequestDto, ContextCompactionRecord,
+             lambda _id, request: self._applications_or_error().context.request_compaction(request.run_id)),
             (
                 "run/pause",
                 method_dtos.RunPauseRequestDto,
@@ -1729,6 +1761,7 @@ class RuntimeServer:
             repository_runtime=self.repository_runtime,
         )
         return _RuntimeApplications(
+            search=SearchApplication(SearchRepository(self.store.database), SessionRepository(self.store.database)),
             queued_runs=QueuedRunApplication(
                 QueuedRunRepository(self.store.database), self.supervisor.events,
                 self._scan_text, self._discard_model_config,
@@ -1772,6 +1805,7 @@ class RuntimeServer:
             context=ContextApplication(
                 snapshots=self.store.context_snapshot_repository(),
                 verified_compactions=self.store.verified_compaction_repository(),
+                management=ContextManagementRepository(self.store.database),
             ),
             checkpoints=CheckpointApplication(
                 self.store,

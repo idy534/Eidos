@@ -1,6 +1,5 @@
 import { AgentList, AgentWorkspacePanel, useAgentState } from "../components/AgentPanel.js";
 import type { AgentSummary } from "../../../shared/collaboration.generated.js";
-import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { PlanPanel } from "../components/PlanPanel.js";
 import type { PlanDocument } from "../../../shared/planning.generated.js";
 import type { SettingsCategory } from "../components/settings/settings-types.js";
@@ -15,6 +14,8 @@ import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedb
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { WelcomeMessage } from "../components/WelcomeMessage.js";
+import { ChatSearch } from "../components/ChatSearch.js";
+import type { SearchHit } from "../../../shared/search.js";
 import { SessionSidebar } from "../components/SessionSidebar.js";
 import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
@@ -145,13 +146,11 @@ export function AppShell({ runtime }: AppShellProps) {
   const latestUserRun = sessionState.snapshot?.runs.filter((run) => !run.inherited && !run.automationOrigin).at(-1);
   const workMode = (approvalSessionId ? workModes[approvalSessionId] : undefined) ?? latestUserRun?.workMode ?? "execute";
   const contextRun = runState.activeRun ?? latestRun;
-  const contextRunId = contextRun && contextRun.modelId === modelState.selectedModelId
-    ? contextRun.id
-    : undefined;
+  const contextRunId = contextRun?.id;
   const [contextUsageState, contextUsageActions] = useContextUsageController({
     ready: runtimeStatus.state === "ready" && isStorageReady,
     sessionId: sessionState.snapshot?.session.id,
-    modelId: modelState.selectedModelId,
+    modelId: contextRun?.modelId,
     runId: contextRunId,
   });
   const handleContextUsageNotification = contextUsageActions.handleNotification;
@@ -166,6 +165,9 @@ export function AppShell({ runtime }: AppShellProps) {
   );
 
   // UI-only state (not domain state)
+  const searchSelection = useRef(0);
+  const [searchMode, setSearchMode] = useState<"global" | "session">();
+  const [searchTarget, setSearchTarget] = useState<{ itemId: string; query: string; occurrence: number; revision: number }>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [startingDraftId, setStartingDraftId] = useState<string>();
@@ -550,7 +552,13 @@ export function AppShell({ runtime }: AppShellProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
       const isCmdOrCtrl = event.metaKey || event.ctrlKey;
+      if (isCmdOrCtrl && event.key.toLowerCase() === "k" && !(event.target as Element)?.closest(".terminal-panel")) { event.preventDefault(); setSearchMode("global"); }
+      if (isCmdOrCtrl && event.key.toLowerCase() === "f" && !settingsOpen && !automationsOpen && !(event.target as Element)?.closest(".terminal-panel,.browser-panel,.workspace-preview")) {
+        event.preventDefault(); setSearchMode("session");
+        const input = document.querySelector<HTMLInputElement>(".workspace-main-column > .find-bar input"); input?.focus(); input?.select();
+      }
       if (isCmdOrCtrl && (event.key === "b" || event.key === "B")) {
         event.preventDefault();
         if (!settingsOpen && !automationsOpen) toggleSidebar();
@@ -613,7 +621,22 @@ export function AppShell({ runtime }: AppShellProps) {
     }
   }, [settingsOpen, automationsOpen, navHistoryActions]);
 
+  function clearSearchTarget() { searchSelection.current += 1; setSearchTarget(undefined); }
+
+  async function handleSearchSelect(hit: SearchHit, query: string): Promise<void> {
+    const selection = ++searchSelection.current;
+    const session = sessionState.sessions.find((candidate) => candidate.id === hit.sessionId) ?? (await window.eidosRuntime.readSession(hit.sessionId)).session;
+    if (selection !== searchSelection.current) return;
+    setSettingsOpen(false); setAutomationsOpen(false);
+    navHistoryActions.navigateTo(session.id);
+    const loaded = await sessionActions.selectSession(session, hit.itemId ?? undefined);
+    if (selection !== searchSelection.current) return;
+    if (loaded && hit.itemId) setSearchTarget({ itemId: hit.itemId, query, occurrence: hit.occurrence ?? 0, revision: Date.now() });
+    if (searchMode === "global") setSearchMode(undefined);
+  }
+
   async function handleSelectSession(session: Session) {
+    setSearchTarget(undefined); setSearchMode(undefined);
     setAutomationsOpen(false);
     navHistoryActions.navigateTo(session.id);
     return sessionActions.selectSession(session);
@@ -907,6 +930,11 @@ export function AppShell({ runtime }: AppShellProps) {
     && (isDraft || (currentSnapshot.session.taskStatus === "new"
       && currentSnapshot.runs.length === 0 && currentSnapshot.items.length === 0))
     && !(startingDraftId && sessionState.draft?.session.id === startingDraftId));
+  // 上下文栏只服务于首次 Run 之前：项目、执行方式和分支一旦被 Run 固定就不再可选。
+  // runs 是本地即时事实，taskStatus 来自权威快照；两者都指向"尚未开始"才展示。
+  const showSessionSetup = Boolean(currentSnapshot
+    && currentSnapshot.session.taskStatus === "new"
+    && currentSnapshot.runs.length === 0);
   const completeSessionItems = useCompleteSessionItems(
     currentSnapshot && !isDraft ? currentSnapshot.session.id : undefined,
     currentSnapshot?.items ?? [],
@@ -1394,6 +1422,7 @@ export function AppShell({ runtime }: AppShellProps) {
     <main className={`workbench${sidebarOpen && !settingsOpen && !automationsOpen ? "" : " workbench--sidebar-collapsed"}${settingsOpen ? " workbench--settings" : ""}${automationsOpen ? " workbench--settings workbench--automations" : ""}`}>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <SessionSidebar
+        onSearch={() => setSearchMode("global")}
         collapsed={!sidebarOpen || settingsOpen || automationsOpen}
         sessions={sessionState.sessions}
         projects={sessionState.projects}
@@ -1438,6 +1467,7 @@ export function AppShell({ runtime }: AppShellProps) {
         }
       />
 
+      {searchMode === "global" && <ChatSearch key="global-search" mode="global" onClear={clearSearchTarget} projects={sessionState.projects} sessions={sessionState.sessions} onClose={() => { setSearchMode(undefined); setSearchTarget(undefined); }} onSelect={handleSearchSelect} />}
       <section ref={workspaceRef} className="workspace" aria-label="Agent 工作区" tabIndex={-1}>
         {currentSnapshot?.session.worktreeRestoreAvailable === true && !isDraft && (
           <div className="worktree-restore-banner" role="status">
@@ -1507,6 +1537,7 @@ export function AppShell({ runtime }: AppShellProps) {
               } as CSSProperties}
             >
             <div className={`workspace-main-column${dockExpanded ? " workspace-main-column--hidden" : ""}`} inert={dockExpanded}>
+            {searchMode === "session" && !isDraft && <ChatSearch key={currentSnapshot.session.id} mode="session" onClear={clearSearchTarget} sessionId={currentSnapshot.session.id} projects={sessionState.projects} onClose={() => { setSearchMode(undefined); setSearchTarget(undefined); }} onSelect={handleSearchSelect} />}
             <header className={`workspace-header session-header${isDraft ? " session-header--draft" : ""}`}>
               {!isDraft && (isRenamingThisSession ? (
                 <form
@@ -1587,8 +1618,10 @@ export function AppShell({ runtime }: AppShellProps) {
                   welcome={showWelcome}
                   feed={<ExecutionFeed
                   key={currentSnapshot.session.id}
+                  searchTarget={searchTarget}
                   items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
+                  contextCompactions={currentSnapshot.contextCompactions}
                   projectless={currentSnapshot.session.projectless === true}
                   runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
                   models={feedModels}
@@ -1623,6 +1656,7 @@ export function AppShell({ runtime }: AppShellProps) {
                 {!isDraft && <QueuedMessages
                   key={`queue-${currentSnapshot.session.id}`}
                   sessionId={currentSnapshot.session.id}
+                  activeRunId={activeRun && ["running", "waiting_approval", "waiting_input", "waiting_agents"].includes(activeRun.status) ? activeRun.id : undefined}
                   ready={isStorageReady && runtimeStatus.state === "ready"}
                   onChanged={(change) => {
                     sessionActions.setSnapshot((previous) => applyQueuedRunChange(previous, change));
@@ -1663,6 +1697,8 @@ export function AppShell({ runtime }: AppShellProps) {
                   }}
                   reasoningSelection={modelState.reasoningSelection}
                   contextUsage={contextUsageState.usage}
+                  contextRunId={contextRun?.id}
+                  contextDetails={contextUsageState.details}
                   showContextIndicator={Boolean(contextRun)}
                   modelConfigured={Boolean(modelState.list?.models.length)}
                   modelLoading={modelState.loading}
@@ -1683,7 +1719,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     setDockOpen(false);
                     setDockExpanded(false);
                   }}
-                  showSessionContext={currentSnapshot.session.taskStatus === "new"}
+                  showSessionContext={showSessionSetup}
                   project={sessionProject ?? null}
                   projectless={currentSnapshot.session.projectless === true}
                   executionMode={currentSnapshot.session.executionMode}

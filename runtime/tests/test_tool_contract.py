@@ -277,11 +277,12 @@ class ToolContractTests(unittest.TestCase):
                 "additionalPermissions": {"network": {"enabled": True}},
                 "justification": "invalid",
             }))
-        with self.assertRaises(ValidationError):
-            RunShellInput.model_validate_json(json.dumps({
-                "command": "make",
-                "unknownPermission": True,
-            }))
+        ignored_permission = RunShellInput.model_validate_json(json.dumps({
+            "command": "make",
+            "unknownPermission": True,
+        }))
+        self.assertEqual(ignored_permission.sandboxPermissions.value, "use_default")
+        self.assertNotIn("unknownPermission", ignored_permission.model_dump())
 
         with self.assertRaisesRegex(
             ValidationError, "network_access_justification_required"
@@ -315,17 +316,102 @@ class ToolContractTests(unittest.TestCase):
         schema = RunShellInput.model_json_schema(by_alias=True)
         properties = schema["properties"]
 
+        self.assertEqual(schema["required"], ["command"])
+        self.assertFalse(schema["additionalProperties"])
         self.assertNotIn("timeoutSeconds", properties)
         self.assertIn("yieldTimeMs", properties)
+        self.assertNotIn("yield_time_ms", properties)
         self.assertEqual(
             RunShellInput.model_validate({"command": "true"}).yieldTimeMs,
             10_000,
         )
         self.assertEqual(properties["yieldTimeMs"]["minimum"], 250)
         self.assertEqual(properties["yieldTimeMs"]["maximum"], 30_000)
-        for value in (249, 30_001):
-            with self.subTest(value=value), self.assertRaises(ValidationError):
-                RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
+        for value in (0, 1, 249):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    RunShellInput.model_validate({"command": "true", "yieldTimeMs": value}).yieldTimeMs,
+                    250,
+                )
+
+    def test_run_shell_accepts_yield_alias_with_existing_limits(self) -> None:
+        for name in ("yieldTimeMs", "yield_time_ms"):
+            for value in (250, 10_000, 30_000):
+                with self.subTest(name=name, value=value):
+                    arguments = RunShellInput.model_validate_json(json.dumps({
+                        "command": "true", name: value,
+                    })).model_dump(mode="json", by_alias=True)
+                    self.assertEqual(arguments["yieldTimeMs"], value)
+                    self.assertNotIn("yield_time_ms", arguments)
+            for value in (-1, True, "1000", 1000.5, None):
+                with self.subTest(name=name, value=value), self.assertRaises(ValidationError):
+                    RunShellInput.model_validate_json(json.dumps({
+                        "command": "true", name: value,
+                    }))
+
+    def test_polling_waits_cap_large_integers_without_relaxing_input_types(self) -> None:
+        for contract, arguments, limit in (
+            (RunShellInput, {"command": "true"}, 30_000),
+            (SearchTextInput, {"query": "test"}, 30_000),
+            (WriteStdinInput, {"sessionId": "shell"}, 60_000),
+            (SearchTextWaitInput, {"sessionId": "search"}, 60_000),
+        ):
+            for value in (limit + 1, 120_000):
+                with self.subTest(contract=contract.__name__, value=value):
+                    self.assertEqual(contract.model_validate_json(json.dumps({
+                        **arguments, "yieldTimeMs": value,
+                    })).yieldTimeMs, limit)
+            for invalid in (True, "120000", 120000.5, None, -1):
+                with self.subTest(contract=contract.__name__, invalid=invalid), self.assertRaises(ValidationError):
+                    contract.model_validate_json(json.dumps({**arguments, "yieldTimeMs": invalid}))
+            if contract in (SearchTextInput, SearchTextWaitInput):
+                with self.assertRaises(ValidationError):
+                    contract.model_validate_json(json.dumps({**arguments, "yieldTimeMs": 249}))
+        self.assertEqual(RunShellInput.model_validate_json(json.dumps({
+            "command": "true", "yield_time_ms": 120_000,
+        })).yieldTimeMs, 30_000)
+
+    def test_run_shell_json_prefers_canonical_yield_and_ignores_unknown_fields(self) -> None:
+        arguments = RunShellInput.model_validate_json(json.dumps({
+            "command": "true", "yieldTimeMs": 1000, "yield_time_ms": 2000,
+        }))
+        self.assertEqual(arguments.yieldTimeMs, 1000)
+        ignored = RunShellInput.model_validate_json(json.dumps({
+            "command": "true", "yield_time_ms": 1000, "unknown": True,
+        }))
+        self.assertEqual(ignored.yieldTimeMs, 1000)
+        self.assertNotIn("unknown", ignored.model_dump())
+
+    def test_run_shell_ignores_only_top_level_extra_fields(self) -> None:
+        arguments = {
+            "command": "true", "shell": "bash", "yield_timeMs": -1,
+            "sandbox_permissions": "require_escalated",
+        }
+        parsed = RunShellInput.model_validate_json(json.dumps(arguments))
+        self.assertEqual(parsed, RunShellInput(command="true"))
+        self.assertEqual(
+            RunShellInput.ignored_argument_names(arguments),
+            ("sandbox_permissions", "shell", "yield_timeMs"),
+        )
+        self.assertEqual(RunShellInput.ignored_argument_names({
+            "command": "true", "yield_time_ms": 1000,
+        }), ())
+        for invalid in (
+            {"shell": "bash"},
+            {"command": 1, "shell": "bash"},
+            {"command": "true", "cwd": False, "shell": "bash"},
+            {"command": "true", "yieldTimeMs": "1000", "shell": "bash"},
+            {"command": "true", "sandboxPermissions": "unknown", "shell": "bash"},
+            {"command": "true", "additionalPermissions": {"unknown": True}},
+            {"command": "true", "additionalPermissions": {"network": {"unknown": True}}},
+        ):
+            with self.subTest(arguments=invalid), self.assertRaises(ValidationError):
+                RunShellInput.model_validate_json(json.dumps(invalid))
+
+        with self.assertRaises(ValidationError):
+            WriteStdinInput.model_validate_json(json.dumps({
+                "sessionId": "shell-1", "unknown": True,
+            }))
 
     def test_shell_observation_budget_preserves_legacy_specs(self) -> None:
         run_shell = next(spec for spec in TOOL_SPECS if spec.name == "run_shell")
@@ -356,8 +442,8 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertEqual(
             description,
-            "Run a shell command in the macOS workspace sandbox. "
-            "Returns command output, or a sessionId if the command is still running.",
+            "Run a shell command and return its output or a sessionId for ongoing interaction. "
+            "Each call starts a new shell.",
         )
         for fragment in (
             "gitWriteAccess",
@@ -378,6 +464,18 @@ class ToolContractTests(unittest.TestCase):
             self.assertNotIn(fragment, description)
 
         properties = RunShellInput.model_json_schema(by_alias=True)["properties"]
+        self.assertEqual(properties["cwd"]["default"], ".")
+        self.assertEqual(
+            properties["cwd"]["description"],
+            "Workspace-relative or canonical absolute working directory. "
+            "Defaults to the current Session workspace.",
+        )
+        model_shell = next(
+            definition["function"] for definition in model_tool_definitions()
+            if definition["function"]["name"] == "run_shell"
+        )
+        self.assertEqual(model_shell["description"], description)
+        self.assertEqual(model_shell["parameters"]["properties"]["cwd"], properties["cwd"])
         self.assertEqual(
             properties["gitWriteAccess"]["description"],
             'Set to "request" when the current Run needs Git metadata write '
@@ -399,8 +497,7 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(
             stdin_description,
-            "Write input to a running shell session or wait for additional "
-            "output. Use empty input to poll for output.",
+            "Write input to a running shell session and return recent output.",
         )
         stdin_properties = WriteStdinInput.model_json_schema(by_alias=True)[
             "properties"
@@ -507,7 +604,7 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(
             wait_properties["yieldTimeMs"]["description"],
-            "How long to wait for additional search results.",
+            "How long to wait for additional search results. Values above 60000 are capped; the search continues.",
         )
         patch_properties = ApplyPatchInput.model_json_schema(by_alias=True)[
             "properties"

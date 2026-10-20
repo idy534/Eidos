@@ -6,6 +6,7 @@ import { useArtifacts } from "./ArtifactContext.js";
 import { userFacingError } from "../session-state.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { Button } from "./Button.js";
+import { Tooltip } from "./Tooltip.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 
 function cleanFilePath(file: { oldPath: string; newPath: string }): string {
@@ -393,33 +394,37 @@ export function LastTurnChanges({ sessionId, previousItemId, items, runId, focus
                 </button>
                 {file.openPath && (
                   <>
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      className="git-icon-button"
-                      icon={<OpenInEditorIcon />}
-                      aria-label={`在编辑器中打开 ${file.openPath}`}
-                      title={`在编辑器中打开 ${file.openPath}`}
-                      onClick={() => {
-                        setError("");
-                        void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.openPath!).catch((cause: unknown) => {
-                          setError(userFacingError(cause));
-                        });
-                      }}
-                    >
-                      <span className="sr-only">{`在编辑器中打开 ${file.openPath}`}</span>
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="ghost"
-                      className="git-icon-button"
-                      icon={<WorkspaceFolderIcon />}
-                      aria-label={`在工作区打开 ${file.openPath}`}
-                      title={`在工作区打开 ${file.openPath}`}
-                      onClick={() => actions?.openFile(file.openPath!)}
-                    >
-                      <span className="sr-only">{`在工作区打开 ${file.openPath}`}</span>
-                    </Button>
+                    <Tooltip content={`在编辑器中打开 ${file.openPath}`}>
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        className="git-icon-button"
+                        icon={<OpenInEditorIcon />}
+                        aria-label={`在编辑器中打开 ${file.openPath}`}
+                        title={`在编辑器中打开 ${file.openPath}`}
+                        onClick={() => {
+                          setError("");
+                          void window.eidosRuntime.openWorkspacePathInEditor(sessionId, file.openPath!).catch((cause: unknown) => {
+                            setError(userFacingError(cause));
+                          });
+                        }}
+                      >
+                        <span className="sr-only">{`在编辑器中打开 ${file.openPath}`}</span>
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content={`在工作区打开 ${file.openPath}`}>
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        className="git-icon-button"
+                        icon={<WorkspaceFolderIcon />}
+                        aria-label={`在工作区打开 ${file.openPath}`}
+                        title={`在工作区打开 ${file.openPath}`}
+                        onClick={() => actions?.openFile(file.openPath!)}
+                      >
+                        <span className="sr-only">{`在工作区打开 ${file.openPath}`}</span>
+                      </Button>
+                    </Tooltip>
                   </>
                 )}
               </header>

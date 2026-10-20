@@ -122,7 +122,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         self.assertEqual(current["status"], "running")
         self.assertNotIn("pauseReason", current)
 
-    def test_crashed_durable_intent_is_reconciled_without_replay(self) -> None:
+    def test_crashed_durable_intent_is_recorded_without_replay_or_gate(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "write")
         item = self.store.create_tool_item(
             run["id"], 1, 0, "call", "write_file",
@@ -137,8 +137,8 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
         recovered = self.store.read_run(run["id"])
         self.assertEqual(recovered["status"], "interrupted")
         self.assertTrue(recovered["sideEffectsMayExist"])
-        self.assertTrue(self.store.side_effects_blocked(run["id"])
-        )
+        self.assertTrue(recovered["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         connection = self.store.connection
         assert connection is not None
         self.assertEqual(
@@ -146,7 +146,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             "interrupted",
         )
 
-    def test_read_step_requires_explicit_workspace_refresh_to_clear_reconciliation(
+    def test_read_step_does_not_create_or_clear_an_unknown_result_gate(
         self,
     ) -> None:
         run, _ = self.store.create_run(self.session["id"], "verify")
@@ -161,7 +161,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             json.dumps({"outcome": "error", "code": "file_commit_uncertain"}),
             item_status="failed", tool_status="failed",
         )
-        self.assertTrue(self.store.side_effects_blocked(run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         pending_epoch = self.store.context_projection_facts(
             run["id"]
         ).reconciliation_epoch
@@ -173,27 +173,21 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             read["id"], json.dumps({"outcome": "success", "code": None})
         )
         self.store.complete_current_step(run["id"], "completed")
-        self.assertTrue(self.store.side_effects_blocked(run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(run["id"]))
+        self.assertTrue(self.store.read_run(run["id"])["reconciliationRequired"])
         self.assertEqual(
             self.store.context_projection_facts(
                 run["id"]
             ).reconciliation_epoch,
             pending_epoch,
         )
-        mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
-            run["id"], pending_epoch
-        )
-        self.assertIsNotNone(mutation)
-        self.assertFalse(self.store.side_effects_blocked(run["id"]))
         self.assertEqual(
-            self.store.context_projection_facts(
-                run["id"]
-            ).reconciliation_epoch,
-            pending_epoch + 1,
+            self.store.context_projection_facts(run["id"]).reconciliation_epoch,
+            pending_epoch,
         )
         self.assertTrue(self.store.read_run(run["id"])["sideEffectsMayExist"])
 
-    def test_stream_failure_after_first_delta_never_replays_request(self) -> None:
+    def test_unclassified_stream_failure_after_first_delta_does_not_replay_request(self) -> None:
         class InterruptedThenCompletedModel:
             calls = 0
             contexts = []
@@ -243,7 +237,7 @@ class PhaseTwoRuntimeTests(unittest.TestCase):
             1,
         )
         attempt = self.store.read_model_attempts(run["id"])[0]
-        self.assertEqual(attempt["retryDecision"]["reason"], "unsafe_stream_progress")
+        self.assertEqual(attempt["retryDecision"]["reason"], "non_retryable_error")
 
     def test_stream_failure_before_first_delta_does_not_replay_unknown_stream_state(self) -> None:
         class InitiallyUnavailableModel:

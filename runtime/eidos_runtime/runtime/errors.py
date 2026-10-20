@@ -4,7 +4,7 @@ import json
 
 from pydantic import BaseModel
 
-from eidos_runtime.file_limits import tool_result_limit
+from eidos_runtime.file_limits import tool_result_limit, MAX_PATCH_RESULT_BYTES
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, SensitiveScanner
 from eidos_runtime.tools.workspace import canonical_tool_result
 
@@ -46,7 +46,7 @@ def bounded_tool_result(
 ) -> dict[str, object]:
     result = canonical_tool_result(tool_name, result, data_model=data_model)
     encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    if len(encoded) <= tool_result_limit(tool_name):
+    if len(encoded) <= max(tool_result_limit(tool_name), MAX_PATCH_RESULT_BYTES):
         return result
     return tool_error(tool_name, "tool_result_too_large", "Tool result exceeded the safe size limit")
 
@@ -62,7 +62,7 @@ def safe_tool_result(
     if not scan_output:
         return canonical_tool_result(tool_name, result, data_model=data_model)
     try:
-        scanned = scanner.scan_json(result, max_bytes=tool_result_limit(tool_name))
+        scanned = scanner.scan_json(result, max_bytes=max(tool_result_limit(tool_name), len(json.dumps(result, ensure_ascii=False).encode("utf-8"))))
     except SensitiveScanError:
         return tool_error(tool_name, "sensitive_content_rejected", "Tool output was withheld")
     assert isinstance(scanned, dict)

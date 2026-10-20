@@ -115,9 +115,12 @@ export function ModelSettings({
     if (resolvedCustom && (!draft.modelId.trim() || !resolvedCustom.baseUrl.trim() || !resolvedCustom.name.trim()
       || !resolvedCustom.providerName.trim() || !Number.isSafeInteger(resolvedCustom.contextWindowTokens) || !Number.isSafeInteger(resolvedCustom.maxOutputTokens)
       || resolvedCustom.contextWindowTokens <= 0 || resolvedCustom.maxOutputTokens <= 0
-      || resolvedCustom.contextWindowTokens > 100000000 || resolvedCustom.maxOutputTokens > 100000000
-      || resolvedCustom.maxOutputTokens > resolvedCustom.contextWindowTokens)) {
-      setLocalError("请填写模型 ID、展示名、接口地址和有效的 Token 上限；最大输出不能超过上下文窗口。");
+      || resolvedCustom.contextWindowTokens > 100000000 || resolvedCustom.maxOutputTokens > 100000000)) {
+      setLocalError("请填写模型 ID、展示名、接口地址和有效的 Token 上限。");
+      return;
+    }
+    if (resolvedCustom && resolvedCustom.contextWindowTokens <= resolvedCustom.maxOutputTokens) {
+      setLocalError("上下文窗口必须大于最大输出。");
       return;
     }
     if (resolvedCustom) {

@@ -446,13 +446,42 @@ def test_existing_v29_database_upgrades_without_losing_sessions(tmp_path):
     store = SessionStore(directory)
     store.initialize()
     session_id = store.create_session(str(workspace))["id"]
-    store.connection.executescript("DROP TRIGGER channel_memory_insert; DROP TRIGGER channel_origin_memory; DROP TABLE channel_deliveries; DROP TABLE channel_run_origins; DROP TABLE channel_inbound; DROP TABLE channel_sessions; DROP TABLE channel_connections; PRAGMA user_version=29;")
+    store.connection.executescript("""
+        DROP INDEX model_request_retry_index;
+        ALTER TABLE model_attempts DROP COLUMN request_group_id;
+        ALTER TABLE model_attempts DROP COLUMN retry_index;
+        ALTER TABLE model_attempts DROP COLUMN retry_deadline_at;
+        ALTER TABLE model_attempts DROP COLUMN assistant_item_id;
+        DROP TRIGGER channel_memory_insert;
+        DROP TRIGGER channel_origin_memory;
+        DROP TABLE channel_deliveries;
+        DROP TABLE channel_run_origins;
+        DROP TABLE channel_inbound;
+        DROP TABLE channel_sessions;
+        DROP TABLE channel_connections;
+        DROP INDEX steps_run_ordinal;
+        DROP TABLE search_fts;
+        DROP TRIGGER search_title_update;
+        DROP TRIGGER search_session_insert;
+        DROP TRIGGER search_session_delete;
+        DROP TRIGGER search_item_insert;
+        DROP TRIGGER search_item_update;
+        DROP TRIGGER search_item_delete;
+        DROP TRIGGER search_history_insert;
+        DROP TRIGGER search_history_delete;
+        DROP TRIGGER search_history_update;
+        DROP TABLE search_pending;
+        DROP TABLE search_documents;
+        DROP TABLE search_index_state;
+        PRAGMA user_version=29;
+    """)
     store.close()
     restored = SessionStore(directory)
     try:
         restored.initialize()
         assert restored.read_session(session_id)["id"] == session_id
-        assert restored.connection.execute("PRAGMA user_version").fetchone()[0] == 30
+        from eidos_runtime.db.schema import SCHEMA_VERSION
+        assert restored.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert ChannelRepository(restored.database).connection() is None
         assert restored.connection.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:

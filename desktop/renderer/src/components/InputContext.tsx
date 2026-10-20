@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { userFacingError } from "../session-state.js";
+import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
 import { FileIcon, FolderIcon, AgentIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
@@ -278,7 +279,7 @@ function ImageLightboxModal({
         autoFocus
         onClick={onClose}
       >
-        ×
+        <ImageCloseIcon />
       </button>
       {displaySrc ? (
         <img src={displaySrc} alt={preview.reference.label} />

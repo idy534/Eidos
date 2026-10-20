@@ -16,6 +16,7 @@ import re
 from typing import ClassVar, Literal
 
 from eidos_runtime.domain.input_reference import InputReferenceId
+from eidos_runtime.domain.context_management import ContextCompactionActivity
 from eidos_runtime.model.config import CustomModelSettings
 
 from pydantic import Field, JsonValue, StrictInt, StrictStr
@@ -202,7 +203,7 @@ class SessionReadRequestDto(_CanonicalIdRequest):
 class ToolTextReadRequestDto(_CanonicalIdRequest):
     session_id: StrictStr = Field(alias="sessionId")
     tool_call_id: StrictStr = Field(alias="toolCallId")
-    field: Literal["diff", "result"]
+    field: Literal["diff", "result", "content"]
     sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     offset: StrictInt = Field(default=0, ge=0, le=9_007_199_254_740_991)
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("session_id", "tool_call_id")
@@ -475,6 +476,14 @@ class ContextUsageRequestDto(_CanonicalIdRequest):
     _canonical_id_fields: ClassVar[tuple[str, ...]] = ("run_id",)
 
 
+class ContextDetailsRequestDto(ContextUsageRequestDto):
+    pass
+
+
+class ContextCompactRequestDto(ContextUsageRequestDto):
+    pass
+
+
 class ModelPresetsRequestDto(MethodRequestDto):
     pass
 
@@ -717,6 +726,7 @@ class SessionReadResponseDto(MethodResultDto):
     step_resolutions: list[StepResolutionReviewDto] = Field(alias="stepResolutions")
     previous_item_id: StrictStr | None = Field(default=None, alias="previousItemId")
     through_event_id: StrictInt | None = Field(default=None, alias="throughEventId")
+    context_compactions: list[ContextCompactionActivity] = Field(default_factory=list, alias="contextCompactions")
 
     def to_json_value(self) -> dict[str, JsonValue]:
         value = super().to_json_value()

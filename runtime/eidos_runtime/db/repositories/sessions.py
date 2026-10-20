@@ -897,26 +897,39 @@ class SessionRepository(Repository):
             raise SessionActiveError("session has an active run")
 
     def read_tool_text(
-        self, session_id: str, tool_call_id: str, field: Literal["diff", "result"],
+        self, session_id: str, tool_call_id: str, field: Literal["diff", "result", "content"],
         sha256: str, offset: int,
     ) -> ToolTextPage:
-        if field not in {"diff", "result"} or offset < 0:
+        if field not in {"diff", "result", "content"} or offset < 0:
             raise InvalidCursorError("invalid tool text page")
-        column = "approval_diff" if field == "diff" else "ui_result_json"
-        with self.lock:
-            row = self._connection().execute(
-                f"SELECT tool_calls.{column} AS content, tool_calls.result_json "
-                "FROM tool_calls JOIN items ON items.id = tool_calls.item_id "
-                "WHERE tool_calls.id = ? AND items.session_id = ?",
-                (tool_call_id, session_id),
-            ).fetchone()
-        if row is None:
-            from eidos_runtime.persistence.session_history import SessionHistoryRepository
-            historical = SessionHistoryRepository(self.database).tool_record(session_id, tool_call_id)
-            if historical is None or historical.item.tool_call is None:
-                raise ResourceNotFoundError("tool call not found in session")
-            tool = historical.item.tool_call
-            row = {"content": tool.change_diff if field == "diff" else tool.result_json, "result_json": tool.result_json}
+        if field == "content":
+            with self.lock:
+                row = self._connection().execute(
+                    "SELECT content FROM items WHERE id=? AND session_id=? AND kind='assistant_message'",
+                    (tool_call_id, session_id),
+                ).fetchone()
+            if row is None:
+                from eidos_runtime.persistence.session_history import SessionHistoryRepository
+                record = SessionHistoryRepository(self.database).item_record(session_id, tool_call_id)
+                if record is None or record.item.kind != "assistant_message":
+                    raise ResourceNotFoundError("assistant item not found in session")
+                row = {"content": record.item.content}
+        else:
+            column = "approval_diff" if field == "diff" else "ui_result_json"
+            with self.lock:
+                row = self._connection().execute(
+                    f"SELECT tool_calls.{column} AS content, tool_calls.result_json "
+                    "FROM tool_calls JOIN items ON items.id = tool_calls.item_id "
+                    "WHERE tool_calls.id = ? AND items.session_id = ?",
+                    (tool_call_id, session_id),
+                ).fetchone()
+            if row is None:
+                from eidos_runtime.persistence.session_history import SessionHistoryRepository
+                historical = SessionHistoryRepository(self.database).tool_record(session_id, tool_call_id)
+                if historical is None or historical.item.tool_call is None:
+                    raise ResourceNotFoundError("tool call not found in session")
+                tool = historical.item.tool_call
+                row = {"content": tool.change_diff if field == "diff" else tool.result_json, "result_json": tool.result_json}
         content = row["content"]
         if content is None and field == "result":
             content = row["result_json"]
@@ -947,6 +960,7 @@ class SessionRepository(Repository):
             if session_row is None:
                 raise ResourceNotFoundError("session not found")
             before_sequence: int | None = None
+            before_timestamp: int | None = None
             from eidos_runtime.persistence.session_history import SessionHistoryRepository
             history = SessionHistoryRepository(self.database)
             inherited_cursor = before_item_id is not None and connection.execute(
@@ -958,7 +972,7 @@ class SessionRepository(Repository):
             elif before_item_id is not None:
                 before_row = connection.execute(
                     """
-                    SELECT creation_seq FROM items
+                    SELECT creation_seq,created_at FROM items
                     WHERE id = ? AND session_id = ?
                     """,
                     (before_item_id, session_id),
@@ -966,6 +980,7 @@ class SessionRepository(Repository):
                 if before_row is None:
                     raise ResourceNotFoundError("item not found")
                 before_sequence = before_row["creation_seq"]
+                before_timestamp = before_row["created_at"]
             run_rows = connection.execute(
                 """
                 SELECT * FROM runs WHERE session_id = ?
@@ -1062,6 +1077,16 @@ class SessionRepository(Repository):
                 "SELECT 1 FROM session_history_entries WHERE session_id=?", (session_id,),
             ).fetchone() and selected_items:
                 snapshot["previousItemId"] = selected_items[0]["id"]
+        if selected_items:
+            from eidos_runtime.persistence.context_management import ContextManagementRepository
+            activities = ContextManagementRepository(self.database).activities(
+                session_id, tuple(dict.fromkeys(str(item["runId"]) for item in selected_items)),
+                through_event_id=through_event_id,
+                since=min(int(item["createdAt"]) for item in selected_items),
+                before=before_timestamp, byte_budget=max(0, MAX_SNAPSHOT_BYTES - _json_bytes(snapshot) - 64),
+            )
+            if activities:
+                snapshot["contextCompactions"] = [activity.to_wire_dict() for activity in activities]
         return snapshot
 
     def list_events(

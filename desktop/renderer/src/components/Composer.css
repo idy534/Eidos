@@ -13,12 +13,6 @@
   border-radius: 1rem;
   background: var(--surface);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 4px 20px rgba(49, 95, 74, 0.15), 0 0 0 3px var(--accent-glow);
 }
 
 .composer textarea {
@@ -213,8 +207,194 @@ button.composer-context-project--empty:hover:not(:disabled) {
   flex: none;
 }
 
-.composer-context-usage:focus-visible {
-  box-shadow: 0 0 0 2px var(--accent-glow);
+.composer-context-usage:focus-within .composer-context-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.composer-actions .context-indicator-trigger {
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  min-height: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+/* Context details popover */
+.context-details-dialog {
+  position: absolute;
+  inset: auto 0 calc(100% + 10px) auto;
+  width: 280px;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg, 16px);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: var(--font-size-sidebar);
+  box-shadow: var(--shadow-popover, 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.05));
+  z-index: 100;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.context-details-dialog::backdrop {
+  display: none;
+  background: transparent;
+}
+
+.context-details-content {
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.context-details-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.context-details-title {
+  font-size: var(--font-size-body, 14px);
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.context-details-dialog .context-details-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  max-height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 120ms ease, color 120ms ease;
+  flex: none;
+}
+
+.context-details-dialog .context-details-close-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.context-details-dialog .context-details-close-btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Hero section */
+.context-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.65rem;
+}
+
+.context-hero-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.context-hero-percent {
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.context-hero-used {
+  font-size: var(--font-size-caption, 12px);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Multi-segmented progress bar */
+.context-progress-bar {
+  width: 100%;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--surface-hover, #ebebeb);
+  display: flex;
+  overflow: hidden;
+  margin-bottom: 0.85rem;
+  box-sizing: border-box;
+}
+
+.context-progress-segment {
+  height: 100%;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-shrink: 0;
+}
+
+/* Content composition section */
+.context-sections-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.context-section-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-caption, 13px);
+  line-height: 1.4;
+}
+
+.context-section-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text);
+}
+
+.context-section-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.context-section-name {
+  font-size: var(--font-size-caption, 13px);
+  color: var(--text);
+}
+
+.context-section-value {
+  font-size: var(--font-size-caption, 13px);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+
+/* Compact button */
+.context-details-compact {
+  width: 100%;
+  margin-top: 0.75rem;
 }
 
 .context-progress-ring {

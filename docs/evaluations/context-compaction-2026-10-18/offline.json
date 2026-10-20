@@ -1,0 +1,2331 @@
+{
+  "kind": "synthetic_history_replay",
+  "model": null,
+  "model_calls": 0,
+  "started_at": "2026-10-18T13:05:10.477832+00:00",
+  "duration_ms": 7170,
+  "source_sha256": {
+    "scripts/evaluate-context-compaction.py": "da5e445a1b77aa24f4fd6ad2156183e5ffdf387b6b9f1650cdd093f89f9839b2",
+    "scripts/fixtures/context-compaction-cases.json": "1ac6d21fb62742950e7617dc75303e2997f6775bfa52b11b488c484f0e991e17",
+    "runtime/eidos_runtime/context/model_summary.py": "c1284a8e4e600dfd3f43fa0b3133f0921871f626e18a4ad35d68fffe3a307edc",
+    "runtime/eidos_runtime/context/compactor.py": "ebaf8ba9493a5ad1f798c190c486de0f22d901063fca8146377782e6eaf2747e",
+    "runtime/eidos_runtime/context/budget.py": "d3b47967facf89a0562807161e1a36a4861496a1586d97e3cab9e9e6750ff225",
+    "runtime/eidos_runtime/model/pydantic_ai_client.py": "b3751d53bbe315d0f5594920321e8693fb530cf56ac78ff750d002339e50b4b0",
+    "runtime/eidos_runtime/model/native_custom.py": "6989abe1fce1955631245f9eeda34e5b4e826c7dd0236d2a4cab75ffc282ba59"
+  },
+  "provider_usage": null,
+  "reasoning_selection": "high",
+  "real_repository_task_completion": "not_measured",
+  "results": [
+    {
+      "case": "chinese_correction",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "4fb7c9e4-3b40-4dc4-ad36-d9e231eed25e",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 27028,
+            "afterTokens": 5485,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "c3bf0be4-8bfa-4aff-9c05-68b1f44e2329",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 28889,
+            "afterTokens": 6086,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "62c03110-21eb-449c-af33-e06a6c8b1a54",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 29487,
+            "afterTokens": 6185,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "chinese_correction",
+      "scale": 2,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "afc9b50c-ebd6-46e0-9615-eda9c0ec9784",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 50435,
+            "afterTokens": 7439,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "101e04bf-5d5a-4d85-afff-4bc2b246b649",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 52293,
+            "afterTokens": 8053,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "f229b9d2-9427-425c-85dc-f5cdd7226864",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 52911,
+            "afterTokens": 8124,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "chinese_correction",
+      "scale": 3,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "c20a5c59-df47-47c4-b9b5-db0802385479",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 45231,
+            "afterTokens": 9394,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "35ba2db3-7036-41d0-889c-142bf2678784",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 41368,
+            "afterTokens": 9966,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "ee77c522-9aa1-433a-94fe-af924dd54ae1",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 41936,
+            "afterTokens": 10098,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "chinese_correction",
+      "scale": 4,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "5f5f7efd-b0f6-4dad-a06b-c6afa89bd94c",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 43542,
+            "afterTokens": 11318,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "207eb87f-ac6b-4148-8673-15f0bb90c1d6",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 37716,
+            "afterTokens": 11927,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "28628729-e018-43c7-810f-e4c597402073",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 38318,
+            "afterTokens": 12007,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "chinese_correction",
+      "scale": 5,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "9b438775-047b-4120-8b1e-a14d176edcf8",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 34046,
+            "afterTokens": 13287,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "21923e98-7266-483a-b3f4-91c86aed5c25",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 14,
+            "beforeTokens": 35917,
+            "afterTokens": 13905,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "2bb0eec2-ea4b-4e23-88ac-ccb988ee7c7f",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 15,
+            "beforeTokens": 36510,
+            "afterTokens": 13959,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "proposal_not_decision",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "aa19b16d-9ac7-4ebf-aa98-5a58b928bbac",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 6,
+            "beforeTokens": 27052,
+            "afterTokens": 5525,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "fdabd0d5-f6a3-432d-a795-2465626f6fa6",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 28936,
+            "afterTokens": 6125,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "e71fd620-2d74-46d2-a8b8-9ec8cdfa0ba5",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 29537,
+            "afterTokens": 6265,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "proposal_not_decision",
+      "scale": 2,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "9a13d6b9-2b89-45aa-9d38-914bf8cd01bc",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 50453,
+            "afterTokens": 7472,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "55166888-15db-440c-bd5b-2c63ccfd1d62",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 52344,
+            "afterTokens": 8054,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "455aba53-f534-4922-93f6-e66245b37bd0",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 52924,
+            "afterTokens": 8188,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "proposal_not_decision",
+      "scale": 3,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "1a0eb958-6a44-4191-966a-6c1ef068c9fc",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 45246,
+            "afterTokens": 9461,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "a3625cd9-8c21-4080-9625-902374ca77e9",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 41459,
+            "afterTokens": 10028,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "64ac4ba8-9be1-454d-a8d3-017233551bd7",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 42016,
+            "afterTokens": 10113,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "proposal_not_decision",
+      "scale": 4,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "32c6860c-8730-4249-976a-606c4f7b9e25",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 43568,
+            "afterTokens": 11382,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "be1a5f98-2fd4-4aa1-9852-4022866bd326",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 37784,
+            "afterTokens": 11955,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "21f85c64-9a2a-46f6-850c-6348ff60cb58",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 38365,
+            "afterTokens": 12079,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "proposal_not_decision",
+      "scale": 5,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "3d5b1dbe-817e-4d9c-a38d-dc3f2dcdf5bb",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 34036,
+            "afterTokens": 13309,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "1db33335-fb4f-4928-ad7e-562fb81d062b",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 35918,
+            "afterTokens": 13924,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "8ed3ffb7-1a95-47e3-8480-ef9472c0e626",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 15,
+            "beforeTokens": 36528,
+            "afterTokens": 14008,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "verified_tests",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "0928637d-f2da-4171-9637-2a848f92422c",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 6,
+            "beforeTokens": 27017,
+            "afterTokens": 5462,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "d51ede33-c26b-4c02-9023-3434dfda01c7",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 28849,
+            "afterTokens": 5911,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "20e12a8c-d161-4bf9-8cf9-53364b6537b8",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 29300,
+            "afterTokens": 5931,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "verified_tests",
+      "scale": 2,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "e2d4783f-666a-4db6-8966-18f852c11c31",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 50421,
+            "afterTokens": 7447,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "1157512b-cb24-4622-9bf7-ccdff84aa7b8",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 52293,
+            "afterTokens": 7897,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "714834a5-a651-40e5-8523-4961ad77ac21",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 52745,
+            "afterTokens": 7895,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "verified_tests",
+      "scale": 3,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "b6e4c8c3-4360-491a-801f-e5031345be41",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 45210,
+            "afterTokens": 9349,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "e43f2926-f88f-4e6f-b72f-3262dca37322",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 41322,
+            "afterTokens": 9824,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "5fd195f5-e914-4dbb-804b-c96f66a4e3ed",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 41795,
+            "afterTokens": 9814,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "verified_tests",
+      "scale": 4,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "b53a8802-54b0-4e60-b84f-f765e133df3d",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 43533,
+            "afterTokens": 11333,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "8832cd91-e79f-48da-802b-82acb112e191",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 16,
+            "beforeTokens": 37695,
+            "afterTokens": 11765,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "5210696b-a117-45b3-b3b0-0c8240d72a5f",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 38142,
+            "afterTokens": 11777,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "verified_tests",
+      "scale": 5,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "37574e16-639b-4b25-a268-3f7d7b4e3def",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 34042,
+            "afterTokens": 13277,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "7f0e274e-1a96-43b4-9d64-3f830fa5cb92",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 35882,
+            "afterTokens": 13743,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "2e4de54c-5bad-4987-a07e-e7ad106a408d",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 15,
+            "beforeTokens": 36356,
+            "afterTokens": 13747,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "english_constraints",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "c35256c8-62f8-4d90-875d-2d88ca544039",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 6,
+            "beforeTokens": 27008,
+            "afterTokens": 5417,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "3b5cbe7a-3695-4384-9c82-0d803790d97a",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 28819,
+            "afterTokens": 6040,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "9738b721-4358-453e-b06a-46dcbb3d6709",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 29443,
+            "afterTokens": 6093,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "english_constraints",
+      "scale": 2,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "9474fbb4-c830-41d7-b774-eb763b03559a",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 50411,
+            "afterTokens": 7355,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "f7bda46d-1a7a-4a4f-9e43-0aa48242ea2b",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 52209,
+            "afterTokens": 7949,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "df05eed7-503c-42d8-ab34-04864ef46e48",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 52809,
+            "afterTokens": 8083,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "english_constraints",
+      "scale": 3,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "0228ba17-9bdf-4abd-902c-460f145b3303",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 45215,
+            "afterTokens": 9335,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "6d8d6418-0ce4-4f1a-b6d8-85445dac43ba",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 41313,
+            "afterTokens": 9929,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "d646ecc6-cf61-4c92-a5ab-385e88c0dab3",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 41907,
+            "afterTokens": 10043,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "english_constraints",
+      "scale": 4,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "4bf74785-7659-4f58-8669-579f118aea53",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 43532,
+            "afterTokens": 11271,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "d86c24ad-8f3e-4126-ac41-14fb8e56cff0",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 37673,
+            "afterTokens": 11869,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "62a734fe-df7a-4db4-a426-f3acaf5a1b0a",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 38273,
+            "afterTokens": 11968,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "english_constraints",
+      "scale": 5,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "68c654c5-6f1d-4a9d-aa4a-ec423cd8ba37",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 34035,
+            "afterTokens": 13262,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "c9e781e8-ef7c-4dde-8c52-eaa66515018f",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 35889,
+            "afterTokens": 13856,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "0be3e1bd-3341-49d5-9352-fcb2d9da4908",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 15,
+            "beforeTokens": 36478,
+            "afterTokens": 13933,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "mixed_code_logs",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "bd6e1f1e-392f-4322-ac2a-89991831eff3",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 6,
+            "beforeTokens": 27045,
+            "afterTokens": 5532,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "cfe768d1-d7d1-4b25-84a6-404e2c63d21e",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 28946,
+            "afterTokens": 6116,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "143f517e-f199-4580-bf2c-e7aeab6b4e88",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 29527,
+            "afterTokens": 6207,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "mixed_code_logs",
+      "scale": 2,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "10c6787e-457c-4bac-9f2e-885f8bd7a39e",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 50447,
+            "afterTokens": 7471,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "1960ba3f-c80e-4166-ae3f-360a99a29d85",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 52340,
+            "afterTokens": 8065,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "b51105c7-8ec6-4433-9ee7-a3ab417edb14",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 52934,
+            "afterTokens": 8178,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "mixed_code_logs",
+      "scale": 3,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "7e7e2cdc-e1d8-47fa-aa7c-b8ee665ab6a7",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 45241,
+            "afterTokens": 9430,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "78e269a6-0bca-48b8-8d40-c1f8cd31ede0",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 41420,
+            "afterTokens": 10049,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "421f78f0-ee1f-4ea1-bc6a-da5ee957ad3c",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 42036,
+            "afterTokens": 10153,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "mixed_code_logs",
+      "scale": 4,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "d7d731b2-e368-4b6f-bba8-894aef61e9bb",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 43546,
+            "afterTokens": 11375,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "2fea1f9d-106a-4b6c-afa6-f9d4550ff3e7",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 37761,
+            "afterTokens": 11980,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "3ce63466-cc55-4b33-a31a-92b8773b15ec",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 38362,
+            "afterTokens": 12075,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "mixed_code_logs",
+      "scale": 5,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "e71852c9-7928-47e2-b3f0-dc691729dd95",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 34053,
+            "afterTokens": 13315,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "3d7facca-7df6-4299-92bc-f775059c2a1b",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 14,
+            "beforeTokens": 35931,
+            "afterTokens": 13904,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "a1181bee-c208-4a07-abfa-e2541b9e04ae",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 15,
+            "beforeTokens": 36514,
+            "afterTokens": 13993,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "long_negative_evidence",
+      "scale": 1,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "a9dfc2b7-b676-44ae-a193-75084aa192ba",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 6,
+            "beforeTokens": 27042,
+            "afterTokens": 5515,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "9633ef8a-bc9d-4593-a575-169c11a8417d",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 28923,
+            "afterTokens": 5991,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "77231d49-4134-4c36-a0aa-2bfeea2aed92",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 7,
+            "beforeTokens": 29404,
+            "afterTokens": 6017,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "long_negative_evidence",
+      "scale": 2,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "dfff6b85-eeea-47b5-995a-c1652238fe8a",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 8,
+            "beforeTokens": 50449,
+            "afterTokens": 7446,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "210c2f0b-d6b3-4394-8526-2b3d05744fe3",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 52315,
+            "afterTokens": 7928,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "0bbfcca2-5382-4c52-841e-23560367f527",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 52792,
+            "afterTokens": 7926,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "long_negative_evidence",
+      "scale": 3,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "c895606c-3ddc-432e-9e5b-10d9993c51ca",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 9,
+            "beforeTokens": 45231,
+            "afterTokens": 9421,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "674fb182-e744-409d-a741-b2a3cc08f499",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 41404,
+            "afterTokens": 9879,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "483c9308-6958-46d5-9989-0f640ff1f42a",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 41864,
+            "afterTokens": 9885,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "long_negative_evidence",
+      "scale": 4,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "5dbe6477-4352-44e2-99fb-4f6b02c0534c",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 10,
+            "beforeTokens": 43538,
+            "afterTokens": 11356,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "961a033f-434f-4717-9626-44e377dda104",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 12,
+            "beforeTokens": 37755,
+            "afterTokens": 11855,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "cc70da8a-8b35-4a52-85b0-497392da45f0",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 38253,
+            "afterTokens": 11869,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    },
+    {
+      "case": "long_negative_evidence",
+      "scale": 5,
+      "originals_unchanged": true,
+      "cycles": [
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "0712be72-63c4-4fcb-b7a7-0c3d17f27e58",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 11,
+            "beforeTokens": 34027,
+            "afterTokens": 13324,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 13
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "4fddde7c-73de-4dae-924c-b6d101317b80",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 13,
+            "beforeTokens": 35913,
+            "afterTokens": 13777,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 27
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        },
+        {
+          "retained": true,
+          "lineage": true,
+          "no_false_completion": true,
+          "compaction": {
+            "requestId": "2b600e61-514b-4215-956b-1d5bbb285161",
+            "stage": "finished",
+            "trigger": "manual",
+            "status": "succeeded",
+            "strategy": "deterministic",
+            "reason": "model_unavailable",
+            "durationMs": 15,
+            "beforeTokens": 36378,
+            "afterTokens": 13801,
+            "inputTokens": null,
+            "outputTokens": null,
+            "sourceItemCount": 41
+          },
+          "continuation_passed": null,
+          "continuation_failure": null,
+          "continuation_usage": null,
+          "continuation_answer": null
+        }
+      ],
+      "repository_task": null
+    }
+  ]
+}

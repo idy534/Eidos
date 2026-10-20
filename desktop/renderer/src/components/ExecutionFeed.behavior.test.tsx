@@ -56,6 +56,23 @@ function renderFeed(item: Item, run: Run = baseRun) {
 }
 
 describe("automation source and tool results", () => {
+  it("keeps steering input inside the running process and updates its receipt in place", () => {
+    const initial = shellItem({ id: "user", kind: "user_message", ordinal: 1, content: "原任务", status: "completed", toolCall: undefined });
+    const steering = shellItem({ id: "steer", kind: "user_message", ordinal: 3, content: "补充要求", toolCall: undefined });
+    const props = { runs: [baseRun], approvals: [], onApprove: vi.fn(), onReject: vi.fn() };
+    const { rerender } = render(<ExecutionFeed {...props} items={[initial, shellItem({ ordinal: 2 }), steering]} />);
+    const process = screen.getByText(/^正在处理/).closest("details")!;
+    expect(within(process).getByText("补充要求")).toBeInTheDocument();
+    expect(within(process).getByText("引导对话")).toBeInTheDocument();
+    expect(process.querySelector(".process-steering .user-message-bubble")).toBeInTheDocument();
+    expect(process.querySelector(".process-steering")?.getAttribute("data-status")).toBe("in_progress");
+    expect(screen.getAllByText("原任务")).toHaveLength(1);
+    rerender(<ExecutionFeed {...props} items={[initial, shellItem({ ordinal: 2 }), { ...steering, status: "completed", completedAt: 2_000 }]} />);
+    expect(within(process).getByText("引导对话")).toBeInTheDocument();
+    expect(process.querySelector(".process-steering")?.getAttribute("data-status")).toBe("completed");
+    expect(screen.getAllByText("补充要求")).toHaveLength(1);
+  });
+
   it("identifies scheduled input in the conversation", () => {
     const run = { ...baseRun, automationOrigin: { automationId: "task", revision: 1, occurrenceId: "occurrence", scheduledFor: "2026-10-15T01:00:00Z" } };
     renderFeed(shellItem({ kind: "user_message", content: "检查状态。", toolCall: undefined }), run);
@@ -104,6 +121,20 @@ describe("automation source and tool results", () => {
       />,
     );
     expect(screen.getByText("企业微信消息")).toBeInTheDocument();
+  });
+
+  it("renders an empty feed without showing empty-history hint and transitions to populated items safely", () => {
+    const props = { runs: [baseRun], approvals: [], onApprove: vi.fn(), onReject: vi.fn() };
+    const { container, rerender } = render(<ExecutionFeed {...props} items={[]} />);
+    expect(screen.queryByText(/还没有执行记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/暂时是没有执行记录/)).not.toBeInTheDocument();
+    expect(container.querySelector(".feed-empty")).toBeNull();
+    expect(container.querySelector(".feed-shell")).not.toBeNull();
+
+    const userItem = shellItem({ id: "user", kind: "user_message", ordinal: 1, content: "新任务", status: "completed", toolCall: undefined });
+    rerender(<ExecutionFeed {...props} items={[userItem]} />);
+    expect(screen.getByText("新任务")).toBeInTheDocument();
+    expect(screen.queryByText(/还没有执行记录/)).not.toBeInTheDocument();
   });
 
   it("renders the automation card only for the trusted builtin tool", () => {
@@ -155,22 +186,26 @@ describe("automation source and tool results", () => {
     expect(summary).not.toBeNull();
     const icon = summary?.querySelector(".tool-icon svg circle");
     expect(icon).toHaveAttribute("r", "6.2");
-    expect(summary?.querySelector(".tool-summary-text")).toHaveTextContent("已创建定时任务 · 每小时喝水提醒");
   });
 });
 
 describe("conversation fork actions", () => {
-  it("lets the user request an earlier page and disables repeated clicks during loading", () => {
+  it("automatically loads earlier history when scrolling up near the top without a manual button", () => {
     const onLoadOlder = vi.fn();
     const items: Item[] = [{ id: "recent", runId: baseRun.id, sessionId: baseRun.sessionId,
       kind: "user_message", ordinal: 1, status: "completed", content: "最近输入", createdAt: 1 }];
-    const { rerender } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
+    const { container, rerender } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
       onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} />);
-    fireEvent.click(screen.getByRole("button", { name: "加载更早的记录" }));
+    expect(screen.queryByRole("button", { name: "加载更早的记录" })).not.toBeInTheDocument();
+    const feed = container.querySelector(".feed") as HTMLElement;
+    fireEvent.wheel(feed, { deltaY: -100 });
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
     rerender(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
       onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} loadingOlder />);
-    expect(screen.getByRole("button", { name: "正在读取历史…" })).toBeDisabled();
+    expect(screen.getByText("正在读取历史…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /历史|记录/ })).not.toBeInTheDocument();
+    fireEvent.wheel(feed, { deltaY: -100 });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
   });
   const answer = (run: Run, overrides: Partial<Item> = {}): Item => ({
     id: "answer", sessionId: run.sessionId, runId: run.id, ordinal: 2,
@@ -214,7 +249,7 @@ describe("Run failure presentation", () => {
     renderFeed({ id: "user", ordinal: 0, sessionId: run.sessionId, runId: run.id,
       kind: "user_message", status: "completed", createdAt: 1_000, content: "读取文件",
     }, run);
-    expect(screen.getByRole("alert")).toHaveTextContent("模型调用“读取文件”时提供的“文件路径”参数不符合要求");
+    expect(screen.getByRole("alert")).toHaveTextContent("模型传给“读取文件”的“文件路径”参数不符合要求");
     expect(screen.getByRole("alert")).not.toHaveTextContent("MODEL_PROTOCOL_ERROR");
     expect(screen.queryByText("诊断信息")).not.toBeInTheDocument();
     expect(screen.queryByText("错误码")).not.toBeInTheDocument();
@@ -264,7 +299,7 @@ describe("Run failure presentation", () => {
     expect(turnResultsSection).toBeInTheDocument();
     expect(turnResultsSection).toHaveClass("turn-results--standalone");
     const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("任务已取消。");
+    expect(notice).toHaveTextContent("任务已取消");
     expect(notice).toHaveClass("run-notice", "run-notice--neutral");
   });
 });
@@ -1186,11 +1221,12 @@ describe("ExecutionFeed regenerate confirmation", () => {
     expect(screen.getByText("重新回答？")).toBeInTheDocument();
     expect(screen.getByText("重新回答将放弃当前的回答并重新生成。确定要继续吗？")).toBeInTheDocument();
 
-    // 2. Click cancel button -> dialog closes, onRegenerate still not called
+    // 2. Click cancel button -> dialog closes, onRegenerate still not called, and tooltip does not linger
     const cancelBtn = screen.getByRole("button", { name: "取消" });
     fireEvent.click(cancelBtn);
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(onRegenerate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 
     // 3. Open dialog again, click confirm button -> dialog closes, onRegenerate called with run
     fireEvent.click(retryBtn);
@@ -1826,3 +1862,35 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
 });
 
 
+
+
+describe("saved output projection", () => {
+  it("does not offer a system capacity pause button for old notices", () => {
+    renderFeed(shellItem({ kind: "assistant_message", status: "completed", toolCall: undefined,
+      content: "当前请求超过处理预算，任务已暂停。系统保留了执行记录，你可以调整任务后继续或取消" }));
+    expect(screen.queryByRole("button", { name: "继续任务" })).not.toBeInTheDocument();
+  });
+
+  it("pages the full assistant answer through its Session and original hash", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, "eidosRuntime");
+    const sha256 = "a".repeat(64);
+    const readToolText = vi.fn()
+      .mockResolvedValueOnce({ content: "first page", nextOffset: 10, totalCharacters: 19, sha256 })
+      .mockResolvedValueOnce({ content: "last page", nextOffset: 19, totalCharacters: 19, sha256 });
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readToolText } });
+    try {
+      renderFeed(shellItem({ kind: "assistant_message", status: "completed", toolCall: undefined,
+        content: "preview", contentBytes: 70000, contentHash: sha256 }), { ...baseRun, status: "succeeded" });
+      fireEvent.click(screen.getByRole("button", { name: "查看完整回答" }));
+      expect(await screen.findByText("first page")).toBeInTheDocument();
+      expect(readToolText).toHaveBeenLastCalledWith(baseRun.sessionId, "shell-item", "content", sha256, 0);
+      fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+      expect(await screen.findByText("last page")).toBeInTheDocument();
+      expect(readToolText).toHaveBeenLastCalledWith(baseRun.sessionId, "shell-item", "content", sha256, 10);
+      expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
+    } finally {
+      if (descriptor) Object.defineProperty(window, "eidosRuntime", descriptor);
+      else delete (window as Partial<Window>).eidosRuntime;
+    }
+  });
+});

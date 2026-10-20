@@ -19,7 +19,7 @@ from eidos_runtime.db.errors import InvalidRunStateError, StorageError
 from eidos_runtime.db.invariants import RuntimeInvariantError
 from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
-from eidos_runtime.model.client import ModelToolCall
+from eidos_runtime.model.client import FunctionToolPayload, ModelToolCall
 from eidos_runtime.runtime.approval import (
     ApprovalCoordinator,
     ApprovalOutcome,
@@ -41,11 +41,10 @@ from eidos_runtime.runtime.resource_registry import (
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
-from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
+from eidos_runtime.tools.contracts import GENERIC_PROJECTOR, RunShellInput
 from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolConcurrencyPolicy,
-    WorkspaceMutationRuntime,
     VerifiedToolOutput,
 )
 from eidos_runtime.telemetry.tracing import (
@@ -133,23 +132,6 @@ class ToolInfrastructureError(RuntimeError):
     pass
 
 
-def _uses_local_reconciliation_policy(plan: ToolDispatchPlan, call: ModelToolCall) -> bool:
-    descriptor = plan.descriptor
-    if descriptor is None or descriptor.provenance.kind != "builtin":
-        return False
-    if (
-        descriptor.provenance.source_id == "eidos"
-        and isinstance(descriptor.runtime, WorkspaceMutationRuntime)
-        and descriptor.spec.name in {"apply_patch", "write_file", "delete_file"}
-    ):
-        # The file handler checks actual prepared targets, again at commit.
-        return True
-    if descriptor.provenance.source_id == "eidos.planning":
-        return descriptor.spec.name == "write_plan"
-    return (
-        descriptor.provenance.source_id == "eidos.collaboration"
-        and descriptor.spec.name in {"send_message", "stop_agent", "followup_task"}
-    )
 
 
 class ToolConcurrencyGate:
@@ -565,21 +547,6 @@ class ToolExecutionController:
                     ),
                     "completed",
                 )
-            elif (
-                plan.side_effect != "none"
-                and self.store.side_effects_blocked(run_id)
-                and not _uses_local_reconciliation_policy(plan, call)
-            ):
-                outcome = HandlerOutcome(
-                    tool_error(
-                        call.name,
-                        "reconciliation_required",
-                        "An unresolved side effect has unknown scope. Runtime recovery does not require a preliminary read. "
-                        "Inspect reconciliationOrigins; do not replay the uncertain operation. Unrelated reads and agent messages or cancellation remain available.",
-                    ),
-                    "failed",
-                    "failed",
-                )
             elif not self.dispatcher.validate_execution(call, plan):
                 argument_validation = getattr(
                     self.dispatcher, "argument_validation", None
@@ -764,6 +731,30 @@ class ToolExecutionController:
                         "code": review.reason_code if review is not None else "auto_review_rejected",
                         "summary": feedback or (review.rationale + " Do not repeat or circumvent the refused action." if review else "Automatic approval review rejected this request. Do not repeat or circumvent it."),
                     })
+            if (
+                call.name == "run_shell"
+                and plan.descriptor is not None
+                and plan.descriptor.input_model is RunShellInput
+                and isinstance(call.raw_payload, FunctionToolPayload)
+            ):
+                ignored = RunShellInput.ignored_argument_names(call.raw_payload.arguments)
+                if ignored:
+                    names = ", ".join(
+                        name if name.isascii() and name.isidentifier() and len(name) <= 64
+                        else "<nonstandard field name>"
+                        for name in ignored[:8]
+                    )
+                    if len(ignored) > 8:
+                        names += ", ..."
+                    names = self.sensitive.redact_for_presentation(names).text
+                    outcome = replace(outcome, result={
+                        **outcome.result,
+                        "summary": (
+                            f"{outcome.result.get('summary', '')} "
+                            f"Ignored invalid or unknown run_shell arguments: {names}. "
+                            "These fields had no effect; follow the schema or omit them."
+                        ),
+                    })
             # Contract failure cannot erase an already-authorized side effect.
             try:
                 outcome = replace(
@@ -888,6 +879,12 @@ class ToolExecutionController:
                 projection = GENERIC_PROJECTOR.project(
                     plan.descriptor, outcome.result
                 )
+            if len(json.dumps(outcome.result, ensure_ascii=False).encode("utf-8")) > 16 * 1024:
+                projection = projection.model_copy(update={"model_result": {
+                    **projection.model_result,
+                    "readBack": {"tool": "read_tool_output", "callId": call.provider_call_id,
+                        "itemId": str(item["id"]), "stream": "result"},
+                }})
             outcome = replace(
                 outcome,
                 progress_fingerprint=projection.progress_fingerprint,

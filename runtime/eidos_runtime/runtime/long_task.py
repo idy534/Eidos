@@ -5,6 +5,8 @@ import json
 import time
 
 from eidos_runtime.db.database import Repository
+from eidos_runtime.db.events import append_event
+from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.domain.long_task import (
     LongTaskProgress,
     LongTaskStatus,
@@ -69,6 +71,36 @@ class LongTaskRepository(Repository):
         )
         self._insert(progress)
         return progress
+
+    def clear_legacy_capacity_pause(self, run_id: str) -> LongTaskProgress | None:
+        current = self.read(run_id)
+        if current is None or current.status is not LongTaskStatus.PAUSED:
+            return current
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT i.id,i.content FROM items i JOIN runs r ON r.id=i.run_id "
+                "WHERE i.run_id=? AND r.status='running' AND r.cancel_requested_at IS NULL "
+                "AND i.kind='assistant_message' AND i.model_step_index IS NULL "
+                "ORDER BY i.creation_seq DESC LIMIT 1", (run_id,),
+            ).fetchone()
+        if row is None or "任务已暂停。系统保留了执行记录" not in (row["content"] or ""):
+            return current
+        with self.lock:
+            latest_pause = self._connection().execute(
+                "SELECT MAX(id) FROM events WHERE run_id=? AND event_type=? "
+                "AND json_extract(payload_json,'$.reason')='long_task_status_changed'",
+                (run_id, EventType.RUN_UPDATED.value),
+            ).fetchone()[0]
+            notice_event = self._connection().execute(
+                "SELECT MAX(id) FROM events WHERE run_id=? AND event_type=? "
+                "AND json_extract(payload_json,'$.itemId')=?",
+                (run_id, EventType.ITEM_COMPLETED.value, row["id"]),
+            ).fetchone()[0]
+        if latest_pause is None or notice_event is None or latest_pause > notice_event:
+            return current
+        # Event ordering identifies the old machine pause. A later user pause
+        # remains untouched, including after the legacy pause was cleared once.
+        return self._update(current, status=LongTaskStatus.RUNNING)
 
     def read(self, run_id: str) -> LongTaskProgress | None:
         with self.lock:
@@ -294,6 +326,13 @@ class LongTaskRepository(Repository):
             )
             if changed.rowcount != 1:
                 raise ConditionalUpdateFailed("long task compare-and-set failed")
+            if updated.status is not current.status:
+                run = connection.execute("SELECT session_id FROM runs WHERE id=?", (current.run_id,)).fetchone()
+                if run is not None:
+                    append_event(connection, EventType.RUN_UPDATED, updated.updated_at,
+                        {"reason": "long_task_status_changed"},
+                        session_id=run["session_id"], run_id=current.run_id)
+
         return updated
 
     def _require(self, run_id: str) -> LongTaskProgress:
@@ -343,12 +382,8 @@ class ResumeVerifier:
             reasons.append("context_plan_changed")
         if expected_permission_snapshot_hash != current_permission_snapshot_hash:
             reasons.append("permission_snapshot_changed")
-        if side_effects_may_exist:
-            reasons.append("reconciliation_required")
         if pending_approval:
             reasons.append("approval_required")
-        if unfinished_side_effecting_tool or durable_intent_unfinished:
-            reasons.append("reconciliation_required")
         if not model_available or not credential_available:
             reasons.append("model_unavailable")
         if not seatbelt_ready:
@@ -359,9 +394,7 @@ class ResumeVerifier:
             reasons.append("checkpoint_integrity_failed")
         reasons = list(dict.fromkeys(reasons))
         outcome = ResumeOutcome.SAFE_RESUME
-        if "reconciliation_required" in reasons:
-            outcome = ResumeOutcome.RECONCILIATION_REQUIRED
-        elif "permission_snapshot_changed" in reasons:
+        if "permission_snapshot_changed" in reasons:
             outcome = ResumeOutcome.PERMISSION_CHANGED
         elif "permission_changed" in reasons:
             outcome = ResumeOutcome.PERMISSION_CHANGED
@@ -392,16 +425,7 @@ class RestartVerifier:
     def verify(
         progress: LongTaskProgress, verification: ResumeVerification
     ) -> ResumeVerification:
-        if (
-            progress.side_effects_may_exist
-            and "reconciliation_required" not in verification.reasons
-        ):
-            return verification.model_copy(
-                update={
-                    "outcome": ResumeOutcome.RECONCILIATION_REQUIRED,
-                    "reasons": (*verification.reasons, "reconciliation_required"),
-                }
-            )
+        # Restart does not replay an uncertain operation or impose a verification gate.
         return verification
 
 

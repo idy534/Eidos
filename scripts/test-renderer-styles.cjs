@@ -83,7 +83,14 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
     await settle();
     await evaluate("document.querySelector('#model-trigger').focus()");
-    assert.equal((await read("#model-trigger", ["outlineWidth", "outlineStyle"])).outlineWidth, "2px", "Keyboard focus remains visible");
+    assert.equal((await read("#model-trigger", ["outlineStyle"])).outlineStyle, "none", "Keyboard focus paints no ring");
+
+    // Focus restored after a pointer-driven dialog close also paints no ring.
+    const triggerPoint = await pointer("#model-trigger", true);
+    win.webContents.sendInputEvent({ type: "mouseUp", button: "left", ...triggerPoint });
+    await settle();
+    await evaluate("document.querySelector('#model-trigger').focus()");
+    assert.equal((await read("#model-trigger", ["outlineStyle"])).outlineStyle, "none", "Pointer focus paints no ring");
 
     await show("selected");
     const selected = ["session", "git", "project", "tree", "model", "mode", "skill", "handoff", "clarification", "mcp"];

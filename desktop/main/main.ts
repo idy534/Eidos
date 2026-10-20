@@ -3,8 +3,9 @@ import { isChannelSaveRequest, isChannelReadRequest } from "../shared/channels.j
 import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
+import { isSearchRequest, isReadAroundRequest, isFileFindRequest } from "../shared/search.js";
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
-import { isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
+import { isQueuedRunSteerRequest, isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, powerMonitor, shell as electronShell } from "electron";
 import { fileURLToPath } from "node:url";
@@ -622,6 +623,18 @@ ipcMain.handle(IPC.AUTOMATION_RUN_NOW, (_event, request: unknown) => {
   if (!isAutomationRunNowRequest(request)) throw new Error("立即执行参数无效。");
   return clientOrThrow().automationRunNow(request);
 });
+ipcMain.handle(IPC.WORKSPACE_READ_FOR_FIND, (_event, request: unknown) => {
+  if (!isFileFindRequest(request)) throw new Error("文件查找参数无效");
+  return clientOrThrow().readWorkspaceFileForFind(request);
+});
+ipcMain.handle(IPC.SEARCH_SESSIONS, (_event, request: unknown) => {
+  if (!isSearchRequest(request)) throw new Error("搜索参数无效");
+  return clientOrThrow().searchSessions(request);
+});
+ipcMain.handle(IPC.SESSION_READ_AROUND, (_event, request: unknown) => {
+  if (!isReadAroundRequest(request)) throw new Error("消息定位参数无效");
+  return clientOrThrow().readSessionAround(request);
+});
 ipcMain.handle(IPC.SIDEBAR_LIST_PINS, () => clientOrThrow().listSidebarPins());
 ipcMain.handle(IPC.RUN_UPDATE_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunUpdateRequest(request)) throw new Error("排队消息参数无效。");
@@ -630,6 +643,10 @@ ipcMain.handle(IPC.RUN_UPDATE_QUEUED, (_event, request: unknown) => {
 ipcMain.handle(IPC.RUN_LIST_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunListRequest(request)) throw new Error("排队消息参数无效。");
   return clientOrThrow().listQueuedRuns(request);
+});
+ipcMain.handle(IPC.RUN_STEER_QUEUED, (_event, request: unknown) => {
+  if (!isQueuedRunSteerRequest(request)) throw new Error("引导消息参数无效");
+  return clientOrThrow().steerQueuedRun(request);
 });
 ipcMain.handle(IPC.RUN_DELETE_QUEUED, (_event, request: unknown) => {
   if (!isQueuedRunDeleteRequest(request)) throw new Error("排队消息参数无效。");
@@ -667,7 +684,7 @@ ipcMain.handle(IPC.SESSION_LIST, (_event, cursor: unknown) => {
 ipcMain.handle(IPC.TOOL_TEXT_READ, (_event, sessionId: unknown, toolCallId: unknown, field: unknown, sha256: unknown, offset: unknown) => {
   if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256
     || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 256
-    || (field !== "diff" && field !== "result")
+    || (field !== "diff" && field !== "result" && field !== "content")
     || typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)
     || typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) {
     throw new Error("工具文本读取参数无效。");
@@ -1353,6 +1370,10 @@ ipcMain.handle(IPC.RUN_START, async (
     planning as RunPlanningOptions | undefined,
   );
 });
+ipcMain.handle(IPC.RUN_RESUME, (_event, runId: unknown) => {
+  if (typeof runId !== "string" || !runId || runId.length > 256) throw new Error("任务参数无效");
+  return clientOrThrow().resumeRun(runId);
+});
 ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Run 参数无效。");
   log("info", "run", "Cancel requested", { runId });
@@ -1361,6 +1382,14 @@ ipcMain.handle(IPC.RUN_CANCEL, (_event, runId: unknown) => {
 ipcMain.handle(IPC.CONTEXT_USAGE, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("Context Usage 参数无效。");
   return clientOrThrow().readContextUsage(runId);
+});
+ipcMain.handle(IPC.CONTEXT_DETAILS, (_event, runId: unknown) => {
+  if (typeof runId !== "string") throw new Error("上下文参数无效。");
+  return clientOrThrow().readContextDetails(runId);
+});
+ipcMain.handle(IPC.CONTEXT_COMPACT, (_event, runId: unknown) => {
+  if (typeof runId !== "string") throw new Error("上下文参数无效。");
+  return clientOrThrow().requestContextCompaction(runId);
 });
 ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown, references: unknown) => {
   inputOwner(_event);

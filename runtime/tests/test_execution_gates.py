@@ -23,7 +23,6 @@ from eidos_runtime.runtime.tool_runtime import FileChangeToolHandler, ToolCallRu
 from eidos_runtime.sandbox.permissions import BasePermissionProfile
 from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.sandbox.shell import ShellLaunchSpec
-from eidos_runtime.workspace.reader import WorkspaceReader
 
 
 @pytest.fixture
@@ -170,17 +169,18 @@ def test_mixed_wait_continues_after_timeout_without_replaying_prior_calls(execut
 
 
 @pytest.mark.parametrize("role", ["default", "explorer", "worker", None])
-def test_unknown_shell_blocks_new_child_with_inherited_execution_tools(execution, role):
+def test_unknown_shell_does_not_block_new_child_with_inherited_execution_tools(execution, role):
     e = execution
     _uncertain(e, 'run_shell')
     arguments = {'taskName': 'inspect', 'message': 'Inspect evidence'}
     if role is not None:
         arguments['role'] = role
     result = _execute(e, (ModelToolCall('child', 'spawn_agent', arguments),), threading.Event())
-    assert result.error_fingerprints
+    assert not result.error_fingerprints
     children = e.app.repository.state(e.run['id']).agents
-    assert children == []
-    assert e.store.side_effects_blocked(e.run['id'])
+    assert len(children) == 1
+    assert e.store.read_run(e.run['id'])["reconciliationRequired"]
+    assert not e.store.side_effects_blocked(e.run['id'])
 
 
 def test_deferred_completion_keeps_shell_manager_available_for_continuation(execution, monkeypatch):
@@ -224,15 +224,16 @@ def test_unknown_shell_does_not_block_messages_or_stopping_owned_children(execut
         ModelToolCall("stop", "stop_agent", {"agentId": child.id}),
     ), threading.Event())
     assert not result.error_fingerprints
-    assert e.store.side_effects_blocked(e.run["id"])
-    blocked = _execute(e, (
-        ModelToolCall("new-shell", "run_shell", {"command": "echo must-not-run"}),
+    assert e.store.read_run(e.run["id"])["reconciliationRequired"]
+    assert not e.store.side_effects_blocked(e.run["id"])
+    continued = _execute(e, (
+        ModelToolCall("new-shell", "run_shell", {"command": "printf allowed"}),
     ), threading.Event())
-    assert blocked.error_fingerprints
-    assert not e.resources.shell_process_manager.has_running()
+    assert not continued.error_fingerprints, _results(e)
+    assert e.store.read_run(e.run["id"])["reconciliationRequired"]
 
 
-def test_unchanged_patch_does_not_clear_an_unknown_shell_effect(execution):
+def test_unchanged_patch_preserves_unknown_shell_evidence_without_blocking_next_tool(execution):
     e = execution
     target = e.workspace / "unchanged.txt"
     target.write_text("known\n")
@@ -242,13 +243,13 @@ def test_unchanged_patch_does_not_clear_an_unknown_shell_effect(execution):
             "*** Begin Patch\n*** Update File: unchanged.txt\n@@\n-known\n+known\n*** End Patch"}),
         ModelToolCall("new-shell", "run_shell", {"command": "echo must-not-run"}),
     ), threading.Event())
-    assert result.error_fingerprints
-    assert [code for _, code, _ in _results(e)][-2:] == ["no_changes", "reconciliation_required"]
-    assert e.store.side_effects_blocked(e.run["id"])
+    assert not result.error_fingerprints, _results(e)
+    assert [code for _, code, _ in _results(e)][-2:] == ["no_changes", "ok"]
+    assert e.store.read_run(e.run["id"])["reconciliationRequired"]
+    assert not e.store.side_effects_blocked(e.run["id"])
     assert e.store.connection.execute(
         "SELECT reconciliation_epoch FROM runs WHERE id=?", (e.run["id"],),
     ).fetchone()[0] == 1
-    assert not e.resources.shell_process_manager.has_running()
     assert target.read_text() == "known\n"
     assert e.store.connection.execute(
         "SELECT status FROM durable_intents WHERE tool_call_id=?", (origin["toolCall"]["id"],),
@@ -324,7 +325,8 @@ def test_coordination_does_not_wait_for_workspace_recovery(execution):
     result = _execute(e, (ModelToolCall("list", "list_agents", {}),), threading.Event())
     assert not result.error_fingerprints
     assert calls == []
-    assert e.store.side_effects_blocked(e.run["id"])
+    assert e.store.read_run(e.run["id"])["reconciliationRequired"]
+    assert not e.store.side_effects_blocked(e.run["id"])
 
 
 def test_repeated_coordination_does_not_scan_unresolved_workspace(execution):
@@ -334,7 +336,8 @@ def test_repeated_coordination_does_not_scan_unresolved_workspace(execution):
     e.runtime.workspace_refresh = lambda _cancel: calls.append("refresh") or SimpleNamespace(complete=False)
     _execute(e, tuple(ModelToolCall(f"list-{i}", "list_agents", {}) for i in range(3)), threading.Event())
     assert calls == []
-    assert e.store.side_effects_blocked(e.run["id"])
+    assert e.store.read_run(e.run["id"])["reconciliationRequired"]
+    assert not e.store.side_effects_blocked(e.run["id"])
 
 
 @pytest.mark.parametrize("name,conditions", [
@@ -349,12 +352,11 @@ def test_unknown_scope_is_not_treated_as_a_known_file(execution, name, condition
     assert e.store.reconciliation_file_paths(e.run["id"]) is None
 
 
-@pytest.mark.parametrize("targets,blocked", [
-    (["unrelated.txt"], False), (["changed.txt"], True),
-    (["changed.txt/child"], True), (["."], True),
-    (["unrelated.txt", "changed.txt"], True),
+@pytest.mark.parametrize("targets", [
+    ["unrelated.txt"], ["changed.txt"], ["changed.txt/child"], ["."],
+    ["unrelated.txt", "changed.txt"],
 ])
-def test_file_reconciliation_only_blocks_conflicting_prepared_targets(execution, targets, blocked):
+def test_unknown_side_effect_does_not_create_a_file_operation_gate(execution, targets):
     e = execution
     _uncertain(e)
     calls = []
@@ -365,12 +367,13 @@ def test_file_reconciliation_only_blocks_conflicting_prepared_targets(execution,
     result = handler._execute_file_effect(e.run["id"], {}, PreparedToolExecution(
         approval_description={}, intent_preconditions={"paths": targets}, transition_reason="test",
     ), threading.Event(), runtime, lambda: calls.append("write") or {"outcome": "success"})
-    assert (result.result.get("code") == "reconciliation_required") is blocked
-    assert calls == ([] if blocked else ["write"])
-    assert e.store.side_effects_blocked(e.run["id"])
+    assert result.result == {"outcome": "success"}
+    assert calls == ["write"]
+    assert e.store.read_run(e.run["id"])["reconciliationRequired"]
+    assert not e.store.side_effects_blocked(e.run["id"])
 
 
-def test_file_barrier_is_rechecked_inside_commit_window(execution):
+def test_unknown_outcome_during_commit_window_does_not_block_prepared_file_operation(execution):
     e = execution
     calls = []
     executor = SimpleNamespace(workspace=SimpleNamespace(path=e.workspace), _external_writers={},
@@ -385,39 +388,30 @@ def test_file_barrier_is_rechecked_inside_commit_window(execution):
     result = handler._execute_file_effect(e.run["id"], {}, PreparedToolExecution(
         approval_description={}, intent_preconditions={"paths": ["unrelated.txt"]}, transition_reason="test",
     ), threading.Event(), runtime, lambda: calls.append("write") or {"outcome": "success"})
-    assert result.result["code"] == "reconciliation_required"
-    assert calls == []
+    assert result.result == {"outcome": "success"}
+    assert calls == ["write"]
+    assert e.store.read_run(e.run["id"])["reconciliationRequired"]
+    assert not e.store.side_effects_blocked(e.run["id"])
 
 
-@pytest.mark.parametrize('origin,target_safe,status,observations', [
-    ('apply_patch', True, 'succeeded', 1),
-    ('apply_patch', False, 'interrupted', 1),
-    ('run_shell', True, 'interrupted', 0),
-])
-def test_completion_recovers_only_verifiable_workspace_effects(execution, monkeypatch, origin, target_safe, status, observations):
+@pytest.mark.parametrize('origin', ['apply_patch', 'run_shell'])
+def test_completion_does_not_refresh_or_gate_on_unknown_workspace_effects(execution, monkeypatch, origin):
     e = execution
     _uncertain(e, origin)
-    observed = []
     scans = []
     e.runtime.workspace_refresh = lambda _cancel: scans.append(True) or SimpleNamespace(complete=False)
-    if not target_safe:
-        (e.workspace / 'changed.txt').symlink_to(e.workspace / 'unrelated.txt')
-    original = WorkspaceReader.observe_files
-
-    def observe(reader, paths, *, cancel):
-        observed.append(paths)
-        return original(reader, paths, cancel=cancel)
-
-    monkeypatch.setattr(WorkspaceReader, 'observe_files', observe)
     step = _step(e)
     item = e.store.create_assistant_item(e.run['id'], step.step_index)
     engine = RuntimeEngine(e.store, None, lambda _event: None)
     action = engine._settle_sample_boundary(e.run['id'], LoopDecision(action=LoopAction.COMPLETE),
         SimpleNamespace(assistant_item=item), SimpleNamespace(status='no_tools'), None, e.resources, None,
-        threading.Event(), completion_recovery=e.runtime._refresh_reconciliation)
+        threading.Event())
     assert action is SampleBoundaryAction.RETURN
-    assert e.store.read_run(e.run['id'])['status'] == status
-    assert len(observed) == observations
+    completed = e.store.read_run(e.run['id'])
+    assert completed['status'] == 'succeeded'
+    assert completed['reconciliationRequired']
+    assert completed['sideEffectsMayExist']
+    assert not e.store.side_effects_blocked(e.run['id'])
     assert scans == []
 
 
@@ -429,9 +423,11 @@ def test_target_recovery_commit_rechecks_epoch_and_affected_paths(execution):
         e.run['id'], epoch + 1, observed_paths=frozenset({'changed.txt'})) is None
     assert e.store.clear_reconciliation_after_workspace_refresh_committed(
         e.run['id'], epoch, observed_paths=frozenset({'other.txt'})) is None
-    assert e.store.side_effects_blocked(e.run['id'])
+    assert e.store.read_run(e.run['id'])['reconciliationRequired']
+    assert not e.store.side_effects_blocked(e.run['id'])
     mutation = e.store.clear_reconciliation_after_workspace_refresh_committed(
         e.run['id'], epoch, observed_paths=frozenset({'changed.txt'}))
     assert mutation is not None
     assert mutation.events[-1]['payload']['reason'] == 'workspace_target_observation'
+    assert not e.store.read_run(e.run['id']).get('reconciliationRequired', False)
     assert not e.store.side_effects_blocked(e.run['id'])

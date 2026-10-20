@@ -1,3 +1,5 @@
+import { Tooltip } from "./Tooltip.js";
+
 export interface NavigationControlsProps {
   sidebarOpen: boolean;
   canGoBack: boolean;
@@ -24,45 +26,51 @@ export function NavigationControls({
     <div className={`navigation-controls ${className}`.trim()}>
       {showTrafficSpacer && <div className="window-traffic-spacer" aria-hidden="true" />}
       <div className="navigation-controls__buttons">
-        <button
-          type="button"
-          className={`nav-icon-btn nav-sidebar-toggle${sidebarOpen ? " nav-sidebar-toggle--open" : ""}`}
-          aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
-          aria-expanded={sidebarOpen}
-          title={sidebarOpen ? "收起侧边栏 (⌘B)" : "展开侧边栏 (⌘B)"}
-          onClick={onToggleSidebar}
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3.5" width="14" height="13" rx="3" />
-            <path d="M7.5 3.5v13" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <Tooltip content={sidebarOpen ? "收起侧边栏" : "展开侧边栏"} shortcut="⌘B" placement="bottom">
+          <button
+            type="button"
+            className={`nav-icon-btn nav-sidebar-toggle${sidebarOpen ? " nav-sidebar-toggle--open" : ""}`}
+            aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+            aria-expanded={sidebarOpen}
+            title={sidebarOpen ? "收起侧边栏 (⌘B)" : "展开侧边栏 (⌘B)"}
+            onClick={onToggleSidebar}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3.5" width="14" height="13" rx="3" />
+              <path d="M7.5 3.5v13" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </Tooltip>
 
-        <button
-          type="button"
-          className="nav-icon-btn nav-back-btn"
-          aria-label="后退"
-          title="后退 (⌘[)"
-          disabled={!canGoBack}
-          onClick={onGoBack}
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M12.5 5L7.5 10L12.5 15" />
-          </svg>
-        </button>
+        <Tooltip content="后退" shortcut="⌘[" placement="bottom">
+          <button
+            type="button"
+            className="nav-icon-btn nav-back-btn"
+            aria-label="后退"
+            title="后退 (⌘[)"
+            disabled={!canGoBack}
+            onClick={onGoBack}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M12.5 5L7.5 10L12.5 15" />
+            </svg>
+          </button>
+        </Tooltip>
 
-        <button
-          type="button"
-          className="nav-icon-btn nav-forward-btn"
-          aria-label="前进"
-          title="前进 (⌘])"
-          disabled={!canGoForward}
-          onClick={onGoForward}
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M7.5 5L12.5 10L7.5 15" />
-          </svg>
-        </button>
+        <Tooltip content="前进" shortcut="⌘]" placement="bottom">
+          <button
+            type="button"
+            className="nav-icon-btn nav-forward-btn"
+            aria-label="前进"
+            title="前进 (⌘])"
+            disabled={!canGoForward}
+            onClick={onGoForward}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M7.5 5L12.5 10L7.5 15" />
+            </svg>
+          </button>
+        </Tooltip>
       </div>
     </div>
   );

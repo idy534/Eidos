@@ -2,6 +2,7 @@
 
   /* Typography Stack */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   --font-code: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "PingFang SC", monospace;
   --diff-font-family: var(--font-code);
 
@@ -88,7 +89,10 @@
   --action-danger-hover: #7a3028;
   --action-danger-active: #65251e;
   --control-disabled-opacity: 0.55;
-  --focus-ring: 2px solid var(--accent);
+  /* Product decision: no focus ring, for pointer or keyboard focus. Rules that still
+   * reference this token resolve to `none`; the focused position stays readable through
+   * hover, selected and border states. */
+  --focus-ring: none;
   --radius-xs: 4px;
   --radius-md: 8px;
   --radius-menu: 9px;
@@ -98,4 +102,12 @@
   --scrollbar-size: 6px;
   --scrollbar-thumb: rgba(106, 111, 103, 0.28);
   --scrollbar-thumb-hover: rgba(106, 111, 103, 0.45);
+
+  /* Tooltip Tokens */
+  --tooltip-bg: rgba(26, 26, 28, 0.92);
+  --tooltip-text: #ffffff;
+  --tooltip-border: rgba(255, 255, 255, 0.12);
+  --tooltip-shadow: 0 4px 14px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --tooltip-radius: 6px;
+  --tooltip-font-size: 11.5px;
 }

@@ -9,7 +9,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/index.js";
 import type { EidosRuntimeAPI, Unsubscribe } from "../shared/ipc-api.js";
 import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "../shared/sidebar.js";
-import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
+import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "../shared/queued-runs.js";
 import type {
   RuntimeStatus,
   RuntimeHealth,
@@ -79,6 +79,9 @@ import type {
 } from "../shared/response-actions.js";
 
 const api: EidosRuntimeAPI = {
+  readWorkspaceFileForFind: (request) => ipcRenderer.invoke(IPC.WORKSPACE_READ_FOR_FIND, request),
+  searchSessions: (request) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, request),
+  readSessionAround: (request) => ipcRenderer.invoke(IPC.SESSION_READ_AROUND, request),
   // Runtime status
   getStatus: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC.RUNTIME_GET_STATUS),
   getHealth: (): Promise<RuntimeHealth> => ipcRenderer.invoke(IPC.RUNTIME_HEALTH),
@@ -167,6 +170,8 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.RUN_UPDATE_QUEUED, request),
   listQueuedRuns: (request: QueuedRunListRequest): Promise<QueuedRunListResponse> =>
     ipcRenderer.invoke(IPC.RUN_LIST_QUEUED, request),
+  steerQueuedRun: (request: QueuedRunSteerRequest): Promise<QueuedRunChangeResponse> =>
+    ipcRenderer.invoke(IPC.RUN_STEER_QUEUED, request),
   deleteQueuedRun: (request: QueuedRunDeleteRequest): Promise<QueuedRunChangeResponse> =>
     ipcRenderer.invoke(IPC.RUN_DELETE_QUEUED, request),
   setSidebarPinned: (request: SidebarSetPinnedRequest): Promise<SidebarPinsResponse> =>
@@ -178,7 +183,7 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.PROJECT_DELETE, projectId),
   listSessions: (cursor?: string): Promise<SessionListResult> => ipcRenderer.invoke(IPC.SESSION_LIST, cursor),
   readSession: (sessionId: string, options?: { itemLimit?: number; beforeItemId?: string }): Promise<SessionSnapshot> => ipcRenderer.invoke(IPC.SESSION_READ, sessionId, options),
-  readToolText: (sessionId: string, toolCallId: string, field: "diff" | "result", sha256: string, offset = 0): Promise<ToolTextPage> => ipcRenderer.invoke(IPC.TOOL_TEXT_READ, sessionId, toolCallId, field, sha256, offset),
+  readToolText: (sessionId: string, toolCallId: string, field: "diff" | "result" | "content", sha256: string, offset = 0): Promise<ToolTextPage> => ipcRenderer.invoke(IPC.TOOL_TEXT_READ, sessionId, toolCallId, field, sha256, offset),
   listEvents: (sessionId: string, afterEventId: number): Promise<EventListResult> =>
     ipcRenderer.invoke(IPC.EVENT_LIST, sessionId, afterEventId),
   createSession: (
@@ -356,8 +361,11 @@ const api: EidosRuntimeAPI = {
     planning,
   ),
   cancelRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_CANCEL, runId),
+  resumeRun: (runId: string): Promise<Run> => ipcRenderer.invoke(IPC.RUN_RESUME, runId),
   readContextUsage: (runId: string): Promise<ContextUsage | null> =>
     ipcRenderer.invoke(IPC.CONTEXT_USAGE, runId),
+  readContextDetails: (runId: string): Promise<ContextDetails> => ipcRenderer.invoke(IPC.CONTEXT_DETAILS, runId),
+  requestContextCompaction: (runId: string): Promise<ContextCompactionRecord> => ipcRenderer.invoke(IPC.CONTEXT_COMPACT, runId),
   reviseRun: (sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult> =>
     ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput, references),
 
@@ -438,3 +446,4 @@ const api: EidosRuntimeAPI = {
 
 contextBridge.exposeInMainWorld("eidosRuntime", api);
 import type { AutomationExecuteRequest, AutomationHistoryRequest, AutomationRunNowRequest, AutomationResponse } from "../shared/automation.js";
+import type { ContextDetails, ContextCompactionRecord } from "../shared/context-management.js";

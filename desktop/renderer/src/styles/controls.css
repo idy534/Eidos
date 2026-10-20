@@ -477,7 +477,11 @@ select:focus {
   color: var(--muted);
   cursor: pointer;
   box-shadow: none !important;
-  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+  transition:
+    color 150ms var(--apple-spring),
+    background-color 150ms var(--apple-spring),
+    border-color 150ms var(--apple-spring),
+    transform 150ms var(--apple-spring);
   flex-shrink: 0;
 }
 
@@ -485,11 +489,13 @@ select:focus {
   color: var(--text);
   border-color: var(--line);
   background: var(--surface);
+  transform: scale(1.05);
   box-shadow: none !important;
 }
 
 .code-copy-btn:active {
   background: var(--surface-muted);
+  transform: scale(0.94);
   box-shadow: none !important;
 }
 

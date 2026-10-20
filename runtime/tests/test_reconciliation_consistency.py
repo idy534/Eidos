@@ -5,7 +5,6 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -30,7 +29,6 @@ from eidos_runtime.runtime.permission_policy import (  # noqa: E402
     PermissionDisposition,
 )
 from eidos_runtime.runtime.tool_orchestrator import OrchestratorResult  # noqa: E402
-from eidos_runtime.runtime.tool_runtime import ToolCallRuntime  # noqa: E402
 from eidos_runtime.sandbox.workspace_manifest import (  # noqa: E402
     WorkspaceManifest,
 )
@@ -97,7 +95,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "completed",
         )
 
-    def test_explicit_top_level_true_keeps_reconciliation_barrier(self) -> None:
+    def test_explicit_unknown_outcome_keeps_evidence_without_barrier(self) -> None:
         item = self.store.create_tool_item(
             self.run["id"], 0, 0, "shell", "run_shell", "{}"
         )
@@ -116,7 +114,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             tool_status="failed",
         )
 
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_known_shell_exit_without_explicit_flag_does_not_open_barrier(self) -> None:
         item = self.store.create_tool_item(
@@ -157,7 +155,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         )
 
         self.assertEqual(self.store.read_run(self.run["id"])["status"], "running")
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_managed_shell_commits_exit_without_rewriting_model_observation(self) -> None:
         index = self.store.increment_model_step(self.run["id"])
@@ -214,7 +212,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertNotIn("executionStatus", result["data"])
         self.assertEqual(result["data"]["stdout"], "partial")
 
-    def test_reconciliation_barrier_commits_interrupted_completion_atomically(self) -> None:
+    def test_unknown_outcome_does_not_override_atomic_success_completion(self) -> None:
         step_index = self.store.increment_model_step(self.run["id"])
         intent_item = self.store.create_tool_item(
             self.run["id"], step_index, 0, "uncertain", "apply_patch", "{}"
@@ -252,17 +250,17 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             assistant["id"], self.run["id"]
         )
 
-        self.assertEqual(mutation.value[1]["status"], "interrupted")
-        self.assertEqual(self.store.read_run(self.run["id"])["status"], "interrupted")
+        self.assertEqual(mutation.value[1]["status"], "succeeded")
+        self.assertEqual(self.store.read_run(self.run["id"])["status"], "succeeded")
         self.assertEqual(self.store.read_item(assistant["id"])["status"], "completed")
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM execution_segments WHERE run_id = ?",
                 (self.run["id"],),
             ).fetchone()[0],
-            "failed",
+            "completed",
         )
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(
             connection.execute(
                 "SELECT status FROM durable_intents WHERE tool_call_id = ?",
@@ -313,7 +311,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             event_count,
         )
 
-    def test_engine_final_text_commits_interrupted_run_without_resampling(self) -> None:
+    def test_engine_final_text_commits_success_with_unknown_effect_evidence(self) -> None:
         mutation = self.store.create_tool_item(
             self.run["id"], 0, 0, "shell-mutation", "run_shell", "{}"
         )
@@ -348,8 +346,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted")
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(persisted["status"], "succeeded")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertEqual(persisted["modelStepCount"], 1)
         self.assertEqual(
             self.store.context_projection_facts(
@@ -710,9 +708,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertEqual(persisted["status"], "interrupted" if blocked else "succeeded")
-        self.assertEqual(self.store.side_effects_blocked(self.run["id"]), blocked)
-        self.assertEqual(start.call_count, 1 if blocked else 2)
+        self.assertEqual(persisted["status"], "succeeded")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(start.call_count, 2)
         self.assertGreaterEqual(len(model.run_statuses), 2)
         self.assertEqual(model.run_statuses[1], "running")
         read_only_tools = {
@@ -736,7 +734,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertTrue(result["data"]["workspaceDiffIncomplete"])
         self.assertEqual(result["data"]["workspaceChangeState"], "unknown")
 
-    def test_workspace_identity_refresh_error_interrupts_after_final_text(self) -> None:
+    def test_workspace_observation_error_preserves_unknown_facts_after_completion(self) -> None:
         self._assert_shell_refresh_error(
             "workspace_identity_changed"
         )
@@ -751,7 +749,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "unsupported_workspace_entry", blocked=False
         )
 
-    def _assert_default_seatbelt_shell_fails_closed_after_list_files(
+    def _assert_default_seatbelt_shell_allows_continuation_after_list_files(
         self, *, code: str, termination: str, exit_code: int | None
     ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
@@ -807,9 +805,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertNotEqual(persisted["status"], "succeeded")
+        self.assertEqual(persisted["status"], "succeeded")
         self.assertTrue(persisted["sideEffectsMayExist"])
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertTrue(
             self.store.context_projection_facts(
@@ -839,19 +837,19 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertTrue(result["data"]["sandboxed"])
         self.assertEqual(result["data"]["sandboxPermissions"], "use_default")
 
-    def test_default_seatbelt_shell_timeout_fails_closed_after_list_files(self) -> None:
-        self._assert_default_seatbelt_shell_fails_closed_after_list_files(
+    def test_default_seatbelt_shell_timeout_allows_continuation_after_list_files(self) -> None:
+        self._assert_default_seatbelt_shell_allows_continuation_after_list_files(
             code="timeout", termination="timeout", exit_code=None
         )
 
-    def test_default_seatbelt_shell_background_process_fails_closed_after_list_files(
+    def test_default_seatbelt_shell_background_process_allows_continuation_after_list_files(
         self,
     ) -> None:
-        self._assert_default_seatbelt_shell_fails_closed_after_list_files(
+        self._assert_default_seatbelt_shell_allows_continuation_after_list_files(
             code="background_process", termination="background_process", exit_code=0
         )
 
-    def test_shell_reconciliation_without_trusted_sandbox_metadata_fails_closed_after_list_files(
+    def test_shell_reconciliation_without_trusted_sandbox_metadata_allows_continuation_after_list_files(
         self,
     ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
@@ -917,8 +915,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertNotEqual(persisted["status"], "succeeded")
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(persisted["status"], "succeeded")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertTrue(
             self.store.context_projection_facts(
@@ -942,7 +940,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         self.assertNotIn("sandboxed", result["data"])
         self.assertNotIn("effectivePermissionsSummary", result["data"])
 
-    def _assert_permissioned_shell_fails_closed_after_list_files(
+    def _assert_permissioned_shell_allows_continuation_after_list_files(
         self, arguments: dict[str, object], expected_mode: str
     ) -> None:
         model = _StatusRecordingModel(self.store, self.run["id"], [
@@ -1004,8 +1002,8 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             ).run(self.run["id"], threading.Event())
 
         persisted = self.store.read_run(self.run["id"])
-        self.assertNotEqual(persisted["status"], "succeeded")
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertEqual(persisted["status"], "succeeded")
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         self.assertTrue(persisted["reconciliationRequired"])
         self.assertTrue(
             self.store.context_projection_facts(
@@ -1028,7 +1026,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(calls, 1)
 
-    def test_escalated_shell_reconciliation_fails_closed_after_list_files(self) -> None:
+    def test_escalated_shell_reconciliation_allows_continuation_after_list_files(self) -> None:
         with (
             patch(
                 "eidos_runtime.runtime.tool_orchestrator.unsandboxed_execution_allowed",
@@ -1042,7 +1040,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 ),
             ),
         ):
-            self._assert_permissioned_shell_fails_closed_after_list_files(
+            self._assert_permissioned_shell_allows_continuation_after_list_files(
                 {
                     "command": "false",
                     "yieldTimeMs": 5000,
@@ -1052,10 +1050,10 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 "require_escalated",
             )
 
-    def test_additional_permission_shell_reconciliation_fails_closed_after_list_files(
+    def test_additional_permission_shell_reconciliation_allows_continuation_after_list_files(
         self,
     ) -> None:
-        self._assert_permissioned_shell_fails_closed_after_list_files(
+        self._assert_permissioned_shell_allows_continuation_after_list_files(
             {
                 "command": "false",
                 "yieldTimeMs": 5000,
@@ -1066,7 +1064,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             "with_additional_permissions",
         )
 
-    def test_external_unknown_side_effect_remains_fail_closed_without_replay(self) -> None:
+    def test_external_unknown_side_effect_preserves_evidence_without_blocking_or_replay(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-external-reconciliation-") as directory:
             root = Path(directory)
             data = root / "data"
@@ -1146,9 +1144,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
                 kernel.close()
 
             persisted = store.read_run(run["id"])
-            self.assertNotEqual(persisted["status"], "succeeded")
+            self.assertEqual(persisted["status"], "succeeded")
             self.assertTrue(persisted["sideEffectsMayExist"])
-            self.assertTrue(store.side_effects_blocked(run["id"]))
+            self.assertFalse(store.side_effects_blocked(run["id"]))
             self.assertTrue(
                 store.context_projection_facts(
                     run["id"]
@@ -1179,166 +1177,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             self.assertIn(result["code"], {"mcp_tool_timeout", "TOOL_TIMEOUT"})
             store.close()
 
-    def test_external_uncertain_refresh_failure_keeps_barrier(self) -> None:
-        item = self.store.create_tool_item(
-            self.run["id"], 0, 0, "external", "external_tool", "{}"
-        )
-        self.store.complete_tool_item(
-            item["id"],
-            json.dumps({
-                "outcome": "error",
-                "code": "external_outcome_unknown",
-                "summary": "External outcome is unknown",
-                "data": {},
-                "sideEffectsMayExist": True,
-                "reconciliationRequired": True,
-            }),
-            item_status="failed",
-            tool_status="failed",
-        )
-        pending_epoch = self.store.context_projection_facts(
-            self.run["id"]
-        ).reconciliation_epoch
-        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
-        runtime.store = self.store
-        runtime.events = SimpleNamespace(
-            publish=lambda *_args, **_kwargs: None,
-        )
 
-        def fail_refresh(_cancel: threading.Event) -> WorkspaceManifest:
-            raise WorkspacePathError("workspace_identity_changed")
 
-        runtime.workspace_refresh = fail_refresh
 
-        runtime._refresh_reconciliation(
-            run_id=self.run["id"],
-            cancel=threading.Event(),
-        )
-
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
-        self.assertEqual(
-            self.store.context_projection_facts(
-                self.run["id"]
-            ).reconciliation_epoch,
-            pending_epoch,
-        )
-
-    def test_external_uncertain_intent_is_not_cleared_by_successful_read_refresh(
-        self,
-    ) -> None:
-        item = self.store.create_tool_item(
-            self.run["id"],
-            0,
-            0,
-            "external",
-            "mcp__fixture__slow",
-            "{}",
-            provenance={"kind": "mcp"},
-        )
-        self.store.begin_durable_intent(
-            item["id"], preconditions={}, approval_required=False
-        )
-        self.store.complete_tool_item(
-            item["id"],
-            json.dumps({
-                "outcome": "error",
-                "code": "external_outcome_unknown",
-                "summary": "External outcome is unknown",
-                "data": {},
-                "sideEffectsMayExist": True,
-                "reconciliationRequired": True,
-            }),
-            item_status="failed",
-            tool_status="failed",
-        )
-        pending_epoch = self.store.context_projection_facts(
-            self.run["id"]
-        ).reconciliation_epoch
-        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
-        runtime.store = self.store
-        runtime.events = SimpleNamespace(
-            publish=lambda *_args, **_kwargs: None,
-        )
-        refresh_called = False
-
-        def refresh(_cancel: threading.Event) -> SimpleNamespace:
-            nonlocal refresh_called
-            refresh_called = True
-            return SimpleNamespace(complete=True)
-
-        runtime.workspace_refresh = refresh
-
-        runtime._refresh_reconciliation(
-            run_id=self.run["id"],
-            cancel=threading.Event(),
-        )
-
-        self.assertFalse(refresh_called)
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
-        self.assertEqual(
-            self.store.context_projection_facts(
-                self.run["id"]
-            ).reconciliation_epoch,
-            pending_epoch,
-        )
-
-    def test_non_workspace_intent_scopes_are_not_cleared_by_read_refresh(self) -> None:
-        connection = self.store.connection
-        connection.execute(
-            "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
-            "WHERE id = ?",
-            (self.run["id"],),
-        )
-        connection.commit()
-        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
-        runtime.store = self.store
-        runtime.events = SimpleNamespace(
-            publish=lambda *_args, **_kwargs: None,
-        )
-        refresh_called = False
-
-        def refresh(_cancel: threading.Event) -> SimpleNamespace:
-            nonlocal refresh_called
-            refresh_called = True
-            return SimpleNamespace(complete=True)
-
-        runtime.workspace_refresh = refresh
-
-        for scope in ("external", "eidos_state", "shell", "unknown"):
-            with self.subTest(scope=scope):
-                refresh_called = False
-                with patch.object(
-                    self.store,
-                    "reconciliation_intent_scopes",
-                    return_value=frozenset({scope}),
-                ):
-                    runtime._refresh_reconciliation(
-                        run_id=self.run["id"],
-                        cancel=threading.Event(),
-                    )
-                self.assertFalse(refresh_called)
-                self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
-
-    def test_persisted_workspace_targets_allow_recovery_without_full_scan(self) -> None:
-        item = self.store.create_tool_item(
-            self.run["id"], 0, 0, "target-recovery", "apply_patch", "{}",
-            provenance={"kind": "builtin", "sourceId": "eidos", "sourceVersion": "1", "contentHash": "a" * 64},
-        )
-        self.store.begin_durable_intent(
-            item["id"], preconditions={"paths": ["recovered.txt"]}, approval_required=False,
-        )
-        self.store.complete_tool_item(item["id"], json.dumps({
-            "outcome": "error", "code": "outcome_unknown", "data": {},
-            "sideEffectsMayExist": True, "reconciliationRequired": True,
-        }), item_status="failed", tool_status="failed")
-        runtime = ToolCallRuntime.__new__(ToolCallRuntime)
-        runtime.store = self.store
-        runtime.events = SimpleNamespace(
-            publish=lambda *_args, **_kwargs: None,
-        )
-        runtime.workspace_refresh = lambda _cancel: self.fail("Recovery must not scan the whole workspace")
-        runtime._refresh_reconciliation(run_id=self.run["id"], cancel=threading.Event())
-        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_new_successful_read_clears_barrier_before_success_completion(self) -> None:
         uncertain = self.store.create_tool_item(
@@ -1357,7 +1198,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             item_status="failed",
             tool_status="failed",
         )
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         pending_epoch = self.store.context_projection_facts(
             self.run["id"]
         ).reconciliation_epoch
@@ -1378,7 +1219,7 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             }),
         )
         self.store.complete_current_step(self.run["id"], "completed")
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
         mutation = self.store.clear_reconciliation_after_workspace_refresh_committed(
             self.run["id"], pending_epoch
         )

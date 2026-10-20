@@ -1,0 +1,43 @@
+{
+  "canonicalResult": {
+    "schemaVersion": 1,
+    "toolContractVersion": 1,
+    "toolName": "read_file_range",
+    "outcome": "success",
+    "code": "ok",
+    "summary": "Read file range",
+    "data": {
+      "path": "README.md",
+      "content": "Eidos 世界\n",
+      "startLine": 1,
+      "endLine": 1,
+      "nextLine": null,
+      "sizeBytes": 9007199254740991,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "sideEffectsMayExist": false,
+    "reconciliationRequired": false
+  },
+  "modelResult": {
+    "toolName": "read_file_range",
+    "outcome": "success",
+    "code": "ok",
+    "summary": "Read file range",
+    "data": {
+      "path": "README.md",
+      "content": "Eidos 世界\n",
+      "startLine": 1,
+      "endLine": 1,
+      "nextLine": null,
+      "sizeBytes": 9007199254740991
+    },
+    "sideEffectsMayExist": false,
+    "reconciliationRequired": false
+  },
+  "contextReadRequest": {
+    "callId": "11111111-1111-4111-8111-111111111111",
+    "stream": "context",
+    "offsetBytes": 0,
+    "maxBytes": 4096
+  }
+}

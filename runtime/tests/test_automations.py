@@ -242,7 +242,7 @@ def test_admission_rolls_back_run_and_occurrence_on_failure(automation):
         app.repository.accept(occurrence.id, fail, session)
 
 
-def test_once_stops_on_submission_and_unknown_effects_pause_only_own_plan(automation):
+def test_once_stops_on_submission_and_unknown_effects_do_not_block_reschedule(automation):
     store, session, app, _ = automation
     once = create(automation, kind="at", schedule={"runAt": "2026-10-16T09:00:00+08:00"}, sessionId=session)
     occurrence = app.repository.claim(once.id, "2026-10-16T01:00:00+00:00")
@@ -250,8 +250,9 @@ def test_once_stops_on_submission_and_unknown_effects_pause_only_own_plan(automa
     assert app.repository.read(once.id).pause_reason == "one_shot_fired"
     store.cancel_run(run["id"])
     store.connection.execute("UPDATE runs SET reconciliation_required=1 WHERE id=?", (run["id"],))
-    with pytest.raises(AutomationError, match="需要核验"):
-        app.execute(AutomationRequest.model_validate({"mode": "update", "id": once.id, "expectedRevision": 2, "changes": {"status": "ACTIVE", "schedule": {"runAt": "2026-10-17T09:00:00+08:00"}}}), context_session_id=session, operation_id=str(uuid4()))
+    updated = app.execute(AutomationRequest.model_validate({"mode": "update", "id": once.id, "expectedRevision": 2, "changes": {"status": "ACTIVE", "schedule": {"runAt": "2026-10-17T09:00:00+08:00"}}}), context_session_id=session, operation_id=str(uuid4()))
+    assert updated.automation.status == "ACTIVE"
+    assert store.read_run(run["id"])["reconciliationRequired"]
     other = create(automation)
     assert app.repository.read(other.id).status == "ACTIVE"
 
@@ -484,7 +485,7 @@ def test_regenerate_lineage_and_origin_are_atomic_and_creation_is_deduplicated(a
         app.execute(request, context_session_id=session, run_id=regenerated["id"], operation_id=str(uuid4()))
 
 
-def test_regenerated_automatic_runs_block_overlap_and_require_verification(automation):
+def test_regenerated_automatic_runs_block_overlap_but_not_unknown_result_evidence(automation):
     store, session, app, _ = automation
     task = create(automation)
     occurrence = app.repository.claim(task.id, NOW.isoformat())
@@ -497,8 +498,10 @@ def test_regenerated_automatic_runs_block_overlap_and_require_verification(autom
     store.cancel_run(replacement["id"])
     with store.lock, store.connection as connection:
         connection.execute("UPDATE runs SET reconciliation_required=1 WHERE id=?", (replacement["id"],))
-    assert app.repository.claim(task.id, (NOW + timedelta(minutes=20)).isoformat()) is None
-    assert app.repository.read(task.id).status == "PAUSED"
+    next_occurrence = app.repository.claim(task.id, (NOW + timedelta(minutes=20)).isoformat())
+    assert next_occurrence is not None and next_occurrence.status == "preparing"
+    assert app.repository.read(task.id).status == "ACTIVE"
+    assert store.read_run(replacement["id"])["reconciliationRequired"]
 
 
 def test_atomic_regeneration_rechecks_current_source_before_creating_run(automation):

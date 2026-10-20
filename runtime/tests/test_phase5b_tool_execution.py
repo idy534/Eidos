@@ -618,7 +618,8 @@ class ToolExecutionControllerTests(unittest.TestCase):
             cancel=threading.Event(), deadline=None,
         )
         self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_CONTRACT_VIOLATION")
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertTrue(self.store.read_run(self.run["id"])["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_skipped_execution_cannot_override_side_effect_evidence(self) -> None:
         for evidence in ("started", "workspace_changed", "sideEffectsMayExist", "reconciliationRequired"):
@@ -652,7 +653,8 @@ class ToolExecutionControllerTests(unittest.TestCase):
                     cancel=threading.Event(), deadline=None,
                 )
                 self.assertEqual(outcome.result["code"], "TOOL_EXECUTION_CONTRACT_VIOLATION")
-                self.assertTrue(self.store.side_effects_blocked(run["id"]))
+                self.assertTrue(self.store.read_run(run["id"])["reconciliationRequired"])
+                self.assertFalse(self.store.side_effects_blocked(run["id"]))
 
     def test_failure_after_execution_started_remains_uncertain(self) -> None:
         handler = _Handler()
@@ -675,7 +677,8 @@ class ToolExecutionControllerTests(unittest.TestCase):
             cancel=threading.Event(), deadline=None,
         )
         self.assertTrue(outcome.result["reconciliationRequired"])
-        self.assertTrue(self.store.side_effects_blocked(self.run["id"]))
+        self.assertTrue(self.store.read_run(self.run["id"])["reconciliationRequired"])
+        self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
     def test_projection_failure_preserves_known_execution_result(self) -> None:
         handler = _Handler()
@@ -791,23 +794,44 @@ class ToolExecutionControllerTests(unittest.TestCase):
             deadline=None,
         )
 
-        self.assertEqual(outcome.result["code"], "TOOL_OUTPUT_TOO_LARGE")
+        self.assertEqual(outcome.result["code"], "ok")
         self.assertTrue(outcome.result["sideEffectsMayExist"])
         self.assertFalse(outcome.result["reconciliationRequired"])
         persisted = json.loads(
             self.store.read_item(item["id"])["toolCall"]["resultJson"]
         )
-        self.assertNotIn("x" * 1_024, json.dumps(persisted))
+        self.assertEqual(persisted["data"]["content"], "x" * 300_000)
+        model_result = json.loads(self.store.connection.execute(
+            "SELECT model_result_json FROM tool_calls WHERE item_id=?", (item["id"],)
+        ).fetchone()[0])
+        self.assertLess(len(json.dumps(model_result).encode()), 50 * 1024)
+        self.assertEqual(model_result["readBack"]["itemId"], item["id"])
+        self.assertNotIn("sha256", model_result.get("data", {}))
         self.assertFalse(self.store.side_effects_blocked(self.run["id"]))
 
-    def test_pending_reconciliation_blocks_mutation_without_interrupting_run(self) -> None:
+    def test_unknown_result_does_not_block_authorized_mutation(self) -> None:
         self.store.connection.execute(
             "UPDATE runs SET reconciliation_required = 1, side_effects_may_exist = 1 "
             "WHERE id = ?",
             (self.run["id"],),
         )
         self.store.connection.commit()
-        controller = self._controller({"file": _Handler()})
+        handler = _Handler()
+        controller = self._controller({"file": handler})
+
+        def execute(_run, item, _call, _cancel):
+            handler.calls += 1
+            controller.authorize_workspace_side_effect(
+                item=item, prepared=PreparedToolExecution(
+                    approval_description={}, intent_preconditions={"path": "a.txt"},
+                    transition_reason="test",
+                ),
+            )
+            controller.mark_execution_started()
+            controller.observe_execution_result(handler.result)
+            return HandlerOutcome(handler.result, "completed")
+
+        handler.execute = execute
 
         outcome = controller.execute(
             run_id=self.run["id"],
@@ -818,10 +842,9 @@ class ToolExecutionControllerTests(unittest.TestCase):
             deadline=None,
         )
 
-        self.assertIn(
-            outcome.result["code"],
-            {"reconciliation_required", "TOOL_RECONCILIATION_REQUIRED"},
-        )
+        self.assertEqual(outcome.result["code"], "ok")
+        self.assertEqual(handler.calls, 1)
+        self.assertTrue(self.store.read_run(self.run["id"])["reconciliationRequired"])
         self.assertEqual(self.store.read_run(self.run["id"])["status"], "running")
 
 

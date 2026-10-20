@@ -1,7 +1,10 @@
-import { useEffect, useId, useRef, useState, Fragment } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, Fragment } from "react";
+import type { RefObject } from "react";
+import { createPortal } from "react-dom";
 import type { InputPrepareRequest } from "../../../shared/input-context.js";
 import { useInputContext } from "./InputContext.js";
 import { userFacingError } from "../session-state.js";
+import { Tooltip } from "./Tooltip.js";
 
 export type InputPickerMode = "all" | "skill" | "commands";
 interface Candidate { id: string; label: string; detail: string; request?: InputPrepareRequest; action?: string; unavailable?: boolean }
@@ -19,12 +22,66 @@ const CATEGORIES = [
   { id: "plugin", label: "插件" },
   { id: "history", label: "会话" },
 ] as const;
-export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onCreateAgent }: {
+
+const PICKER_MARGIN = 8;
+const PICKER_GAP = 10;
+const PICKER_WIDTH = 390;
+const PICKER_HEIGHT = 400;
+const PICKER_MIN_HEIGHT = 120;
+const PICKER_PREFERRED_ABOVE = 260;
+
+type PickerPlacement = "above" | "below";
+interface PickerLayout {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  placement: PickerPlacement;
+}
+
+const PICKER_FALLBACK_LAYOUT: PickerLayout = {
+  top: PICKER_MARGIN,
+  left: PICKER_MARGIN,
+  width: PICKER_WIDTH,
+  height: PICKER_HEIGHT,
+  placement: "above",
+};
+
+/**
+ * Keeps the picker inside the surface that would otherwise clip it: preferred above the trigger,
+ * flipped or shrunk when the session canvas has less room, and always inside the canvas bounds.
+ */
+function measurePickerLayout(surface: HTMLElement, boundary: HTMLElement | null): PickerLayout {
+  const anchor = surface.getBoundingClientRect();
+  const bounds = boundary?.getBoundingClientRect();
+  const limitTop = (bounds?.top ?? 0) + PICKER_MARGIN;
+  const limitBottom = (bounds?.bottom ?? window.innerHeight) - PICKER_MARGIN;
+  const limitLeft = (bounds?.left ?? 0) + PICKER_MARGIN;
+  const limitRight = (bounds?.right ?? window.innerWidth) - PICKER_MARGIN;
+  const width = Math.min(PICKER_WIDTH, Math.max(0, limitRight - limitLeft));
+  const left = Math.max(limitLeft, Math.min(anchor.left, limitRight - width));
+  const desired = Math.min(PICKER_HEIGHT, window.innerHeight * 0.6);
+  const aboveBottom = anchor.top - PICKER_GAP;
+  const belowTop = anchor.bottom + PICKER_GAP;
+  const spaceAbove = Math.max(0, aboveBottom - limitTop);
+  const spaceBelow = Math.max(0, limitBottom - belowTop);
+  const placement: PickerPlacement =
+    spaceAbove >= Math.min(desired, PICKER_PREFERRED_ABOVE) || spaceAbove >= spaceBelow ? "above" : "below";
+  const available = placement === "above" ? spaceAbove : spaceBelow;
+  if (available < PICKER_MIN_HEIGHT) {
+    return { top: limitTop, left, width, placement, height: Math.min(desired, Math.max(0, limitBottom - limitTop)) };
+  }
+  const height = Math.min(desired, available);
+  return { top: placement === "above" ? aboveBottom - height : belowTop, left, width, height, placement };
+}
+
+export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, onCommand, onListId, onSelectPlanMode, onCreateAgent, anchor }: {
   mode: InputPickerMode; query: string; inline: boolean;
   onQuery(value: string): void; onChoose(request: InputPrepareRequest): void; onClose(): void;
   onCommand(command: string): void; onListId?(id: string, active: string | undefined): void;
   onSelectPlanMode?(): void;
   onCreateAgent?: (() => void) | undefined;
+  anchor?: RefObject<HTMLElement | null> | undefined;
 }) {
   const context = useInputContext();
   const [catalog, setCatalog] = useState<Candidate[]>([]);
@@ -48,6 +105,35 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
   }, [searchExpanded]);
   const listId = useId();
   const root = useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = useState<PickerLayout>(PICKER_FALLBACK_LAYOUT);
+  useLayoutEffect(() => {
+    const surface = anchor?.current ?? document.querySelector<HTMLElement>(".composer");
+    if (!surface) return;
+    const boundary = surface.closest<HTMLElement>(".session-canvas") ?? surface.closest<HTMLElement>(".workspace-content");
+    const update = () => {
+      const next = measurePickerLayout(surface, boundary);
+      setLayout((previous) => (
+        previous.top === next.top
+        && previous.left === next.left
+        && previous.width === next.width
+        && previous.height === next.height
+        && previous.placement === next.placement
+          ? previous
+          : next
+      ));
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update);
+    observer?.observe(surface);
+    if (boundary) observer?.observe(boundary);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+      observer?.disconnect();
+    };
+  }, [anchor]);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -208,8 +294,13 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
     return () => document.removeEventListener("pointerdown", outside);
   }, [onClose]);
 
-  return (
-    <div className="input-picker" ref={root}>
+  return createPortal(
+    <div
+      className="input-picker"
+      ref={root}
+      data-placement={layout.placement}
+      style={{ top: layout.top, left: layout.left, width: layout.width, height: layout.height }}
+    >
       {inline ? (
         <div className="input-picker__header">
           <div className="input-picker__inline-header">
@@ -232,99 +323,113 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
               onKeyDown={handleSearchKeyDown}
             />
             {query ? (
-              <button
-                type="button"
-                className="input-picker__clear-btn"
-                onClick={() => {
-                  onQuery("");
-                  searchInputRef.current?.focus();
-                }}
-                aria-label="清空搜索"
-                title="清空搜索"
-                tabIndex={-1}
-              >
-                <ClearIcon />
-              </button>
+              <Tooltip content="清空搜索">
+                <button
+                  type="button"
+                  className="input-picker__clear-btn"
+                  onClick={() => {
+                    onQuery("");
+                    searchInputRef.current?.focus();
+                  }}
+                  aria-label="清空搜索"
+                  title="清空搜索"
+                  tabIndex={-1}
+                >
+                  <ClearIcon />
+                </button>
+              </Tooltip>
             ) : (
-              <button
-                type="button"
-                className="input-picker__collapse-btn"
-                onClick={() => {
-                  setSearchExpanded(false);
-                  onQuery("");
-                }}
-                aria-label="收起搜索"
-                title="收起搜索"
-              >
-                收起
-              </button>
+              <Tooltip content="收起搜索">
+                <button
+                  type="button"
+                  className="input-picker__collapse-btn"
+                  onClick={() => {
+                    setSearchExpanded(false);
+                    onQuery("");
+                  }}
+                  aria-label="收起搜索"
+                  title="收起搜索"
+                >
+                  收起
+                </button>
+              </Tooltip>
             )}
           </div>
         </div>
       ) : (
         <div className="input-picker__header input-picker__header--actions">
           <div className="input-picker__actions">
-            <button
-              type="button"
-              className="input-picker__action-btn"
-              aria-label="添加文件"
-              title="添加文件"
-              onClick={() => {
-                void window.eidosRuntime.pickInputPaths().then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
-              }}
-            >
-              <UploadFileIcon />
-              <span>文件</span>
-            </button>
-            <button
-              type="button"
-              className="input-picker__action-btn"
-              aria-label="添加文件夹"
-              title="添加文件夹"
-              onClick={() => {
-                void window.eidosRuntime.pickInputPaths(true).then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
-              }}
-            >
-              <FolderPlusIcon />
-              <span>文件夹</span>
-            </button>
+            <Tooltip content="添加文件">
+              <button
+                type="button"
+                className="input-picker__action-btn"
+                aria-label="添加文件"
+                title="添加文件"
+                onClick={() => {
+                  void window.eidosRuntime.pickInputPaths().then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
+                }}
+              >
+                <UploadFileIcon />
+                <span>文件</span>
+              </button>
+            </Tooltip>
+            <Tooltip content="添加文件夹">
+              <button
+                type="button"
+                className="input-picker__action-btn"
+                aria-label="添加文件夹"
+                title="添加文件夹"
+                onClick={() => {
+                  void window.eidosRuntime.pickInputPaths(true).then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
+                }}
+              >
+                <FolderPlusIcon />
+                <span>文件夹</span>
+              </button>
+            </Tooltip>
 
             <span className="input-picker__actions-divider" aria-hidden="true" />
 
-            <button
-              type="button"
-              className="input-picker__action-btn input-picker__action-btn--plan"
-              aria-label="Plan 模式"
-              title="开始 Plan 模式"
-              onClick={() => {
-                onSelectPlanMode?.();
-                onClose();
-              }}
-            >
-              <LightbulbIcon />
-              <span>Plan</span>
-            </button>
-            <button
-              type="button"
-              className="input-picker__action-btn input-picker__action-btn--goal"
-              aria-label="目标模式"
-              title="目标模式 (即将推出)"
-              disabled
-            >
-              <TargetGoalIcon />
-              <span>目标</span>
-            </button>
+            <Tooltip content="开始 Plan 模式">
+              <button
+                type="button"
+                className="input-picker__action-btn input-picker__action-btn--plan"
+                aria-label="Plan 模式"
+                title="开始 Plan 模式"
+                onClick={() => {
+                  onSelectPlanMode?.();
+                  onClose();
+                }}
+              >
+                <LightbulbIcon />
+                <span>Plan</span>
+              </button>
+            </Tooltip>
+            <Tooltip content="目标模式 (即将推出)">
+              <button
+                type="button"
+                className="input-picker__action-btn input-picker__action-btn--goal"
+                aria-label="目标模式"
+                title="目标模式 (即将推出)"
+                disabled
+              >
+                <TargetGoalIcon />
+                <span>目标</span>
+              </button>
+            </Tooltip>
           </div>
 
-          <button
-            type="button"
-            className="input-picker__search-trigger"
-            aria-label="搜索引用"
-            title="搜索引用"
-            onClick={() => setSearchExpanded(true)}
-          >
-            <SearchIcon />
-          </button>
+          <Tooltip content="搜索引用">
+            <button
+              type="button"
+              className="input-picker__search-trigger"
+              aria-label="搜索引用"
+              title="搜索引用"
+              onClick={() => setSearchExpanded(true)}
+            >
+              <SearchIcon />
+            </button>
+          </Tooltip>
         </div>
       )}
 
@@ -410,23 +515,24 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                   )}
                 </button>
                 {candidate.request?.kind === "history" && !candidate.request.itemIds && history === null && (
-                  <button
-                    type="button"
-                    className="input-picker__drilldown-btn"
-                    title="选择消息"
-                    aria-label="选择消息"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const source = candidate.request!.source;
-                      void window.eidosRuntime.readSession(source, { itemLimit: 100 }).then((snapshot) => {
-                        setCategory("all");
-                        onQuery("");
-                        setHistory([
-                          { ...candidate, label: "引用最近 20 条消息" },
-                          ...snapshot.items
-                            .filter((item) => ["user_message", "assistant_message"].includes(item.kind) && item.content)
-                            .map((item) => ({
-                              id: item.id,
+                  <Tooltip content="选择消息">
+                    <button
+                      type="button"
+                      className="input-picker__drilldown-btn"
+                      title="选择消息"
+                      aria-label="选择消息"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const source = candidate.request!.source;
+                        void window.eidosRuntime.readSession(source, { itemLimit: 100 }).then((snapshot) => {
+                          setCategory("all");
+                          onQuery("");
+                          setHistory([
+                            { ...candidate, label: "引用最近 20 条消息" },
+                            ...snapshot.items
+                              .filter((item) => ["user_message", "assistant_message"].includes(item.kind) && item.content)
+                              .map((item) => ({
+                                id: item.id,
                               label: (item.content ?? "").slice(0, 100),
                               detail: item.kind === "user_message" ? "用户" : "Eidos",
                               request: {
@@ -442,7 +548,8 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                   >
                     <ChevronRightIcon />
                   </button>
-                )}
+                </Tooltip>
+              )}
               </div>
             </Fragment>
           );
@@ -459,7 +566,8 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
         <button type="button" className="btn btn--ghost btn--small" disabled={!onCreateAgent} onClick={onCreateAgent}>+ 创建智能体</button>
         <button type="button" className="btn btn--ghost btn--small" onClick={() => onCommand("agents")}>管理智能体</button>
       </div>}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

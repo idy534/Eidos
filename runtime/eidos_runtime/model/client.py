@@ -184,9 +184,11 @@ class ModelProfileSnapshot(_FrozenModel):
     supports_custom_tools: bool = False
     supports_tool_grammar: bool = False
     retry_max_attempts: int = Field(default=6, ge=1, le=10)
-    retry_initial_backoff_seconds: float = Field(default=0.2, ge=0, le=60)
-    retry_max_backoff_seconds: float = Field(default=2.0, ge=0, le=300)
+    retry_initial_backoff_seconds: float = Field(default=2.0, ge=0, le=60)
+    retry_max_backoff_seconds: float = Field(default=30.0, ge=0, le=300)
+    retry_recovery_window_seconds: float = Field(default=180, gt=0, le=3600)
     pydantic_ai_version: str = "2.57.0"
+    connection_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$", exclude_if=lambda value: value is None)
 
 
 class ModelClient(Protocol):
@@ -204,6 +206,8 @@ class ModelClient(Protocol):
         instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
+        max_output_tokens: int | None = None,
+        required_tool: str | None = None,
     ) -> ModelResponse: ...
 
 
@@ -235,6 +239,8 @@ class ScriptedModel:
         instructions: str,
         allow_tools: bool = True,
         tool_definitions: tuple[ModelToolDefinitionLike, ...] = (),
+        max_output_tokens: int | None = None,
+        required_tool: str | None = None,
     ) -> ModelResponse:
         if cancel.is_set():
             return ModelResponse()

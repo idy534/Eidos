@@ -90,14 +90,14 @@ def test_projection_recovery_preserves_scoped_discovery_and_deduplicates_reads()
 
             assert store.read_run(current["id"])["status"] == "succeeded"
             summary = store.latest_compact_summary(current["id"])
-            assert summary is not None
-            assert len(summary.source_item_ids) == 251
+            assert summary is None
             context = model.contexts[0]
-            assert any(
-                item.get("type") == "user"
-                and "Compact summary:" in str(item.get("content"))
+            retained_old_items = sum(
+                item.get("type") == "assistant"
+                and item.get("content") == "x" * 5_000
                 for item in context
             )
+            assert retained_old_items == 250
             read_results = [
                 item for item in context
                 if item.get("type") == "tool_result"
