@@ -32,6 +32,7 @@ from eidos_runtime.model.client import (
 from eidos_runtime.tools.contracts import (
     GENERIC_PROJECTOR,
     PROJECTORS,
+    RunShellInput,
     ToolResultProjector,
 )
 
@@ -412,9 +413,15 @@ class ToolRegistryEntry:
                     reason_code="function_arguments_too_large",
                 )
             if self.input_model is not None:
-                normalized = self.input_model.model_validate_json(
-                    encoded_value.decode("utf-8")
-                ).model_dump(mode="json", by_alias=True, exclude_unset=self.preserve_omitted_arguments)
+                parsed = (
+                    RunShellInput.filter_arguments_json(encoded_value.decode("utf-8"))[0]
+                    if self.input_model is RunShellInput
+                    else self.input_model.model_validate_json(encoded_value.decode("utf-8"))
+                )
+                normalized = parsed.model_dump(
+                    mode="json", by_alias=True,
+                    exclude_unset=self.preserve_omitted_arguments or self.input_model is RunShellInput,
+                )
             elif self.input_schema_validator is not None:
                 validated = self.input_schema_validator.validate(
                     value, apply_defaults=True

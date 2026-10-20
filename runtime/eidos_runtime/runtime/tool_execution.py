@@ -751,8 +751,8 @@ class ToolExecutionController:
                         **outcome.result,
                         "summary": (
                             f"{outcome.result.get('summary', '')} "
-                            f"Ignored unsupported run_shell arguments: {names}. "
-                            "These fields had no effect; omit them in future calls."
+                            f"Ignored invalid or unknown run_shell arguments: {names}. "
+                            "These fields had no effect; follow the schema or omit them."
                         ),
                     })
             # Contract failure cannot erase an already-authorized side effect.

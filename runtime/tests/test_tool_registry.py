@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sys
 import threading
 import unittest
@@ -74,6 +75,15 @@ def memory_entry(name: str = "memory_echo") -> ToolRegistryEntry:
     )
 
 
+def shell_entry() -> ToolRegistryEntry:
+    base = memory_entry()
+    return ToolRegistryEntry(
+        next(spec for spec in TOOL_SPECS if spec.name == "run_shell"),
+        base.provenance, base.adapter,
+        input_model=RunShellInput, result_data_model=RunShellResultData,
+    )
+
+
 class ToolRegistryTests(unittest.TestCase):
     def test_shell_yield_alias_is_normalized_before_dispatch(self) -> None:
         base = memory_entry()
@@ -114,10 +124,77 @@ class ToolRegistryTests(unittest.TestCase):
         )))
         self.assertIsNone(validated.error_code)
         call = validated.tool_calls[0]
-        self.assertEqual(call.arguments, RunShellInput(command="true").model_dump(mode="json"))
+        self.assertEqual(call.arguments, {"command": "true"})
         self.assertEqual(call.raw_payload.arguments, arguments)
         self.assertTrue(dispatcher.validate_execution(call, dispatcher.plan(call)))
         self.assertFalse(base.validate_arguments({"value": "x", "shell": "bash"}).valid)
+
+    def test_shell_uses_valid_optional_values_and_discards_invalid_ones(self) -> None:
+        entry = shell_entry()
+        valid = {"command": "true", "cwd": "nested", "yieldTimeMs": 750}
+        for invalid in (
+            {"yieldTimeMs": "1500"}, {"yieldTimeMs": [1000]}, {"yieldTimeMs": 249},
+            {"yield_time_ms": "1000", "yieldTimeMs": None},
+            {"cwd": False}, {"dependencyBindingId": []},
+            {"additionalPermissions": "null"}, {"additionalPermissions": []},
+            {"additionalPermissions": {"network": {"unexpected": True}}},
+            {"networkAccess": True}, {"gitWriteAccess": {}},
+            {"sandboxPermissions": "invalid"}, {"justification": ["reason"]},
+            {"yieldTimeMs": "1500", "additionalPermissions": "null", "networkAccess": True},
+        ):
+            arguments = {**valid, **invalid}
+            with self.subTest(invalid=invalid):
+                result = entry.validate_arguments(arguments)
+                self.assertTrue(result.valid, result)
+                expected = RunShellInput.model_validate_json(json.dumps({
+                    name: value for name, value in arguments.items() if name not in invalid
+                })).model_dump(mode="json", exclude_unset=True)
+                self.assertEqual(result.normalized_arguments, expected)
+                self.assertEqual(set(RunShellInput.ignored_argument_names(arguments)), set(invalid))
+
+    def test_shell_discards_incomplete_permission_groups_without_losing_cwd_or_wait(self) -> None:
+        entry = shell_entry()
+        valid = {"command": "true", "cwd": "nested", "yieldTimeMs": 750}
+        for permissions in (
+            {"networkAccess": "request"},
+            {"gitWriteAccess": "request", "justification": ["invalid reason"]},
+            {"sandboxPermissions": "with_additional_permissions"},
+            {"sandboxPermissions": "require_escalated"},
+            {"additionalPermissions": {"network": {"enabled": True}}},
+            {"networkAccess": "request", "sandboxPermissions": "require_escalated", "justification": "conflict"},
+        ):
+            arguments = {**valid, **permissions}
+            with self.subTest(permissions=permissions):
+                result = entry.validate_arguments(arguments)
+                self.assertTrue(result.valid, result)
+                self.assertEqual(result.normalized_arguments, valid)
+                self.assertEqual(set(RunShellInput.ignored_argument_names(arguments)), set(permissions))
+
+        request = entry.validate_arguments({**valid, "networkAccess": "request", "justification": "Download"})
+        self.assertTrue(request.valid, request)
+        self.assertEqual(request.normalized_arguments["networkAccess"], "request")
+        self.assertEqual(request.normalized_arguments["justification"], "Download")
+        permissions = {
+            "sandboxPermissions": "with_additional_permissions",
+            "additionalPermissions": {
+                "fileSystem": [{"path": "/private/tmp/sdk", "access": "read", "recursive": True}],
+                "network": {"enabled": True},
+            },
+            "justification": "Read the SDK",
+        }
+        structured = entry.validate_arguments({**valid, **permissions})
+        self.assertTrue(structured.valid, structured)
+        for name, value in permissions.items():
+            self.assertEqual(structured.normalized_arguments[name], value)
+        self.assertEqual(RunShellInput.ignored_argument_names({**valid, **permissions}), ())
+
+    def test_shell_command_stays_required_and_strict(self) -> None:
+        entry = shell_entry()
+        for arguments in ({}, {"command": ""}, {"command": False}, {"command": ["pwd"]}):
+            with self.subTest(arguments=arguments):
+                result = entry.validate_arguments({**arguments, "yieldTimeMs": "bad", "shell": "bash"})
+                self.assertFalse(result.valid)
+                self.assertEqual(result.path, "command")
 
     def test_search_keeps_100_deferred_tools_out_until_next_snapshot(self) -> None:
         candidates = tuple(

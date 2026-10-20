@@ -167,8 +167,13 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                     self.session["id"], "Run with unused arguments", approval_mode="full_access"
                 )
                 filename = f"executed-{exit_code}.txt"
+                cwd = self.workspace / f"nested-{exit_code}"
+                cwd.mkdir()
                 arguments = {
                     "command": f"printf x >> {filename}; printf compatibility-ok; exit {exit_code}",
+                    "cwd": cwd.name,
+                    "yield_time_ms": "1500",
+                    "additionalPermissions": "null",
                     "shell": "/not/a/shell",
                     "yield_timeMs": -1,
                     "sandbox_permissions": "require_escalated",
@@ -189,19 +194,23 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                 result = json.loads(row["result_json"])
                 self.assertEqual(json.loads(row["raw_arguments_json"]), arguments)
                 self.assertEqual(effective["command"], arguments["command"])
-                self.assertEqual(effective["yieldTimeMs"], 10_000)
-                self.assertEqual(effective["sandboxPermissions"], "use_default")
+                self.assertEqual(effective["cwd"], cwd.name)
+                self.assertEqual(effective, {"command": arguments["command"], "cwd": cwd.name})
                 for name in ("shell", "yield_timeMs", "sandbox_permissions"):
                     self.assertNotIn(name, effective)
                     self.assertIn(name, result["summary"])
                 self.assertNotIn("/not/a/shell", result["summary"])
-                self.assertIn("Ignored unsupported run_shell arguments", result["summary"])
+                for name in ("additionalPermissions", "yield_time_ms"):
+                    self.assertIn(name, result["summary"])
+                self.assertIn("Ignored invalid or unknown run_shell arguments", result["summary"])
                 self.assertEqual(result["code"], expected_code)
                 self.assertEqual(result["data"]["exitCode"], exit_code)
                 self.assertEqual(result["data"]["stdout"], "compatibility-ok")
-                self.assertEqual((self.workspace / filename).read_text(), "x")
+                self.assertEqual((cwd / filename).read_text(), "x")
                 feedback = next(item for item in reversed(model.contexts[1]) if item["type"] == "tool_result")
                 self.assertEqual(json.loads(feedback["result"])["summary"], result["summary"])
+                history_call = next(item for item in reversed(model.contexts[1]) if item["type"] == "tool_call")
+                self.assertEqual(json.loads(history_call["arguments"]), effective)
                 self.assertEqual(json.loads(row["model_result_json"])["code"], expected_code)
                 for table in ("tool_attempts a JOIN tool_calls t ON t.id = a.tool_call_id JOIN items i ON i.id = t.item_id", "durable_intents"):
                     self.assertEqual(self.store.connection.execute(
@@ -215,7 +224,7 @@ class ProtocolRepairRegressionTests(unittest.TestCase):
                 self.store.close()
                 self.store = SessionStore(self.data)
                 self.store.initialize()
-                self.assertEqual((self.workspace / filename).read_text(), "x")
+                self.assertEqual((cwd / filename).read_text(), "x")
                 persisted = self.store.connection.execute(
                     """SELECT raw_arguments_json, result_json FROM tool_calls t
                        JOIN items i ON i.id = t.item_id WHERE i.run_id = ?""", (run["id"],)

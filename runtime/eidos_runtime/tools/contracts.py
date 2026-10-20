@@ -20,6 +20,7 @@ from pydantic import (
     RootModel,
     StrictInt,
     StrictStr,
+    ValidationError,
     create_model,
     field_validator,
     model_validator,
@@ -300,8 +301,7 @@ class RunShellInput(StrictToolModel):
         default=".",
         description=(
             "Workspace-relative or canonical absolute working directory. "
-            "Defaults to '.', the current Session's workspace root, including "
-            "projectless and full_access Runs."
+            "Defaults to the current Session workspace."
         ),
     )
     yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_initial_wait)] = Field(
@@ -310,8 +310,8 @@ class RunShellInput(StrictToolModel):
         ge=250,
         le=30_000,
         description=(
-            "Maximum initial wait. A running result includes sessionId for write_stdin; "
-            "values above 30000 are capped. This window does not limit the process lifetime."
+            "Initial wait in milliseconds. A running result includes sessionId for write_stdin; "
+            "the process continues after this window."
         ),
     )
     dependencyBindingId: StrictStr | None = Field(
@@ -321,8 +321,7 @@ class RunShellInput(StrictToolModel):
         max_length=256,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
         description=(
-            "Optional verified Eidos runtime binding identifier. This selects "
-            "an already-resolved environment; it does not grant paths or env values."
+            "Verified runtime environment binding; normally selected automatically."
         ),
     )
     networkAccess: NetworkAccess = Field(
@@ -342,7 +341,7 @@ class RunShellInput(StrictToolModel):
     )
 
     @classmethod
-    def ignored_argument_names(cls, arguments: dict[str, object]) -> tuple[str, ...]:
+    def _unknown_argument_names(cls, arguments: dict[str, object]) -> tuple[str, ...]:
         accepted = set(cls.model_fields)
         for field in cls.model_fields.values():
             if isinstance(field.validation_alias, AliasChoices):
@@ -351,6 +350,44 @@ class RunShellInput(StrictToolModel):
                     if isinstance(name, str)
                 )
         return tuple(sorted(name for name in arguments if name not in accepted))
+
+    @classmethod
+    def filter_arguments_json(cls, value: str) -> tuple[RunShellInput, tuple[str, ...]]:
+        arguments = json.loads(value)
+        if not isinstance(arguments, dict):
+            return cls.model_validate_json(value), ()
+        ignored = set(cls._unknown_argument_names(arguments))
+        arguments = {name: value for name, value in arguments.items() if name not in ignored}
+        required = {name for name, field in cls.model_fields.items() if field.is_required()}
+        while True:
+            try:
+                parsed = cls.model_validate_json(json.dumps(arguments, ensure_ascii=False))
+                return parsed, tuple(sorted(ignored))
+            except ValidationError as error:
+                issues = error.errors(include_url=False, include_input=False)
+                invalid = {issue["loc"][0] for issue in issues if issue["loc"]}
+                if invalid & required:
+                    raise
+                if any(not issue["loc"] for issue in issues):
+                    # Permission fields form one request; discard an invalid combination together.
+                    invalid.update({
+                        "networkAccess", "gitWriteAccess", "sandboxPermissions",
+                        "additionalPermissions", "justification",
+                    })
+                discarded = invalid.intersection(arguments)
+                if not discarded:
+                    raise
+                ignored.update(discarded)
+                arguments = {
+                    name: value for name, value in arguments.items() if name not in discarded
+                }
+
+    @classmethod
+    def ignored_argument_names(cls, arguments: dict[str, object]) -> tuple[str, ...]:
+        try:
+            return cls.filter_arguments_json(json.dumps(arguments, ensure_ascii=False))[1]
+        except ValidationError:
+            return cls._unknown_argument_names(arguments)
 
     @field_validator("command")
     @classmethod

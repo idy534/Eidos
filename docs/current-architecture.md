@@ -308,6 +308,8 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。`apply_patch` 不执行敏感内容扫描，但仍执行输入类型、Patch 语法、Workspace 边界、权限、版本、受控写入和最终内容校验。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并受控提交已有文件的原地写入或新文件的排他创建。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
 
+`run_shell` 的主描述说明执行命令、必填参数和返回输出或 `sessionId` 的行为。`cwd` 参数单独说明路径格式和默认会话工作区。模型可以在命令中使用 `cd`；工具描述不再要求模型避免这种写法。每次调用仍创建新的 Shell，命令中的目录切换不会改变后续调用的默认目录。说明文本参与既有 Tool Contract Hash，新 Step 使用当前定义，历史快照保持原样。
+
 `search_text` 在 Run 内把 Ripgrep 进程寿命和 ToolCall 等待窗口分开。首次调用默认等待 10 秒，`search_text_wait` 默认等待 30 秒。等待窗口结束只返回 `search_running` 和 `sessionId`。后台搜索继续使用原来的受管 Ripgrep、授权根、ignore 规则、文件验证、输出边界和结果解析。搜索完成后，续接调用读取同一个有界结构化结果。Run 关闭时，`ToolExecutor` 会取消并回收未完成的搜索。搜索会话不持久化，也不能跨 Run 使用。
 
 已声明 Tool 的载荷类型正确但参数契约校验失败时，Runtime 会在 Prepare 前生成并提交 `invalid_arguments` Tool Error。该 ToolCall 仍然进入 SQLite、Event 和下一次 Model Context，但不会触发 Approval、Durable Intent 或 Tool Runtime。载荷类型错误、当前目录中不存在的 Tool、重复或无效 Call ID 等协议错误仍然进入 protocol repair。
@@ -678,7 +680,11 @@ Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替�
 
 ## Run 收尾与 Shell 执行期限
 
-`run_shell` 只有 `command` 必填。输入校验同时接受 `yieldTimeMs` 和 `yield_time_ms`，并统一输出 `yieldTimeMs`。JSON 调用同时提交两个名称时，校验优先使用 `yieldTimeMs`。Runtime 忽略未知顶层字段，包括 `shell`、`sandbox_permissions` 和 `yield_timeMs`，并使用原有默认值；这些字段不能选择 Shell、申请权限或改变等待窗口。Runtime 在结果摘要中向模型说明被忽略的字段，最多列出 8 个有界字段名，不回显字段值。原始参数仍保存在 `raw_arguments_json`，执行参数只保留校验后的字段。模型可见的工具 Schema、描述和提示词保持不变，Schema 仍要求模型只提交已声明字段。已声明字段的严格类型、数值范围、权限组合校验和嵌套未知字段检查继续生效；其他工具的未知字段校验保持不变。
+`run_shell` 只有 `command` 必填。模型看到的 Schema 只声明标准参数名、类型和默认值。工具说明要求模型省略不需要的可选字段。后端保留原有 `yield_time_ms` 别名，模型看到的名称仍是 `yieldTimeMs`。
+
+Runtime 使用 Pydantic 校验原始参数。命令缺失或无效时，Runtime 返回参数错误。未知字段和校验失败的可选字段会被移除，剩余字段继续校验，缺省字段使用默认值。Runtime 不按错误值增加转换分支，也不把字符串数字或字符串空值猜成目标类型。有效的工作目录、等待时间和其他独立参数会保留。权限字段组成一个请求；组合无效时，Runtime 整体丢弃这组请求，回到默认权限。实际路径、权限、审批、Sandbox、Durable Intent 和结果核验仍走原流程。
+
+Runtime 在结果摘要中告诉模型哪些参数被忽略，最多列出 8 个有界字段名，不回显值。原始参数继续保存在 `raw_arguments_json`，`arguments_json` 只保存实际提交且校验通过的参数。模型历史不再回填省略字段的默认值，Shell 执行器仍在内部补齐默认值。这个规则只作用于 `run_shell`，其他工具保持原有校验。
 
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。

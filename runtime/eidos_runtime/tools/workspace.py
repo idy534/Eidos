@@ -234,10 +234,9 @@ _APPLY_PATCH_DESCRIPTION = (
 
 
 _RUN_SHELL_DESCRIPTION = (
-    "Run a shell command in cwd under the current Run permissions. "
-    "Each call starts a new shell in cwd; cd does not carry over to later calls. "
-    "Use cwd to select the working directory instead of prepending cd to command. "
-    "Returns command output, or a sessionId if the command is still running."
+    "Run a command in cwd under the current Run permissions. "
+    "Only command is required; omit unused optional fields. "
+    "Each call starts a new shell. Returns output or a sessionId if still running."
 )
 
 
