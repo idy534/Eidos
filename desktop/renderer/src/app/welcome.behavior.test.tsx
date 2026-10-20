@@ -44,6 +44,21 @@ describe("welcome conversation", () => {
     expect(screen.getByRole("button", { name: "取消 Run" })).toBeInTheDocument();
   });
 
+  it("hides the project context row as soon as the first Run starts", async () => {
+    const { container } = renderShell();
+    const input = await screen.findByRole("textbox");
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(container.querySelector(".composer-context")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "选择项目" })).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "第一件事" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(screen.getByRole("button", { name: "取消 Run" })).toBeInTheDocument());
+
+    expect(container.querySelector(".composer-context")).toBeNull();
+    expect(screen.queryByRole("button", { name: "选择项目" })).not.toBeInTheDocument();
+  });
+
   it.each(["create", "start"])("restores the welcome draft and its text after %s fails", async (stage) => {
     if (stage === "create") vi.spyOn(window.eidosRuntime, "createSession").mockRejectedValueOnce(new Error("failed"));
     else vi.spyOn(window.eidosRuntime, "startRun").mockRejectedValueOnce(new Error("failed"));

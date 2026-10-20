@@ -98,7 +98,7 @@ Renderer 的本地 CSS 由 `desktop/renderer/src/styles.css` 统一导入。该�
 
 滚动条外观统一由 `styles/scrollbars.css` 管理。Renderer 使用 Chromium 的 `::-webkit-scrollbar-*` 定义 6px 滑块、透明轨道和角落；这些部位不显示边框、阴影和箭头。公共层将标准 `scrollbar-width` 与 `scrollbar-color` 保持为 `auto`，避免它们覆盖自定义外观。模块只保留隐藏滚动条和代码、Diff 悬停显示滑块的规则。灰色滑块与悬停颜色来自有效的颜色变量，变量不引用自身。
 
-公共控件负责 Button 的颜色、交互状态、焦点和禁用样式。审批和计划模块只补充按钮排列与尺寸。Composer 的模型与审批模式选择器共用触发按钮和浮层基础规则。列表与选择卡使用 `--surface-selected`，普通悬停使用 `--surface-hover`；危险操作继续使用危险颜色。代码与 Mermaid 共用标题标签和复制控件。聊天专用 `.eidos-chat-prose` 保留独立范围，文件预览与其他 Markdown 不启用该范围。
+公共控件负责 Button 的颜色、交互状态、焦点和禁用样式。产品不绘制焦点环：`--focus-ring` 统一为 `none`，键盘与鼠标聚焦都不出现绿色轮廓。Chromium 会把弹窗还原的焦点判成 `:focus-visible`，所以这个 token 是移除残留绿圈的唯一入口，各模块只引用它，不再各自定义轮廓。焦点位置改由悬停、选中和边框颜色表达。审批和计划模块只补充按钮排列与尺寸。Composer 的模型与审批模式选择器共用触发按钮和浮层基础规则。列表与选择卡使用 `--surface-selected`，普通悬停使用 `--surface-hover`；危险操作继续使用危险颜色。代码与 Mermaid 共用标题标签和复制控件。聊天专用 `.eidos-chat-prose` 保留独立范围，文件预览与其他 Markdown 不启用该范围。
 
 Workspace Dock 独立维护 Session 内容列和环境浮层。居中 Session 沿用原构建实际生效的单列布局，并由 `--session-content-width` 限制回答与 Composer 宽度。规划样式不再重复定义环境浮层，技能样式不再修改整个设置窗口。样式测试按统一入口读取模块；原生 Electron 定向检查验证最终计算样式和响应式布局。
 
@@ -190,6 +190,8 @@ RunFinalizer 为 context pressure、loop guard 等需要提前停止的路径生
 ## 6. Context & Instructions
 
 默认在线 Run 使用 `ContextBuilder` 从持久状态事实、当前 Run、Model Profile、Rule Snapshot、Selected Skill、历史 Item、Tool Result、Workspace State 和额外事实构建模型 Context。
+
+Schema v32 为 `steps(run_id, ordinal)` 增加非唯一索引。上下文历史中的响应回放和响应阶段查询使用这个索引定位 Step，再通过已有 `model_attempts(step_id, ordinal)` 索引读取 Model Attempt。系统不再为每个历史 Item 反复扫描全库的 Model Attempt，减少后台上下文查询占用共享数据库锁的时间。主库启动与持久化布局升级入口都支持 v31→v32；索引创建和版本更新在同一事务中完成，失败后回滚。系统继续接受 v31 备份，恢复后的数据库在启动时升级。该迁移不改写历史记录、回放选择或协议。共享连接的所有者锁仍覆盖查询和结果读取。
 
 `ProjectRuleResolver` 从 Workspace root 到 effective cwd 逐层读取每个目录中优先级最高的非空候选文件。候选顺序是：
 

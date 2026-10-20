@@ -905,6 +905,11 @@ export function AppShell({ runtime }: AppShellProps) {
     && (isDraft || (currentSnapshot.session.taskStatus === "new"
       && currentSnapshot.runs.length === 0 && currentSnapshot.items.length === 0))
     && !(startingDraftId && sessionState.draft?.session.id === startingDraftId));
+  // 上下文栏只服务于首次 Run 之前：项目、执行方式和分支一旦被 Run 固定就不再可选。
+  // runs 是本地即时事实，taskStatus 来自权威快照；两者都指向"尚未开始"才展示。
+  const showSessionSetup = Boolean(currentSnapshot
+    && currentSnapshot.session.taskStatus === "new"
+    && currentSnapshot.runs.length === 0);
   const completeSessionItems = useCompleteSessionItems(
     currentSnapshot && !isDraft ? currentSnapshot.session.id : undefined,
     currentSnapshot?.items ?? [],
@@ -1685,7 +1690,7 @@ export function AppShell({ runtime }: AppShellProps) {
                     setDockOpen(false);
                     setDockExpanded(false);
                   }}
-                  showSessionContext={currentSnapshot.session.taskStatus === "new"}
+                  showSessionContext={showSessionSetup}
                   project={sessionProject ?? null}
                   projectless={currentSnapshot.session.projectless === true}
                   executionMode={currentSnapshot.session.executionMode}

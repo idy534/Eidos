@@ -15,6 +15,7 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 @pytest.fixture
 def downgrade_channel_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP INDEX IF EXISTS steps_run_ordinal")
         connection.execute("DROP INDEX IF EXISTS model_request_retry_index")
         columns = {row[1] for row in connection.execute("PRAGMA table_info(model_attempts)")}
         for column in ("request_group_id", "retry_index", "retry_deadline_at", "assistant_item_id"):

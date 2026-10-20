@@ -207,10 +207,6 @@ button.composer-context-project--empty:hover:not(:disabled) {
   flex: none;
 }
 
-.composer-context-usage:focus-visible {
-  box-shadow: 0 0 0 2px var(--accent-glow);
-}
-
 .composer-context-usage:focus-within .composer-context-tooltip {
   opacity: 1;
   visibility: visible;

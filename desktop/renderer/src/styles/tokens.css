@@ -89,7 +89,10 @@
   --action-danger-hover: #7a3028;
   --action-danger-active: #65251e;
   --control-disabled-opacity: 0.55;
-  --focus-ring: 2px solid var(--accent);
+  /* Product decision: no focus ring, for pointer or keyboard focus. Rules that still
+   * reference this token resolve to `none`; the focused position stays readable through
+   * hover, selected and border states. */
+  --focus-ring: none;
   --radius-xs: 4px;
   --radius-md: 8px;
   --radius-menu: 9px;

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessionController } from "./useSessionController.js";
-import type { EidosRuntimeAPI, Session, SessionListResult, SessionSnapshot } from "../contracts.js";
+import type { EidosRuntimeAPI, Run, Session, SessionListResult, SessionSnapshot } from "../contracts.js";
 
 const mockSession1: Session = {
   id: "session-1",
@@ -607,6 +607,63 @@ describe("useSessionController real Hook behavior", () => {
     expect(createSession).toHaveBeenCalledWith(project.workspaceRoot, { executionMode: "local" });
     expect(result.current[0].snapshot).toEqual(mockSnapshot1);
     expect(result.current[0].draft).toBeDefined();
+  });
+
+  it("projects the first Run into the snapshot task status without an authoritative reload", async () => {
+    setupMockRuntime({ createSession: vi.fn().mockResolvedValue(mockSession1) });
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft(null));
+    await act(async () => {
+      await result.current[1].materializeDraft();
+    });
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("new");
+
+    const run: Run = {
+      id: "run-1",
+      sessionId: mockSession1.id,
+      modelId: "model-1",
+      status: "running",
+      approvalMode: "manual",
+      modelStepCount: 0,
+      createdAt: 2,
+      updatedAt: 2,
+      allowedActions: ["cancel"],
+    };
+    act(() => result.current[1].projectRun(mockSession1.id, run));
+
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("in_progress");
+    expect(result.current[0].snapshot?.runs.map((item) => item.id)).toEqual([run.id]);
+  });
+
+  it("keeps the snapshot task status in step with Run notifications", async () => {
+    setupMockRuntime({ createSession: vi.fn().mockResolvedValue(mockSession1) });
+    const { result } = renderHook(() => useSessionController());
+    act(() => result.current[1].startDraft(null));
+    await act(async () => {
+      await result.current[1].materializeDraft();
+    });
+
+    await act(async () => {
+      result.current[1].handleRunNotification({
+        id: "run-2",
+        sessionId: mockSession1.id,
+        status: "running",
+        updatedAt: 5,
+        reconciliationRequired: false,
+      });
+    });
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("in_progress");
+
+    await act(async () => {
+      result.current[1].handleRunNotification({
+        id: "run-2",
+        sessionId: mockSession1.id,
+        status: "succeeded",
+        updatedAt: 6,
+        reconciliationRequired: false,
+      });
+    });
+    expect(result.current[0].snapshot?.session.taskStatus).toBe("completed");
   });
 
   it("passes the first input hint when materializing a projectless draft", async () => {

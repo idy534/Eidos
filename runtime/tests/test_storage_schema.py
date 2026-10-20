@@ -476,6 +476,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_segment_per_run",
                 "one_active_segment_per_run",
                 "one_running_step_per_run",
+                "steps_run_ordinal",
                 "one_running_attempt_per_step",
                 "model_request_retry_index",
                 "one_running_finalization_attempt_per_run",
@@ -551,8 +552,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 31)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 30)
+        self.assertEqual(SCHEMA_VERSION, 32)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 31)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

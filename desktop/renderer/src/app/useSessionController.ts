@@ -666,7 +666,11 @@ export function useSessionController(): [SessionControllerState, SessionControll
       : s));
     setSnapshot((prev) => {
       if (!prev || prev.session.id !== sessionId) return prev;
-      return { ...prev, runs: upsertRun(prev.runs, run) };
+      return {
+        ...prev,
+        session: { ...prev.session, taskStatus },
+        runs: upsertRun(prev.runs, run),
+      };
     });
   }, []);
 
@@ -684,6 +688,10 @@ export function useSessionController(): [SessionControllerState, SessionControll
     setSessions((prev) => prev.map((s) => s.id === run.sessionId
       ? { ...s, taskStatus, activeRunStatus: activeStatus(run.status), updatedAt: run.updatedAt }
       : s));
+    setSnapshot((prev) => {
+      if (!prev || prev.session.id !== run.sessionId) return prev;
+      return { ...prev, session: { ...prev.session, taskStatus } };
+    });
     updateReadCompleted((prev) => {
       const next = new Set(prev);
       if (

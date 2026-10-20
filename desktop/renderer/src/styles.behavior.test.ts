@@ -24,6 +24,13 @@ describe("renderer style ownership", () => {
   });
 });
 
+describe("focus ring", () => {
+  it("paints no ring for keyboard or pointer focus", () => {
+    expect(styles).toMatch(/--focus-ring:\s*none;/);
+    expect(styles).not.toMatch(/--focus-ring:\s*[^;]*\d+px\s+solid/);
+  });
+});
+
 describe("interactive color tokens", () => {
   it("does not use the dark green hover token", () => {
     expect(styles).not.toContain("--accent-hover");
