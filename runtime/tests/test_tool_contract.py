@@ -442,8 +442,9 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertEqual(
             description,
-            "Run a shell command and return its output or a sessionId for ongoing interaction. "
-            "Each call starts a new shell.",
+            "Run a command in a new shell with its working directory already set to cwd. "
+            "The default is the current workspace, including projectless and full_access Runs. "
+            "Return output or a sessionId for ongoing interaction.",
         )
         for fragment in (
             "gitWriteAccess",
@@ -467,8 +468,9 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(properties["cwd"]["default"], ".")
         self.assertEqual(
             properties["cwd"]["description"],
-            "Workspace-relative or canonical absolute working directory. "
-            "Defaults to the current Session workspace.",
+            "Starting directory, set before command runs. Omit this field or use '.' "
+            "for the current workspace shown in Runtime context. Relative paths start "
+            "at that workspace root; canonical absolute paths follow the current Run permissions.",
         )
         model_shell = next(
             definition["function"] for definition in model_tool_definitions()

@@ -251,7 +251,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Shell
 
-- `run_shell` 的工具说明明确：每次调用都在 `cwd` 中启动新的 Shell，上次命令中的 `cd` 不会影响下次调用。`cwd` 默认为 `.`，表示当前 Session 的工作区根目录，无项目和完全访问 Run 也遵循这一规则。模型应通过 `cwd` 选择工作目录，避免在命令前重复添加 `cd`。
+- Runtime 在每一步的提示中写出 Shell 默认启动目录的实际路径，并说明进程在执行命令前已经位于该目录。模型省略 `cwd` 或传入 `.` 就使用当前 Run 的工作区。有项目、无项目和完全访问 Run 都使用这条规则。提示使用 `{"command":"pwd"}` 展示默认目录下的直接调用。
+- `run_shell` 的工具和字段说明要求模型直接提交当前目录的命令，并通过 `cwd` 指定其他启动目录。每次调用创建新的 Shell，上次命令中的 `cd` 不会影响下次调用。命令执行过程中仍可按需切换目录。Runtime 不改写模型提交的 Shell 命令；提示对冗余 `cd` 的实际改善效果尚未通过真实模型调用验证。
 - Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；持久化失败仍保留未知结果记录。
 - Runtime 会投影未决 Intent 的对账来源。未知结果不设核验门；有效 Shell 空输入等待保持中性。系统不会通过删除缓存、申请新权限或换一条命令解除未知 Shell Intent。
 

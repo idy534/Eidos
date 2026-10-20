@@ -234,8 +234,9 @@ _APPLY_PATCH_DESCRIPTION = (
 
 
 _RUN_SHELL_DESCRIPTION = (
-    "Run a shell command and return its output or a sessionId for ongoing interaction. "
-    "Each call starts a new shell."
+    "Run a command in a new shell with its working directory already set to cwd. "
+    "The default is the current workspace, including projectless and full_access Runs. "
+    "Return output or a sessionId for ongoing interaction."
 )
 
 

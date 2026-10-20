@@ -304,14 +304,18 @@ class RunShellInput(StrictToolModel):
         min_length=1,
         max_length=16 * 1024,
         validation_alias=AliasChoices("command", "cmd"),
-        description="Shell command to execute in the user's default shell.",
+        description=(
+            "Command to execute in the user's default shell after Runtime sets cwd. "
+            "Relative paths use cwd. Set the starting directory with cwd instead of a leading cd."
+        ),
     )
     cwd: StrictStr = Field(
         default=".",
         validation_alias=AliasChoices("cwd", "workdir"),
         description=(
-            "Workspace-relative or canonical absolute working directory. "
-            "Defaults to the current Session workspace."
+            "Starting directory, set before command runs. Omit this field or use '.' "
+            "for the current workspace shown in Runtime context. Relative paths start "
+            "at that workspace root; canonical absolute paths follow the current Run permissions."
         ),
     )
     yieldTimeMs: Annotated[

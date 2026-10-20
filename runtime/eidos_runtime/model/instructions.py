@@ -77,6 +77,22 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
     lines.append(f"Sandbox mode: {policy.sandbox_mode}")
     lines.append(f"Workspace root: {policy.workspace_root}")
 
+    if "run_shell" in policy.available_tools:
+        lines.extend((
+            "\nShell starting directory:",
+            "Runtime starts every new run_shell process in "
+            f"{json.dumps(policy.workspace_root, ensure_ascii=False)} "
+            "before executing command, unless you set cwd to another directory.",
+            'Omitting cwd or setting it to "." selects this workspace. '
+            "Projectless and full_access Runs use the same directory rule.",
+            "For commands in this workspace, submit command directly and omit cwd. "
+            "Do not prepend cd to this workspace.",
+            'For example, {"command":"pwd"} prints the workspace path above without a cd prefix.',
+            "To start in another directory, set cwd. Relative cwd paths are resolved from this workspace. "
+            "A previous Shell call cannot change the next call's starting directory.",
+            "Use cd inside command only when the command itself needs to switch directories after it starts.",
+        ))
+
     if policy.writable_roots:
         lines.append("\nWritable roots:")
         for root in policy.writable_roots:
