@@ -83,7 +83,8 @@ def test_network_denial_does_not_replay_shell_and_persists_raw_arguments(tmp_pat
         rows = store.connection.execute('SELECT raw_arguments_json, arguments_json, result_json FROM tool_calls ORDER BY creation_seq').fetchall()
         assert 'networkAccess' not in json.loads(rows[0][0])
         assert json.loads(rows[1][0])['networkAccess'] == 'default'
-        assert json.loads(rows[0][1])['networkAccess'] == 'default'
+        assert 'networkAccess' not in json.loads(rows[0][1])
+        assert json.loads(rows[1][1])['networkAccess'] == 'default'
         assert json.loads(rows[0][2])['code'] == ('permission_granted_retry_required' if decision == 'approve' else 'user_rejected_network')
     finally:
         store.close()

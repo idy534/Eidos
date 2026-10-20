@@ -7,6 +7,7 @@
 @import "./styles/scrollbars.css";
 @import "./app/AppShell.css";
 @import "./components/SessionSidebar.css";
+@import "./components/Search.css";
 @import "./components/WorkspaceExplorer.css";
 @import "./components/GitReview.css";
 @import "./components/settings/SettingsPage.css";
@@ -34,6 +35,8 @@
 @import "./components/TextReviewPanel.css";
 @import "./components/settings/SkillSettings.css";
 @import "./components/settings/AgentSettings.css";
+@import "./components/settings/McpSettings.css";
+@import "./components/settings/WorktreeSettings.css";
 @import "./components/planning.css";
 @import "./components/automations/automations.css";
 @import "./components/ModelSelector.css";

@@ -1,5 +1,18 @@
 # Eidos 当前限制
 
+## 聊天搜索与文件查找（2026-10-20）
+
+本轮修改覆盖 Runtime 搜索服务、Schema v33 迁移、生成契约、typed IPC、侧栏入口和两个正文查找浮层。搜索相关改动约为 49 个文件、增加 2,400 行、删除 32 行，统计包含生成文件、测试与文档。系统采用 SQLite FTS5、标准字符串与正则 API，并把已锁定的 `markdown-it-py` 声明为直接生产依赖。系统删除了来源定位最多逐页累积 20,000 条记录的旧路径。SQLite 事实来源、只读文件权限、身份和版本核验继续保留。系统没有修改 Run 执行语义。工作区中的其他未提交改动保持原样。
+
+- 全局搜索只覆盖普通会话标题、持久用户消息与助手消息，以及冻结的分叉继承历史。内部子 Agent Session、工具参数和输出、思考正文、图片内容、附件正文、长期记忆和未提交的流式草稿不进入该索引。系统使用忽略大小写的字面量匹配，不做语义或模糊搜索。
+- 首次搜索会分批回填索引。后台刷新保留现有结果，并用 `aria-busy` 标记请求状态。索引变化会重置分页。短中文查询会扫描完整投影；超大历史库的响应时间还需要规模验收。
+- 当前 Session 查找按页显示命中数量，数量后的 `+` 表示还有后续结果或回填。搜索定位读取命中附近的有界消息窗口，不会一次把全部历史传到 Renderer。
+- 文件查找支持 UTF-8 文本、代码、Markdown 可见文字和 HTML 源码。系统最多读取 2 MiB，最多返回 2,000 处；界面会显示截断提示。正则 Worker 在 1 秒后终止并提示超时。文件版本变化时，系统拒绝把新内容与旧预览混用。Files 仍只向有项目的会话开放。
+- 超长助手回答仍保留现有的 64 KiB 预览和完整回答分页。全文索引可以命中未展示的正文；自动高亮只作用于当前已展示的文字。
+- 系统还没有文件名搜索、跨文件内容搜索、执行详情搜索、Diff、终端、网页或 PDF 查找。当前接口需要 Desktop 与 Runtime 一起升级。旧代码不识别 Schema v33；回退时需要恢复升级前备份。
+
+定向验证包括 56 项 Runtime 测试、147 项 Renderer 行为测试、45 项 Feed 纯渲染测试和 1 项 Main 到真实 Runtime 的跨进程测试。共享 Fixture、Ruff、Deptry、Python 依赖审计、Desktop 构建、macOS Runtime Bundle 与 smoke 均通过。真实 Electron 检查了四种宽度、索引刷新、旧消息定位、文件 Worker、单行浮层、不挤动正文、标题栏下方的位置和聚焦无蓝框。Electron 启动退出 smoke 通过。本轮没有运行 Full Suite、DMG 安装包或超大聊天库性能验收。构建仍有大 Chunk 提示，以及 CSS 压缩器不识别 `::highlight` 的提示；Electron 已验证高亮实际可用。
+
 ## Session 展开与持续输出滚动（2026-10-18）
 
 - Feed 已分开管理跟随意图和底部位置，并用原生 ResizeObserver 跟踪内容与视口。处理过程和嵌套工具仍保留原有折叠动画；Run 结束后仍自动折叠。用户向上浏览历史时暂停跟随，折叠引起的滚动范围收缩不会恢复跟随。到底按钮改为使用统一的下一帧滚动入口。
@@ -172,7 +185,7 @@
 - `apply_patch` 支持 Add、Update、Delete、Move 和多文件 Patch，但不提供通用二进制编辑、浏览器自动化或 Artifact 发布工具。
 - Desktop Terminal 是用户直接操作的临时 PTY。它不属于 Agent Tool，不经过 Runtime Approval 或 Seatbelt，也不会写入 SQLite、Checkpoint、Conversation 或恢复状态。关闭 Terminal Tab、切换 Session execution binding、删除 Session、关闭窗口或退出应用都会终止对应 PTY。Review 和 Files 各只打开一个工具 Tab；Terminal 可以打开多个 Tab，Files 可以同时预览多个文件。
 - Projectless Conversation 不创建 Project，也不提供 Git status、Git diff 或 Repository Intelligence。它使用系统私有锚点作为 workspace，并提供文件工具、Shell、Skill、MCP、Plugin、Files 和网页预览。它只支持 Local execution。
-- Workspace Explorer 支持有界 UTF-8 text/code、Markdown、常见图片、PDF 和 HTML。其他二进制、Office、archive 和 database 文件不做内嵌预览。Explorer 不提供编辑、搜索、文件拖放、重命名或删除。当前的拖动交互只用于调整文件树与预览区的宽高。
+- Workspace Explorer 支持有界 UTF-8 text/code、Markdown、常见图片、PDF 和 HTML。其他二进制、Office、archive 和 database 文件不做内嵌预览。Explorer 支持已打开文本文件内查找，但不提供文件名或跨文件搜索、编辑、文件拖放、重命名或删除。当前的拖动交互只用于调整文件树与预览区的宽高。
 - Non-Git Project 已经支持 Local Execution Session。Non-Git Project 不支持 Git status、Git diff、Managed Worktree 或 Git-based Fork。Local Checkpoint Fork 共享真实 workspace，不提供 directory snapshot、copy-on-write 或 filesystem rewind。
 - Git Project 可以创建 Local 或 Worktree Execution Session，也可以在同一个 Session 中执行 Local ↔ Managed Worktree Handoff。Local Session 支持切换 local branch，也支持基于当前 branch 创建并切换到新 branch。该操作要求 workspace clean 且没有任何共享该 workspace 的 active Run。Managed Worktree 默认是 detached HEAD。Runtime 已提供 structured status、compare ref、精确文本行统计、file-scoped diff、stage、unstage、discard、commit、fetch、fast-forward-only pull、push、merge、rebase 和对应 continue/abort typed API。Desktop Review 已提供文件手风琴、展开或折叠全部、Stage、Unstage、tracked/untracked Discard、Open in Editor、inline Review Comment，以及 Commit、Fetch、Pull、Push、Merge、Rebase 和 Local branch 控制。二进制文件没有可用的文本行统计，`statsIncomplete` 会明确标记。Stash 尚未实现。
 - Desktop Remote Git 不提供 credential 配置或 PAT 输入。它只复用系统 Git credential helper 和 SSH Agent。Advanced Git target 当前只列出已观察到的 local branch。它不接受任意 revision 文本，也不提供 remote ref browser。

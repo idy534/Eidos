@@ -880,7 +880,7 @@ class RuntimeLoopTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(command_item["toolCall"]["argumentsJson"]),
-            {"command": "printf shell-ok", "cwd": ".", "yieldTimeMs": 5000},
+            {"command": "printf shell-ok", "yieldTimeMs": 5000},
         )
         result = json.loads(command_item["toolCall"]["resultJson"])
         self.assertEqual(result["outcome"], "success")

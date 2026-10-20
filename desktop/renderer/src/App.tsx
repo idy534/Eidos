@@ -1,6 +1,7 @@
 import { AppShell } from "./app/AppShell.js";
 import { EidosMark } from "./components/EidosMark.js";
 import { Button } from "./components/Button.js";
+import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { useRuntimeLifecycle } from "./app/useRuntimeLifecycle.js";
 import { deriveRuntimePresentation } from "./session-state.js";
 import type { RuntimeStatus } from "./contracts.js";
@@ -24,7 +25,11 @@ export function App() {
     );
   }
 
-  return <AppShell runtime={runtime} />;
+  return (
+    <ErrorBoundary>
+      <AppShell runtime={runtime} />
+    </ErrorBoundary>
+  );
 }
 
 function RuntimeGate({

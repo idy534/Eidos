@@ -1,3 +1,4 @@
+import { FileFind } from "./FileFind.js";
 import { useInputContext } from "./InputContext.js";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
@@ -874,6 +875,22 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
   const [navigationNotice, setNavigationNotice] = useState<string>();
   const [codeRevision, setCodeRevision] = useState(0);
   const previewRef = useRef<HTMLElement>(null);
+  const [findRequested, setFindRequested] = useState(false);
+  const [findPreview, setFindPreview] = useState<WorkspaceFilePreview>();
+  const [findNotice, setFindNotice] = useState("");
+  const requestFileFind = useCallback(() => setFindRequested(true), []);
+  useEffect(() => {
+    let current = true;
+    setFindPreview(undefined); setFindNotice("");
+    if (findRequested && preview.truncated && preview.version && actions?.sessionId) {
+      setFindNotice("正在读取文件正文…");
+      void window.eidosRuntime.readWorkspaceFileForFind({ sessionId: actions.sessionId, path: preview.path, version: preview.version }).then((result) => {
+        if (current) { setFindPreview(result); setFindNotice(result.truncated ? "文件超过 2 MiB，仅查找已读取部分" : ""); }
+      }).catch((cause) => { if (current) setFindNotice(userFacingError(cause)); });
+    }
+    return () => { current = false; };
+  }, [findRequested, preview.path, preview.version, preview.truncated, actions?.sessionId]);
+  const visiblePreview = findPreview ?? preview;
   const codeReady = useCallback(() => setCodeRevision((value) => value + 1), []);
   useEffect(() => {
     if (preview.kind === "html" && navigation?.line !== undefined) setSource(true);
@@ -894,8 +911,9 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
     selectPreviewPosition(previewRef.current, navigation, preview.kind === "markdown");
   }, [navigation, preview.content, preview.kind, preview.truncated, source, codeRevision]);
   return (
-    <article className="workspace-preview" ref={previewRef}>
-      {preview.truncated && <p className="workspace-preview-notice">预览已截断</p>}
+    <article className="workspace-preview" ref={previewRef} tabIndex={-1} onPointerDown={(event) => { if (!(event.target as Element).closest("button,input,select,textarea,a")) event.currentTarget.focus({ preventScroll: true }); }}>
+      {(["text", "code", "markdown"].includes(preview.kind) || preview.kind === "html" && source) && <FileFind key={preview.path} root={previewRef} revision={`${preview.version}:${codeRevision}:${findPreview?.content?.length ?? 0}`} truncated={visiblePreview.truncated} onOpen={requestFileFind} notice={findNotice} />}
+      {visiblePreview.truncated && <p className="workspace-preview-notice">预览已截断</p>}
       {navigationNotice && <p className="workspace-preview-notice" role="status">{navigationNotice}</p>}
       {(error || loadError) && <p role="alert">{error || loadError}</p>}
       {preview.kind === "html" && <div className="artifact-toolbar"><button onClick={() => setSource(!source)}>{source ? "查看预览入口" : "查看源码"}</button><button disabled={!url || preview.truncated} onClick={() => { if (url) actions?.openBrowser(url); }}>打开交互预览</button></div>}
@@ -920,16 +938,16 @@ function WorkspacePreview({ preview, navigation }: { preview: WorkspaceFilePrevi
         </div>
       ) : preview.kind === "markdown" ? (
         <div className="workspace-markdown-preview">
-          <MarkdownContent content={preview.content ?? ""} documentPath={preview.path} />
+          <MarkdownContent content={visiblePreview.content ?? ""} documentPath={preview.path} />
         </div>
       ) : preview.kind === "code" || preview.kind === "html" ? (
         <ShikiPreview
-          code={preview.content ?? ""}
+          code={visiblePreview.content ?? ""}
           onReady={codeReady}
           {...(preview.language === undefined ? {} : { language: preview.language })}
         />
       ) : (
-        <NumberedText code={preview.content ?? ""} />
+        <NumberedText code={visiblePreview.content ?? ""} />
       )}
     </article>
   );

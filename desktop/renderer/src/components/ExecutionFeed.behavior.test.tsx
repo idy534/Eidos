@@ -123,6 +123,20 @@ describe("automation source and tool results", () => {
     expect(screen.getByText("企业微信消息")).toBeInTheDocument();
   });
 
+  it("renders an empty feed without showing empty-history hint and transitions to populated items safely", () => {
+    const props = { runs: [baseRun], approvals: [], onApprove: vi.fn(), onReject: vi.fn() };
+    const { container, rerender } = render(<ExecutionFeed {...props} items={[]} />);
+    expect(screen.queryByText(/还没有执行记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/暂时是没有执行记录/)).not.toBeInTheDocument();
+    expect(container.querySelector(".feed-empty")).toBeNull();
+    expect(container.querySelector(".feed-shell")).not.toBeNull();
+
+    const userItem = shellItem({ id: "user", kind: "user_message", ordinal: 1, content: "新任务", status: "completed", toolCall: undefined });
+    rerender(<ExecutionFeed {...props} items={[userItem]} />);
+    expect(screen.getByText("新任务")).toBeInTheDocument();
+    expect(screen.queryByText(/还没有执行记录/)).not.toBeInTheDocument();
+  });
+
   it("renders the automation card only for the trusted builtin tool", () => {
     const item = shellItem({ kind: "tool_call", status: "completed", toolCall: {
       ...shellItem().toolCall!, toolName: "automation", status: "completed",

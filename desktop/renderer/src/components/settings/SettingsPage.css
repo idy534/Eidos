@@ -924,7 +924,26 @@
 .mcp-meta-grid dd {
   margin: 0.15rem 0 0;
   font-weight: 550;
+}
 
+.mcp-meta-grid .full-width {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.mcp-meta-grid .full-width dd {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-meta-grid .full-width dd code {
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
 .permission-badge {
@@ -1024,7 +1043,8 @@
     grid-template-columns: 1fr;
   }
 
-  .mcp-details-grid .full-width {
+  .mcp-details-grid .full-width,
+  .mcp-meta-grid .full-width {
     grid-column: span 1;
   }
 }

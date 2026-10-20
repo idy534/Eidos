@@ -81,6 +81,9 @@ import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js"
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
+  readWorkspaceFileForFind(request: import("./search.js").FileFindRequest): Promise<WorkspaceFilePreview>;
+  searchSessions(request: import("./search.js").SearchRequest): Promise<import("./search.js").SearchResponse>;
+  readSessionAround(request: import("./search.js").ReadAroundRequest): Promise<SessionSnapshot>;
   readChannel(request?: ChannelReadRequest): Promise<ChannelResponse>;
   saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse>;
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;

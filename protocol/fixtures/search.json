@@ -1,0 +1,143 @@
+{
+  "validRequests": [
+    {
+      "query": "中文"
+    },
+    {
+      "query": "needle",
+      "sessionId": "22222222-2222-4222-8222-222222222222",
+      "limit": 30
+    }
+  ],
+  "invalidRequests": [
+    {
+      "query": ""
+    },
+    {
+      "query": "x",
+      "limit": 101
+    },
+    {
+      "query": "x",
+      "extra": true
+    },
+    {
+      "query": 5
+    },
+    {
+      "query": "   "
+    },
+    {
+      "query": "x",
+      "projectId": "p",
+      "projectless": true
+    }
+  ],
+  "validResponses": [
+    {
+      "items": [],
+      "indexing": false
+    },
+    {
+      "items": [
+        {
+          "sessionId": "22222222-2222-4222-8222-222222222222",
+          "title": "历史",
+          "projectName": "Eidos",
+          "itemId": "44444444-4444-4444-8444-444444444444",
+          "snippet": "中文正文",
+          "occurrence": 0,
+          "matchKind": "message"
+        }
+      ],
+      "indexing": false
+    }
+  ],
+  "invalidResponses": [
+    {
+      "items": [
+        {
+          "sessionId": "s",
+          "title": "历史",
+          "projectName": "Eidos",
+          "snippet": "",
+          "matchKind": "tool"
+        }
+      ],
+      "indexing": false
+    }
+  ],
+  "validFileRequests": [
+    {
+      "sessionId": "s",
+      "path": "a.txt",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "sessionId": "s",
+      "path": "a.txt",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "offset": 196608
+    }
+  ],
+  "invalidFileRequests": [
+    {
+      "sessionId": "s",
+      "path": "a.txt",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "offset": -1
+    },
+    {
+      "sessionId": "s",
+      "path": "a.txt",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "extra": true
+    },
+    {
+      "sessionId": "s",
+      "path": "a.txt",
+      "version": "invalid"
+    }
+  ],
+  "validFileResponses": [
+    {
+      "path": "a.txt",
+      "kind": "text",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "data": "YQ==",
+      "sizeBytes": 1,
+      "nextOffset": 1,
+      "complete": true
+    }
+  ],
+  "invalidFileResponses": [
+    {
+      "path": "a.txt",
+      "kind": "pdf",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "data": "YQ==",
+      "sizeBytes": 1,
+      "nextOffset": 1,
+      "complete": true
+    },
+    {
+      "path": "a.txt",
+      "kind": "text",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "data": "YQ==",
+      "sizeBytes": 1,
+      "nextOffset": -1,
+      "complete": true
+    },
+    {
+      "path": "a.txt",
+      "kind": "text",
+      "version": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "data": "YQ==",
+      "sizeBytes": 1,
+      "nextOffset": 1,
+      "complete": true,
+      "extra": true
+    }
+  ]
+}

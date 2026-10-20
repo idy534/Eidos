@@ -275,7 +275,7 @@ export function useSessionController(): [SessionControllerState, SessionControll
     if (
       selectedSessionIdRef.current === session.id
       && snapshot?.session.id === session.id
-      && !focusItemId
+      && (!focusItemId || snapshot.items.some((item) => item.id === focusItemId))
     ) {
       if (session.taskStatus === "completed") {
         updateReadCompleted((prev) => new Set(prev).add(session.id));
@@ -297,14 +297,10 @@ export function useSessionController(): [SessionControllerState, SessionControll
       try {
         let loaded = await loadAuthoritativeSnapshot(session.id);
         if (activeSelectionRef.current?.token !== tokenSymbol) return undefined;
-        const seenCursors = new Set<string>();
-        while (focusItemId && !loaded.items.some((item) => item.id === focusItemId)) {
-          const cursor = loaded.previousItemId;
-          if (!cursor || seenCursors.has(cursor) || loaded.items.length >= 20_000) throw new Error("Source answer unavailable");
-          seenCursors.add(cursor);
-          const older = await window.eidosRuntime.readSession(session.id, { itemLimit: 500, beforeItemId: cursor });
+        if (focusItemId && !loaded.items.some((item) => item.id === focusItemId)) {
+          const around = await window.eidosRuntime.readSessionAround({ sessionId: session.id, itemId: focusItemId });
           if (activeSelectionRef.current?.token !== tokenSymbol) return undefined;
-          loaded = mergeOlderHistory(loaded, older);
+          loaded = mergeOlderHistory(loaded, around);
         }
         if (activeSelectionRef.current?.token !== tokenSymbol) {
           return undefined;

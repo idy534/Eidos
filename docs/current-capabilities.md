@@ -24,6 +24,14 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 
 文件内容已经相同时，单文件或多文件 Update Patch 返回成功的 `no_changes`。Runtime 不为这次无改动操作创建审批、Durable Intent 或未知副作用屏障。manual、auto_review 和 full_access 都支持随后继续执行 Shell，并正常完成 Run。同批次和下一轮调用遵循相同规则，模型无需补做只读核验。
 
+## 聊天搜索与当前文件查找（2026-10-20）
+
+侧栏品牌行右侧的放大镜和 `⌘K` 打开全局搜索。用户没有输入关键词时，弹层按最近活动时间显示最多 10 个普通会话。每行显示标题、项目名称和会话时间。时间与侧栏悬停卡片一致，使用“刚刚”“30 分钟前”“今天 01:21”“昨天 18:30”等格式，悬停时间文字可以查看完整时间。项目和无项目筛选同样生效。用户可以直接点击或用方向键和 Enter 打开会话。系统搜索当前数据目录中所有普通 Session 的标题、用户消息和助手消息，范围包括各项目、无项目、Local、Worktree 和分叉继承历史。系统每个会话显示一条结果，标题完整匹配和前缀匹配优先，然后按最近活动排序。用户可以按项目或无项目过滤。项目名称匹配单独显示，点击后进入该项目的搜索范围。系统不受侧栏已加载条数限制。搜索框和项目下拉框位于同一行。后台索引刷新保留现有结果，界面不显示索引说明行。
+
+用户在聊天区按 `⌘F` 查找当前 Session 的全部持久消息。系统按消息加载命中附近的记录，并高亮命中文字。用户可以用 Enter / Shift+Enter、`⌘G` / `⌘⇧G` 和上下按钮切换命中。用户在已打开的文本、代码、Markdown 或 HTML 源码内按 `⌘F` 查找当前文件。文件查找支持区分大小写、全字和正则表达式。Escape 关闭查找并恢复焦点。聊天与文件查找没有可见入口按钮。两个查找条都使用一行悬浮布局，不占正文空间。聊天查找条位于标题栏下方，宽度最多为 25rem；输入框聚焦时不显示蓝色外框。两个查找条的关闭按钮常态使用浅灰色，悬停和按下时使用深灰色，叉号保持浅色。聊天、文件查找和图片全屏预览使用较小的居中图形关闭图标，按钮点击区域保持原大小。
+
+文件查找在普通预览截断时，通过版本绑定的只读接口补读最多 2 MiB。界面会说明仍然截断的文件。单文件最多显示 2,000 处命中；正则计算在可终止的 Worker 中运行。文件名搜索、跨文件内容搜索和其他面板查找尚未实现。详细边界见 [当前限制](current-limitations.md)。
+
 ## Desktop
 
 - 主任务与子 Agent 共用中文结束原因提示。模型超时、访问被拒绝、工具输入不符合要求和普通中断按持久事实解释；未知原因使用通用提示。Session 正文不展示诊断信息区块，Runtime 继续保留错误码和请求标识。操作结果未确认单独提示，不把中断当作进程重启，也不默认建议重放操作。
@@ -308,7 +316,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v27。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v33。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。

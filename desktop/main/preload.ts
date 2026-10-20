@@ -79,6 +79,9 @@ import type {
 } from "../shared/response-actions.js";
 
 const api: EidosRuntimeAPI = {
+  readWorkspaceFileForFind: (request) => ipcRenderer.invoke(IPC.WORKSPACE_READ_FOR_FIND, request),
+  searchSessions: (request) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, request),
+  readSessionAround: (request) => ipcRenderer.invoke(IPC.SESSION_READ_AROUND, request),
   // Runtime status
   getStatus: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC.RUNTIME_GET_STATUS),
   getHealth: (): Promise<RuntimeHealth> => ipcRenderer.invoke(IPC.RUNTIME_HEALTH),

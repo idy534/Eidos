@@ -41,6 +41,10 @@ from eidos_runtime.application.extensions import (
 from eidos_runtime.application.models import ModelApplication
 from eidos_runtime.model.discovery import CustomProviderRequest, CustomProviderResult, discover_custom_models
 from eidos_runtime.application.projects import ProjectApplication
+from eidos_runtime.application.search import SearchApplication
+from eidos_runtime.persistence.search import SearchRepository
+from eidos_runtime.protocol import search as search_dtos
+from eidos_runtime.db.repositories.sessions import SessionRepository
 from eidos_runtime.application.sidebar import SidebarApplication
 from eidos_runtime.application.queued_runs import QueuedRunApplication
 from eidos_runtime.application.automations import AutomationApplication
@@ -597,6 +601,7 @@ class _DeferredSessionForkAdapter:
 
 @dataclass(frozen=True)
 class _RuntimeApplications:
+    search: SearchApplication
     queued_runs: QueuedRunApplication
     sidebar: SidebarApplication
     projects: ProjectApplication
@@ -995,6 +1000,14 @@ class RuntimeServer:
                 lambda _id, request: self._applications_or_error().sessions.read_tool_text(request),
             ),
             (
+                "search/sessions", search_dtos.SearchRequest, search_dtos.SearchResponse,
+                lambda _id, request: self._applications_or_error().search.search(request),
+            ),
+            (
+                "session/readAround", search_dtos.ReadAroundRequest, method_dtos.SessionReadResponseDto,
+                lambda _id, request: self._applications_or_error().search.read_around(request),
+            ),
+            (
                 "session/read",
                 method_dtos.SessionReadRequestDto,
                 method_dtos.SessionReadResponseDto,
@@ -1014,6 +1027,10 @@ class RuntimeServer:
                 method_dtos.WorkspaceReadAssetRequestDto,
                 method_dtos.WorkspaceReadAssetResponseDto,
                 lambda _id, request: self._applications_or_error().workspace.read_asset(request),
+            ),
+            (
+                "workspace/readFileForFind", search_dtos.FileFindRequest, search_dtos.FileFindResponse,
+                lambda _id, request: self._applications_or_error().workspace.read_file_for_find(request),
             ),
             (
                 "workspace/readFilePreview",
@@ -1744,6 +1761,7 @@ class RuntimeServer:
             repository_runtime=self.repository_runtime,
         )
         return _RuntimeApplications(
+            search=SearchApplication(SearchRepository(self.store.database), SessionRepository(self.store.database)),
             queued_runs=QueuedRunApplication(
                 QueuedRunRepository(self.store.database), self.supervisor.events,
                 self._scan_text, self._discard_model_config,

@@ -3,6 +3,7 @@ import { isChannelSaveRequest, isChannelReadRequest } from "../shared/channels.j
 import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
+import { isSearchRequest, isReadAroundRequest, isFileFindRequest } from "../shared/search.js";
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
 import { isQueuedRunSteerRequest, isQueuedRunDeleteRequest, isQueuedRunUpdateRequest, isQueuedRunListRequest } from "../shared/queued-runs.js";
 import type { RunPlanningOptions } from "../shared/planning.generated.js";
@@ -621,6 +622,18 @@ ipcMain.handle(IPC.AUTOMATION_HISTORY, (_event, request: unknown) => {
 ipcMain.handle(IPC.AUTOMATION_RUN_NOW, (_event, request: unknown) => {
   if (!isAutomationRunNowRequest(request)) throw new Error("立即执行参数无效。");
   return clientOrThrow().automationRunNow(request);
+});
+ipcMain.handle(IPC.WORKSPACE_READ_FOR_FIND, (_event, request: unknown) => {
+  if (!isFileFindRequest(request)) throw new Error("文件查找参数无效");
+  return clientOrThrow().readWorkspaceFileForFind(request);
+});
+ipcMain.handle(IPC.SEARCH_SESSIONS, (_event, request: unknown) => {
+  if (!isSearchRequest(request)) throw new Error("搜索参数无效");
+  return clientOrThrow().searchSessions(request);
+});
+ipcMain.handle(IPC.SESSION_READ_AROUND, (_event, request: unknown) => {
+  if (!isReadAroundRequest(request)) throw new Error("消息定位参数无效");
+  return clientOrThrow().readSessionAround(request);
 });
 ipcMain.handle(IPC.SIDEBAR_LIST_PINS, () => clientOrThrow().listSidebarPins());
 ipcMain.handle(IPC.RUN_UPDATE_QUEUED, (_event, request: unknown) => {

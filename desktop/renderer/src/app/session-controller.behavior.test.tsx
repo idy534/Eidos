@@ -147,11 +147,12 @@ describe("useSessionController real Hook behavior", () => {
       kind: "assistant_message" as const, status: "completed" as const, createdAt: 1 };
     const readSession = vi.fn().mockResolvedValueOnce({ ...mockSnapshot1, previousItemId: "recent" })
       .mockResolvedValueOnce({ ...mockSnapshot1, items: [selected] });
-    setupMockRuntime({ readSession });
+    const readSessionAround = vi.fn().mockResolvedValue({ ...mockSnapshot1, items: [selected] });
+    setupMockRuntime({ readSession, readSessionAround });
     const { result } = renderHook(() => useSessionController());
     await act(async () => { await result.current[1].selectSession(mockSession1, selected.id); });
     expect(result.current[0].snapshot?.items[0]?.id).toBe(selected.id);
-    expect(readSession).toHaveBeenLastCalledWith(mockSession1.id, { itemLimit: 500, beforeItemId: "recent" });
+    expect(readSessionAround).toHaveBeenCalledWith({ sessionId: mockSession1.id, itemId: selected.id });
   });
 
   it("loads every Session page so older Projects retain their conversations", async () => {

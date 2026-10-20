@@ -38,8 +38,6 @@ export function McpReviewDialog({
 
   if (!server) return null;
 
-  const fullCommand = [server.executable, ...server.argv].join(" ");
-
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div
@@ -50,16 +48,11 @@ export function McpReviewDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h3 id="mcp-review-title">审阅并启用 MCP Server</h3>
+          <h3 id="mcp-review-title">启用 MCP Server</h3>
           <p className="modal-subtitle">请检查 MCP Server 的启动指令与所需权限</p>
         </div>
 
         <div className="modal-body mcp-review-body">
-          <div className="mcp-warning-banner">
-            <span className="mcp-warning-icon">⚠️</span>
-            <p>启用后，该 MCP Server 可能在任务执行过程中被调用。</p>
-          </div>
-
           <dl className="mcp-meta-grid">
             <div>
               <dt>Server 名称</dt>
@@ -88,15 +81,10 @@ export function McpReviewDialog({
             {server.cwd && (
               <div className="full-width">
                 <dt>工作目录</dt>
-                <dd><code>{server.cwd}</code></dd>
+                <dd title={server.cwd}><code>{server.cwd}</code></dd>
               </div>
             )}
           </dl>
-
-          <div className="mcp-command-block">
-            <label>完整执行命令</label>
-            <pre><code>{fullCommand}</code></pre>
-          </div>
         </div>
 
         <div className="modal-footer">
@@ -116,7 +104,7 @@ export function McpReviewDialog({
             loading={busy}
             onClick={onConfirm}
           >
-            确认并启用
+            确认启用
           </Button>
         </div>
       </div>

@@ -188,6 +188,7 @@ export function useFeedScroll(hasContent: boolean, options?: UseFeedScrollOption
 
   return {
     feedRef, contentRef, atBottom, following, scheduleFollow, jumpToBottom,
+    pauseFollowing: () => changeFollowing(false),
     handleScroll, handleWheel, handleKeyDown, handlePointerDown, handleTouchStart, handleTouchMove,
   };
 }

@@ -1,3 +1,4 @@
+import { highlightText, clearHighlights } from "./find-text.js";
 import { InputReferenceCards } from "./InputContext.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
@@ -23,7 +24,7 @@ import { Button } from "./Button.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
-import { CopyIcon, CheckmarkIcon, AutomationsIcon } from "./MenuIcons.js";
+import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon } from "./MenuIcons.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
 import { ConfirmDialog } from "./settings/ConfirmDialog.js";
@@ -46,6 +47,7 @@ type RegenerateHandler = (run: Run) => Promise<void>;
 type EditResendHandler = (run: Run, editedInput: string, references?: string[]) => Promise<boolean | void>;
 
 interface Props {
+  searchTarget?: { itemId: string; query: string; occurrence: number; revision: number } | undefined;
   contextCompactions?: readonly ContextCompactionActivity[] | undefined;
   items: Item[];
   resultItems?: Item[];
@@ -110,6 +112,7 @@ const NOOP_EDIT_RESEND: EditResendHandler = async () => {};
 
 
 export const ExecutionFeed = memo(function ExecutionFeed({
+  searchTarget,
   contextCompactions = EMPTY_COMPACTIONS,
   items,
   resultItems = items,
@@ -146,7 +149,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   allowEditResend = true,
 }: Props) {
   const {
-    feedRef, contentRef, atBottom, following, scheduleFollow, jumpToBottom,
+    feedRef, contentRef, atBottom, following, scheduleFollow, jumpToBottom, pauseFollowing,
     handleScroll, handleWheel, handleKeyDown, handlePointerDown, handleTouchStart, handleTouchMove,
   } = useFeedScroll(items.length > 0, {
     onLoadOlder,
@@ -167,23 +170,21 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   const latestVisibleRun = [...runs].reverse().find((run) => !supersededRunIds.has(run.id));
   const hasActiveRun = runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status));
 
-  if (items.length === 0) {
-    return (
-      <div className="feed-empty" role="status">
-        {approvalLoadError && onRetryLoadPending && (
-          <ApprovalRecoveryBanner
-            error={approvalLoadError}
-            loading={loadingPendingApprovals}
-            onRetry={onRetryLoadPending}
-          />
-        )}
-        <p>这个 Session 还没有执行记录。</p>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!searchTarget) { clearHighlights("eidos-chat-find"); return; }
+    pauseFollowing();
+    const element = document.getElementById(`item-${searchTarget.itemId}`);
+    if (!element) return;
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+    }
+    const body = element.querySelector<HTMLElement>(".eidos-chat-prose");
+    if (body) highlightText(body, searchTarget.query, searchTarget.occurrence);
+    return () => clearHighlights("eidos-chat-find");
+  }, [searchTarget, items]);
 
   const runsById = new Map(runs.map((run) => [run.id, run]));
-  const itemGroups = groupItemsByRun(items).filter(({ runId }) => !supersededRunIds.has(runId));
+  const itemGroups = groupItemsByRun(items).filter(({ runId }) => (!supersededRunIds.has(runId) || items.some((item) => item.runId === runId && item.id === searchTarget?.itemId)));
 
   return (
     <div className="feed-shell">
@@ -594,7 +595,7 @@ function UserMessage({
   }
 
   return (
-    <div className="feed-item feed-item--user">
+    <div id={`item-${item.id}`} className="feed-item feed-item--user">
       {run.channelOrigin && <p className="feed-label">{run.channelOrigin.channel === "feishu" ? "飞书" : run.channelOrigin.channel === "wecom" ? "企业微信" : "钉钉"}消息</p>}
       {run.automationOrigin && <p className="feed-label">定时任务自动执行</p>}
       <div className="user-message-bubble">
@@ -973,7 +974,7 @@ function ProcessItem({
 }) {
   if (item.kind === "user_message") {
     return (
-      <div className="process-steering" data-status={item.status}>
+      <div id={`item-${item.id}`} className="process-steering" data-status={item.status}>
         <p className="feed-label">引导对话</p>
         <div className="user-message-bubble">
           {item.references?.length ? (
@@ -989,7 +990,7 @@ function ProcessItem({
   }
   if (item.kind === "assistant_message") {
     if (!item.content) return null;
-    return <div className="process-text"><MarkdownContent className="eidos-chat-prose" content={item.content} isStreaming={item.status === "in_progress"} />
+    return <div id={`item-${item.id}`} className="process-text"><MarkdownContent className="eidos-chat-prose" content={item.content} isStreaming={item.status === "in_progress"} />
       {item.status !== "in_progress" && item.contentBytes !== undefined && item.contentHash && <ToolTextView
         sessionId={item.sessionId} toolCallId={item.id} field="content" sha256={item.contentHash} totalBytes={item.contentBytes} />}
     </div>;
@@ -1346,7 +1347,7 @@ function ViewImageViewer({
             autoFocus
             onClick={() => setLightboxOpen(false)}
           >
-            ×
+            <CloseIcon />
           </button>
           {previewUrl ? (
             <img src={previewUrl} alt={displayName} />

@@ -179,6 +179,20 @@ pnpm test:packaging
 
 `pnpm test:electron-smoke` 会使用临时 `EIDOS_DATA_DIR` 和临时 Electron user-data 目录。该测试不需要真实 Model API Key。
 
+### 搜索定向验证
+
+搜索定向验证使用以下入口。这些入口不运行 Full Suite：
+
+```bash
+uv run --locked pytest runtime/tests/test_chat_search.py runtime/tests/test_storage_schema.py runtime/tests/test_context_query_indexes.py runtime/tests/test_session_fork_application.py -m 'not platform' -q
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/Search.behavior.test.tsx desktop/renderer/src/components/WorkspaceExplorer.behavior.test.tsx desktop/renderer/src/app/session-controller.behavior.test.tsx
+pnpm build:main
+node --test dist/main/runtime-client-search.test.js
+node_modules/.bin/electron scripts/test-search.cjs
+```
+
+Electron 搜索页使用临时 user-data、生产 AppShell 和内存 API。该测试检查全局搜索、旧消息定位、文件 Worker、高亮、快捷键、索引刷新、查找与图片预览关闭图标的居中，以及 320、768、1024、1440px 下的单行浮层和正文布局。该页面不读取真实会话或调用模型。开发者可以用 `EIDOS_SEARCH_SCREENSHOT` 指定截图路径。Main 跨进程测试使用真实 Runtime、临时数据库和临时文件，检查共享 Fixture、搜索范围、分块读取、截断与文件版本校验。搜索 DTO 由 `node scripts/generate-search-contracts.mjs` 从 Python Schema 生成。
+
 ## 5. Native Seatbelt test
 
 ```bash

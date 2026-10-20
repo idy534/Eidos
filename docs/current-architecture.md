@@ -18,6 +18,16 @@ Local 与 Projectless 分叉可以共享当前目录。独立 Worktree 分叉复
 
 Renderer 的 `ForkIcon` 统一侧栏、回答操作栏和分叉弹窗的图标。侧栏根据 `forkedFrom.sessionId` 从已有 Session 列表读取直接来源的当前名称。气泡通过既有 `onSelect` 跳转到来源，并关闭气泡。来源缺失时，气泡不提供跳转。该显示和导航变化不修改 RPC、SQLite Schema 或历史记录。
 
+## 聊天与文件查找（2026-10-20）
+
+聊天搜索经过 `ChatSearch → typed preload IPC → Main → search/sessions → SearchApplication → SearchRepository → SQLite`。空搜索复用 useSessionController 已读取全部分页的普通会话列表，先按项目过滤，再按 updatedAt、createdAt 和 ID 排序并取前 10 条。该路径不调用搜索接口，不增加协议或持久化状态。时间复用 SidebarTooltip 的 formatSessionTime，并按分钟刷新。`session/readAround` 复用 SessionRepository 的有界分页，从命中位置附近读取最多 40 条记录。Main 继续合并继承历史展示项。Renderer 按 Item ID 定位、展开所在处理过程并用 CSS Custom Highlight 标记正文。这些操作不创建 Run，也不激活或切换工作环境。
+
+Schema v33 增加 `search_documents`、`search_fts`、`search_pending` 和 `search_index_state`。源消息的插入、正文更新和删除通过同事务 Trigger 登记待处理项或删除旧投影。搜索请求推进最多 40 项、目标 80 ms 的投影批次；一个正在解析的消息可能超过该时间目标。队列保存在 SQLite，Runtime 重启后由后续搜索继续处理。界面在后台继续查询并保留现有结果，不显示单独的索引说明。系统不增加后台线程。`markdown-it-py` 提取可展示的正文，保留代码和链接文字。分叉历史继续从冻结的历史记录读取，来源删除不会删除目标的索引来源。
+
+三个及以上字符的字面量查询先通过 FTS5 trigram 选出候选，再核对正文包含关系。一两个字符的查询直接在完整正文投影上使用 SQLite `instr`，不把侧栏前 50 条作为范围。标题和项目名称直接读取业务表。系统先按会话归组再分页；当前 Session 查找则按继承历史、自有消息和消息内命中位置分页。游标绑定查询、范围和索引版本。版本变化会重置分页，避免沿用旧偏移。搜索索引是派生数据，消息、Session 和冻结历史仍是事实来源。
+
+当前文件查找经过 `FileFind → 可终止 Web Worker → DOM Range / CSS Custom Highlight`。普通预览截断时，Renderer 经过 typed IPC 调用 `workspace/readFileForFind`。Runtime 重新核验当前 execution root、文件身份与版本，并通过现有 WorkspaceReader 每次读取最多 192 KiB。Main 校验分块进度、合并并解码最多 2 MiB，保持原有 1 MiB 单行 JSON-RPC 边界。Renderer 不直接访问文件系统。聊天查找条使用 absolute 定位；文件查找条放在零高度的 sticky 容器中。两个浮层均保持单行，不改变正文布局。其他面板和跨文件搜索没有接入。
+
 ## 1. System Boundary
 
 Eidos 是一个面向 macOS 的本地桌面 Agent Runtime。系统包含 Electron Desktop、Python Runtime、SQLite、本地 Workspace 和远端 Model Provider。

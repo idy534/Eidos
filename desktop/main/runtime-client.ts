@@ -1,3 +1,4 @@
+import { isSearchResponse, isFileFindResponse, type SearchRequest, type SearchResponse, type ReadAroundRequest, type FileFindRequest } from "../shared/search.js";
 import { isCustomModelSettings, isCustomProviderResult } from "../shared/custom-models.js";
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest, type ChannelReadRequest } from "../shared/channels.js";
@@ -108,6 +109,8 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "WORKSPACE_IDENTITY_CHANGED",
   "WORKSPACE_READ_TIMEOUT",
   "WORKSPACE_FILE_TOO_LARGE",
+  "WORKSPACE_FILE_CHANGED",
+  "WORKSPACE_PREVIEW_UNSUPPORTED",
   "WORKSPACE_FILE_NOT_FOUND",
   "WORKSPACE_SENSITIVE_CONTENT",
   "CHECKPOINT_GIT_STATE_UNAVAILABLE",
@@ -546,6 +549,34 @@ export class RuntimeClient {
     options: { limit?: number; cursor?: string } = {},
   ): Promise<SessionListResult> {
     return this.validatedRequest("session/list", options, isSessionListResult);
+  }
+
+  async readWorkspaceFileForFind(request: FileFindRequest): Promise<WorkspaceFilePreview> {
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    while (true) {
+      const page = await this.validatedRequest("workspace/readFileForFind", { ...request, offset }, isFileFindResponse);
+      const data = Buffer.from(page.data, "base64");
+      if (page.version !== request.version || page.nextOffset !== offset + data.length || (!page.complete && page.nextOffset <= offset) || chunks.length >= 11) throw new Error("INVALID_RUNTIME_RESPONSE");
+      chunks.push(data); offset = page.nextOffset;
+      if (page.complete || offset >= 2 * 1024 * 1024) {
+        const truncated = !page.complete;
+        const content = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks), { stream: truncated });
+        return { path: page.path, kind: page.kind, sizeBytes: page.sizeBytes, version: page.version, truncated, content,
+          ...(page.language ? { language: page.language } : {}) };
+      }
+    }
+  }
+
+  searchSessions(request: SearchRequest): Promise<SearchResponse> {
+    return this.validatedRequest("search/sessions", { ...request }, isSearchResponse);
+  }
+
+  async readSessionAround(request: ReadAroundRequest): Promise<SessionSnapshot> {
+    const snapshot = await this.validatedRequest("session/readAround", { ...request }, isSessionSnapshot);
+    const history = snapshot.inheritedHistory ?? [];
+    const inheritedRuns = [...new Map(history.map((entry) => [entry.run.id, { ...entry.run, inherited: true }])).values()];
+    return { ...snapshot, runs: [...inheritedRuns, ...snapshot.runs], items: [...history.map((entry) => ({ ...entry.item, inherited: true })), ...snapshot.items] };
   }
 
   async readSession(

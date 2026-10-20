@@ -94,10 +94,12 @@ function formatLanguage(lang: string): string {
 
 export const CodeBlock = memo(function CodeBlock({
   className,
+  title,
   children,
   isStreaming = false,
 }: {
   className?: string | undefined;
+  title?: string | undefined;
   children?: ReactNode;
   isStreaming?: boolean | undefined;
 }) {
@@ -159,7 +161,7 @@ export const CodeBlock = memo(function CodeBlock({
   return (
     <div className="code-block-card" role="region" aria-label={`${lang || "代码"}片段`}>
       <div className="code-block-header">
-        <span className="code-block-language">{formatLanguage(lang || "text")}</span>
+        <span className="code-block-language">{title ?? formatLanguage(lang || "text")}</span>
         <Tooltip content={copied ? "已复制代码" : "复制代码"}>
           <button
             type="button"

@@ -6,7 +6,7 @@ import { committedFileDiff, projectNetFileDiff, type ParsedFileDiff } from "../p
 import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
-import { PreviewIcon, ExternalLinkIcon, FinderIcon } from "./MenuIcons.js";
+import { PreviewIcon, ExternalLinkIcon, FinderIcon, CloseIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 import { Tooltip } from "./Tooltip.js";
 
@@ -523,7 +523,7 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
             if (event.target === event.currentTarget) setImageOpen(false);
           }}
         >
-          <button type="button" className="artifact-image-preview__close" aria-label="关闭图片预览" autoFocus onClick={() => setImageOpen(false)}>×</button>
+          <button type="button" className="artifact-image-preview__close" aria-label="关闭图片预览" autoFocus onClick={() => setImageOpen(false)}><CloseIcon /></button>
           {previewUrl ? <img src={previewUrl} alt={displayName} /> : <p role={previewError ? "alert" : "status"}>{previewError || "正在读取图片预览…"}</p>}
         </div>,
         document.body,

@@ -222,6 +222,7 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         AgentCatalogResponse,
         AgentDefinitionDocument,
         ChannelResponse,
+        method_dtos.SessionReadResponseDto,
     }
     assert all(
         not registration.response_type.__pydantic_root_model__
