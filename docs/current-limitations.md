@@ -304,7 +304,7 @@
 - Workspace 文件 Intent 的自动恢复只核验实际目标和必要父目录。Runtime 最多观察 512 个目标，读取总量最多 64 MiB，并检查读取期限、取消、文件类型、链接、owner 和当前版本。SQLite 提交再次匹配 epoch 与目标集合；未知 Shell、MCP、外部操作和 Eidos-state 不通过该路径恢复。历史完整 Workspace refresh 入口继续兼容，但不再是自动恢复的前置条件。
 - `interrupted` 保持稳定错误码 `RUNTIME_INTERRUPTED`，并在既有 `stopReason` 与 Event 中保留真实触发原因。主任务和子 Agent 共用结束原因提示，并区分执行中断、活动命令清理和真实未确认操作。新终态保存有界 `termination` 事实；已有记录不补写或推测原因。已移除的完成检查原因使用通用停止提示。系统没有具体证据时，界面不会断言网络故障、密钥失效或操作成功。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。
-- 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin` 等待，默认 30 秒，范围 250 毫秒至 60 秒。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
+- 新 Run 的 Shell 不再设置默认进程总期限。`run_shell` 首次等待默认 10 秒，范围 250 毫秒至 30 秒；模型随后使用 `write_stdin`，非空输入默认等待 250 毫秒，空输入轮询默认等待 30 秒，范围仍为 250 毫秒至 60 秒。有效非负整数在范围外时使用对应边界值。等待窗口到期只返回 `shell_running` 和 `sessionId`，不会结束进程或触发 reconciliation。ToolSpec 的 600 秒 watchdog 只限制单次启动、审批重试或跟进调用，审批等待不计入预算。历史 3600 秒 ToolSpec 仍可读取，但新工具不会用它限制进程寿命。
 - 控制器把已有 Shell 结果转成超时或取消结果时，会保留已有输出和终止信息，并继续执行结果校验和输出限额；展示片段使用 best-effort 凭据脱敏，聚合 stdout/stderr 保留原始内容。进程清理和未知副作用仍按原规则处理。此修改不恢复旧结果中已经缺失的 stdout/stderr。
 - Runtime context 使用 `recentToolErrorFingerprints` 表示最近工具错误。空列表不代表对账完成。LoopGuard 不把 assistant 文本变化或最近错误列表中的错误消失单独当作新进展。
 

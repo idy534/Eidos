@@ -308,7 +308,9 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。`apply_patch` 不执行敏感内容扫描，但仍执行输入类型、Patch 语法、Workspace 边界、权限、版本、受控写入和最终内容校验。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并受控提交已有文件的原地写入或新文件的排他创建。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
 
-`run_shell` 的主描述说明执行命令、必填参数和返回输出或 `sessionId` 的行为。`cwd` 参数单独说明路径格式和默认会话工作区。模型可以在命令中使用 `cd`；工具描述不再要求模型避免这种写法。每次调用仍创建新的 Shell，命令中的目录切换不会改变后续调用的默认目录。说明文本参与既有 Tool Contract Hash，新 Step 使用当前定义，历史快照保持原样。
+`run_shell` 的主描述说明执行命令和返回输出或 `sessionId` 的行为。`command`、`cwd` 和 `yieldTimeMs` 分别说明 Shell 命令、目录默认值和等待窗口。模型可以在命令中使用 `cd`；工具描述不再要求模型避免这种写法。每次调用仍创建新的 Shell，命令中的目录切换不会改变后续调用的默认目录。说明文本参与既有 Tool Contract Hash，新 Step 使用当前定义，历史快照保持原样。
+
+Shell 参数通过 Pydantic `AliasChoices` 兼容 Codex 拼写。`run_shell` 接受 `cmd`、`workdir` 和 `yield_time_ms`，并归一化为 `command`、`cwd` 和 `yieldTimeMs`；两个名称同时出现时，原有字段名优先。`write_stdin` 接受 `session_id` 和 `yield_time_ms`，并归一化为原有字段。模型可见 Schema 仍使用 Eidos 名称，原始参数继续单独保存。参数归一化后，调用继续经过现有目录身份校验、权限判断、Durable Intent 和结果提交。非负整数等待值会被限制到有效范围，负数和错误类型不被转换成有效等待值。`write_stdin` 在未指定等待值且输入非空时默认等待 250 毫秒；空输入轮询仍默认等待 30 秒。两种调用都继续使用已有进程、输出限额和清理流程。
 
 `search_text` 在 Run 内把 Ripgrep 进程寿命和 ToolCall 等待窗口分开。首次调用默认等待 10 秒，`search_text_wait` 默认等待 30 秒。等待窗口结束只返回 `search_running` 和 `sessionId`。后台搜索继续使用原来的受管 Ripgrep、授权根、ignore 规则、文件验证、输出边界和结果解析。搜索完成后，续接调用读取同一个有界结构化结果。Run 关闭时，`ToolExecutor` 会取消并回收未完成的搜索。搜索会话不持久化，也不能跨 Run 使用。
 

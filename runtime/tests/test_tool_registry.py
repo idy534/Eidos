@@ -133,7 +133,7 @@ class ToolRegistryTests(unittest.TestCase):
         entry = shell_entry()
         valid = {"command": "true", "cwd": "nested", "yieldTimeMs": 750}
         for invalid in (
-            {"yieldTimeMs": "1500"}, {"yieldTimeMs": [1000]}, {"yieldTimeMs": 249},
+            {"yieldTimeMs": "1500"}, {"yieldTimeMs": [1000]}, {"yieldTimeMs": -1},
             {"yield_time_ms": "1000", "yieldTimeMs": None},
             {"cwd": False}, {"dependencyBindingId": []},
             {"additionalPermissions": "null"}, {"additionalPermissions": []},

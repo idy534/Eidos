@@ -234,9 +234,8 @@ _APPLY_PATCH_DESCRIPTION = (
 
 
 _RUN_SHELL_DESCRIPTION = (
-    "Run a command in cwd under the current Run permissions. "
-    "Only command is required; omit unused optional fields. "
-    "Each call starts a new shell. Returns output or a sessionId if still running."
+    "Run a shell command and return its output or a sessionId for ongoing interaction. "
+    "Each call starts a new shell."
 )
 
 
@@ -248,7 +247,7 @@ _BUILTIN_CONTRACTS = (
     ("search_text_wait", "Wait for additional results from a running search_text session.", "none", False, 65, "single", SearchTextWaitInput, SearchTextResultData, "search_text"),
     ("apply_patch", _APPLY_PATCH_DESCRIPTION, "workspace", False, 120, "single", ApplyPatchInput, ApplyPatchResultData, "file_change"),
     ("run_shell", _RUN_SHELL_DESCRIPTION, "shell", False, 600, "single", RunShellInput, RunShellResultData, "run_shell"),
-    ("write_stdin", "Write input to a running shell session or wait for additional output. Use empty input to poll for output.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
+    ("write_stdin", "Write input to a running shell session and return recent output.", "none", False, 600, "single", WriteStdinInput, WriteStdinResultData, "run_shell"),
 )
 TOOL_SPECS = tuple(ToolSpec.model_validate({
     "name": name,

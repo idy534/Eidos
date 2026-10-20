@@ -327,9 +327,12 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(properties["yieldTimeMs"]["minimum"], 250)
         self.assertEqual(properties["yieldTimeMs"]["maximum"], 30_000)
-        for value in (249,):
-            with self.subTest(value=value), self.assertRaises(ValidationError):
-                RunShellInput.model_validate({"command": "true", "yieldTimeMs": value})
+        for value in (0, 1, 249):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    RunShellInput.model_validate({"command": "true", "yieldTimeMs": value}).yieldTimeMs,
+                    250,
+                )
 
     def test_run_shell_accepts_yield_alias_with_existing_limits(self) -> None:
         for name in ("yieldTimeMs", "yield_time_ms"):
@@ -340,7 +343,7 @@ class ToolContractTests(unittest.TestCase):
                     })).model_dump(mode="json", by_alias=True)
                     self.assertEqual(arguments["yieldTimeMs"], value)
                     self.assertNotIn("yield_time_ms", arguments)
-            for value in (249, True, "1000", 1000.5, None):
+            for value in (-1, True, "1000", 1000.5, None):
                 with self.subTest(name=name, value=value), self.assertRaises(ValidationError):
                     RunShellInput.model_validate_json(json.dumps({
                         "command": "true", name: value,
@@ -358,9 +361,12 @@ class ToolContractTests(unittest.TestCase):
                     self.assertEqual(contract.model_validate_json(json.dumps({
                         **arguments, "yieldTimeMs": value,
                     })).yieldTimeMs, limit)
-            for invalid in (True, "120000", 120000.5, None, -1, 249):
+            for invalid in (True, "120000", 120000.5, None, -1):
                 with self.subTest(contract=contract.__name__, invalid=invalid), self.assertRaises(ValidationError):
                     contract.model_validate_json(json.dumps({**arguments, "yieldTimeMs": invalid}))
+            if contract in (SearchTextInput, SearchTextWaitInput):
+                with self.assertRaises(ValidationError):
+                    contract.model_validate_json(json.dumps({**arguments, "yieldTimeMs": 249}))
         self.assertEqual(RunShellInput.model_validate_json(json.dumps({
             "command": "true", "yield_time_ms": 120_000,
         })).yieldTimeMs, 30_000)
@@ -436,9 +442,8 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertEqual(
             description,
-            "Run a command in cwd under the current Run permissions. "
-            "Only command is required; omit unused optional fields. "
-            "Each call starts a new shell. Returns output or a sessionId if still running.",
+            "Run a shell command and return its output or a sessionId for ongoing interaction. "
+            "Each call starts a new shell.",
         )
         for fragment in (
             "gitWriteAccess",
@@ -492,8 +497,7 @@ class ToolContractTests(unittest.TestCase):
         )
         self.assertEqual(
             stdin_description,
-            "Write input to a running shell session or wait for additional "
-            "output. Use empty input to poll for output.",
+            "Write input to a running shell session and return recent output.",
         )
         stdin_properties = WriteStdinInput.model_json_schema(by_alias=True)[
             "properties"

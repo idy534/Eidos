@@ -55,6 +55,10 @@ def _cap_followup_wait(value: object) -> object:
     return min(value, 60_000) if type(value) is int else value
 
 
+def _floor_shell_wait(value: object) -> object:
+    return max(value, 250) if type(value) is int and value >= 0 else value
+
+
 def _relative_path(value: str, *, allow_dot: bool = False) -> str:
     if not value or "\x00" in value or "\\" in value:
         raise ValueError("invalid_relative_path")
@@ -296,22 +300,30 @@ class RunShellInput(StrictToolModel):
         extra="ignore", json_schema_extra={"additionalProperties": False}
     )
 
-    command: StrictStr = Field(min_length=1, max_length=16 * 1024)
+    command: StrictStr = Field(
+        min_length=1,
+        max_length=16 * 1024,
+        validation_alias=AliasChoices("command", "cmd"),
+        description="Shell command to execute in the user's default shell.",
+    )
     cwd: StrictStr = Field(
         default=".",
+        validation_alias=AliasChoices("cwd", "workdir"),
         description=(
             "Workspace-relative or canonical absolute working directory. "
             "Defaults to the current Session workspace."
         ),
     )
-    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_initial_wait)] = Field(
+    yieldTimeMs: Annotated[
+        StrictInt, BeforeValidator(_cap_initial_wait), BeforeValidator(_floor_shell_wait)
+    ] = Field(
         default=10_000,
         validation_alias=AliasChoices("yieldTimeMs", "yield_time_ms"),
         ge=250,
         le=30_000,
         description=(
-            "Initial wait in milliseconds. A running result includes sessionId for write_stdin; "
-            "the process continues after this window."
+            "Wait before returning output. Defaults to 10000 ms; effective range is 250-30000 ms. "
+            "A running command continues and returns sessionId for write_stdin."
         ),
     )
     dependencyBindingId: StrictStr | None = Field(
@@ -467,19 +479,39 @@ class WriteStdinInput(StrictToolModel):
     sessionId: StrictStr = Field(
         min_length=1,
         max_length=256,
+        validation_alias=AliasChoices("sessionId", "session_id"),
         description="Running shell session identifier returned by run_shell.",
     )
     chars: StrictStr = Field(
         default="",
         max_length=16 * 1024,
-        description="Input to write to the session. Empty input polls for additional output; \u0003 interrupts the command.",
+        description="Input to write. Defaults to empty, which polls without writing; \u0003 interrupts the command.",
     )
-    yieldTimeMs: Annotated[StrictInt, BeforeValidator(_cap_followup_wait)] = Field(
+    yieldTimeMs: Annotated[
+        StrictInt, BeforeValidator(_cap_followup_wait), BeforeValidator(_floor_shell_wait)
+    ] = Field(
         default=30_000,
+        validation_alias=AliasChoices("yieldTimeMs", "yield_time_ms"),
         ge=250,
         le=60_000,
-        description="How long to wait for the running shell session before returning. Values above 60000 are capped; the process continues.",
+        description=(
+            "Wait before returning output. Defaults to 250 ms for non-empty input, otherwise 30000 ms; "
+            "effective range is 250-60000 ms. The process continues after this window."
+        ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_input_wait(cls, value: object) -> object:
+        if (
+            isinstance(value, dict)
+            and isinstance(value.get("chars"), str)
+            and value["chars"]
+            and "yieldTimeMs" not in value
+            and "yield_time_ms" not in value
+        ):
+            return {**value, "yieldTimeMs": 250}
+        return value
 
     @field_validator("chars")
     @classmethod
