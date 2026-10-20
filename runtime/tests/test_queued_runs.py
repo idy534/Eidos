@@ -19,7 +19,7 @@ from eidos_runtime.protocol.queued_runs import QueuedRunChangeResponse, QueuedRu
 from eidos_runtime.protocol.server import RuntimeServer
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.engine import RuntimeEngine
-from eidos_runtime.model.client import ModelResponse, ModelToolCall
+from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.persistence import queued_runs as queued_run_module
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
@@ -83,6 +83,57 @@ def test_queued_inputs_stay_out_of_current_context_and_compaction_until_fifo_sta
     assert [row.user_input for row in repo.list(session).items] == []
     # Even a later completed Run cannot rewrite an older Run's projection.
     assert second_item["id"] not in {item.item_id for item in store.context_projection_facts(first["id"]).items}
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_fifo_context_keeps_previous_run_complete_before_queued_goal(queue, restart):
+    store, session, _ = queue
+    active, _ = store.create_run(session, "Create a presentation")
+    queued, user = store.enqueue_run(session, "Add a culture page")
+    later, _ = store.enqueue_run(session, "Keep this queued")
+    store.enqueue_input(active["id"], "Include local food")
+    model = ScriptedModel([
+        ModelResponse(tool_calls=(ModelToolCall("list", "list_files", {}),)),
+        ModelResponse(text="The original presentation is complete"),
+    ])
+    RuntimeEngine(store, model, lambda _: None).run(active["id"], threading.Event())
+    assert store.read_run(active["id"])["status"] == "succeeded"
+
+    def check(current):
+        for projection in (current.context_projection_facts, current.compaction_candidate_facts):
+            facts = projection(queued["id"])
+            # Summary candidates exclude the protected current goal; online
+            # history retains it after the complete preceding Run.
+            online = projection == current.context_projection_facts
+            previous = facts.items[:-1] if online else facts.items
+            if online:
+                assert facts.items[-1].item_id == user["id"]
+            else:
+                assert user["id"] not in {item.item_id for item in facts.items}
+            assert facts.current_user_goal_id == user["id"]
+            assert all(item.run_id == active["id"] for item in previous)
+            assert [item.content for item in facts.items if item.kind == "user_message"] == [
+                "Create a presentation", "Include local food",
+            ] + (["Add a culture page"] if online else [])
+            assert previous[-1].content == "The original presentation is complete"
+            assert sum(item.provider_call_id == "list" for item in facts.items) == 1
+        context = ContextBuilder(current).build(queued["id"]).model_context
+        assert context[-1]["content"] == "Add a culture page"
+        assert sum(item.get("callId") == "list" for item in context) == 2
+        assert "Keep this queued" not in [item.get("content") for item in context]
+        assert current.read_run(later["id"])["status"] == "queued"
+
+    assert store.claim_next_run()["id"] == queued["id"]
+    check(store)
+    if restart:
+        directory = store.database.data_directory
+        store.close()
+        reopened = SessionStore(directory)
+        reopened.initialize()
+        try:
+            check(reopened)
+        finally:
+            reopened.close()
 
 
 def steer(repo, session, source, target, operation=None):

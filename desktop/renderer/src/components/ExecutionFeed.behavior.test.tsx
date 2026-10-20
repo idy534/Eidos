@@ -63,10 +63,13 @@ describe("automation source and tool results", () => {
     const { rerender } = render(<ExecutionFeed {...props} items={[initial, shellItem({ ordinal: 2 }), steering]} />);
     const process = screen.getByText(/^正在处理/).closest("details")!;
     expect(within(process).getByText("补充要求")).toBeInTheDocument();
-    expect(within(process).getByText("引导对话 · 等待下一步读取")).toBeInTheDocument();
+    expect(within(process).getByText("引导对话")).toBeInTheDocument();
+    expect(process.querySelector(".process-steering .user-message-bubble")).toBeInTheDocument();
+    expect(process.querySelector(".process-steering")?.getAttribute("data-status")).toBe("in_progress");
     expect(screen.getAllByText("原任务")).toHaveLength(1);
     rerender(<ExecutionFeed {...props} items={[initial, shellItem({ ordinal: 2 }), { ...steering, status: "completed", completedAt: 2_000 }]} />);
-    expect(within(process).getByText("引导对话 · 已加入当前对话")).toBeInTheDocument();
+    expect(within(process).getByText("引导对话")).toBeInTheDocument();
+    expect(process.querySelector(".process-steering")?.getAttribute("data-status")).toBe("completed");
     expect(screen.getAllByText("补充要求")).toHaveLength(1);
   });
 

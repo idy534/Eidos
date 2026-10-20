@@ -394,6 +394,7 @@ class PydanticAIModelClient:
                             context,
                             supports_images=self._profile_snapshot.supports_images,
                             reasoning_required=self._reasoning_selection_active(),
+                            thinking_field=self._model.profile.get("openai_chat_thinking_field"),
                         ),
                         instructions,
                     ),
@@ -505,6 +506,7 @@ def encode_context(
     *,
     supports_images: bool = False,
     reasoning_required: bool = False,
+    thinking_field: str | None = None,
 ) -> list[ModelMessage]:
     messages: list[ModelMessage] = []
     historical_calls: set[str] = set()
@@ -528,6 +530,11 @@ def encode_context(
                 part.content, id=part.id, signature=part.signature,
                 provider_name=part.provider_name, provider_details=part.provider_details,
             ) for part in (replay.reasoning_parts if replay else ()) if part.kind == "thinking"]
+            if reasoning_required and replay is not None and not parts and thinking_field:
+                # A retained response may have no thinking tokens. Preserve an
+                # empty provider field even for a text-only assistant response;
+                # Pydantic AI currently backfills only tool-calling responses.
+                parts.append(ThinkingPart("", id=thinking_field, provider_name=replay.provider_name))
             content = item.get("content")
             if isinstance(content, str) and content:
                 phase = item.get("phase")

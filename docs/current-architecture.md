@@ -888,7 +888,7 @@ AppShell 只在已持久化的 Session 中挂载 QueuedMessages。`draft-…` �
 
 用户可以点击队列行的箭头，把指定消息转为当前 Run 的引导。`run/steerQueued` 要求明确的 `targetRunId` 和原消息文字，并在同一事务中检查源消息、目标 Run 和取消状态，创建 `input_mailbox` pending 记录与同 ID 的可见用户 Item，移除源 queued Run，再提交 Item 与队列 Event/Outbox。目标可以处于 running、waiting_approval、waiting_input 或 waiting_agents；finalizing、已经结束或正在取消的目标拒绝转换，原消息继续排队。重复请求复用 Operation 结果。目标 Run 的模型、权限和工作模式快照保持不变。
 
-引导 Item 在“正在处理”内显示“引导对话 · 等待下一步读取”。Runtime 在下一次采样边界消费邮箱，并把同一 Item 标为 completed，界面改为“已加入当前对话”。消费会把 Item 的 ordinal 与 creation_seq 移到之前采样产生的结果之后，保持模型消息顺序。待消费或取消后仍未消费的 Item 不进入上下文。邮箱、Item 和剩余 FIFO 队列都保存在 SQLite 中，不新增 Schema。普通内容引用随消息保留；扩展 selection、已关联计划和当前模型不支持的图片会拒绝转换并保留队列消息，避免改变已冻结的运行配置。
+引导 Item 在“正在处理”内以类似正常用户输入的右侧气泡显示，上方标签为“引导对话”。Runtime 在下一次采样边界消费邮箱，并把同一 Item 标为 completed。消费会把 Item 的 ordinal 与 creation_seq 移到之前采样产生的结果之后，保持模型消息顺序。待消费或取消后仍未消费的 Item 不进入上下文。邮箱、Item 和剩余 FIFO 队列都保存在 SQLite 中，不新增 Schema。普通内容引用随消息保留；扩展 selection、已关联计划和当前模型不支持的图片会拒绝转换并保留队列消息，避免改变已冻结的运行配置。
 
 
 新 Run 持久保存内部 Skill 元数据快照，公共 Run DTO 不发送该快照；内部恢复读取保持完整。只有实际选择、读取或激活的 Skill 建立租约，其他 Skill 可删除；旧 Run 继续按目录引用保护。资源激活重新检查冻结身份和内容版本，已移除且未使用的 Skill 以普通工具错误反馈，不破坏整个 Run 的恢复。
@@ -943,3 +943,9 @@ Schema 30→31 在 model_attempts 增加 request_group_id、retry_index、retry_
 Runtime 重启只恢复现有 Recovery 允许的纯模型阶段。恢复沿用请求组、已消耗次数、原 Snapshot、恢复期限和已保存的下次请求时间；新消息保留未读，等待下一次正常采样。最后一次可用尝试已经消耗或期限已过时，恢复记录为 interrupted，不重置预算。存在未知操作的 Run 继续沿用原有恢复规则，不重放操作。
 
 本轮只完成 Runtime 两阶段。Desktop 沿用已有草稿和结束提示，没有新增倒计时、暂停状态、继续按钮、模型切换或后台网络监听。SQLite 升级增加列，回退旧版本前需要恢复升级前备份。安装、启动和生产依赖没有变化。
+
+## 排队消息的上下文顺序与空 reasoning 回放（2026-10-20）
+
+排队消息在入队时就保存用户 Item。ContextRepository 按 `runs.creation_seq` 和 Run 内的 `items.ordinal` 选择、排列历史和识别最新用户输入。系统不能用 Item 的全局写入顺序，把排队消息插入上一轮仍在生成的工具记录和最终回复之间。ContextBuilder 沿用这个顺序。压缩候选继续排除当前目标和受保护的近期事实；已有引导仍在消费边界进入所属 Run。修复不改写历史 Item、已保存的 ContextSnapshot、Run 配置或 FIFO 状态，也不增加数据库字段。
+
+思考模式下，Chat Completions Adapter 在已有 response replay、但没有 thinking part 时，使用 Pydantic AI Provider Profile 声明的 `openai_chat_thinking_field` 创建空 ThinkingPart。Pydantic AI 继续负责请求字段映射。纯文本的历史最终回复也会携带空 reasoning 字段，系统不生成或补造思考正文。没有回放记录的历史仍使用原有的历史文本降级；未开启思考或 Profile 未声明字段时，Adapter 不增加这个空 part。工具调用和结果仍按原有批次规则配对，系统不重放工具。

@@ -93,11 +93,14 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
     await script("new Promise(resolve => setTimeout(resolve, 100))");
     assert.equal(await script("document.querySelectorAll('.queued-message').length"), 6);
-    assert.equal(await script("document.querySelector('.process-group .process-steering .feed-label').textContent"), "引导对话 · 等待下一步读取");
+    assert.equal(await script("document.querySelector('.process-group .process-steering .feed-label').textContent"), "引导对话");
+    assert.equal(await script("document.querySelector('.process-steering .user-message-bubble').textContent"), "第 1 条排队消息");
+    assert.equal(await script("document.querySelector('.process-steering').getAttribute('data-status')"), "in_progress");
     assert.equal(await script("document.querySelector('.composer textarea').value"), "主输入框中的草稿");
     await script("window.consumeSteering()");
     await script("new Promise(resolve => setTimeout(resolve, 100))");
-    assert.equal(await script("document.querySelector('.process-steering .feed-label').textContent"), "引导对话 · 已加入当前对话");
+    assert.equal(await script("document.querySelector('.process-steering .feed-label').textContent"), "引导对话");
+    assert.equal(await script("document.querySelector('.process-steering').getAttribute('data-status')"), "completed");
     if (process.env.EIDOS_QUEUE_SCREENSHOT_DIR) await writeFile(path.join(process.env.EIDOS_QUEUE_SCREENSHOT_DIR, "queued-steering.png"), (await win.webContents.capturePage()).toPNG());
     await script("window.setQueuedMessages([])");
     await script("new Promise(resolve => setTimeout(resolve, 100))");

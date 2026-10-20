@@ -267,6 +267,91 @@ def test_signatures_and_provider_metadata_survive_chat_replay():
     assert thinking.provider_details == part.provider_details
 
 
+@pytest.mark.parametrize("reasoning_required", [False, True])
+def test_empty_reasoning_uses_provider_field_only_for_retained_reasoning_history(reasoning_required):
+    replay = ModelResponseReplay(provider_name="deepseek", response_text_present=True)
+    messages = encode_context(
+        ({
+            "type": "assistant", "content": "Previous answer", "responseId": "attempt",
+            "responseReplay": replay.model_dump(mode="json"),
+        },),
+        reasoning_required=reasoning_required,
+        thinking_field="reasoning_content",
+    )
+    response = messages[0]
+    assert isinstance(response, PAIResponse)
+    thinking = [part for part in response.parts if isinstance(part, ThinkingPart)]
+    assert [part.content for part in thinking] == ([""] if reasoning_required else [])
+    if thinking:
+        assert thinking[0].id == "reasoning_content"
+        assert thinking[0].provider_name == "deepseek"
+
+
+@pytest.mark.parametrize("reasoning_selection,has_replay", [("high", True), ("none", True), ("high", False)])
+def test_provider_wire_preserves_empty_reasoning_on_previous_final_answer(reasoning_selection, has_replay):
+    import httpx2 as httpx
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from eidos_runtime.model.client import FunctionToolDefinition
+    from eidos_runtime.model.config import MODEL_CATALOG
+    from eidos_runtime.model.pydantic_ai_client import PydanticAIModelClient
+    from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
+
+    captured = []
+
+    def handler(request):
+        captured.append(json.loads(request.content))
+        chunk = {
+            "id": "fixture", "object": "chat.completion.chunk", "created": 0,
+            "model": "deepseek-flash",
+            "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}],
+        }
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content=("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode())
+
+    kernel = RuntimeAsyncKernel()
+    kernel.start()
+    sdk = AsyncOpenAI(
+        api_key="offline-fixture", base_url="https://fixture.invalid", max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    client = PydanticAIModelClient(
+        OpenAIChatModel("deepseek-flash", provider=DeepSeekProvider(openai_client=sdk)),
+        MODEL_CATALOG.profile("deepseek-flash"), openai_client=sdk,
+        reasoning_selection=reasoning_selection, async_kernel=kernel,
+    )
+    assistant = {"type": "assistant", "content": "Original presentation is complete", "responseId": "previous"}
+    if has_replay:
+        assistant["responseReplay"] = ModelResponseReplay(
+            provider_name="deepseek", response_text_present=True,
+        ).model_dump(mode="json")
+    try:
+        client.complete(
+            ({"type": "user", "content": "Create a presentation"}, assistant,
+             {"type": "user", "content": "Add a culture page"}),
+            threading.Event(), lambda _: None, instructions="fixture",
+            tool_definitions=(FunctionToolDefinition(
+                name="list_files", description="fixture", parameters_json_schema={"type": "object"},
+            ),),
+        )
+        messages = captured[0]["messages"]
+        assert messages[-1] == {"role": "user", "content": "Add a culture page"}
+        assistants = [message for message in messages if message["role"] == "assistant"]
+        if reasoning_selection == "high" and has_replay:
+            assert assistants == [{
+                "role": "assistant", "content": "Original presentation is complete", "reasoning_content": "",
+            }]
+        elif reasoning_selection == "none":
+            assert assistants == [{"role": "assistant", "content": "Original presentation is complete"}]
+        else:
+            assert assistants == []
+            assert "Historical model response" in messages[-2]["content"]
+    finally:
+        client.close()
+        kernel.close()
+
+
 def test_partial_response_uses_history_without_orphaned_calls_or_reasoning():
     replay = ModelResponseReplay(
         tool_call_ids=("one", "two"),

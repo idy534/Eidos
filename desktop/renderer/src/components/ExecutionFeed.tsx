@@ -972,13 +972,20 @@ function ProcessItem({
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
   if (item.kind === "user_message") {
-    const state = item.status === "completed" ? "已加入当前对话"
-      : item.status === "in_progress" && ACTIVE_RUN_STATUSES.has(run.status) ? "等待下一步读取" : "未加入当前对话";
-    return <div className="process-steering">
-      <p className="feed-label">引导对话 · {state}</p>
-      {item.content && <MarkdownContent className="eidos-chat-prose" content={item.content} />}
-      {!!item.references?.length && <InputReferenceCards references={item.references} />}
-    </div>;
+    return (
+      <div className="process-steering" data-status={item.status}>
+        <p className="feed-label">引导对话</p>
+        <div className="user-message-bubble">
+          {item.references?.length ? (
+            <InputReferenceCards
+              references={item.references}
+              variant="bubble"
+            />
+          ) : null}
+          {item.content && <MarkdownContent className="eidos-chat-prose" content={item.content} />}
+        </div>
+      </div>
+    );
   }
   if (item.kind === "assistant_message") {
     if (!item.content) return null;

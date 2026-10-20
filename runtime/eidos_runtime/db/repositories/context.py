@@ -86,9 +86,9 @@ class ContextRepository(Repository):
             ).fetchone()
             latest_user_row = connection.execute(
                 """
-                SELECT * FROM items
-                WHERE session_id = ? AND kind = 'user_message'
-                  AND status = 'completed'
+                SELECT items.* FROM items JOIN runs ON runs.id = items.run_id
+                WHERE items.session_id = ? AND kind = 'user_message'
+                  AND items.status = 'completed'
                   AND run_id IN (
                     SELECT id FROM runs WHERE creation_seq <= ?
                       AND (id = ? OR started_at IS NOT NULL)
@@ -97,7 +97,7 @@ class ContextRepository(Repository):
                     SELECT 1 FROM run_revisions
                     WHERE run_revisions.source_run_id = items.run_id
                   )
-                ORDER BY creation_seq DESC LIMIT 1
+                ORDER BY runs.creation_seq DESC, items.ordinal DESC LIMIT 1
                 """,
                 (run["session_id"], run["creation_seq"], run_id),
             ).fetchone()
@@ -161,7 +161,8 @@ class ContextRepository(Repository):
                 )
             """ if newest else ""
             base = f"""
-                FROM items LEFT JOIN tool_calls ON tool_calls.item_id = items.id
+                FROM items JOIN runs ON runs.id = items.run_id
+                LEFT JOIN tool_calls ON tool_calls.item_id = items.id
                 {replay_join}
                 WHERE items.session_id = ?
                   AND items.run_id IN (
@@ -207,9 +208,10 @@ class ContextRepository(Repository):
             ).fetchone()
             metadata = connection.execute(
                 f"""
-                SELECT items.id, items.creation_seq, {size_expression} AS fact_bytes
+                SELECT items.id, {size_expression} AS fact_bytes
                 {base}
-                ORDER BY items.creation_seq {'DESC' if newest else 'ASC'} LIMIT ?
+                ORDER BY runs.creation_seq {'DESC' if newest else 'ASC'},
+                         items.ordinal {'DESC' if newest else 'ASC'} LIMIT ?
                 """,
                 (
                     run["session_id"],
@@ -267,21 +269,27 @@ class ContextRepository(Repository):
                 placeholders = ",".join("?" for _ in selected_ids)
                 if newest:
                     item_rows = connection.execute(
-                        f"SELECT * FROM items WHERE id IN ({placeholders})",
+                        f"""
+                        SELECT items.*, runs.creation_seq AS run_creation_seq
+                        FROM items JOIN runs ON runs.id = items.run_id
+                        WHERE items.id IN ({placeholders})
+                        """,
                         selected_ids,
                     ).fetchall()
                 else:
                     item_rows = connection.execute(
                         f"""
-                        SELECT creation_seq, id, session_id, run_id, ordinal,
-                               model_step_index, kind, status, input_references_json,
+                        SELECT items.creation_seq, items.id, items.session_id, run_id, ordinal,
+                               runs.creation_seq AS run_creation_seq,
+                               model_step_index, kind, items.status, input_references_json,
                                substr(content, 1, ?) AS content,
-                               incomplete, created_at, completed_at
-                        FROM items WHERE id IN ({placeholders})
+                               incomplete, items.created_at, items.completed_at
+                        FROM items JOIN runs ON runs.id = items.run_id
+                        WHERE items.id IN ({placeholders})
                         """,
                         (COMPACTION_FACT_VALUE_MAX_CHARS, *selected_ids),
                     ).fetchall()
-            item_rows.sort(key=lambda row: int(row["creation_seq"]))
+            item_rows.sort(key=lambda row: (int(row["run_creation_seq"]), int(row["ordinal"])))
             native_phases = {}
             response_rows = {}
             if selected_ids:
@@ -363,14 +371,16 @@ class ContextRepository(Repository):
                 (run_id,),
             ).fetchall() if run["reconciliation_required"] else ()
         tools_by_item = {row["item_id"]: row for row in tool_rows}
-        item_order = {str(row["id"]): int(row["creation_seq"]) for row in item_rows}
+        # Queued input is persisted before the preceding Run finishes. Its
+        # insertion sequence must not split that Run's assistant/tool history.
+        item_order = {str(row["id"]): index for index, row in enumerate(item_rows)}
         if newest:
             # Metadata only bounds loading. Reserve the actual serialized bytes
             # of protected facts before older history can consume their space.
             # Prefer newer unprotected history, then restore conversation order.
             item_rows.sort(key=lambda row: (
                 str(row["id"]) not in protected_ids,
-                int(row["creation_seq"]) if str(row["id"]) in protected_ids else -int(row["creation_seq"]),
+                item_order[str(row["id"])] if str(row["id"]) in protected_ids else -item_order[str(row["id"])],
             ))
         items: list[ContextItemFact] = []
         serialized_bytes = 2
