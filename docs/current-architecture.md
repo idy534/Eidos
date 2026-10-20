@@ -678,7 +678,7 @@ Desktop 的 `ComposerSlot` 在 `waiting_approval` 时用 `ApprovalComposer` 替�
 
 ## Run 收尾与 Shell 执行期限
 
-`run_shell` 的输入校验同时接受 `yieldTimeMs` 和 `yield_time_ms`，并统一输出 `yieldTimeMs`。模型可见的工具 Schema、描述和提示词保持不变。JSON 调用同时提交两个名称时，校验优先使用 `yieldTimeMs`；原有严格类型、数值范围和未知字段检查继续生效。
+`run_shell` 只有 `command` 必填。输入校验同时接受 `yieldTimeMs` 和 `yield_time_ms`，并统一输出 `yieldTimeMs`。JSON 调用同时提交两个名称时，校验优先使用 `yieldTimeMs`。Runtime 忽略未知顶层字段，包括 `shell`、`sandbox_permissions` 和 `yield_timeMs`，并使用原有默认值；这些字段不能选择 Shell、申请权限或改变等待窗口。Runtime 在结果摘要中向模型说明被忽略的字段，最多列出 8 个有界字段名，不回显字段值。原始参数仍保存在 `raw_arguments_json`，执行参数只保留校验后的字段。模型可见的工具 Schema、描述和提示词保持不变，Schema 仍要求模型只提交已声明字段。已声明字段的严格类型、数值范围、权限组合校验和嵌套未知字段检查继续生效；其他工具的未知字段校验保持不变。
 
 - 模型提交最终答复时，Runtime 在同一事务提交答复和 Run 终态。未清除的 reconciliation 会使 Run 进入 `interrupted`，不会再强制模型继续只读核验，也不会清除未知 Durable Intent 或放行新副作用。
 - 取消后 Worker 已退出时，RPC 返回 `canceled` 或 `interrupted`。系统记录取消完成时间；副作用未知不再作为取消失败。无 Worker 的 queued Run 如果已带有未确认副作用，也进入 `interrupted`。重复取消已中断 Run 返回原终态。Worker 仍存活时继续报告 `RUN_CANCEL_TIMEOUT`。

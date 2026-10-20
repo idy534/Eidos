@@ -97,6 +97,28 @@ class ToolRegistryTests(unittest.TestCase):
                 self.assertNotIn("yield_time_ms", call.arguments)
                 self.assertEqual(call.raw_payload.arguments, arguments)
 
+    def test_shell_extra_fields_are_removed_before_dispatch(self) -> None:
+        base = memory_entry()
+        entry = ToolRegistryEntry(
+            next(spec for spec in TOOL_SPECS if spec.name == "run_shell"),
+            base.provenance, base.adapter,
+            input_model=RunShellInput, result_data_model=RunShellResultData,
+        )
+        dispatcher = ToolDispatcher(ToolRegistry((entry,)))
+        arguments = {
+            "command": "true", "shell": "bash", "yield_timeMs": 1000,
+            "sandbox_permissions": "require_escalated",
+        }
+        validated = dispatcher.validate(ModelResponse(tool_calls=(
+            ModelToolCall("shell-call", "run_shell", arguments),
+        )))
+        self.assertIsNone(validated.error_code)
+        call = validated.tool_calls[0]
+        self.assertEqual(call.arguments, RunShellInput(command="true").model_dump(mode="json"))
+        self.assertEqual(call.raw_payload.arguments, arguments)
+        self.assertTrue(dispatcher.validate_execution(call, dispatcher.plan(call)))
+        self.assertFalse(base.validate_arguments({"value": "x", "shell": "bash"}).valid)
+
     def test_search_keeps_100_deferred_tools_out_until_next_snapshot(self) -> None:
         candidates = tuple(
             ToolRegistryEntry(

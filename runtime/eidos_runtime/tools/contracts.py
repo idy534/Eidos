@@ -290,6 +290,11 @@ class GitWriteAccess(StrEnum):
 
 
 class RunShellInput(StrictToolModel):
+    # Keep the advertised contract closed while tolerating unused model arguments.
+    model_config = ConfigDict(
+        extra="ignore", json_schema_extra={"additionalProperties": False}
+    )
+
     command: StrictStr = Field(min_length=1, max_length=16 * 1024)
     cwd: StrictStr = Field(
         default=".",
@@ -335,6 +340,17 @@ class RunShellInput(StrictToolModel):
         max_length=2_000,
         description="Short user-facing reason for the requested permission.",
     )
+
+    @classmethod
+    def ignored_argument_names(cls, arguments: dict[str, object]) -> tuple[str, ...]:
+        accepted = set(cls.model_fields)
+        for field in cls.model_fields.values():
+            if isinstance(field.validation_alias, AliasChoices):
+                accepted.update(
+                    name for name in field.validation_alias.choices
+                    if isinstance(name, str)
+                )
+        return tuple(sorted(name for name in arguments if name not in accepted))
 
     @field_validator("command")
     @classmethod

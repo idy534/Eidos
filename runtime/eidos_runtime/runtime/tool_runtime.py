@@ -1817,7 +1817,7 @@ class ToolCallRuntime:
             item = mutation.value
             self.events.publish(mutation, item=item)
             effective_call = ModelToolCall(
-                call.provider_call_id, call.name, payload
+                call.provider_call_id, call.name, payload, raw_payload=raw_payload
             )
             plan = self.dispatcher.plan(
                 effective_call, step.tool_snapshot.binding(call.name),

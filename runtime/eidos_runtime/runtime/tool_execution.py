@@ -19,7 +19,7 @@ from eidos_runtime.db.errors import InvalidRunStateError, StorageError
 from eidos_runtime.db.invariants import RuntimeInvariantError
 from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
-from eidos_runtime.model.client import ModelToolCall
+from eidos_runtime.model.client import FunctionToolPayload, ModelToolCall
 from eidos_runtime.runtime.approval import (
     ApprovalCoordinator,
     ApprovalOutcome,
@@ -41,7 +41,7 @@ from eidos_runtime.runtime.resource_registry import (
 from eidos_runtime.runtime.fault_injection import hit_fault
 from eidos_runtime.runtime.tool_dispatcher import ToolDispatchPlan, ToolDispatcher
 from eidos_runtime.sandbox.sensitive import SensitiveScanner
-from eidos_runtime.tools.contracts import GENERIC_PROJECTOR
+from eidos_runtime.tools.contracts import GENERIC_PROJECTOR, RunShellInput
 from eidos_runtime.tools.registry import (
     ToolArgumentValidationResult,
     ToolConcurrencyPolicy,
@@ -730,6 +730,30 @@ class ToolExecutionController:
                         **outcome.result,
                         "code": review.reason_code if review is not None else "auto_review_rejected",
                         "summary": feedback or (review.rationale + " Do not repeat or circumvent the refused action." if review else "Automatic approval review rejected this request. Do not repeat or circumvent it."),
+                    })
+            if (
+                call.name == "run_shell"
+                and plan.descriptor is not None
+                and plan.descriptor.input_model is RunShellInput
+                and isinstance(call.raw_payload, FunctionToolPayload)
+            ):
+                ignored = RunShellInput.ignored_argument_names(call.raw_payload.arguments)
+                if ignored:
+                    names = ", ".join(
+                        name if name.isascii() and name.isidentifier() and len(name) <= 64
+                        else "<nonstandard field name>"
+                        for name in ignored[:8]
+                    )
+                    if len(ignored) > 8:
+                        names += ", ..."
+                    names = self.sensitive.redact_for_presentation(names).text
+                    outcome = replace(outcome, result={
+                        **outcome.result,
+                        "summary": (
+                            f"{outcome.result.get('summary', '')} "
+                            f"Ignored unsupported run_shell arguments: {names}. "
+                            "These fields had no effect; omit them in future calls."
+                        ),
                     })
             # Contract failure cannot erase an already-authorized side effect.
             try:

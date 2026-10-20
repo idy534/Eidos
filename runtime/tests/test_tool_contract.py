@@ -277,11 +277,12 @@ class ToolContractTests(unittest.TestCase):
                 "additionalPermissions": {"network": {"enabled": True}},
                 "justification": "invalid",
             }))
-        with self.assertRaises(ValidationError):
-            RunShellInput.model_validate_json(json.dumps({
-                "command": "make",
-                "unknownPermission": True,
-            }))
+        ignored_permission = RunShellInput.model_validate_json(json.dumps({
+            "command": "make",
+            "unknownPermission": True,
+        }))
+        self.assertEqual(ignored_permission.sandboxPermissions.value, "use_default")
+        self.assertNotIn("unknownPermission", ignored_permission.model_dump())
 
         with self.assertRaisesRegex(
             ValidationError, "network_access_justification_required"
@@ -315,6 +316,8 @@ class ToolContractTests(unittest.TestCase):
         schema = RunShellInput.model_json_schema(by_alias=True)
         properties = schema["properties"]
 
+        self.assertEqual(schema["required"], ["command"])
+        self.assertFalse(schema["additionalProperties"])
         self.assertNotIn("timeoutSeconds", properties)
         self.assertIn("yieldTimeMs", properties)
         self.assertNotIn("yield_time_ms", properties)
@@ -362,14 +365,46 @@ class ToolContractTests(unittest.TestCase):
             "command": "true", "yield_time_ms": 120_000,
         })).yieldTimeMs, 30_000)
 
-    def test_run_shell_json_prefers_canonical_yield_and_rejects_unknown_fields(self) -> None:
+    def test_run_shell_json_prefers_canonical_yield_and_ignores_unknown_fields(self) -> None:
         arguments = RunShellInput.model_validate_json(json.dumps({
             "command": "true", "yieldTimeMs": 1000, "yield_time_ms": 2000,
         }))
         self.assertEqual(arguments.yieldTimeMs, 1000)
+        ignored = RunShellInput.model_validate_json(json.dumps({
+            "command": "true", "yield_time_ms": 1000, "unknown": True,
+        }))
+        self.assertEqual(ignored.yieldTimeMs, 1000)
+        self.assertNotIn("unknown", ignored.model_dump())
+
+    def test_run_shell_ignores_only_top_level_extra_fields(self) -> None:
+        arguments = {
+            "command": "true", "shell": "bash", "yield_timeMs": -1,
+            "sandbox_permissions": "require_escalated",
+        }
+        parsed = RunShellInput.model_validate_json(json.dumps(arguments))
+        self.assertEqual(parsed, RunShellInput(command="true"))
+        self.assertEqual(
+            RunShellInput.ignored_argument_names(arguments),
+            ("sandbox_permissions", "shell", "yield_timeMs"),
+        )
+        self.assertEqual(RunShellInput.ignored_argument_names({
+            "command": "true", "yield_time_ms": 1000,
+        }), ())
+        for invalid in (
+            {"shell": "bash"},
+            {"command": 1, "shell": "bash"},
+            {"command": "true", "cwd": False, "shell": "bash"},
+            {"command": "true", "yieldTimeMs": "1000", "shell": "bash"},
+            {"command": "true", "sandboxPermissions": "unknown", "shell": "bash"},
+            {"command": "true", "additionalPermissions": {"unknown": True}},
+            {"command": "true", "additionalPermissions": {"network": {"unknown": True}}},
+        ):
+            with self.subTest(arguments=invalid), self.assertRaises(ValidationError):
+                RunShellInput.model_validate_json(json.dumps(invalid))
+
         with self.assertRaises(ValidationError):
-            RunShellInput.model_validate_json(json.dumps({
-                "command": "true", "yield_time_ms": 1000, "unknown": True,
+            WriteStdinInput.model_validate_json(json.dumps({
+                "sessionId": "shell-1", "unknown": True,
             }))
 
     def test_shell_observation_budget_preserves_legacy_specs(self) -> None:
