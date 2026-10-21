@@ -1,3 +1,4 @@
+import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "../shared/shell-environment.js";
 import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "../shared/web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "../shared/channels.js";
@@ -160,6 +161,9 @@ const api: EidosRuntimeAPI = {
     return () => ipcRenderer.removeListener(IPC.TERMINAL_EXIT_EVENT, listener);
   },
 
+  readShellEnvironment: (request: ShellEnvironmentReadRequest = {}): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_READ, request),
+  saveShellEnvironment: (request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_SAVE, request),
+  refreshShellEnvironment: (request: ShellEnvironmentRefreshRequest = {}): Promise<ShellEnvironmentResponse> => ipcRenderer.invoke(IPC.SHELL_ENVIRONMENT_REFRESH, request),
   readWebSearch: (request: WebSearchReadRequest = {}): Promise<WebSearchResponse> => ipcRenderer.invoke(IPC.WEB_SEARCH_READ, request),
   saveWebSearch: (request: WebSearchSaveRequest): Promise<WebSearchResponse> => ipcRenderer.invoke(IPC.WEB_SEARCH_SAVE, request),
   openWebSearchOfficialPage: (request: WebSearchOfficialPageRequest): Promise<void> => ipcRenderer.invoke(IPC.WEB_SEARCH_OFFICIAL_PAGE, request),

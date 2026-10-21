@@ -1,3 +1,4 @@
+import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
 import { isWebSearchResponse, type WebSearchReadRequest, type WebSearchSaveRequest, type WebSearchResponse } from "../shared/web-search.js";
 import { isSearchResponse, isFileFindResponse, type SearchRequest, type SearchResponse, type ReadAroundRequest, type FileFindRequest } from "../shared/search.js";
 import { isCustomModelSettings, isCustomProviderResult } from "../shared/custom-models.js";
@@ -62,6 +63,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "STORAGE_HEALTH_ONLY",
   "OPERATION_ID_REUSED",
   "OPERATION_IN_PROGRESS",
+  "SHELL_ENVIRONMENT_CONFIG_CONFLICT",
   "WEB_SEARCH_CONFIG_CONFLICT",
   "WEB_SEARCH_CREDENTIALS_UNAVAILABLE",
   "INTERNAL_ERROR",
@@ -493,6 +495,18 @@ export class RuntimeClient {
 
   listProjects(): Promise<ProjectListResult> {
     return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  readShellEnvironment(request: ShellEnvironmentReadRequest = {}): Promise<ShellEnvironmentResponse> {
+    return this.validatedRequest("shellEnvironment/read", { ...request }, isShellEnvironmentResponse);
+  }
+
+  saveShellEnvironment(request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse> {
+    return this.validatedRequest("shellEnvironment/save", { ...request }, isShellEnvironmentResponse);
+  }
+
+  refreshShellEnvironment(request: ShellEnvironmentRefreshRequest = {}): Promise<ShellEnvironmentResponse> {
+    return this.validatedRequest("shellEnvironment/refresh", { ...request }, isShellEnvironmentResponse);
   }
 
   readWebSearch(request: WebSearchReadRequest = {}): Promise<WebSearchResponse> {

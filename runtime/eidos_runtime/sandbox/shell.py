@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 
+from eidos_runtime.domain.shell_environment import ShellEnvironmentPolicy
 from eidos_runtime.extensions.skill_access import SkillAccessRecord
 from eidos_runtime.sandbox.dependency_environment import (
     DependencyShellEnvironment,
@@ -315,6 +316,7 @@ def prepare_shell_launch_for_execution(
     attempt: SandboxAttempt | None,
     active_skill_roots: Sequence[Path] = (),
     dependency_environment: DependencyShellEnvironment | None = None,
+    environment_policy: ShellEnvironmentPolicy | None = None,
 ) -> ShellLaunchSpec:
     """Prepare a verified launch without owning the process lifetime."""
     workspace_fd = -1
@@ -332,6 +334,7 @@ def prepare_shell_launch_for_execution(
             attempt,
             active_skill_roots,
             dependency_environment,
+            environment_policy,
         )
     finally:
         if cwd_fd >= 0:
@@ -347,6 +350,7 @@ def _prepare_verified_shell_launch(
     attempt: SandboxAttempt | None,
     active_skill_roots: Sequence[Path],
     dependency_environment: DependencyShellEnvironment | None,
+    environment_policy: ShellEnvironmentPolicy | None = None,
 ) -> ShellLaunchSpec:
     host_shell = HOST_SHELL_RESOLVER.resolve()
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
@@ -366,6 +370,7 @@ def _prepare_verified_shell_launch(
         host_shell,
         cwd.path,
         command_wrapper=preflight_profile.command if sandboxed else None,
+        **({"environment_policy": environment_policy} if environment_policy is not None else {}),
     )
     environment = _effective_shell_environment(snapshot.environment, host_shell)
     profile = _create_seatbelt_profile(
@@ -384,6 +389,7 @@ def _prepare_verified_shell_launch(
         shell=host_shell,
         environment=environment,
         environment_source=snapshot.source,
+        environment_policy=environment_policy,
         dependency_environment=dependency_environment,
     )
     return launch
@@ -422,10 +428,15 @@ def prepare_shell_launch(
     environment: Mapping[str, str],
     environment_source: str | None = None,
     dependency_environment: DependencyShellEnvironment | None = None,
+    environment_policy: ShellEnvironmentPolicy | None = None,
 ) -> ShellLaunchSpec:
     sandboxed = attempt is None or attempt.sandbox is SandboxType.MACOS_SEATBELT
     # zsh and bash support pipefail natively. Keep POSIX sh compatibility.
     shell_argv = [str(shell.executable)]
+    if shell.kind == "zsh" and environment_policy is not None and environment_policy.inherit != "all":
+        # The captured environment is already filtered. Do not let a second
+        # user .zshenv restore variables excluded by core/none inheritance.
+        shell_argv.append("-f")
     if shell.kind in {"zsh", "bash"}:
         shell_argv.extend(("-o", "pipefail"))
     shell_argv.extend(("-c", command))
@@ -438,7 +449,8 @@ def prepare_shell_launch(
         argv=tuple(argv),
         cwd=cwd.path,
         environment=apply_dependency_environment(
-            environment,
+            (environment_policy.apply(environment)
+             if environment_policy is not None else environment),
             dependency_environment,
         ),
         sandboxed=sandboxed,

@@ -1,3 +1,4 @@
+import { isShellEnvironmentReadRequest, isShellEnvironmentRefreshRequest, isShellEnvironmentSaveRequest } from "../shared/shell-environment.js";
 import { webSearchOfficialUrl } from "./web-search-links.js";
 import { isWebSearchReadRequest, isWebSearchSaveRequest } from "../shared/web-search.js";
 import type { CustomProviderRequest } from "../shared/custom-models.js";
@@ -604,6 +605,21 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.SHELL_ENVIRONMENT_READ, (_event, request: unknown) => {
+  const value = request ?? {};
+  if (!isShellEnvironmentReadRequest(value)) throw new Error("沙盒环境读取参数无效。");
+  return clientOrThrow().readShellEnvironment(value);
+});
+ipcMain.handle(IPC.SHELL_ENVIRONMENT_SAVE, (_event, request: unknown) => {
+  if (!isShellEnvironmentSaveRequest(request)) throw new Error("沙盒环境配置无效，请检查各项参数。");
+  return clientOrThrow().saveShellEnvironment(request);
+});
+ipcMain.handle(IPC.SHELL_ENVIRONMENT_REFRESH, (_event, request: unknown) => {
+  const value = request ?? {};
+  if (!isShellEnvironmentRefreshRequest(value)) throw new Error("沙盒环境刷新参数无效。");
+  return clientOrThrow().refreshShellEnvironment(value);
+});
+
 ipcMain.handle(IPC.WEB_SEARCH_READ, (_event, request: unknown) => {
   const value = request ?? {};
   if (!isWebSearchReadRequest(value)) throw new Error("网页搜索读取参数无效。");

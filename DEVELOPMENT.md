@@ -377,6 +377,10 @@ Trace 包括入口 `eidos.rpc`、`eidos.run`、`eidos.model.attempt` 和 `eidos.
 
 ## 12. Shell manual test
 
+设置页的“沙盒环境设置”位于现有 Runtime 页面内。区块只有继承方式和重新读取两个设置，用户可以通过小问号查看说明。用户修改继承方式后自动保存；保存影响后续启动的 Agent Shell，正在运行的进程不受影响。重新读取环境只清除快照，下一次命令仍在当前有效权限下捕获。Schema v34→v35 增加配置表，只保存继承模式和版本，不保存变量名和值；回退旧版本需要恢复升级前备份。
+
+定向验证入口为 `uv run --locked pytest runtime/tests/test_shell_environment_settings.py`、`pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/ShellEnvironmentSettings.behavior.test.tsx` 和构建 Main 后的 `node --test dist/main/runtime-client-shell-environment.test.js`。`node_modules/.bin/electron scripts/test-shell-environment-settings.cjs` 使用隔离设置页面和测试配置，验证 320、768、1024、1440px 布局、小问号、自动保存与重新读取，不读取真实环境值。`EIDOS_SHELL_ENVIRONMENT_SCREENSHOT_DIR` 可以指定截图目录。
+
 Shell 手工验收应使用临时 Workspace。正常 Finder 启动时，Agent Shell 的 `HOME` 应与用户 Terminal 的真实 HOME 一致。测试者不要直接在真实 HOME 创建探针文件。默认 Workspace Shell 不需要 Approval，additional write、network 和 unsandboxed attempt 仍需要 Approval。
 
 先启动应用，并把待测 Session 指向临时 Workspace。然后在 Agent Shell 中执行以下环境检查：

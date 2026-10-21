@@ -72,6 +72,7 @@ class OperationStatus(StrEnum):
 
 
 class EventType(StrEnum):
+    SHELL_ENVIRONMENT_CHANGED = "shell_environment.settings_changed"
     WEB_SEARCH_CHANGED = "web_search.settings_changed"
     CHANNEL_CHANGED = "channel.changed"
     AUTOMATION_CHANGED = "automation.changed"

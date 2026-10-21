@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { parseDiff } from "react-diff-view";
 import type { Item, ToolCall } from "../contracts.js";
-import { artifactPath, useArtifacts } from "./ArtifactContext.js";
+import { artifactPath, displayFilePath, useArtifacts } from "./ArtifactContext.js";
+import { Tooltip } from "./Tooltip.js";
 
 /** References from persisted tool evidence; this is not an execution-success projection. */
 export function toolFilePaths(call: ToolCall): string[] {
@@ -37,7 +38,14 @@ export function ResultFiles({ items, incomplete }: { items: Item[]; incomplete: 
   return <details className="result-files"><summary>结果文件 · {paths.length}</summary>
     <p>列表来自已加载的工具修改记录，可能包含计划修改或已删除文件。点击后打开当前文件。</p>
     {incomplete && <p>更早的记录尚未加载，完整目录见下方文件树。</p>}
-    {paths.map((path) => <button type="button" key={path} title={path} onClick={() => actions?.openFile(path)}>{path}</button>)}
+    {paths.map((path) => {
+      const displayPath = displayFilePath(path, actions?.executionRoot);
+      return (
+        <Tooltip key={path} content={displayPath} className="eidos-link-tooltip">
+          <button type="button" title={displayPath} onClick={() => actions?.openFile(path)}>{path}</button>
+        </Tooltip>
+      );
+    })}
     {!paths.length && <p>当前没有已记录的结果文件。</p>}
   </details>;
 }

@@ -6,6 +6,9 @@
  */
 
 export const IPC = {
+  SHELL_ENVIRONMENT_READ: "shell-environment:read",
+  SHELL_ENVIRONMENT_SAVE: "shell-environment:save",
+  SHELL_ENVIRONMENT_REFRESH: "shell-environment:refresh",
   WEB_SEARCH_READ: "web-search:read",
   WEB_SEARCH_SAVE: "web-search:save",
   WEB_SEARCH_OFFICIAL_PAGE: "web-search:official-page",

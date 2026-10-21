@@ -16,6 +16,8 @@ import time
 from types import MappingProxyType
 from typing import Literal
 
+from eidos_runtime.domain.shell_environment import ShellEnvironmentPolicy
+
 
 HostShellKind = Literal["zsh", "bash", "sh"]
 SnapshotSource = Literal["captured", "fallback"]
@@ -141,7 +143,7 @@ class ShellEnvironmentSnapshotProvider:
         self._clock = clock or _utc_now
         self._pwd_resolver = pwd_resolver or _default_pwd_resolver
         self._cache: dict[
-            tuple[Path, Path, tuple[str, ...]], ShellEnvironmentSnapshot
+            tuple[Path, Path, tuple[str, ...], str], ShellEnvironmentSnapshot
         ] = {}
         self._cache_lock = threading.Lock()
 
@@ -151,6 +153,7 @@ class ShellEnvironmentSnapshotProvider:
         cwd: Path,
         *,
         command_wrapper: CommandWrapper | None = None,
+        environment_policy: ShellEnvironmentPolicy | None = None,
     ) -> ShellEnvironmentSnapshot:
         canonical_shell = shell.executable.resolve(strict=False)
         canonical_cwd = Path(cwd).resolve(strict=False)
@@ -160,15 +163,19 @@ class ShellEnvironmentSnapshotProvider:
             if command_wrapper is not None
             else capture_argv
         )
-        cache_key = (canonical_shell, canonical_cwd, launch_argv)
+        policy = environment_policy or ShellEnvironmentPolicy()
+        cache_key = (canonical_shell, canonical_cwd, launch_argv, policy.inherit)
         with self._cache_lock:
             cached = self._cache.get(cache_key)
-            if cached is not None:
+            if cached is not None and (
+                cached.source == "captured"
+                or (self._clock() - cached.captured_at).total_seconds() < 1.0
+            ):
                 return cached
 
             passwd_record = _safe_pwd_record(self._pwd_resolver)
             parent_environment = _complete_environment(
-                sanitize_shell_environment(self._parent_environment),
+                policy.apply(sanitize_shell_environment(self._parent_environment)),
                 shell=shell,
                 passwd_record=passwd_record,
                 parent_environment={},
@@ -180,8 +187,14 @@ class ShellEnvironmentSnapshotProvider:
                 parent_environment=parent_environment,
                 passwd_record=passwd_record,
             )
+            if cache_key not in self._cache and len(self._cache) >= 64:
+                self._cache.pop(next(iter(self._cache)))
             self._cache[cache_key] = snapshot
             return snapshot
+
+    def invalidate(self) -> None:
+        with self._cache_lock:
+            self._cache.clear()
 
     def fallback_environment(self, shell: HostShell) -> dict[str, str]:
         """Return the sanitized, completed parent environment without capture."""

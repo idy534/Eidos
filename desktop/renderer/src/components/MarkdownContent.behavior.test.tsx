@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ArtifactProvider, type ArtifactActions } from "./ArtifactContext.js";
 import { MarkdownContent } from "./MarkdownContent.js";
@@ -57,5 +57,68 @@ describe("MarkdownContent context updates", () => {
     expect(prepare).toHaveBeenLastCalledWith("session-b", "image.png", undefined, "/workspace", undefined);
     expect(release).toHaveBeenCalledWith("eidos-preview://a");
     expect(screen.getByRole("region", { name: "javascript片段" })).toBe(code);
+  });
+
+  it("shows link and file path tooltips on hover", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <ArtifactProvider value={baseActions}>
+          <MarkdownContent className="eidos-chat-prose" content={"[File](/workspace/file.ts)\n\n[Web](https://example.com)\n\n[Relative](relative.txt)"} />
+        </ArtifactProvider>,
+      );
+      const webLink = screen.getByRole("link", { name: "Web" });
+      const fileLink = screen.getByRole("link", { name: "File" });
+      const fallback = screen.getByText("Relative");
+
+      // Hover web link
+      fireEvent.mouseEnter(webLink);
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      let tooltip = screen.getByRole("tooltip");
+      expect(tooltip).toBeInTheDocument();
+      expect(tooltip).toHaveTextContent("https://example.com");
+      expect(tooltip).toHaveClass("eidos-link-tooltip");
+
+      fireEvent.mouseLeave(webLink);
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+      // Hover file link (prioritizes absolute path when executionRoot is absolute)
+      fireEvent.mouseEnter(fileLink);
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      tooltip = screen.getByRole("tooltip");
+      expect(tooltip).toBeInTheDocument();
+      expect(tooltip).toHaveTextContent("/workspace/file.ts");
+      expect(tooltip).toHaveClass("eidos-link-tooltip");
+
+      fireEvent.mouseLeave(fileLink);
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+      // Hover fallback link
+      fireEvent.mouseEnter(fallback);
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      tooltip = screen.getByRole("tooltip");
+      expect(tooltip).toBeInTheDocument();
+      expect(tooltip).toHaveTextContent("relative.txt");
+      expect(tooltip).toHaveClass("eidos-link-tooltip");
+
+      // Hover file link again and click to suppress tooltip
+      fireEvent.mouseLeave(fallback);
+      fireEvent.mouseEnter(fileLink);
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(screen.getByRole("tooltip")).toBeInTheDocument();
+      fireEvent.click(fileLink);
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

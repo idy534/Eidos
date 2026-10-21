@@ -53,6 +53,28 @@
   letter-spacing: 0.03em;
 }
 
+/* Specialized Tooltip for Hyperlinks and File Paths */
+.eidos-tooltip.eidos-link-tooltip {
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 5px 9px;
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.eidos-tooltip.eidos-link-tooltip .eidos-tooltip__content {
+  white-space: normal;
+  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .eidos-tooltip {
     transition: opacity 60ms ease-out;

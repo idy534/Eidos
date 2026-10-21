@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { getOfficialFileIcon } from "./FileIcons.js";
 import type { ToastType } from "./ToastContainer.js";
+import { Tooltip } from "./Tooltip.js";
 
 export interface WorkspaceFilePosition {
   line?: number;
@@ -87,6 +88,29 @@ export function workspaceFileLink(href: string, root: string, documentPath?: str
   } catch { return undefined; }
 }
 
+/** Prioritize absolute path when available, falling back to workspace-relative path. */
+export function displayFilePath(
+  path: string,
+  root?: string,
+  position?: WorkspaceFilePosition,
+): string {
+  const lineSuffix = position?.line
+    ? `:${position.line}${position.column ? `:${position.column}` : ""}`
+    : "";
+
+  if (path.startsWith("/") || /^[a-zA-Z]:[/\\]/.test(path)) {
+    return `${path}${lineSuffix}`;
+  }
+
+  if (root && (root.startsWith("/") || /^[a-zA-Z]:[/\\]/.test(root))) {
+    const cleanRoot = root.replace(/\/+$/, "");
+    const cleanPath = path.replace(/^\.?\/+/, "");
+    return `${cleanRoot}/${cleanPath}${lineSuffix}`;
+  }
+
+  return `${path}${lineSuffix}`;
+}
+
 export function usePreviewUrl(path: string | undefined, version?: string) {
   const actions = useArtifacts();
   const [revision, setRevision] = useState(0);
@@ -139,22 +163,55 @@ export function ArtifactLink({ href, documentPath, children }: { href?: string; 
   const actions = useArtifacts();
   if (!href || !actions) return <span>{children}</span>;
   const web = /^https?:\/\//i.test(href);
-  if (web) return <a href={href} onClick={(event) => { event.preventDefault(); actions.openBrowser(href); }}>{children}</a>;
+  if (web) {
+    return (
+      <Tooltip content={href} className="eidos-link-tooltip">
+        <a
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            actions.openBrowser(href);
+          }}
+        >
+          {children}
+        </a>
+      </Tooltip>
+    );
+  }
   const target = workspaceFileLink(href, actions.executionRoot, documentPath);
-  if (!target) return <span title={href}>{children}</span>;
-  const title = `在工作区中打开 ${target.path}${target.line ? ` (第 ${target.line} 行${target.column ? `，第 ${target.column} 列` : ""})` : ""}`;
+  if (!target) {
+    let fallbackPath = href;
+    if (fallbackPath.startsWith("file://")) {
+      try {
+        const url = new URL(fallbackPath);
+        if (!url.hostname) fallbackPath = decodeURIComponent(url.pathname);
+      } catch { /* keep href */ }
+    }
+    return (
+      <Tooltip content={fallbackPath} className="eidos-link-tooltip">
+        <span title={fallbackPath}>{children}</span>
+      </Tooltip>
+    );
+  }
+  const filePath = displayFilePath(target.path, actions.executionRoot, target);
   return (
-    <a href={href} className={documentPath ? undefined : "markdown-file-link"} title={title}
-      onClick={(event) => {
-        event.preventDefault();
-        const { path, ...position } = target;
-        if (position.line === undefined && position.column === undefined) actions.openFile(path);
-        else actions.openFile(path, position);
-      }}>
-      {documentPath ? children : <>
-        <span className="markdown-file-icon" aria-hidden="true">{getOfficialFileIcon(target.path)}</span>
-        <span className="markdown-file-text">{children}</span>
-      </>}
-    </a>
+    <Tooltip content={filePath} className="eidos-link-tooltip">
+      <a
+        href={href}
+        className={documentPath ? undefined : "markdown-file-link"}
+        title={filePath}
+        onClick={(event) => {
+          event.preventDefault();
+          const { path, ...position } = target;
+          if (position.line === undefined && position.column === undefined) actions.openFile(path);
+          else actions.openFile(path, position);
+        }}
+      >
+        {documentPath ? children : <>
+          <span className="markdown-file-icon" aria-hidden="true">{getOfficialFileIcon(target.path)}</span>
+          <span className="markdown-file-text">{children}</span>
+        </>}
+      </a>
+    </Tooltip>
   );
 }

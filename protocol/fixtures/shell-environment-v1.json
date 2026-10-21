@@ -1,0 +1,78 @@
+{
+  "validReadRequests": [
+    {}
+  ],
+  "invalidReadRequests": [
+    {
+      "unknown": true
+    }
+  ],
+  "validRequests": [
+    {
+      "expectedRevision": 0,
+      "policy": {
+        "inherit": "all"
+      }
+    },
+    {
+      "expectedRevision": 1,
+      "policy": {
+        "inherit": "none"
+      }
+    }
+  ],
+  "invalidRequests": [
+    {
+      "expectedRevision": -1,
+      "policy": {}
+    },
+    {
+      "expectedRevision": 0,
+      "policy": {
+        "inherit": "invalid"
+      }
+    },
+    {
+      "expectedRevision": 0,
+      "policy": {},
+      "command": "env"
+    },
+    {
+      "expectedRevision": 0,
+      "policy": {
+        "filters": {}
+      }
+    },
+    {
+      "expectedRevision": 0,
+      "policy": {
+        "set": {
+          "UNUSED": "no"
+        }
+      }
+    }
+  ],
+  "validResponses": [
+    {
+      "revision": 0,
+      "policy": {
+        "inherit": "all"
+      }
+    }
+  ],
+  "invalidResponses": [
+    {
+      "policy": {}
+    },
+    {
+      "revision": 0
+    },
+    {
+      "revision": 0,
+      "policy": {},
+      "environment": {
+        "HOST_TOKEN": "secret"
+      }
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "./shell-environment.js";
 import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "./web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "./custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "./channels.js";
@@ -85,6 +86,9 @@ export interface EidosRuntimeAPI {
   readWorkspaceFileForFind(request: import("./search.js").FileFindRequest): Promise<WorkspaceFilePreview>;
   searchSessions(request: import("./search.js").SearchRequest): Promise<import("./search.js").SearchResponse>;
   readSessionAround(request: import("./search.js").ReadAroundRequest): Promise<SessionSnapshot>;
+  readShellEnvironment(request?: ShellEnvironmentReadRequest): Promise<ShellEnvironmentResponse>;
+  saveShellEnvironment(request: ShellEnvironmentSaveRequest): Promise<ShellEnvironmentResponse>;
+  refreshShellEnvironment(request?: ShellEnvironmentRefreshRequest): Promise<ShellEnvironmentResponse>;
   readWebSearch(request?: WebSearchReadRequest): Promise<WebSearchResponse>;
   saveWebSearch(request: WebSearchSaveRequest): Promise<WebSearchResponse>;
   openWebSearchOfficialPage(request: WebSearchOfficialPageRequest): Promise<void>;

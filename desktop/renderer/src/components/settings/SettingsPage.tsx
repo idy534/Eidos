@@ -211,7 +211,7 @@ export function SettingsPage({
             )}
 
             {activeCategory === "runtime" && (
-              <RuntimeSettings runtime={runtime} />
+              <RuntimeSettings runtime={runtime} onShowToast={showToast} />
             )}
 
             {activeCategory === "worktrees" && <WorktreeSettings onShowToast={showToast} />}

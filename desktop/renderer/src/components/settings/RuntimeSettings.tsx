@@ -1,4 +1,5 @@
 import React from "react";
+import { ShellEnvironmentSettings } from "./ShellEnvironmentSettings.js";
 import type { RuntimeStatus } from "../../contracts";
 import { deriveRuntimePresentation } from "../../session-state";
 import { SettingSection } from "./SettingSection";
@@ -7,9 +8,10 @@ import { StatusBadge } from "./StatusBadge";
 
 interface RuntimeSettingsProps {
   runtime: RuntimeStatus;
+  onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
 }
 
-export function RuntimeSettings({ runtime }: RuntimeSettingsProps) {
+export function RuntimeSettings({ runtime, onShowToast }: RuntimeSettingsProps) {
   const presentation = deriveRuntimePresentation(runtime);
 
   if (runtime.state !== "ready") {
@@ -85,6 +87,7 @@ export function RuntimeSettings({ runtime }: RuntimeSettingsProps) {
           }
         />
       </SettingSection>
+      {isStorageReady && <ShellEnvironmentSettings onShowToast={onShowToast} />}
     </div>
   );
 }

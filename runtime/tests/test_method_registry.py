@@ -28,6 +28,8 @@ from eidos_runtime.domain.automation import AutomationResponse
 from eidos_runtime.domain.agents import AgentCatalogResponse
 from eidos_runtime.protocol.collaboration import AgentDefinitionDocument
 from eidos_runtime.protocol.channels import ChannelResponse
+from eidos_runtime.protocol.shell_environment import ShellEnvironmentResponse
+from eidos_runtime.protocol.web_search import WebSearchResponse
 
 
 class Params(RootModel[dict[str, object]]):
@@ -222,6 +224,8 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         AgentCatalogResponse,
         AgentDefinitionDocument,
         ChannelResponse,
+        ShellEnvironmentResponse,
+        WebSearchResponse,
         method_dtos.SessionReadResponseDto,
     }
     assert all(

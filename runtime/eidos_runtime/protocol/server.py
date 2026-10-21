@@ -16,6 +16,9 @@ from pydantic import BaseModel, ValidationError
 from eidos_runtime import __version__
 from eidos_runtime.application.channels import ChannelApplication
 from eidos_runtime.domain.channels import ChannelError
+from eidos_runtime.application.shell_environment import ShellEnvironmentApplication
+from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
+from eidos_runtime.protocol.shell_environment import ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse
 from eidos_runtime.application.web_search import WebSearchApplication
 from eidos_runtime.infrastructure.secret_files import SecretFiles
 from eidos_runtime.persistence.web_search import WebSearchRepository
@@ -873,6 +876,9 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            ("shellEnvironment/read", ShellEnvironmentReadRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().read()),
+            ("shellEnvironment/save", ShellEnvironmentSaveRequest, ShellEnvironmentResponse, lambda _id, request: self._shell_environment_save(request)),
+            ("shellEnvironment/refresh", ShellEnvironmentRefreshRequest, ShellEnvironmentResponse, lambda _id, _request: self._shell_environment_application().refresh()),
             ("webSearch/read", WebSearchReadRequest, WebSearchResponse, lambda _id, _request: self._web_search_application().read()),
             ("webSearch/save", WebSearchSaveRequest, WebSearchResponse, lambda _id, request: self._web_search_save(request)),
             ("channel/read", ChannelReadRequest, ChannelResponse, lambda _id, request: self._channel_read(request)),
@@ -1641,6 +1647,14 @@ class RuntimeServer:
     def _planning_application(self) -> PlanningApplication:
         return PlanningApplication(self.store, self.supervisor.schedule_next,
                                    self.supervisor.events.deliver_pending, self._scan_text)
+
+    def _shell_environment_application(self) -> ShellEnvironmentApplication:
+        return ShellEnvironmentApplication(ShellEnvironmentRepository(self.store.database))
+
+    def _shell_environment_save(self, request: ShellEnvironmentSaveRequest) -> ShellEnvironmentResponse:
+        response = self._shell_environment_application().save(request)
+        self.supervisor.events.deliver_pending()
+        return response
 
     def _web_search_application(self) -> WebSearchApplication:
         directory = self.store.database.data_directory

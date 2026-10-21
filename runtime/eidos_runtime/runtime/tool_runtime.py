@@ -113,6 +113,7 @@ from eidos_runtime.sandbox.seatbelt import (
     SeatbeltUnavailableError,
     is_seatbelt_ready,
 )
+from eidos_runtime.persistence.shell_environment import ShellEnvironmentRepository
 from eidos_runtime.sandbox.shell import (
     ShellProcessStartError,
     prepare_shell_launch_for_execution,
@@ -984,6 +985,7 @@ class ShellToolHandler:
                     attempt,
                     active_skill_roots=active_skill_roots,
                     dependency_environment=dependency_environment,
+                    environment_policy=ShellEnvironmentRepository(self.dependencies.store.database).read().policy,
                 )
                 raw_result = shell_process_manager.start(
                     launch,

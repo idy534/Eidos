@@ -173,6 +173,7 @@ class MemoryChangedPayload(ClosedModel):
 
 
 EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
+    EventType.SHELL_ENVIRONMENT_CHANGED: AutomationChangedPayload,
     EventType.WEB_SEARCH_CHANGED: AutomationChangedPayload,
     EventType.CHANNEL_CHANGED: AutomationChangedPayload,
     EventType.AUTOMATION_CHANGED: AutomationChangedPayload,

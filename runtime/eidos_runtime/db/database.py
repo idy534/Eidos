@@ -59,6 +59,7 @@ from eidos_runtime.db.schema import (
     V31_SCHEMA_VERSION,
     V32_SCHEMA_VERSION,
     V33_SCHEMA_VERSION,
+    V34_SCHEMA_VERSION,
     PLANNING_SCHEMA_SQL,
     V13_TO_V14_MIGRATION_SQL,
     V12_TO_V13_MIGRATION_SQL,
@@ -191,6 +192,7 @@ class Database:
                     V31_SCHEMA_VERSION,
                     V32_SCHEMA_VERSION,
                     V33_SCHEMA_VERSION,
+                    V34_SCHEMA_VERSION,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -422,6 +424,12 @@ class Database:
                 from eidos_runtime.db.web_search_migration import migrate_web_search
                 try:
                     migrate_web_search(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == V34_SCHEMA_VERSION:
+                from eidos_runtime.db.shell_environment_migration import migrate_shell_environment
+                try:
+                    migrate_shell_environment(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

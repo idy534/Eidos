@@ -32,7 +32,7 @@ class EventProjector:
                 }),)
         if event_type == "run.queue_changed" and isinstance(payload, dict):
             return (self._notification("run/queueChanged", payload),)
-        if event_type in {"channel.changed", "web_search.settings_changed"}:
+        if event_type in {"channel.changed", "web_search.settings_changed", "shell_environment.settings_changed"}:
             return ()
         if event_type == "automation.changed" and isinstance(payload, dict) and isinstance(payload.get("id"), str):
             return (self._notification("automation/changed", {"id": payload["id"]}),)

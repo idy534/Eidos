@@ -3,7 +3,7 @@ import { parseDiff } from "react-diff-view";
 import { createPortal } from "react-dom";
 import type { Item, Run } from "../contracts.js";
 import { committedFileDiff, projectNetFileDiff, type ParsedFileDiff } from "../persisted-file-diff.js";
-import { useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
+import { displayFilePath, useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { PreviewIcon, ExternalLinkIcon, FinderIcon, CloseIcon } from "./MenuIcons.js";
@@ -489,11 +489,12 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
     () => { void open(true); },
     () => { void revealInFinder(); },
   );
+  const displayPath = displayFilePath(artifact.path, artifact.executionRoot || actions?.executionRoot);
   return (
     <>
       <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>
-        <Tooltip content={artifact.path}>
-          <button type="button" className="artifact-result-card__main" disabled={!actions || wrongWorkspace || opening} onClick={() => { void open(); }} title={artifact.path} aria-label={`打开 ${displayName}`}>
+        <Tooltip content={displayPath} className="eidos-link-tooltip">
+          <button type="button" className="artifact-result-card__main" disabled={!actions || wrongWorkspace || opening} onClick={() => { void open(); }} title={displayPath} aria-label={`打开 ${displayName}`}>
             <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
             <span className="artifact-result-card__copy">
               <strong>{displayName}</strong>

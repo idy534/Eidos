@@ -382,7 +382,7 @@ ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、�
 
 HostShellResolver 先读取当前账户的 login shell，再读取 `SHELL`，最后按 `/bin/zsh`、`/bin/bash`、`/bin/sh` 顺序选择 fallback。Resolver 只接受存在、可执行且 basename 为 `zsh`、`bash` 或 `sh` 的绝对路径。
 
-ShellEnvironmentSnapshotProvider 使用 resolved shell 的 `-lc` 做一次 bounded 环境捕获。默认 attempt 会先验证 Seatbelt profile，然后在同一个 effective Seatbelt 边界内执行 trusted capture script。捕获使用 NUL 分隔的环境格式。捕获上限是 512 KiB，超时是 10 秒。缓存 key 包含 shell executable、canonical cwd 和实际 capture launch identity。同一个 key 不会重复捕获。普通命令使用 resolved shell 的 `-c`，不会使用 `-lc`。
+ShellEnvironmentSnapshotProvider 使用 resolved shell 的 `-lc` 做一次 bounded 环境捕获。默认 attempt 会先验证 Seatbelt profile，然后在同一个 effective Seatbelt 边界内执行 trusted capture script。捕获使用 NUL 分隔的环境格式。捕获上限是 512 KiB，超时是 10 秒。缓存 key 包含 shell executable、canonical cwd、实际 capture launch identity 和环境策略标识。缓存最多保留 64 项。成功结果在用户保存设置或重新读取环境前复用；失败回退只复用 1 秒，后续调用可以再次捕获。普通命令使用 resolved shell 的 `-c`，不会使用 `-lc`。
 
 捕获失败时，Provider 使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
 
@@ -397,6 +397,16 @@ Shell 输出在 Renderer 中使用成熟的 ANSI stripping 实现转为纯文本
 `run_shell` 的模型结果投影对 stdout 和 stderr 各保留首尾，每条流最多 16 KiB，整个 JSON 最多 48 KiB。原始 `truncated` 和 `omittedBytes` 保持为原始 Shell 事实，不会被模型投影覆盖。模型投影使用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 字段，其中 omitted bytes 只计算模型省略的 stdout/stderr UTF-8 字节。
 
 `read_tool_output` 是只读 Shell 输出分页工具。它使用前一次 `run_shell` 的 provider tool call ID，默认读取 stdout，也可读取 stderr。当前 Run 的活动 Shell 通过其 ShellProcessManager 读取累计快照，不移动等待游标；同 Session 的历史 Run 读取持久终态结果。跨 Run 活动结果、跨 Session、缺失和歧义 ID 拒绝。`offsetBytes`、`maxBytes`（4 字节至 16 KiB）和 `fromEnd` 控制分页；返回 UTF-8 对齐的实际 `startByte`、`endByte` 和 `nextOffset`。该工具不重新执行 Shell、不清除 reconciliation，也不能恢复原始输出上限已丢失的字节。
+
+### 沙盒环境设置
+
+Desktop 在现有 Runtime 页面内增加“沙盒环境设置”区块。区块只有继承方式和重新读取两个设置，说明通过小问号 Tooltip 展示。用户选择继承方式后自动保存，页面不提供单独的保存按钮、变量过滤或变量覆盖。审批窗口与 Shell 卡片保持现状。`shellEnvironment/read`、`shellEnvironment/save`、`shellEnvironment/refresh` 经 typed IPC、Main RuntimeClient、Method Registry 和 ShellEnvironmentApplication 进入现有 SQLite Repository。
+
+环境策略默认 `inherit=all`，用户可选择 `core` 或 `none`。`core` 只透传 PATH、SHELL、HOME、TMPDIR、TEMP、TMP、USER、LOGNAME、LANG、LC_ALL、LC_CTYPE。最终策略同时约束父进程继承和 profile 捕获的变量，并排除 `EIDOS_*` 内部变量。系统不按 KEY、TOKEN、SECRET 等名称统一剔除变量。受管 Skill 的可信依赖绑定仍在其后设置受管执行路径与运行控制变量。使用 core/none 时，执行 zsh 的进程禁用第二次用户启动脚本加载，避免已排除变量被重新导出；默认 all 保留原启动行为。
+
+每次 Shell 启动准备读取当前设置，所以保存只影响后续命令，不修改活动进程或重放命令。文件与网络权限继续使用原有物化结果。重新读取环境只清除快照，下一次命令沿用其有效沙盒重新捕获。初始读取失败时，用户也可以通过重新读取恢复。
+
+SQLite Schema v34→v35 增加 `shell_environment_settings`，只保存继承模式和递增 revision，不保存环境变量名和值。保存执行版本比较，并与 `shell_environment.settings_changed` Event/Outbox 在同一事务提交；事件不包含环境内容，也不产生新的 Renderer 通知。升级保留旧配置和任务；回退旧版本前需要恢复升级前备份。实现没有新增依赖，没有增加环境变量 Tool 参数，没有改变文件、网络或审批权限。
 
 ### Default filesystem
 

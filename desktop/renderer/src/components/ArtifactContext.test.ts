@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { workspaceFileLink } from "./ArtifactContext.js";
+import { displayFilePath, workspaceFileLink } from "./ArtifactContext.js";
 
 test("resolves absolute workspace links and preserves line and column", () => {
   assert.deepEqual(
@@ -58,5 +58,28 @@ test("keeps document-relative and file links based on the displayed document", (
   assert.equal(
     workspaceFileLink("../../../outside.txt", "/workspace", "docs/guides/README.md"),
     undefined,
+  );
+});
+
+test("displayFilePath prioritizes absolute path when execution root is absolute and falls back to relative path", () => {
+  assert.equal(
+    displayFilePath("夏威夷旅行见闻.pptx", "/Users/xielei/Documents/test1/Office-Test"),
+    "/Users/xielei/Documents/test1/Office-Test/夏威夷旅行见闻.pptx",
+  );
+  assert.equal(
+    displayFilePath("src/app.ts", "/workspace", { line: 42, column: 5 }),
+    "/workspace/src/app.ts:42:5",
+  );
+  assert.equal(
+    displayFilePath("/already/absolute/path.txt", "/workspace"),
+    "/already/absolute/path.txt",
+  );
+  assert.equal(
+    displayFilePath("夏威夷旅行见闻.pptx"),
+    "夏威夷旅行见闻.pptx",
+  );
+  assert.equal(
+    displayFilePath("夏威夷旅行见闻.pptx", "relative-root"),
+    "夏威夷旅行见闻.pptx",
   );
 });

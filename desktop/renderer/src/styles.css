@@ -38,6 +38,7 @@
 @import "./components/settings/AgentSettings.css";
 @import "./components/settings/McpSettings.css";
 @import "./components/settings/WorktreeSettings.css";
+@import "./components/settings/ShellEnvironmentSettings.css";
 @import "./components/planning.css";
 @import "./components/automations/automations.css";
 @import "./components/ModelSelector.css";

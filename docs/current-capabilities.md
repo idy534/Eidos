@@ -253,13 +253,16 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Shell
 
+- Desktop 在现有 Runtime 页面内提供“沙盒环境设置”区块。区块只有继承方式和重新读取两个设置。用户修改继承方式后自动保存，说明通过小问号悬停和键盘焦点展示。页面没有变量过滤、变量覆盖或保存按钮。审批窗口和 Shell 卡片没有变化。
+- Shell 环境可以继承全部、仅基础环境或不继承。系统默认继承宿主机变量，不按 KEY、TOKEN、SECRET 名称统一排除，仍排除 Eidos 内部变量。SQLite 只保存继承方式与版本，不保存实际变量。并发保存使用 revision 检查。保存影响后续启动的命令；重新读取环境清除快照，后续命令重新捕获。配置不增加文件或网络权限。
+
 - Runtime 在每一步的提示中写出 Shell 默认启动目录的实际路径，并说明进程在执行命令前已经位于该目录。模型省略 `cwd` 或传入 `.` 就使用当前 Run 的工作区。有项目、无项目和完全访问 Run 都使用这条规则。提示使用 `{"command":"pwd"}` 展示默认目录下的直接调用。
 - `run_shell` 的工具和字段说明要求模型直接提交当前目录的命令，并通过 `cwd` 指定其他启动目录。每次调用创建新的 Shell，上次命令中的 `cd` 不会影响下次调用。命令执行过程中仍可按需切换目录。Runtime 不改写模型提交的 Shell 命令；提示对冗余 `cd` 的实际改善效果尚未通过真实模型调用验证。
 - Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；持久化失败仍保留未知结果记录。
 - Runtime 会投影未决 Intent 的对账来源。未知结果不设核验门；有效 Shell 空输入等待保持中性。系统不会通过删除缓存、申请新权限或换一条命令解除未知 Shell Intent。
 
 - `HostShellResolver` 先使用账户 login shell，再使用 `SHELL`，最后使用 `/bin/zsh`、`/bin/bash`、`/bin/sh`。Resolver 只接受有效的绝对可执行 shell 路径。
-- `ShellEnvironmentSnapshotProvider` 对每个 shell executable、canonical cwd 和 capture launch identity 做一次 `-lc` 环境捕获。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。
+- `ShellEnvironmentSnapshotProvider` 按 shell executable、canonical cwd、capture launch identity 和环境策略标识缓存 `-lc` 环境捕获。缓存最多 64 项，捕获失败的回退结果只复用 1 秒。默认 attempt 会在同一个 effective Seatbelt 边界内运行 trusted capture script。捕获使用 NUL 分隔格式，限制为 10 秒和 512 KiB。
 - 普通 `run_shell` 命令使用 resolved shell 的 `-c`。Snapshot 捕获失败时使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
 - Runtime 分开管理 Shell 进程寿命和工具等待窗口。模型收到 `shell_running` 后，可以用 `write_stdin` 的空 `chars` 继续等待和读取新输出，也可以发送 Ctrl-C 停止命令。Runtime 持续读取 stdout/stderr，并把做过 best-effort 展示脱敏的片段追加到原命令 Item；聚合结果保留原始 stdout/stderr。内部会保存每次跟进 ToolCall；Desktop 不显示正常跟进卡片，也不显示 `write_stdin` 工具名。跟进失败会显示中文错误提示。
 - Shell stdout 和 stderr 使用 UTF-8 增量解码。Runtime 按片段到达顺序将展示脱敏后的内容累积到 Item content，Desktop Execution Feed 在运行中和终态都使用这份累计内容。这样可以保留 stdout 和 stderr 的到达顺序，也不会在终态重复追加最终流。
