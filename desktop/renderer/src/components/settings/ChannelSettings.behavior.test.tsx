@@ -22,7 +22,6 @@ const connection: ChannelPublicConnection = {
   id: "connection",
   revision: 2,
   hasSecret: true,
-  clientSecret: "saved-dingtalk-secret",
   config: {
     enabled: true,
     clientId: "app",
@@ -36,7 +35,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("loads connection state, navigates to dingtalk details, masks credentials and shows unknown delivery reasons", async () => {
+it("loads connection state without exposing saved credentials and shows unknown delivery reasons", async () => {
   const user = userEvent.setup();
   window.eidosRuntime = {
     readChannel: vi.fn().mockImplementation(({ channel } = {}) => Promise.resolve(channel && channel !== "dingtalk" ? { state: "disabled" } : {
@@ -56,7 +55,8 @@ it("loads connection state, navigates to dingtalk details, masks credentials and
   await user.click(screen.getByRole("button", { name: "设置" }));
 
   expect(screen.getByLabelText("Client Secret")).toHaveAttribute("type", "password");
-  expect(screen.getByLabelText("Client Secret")).toHaveValue("saved-dingtalk-secret");
+  expect(screen.getByLabelText("Client Secret")).toHaveValue("");
+  expect(screen.getByLabelText("Client Secret")).toHaveAttribute("placeholder", "已保存，留空则保留");
   await user.click(screen.getByRole("button", { name: "显示密码" }));
   expect(screen.getByLabelText("Client Secret")).toHaveAttribute("type", "text");
   await user.click(screen.getByRole("button", { name: "隐藏密码" }));
@@ -151,7 +151,7 @@ it("automatically dismisses toast notification after 3.5 seconds", async () => {
   vi.useRealTimers();
 });
 
-it("saves current options and resends the revealed secret explicitly", async () => {
+it("saves current options while retaining the saved secret inside Runtime", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
   render(<ChannelForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
@@ -167,7 +167,7 @@ it("saves current options and resends the revealed secret explicitly", async () 
   const request = save.mock.calls[0]![0];
   expect(request.expectedRevision).toBe(2);
   expect(request.config).toEqual({ ...connection.config, enabled: false });
-  expect(request).toHaveProperty("clientSecret", "saved-dingtalk-secret");
+  expect(request).not.toHaveProperty("clientSecret");
 });
 
 it("creates a connection with just app credentials and the default model and permissions", async () => {
@@ -184,7 +184,7 @@ it("creates a connection with just app credentials and the default model and per
     clientSecret: "new-secret",
     config: { enabled: true, clientId: "new-app", modelId: model.id, projectId: null, approvalMode: "manual" },
   });
-  expect(screen.getByLabelText("Client Secret")).toHaveValue("new-secret");
+  expect(screen.getByLabelText("Client Secret")).toHaveValue("");
 });
 
 it("requires a danger confirmation before selecting full access and saves its confirmation", async () => {

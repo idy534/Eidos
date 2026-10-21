@@ -36,14 +36,15 @@ class ChannelApplication:
 
     def read(self, channel: ChannelKind = "dingtalk") -> ChannelResponse:
         connection = self.repository.connection(channel)
-        secret_val = ""
+        has_secret = False
         if connection:
             try:
-                secret_val = self.secrets.read(connection.secret_ref)
+                self.secrets.read(connection.secret_ref)
+                has_secret = True
             except (OSError, ValueError):
-                secret_val = ""
+                has_secret = False
         return ChannelResponse(connection=ChannelPublicConnection(channel=channel, id=connection.id, revision=connection.revision,
-            config=connection.config, has_secret=bool(secret_val), client_secret=secret_val) if connection else None,
+            config=connection.config, has_secret=has_secret) if connection else None,
             deliveries=self.repository.deliveries(channel))
 
     def save(self, request: ChannelSaveRequest) -> ChannelResponse:

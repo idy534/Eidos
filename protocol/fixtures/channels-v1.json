@@ -221,6 +221,23 @@
       }
     }
   ],
+  "invalidResponses": [
+    {
+      "state": "connecting",
+      "connection": {
+        "channel": "feishu",
+        "id": "feishu",
+        "revision": 1,
+        "hasSecret": true,
+        "clientSecret": "sample-secret",
+        "config": {
+          "clientId": "app",
+          "modelId": "model",
+          "enabled": true
+        }
+      }
+    }
+  ],
   "validReadRequests": [
     {},
     {

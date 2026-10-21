@@ -60,7 +60,7 @@ export function ChannelForm({
     projectId: null,
     approvalMode: "manual",
   });
-  const [secret, setSecret] = useState(connection?.clientSecret ?? "");
+  const [secret, setSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [error, setError] = useState("");
   const [showFullAccessDialog, setShowFullAccessDialog] = useState(false);
@@ -78,7 +78,7 @@ export function ChannelForm({
       projectId: null,
       approvalMode: "manual",
     },
-    secret: connection?.clientSecret ?? "",
+    secret: "",
   });
 
   const busyRef = useRef(false);
@@ -103,16 +103,10 @@ export function ChannelForm({
       revisionRef.current = connection.revision;
       lastSavedRef.current = {
         config: connection.config,
-        secret: connection.clientSecret ?? "",
+        secret: "",
       };
     }
   }, [connection]);
-
-  useEffect(() => {
-    if (connection?.clientSecret !== undefined) {
-      setSecret(connection.clientSecret);
-    }
-  }, [connection?.clientSecret]);
 
   const executeSave = async (
     targetConfig: ChannelConfig,
@@ -146,8 +140,9 @@ export function ChannelForm({
         revisionRef.current += 1;
         lastSavedRef.current = {
           config: targetConfig,
-          secret: targetSecret,
+          secret: "",
         };
+        setSecret("");
       }
       return success;
     } catch {
@@ -207,11 +202,8 @@ export function ChannelForm({
 
     const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
     const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
-    const isOldSecretForDifferentClient = Boolean(
-      connection && !isSameClientAsConnection && targetSecret === connection.clientSecret,
-    );
 
-    if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
+    if (!trimmedSecret && !hasRetainedSecret) {
       return false;
     }
 
@@ -230,16 +222,13 @@ export function ChannelForm({
     const trimmedSecret = secret.trim();
     const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
     const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
-    const isOldSecretForDifferentClient = Boolean(
-      connection && !isSameClientAsConnection && secret === connection.clientSecret,
-    );
 
     if (checked) {
       if (!trimmedId) {
         setError(`请填写 ${idLabel}。`);
         return;
       }
-      if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
+      if (!trimmedSecret && !hasRetainedSecret) {
         setError(`请填写 ${secretLabel}。`);
         return;
       }
@@ -250,6 +239,9 @@ export function ChannelForm({
   const handleClientIdChange = (value: string) => {
     const nextConfig = { ...config, clientId: value };
     setConfig(nextConfig);
+    if (value.trim() !== config.clientId.trim()) {
+      setSecret("");
+    }
     if (clientIdDebounceTimer.current) {
       clearTimeout(clientIdDebounceTimer.current);
     }
@@ -288,11 +280,8 @@ export function ChannelForm({
     const trimmedSecret = secret.trim();
     const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
     const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
-    const isOldSecretForDifferentClient = Boolean(
-      connection && !isSameClientAsConnection && secret === connection.clientSecret,
-    );
 
-    if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
+    if (!trimmedSecret && !hasRetainedSecret) {
       setError(`请填写 ${secretLabel}。`);
     }
   };
@@ -337,6 +326,9 @@ export function ChannelForm({
   };
 
   const missingProject = config.projectId && !projects.some((project) => project.id === config.projectId);
+  const hasSavedSecretForCurrentId = Boolean(
+    connection?.hasSecret && connection.config?.clientId === config.clientId.trim(),
+  );
 
   return (
     <form
@@ -358,10 +350,7 @@ export function ChannelForm({
           connection && connection.config?.clientId === config.clientId.trim(),
         );
         const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
-        const isOldSecretForDifferentClient = Boolean(
-          connection && !isSameClientAsConnection && secret === connection.clientSecret,
-        );
-        if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
+        if (!trimmedSecret && !hasRetainedSecret) {
           setError(`请填写 ${secretLabel}。`);
           return;
         }
@@ -475,7 +464,7 @@ export function ChannelForm({
                     maxLength={1024}
                     value={secret}
                     autoComplete="new-password"
-                    placeholder={`请输入 ${secretLabel}`}
+                    placeholder={hasSavedSecretForCurrentId ? "已保存，留空则保留" : `请输入 ${secretLabel}`}
                     onChange={(event) => handleSecretChange(event.target.value)}
                     onBlur={handleSecretBlur}
                   />

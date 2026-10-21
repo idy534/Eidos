@@ -473,6 +473,10 @@ def test_existing_v29_database_upgrades_without_losing_sessions(tmp_path):
         DROP TABLE search_pending;
         DROP TABLE search_documents;
         DROP TABLE search_index_state;
+        DROP INDEX IF EXISTS run_web_search_credential_ref;
+        DROP TABLE IF EXISTS run_web_search_snapshots;
+        DROP TABLE IF EXISTS web_search_settings;
+        DROP TABLE IF EXISTS shell_environment_settings;
         PRAGMA user_version=29;
     """)
     store.close()
@@ -578,6 +582,7 @@ def test_real_runtime_receives_once_runs_and_persists_final_reply(tmp_path, appr
         response = application.read(channel).model_dump_json()
         assert "test-channel-secret" not in response
         assert "secret_ref" not in response
+        assert not hasattr(application.read(channel).connection, "client_secret")
         snapshot = server.store.read_session_snapshot(identifier.session_id)
         assert snapshot["runs"][0]["channelOrigin"]["senderId"] == "user"
     finally:
@@ -599,6 +604,9 @@ def test_channel_fixture_matches_python_contracts():
             ChannelSaveRequest.model_validate(value)
     for value in fixture["validResponses"]:
         ChannelResponse.model_validate(value)
+    for value in fixture["invalidResponses"]:
+        with pytest.raises(ValidationError):
+            ChannelResponse.model_validate(value)
 
 
 @pytest.mark.parametrize("direct", [False, True])
@@ -660,7 +668,7 @@ def test_channel_reasoning_rejects_unknown_values():
         ChannelConfig.model_validate(configuration().model_dump() | {"reasoningSelection": "ultra"})
 
 
-def test_channel_read_reveals_client_secret_for_local_display(channels):
+def test_channel_read_confirms_saved_secret_without_returning_it(channels):
     from eidos_runtime.application.channels import ChannelApplication
     store, repository, _, _ = channels
     secrets = ChannelSecrets(store.data_directory)
@@ -670,6 +678,8 @@ def test_channel_read_reveals_client_secret_for_local_display(channels):
     read_resp = application.read("dingtalk")
     assert read_resp.connection is not None
     assert read_resp.connection.has_secret is True
-    assert read_resp.connection.client_secret == "my-super-secret-key"
+    assert not hasattr(read_resp.connection, "client_secret")
     wire = read_resp.model_dump(mode="json", by_alias=True)
-    assert wire["connection"]["clientSecret"] == "my-super-secret-key"
+    assert "clientSecret" not in wire["connection"]
+    assert "secret_ref" not in wire["connection"]
+    assert "my-super-secret-key" not in json.dumps(wire)

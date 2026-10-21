@@ -16,6 +16,7 @@ void test("channel fixtures enforce the generated Python boundary", async () => 
   for (const value of fixture.validRequests) assert.equal(isChannelSaveRequest(value), true);
   for (const value of fixture.invalidRequests) assert.equal(isChannelSaveRequest(value), false);
   for (const value of fixture.validResponses) assert.equal(isChannelResponse(value), true);
+  for (const value of fixture.invalidResponses) assert.equal(isChannelResponse(value), false);
   assert.equal(isChannelResponse({ state: "connected", clientSecret: "leak" }), false);
 });
 

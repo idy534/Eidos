@@ -15,7 +15,6 @@ export type Channel2 = "dingtalk" | "feishu" | "wecom";
 export type Id = string;
 export type Revision = number;
 export type Hassecret = boolean;
-export type Clientsecret1 = string;
 export type State = "disabled" | "connecting" | "connected" | "error";
 export type Reason = string | null;
 export type Id1 = string;
@@ -70,7 +69,6 @@ export interface ChannelPublicConnection {
   revision: Revision;
   config: ChannelConfig;
   hasSecret: Hassecret;
-  clientSecret?: Clientsecret1;
 }
 export interface ChannelDelivery {
   id: Id1;
