@@ -80,6 +80,18 @@
       "revision": 0,
       "config": {},
       "credentials": {
+        "deepseek": "stored",
+        "langsearch": "missing"
+      },
+      "credentialValues": {
+        "deepseek": "sample-secret",
+        "langsearch": ""
+      }
+    },
+    {
+      "revision": 0,
+      "config": {},
+      "credentials": {
         "deepseek": "connected"
       }
     }

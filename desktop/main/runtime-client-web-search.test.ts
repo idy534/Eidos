@@ -37,11 +37,14 @@ void test("settings remain redacted, revision guarded and persist across Runtime
     const saved = await client.saveWebSearch(request);
     assert.equal(saved.revision, 1); assert.equal(saved.credentials.langsearch, "stored");
     assert.equal(JSON.stringify(saved).includes("sample-search-secret"), false);
+    assert.equal(Object.hasOwn(saved, "credentialValues"), false);
     await assert.rejects(client.saveWebSearch(request), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "WEB_SEARCH_CONFIG_CONFLICT");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
     client = new RuntimeClient(options); await client.initialize();
     const restored = await client.readWebSearch();
     assert.equal(restored.config.defaultProvider, "langsearch"); assert.equal(restored.credentials.langsearch, "stored");
+    assert.equal(JSON.stringify(restored).includes("sample-search-secret"), false);
+    assert.equal(Object.hasOwn(restored, "credentialValues"), false);
     const cleared = await client.saveWebSearch({ expectedRevision: 1, config: restored.config, credentialChanges: [{ provider: "langsearch", action: "clear" }] });
     assert.equal(cleared.config.defaultProvider ?? null, null); assert.equal(cleared.credentials.langsearch, "missing");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);

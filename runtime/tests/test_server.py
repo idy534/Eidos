@@ -976,7 +976,7 @@ class RuntimeProtocolTests(unittest.TestCase):
                 {"code": "RESOURCE_NOT_FOUND", "retryable": False},
             )
 
-    def test_local_model_configuration_is_private_and_loaded_after_restart(self) -> None:
+    def test_local_model_configuration_returns_key_for_settings_and_loads_after_restart(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-data-") as data_directory:
             configured = run_runtime(
                 [
@@ -999,8 +999,10 @@ class RuntimeProtocolTests(unittest.TestCase):
             )
             configured_response = json.loads(configured.stdout.splitlines()[1])
             self.assertEqual(configured_response["result"]["id"], "deepseek-flash")
-            self.assertNotIn("apiKey", configured_response["result"])
-            self.assertNotIn("sk-example", configured.stdout)
+            self.assertEqual(
+                configured_response["result"]["apiKey"], "sk-example-key-for-tests"
+            )
+            self.assertNotIn("sk-example-key-for-tests", configured.stderr)
             self.assertTrue((Path(data_directory) / "models.json").is_file())
             self.assertFalse((Path(data_directory) / "model-secrets.json").exists())
 

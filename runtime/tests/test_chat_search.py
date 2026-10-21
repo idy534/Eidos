@@ -197,19 +197,11 @@ def test_frozen_history_search_and_anchor_survive_source_deletion(store, tmp_pat
     assert anchor in {entry.item.id for entry in around.inherited_history}
 
 
-def test_real_v32_upgrade_backfills_existing_messages(store, tmp_path):
+def test_real_v32_upgrade_backfills_existing_messages(store, tmp_path, downgrade_search_schema):
     value = session(store, tmp_path)
     store.create_run(value["id"], "backfill needle")
     with store.database.transaction() as connection:
-        triggers = connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'search_%'"
-        ).fetchall()
-        for row in triggers:
-            connection.execute(f'DROP TRIGGER "{row[0]}"')
-        connection.execute("DROP TABLE search_fts")
-        connection.execute("DROP TABLE search_documents")
-        connection.execute("DROP TABLE search_pending")
-        connection.execute("DROP TABLE search_index_state")
+        downgrade_search_schema(connection)
         connection.execute("PRAGMA user_version=32")
     data = store.database.data_directory
     store.close()

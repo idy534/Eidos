@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { WebSearchResponse } from "../../../../shared/web-search.generated.js";
 import { WebSearchSettings } from "./WebSearchSettings.js";
@@ -12,18 +12,20 @@ const initial = (): WebSearchResponse => ({
 });
 
 function setup(value = initial()) {
+  let credentials: WebSearchResponse["credentials"] = { ...value.credentials };
   const api = {
     readWebSearch: vi.fn().mockResolvedValue(value),
     saveWebSearch: vi.fn().mockImplementation(async (request) => {
-      const vals: Record<string, string> = {};
       for (const change of request.credentialChanges ?? []) {
-        if (change.action === "set") vals[change.provider] = change.value;
+        credentials = {
+          ...credentials,
+          [change.provider]: change.action === "set" ? "stored" : "missing",
+        };
       }
       return {
         revision: request.expectedRevision + 1,
         config: request.config,
-        credentials: { deepseek: "stored", langsearch: "stored" },
-        credentialValues: vals,
+        credentials: { ...credentials },
       };
     }),
     openWebSearchOfficialPage: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +59,7 @@ it("requires an explicit default, allows neither selection and auto-saves creden
       credentialChanges: [{ provider: "deepseek", action: "set", value: "deep-key" }],
     }),
   );
+  await waitFor(() => expect(deepInput).toHaveValue(""));
 
   const langInput = screen.getByLabelText("LangSearch API Key", { selector: "input" });
   await user.type(langInput, "lang-key{Enter}");
@@ -118,25 +121,33 @@ it("shows alert when auto-save fails and allows refreshing revision", async () =
   expect(screen.queryByText(/Eidos 已读取最新配置/)).not.toBeInTheDocument();
 });
 
-it("reveals a saved API key and toggles visibility with the eye icon button", async () => {
+it("keeps saved API keys hidden and clears them only through the explicit action", async () => {
   const user = userEvent.setup();
-  setup({
+  const api = setup({
     ...initial(),
+    config: { defaultProvider: "deepseek" },
     credentials: { deepseek: "stored", langsearch: "missing" },
-    credentialValues: { deepseek: "sk-saved-deepseek-key", langsearch: "" },
   });
   const input = await screen.findByLabelText("DeepSeek Search API Key", { selector: "input" });
   expect(input).toHaveAttribute("type", "password");
-  expect(input).toHaveValue("sk-saved-deepseek-key");
-  expect(input).toHaveAttribute("placeholder", "输入 API Key");
+  expect(input).toHaveValue("");
+  expect(input).toHaveAttribute("placeholder", "已保存，留空则保留");
+
+  fireEvent.blur(input);
+  expect(api.saveWebSearch).not.toHaveBeenCalled();
 
   const toggleBtn = screen.getByRole("button", { name: "显示 DeepSeek Search API Key" });
-  await user.click(toggleBtn);
-  expect(input).toHaveAttribute("type", "text");
+  expect(toggleBtn).toBeDisabled();
 
-  const hideBtn = screen.getByRole("button", { name: "隐藏 DeepSeek Search API Key" });
-  await user.click(hideBtn);
-  expect(input).toHaveAttribute("type", "password");
+  await user.click(screen.getByRole("button", { name: "清除已保存的 Key" }));
+  await waitFor(() =>
+    expect(api.saveWebSearch).toHaveBeenCalledWith({
+      expectedRevision: 0,
+      config: { defaultProvider: null },
+      credentialChanges: [{ provider: "deepseek", action: "clear" }],
+    }),
+  );
+  await waitFor(() => expect(input).toHaveAttribute("placeholder", "输入 API Key"));
 });
 
 it("opens official links and auto-saves other settings without extra summaries", async () => {

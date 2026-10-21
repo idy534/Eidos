@@ -13,8 +13,26 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def downgrade_search_schema():
+def downgrade_shell_environment_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS shell_environment_settings")
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_web_search_schema(downgrade_shell_environment_schema):
+    def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_shell_environment_schema(connection)
+        connection.execute("DROP INDEX IF EXISTS run_web_search_credential_ref")
+        connection.execute("DROP TABLE IF EXISTS run_web_search_snapshots")
+        connection.execute("DROP TABLE IF EXISTS web_search_settings")
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_search_schema(downgrade_web_search_schema):
+    def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_web_search_schema(connection)
         for row in connection.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'search_%'").fetchall():
             connection.execute(f'DROP TRIGGER "{row[0]}"')
         for name in ("search_fts", "search_documents", "search_pending", "search_index_state"):
