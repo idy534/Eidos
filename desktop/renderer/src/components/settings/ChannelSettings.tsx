@@ -135,7 +135,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
     try {
       const value = await window.eidosRuntime.saveChannel(request);
       setResponses((old) => ({ ...old, [request.channel ?? "dingtalk"]: value }));
-      showToast(request.config.enabled ? "配置已保存，Eidos 正在连接。" : "助理已停用。", "success");
+      showToast(request.config.enabled ? "配置已保存" : "助理已停用。", "success");
       return true;
     } catch {
       const errMsg = "助理保存失败。请检查配置、模型和项目；配置有冲突时请刷新后重试。 ";
@@ -255,7 +255,7 @@ export function ChannelSettings({ modelList, initialChannel = "list" }: ChannelS
             <>
               {/* 表单主体（包含单行顶栏与凭证、运行策略卡片） */}
               <ChannelForm
-                key={`${selected}:${response?.connection?.revision ?? 0}`}
+                key={selected}
                 channel={selected}
                 connection={response?.connection ?? null}
                 models={modelList?.models ?? []}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { DeepSeekSearchOptions, LangSearchOptions, Provider } from "../../../../shared/web-search.generated.js";
 
 export const searchOptionDefaults = {
@@ -7,6 +7,42 @@ export const searchOptionDefaults = {
   includePageContent: false,
   maxExcerptCharacters: 3000,
 };
+
+export const FRESHNESS_PRESETS = [
+  { value: "noLimit", label: "不限时间" },
+  { value: "oneDay", label: "过去 24 小时（一天内）" },
+  { value: "oneWeek", label: "过去 1 周" },
+  { value: "oneMonth", label: "过去 1 个月" },
+  { value: "oneYear", label: "过去 1 年" },
+  { value: "custom", label: "指定日期范围..." },
+] as const;
+
+type FreshnessPreset = (typeof FRESHNESS_PRESETS)[number]["value"];
+
+function getLocalDateString(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseFreshness(freshness: string | undefined): {
+  preset: FreshnessPreset;
+  start: string;
+  end: string;
+} {
+  const value = freshness?.trim() || "noLimit";
+  const standardPresets = new Set(["noLimit", "oneDay", "oneWeek", "oneMonth", "oneYear"]);
+  if (standardPresets.has(value)) {
+    return { preset: value as FreshnessPreset, start: "", end: "" };
+  }
+  const parts = value.split("..");
+  return {
+    preset: "custom",
+    start: parts[0]?.trim() || "",
+    end: parts[1]?.trim() || "",
+  };
+}
 
 export function WebSearchProviderFields({
   provider,
@@ -19,10 +55,64 @@ export function WebSearchProviderFields({
 }) {
   const values = { ...searchOptionDefaults, ...options };
   const lang = options as LangSearchOptions;
+
   const [includeText, setIncludeText] = useState((lang.includeDomains ?? []).join(", "));
   const [excludeText, setExcludeText] = useState((lang.excludeDomains ?? []).join(", "));
+
+  const parsedFreshness = parseFreshness(lang.freshness);
+  const [freshnessPreset, setFreshnessPreset] = useState<FreshnessPreset>(parsedFreshness.preset);
+  const [customStart, setCustomStart] = useState(parsedFreshness.start);
+  const [customEnd, setCustomEnd] = useState(parsedFreshness.end);
+
+  useEffect(() => {
+    const next = parseFreshness(lang.freshness);
+    setFreshnessPreset(next.preset);
+    if (next.preset === "custom") {
+      setCustomStart((prev) => (prev !== next.start ? next.start : prev));
+      setCustomEnd((prev) => (prev !== next.end ? next.end : prev));
+    }
+  }, [lang.freshness]);
+
   const update = (change: Partial<DeepSeekSearchOptions & LangSearchOptions>) =>
     onChange({ ...options, ...change });
+
+  const handlePresetChange = (newPreset: FreshnessPreset) => {
+    setFreshnessPreset(newPreset);
+    if (newPreset !== "custom") {
+      update({ freshness: newPreset });
+    } else {
+      const today = getLocalDateString();
+      const nextStart = customStart || today;
+      setCustomStart(nextStart);
+      const nextFreshness = customEnd ? `${nextStart}..${customEnd}` : nextStart;
+      update({ freshness: nextFreshness });
+    }
+  };
+
+  const handleStartChange = (val: string) => {
+    setCustomStart(val);
+    if (!val) return;
+    let nextEnd = customEnd;
+    if (nextEnd && nextEnd < val) {
+      nextEnd = val;
+      setCustomEnd(nextEnd);
+    }
+    const nextFreshness = nextEnd ? `${val}..${nextEnd}` : val;
+    update({ freshness: nextFreshness });
+  };
+
+  const handleEndChange = (val: string) => {
+    setCustomEnd(val);
+    const start = customStart || getLocalDateString();
+    if (!customStart) {
+      setCustomStart(start);
+    }
+    if (!val) {
+      update({ freshness: start });
+    } else if (val >= start) {
+      update({ freshness: `${start}..${val}` });
+    }
+  };
 
   return (
     <div className="web-search-options-grid">
@@ -77,37 +167,54 @@ export function WebSearchProviderFields({
         </div>
       </div>
 
-      <div className="web-search-options-section">
-        <div className="web-search-options-title">高级控制</div>
-        {provider === "deepseek" ? (
-          <label className="web-search-field-item web-search-wide">
-            <span className="web-search-field-label">本地化 IP（可选）</span>
-            <input
-              value={(options as DeepSeekSearchOptions).localization ?? ""}
-              placeholder="例如 203.0.113.1"
-              maxLength={45}
-              onChange={(event) => update({ localization: event.target.value || null })}
-            />
-            <small className="web-search-hint">按目标 IP 优化区域搜索结果，不会主动探测你的公网真实 IP。</small>
-          </label>
-        ) : (
+      {provider === "langsearch" && (
+        <div className="web-search-options-section">
+          <div className="web-search-options-title">高级控制</div>
           <div className="web-search-langsearch-fields">
-            <label className="web-search-field-item">
+            <div className="web-search-field-item">
               <span className="web-search-field-label">时间范围</span>
-              <input
-                list="web-search-freshness"
-                value={lang.freshness ?? "noLimit"}
-                required
-                maxLength={22}
-                placeholder="noLimit / oneDay / oneWeek 等"
-                onChange={(event) => update({ freshness: event.target.value })}
-              />
-              <datalist id="web-search-freshness">
-                {["noLimit", "oneDay", "oneWeek", "oneMonth", "oneYear"].map((value) => (
-                  <option key={value} value={value} />
+              <select
+                aria-label="时间范围"
+                value={freshnessPreset}
+                onChange={(event) => handlePresetChange(event.target.value as FreshnessPreset)}
+              >
+                {FRESHNESS_PRESETS.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
                 ))}
-              </datalist>
-            </label>
+              </select>
+              {freshnessPreset === "custom" && (
+                <div className="web-search-custom-date-container">
+                  <div className="web-search-custom-date-row">
+                    <label className="web-search-custom-date-col">
+                      <span className="web-search-field-label">起始日期</span>
+                      <input
+                        type="date"
+                        aria-label="起始日期"
+                        required
+                        value={customStart}
+                        onChange={(event) => handleStartChange(event.target.value)}
+                      />
+                    </label>
+                    <span className="web-search-date-sep">至</span>
+                    <label className="web-search-custom-date-col">
+                      <span className="web-search-field-label">截止日期（可选）</span>
+                      <input
+                        type="date"
+                        aria-label="截止日期（可选）"
+                        value={customEnd}
+                        min={customStart || undefined}
+                        onChange={(event) => handleEndChange(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <span className="web-search-hint">
+                    支持指定单个起始日期或起止区间（例如 2026-01-01 至 2026-10-21）。
+                  </span>
+                </div>
+              )}
+            </div>
             <label className="web-search-field-item web-search-wide">
               <span className="web-search-field-label">仅搜索这些域名（可选）</span>
               <input
@@ -143,8 +250,8 @@ export function WebSearchProviderFields({
               />
             </label>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

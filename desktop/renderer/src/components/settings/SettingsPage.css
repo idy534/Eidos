@@ -114,6 +114,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
   width: 100%;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -125,6 +126,29 @@
   font-weight: 500;
   text-align: left;
   transition: background-color 120ms ease, color 120ms ease;
+}
+
+.settings-nav-item-start {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+}
+
+.settings-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: inherit;
+}
+
+.settings-nav-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .settings-nav-item:hover:not(:disabled) {

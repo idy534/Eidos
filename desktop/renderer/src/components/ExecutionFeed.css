@@ -368,6 +368,47 @@ span.tool-file-link:hover {
   text-decoration-color: transparent !important;
   color: inherit !important;
 }
+.tool-web-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+.tool-web-search-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+  cursor: default;
+}
+.tool-web-search-item--clickable {
+  cursor: pointer;
+}
+.tool-web-search-item--clickable:hover .tool-web-search-excerpt {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tool-web-search-bullet {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+.tool-web-search-excerpt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-web-search-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}
 .tool-image-container {
   display: flex;
   flex-direction: column;

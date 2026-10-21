@@ -1863,4 +1863,88 @@ test("renders skill_read and skill_read_resource as static rows with SparklesIco
   assert.match(html, /M8 2c\.3 2\.2 1\.8 3\.7 4 4/);
 });
 
+test("renders web_search in progress and completed with Globe icon and single-line excerpt results", () => {
+  const items: Item[] = [
+    item({
+      id: "search-running",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-ws-1",
+        itemId: "search-running",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-ws-1",
+        toolName: "web_search",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ query: "杭州天气" }),
+      },
+    }),
+    item({
+      id: "search-completed",
+      ordinal: 2,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-ws-2",
+        itemId: "search-completed",
+        modelStepIndex: 1,
+        batchOrder: 1,
+        providerCallId: "p-ws-2",
+        toolName: "web_search",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1500,
+        argumentsJson: JSON.stringify({ query: "杭州天气" }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          data: {
+            query: "杭州天气",
+            results: [
+              {
+                title: "杭州天气预报_中国天气网",
+                url: "https://weather.com.cn/hangzhou",
+                excerpt: "杭州实时天气：气温 22℃，多云，东北风2级，空气优。",
+              },
+              {
+                title: "杭州未来一周天气趋势",
+                url: "https://weather.com.cn/hangzhou/week",
+                excerpt: "预计未来3天杭州多阵雨或雷雨，气温略有下降。",
+              },
+            ],
+          },
+        }),
+      },
+    }),
+  ];
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={items}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // Status copy
+  assert.match(html, /正在搜索 杭州天气/);
+  assert.match(html, /已搜索 杭州天气/);
+
+  // Globe icon (viewBox 0 0 24 24, circle cx=12 cy=12 r=10)
+  assert.match(html, /circle cx="12" cy="12" r="10"/);
+
+  // Excerpt list elements
+  assert.match(html, /class="tool-web-search-results"/);
+  assert.match(html, /class="tool-web-search-item/);
+  assert.match(html, /class="tool-web-search-excerpt"[^>]*>杭州实时天气：气温 22℃/);
+  assert.match(html, /class="tool-web-search-excerpt"[^>]*>预计未来3天杭州多阵雨或雷雨/);
+});
+
 

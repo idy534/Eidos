@@ -187,3 +187,85 @@ it("explains a missing default credential before auto-saving default", async () 
   expect(await screen.findByRole("alert")).toHaveTextContent("请先为默认搜索服务填写 API Key");
   expect(api.saveWebSearch).not.toHaveBeenCalled();
 });
+
+it("removes localization IP entry from deepseek search settings", async () => {
+  const user = userEvent.setup();
+  setup();
+  const section = (await screen.findByRole("heading", { name: "DeepSeek Search", exact: true })).closest("section")!;
+  await user.click(within(section).getByRole("button", { name: /其他设置/ }));
+
+  expect(within(section).getByLabelText("默认结果条数")).toBeInTheDocument();
+  expect(within(section).getByLabelText("请求超时（秒）")).toBeInTheDocument();
+  expect(within(section).getByLabelText("每条结果最多字符数")).toBeInTheDocument();
+  expect(within(section).getByLabelText("返回网页正文")).toBeInTheDocument();
+
+  expect(within(section).queryByText("本地化 IP（可选）")).not.toBeInTheDocument();
+  expect(within(section).queryByPlaceholderText("例如 203.0.113.1")).not.toBeInTheDocument();
+  expect(within(section).queryByText("高级控制")).not.toBeInTheDocument();
+});
+
+it("supports redesigned freshness presets and custom date range in langsearch", async () => {
+  const user = userEvent.setup();
+  const api = setup();
+  const section = (await screen.findByRole("heading", { name: "LangSearch", exact: true })).closest("section")!;
+  await user.click(within(section).getByRole("button", { name: /其他设置/ }));
+
+  const freshnessSelect = within(section).getByLabelText("时间范围");
+  expect(freshnessSelect).toHaveValue("noLimit");
+
+  // Select preset "oneWeek"
+  await user.selectOptions(freshnessSelect, "oneWeek");
+  await waitFor(() =>
+    expect(api.saveWebSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          langsearch: expect.objectContaining({ freshness: "oneWeek" }),
+        }),
+      }),
+    ),
+  );
+
+  // Switch to custom date range
+  await user.selectOptions(freshnessSelect, "custom");
+  const startInput = await within(section).findByLabelText("起始日期");
+  const endInput = within(section).getByLabelText("截止日期（可选）");
+
+  await user.clear(startInput);
+  await user.type(startInput, "2026-10-01");
+  await user.type(endInput, "2026-10-21");
+
+  await waitFor(
+    () =>
+      expect(api.saveWebSearch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            langsearch: expect.objectContaining({ freshness: "2026-10-01..2026-10-21" }),
+          }),
+        }),
+      ),
+    { timeout: 3000 },
+  );
+});
+
+it("correctly restores existing custom freshness range from saved config", async () => {
+  const user = userEvent.setup();
+  setup({
+    ...initial(),
+    config: {
+      defaultProvider: "langsearch",
+      langsearch: {
+        freshness: "2026-05-01..2026-05-31",
+      },
+    },
+  });
+  const section = (await screen.findByRole("heading", { name: "LangSearch", exact: true })).closest("section")!;
+  await user.click(within(section).getByRole("button", { name: /其他设置/ }));
+
+  const freshnessSelect = within(section).getByLabelText("时间范围");
+  expect(freshnessSelect).toHaveValue("custom");
+
+  const startInput = within(section).getByLabelText("起始日期");
+  const endInput = within(section).getByLabelText("截止日期（可选）");
+  expect(startInput).toHaveValue("2026-05-01");
+  expect(endInput).toHaveValue("2026-05-31");
+});

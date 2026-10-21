@@ -899,6 +899,7 @@ ipcMain.handle(IPC.BROWSER_OPEN, (
   );
 });
 ipcMain.handle(IPC.BROWSER_CLOSE, (event, id: unknown, browserId: unknown) => artifactPreview.close(previewOwner(event), previewString(id), previewString(browserId)));
+ipcMain.handle(IPC.BROWSER_STOP, (event, id: unknown, browserId: unknown) => artifactPreview.stop(previewOwner(event), previewString(id), previewString(browserId)));
 ipcMain.handle(IPC.BROWSER_STATE, (event, id: unknown, browserId: unknown) => artifactPreview.state(previewOwner(event), previewString(id), previewString(browserId)));
 ipcMain.handle(IPC.BROWSER_ANNOTATE, (event, id: unknown, browserId: unknown) => artifactPreview.annotate(previewOwner(event), previewString(id), previewString(browserId)));
 ipcMain.handle(IPC.BROWSER_BOUNDS, (event, id: unknown, browserId: unknown, bounds: unknown) => {

@@ -314,6 +314,14 @@ export class ArtifactPreviewManager {
     return { elements: Array.isArray(elements) ? elements.filter(isAnnotationElement).slice(0, 100) : [], url, title: wc.getTitle().slice(0, 512), selection: typeof selection === "string" ? selection : "", screenshot, capturedAt: Date.now() };
   }
 
+  stop(owner: WebContents, sessionId: string, browserId: string): void {
+    const key = this.key(owner, sessionId, browserId);
+    this.generation.set(key, (this.generation.get(key) ?? 0) + 1);
+    const entry = this.browsers.get(key);
+    if (!entry) return;
+    entry.view.webContents.stop();
+  }
+
   close(owner: WebContents, sessionId: string, browserId: string): void {
     const key = this.key(owner, sessionId, browserId);
     this.generation.set(key, (this.generation.get(key) ?? 0) + 1);

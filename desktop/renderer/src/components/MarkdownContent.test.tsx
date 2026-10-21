@@ -30,6 +30,16 @@ test("renders GFM tables as semantic table content", () => {
   assert.match(html, /<td>开窗通风<\/td>/);
 });
 
+test("supports double tilde strikethrough without mistaking single tilde ranges for strikethrough", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownContent content={"| 日期 | 天气 | 气温 |\n|---|---|---|\n| 10/22 | 多云 | 21~22 / 13~15℃ |\n| 10/23 | ~~下雨~~ | 22~23 / 16~17℃ |"} />,
+  );
+
+  assert.match(html, /<td>21~22 \/ 13~15℃<\/td>/);
+  assert.match(html, /<td>22~23 \/ 16~17℃<\/td>/);
+  assert.match(html, /<del>下雨<\/del>/);
+});
+
 test("does not activate raw HTML, remote images, or links", () => {
   const html = renderToStaticMarkup(
     <MarkdownContent content={"<script>alert('xss')</script>\n\n![远程图](https://example.com/a.png)\n\n[文档](https://example.com)"} />,

@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Channel, ChannelConfig, ChannelPublicConnection, ChannelSaveRequest, State } from "../../../../shared/channels.js";
 import type { ModelOption, Project } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";
-import { Button } from "../Button.js";
 import { Tooltip } from "../Tooltip.js";
 import { StatusBadge, type StatusTone } from "./StatusBadge.js";
 import { Toggle } from "./Toggle.js";
@@ -53,9 +52,13 @@ export function ChannelForm({
   const name = channel === "feishu" ? "飞书" : channel === "wecom" ? "企业微信" : "钉钉";
   const idLabel = channel === "feishu" ? "App ID" : channel === "wecom" ? "Bot ID" : "Client ID";
   const secretLabel = channel === "feishu" ? "App Secret" : channel === "wecom" ? "Secret" : "Client Secret";
+
   const [config, setConfig] = useState<ChannelConfig>(connection?.config ?? {
-    enabled: false, clientId: "", modelId: models[0]?.id ?? "",
-    projectId: null, approvalMode: "manual",
+    enabled: false,
+    clientId: "",
+    modelId: models[0]?.id ?? "",
+    projectId: null,
+    approvalMode: "manual",
   });
   const [secret, setSecret] = useState(connection?.clientSecret ?? "");
   const [showSecret, setShowSecret] = useState(false);
@@ -63,13 +66,276 @@ export function ChannelForm({
   const [showFullAccessDialog, setShowFullAccessDialog] = useState(false);
   const [fullAccessConfirmed, setFullAccessConfirmed] = useState(false);
 
+  const revisionRef = useRef(connection?.revision ?? 0);
+  const lastSavedRef = useRef<{
+    config: ChannelConfig;
+    secret: string;
+  }>({
+    config: connection?.config ?? {
+      enabled: false,
+      clientId: "",
+      modelId: models[0]?.id ?? "",
+      projectId: null,
+      approvalMode: "manual",
+    },
+    secret: connection?.clientSecret ?? "",
+  });
+
+  const busyRef = useRef(false);
+  const pendingSaveRef = useRef<{
+    config: ChannelConfig;
+    secret: string;
+    fullAccessConfirmed: boolean;
+  } | null>(null);
+
+  const clientIdDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const secretDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (clientIdDebounceTimer.current) clearTimeout(clientIdDebounceTimer.current);
+      if (secretDebounceTimer.current) clearTimeout(secretDebounceTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (connection) {
+      revisionRef.current = connection.revision;
+      lastSavedRef.current = {
+        config: connection.config,
+        secret: connection.clientSecret ?? "",
+      };
+    }
+  }, [connection]);
+
   useEffect(() => {
     if (connection?.clientSecret !== undefined) {
       setSecret(connection.clientSecret);
     }
   }, [connection?.clientSecret]);
 
-  const change = <K extends keyof ChannelConfig>(key: K, value: ChannelConfig[K]) => setConfig((old) => ({ ...old, [key]: value }));
+  const executeSave = async (
+    targetConfig: ChannelConfig,
+    targetSecret: string,
+    isFullAccessConfirmed: boolean,
+  ): Promise<boolean> => {
+    if (busyRef.current) {
+      pendingSaveRef.current = {
+        config: targetConfig,
+        secret: targetSecret,
+        fullAccessConfirmed: isFullAccessConfirmed,
+      };
+      return false;
+    }
+
+    busyRef.current = true;
+    setError("");
+
+    try {
+      const trimmedSecret = targetSecret.trim();
+      const needConfirmation = targetConfig.approvalMode === "full_access" && isFullAccessConfirmed;
+      const success = await onSave({
+        channel,
+        expectedRevision: revisionRef.current,
+        config: targetConfig,
+        ...(needConfirmation ? { fullAccessConfirmation: "full-access-v1" as const } : {}),
+        ...(trimmedSecret ? { clientSecret: trimmedSecret } : {}),
+      });
+
+      if (success) {
+        revisionRef.current += 1;
+        lastSavedRef.current = {
+          config: targetConfig,
+          secret: targetSecret,
+        };
+      }
+      return success;
+    } catch {
+      return false;
+    } finally {
+      busyRef.current = false;
+      if (pendingSaveRef.current) {
+        const next = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        void executeSave(next.config, next.secret, next.fullAccessConfirmed);
+      }
+    }
+  };
+
+  const isSameAsSaved = (
+    targetConfig: ChannelConfig,
+    targetSecret: string,
+    isFullAccessConfirmed: boolean,
+  ) => {
+    const last = lastSavedRef.current;
+    if (targetSecret !== last.secret) return false;
+    if (targetConfig.enabled !== last.config.enabled) return false;
+    if (targetConfig.clientId !== last.config.clientId) return false;
+    if (targetConfig.modelId !== last.config.modelId) return false;
+    if (targetConfig.reasoningSelection !== last.config.reasoningSelection) return false;
+    if (targetConfig.projectId !== last.config.projectId) return false;
+    if (targetConfig.approvalMode !== last.config.approvalMode) return false;
+    if (targetConfig.approvalMode === "full_access" && isFullAccessConfirmed) return false;
+    return true;
+  };
+
+  const triggerSave = async (
+    targetConfig: ChannelConfig,
+    targetSecret: string,
+    isFullAccessConfirmed: boolean,
+  ): Promise<boolean> => {
+    if (clientIdDebounceTimer.current) {
+      clearTimeout(clientIdDebounceTimer.current);
+      clientIdDebounceTimer.current = null;
+    }
+    if (secretDebounceTimer.current) {
+      clearTimeout(secretDebounceTimer.current);
+      secretDebounceTimer.current = null;
+    }
+
+    const trimmedId = targetConfig.clientId.trim();
+    const trimmedSecret = targetSecret.trim();
+
+    if (!targetConfig.modelId) {
+      setError("请选择模型。");
+      return false;
+    }
+
+    if (!trimmedId) {
+      return false;
+    }
+
+    const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
+    const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
+    const isOldSecretForDifferentClient = Boolean(
+      connection && !isSameClientAsConnection && targetSecret === connection.clientSecret,
+    );
+
+    if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
+      return false;
+    }
+
+    if (isSameAsSaved(targetConfig, targetSecret, isFullAccessConfirmed)) {
+      return false;
+    }
+
+    return executeSave(targetConfig, targetSecret, isFullAccessConfirmed);
+  };
+
+  const handleToggleEnabled = (checked: boolean) => {
+    const nextConfig = { ...config, enabled: checked };
+    setConfig(nextConfig);
+
+    const trimmedId = nextConfig.clientId.trim();
+    const trimmedSecret = secret.trim();
+    const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
+    const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
+    const isOldSecretForDifferentClient = Boolean(
+      connection && !isSameClientAsConnection && secret === connection.clientSecret,
+    );
+
+    if (checked) {
+      if (!trimmedId) {
+        setError(`请填写 ${idLabel}。`);
+        return;
+      }
+      if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
+        setError(`请填写 ${secretLabel}。`);
+        return;
+      }
+    }
+    void triggerSave(nextConfig, secret, fullAccessConfirmed);
+  };
+
+  const handleClientIdChange = (value: string) => {
+    const nextConfig = { ...config, clientId: value };
+    setConfig(nextConfig);
+    if (clientIdDebounceTimer.current) {
+      clearTimeout(clientIdDebounceTimer.current);
+    }
+    clientIdDebounceTimer.current = setTimeout(() => {
+      void triggerSave(nextConfig, secretRef.current, fullAccessConfirmedRef.current);
+    }, 400);
+  };
+
+  const handleClientIdBlur = () => {
+    if (!config.clientId.trim()) {
+      setError(`请填写 ${idLabel}。`);
+    }
+  };
+
+  const configRef = useRef(config);
+  configRef.current = config;
+
+  const secretRef = useRef(secret);
+  secretRef.current = secret;
+
+  const fullAccessConfirmedRef = useRef(fullAccessConfirmed);
+  fullAccessConfirmedRef.current = fullAccessConfirmed;
+
+  const handleSecretChange = (value: string) => {
+    setSecret(value);
+    if (secretDebounceTimer.current) {
+      clearTimeout(secretDebounceTimer.current);
+    }
+    secretDebounceTimer.current = setTimeout(() => {
+      void triggerSave(configRef.current, value, fullAccessConfirmedRef.current);
+    }, 400);
+  };
+
+  const handleSecretBlur = () => {
+    const trimmedId = config.clientId.trim();
+    const trimmedSecret = secret.trim();
+    const isSameClientAsConnection = Boolean(connection && connection.config?.clientId === trimmedId);
+    const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
+    const isOldSecretForDifferentClient = Boolean(
+      connection && !isSameClientAsConnection && secret === connection.clientSecret,
+    );
+
+    if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
+      setError(`请填写 ${secretLabel}。`);
+    }
+  };
+
+  const handleModelChange = (id: string) => {
+    const nextConfig: ChannelConfig = { ...config, modelId: id, reasoningSelection: null };
+    setConfig(nextConfig);
+    void triggerSave(nextConfig, secret, fullAccessConfirmed);
+  };
+
+  const handleReasoningChange = (selection: ChannelConfig["reasoningSelection"]) => {
+    const nextConfig: ChannelConfig = { ...config, reasoningSelection: selection ?? null };
+    setConfig(nextConfig);
+    void triggerSave(nextConfig, secret, fullAccessConfirmed);
+  };
+
+  const handleProjectChange = (projectId: string | null) => {
+    const nextConfig: ChannelConfig = { ...config, projectId };
+    setConfig(nextConfig);
+    void triggerSave(nextConfig, secret, fullAccessConfirmed);
+  };
+
+  const handleApprovalModeChange = (nextMode: ChannelConfig["approvalMode"]) => {
+    if (nextMode === config.approvalMode) return;
+    if (nextMode === "full_access") {
+      setShowFullAccessDialog(true);
+    } else {
+      const approvalMode = nextMode === "auto_review" ? "auto_review" : "manual";
+      const nextConfig: ChannelConfig = { ...config, approvalMode };
+      setConfig(nextConfig);
+      setFullAccessConfirmed(false);
+      void triggerSave(nextConfig, secret, false);
+    }
+  };
+
+  const handleConfirmFullAccess = () => {
+    setShowFullAccessDialog(false);
+    setFullAccessConfirmed(true);
+    const nextConfig: ChannelConfig = { ...config, approvalMode: "full_access" };
+    setConfig(nextConfig);
+    void triggerSave(nextConfig, secret, true);
+  };
+
   const missingProject = config.projectId && !projects.some((project) => project.id === config.projectId);
 
   return (
@@ -79,18 +345,27 @@ export function ChannelForm({
         event.preventDefault();
         if (showFullAccessDialog) return;
         setError("");
-        if (!config.modelId) { setError("请选择模型。"); return; }
-        if (!secret.trim()) {
+        if (!config.modelId) {
+          setError("请选择模型。");
+          return;
+        }
+        if (!config.clientId.trim()) {
+          setError(`请填写 ${idLabel}。`);
+          return;
+        }
+        const trimmedSecret = secret.trim();
+        const isSameClientAsConnection = Boolean(
+          connection && connection.config?.clientId === config.clientId.trim(),
+        );
+        const hasRetainedSecret = Boolean(connection?.hasSecret && isSameClientAsConnection);
+        const isOldSecretForDifferentClient = Boolean(
+          connection && !isSameClientAsConnection && secret === connection.clientSecret,
+        );
+        if ((!trimmedSecret || isOldSecretForDifferentClient) && !hasRetainedSecret) {
           setError(`请填写 ${secretLabel}。`);
           return;
         }
-        void onSave({
-          channel,
-          expectedRevision: connection?.revision ?? 0,
-          config,
-          ...(config.approvalMode === "full_access" && fullAccessConfirmed ? { fullAccessConfirmation: "full-access-v1" as const } : {}),
-          clientSecret: secret.trim(),
-        });
+        void triggerSave(config, secret, fullAccessConfirmed);
       }}
     >
       {/* 顶部单行栏：返回按钮 + 钉钉标识与连接状态 + 启用开关 + 刷新按钮 */}
@@ -133,7 +408,7 @@ export function ChannelForm({
               label={`启用${name}助理`}
               checked={config.enabled ?? false}
               disabled={busy}
-              onChange={(checked) => change("enabled", checked)}
+              onChange={handleToggleEnabled}
             />
           </div>
           {onRefresh && (
@@ -160,14 +435,20 @@ export function ChannelForm({
         </div>
       )}
 
-      <fieldset disabled={busy} className="channel-fieldset">
+      <fieldset className="channel-fieldset">
         <legend className="sr-only">{name}连接配置</legend>
 
         {/* 应用凭证卡片 */}
         <div className="channel-form-card">
           <div className="channel-form-card-header">
             <h3 className="channel-card-heading">应用凭证</h3>
-            <p className="channel-card-subheading">{channel === "feishu" ? "在飞书开放平台创建的自建应用凭证（需启用长连接）" : channel === "wecom" ? "在企业微信创建智能机器人，选择 API 模式和长连接，获取 Bot ID 与 Secret" : "在钉钉开放平台创建的企业内部应用凭证（需启用 Stream 模式）"}</p>
+            <p className="channel-card-subheading">
+              {channel === "feishu"
+                ? "在飞书开放平台创建的自建应用凭证（需启用长连接）"
+                : channel === "wecom"
+                  ? "在企业微信创建智能机器人，选择 API 模式和长连接，获取 Bot ID 与 Secret"
+                  : "在钉钉开放平台创建的企业内部应用凭证（需启用 Stream 模式）"}
+            </p>
           </div>
           <div className="channel-form-card-body">
             <div className="channel-grid-fields">
@@ -180,7 +461,8 @@ export function ChannelForm({
                   value={config.clientId}
                   autoComplete="off"
                   placeholder={`请输入 ${idLabel}`}
-                  onChange={(event) => change("clientId", event.target.value.trim())}
+                  onChange={(event) => handleClientIdChange(event.target.value)}
+                  onBlur={handleClientIdBlur}
                 />
               </div>
 
@@ -194,7 +476,8 @@ export function ChannelForm({
                     value={secret}
                     autoComplete="new-password"
                     placeholder={`请输入 ${secretLabel}`}
-                    onChange={(event) => setSecret(event.target.value)}
+                    onChange={(event) => handleSecretChange(event.target.value)}
+                    onBlur={handleSecretBlur}
                   />
                   <Tooltip content={showSecret ? "隐藏密码" : "显示密码"}>
                     <button
@@ -229,8 +512,8 @@ export function ChannelForm({
                   selectedModelId={config.modelId}
                   selection={config.reasoningSelection ?? undefined}
                   disabled={busy}
-                  onModelChange={(id) => setConfig((old) => ({ ...old, modelId: id, reasoningSelection: null }))}
-                  onChange={(selection) => change("reasoningSelection", selection ?? null)}
+                  onModelChange={handleModelChange}
+                  onChange={handleReasoningChange}
                 />
               </div>
 
@@ -240,7 +523,7 @@ export function ChannelForm({
                   <select
                     id="field-project-id"
                     value={config.projectId ?? ""}
-                    onChange={(event) => change("projectId", event.target.value || null)}
+                    onChange={(event) => handleProjectChange(event.target.value || null)}
                   >
                     <option value="">独立工作区</option>
                     {missingProject && <option value={config.projectId ?? ""}>已保存的项目不可用</option>}
@@ -259,12 +542,7 @@ export function ChannelForm({
                   <select
                     id="field-approval-mode"
                     value={config.approvalMode ?? "manual"}
-                    onChange={(event) => {
-                      const next = event.target.value as ChannelConfig["approvalMode"];
-                      if (next === config.approvalMode) return;
-                      if (next === "full_access") setShowFullAccessDialog(true);
-                      else { change("approvalMode", next); setFullAccessConfirmed(false); }
-                    }}
+                    onChange={(event) => handleApprovalModeChange(event.target.value as ChannelConfig["approvalMode"])}
                   >
                     <option value="manual">请求审批</option>
                     <option value="auto_review">替我审批</option>
@@ -282,21 +560,26 @@ export function ChannelForm({
             <span className="channel-alert-message">{error}</span>
           </div>
         )}
-
-        <div className="channel-form-actions">
-          <Button type="submit" variant="primary" size="medium" loading={busy} disabled={busy}>
-            {busy ? "正在保存…" : "保存助理配置"}
-          </Button>
-        </div>
       </fieldset>
-      <ConfirmDialog open={showFullAccessDialog} title="开启完全访问？" isDestructive busy={busy}
-        confirmLabel="开启完全访问" cancelLabel="取消"
-        description={<div className="channel-full-access-warning">
-          <p>Eidos 将不再逐项请求批准</p>
-          <p>此助理今后收到的消息都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任此助理及可向机器人发送消息的用户时开启。</p>
-        </div>}
-        onConfirm={() => { change("approvalMode", "full_access"); setFullAccessConfirmed(true); setShowFullAccessDialog(false); }}
-        onCancel={() => setShowFullAccessDialog(false)} />
+
+      <ConfirmDialog
+        open={showFullAccessDialog}
+        title="开启完全访问？"
+        isDestructive
+        busy={busy}
+        confirmLabel="开启完全访问"
+        cancelLabel="取消"
+        description={
+          <div className="channel-full-access-warning">
+            <p>Eidos 将不再逐项请求批准</p>
+            <p>
+              此助理今后收到的消息都将以当前 macOS 用户的权限读写文件、运行命令和访问网络。操作可能造成数据丢失、凭据泄露或系统设置变化，也可能修改 Eidos 自身的数据。请仅在信任此助理及可向机器人发送消息的用户时开启。
+            </p>
+          </div>
+        }
+        onConfirm={handleConfirmFullAccess}
+        onCancel={() => setShowFullAccessDialog(false)}
+      />
     </form>
   );
 }

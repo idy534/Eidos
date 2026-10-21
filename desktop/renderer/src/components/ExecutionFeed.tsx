@@ -1361,6 +1361,63 @@ function ViewImageViewer({
   );
 }
 
+function WebSearchResultsViewer({
+  toolCall,
+  item,
+  isError,
+  errorSummary,
+}: {
+  toolCall: ToolCall;
+  item: Item;
+  isError: boolean;
+  errorSummary?: string | undefined;
+}) {
+  const actions = useArtifacts();
+  if (isError) {
+    return <p className="tool-summary--error">{errorSummary || "搜索失败"}</p>;
+  }
+  if (item.status === "in_progress") {
+    return <p className="tool-web-search-empty">正在搜索中…</p>;
+  }
+
+  const resultObj = parseObject(toolCall.resultJson);
+  const dataObj = objectField(resultObj, "data");
+  const rawResults = Array.isArray(dataObj.results)
+    ? dataObj.results
+    : Array.isArray(resultObj.results)
+    ? resultObj.results
+    : [];
+  const results = rawResults.filter((r): r is Record<string, unknown> => Boolean(r) && typeof r === "object");
+
+  if (results.length === 0) {
+    return <p className="tool-web-search-empty">未找到相关网页结果</p>;
+  }
+
+  return (
+    <div className="tool-web-search-results" role="list">
+      {results.map((hit, index) => {
+        const excerpt = stringField(hit, "excerpt") || stringField(hit, "snippet") || stringField(hit, "title") || stringField(hit, "url");
+        const url = stringField(hit, "url");
+        const fullText = excerpt || stringField(hit, "title");
+        const canOpen = Boolean(url && actions?.openBrowser);
+
+        return (
+          <div
+            key={index}
+            className={`tool-web-search-item${canOpen ? " tool-web-search-item--clickable" : ""}`}
+            role="listitem"
+            title={fullText}
+            onClick={canOpen ? () => actions?.openBrowser?.(url) : undefined}
+          >
+            <span className="tool-web-search-bullet" aria-hidden="true">•</span>
+            <span className="tool-web-search-excerpt">{excerpt}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SkillReadToolItem({
   item,
   toolCall,
@@ -1688,6 +1745,7 @@ function ToolItem({
   const result = parseObject(toolCall.resultJson);
   const isDeclareOutputs = toolCall.toolName === "declare_outputs";
   const isViewImage = toolCall.toolName === "view_image";
+  const isWebSearch = toolCall.toolName === "web_search";
   const isError = Boolean(
     result.outcome === "error"
     || (typeof result.code === "string" && result.code && result.code !== "ok")
@@ -1722,6 +1780,13 @@ function ToolItem({
           <ViewImageViewer
             toolCall={toolCall}
             onOpenFile={onOpenFile}
+            isError={isError}
+            errorSummary={isError ? summary : undefined}
+          />
+        ) : isWebSearch ? (
+          <WebSearchResultsViewer
+            toolCall={toolCall}
+            item={item}
             isError={isError}
             errorSummary={isError ? summary : undefined}
           />
@@ -2055,6 +2120,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
 
   const baseLabels: Record<string, string> = {
     automation: "定时任务",
+    web_search: query ? `搜索 ${query}` : "网页搜索",
     spawn_agent: subagentName ? `创建智能体 · ${subagentName}` : "创建智能体",
     wait_agents: subagentName ? `等待智能体 · ${subagentName}` : "等待智能体",
     list_agents: subagentName ? `查询智能体 · ${subagentName}` : "查询智能体",
@@ -2074,6 +2140,8 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     ? baseLabels[toolCall.toolName]
     : isSkillRead
     ? baseLabels[toolCall.toolName]
+    : toolCall.toolName === "web_search"
+    ? baseLabels[toolCall.toolName]
     : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
     return `未执行：与尚未确认的操作冲突 ${targetLabel}`;
@@ -2089,6 +2157,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
       ? (imageFileName ? `正在查看图像 · ${imageFileName}` : "正在查看图像")
       : (imageFileName ? `已查看图像 · ${imageFileName}` : "已查看图像"),
     search_text: running ? `正在搜索 ${query || "文本"}` : `已搜索 ${query || "文本"}`,
+    web_search: running ? `正在搜索 ${query || "网页"}` : `已搜索 ${query || "网页"}`,
     write_file: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,
@@ -2232,6 +2301,16 @@ function MemoryIcon() {
   );
 }
 
+function WebSearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+      <path d="M2 12h20" />
+    </svg>
+  );
+}
+
 function DefaultToolIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -2242,6 +2321,7 @@ function DefaultToolIcon() {
 
 function toolIcon(name: string): ReactNode {
   if (name === "automation") return <AutomationsIcon />;
+  if (name === "web_search") return <WebSearchIcon />;
   if (name === "declare_outputs") return <DeclareOutputsIcon />;
   if (name === "run_shell" || name === "read_tool_output") return <ShellIcon />;
   if (name === "list_files") return <FileListIcon />;

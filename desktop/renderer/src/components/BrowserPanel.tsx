@@ -44,10 +44,41 @@ export function resolveBrowserTarget(input: string): string | undefined {
   return `https://www.google.com/search?q=${encodeURIComponent(value)}`;
 }
 
-export function BrowserPanel({ browserId, sessionId, executionKey, active, request, workspaceRoot }: {
-  browserId: string; sessionId: string; executionKey: string; active: boolean;
+export function getBrowserTabTitle(url: string): string {
+  const target = url.trim();
+  if (!target) return "新标签页";
+  try {
+    const parsed = new URL(
+      target.startsWith("http://") || target.startsWith("https://") || target.startsWith("eidos-preview://")
+        ? target
+        : `https://${target}`,
+    );
+    if (parsed.protocol === "eidos-preview:") {
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      return parts.at(-1) || "文件预览";
+    }
+    return parsed.hostname || target;
+  } catch {
+    return target;
+  }
+}
+
+export function BrowserPanel({
+  browserId,
+  sessionId,
+  executionKey,
+  active,
+  request,
+  workspaceRoot,
+  onPageStateChange,
+}: {
+  browserId: string;
+  sessionId: string;
+  executionKey: string;
+  active: boolean;
   workspaceRoot?: string;
   request?: { url: string; id: number } | undefined;
+  onPageStateChange?: (state: BrowserPageState) => void;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
@@ -69,19 +100,38 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
     const target = resolveBrowserTarget(url);
     if (!target) return;
     const token = ++generation.current;
-    setError(""); setPage((current) => ({ ...current, loading: true }));
+    addressDirty.current = false;
+    setAddress(target);
+    setError("");
+    const optimisticTitle = getBrowserTabTitle(target);
+    setPage((current) => ({ ...current, url: current.url || target, loading: true }));
+    onPageStateChange?.({ url: target, title: optimisticTitle, loading: true });
     try {
       const next = await window.eidosRuntime.openBrowser(sessionId, browserId, target, workspaceRoot);
       if (token === generation.current) {
         addressDirty.current = false;
         setPage(next);
         setAddress(next.url || target);
+        onPageStateChange?.(next);
       }
-    } catch (cause) { if (token === generation.current) { setError(userFacingError(cause)); setPage((current) => ({ ...current, loading: false })); } }
+    } catch (cause) {
+      if (token === generation.current) {
+        const message = userFacingError(cause);
+        setError(message);
+        setPage((current) => ({ ...current, loading: false }));
+        onPageStateChange?.({ url: target, title: optimisticTitle, loading: false, error: message });
+      }
+    }
   }
   function refresh(): void {
     setRefreshVersion((version) => version + 1);
-    void open(page.url);
+    void open(page.url || address);
+  }
+  function stop(): void {
+    generation.current++;
+    setPage((current) => ({ ...current, loading: false }));
+    onPageStateChange?.({ ...page, loading: false });
+    void window.eidosRuntime.stopBrowser?.(sessionId, browserId).catch(() => {});
   }
   useEffect(() => { if (request) void open(request.url); }, [request?.id, executionKey]);
 
@@ -106,6 +156,7 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
         if (!current) return;
         setPage(next);
         if (!addressDirty.current && next.url) setAddress(next.url);
+        onPageStateChange?.(next);
       }).catch(() => {});
     }, 1000);
     return () => { current = false; clearInterval(timer); };
@@ -124,9 +175,39 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
           </button>
         </Tooltip>
-        <Tooltip content="刷新">
-          <button type="button" className="browser-navigation__button browser-navigation__button--refresh" aria-label="刷新" title="刷新" disabled={!page.url || page.loading} onClick={refresh}>
-            <svg key={refreshVersion} className={refreshVersion > 0 ? "browser-navigation__refresh-icon--refreshing" : undefined} viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 10.5a8.5 8.5 0 0 0-15.2-4L3 8" /><path d="M3 4.5V8h3.5" /><path d="M3.5 13.5a8.5 8.5 0 0 0 15.2 4L21 16" /><path d="M21 19.5V16h-3.5" /></svg>
+        <Tooltip content={page.loading ? "停止加载" : "刷新"}>
+          <button
+            type="button"
+            className={`browser-navigation__button browser-navigation__button--refresh${page.loading ? " browser-navigation__button--stop" : ""}`}
+            aria-label={page.loading ? "停止加载" : "刷新"}
+            title={page.loading ? "停止加载" : "刷新"}
+            disabled={!page.loading && (!page.url && !address.trim())}
+            onClick={page.loading ? stop : refresh}
+          >
+            {page.loading ? (
+              <svg
+                className={[
+                  "browser-navigation__stop-icon",
+                  refreshVersion > 0 ? "browser-navigation__refresh-icon--refreshing" : "",
+                ].filter(Boolean).join(" ")}
+                viewBox="0 0 20 20"
+                aria-hidden="true"
+              >
+                <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            ) : (
+              <svg
+                key={refreshVersion}
+                className={refreshVersion > 0 ? "browser-navigation__refresh-icon--refreshing" : undefined}
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="M20.5 10.5a8.5 8.5 0 0 0-15.2-4L3 8" />
+                <path d="M3 4.5V8h3.5" />
+                <path d="M3.5 13.5a8.5 8.5 0 0 0 15.2 4L21 16" />
+                <path d="M21 19.5V16h-3.5" />
+              </svg>
+            )}
           </button>
         </Tooltip>
       </div>
@@ -138,8 +219,31 @@ export function BrowserPanel({ browserId, sessionId, executionKey, active, reque
         placeholder="搜索或输入网址"
       />
     </form>
+    {page.loading && (
+      <div className="browser-progress-bar" role="progressbar" aria-label="网页加载进度">
+        <div className="browser-progress-bar__indicator" />
+      </div>
+    )}
     {(error || page.error) && <p role="alert">{error || page.error}</p>}
     <div ref={viewport} className="browser-viewport">
+      {page.loading && (
+        <div className="browser-loading" role="status" aria-live="polite">
+          <div className="browser-loading__icon-wrapper" aria-hidden="true">
+            <svg viewBox="0 0 32 32" className="browser-loading__icon">
+              <circle cx="16" cy="16" r="11.5" />
+              <ellipse cx="16" cy="16" rx="4.5" ry="11.5" />
+              <path d="M4.5 16h23" />
+            </svg>
+          </div>
+          <strong className="browser-loading__title">正在连接并加载网页…</strong>
+          {address && (
+            <span className="browser-loading__url" title={address}>
+              {address}
+            </span>
+          )}
+          <span className="browser-loading__tip">外部站点加载受网络与节点速度影响，请稍候</span>
+        </div>
+      )}
       {!page.url && !page.loading && <div className="browser-empty" role="status">
         <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="11.5" /><ellipse cx="16" cy="16" rx="4.5" ry="11.5" /><path d="M4.5 16h23" /></svg>
         <strong>开始浏览</strong>

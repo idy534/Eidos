@@ -531,12 +531,6 @@
   background-position: right 0.75rem center;
 }
 
-/* Form Actions / Footer */
-.channel-form-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 0.5rem;
-}
 
 /* --------------------------------------------------------------------------
    Setup Guide Card

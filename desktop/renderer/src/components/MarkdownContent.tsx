@@ -129,7 +129,10 @@ const STREAMING_REHYPE_PLUGINS: MarkdownRehypePlugins = [
   [rehypeKatex, KATEX_REHYPE_OPTIONS] as unknown as MarkdownRehypePlugins[number],
   rehypeStreamingFade as unknown as MarkdownRehypePlugins[number],
 ];
-const REMARK_PLUGINS: MarkdownRemarkPlugins = [remarkGfm, remarkMath];
+const REMARK_PLUGINS: MarkdownRemarkPlugins = [
+  [remarkGfm, { singleTilde: false }] as unknown as MarkdownRemarkPlugins[number],
+  remarkMath,
+];
 
 function MarkdownImage({ src, alt, documentPath }: ComponentProps<"img"> & { documentPath?: string }) {
   const actions = useArtifacts();

@@ -31,6 +31,7 @@ export const IPC = {
   BROWSER_CLOSE: "browser:close",
   BROWSER_STATE: "browser:state",
   BROWSER_ANNOTATE: "browser:annotate",
+  BROWSER_STOP: "browser:stop",
   WORKSPACE_READ_FILE_PREVIEW: "workspace:read-file-preview",
   WORKSPACE_OPEN_IN_EDITOR: "workspace:open-in-editor",
   WORKSPACE_SHOW_IN_FINDER: "workspace:show-in-finder",

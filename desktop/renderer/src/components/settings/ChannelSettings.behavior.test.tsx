@@ -97,7 +97,7 @@ it("renders three available channels with DingTalk at the top", async () => {
   // 钉钉未配置时点击接入进入钉钉详情页
   await user.click(dingTalkButton);
   expect(await screen.findByRole("heading", { name: "应用凭证" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "保存助理配置" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "保存助理配置" })).not.toBeInTheDocument();
 });
 
 it("shows floating toast on refresh and supports manual close", async () => {
@@ -161,11 +161,12 @@ it("saves current options and resends the revealed secret explicitly", async () 
   expect(screen.queryByLabelText("允许的群 ConversationID")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("机器人 RobotCode")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("组织 CorpID")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
-  expect(save).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "保存助理配置" })).not.toBeInTheDocument();
+  await user.click(screen.getByLabelText("启用钉钉助理"));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
   const request = save.mock.calls[0]![0];
   expect(request.expectedRevision).toBe(2);
-  expect(request.config).toEqual(connection.config);
+  expect(request.config).toEqual({ ...connection.config, enabled: false });
   expect(request).toHaveProperty("clientSecret", "saved-dingtalk-secret");
 });
 
@@ -176,9 +177,8 @@ it("creates a connection with just app credentials and the default model and per
   await user.type(screen.getByLabelText("Client ID"), "new-app");
   await user.type(screen.getByLabelText("Client Secret"), "new-secret");
   await user.click(screen.getByLabelText("启用钉钉助理"));
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
-  await waitFor(() => expect(save).toHaveBeenCalledOnce());
-  expect(save).toHaveBeenCalledWith({
+  await waitFor(() => expect(save).toHaveBeenCalled());
+  expect(save).toHaveBeenLastCalledWith({
     channel: "dingtalk",
     expectedRevision: 0,
     clientSecret: "new-secret",
@@ -198,7 +198,7 @@ it("requires a danger confirmation before selecting full access and saves its co
   expect(screen.getByRole("button", { name: "开启完全访问" })).toHaveClass("btn--danger");
   await waitFor(() => expect(screen.getByRole("button", { name: "取消" })).toHaveFocus());
   expect(approval).toHaveValue("manual");
-  fireEvent.submit(screen.getByRole("button", { name: "保存助理配置" }).closest("form")!);
+  fireEvent.submit(approval.closest("form")!);
   expect(save).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "取消" }));
   expect(approval).toHaveValue("manual");
@@ -206,13 +206,12 @@ it("requires a danger confirmation before selecting full access and saves its co
   await user.selectOptions(approval, "full_access");
   await user.click(screen.getByRole("button", { name: "开启完全访问" }));
   expect(approval).toHaveValue("full_access");
-  expect(save).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
-  expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ fullAccessConfirmation: "full-access-v1",
-    config: expect.objectContaining({ approvalMode: "full_access" }) }));
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ fullAccessConfirmation: "full-access-v1",
+    config: expect.objectContaining({ approvalMode: "full_access" }) })));
   await user.selectOptions(approval, "auto_review");
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
-  expect(save.mock.calls[1]![0]).not.toHaveProperty("fullAccessConfirmation");
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({
+    config: expect.objectContaining({ approvalMode: "auto_review" }) })));
+  expect(save.mock.calls[save.mock.calls.length - 1]![0]).not.toHaveProperty("fullAccessConfirmation");
 });
 
 it("retains saved full access and requires confirmation again after changing to another mode", async () => {
@@ -221,10 +220,12 @@ it("retains saved full access and requires confirmation again after changing to 
   render(<ChannelForm connection={{ ...connection, config: { ...connection.config, approvalMode: "full_access" } }}
     models={[model]} projects={[]} busy={false} onSave={save} />);
   const approval = screen.getByRole("combobox", { name: "审批模式" });
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
+  await user.click(screen.getByLabelText("启用钉钉助理"));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   expect(save.mock.calls[0]![0]).not.toHaveProperty("fullAccessConfirmation");
   await user.selectOptions(approval, "auto_review");
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
   await user.selectOptions(approval, "full_access");
   expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   await user.keyboard("{Escape}");
@@ -239,11 +240,10 @@ it("requires a fresh secret when changing the app and preserves it after failure
   await user.clear(screen.getByLabelText("Client ID"));
   await user.type(screen.getByLabelText("Client ID"), "other");
   await user.clear(screen.getByLabelText("Client Secret"));
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
+  fireEvent.blur(screen.getByLabelText("Client Secret"));
   expect(await screen.findByRole("alert")).toHaveTextContent("Client Secret");
   expect(save).not.toHaveBeenCalled();
   await user.type(screen.getByLabelText("Client Secret"), "new-secret");
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenCalledOnce());
   expect(screen.getByLabelText("Client Secret")).toHaveValue("new-secret");
 });
@@ -353,23 +353,25 @@ it("saves reasoning, switches provider logos and clears the old model reasoning"
   expect(trigger.querySelector("img")).toBeInTheDocument();
   fireEvent.click(trigger);
   fireEvent.change(screen.getByRole("slider", { name: "DeepSeek 思考强度" }), { target: { value: "0" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ reasoningSelection: "none" }) })));
   fireEvent.click(screen.getByRole("button", { name: /切换模型/ }));
   fireEvent.click(screen.getByRole("radio", { name: "MiniMax，MiniMax" }));
   expect(screen.getByRole("slider", { name: "MiniMax 思考强度" })).toHaveAttribute("aria-valuetext", "启用思考");
   const nextTrigger = screen.getByRole("button", { name: /MiniMax，MiniMax.*思考强度/ });
   expect(nextTrigger.querySelector("img")?.getAttribute("src")).toBe(minimaxLogo);
-  fireEvent.click(screen.getByRole("button", { name: "保存助理配置" }));
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ config: expect.objectContaining({ modelId: "minimax", reasoningSelection: null }) })));
 });
 
 
 it.each(["feishu", "wecom"] as const)("saves %s credentials independently and requires full access confirmation", async (channel) => {
   const user = userEvent.setup();
-  const saveChannel = vi.fn().mockImplementation(async (request) => ({ state: "connecting", connection: { channel, id: channel, revision: 1, hasSecret: true, config: request.config } }));
+  const saveChannel = vi.fn().mockImplementation(async (request) => ({
+    state: "connecting",
+    connection: { channel, id: channel, revision: (request.expectedRevision ?? 0) + 1, hasSecret: true, config: request.config },
+  }));
   window.eidosRuntime = {
-    readChannel: vi.fn().mockResolvedValue({ state: "disabled" }), saveChannel,
+    readChannel: vi.fn().mockResolvedValue({ state: "disabled" }),
+    saveChannel,
     listProjects: vi.fn().mockResolvedValue({ items: [] }),
   } as unknown as EidosRuntimeAPI;
   render(<ChannelSettings modelList={{ models: [model] }} initialChannel={channel} />);
@@ -378,16 +380,14 @@ it.each(["feishu", "wecom"] as const)("saves %s credentials independently and re
   await user.type(await screen.findByLabelText(idLabel), "other-app");
   await user.type(screen.getByLabelText(secretLabel), "other-secret");
   await user.selectOptions(screen.getByLabelText("审批模式"), "full_access");
-  expect(saveChannel).not.toHaveBeenCalled();
+  expect(screen.getByRole("alertdialog", { name: "开启完全访问？" })).toBeInTheDocument();
+  expect(saveChannel).not.toHaveBeenCalledWith(expect.objectContaining({ fullAccessConfirmation: "full-access-v1" }));
   await user.click(screen.getByRole("button", { name: "取消" }));
   expect(screen.getByLabelText("审批模式")).toHaveValue("manual");
   await user.selectOptions(screen.getByLabelText("审批模式"), "full_access");
   await user.click(screen.getByRole("button", { name: "开启完全访问" }));
-  expect(saveChannel).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "保存助理配置" }));
-  await waitFor(() => expect(saveChannel).toHaveBeenCalledOnce());
-  expect(saveChannel).toHaveBeenCalledWith(expect.objectContaining({ channel, expectedRevision: 0,
+  await waitFor(() => expect(saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ channel,
     clientSecret: "other-secret", fullAccessConfirmation: "full-access-v1",
     config: expect.objectContaining({ clientId: "other-app", approvalMode: "full_access" }),
-  }));
+  })));
 });

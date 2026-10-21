@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="660" viewBox="0 0 980 660">
+<rect width="980" height="660" rx="22" fill="#f7f8fa"/>
+<text x="46" y="60" font-size="27" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="700" fill="#20262b">Eidos / Settings Icons</text>
+<text x="46" y="91" font-size="14" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#6b7280">10 SVG assets · 24×24 viewBox · currentColor · MCP official mark</text>
+<rect x="40" y="123" width="550" height="490" rx="18" fill="#ffffff" stroke="#e6e9ec"/>
+<rect x="618" y="123" width="322" height="490" rx="18" fill="#fff" stroke="#e6e9ec"/>
+<text x="66" y="159" font-size="16" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="600" fill="#252a30">图标清单</text>
+<text x="644" y="159" font-size="16" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="600" fill="#252a30">侧栏效果预览</text>
+<rect x="66" y="174" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="84" y="192" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 20v2" />
+  <path  d="M12 2v2" />
+  <path  d="M17 20v2" />
+  <path  d="M17 2v2" />
+  <path  d="M2 12h2" />
+  <path  d="M2 17h2" />
+  <path  d="M2 7h2" />
+  <path  d="M20 12h2" />
+  <path  d="M20 17h2" />
+  <path  d="M20 7h2" />
+  <path  d="M7 20v2" />
+  <path  d="M7 2v2" />
+  <rect  x="4" y="4" width="16" height="16" rx="2" />
+  <rect  x="8" y="8" width="8" height="8" rx="1" />
+</svg>
+<text x="130" y="201" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">模型</text>
+<text x="130" y="221" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">cpu</text>
+<rect x="336" y="174" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="354" y="192" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle  cx="12" cy="12" r="10" />
+  <path  d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+  <path  d="M2 12h20" />
+</svg>
+<text x="400" y="201" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">网页搜索</text>
+<text x="400" y="221" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">globe</text>
+<rect x="66" y="252" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="84" y="270" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+  <path  d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
+</svg>
+<text x="130" y="279" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">助理</text>
+<text x="130" y="299" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">messages-square</text>
+<rect x="336" y="252" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="354" y="270" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 18V5" />
+  <path  d="M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4" />
+  <path  d="M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294" />
+  <path  d="M17.996 5.125a4 4 0 012.526 5.77" />
+  <path  d="M18 18a4 4 0 002-7.465" />
+  <path  d="M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517" />
+  <path  d="M6 18a4 4 0 01-2-7.465" />
+  <path  d="M6.004 5.125a4 4 0 00-2.526 5.77" />
+</svg>
+<text x="400" y="279" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">记忆</text>
+<text x="400" y="299" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">brain</text>
+<rect x="66" y="330" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="84" y="348" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" />
+</svg>
+<text x="130" y="357" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">Plugins</text>
+<text x="130" y="377" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">puzzle</text>
+<rect x="336" y="330" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="354" y="348" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 5v16" />
+  <path  d="m16 12 2 2 4-4" />
+  <path  d="M22 6V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2h4.001A2 2 0 0022 17v-1.344" />
+</svg>
+<text x="400" y="357" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">技能</text>
+<text x="400" y="377" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">book-open-check</text>
+<rect x="66" y="408" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="84" y="426" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 8V4H8" />
+  <rect  width="16" height="12" x="4" y="8" rx="2" />
+  <path  d="M2 14h2" />
+  <path  d="M20 14h2" />
+  <path  d="M15 13v2" />
+  <path  d="M9 13v2" />
+</svg>
+<text x="130" y="435" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">智能体</text>
+<text x="130" y="455" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">bot</text>
+<rect x="336" y="408" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="354" y="426" width="28" height="28" viewBox="0 0 180 180" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g  clip-path="url(#clip0_19_13)">
+<path d="M18 84.8528L85.8822 16.9706C95.2548 7.59798 110.451 7.59798 119.823 16.9706V16.9706C129.196 26.3431 129.196 41.5391 119.823 50.9117L68.5581 102.177" stroke="currentColor" stroke-width="12" stroke-linecap="round" />
+<path d="M69.2652 101.47L119.823 50.9117C129.196 41.5391 144.392 41.5391 153.765 50.9117L154.118 51.2652C163.491 60.6378 163.491 75.8338 154.118 85.2063L92.7248 146.6C89.6006 149.724 89.6006 154.789 92.7248 157.913L105.331 170.52" stroke="currentColor" stroke-width="12" stroke-linecap="round" />
+<path d="M102.853 33.9411L52.6482 84.1457C43.2756 93.5183 43.2756 108.714 52.6482 118.087V118.087C62.0208 127.459 77.2167 127.459 86.5893 118.087L136.794 67.8822" stroke="currentColor" stroke-width="12" stroke-linecap="round" />
+</g>
+<defs ><clipPath id="clip0_19_13"><rect width="180" height="180" fill="white" /></clipPath></defs>
+</svg>
+<text x="400" y="435" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">MCP Servers</text>
+<text x="400" y="455" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">MCP 官方标识</text>
+<rect x="66" y="486" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="84" y="504" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M15 6a9 9 0 0 0-9 9V3" />
+  <circle  cx="18" cy="6" r="3" />
+  <circle  cx="6" cy="18" r="3" />
+</svg>
+<text x="130" y="513" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">Worktrees</text>
+<text x="130" y="533" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">git-branch</text>
+<rect x="336" y="486" width="252" height="58" rx="11" fill="#f7f8fa"/>
+<svg x="354" y="504" width="28" height="28" viewBox="0 0 24 24" style="color:#344b43" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="m7 11 2-2-2-2" />
+  <path  d="M11 13h4" />
+  <rect  width="18" height="18" x="3" y="3" rx="2" ry="2" />
+</svg>
+<text x="400" y="513" font-size="17" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#22282b">Runtime</text>
+<text x="400" y="533" font-size="12" font-family="'Noto Sans CJK SC', Arial, sans-serif" fill="#92999e">square-terminal</text>
+<rect x="632" y="168" width="294" height="36" rx="10" fill="#edf3ef"/>
+<svg x="649" y="176" width="19" height="19" viewBox="0 0 24 24" style="color:#246647" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 20v2" />
+  <path  d="M12 2v2" />
+  <path  d="M17 20v2" />
+  <path  d="M17 2v2" />
+  <path  d="M2 12h2" />
+  <path  d="M2 17h2" />
+  <path  d="M2 7h2" />
+  <path  d="M20 12h2" />
+  <path  d="M20 17h2" />
+  <path  d="M20 7h2" />
+  <path  d="M7 20v2" />
+  <path  d="M7 2v2" />
+  <rect  x="4" y="4" width="16" height="16" rx="2" />
+  <rect  x="8" y="8" width="8" height="8" rx="1" />
+</svg>
+<text x="682" y="191" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="600" fill="#224f3a">模型</text>
+<svg x="649" y="215" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle  cx="12" cy="12" r="10" />
+  <path  d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+  <path  d="M2 12h20" />
+</svg>
+<text x="682" y="230" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">网页搜索</text>
+<svg x="649" y="254" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+  <path  d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
+</svg>
+<text x="682" y="269" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">助理</text>
+<svg x="649" y="293" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 18V5" />
+  <path  d="M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4" />
+  <path  d="M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294" />
+  <path  d="M17.996 5.125a4 4 0 012.526 5.77" />
+  <path  d="M18 18a4 4 0 002-7.465" />
+  <path  d="M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517" />
+  <path  d="M6 18a4 4 0 01-2-7.465" />
+  <path  d="M6.004 5.125a4 4 0 00-2.526 5.77" />
+</svg>
+<text x="682" y="308" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">记忆</text>
+<svg x="649" y="332" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" />
+</svg>
+<text x="682" y="347" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">Plugins</text>
+<svg x="649" y="371" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 5v16" />
+  <path  d="m16 12 2 2 4-4" />
+  <path  d="M22 6V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2h4.001A2 2 0 0022 17v-1.344" />
+</svg>
+<text x="682" y="386" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">技能</text>
+<svg x="649" y="410" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M12 8V4H8" />
+  <rect  width="16" height="12" x="4" y="8" rx="2" />
+  <path  d="M2 14h2" />
+  <path  d="M20 14h2" />
+  <path  d="M15 13v2" />
+  <path  d="M9 13v2" />
+</svg>
+<text x="682" y="425" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">智能体</text>
+<svg x="649" y="449" width="19" height="19" viewBox="0 0 180 180" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g  clip-path="url(#clip0_19_13)">
+<path d="M18 84.8528L85.8822 16.9706C95.2548 7.59798 110.451 7.59798 119.823 16.9706V16.9706C129.196 26.3431 129.196 41.5391 119.823 50.9117L68.5581 102.177" stroke="currentColor" stroke-width="12" stroke-linecap="round" />
+<path d="M69.2652 101.47L119.823 50.9117C129.196 41.5391 144.392 41.5391 153.765 50.9117L154.118 51.2652C163.491 60.6378 163.491 75.8338 154.118 85.2063L92.7248 146.6C89.6006 149.724 89.6006 154.789 92.7248 157.913L105.331 170.52" stroke="currentColor" stroke-width="12" stroke-linecap="round" />
+<path d="M102.853 33.9411L52.6482 84.1457C43.2756 93.5183 43.2756 108.714 52.6482 118.087V118.087C62.0208 127.459 77.2167 127.459 86.5893 118.087L136.794 67.8822" stroke="currentColor" stroke-width="12" stroke-linecap="round" />
+</g>
+<defs ><clipPath id="clip0_19_13"><rect width="180" height="180" fill="white" /></clipPath></defs>
+</svg>
+<text x="682" y="464" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">MCP Servers</text>
+<svg x="649" y="488" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="M15 6a9 9 0 0 0-9 9V3" />
+  <circle  cx="18" cy="6" r="3" />
+  <circle  cx="6" cy="18" r="3" />
+</svg>
+<text x="682" y="503" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">Worktrees</text>
+<svg x="649" y="527" width="19" height="19" viewBox="0 0 24 24" style="color:#555d63" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path  d="m7 11 2-2-2-2" />
+  <path  d="M11 13h4" />
+  <rect  width="18" height="18" x="3" y="3" rx="2" ry="2" />
+</svg>
+<text x="682" y="542" font-size="15" font-family="'Noto Sans CJK SC', Arial, sans-serif" font-weight="400" fill="#394047">Runtime</text>
+</svg>

@@ -39,7 +39,7 @@ import {
   type WorkspaceFileOpenRequest,
 } from "../components/WorkspaceExplorer.js";
 import { ArtifactProvider, artifactPath, type WorkspaceFilePosition } from "../components/ArtifactContext.js";
-import { BrowserPanel } from "../components/BrowserPanel.js";
+import { BrowserPanel, getBrowserTabTitle } from "../components/BrowserPanel.js";
 import {
   WorkspaceDock,
   WorkspaceDockToggle,
@@ -1871,6 +1871,18 @@ export function AppShell({ runtime }: AppShellProps) {
                     workspaceRoot={currentSnapshot.session.worktree?.worktreeRoot ?? currentSnapshot.session.workspaceRoot}
                     active={dockOpen && activeTabId === tab.id}
                     request={browserRequest?.browserId === tab.id ? { url: browserRequest.url, id: browserRequest.id } : undefined}
+                    onPageStateChange={(pageState) => {
+                      setOpenTabs((currentTabs) => currentTabs.map((t) => {
+                        if (t.id !== tab.id) return t;
+                        const title = pageState.title?.trim() || (pageState.url ? getBrowserTabTitle(pageState.url) : t.title);
+                        if (t.title === title && t.loading === pageState.loading) return t;
+                        return {
+                          ...t,
+                          ...(title ? { title } : {}),
+                          loading: pageState.loading,
+                        };
+                      }));
+                    }}
                   />;
                   return (
                   <WorkspaceExplorer

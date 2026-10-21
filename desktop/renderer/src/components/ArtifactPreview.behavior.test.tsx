@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EidosRuntimeAPI, Item, WorkspaceFilePreview } from "../contracts.js";
 import { ArtifactImage, ArtifactProvider } from "./ArtifactContext.js";
-import { BrowserPanel, resolveBrowserTarget } from "./BrowserPanel.js";
+import { BrowserPanel, getBrowserTabTitle, resolveBrowserTarget } from "./BrowserPanel.js";
 import { LastTurnChanges } from "./LastTurnChanges.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ResultFiles, toolFilePaths } from "./ResultFiles.js";
@@ -102,6 +102,7 @@ describe("artifact previews and feedback", () => {
       releaseWorkspacePreview: vi.fn().mockResolvedValue(undefined),
       openBrowser: vi.fn().mockResolvedValue({ url: "http://localhost:3000", title: "App", loading: false }),
       closeBrowser: vi.fn().mockResolvedValue(undefined),
+      stopBrowser: vi.fn().mockResolvedValue(undefined),
       setBrowserBounds: vi.fn().mockResolvedValue(undefined),
       readBrowserState: vi.fn().mockResolvedValue({ url: "http://localhost:3000", title: "App", loading: false }),
       annotateBrowser: vi.fn().mockResolvedValue({
@@ -395,5 +396,56 @@ describe("artifact previews and feedback", () => {
     expect(screen.queryByRole("button", { name: "网页菜单" })).not.toBeInTheDocument();
     unmount();
     expect(api.closeBrowser).toHaveBeenCalledWith("session-a", "browser-1");
+  });
+
+  it("immediately populates the address input and displays loading indicators while fetching", async () => {
+    expect(getBrowserTabTitle("https://news.web.nhk/item1")).toBe("news.web.nhk");
+    expect(getBrowserTabTitle("eidos-preview://token/demo.html")).toBe("demo.html");
+    expect(getBrowserTabTitle("")).toBe("新标签页");
+
+    let resolveOpen: (value: { url: string; title: string; loading: boolean }) => void = () => {};
+    const openPromise = new Promise<{ url: string; title: string; loading: boolean }>((resolve) => {
+      resolveOpen = resolve;
+    });
+    vi.mocked(api.openBrowser).mockImplementationOnce(() => openPromise);
+
+    const onPageStateChange = vi.fn();
+    const { unmount } = render(
+      <BrowserPanel
+        browserId="browser-2"
+        sessionId="session-b"
+        executionKey="local:/workspace"
+        active
+        request={{ url: "https://news.web.nhk/item1", id: 1 }}
+        onPageStateChange={onPageStateChange}
+      />,
+    );
+
+    // Immediate feedback without waiting for openBrowser to resolve:
+    const address = screen.getByRole("textbox", { name: "网页地址" });
+    expect(address).toHaveValue("https://news.web.nhk/item1");
+    expect(screen.getByRole("progressbar", { name: "网页加载进度" })).toBeInTheDocument();
+    expect(screen.getByText("正在连接并加载网页…")).toBeInTheDocument();
+    expect(screen.getByText("https://news.web.nhk/item1")).toBeInTheDocument();
+    const stopBtn = screen.getByRole("button", { name: "停止加载" });
+    expect(stopBtn).not.toBeDisabled();
+    expect(stopBtn.querySelector(".browser-navigation__stop-icon")).toBeInTheDocument();
+    expect(onPageStateChange).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://news.web.nhk/item1",
+      title: "news.web.nhk",
+      loading: true,
+    }));
+
+    // User can click stop button (Scheme B) to cancel:
+    fireEvent.click(stopBtn);
+    expect(api.stopBrowser).toHaveBeenCalledWith("session-b", "browser-2");
+    expect(screen.queryByRole("progressbar", { name: "网页加载进度" })).not.toBeInTheDocument();
+    expect(screen.queryByText("正在连接并加载网页…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
+    expect(onPageStateChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      loading: false,
+    }));
+
+    unmount();
   });
 });

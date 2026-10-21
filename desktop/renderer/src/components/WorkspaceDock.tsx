@@ -8,7 +8,8 @@ export type WorkspaceToolKind = "text-review" | "plan" | "agent" | "review" | "t
 export interface WorkspaceTab {
   id: string;
   kind: WorkspaceToolKind;
-  title?: string;
+  title?: string | undefined;
+  loading?: boolean | undefined;
 }
 
 interface WorkspaceDockProps {
@@ -170,7 +171,17 @@ export function WorkspaceDock({
                   });
                 }}
               >
-                <span className="workspace-dock__tool-icon"><ToolIcon tool={tab.kind} /></span>
+                <span className="workspace-dock__tool-icon">
+                  {tab.loading ? (
+                    <span className="workspace-dock__tab-spinner" aria-hidden="true">
+                      <svg className="browser-navigation__spinner-icon" viewBox="0 0 16 16">
+                        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" fill="none" strokeDasharray="26" strokeDashoffset="8" strokeLinecap="round" />
+                      </svg>
+                    </span>
+                  ) : (
+                    <ToolIcon tool={tab.kind} />
+                  )}
+                </span>
                 <span>{tabLabel(tab)}</span>
               </button>
               <button

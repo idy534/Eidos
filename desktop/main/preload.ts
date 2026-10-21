@@ -119,6 +119,7 @@ const api: EidosRuntimeAPI = {
   ) => ipcRenderer.invoke(IPC.BROWSER_OPEN, sessionId, browserId, url, workspaceRoot),
   setBrowserBounds: (sessionId: string, browserId: string, bounds: import("../shared/domain-contracts.js").BrowserBounds | null) => ipcRenderer.invoke(IPC.BROWSER_BOUNDS, sessionId, browserId, bounds),
   closeBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_CLOSE, sessionId, browserId),
+  stopBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_STOP, sessionId, browserId),
   readBrowserState: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_STATE, sessionId, browserId),
   annotateBrowser: (sessionId: string, browserId: string) => ipcRenderer.invoke(IPC.BROWSER_ANNOTATE, sessionId, browserId),
   readWorkspaceFilePreview: (
