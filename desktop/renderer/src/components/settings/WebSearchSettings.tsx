@@ -68,12 +68,6 @@ export function WebSearchSettings({
           draftRef.current = value.config;
           setSaved(value);
           setDraft(value.config);
-          if (value.credentialValues) {
-            setKeys((prev) => ({
-              deepseek: { visible: prev.deepseek.visible, value: value.credentialValues?.deepseek ?? "" },
-              langsearch: { visible: prev.langsearch.visible, value: value.credentialValues?.langsearch ?? "" },
-            }));
-          }
         }
       })
       .catch(() => {
@@ -122,11 +116,15 @@ export function WebSearchSettings({
       setSaved(res);
       draftRef.current = res.config;
       setDraft(res.config);
-      if (res.credentialValues) {
-        setKeys((prev) => ({
-          deepseek: { visible: prev.deepseek.visible, value: res.credentialValues?.deepseek ?? prev.deepseek.value },
-          langsearch: { visible: prev.langsearch.visible, value: res.credentialValues?.langsearch ?? prev.langsearch.value },
-        }));
+      if (allChanges.length > 0) {
+        const changedProviders = new Set(allChanges.map((change) => change.provider));
+        setKeys((prev) => {
+          const next = { ...prev };
+          for (const provider of changedProviders) {
+            next[provider] = { ...next[provider], value: "" };
+          }
+          return next;
+        });
       }
       onShowToast?.("设置已保存", "success");
       return res;
@@ -151,12 +149,6 @@ export function WebSearchSettings({
       setSaved(value);
       draftRef.current = value.config;
       setDraft(value.config);
-      if (value.credentialValues) {
-        setKeys((prev) => ({
-          deepseek: { visible: prev.deepseek.visible, value: value.credentialValues?.deepseek ?? "" },
-          langsearch: { visible: prev.langsearch.visible, value: value.credentialValues?.langsearch ?? "" },
-        }));
-      }
       onShowToast?.("配置已刷新", "info");
     } catch {
       triggerError("网页搜索配置无法读取。请重试。");
@@ -183,17 +175,25 @@ export function WebSearchSettings({
     }
     const rawValue = keys[provider].value.trim();
     if (!draftRef.current) return;
-    const currentStored = savedRef.current?.credentialValues?.[provider] ?? "";
-    if (rawValue === currentStored && (rawValue ? savedRef.current?.credentials[provider] === "stored" : savedRef.current?.credentials[provider] !== "stored")) {
-      return;
-    }
     if (!rawValue) {
-      if (savedRef.current?.credentials[provider] === "stored") {
-        await executeSave(draftRef.current, [{ provider, action: "clear" }]);
-      }
       return;
     }
     await executeSave(draftRef.current, [{ provider, action: "set", value: rawValue }]);
+  }
+
+  async function clearKey(provider: Provider) {
+    if (!savedRef.current || !draftRef.current) return;
+    if (keyDebounceTimers.current[provider]) {
+      clearTimeout(keyDebounceTimers.current[provider]);
+      delete keyDebounceTimers.current[provider];
+    }
+    const nextConfig = draftRef.current.defaultProvider === provider
+      ? { ...draftRef.current, defaultProvider: null }
+      : draftRef.current;
+    setKey(provider, { value: "" });
+    setDraft(nextConfig);
+    draftRef.current = nextConfig;
+    await executeSave(nextConfig, [{ provider, action: "clear" }]);
   }
 
   function handleKeyChange(provider: Provider, value: string) {
@@ -421,7 +421,7 @@ export function WebSearchSettings({
                             type={key.visible ? "text" : "password"}
                             maxLength={1024}
                             value={key.value}
-                            placeholder="输入 API Key"
+                            placeholder={status === "stored" ? "已保存，留空则保留" : status === "unavailable" ? "文件不可用，输入新 Key" : "输入 API Key"}
                             onChange={(event) => handleKeyChange(provider, event.target.value)}
                             onBlur={() => void commitKeyInput(provider)}
                             onKeyDown={(event) => {
@@ -436,6 +436,7 @@ export function WebSearchSettings({
                             className="web-search-eye-btn"
                             aria-pressed={key.visible}
                             aria-label={`${key.visible ? "隐藏" : "显示"} ${names[provider]} API Key`}
+                            disabled={!key.value}
                             onClick={() => setKey(provider, { visible: !key.visible })}
                           >
                             {key.visible ? (
@@ -453,6 +454,17 @@ export function WebSearchSettings({
                             )}
                           </button>
                         </div>
+                        {(status === "stored" || status === "unavailable") && (
+                          <Button
+                            size="small"
+                            variant="ghost"
+                            className="web-search-clear-key-btn"
+                            disabled={busy}
+                            onClick={() => void clearKey(provider)}
+                          >
+                            清除已保存的 Key
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
