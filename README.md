@@ -1,25 +1,64 @@
 # Eidos
 
-Eidos 是一个面向 macOS 的桌面 Agent Runtime。Electron Renderer 通过 typed IPC 连接 Electron Main。Electron Main 通过 JSON-RPC 2.0、JSONL 和 stdio 连接 Python Runtime。Python Runtime 负责 Model、Context、Tool、Approval、Sandbox、SQLite 事实和运行恢复。
+> Give ideas an executable form.
 
-## 系统组成
+[English](README.md) · [简体中文](README.zh-CN.md)
 
-```text
-Electron Renderer
-    ↓ typed IPC
-Electron Main
-    ↓ JSON-RPC 2.0 / JSONL over stdio
-Python Runtime
-    ├── Run orchestration
-    ├── Context and Model Gateway
-    ├── Tool / Approval / Sandbox
-    ├── Plugin / Skill / MCP
-    └── SQLite persistence and events
+Eidos is a macOS desktop Agent Runtime for software work. It brings projects, sessions, models, and local workspaces into one desktop app. An agent can read code, search, edit files, run commands, and work with Git changes. The Runtime manages tool execution, approvals, sandboxing, persistence, and recovery.
+
+Eidos stores Runtime data locally. Requests go to the Provider configured by the user when a remote model service is used.
+
+## Interface preview
+
+![Eidos desktop session interface](assets/screenshots/eidos-workbench.png)
+
+*Captured from an isolated test page running the Eidos Renderer with sample session data.*
+
+## Core features
+
+- **Projects and sessions**: Work with multiple workspaces and sessions. Git projects can run locally or in a managed worktree.
+- **Code workflows**: Browse files, search text, review diffs, and run common Git operations. Checkpoints support fork and rewind.
+- **Durable Agent Runtime**: The Runtime stores Runs, Steps, tool results, and events. It handles cancellation, approval waits, and restart recovery.
+- **Models and context**: Configure model Providers. The Runtime freezes model and extension snapshots for each Run, and provides context usage and compaction.
+- **Tool permissions**: Agents can use file tools and a controlled Shell. Approval and macOS Seatbelt restrict high-risk operations.
+- **Extensions and automation**: The Runtime supports Skills, Plugins, stdio MCP, local scheduled tasks, and a DingTalk message channel.
+
+See [current capabilities](docs/current-capabilities.md) and [current limitations](docs/current-limitations.md) for details.
+
+## Architecture
+
+```mermaid
+flowchart TD
+  Renderer[Electron Renderer]
+  Preload[Context-isolated Preload<br/>typed IPC]
+  Main[Electron Main]
+  Server[RuntimeServer<br/>JSON-RPC 2.0 over stdio / JSONL]
+  Runtime[Python Runtime<br/>RunSupervisor + RuntimeEngine]
+  Model[Model Gateway + Context]
+  Tools[Tools + Approval + Seatbelt Sandbox]
+  Extensions[Skill + Plugin + MCP]
+  SQLite[(SQLite)]
+  Events[Event + Outbox]
+  Provider[Configured Model Provider]
+
+  Renderer --> Preload --> Main --> Server --> Runtime
+  Runtime --> Model
+  Runtime --> Tools
+  Runtime --> Extensions
+  Runtime --> SQLite
+  Runtime --> Events --> Main --> Renderer
+  Model --> Provider
 ```
 
-## 开发启动
+The Renderer calls Electron Main through typed IPC exposed by a context-isolated Preload. Main connects to the Python Runtime through JSON-RPC 2.0, JSONL, and stdio. The Runtime owns the Agent Loop, permission decisions, tool execution, and recovery semantics. SQLite is the single source of truth for business state.
 
-开发机需要 macOS、Node.js 22.12+、pnpm 11、Python 3.11 或 3.12，以及 [uv](https://docs.astral.sh/uv/)。
+Read [current architecture](docs/current-architecture.md) and the [architecture overview](docs/architecture-overview.html) for more details.
+
+## Install and run
+
+Eidos currently supports macOS arm64. Development requires Node.js 22.12 or later, pnpm 11, Python 3.11 or 3.12, and [uv](https://docs.astral.sh/uv/).
+
+Run these commands from the repository root:
 
 ```bash
 pnpm install
@@ -27,41 +66,27 @@ uv sync --locked
 pnpm start
 ```
 
-如果需要隔离开发数据，可以设置 `EIDOS_DATA_DIR`：
+After launch, configure a model Provider and API key in Settings to run an agent.
 
-```bash
-EIDOS_DATA_DIR=/private/tmp/eidos-dev-data pnpm start
-```
+Maintainers can run `pnpm package:mac` on Apple Silicon macOS to create a local unsigned DMG. A signed release requires Apple Developer and notarization credentials. See [DEVELOPMENT.md](DEVELOPMENT.md) for full installation, development, verification, and packaging instructions.
 
-## 验证
+## Development roadmap
 
-```bash
-pnpm check:python
-pnpm test
-pnpm build
-pnpm test:seatbelt-native
-pnpm test:electron-smoke
-```
+This roadmap describes current direction. It does not promise delivery dates.
 
-## 生成 DMG
+1. Establish evaluation baselines with real software tasks and improve long-context handling and interruption recovery.
+2. Complete Agent Shell PTY support, user Hooks, streaming tool scheduling, subagent isolation and result delivery, and browser-based visual verification.
+3. Complete the macOS arm64 signing, notarization, and release workflow. Improve checks for upgrades, backup and restore, and diagnostics.
+4. After the core workflow is stable, evaluate remote MCP and OAuth, a Plugin Marketplace, a CLI, and support for other platforms.
 
-开发者在 Apple Silicon macOS 上运行以下命令生成本地未签名 DMG：
+## Documentation
 
-```bash
-pnpm package:mac
-```
+- [Current architecture](docs/current-architecture.md)
+- [Current capabilities](docs/current-capabilities.md)
+- [Current limitations](docs/current-limitations.md)
+- [Development and verification](DEVELOPMENT.md)
+- [Documentation index](docs/README.md)
 
-正式打包需要 Apple Developer signing 和 notarization credentials：
+## License
 
-```bash
-pnpm package:mac:release
-```
-
-## 文档入口
-
-- [文档导航](docs/README.md)
-- [当前架构](docs/current-architecture.md)
-- [当前能力](docs/current-capabilities.md)
-- [当前限制](docs/current-limitations.md)
-- [宏观架构图](docs/architecture-overview.html)
-- [本地开发与验证](DEVELOPMENT.md)
+Eidos project code is licensed under the [Apache License 2.0](LICENSE). It allows use, modification, redistribution, and commercial use. Redistributors must include a copy of the license and retain applicable copyright, patent, trademark, and attribution notices. Modified files must carry notices stating that they were changed. The license includes a limited patent grant, but it does not grant trademark rights or provide warranties. Third-party dependencies and assets remain under their own licenses.
