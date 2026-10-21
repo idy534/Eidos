@@ -2106,7 +2106,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const rawImagePath = stringField(args, "path") || stringField(args, "filePath") || stringField(data, "path");
   const imageFileName = rawImagePath ? pathBasename(rawImagePath) : "";
   const path = stringField(args, "path") || stringField(args, "filePath");
-  const query = stringField(args, "query") || stringField(args, "pattern");
+  const query = stringField(args, "query") || stringField(args, "pattern") || stringField(data, "query");
   const running = status === "in_progress";
   const subagentInfo = isSubagentTool(toolCall.toolName)
     ? extractSubagentInfo(toolCall, agents)

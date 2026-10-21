@@ -14,6 +14,7 @@ _DISPLAY_ARGUMENT_FIELDS = {
     "run_shell": ("command", "cwd"),
     "write_stdin": ("chars",),
     "search_text": ("query",),
+    "web_search": ("query",),
 }
 
 

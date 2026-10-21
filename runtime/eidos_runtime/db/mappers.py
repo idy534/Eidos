@@ -75,6 +75,7 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         "search_text": (
             "query", "path", "regex", "maxResults", "includeGlobs"
         ),
+        "web_search": ("query",),
         "write_file": ("path",),
         "apply_patch": (),
         "delete_file": ("path",),

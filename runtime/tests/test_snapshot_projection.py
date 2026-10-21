@@ -27,6 +27,14 @@ def test_discovery_snapshot_keeps_scoped_arguments_and_bounded_globs() -> None:
             "ignored": "not projected",
         }),
     }) or "null")
+    web_search_arguments = json.loads(_snapshot_display_arguments({
+        "toolName": "web_search",
+        "argumentsJson": json.dumps({
+            "query": "杭州天气",
+            "count": 5,
+            "ignored": "not projected",
+        }),
+    }) or "null")
 
     assert list_arguments == {
         "maxDepth": 2,
@@ -39,6 +47,9 @@ def test_discovery_snapshot_keeps_scoped_arguments_and_bounded_globs() -> None:
         "path": "codex-rs/core",
         "query": "ConfigBuilder",
         "regex": True,
+    }
+    assert web_search_arguments == {
+        "query": "杭州天气",
     }
 
 

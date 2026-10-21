@@ -1947,4 +1947,50 @@ test("renders web_search in progress and completed with Globe icon and single-li
   assert.match(html, /class="tool-web-search-excerpt"[^>]*>预计未来3天杭州多阵雨或雷雨/);
 });
 
+test("falls back to result data.query when argumentsJson is missing in historical snapshot", () => {
+  const items: Item[] = [
+    item({
+      id: "search-restored",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-ws-restored",
+        itemId: "search-restored",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-ws-restored",
+        toolName: "web_search",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1500,
+        argumentsJson: "{}",
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          data: {
+            query: "杭州天气",
+            results: [{ excerpt: "杭州今日多云。" }],
+          },
+        }),
+      },
+    }),
+  ];
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={items}
+      runs={[{ ...run, status: "succeeded" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /已搜索 杭州天气/);
+  assert.match(html, /杭州今日多云/);
+});
+
 
