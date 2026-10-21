@@ -51,6 +51,7 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
 
 
 EXPECTED_TABLES = {
+    "web_search_settings", "run_web_search_snapshots",
     "search_documents", "search_pending", "search_index_state", "search_fts",
     "channel_connections", "channel_sessions", "channel_inbound", "channel_run_origins", "channel_deliveries",
     "scheduled_tasks", "scheduled_occurrences", "automation_run_origins",
@@ -480,6 +481,7 @@ class StorageSchemaTests(unittest.TestCase):
                 "one_running_step_per_run",
                 "steps_run_ordinal",
                 "search_documents_session",
+                "run_web_search_credential_ref",
                 "one_running_attempt_per_step",
                 "model_request_retry_index",
                 "one_running_finalization_attempt_per_run",
@@ -555,8 +557,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 33)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 32)
+        self.assertEqual(SCHEMA_VERSION, 34)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 33)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

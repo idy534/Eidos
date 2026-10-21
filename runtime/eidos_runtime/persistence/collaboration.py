@@ -284,6 +284,8 @@ class CollaborationRepository:
             queued=True, model_id=profile.model_id, model_profile=profile, work_mode=parent['work_mode'],
             approval_mode=parent['approval_mode'], extension_snapshot=json.loads(parent['extension_snapshot_json']),
             run_id=run_id, transaction_connection=connection)
+        from eidos_runtime.persistence.web_search import WebSearchRepository
+        WebSearchRepository.inherit(connection, run_id, parent["id"])
 
     def _target(self, connection: sqlite3.Connection, run_id: str, agent_id: str) -> sqlite3.Row:
         row = connection.execute('SELECT * FROM agent_delegations WHERE parent_run_id=? AND id=?', (run_id, agent_id)).fetchone()

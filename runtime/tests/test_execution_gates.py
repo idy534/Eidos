@@ -124,6 +124,94 @@ def test_cleanup_distinguishes_a_natural_exit_from_stopping_live_work(execution)
     assert manager.cleanup(close=False) is True
 
 
+@pytest.mark.parametrize("unknown_result", [False, True])
+def test_successful_completion_stops_owned_shell_without_failing_run(execution, unknown_result):
+    e = execution
+    if unknown_result:
+        _uncertain(e)
+    result = _execute(e, (
+        ModelToolCall("owned-shell", "run_shell", {"command": "sleep 30", "yieldTimeMs": 250}),
+    ), threading.Event())
+    assert not result.error_fingerprints, _results(e)
+    command = next(item for item in e.store.read_session_snapshot(e.run["sessionId"])["items"]
+                   if item["kind"] == "command_execution")
+    shell = json.loads(command["toolCall"]["resultJson"])["data"]["sessionId"]
+    step = _step(e)
+    item = e.store.create_assistant_item(e.run["id"], step.step_index)
+    e.store.append_item_content(item["id"], "The requested work is complete.")
+    engine = RuntimeEngine(e.store, None, lambda _event: None)
+    action = engine._settle_sample_boundary(
+        e.run["id"], LoopDecision(action=LoopAction.COMPLETE),
+        SimpleNamespace(assistant_item=item), SimpleNamespace(status="no_tools"),
+        None, e.resources, None, threading.Event(),
+    )
+    assert action is SampleBoundaryAction.RETURN
+    completed = e.store.read_run(e.run["id"])
+    assert completed["status"] == "succeeded"
+    assert "errorCode" not in completed
+    assert "termination" not in completed
+    assert e.store.read_session(e.run["sessionId"])["taskStatus"] == "completed"
+    assert not e.resources.shell_process_manager.is_running(shell)
+    command_result = json.loads(e.store.read_item(command["id"])["toolCall"]["resultJson"])
+    assert command_result["data"]["executionStatus"] == "exited"
+    assert command_result["data"]["termination"] == "canceled"
+    if unknown_result or command_result.get("reconciliationRequired", False):
+        assert completed["reconciliationRequired"]
+    assert e.store.connection.execute(
+        "SELECT status FROM execution_segments WHERE run_id = ? ORDER BY ordinal DESC LIMIT 1",
+        (e.run["id"],),
+    ).fetchone()["status"] == "completed"
+
+
+def test_cleanup_failure_prevents_successful_completion(execution, monkeypatch):
+    from eidos_runtime.runtime.shell_process_manager import ShellSessionFinalizationError
+
+    e = execution
+    step = _step(e)
+    item = e.store.create_assistant_item(e.run["id"], step.step_index)
+
+    def fail_cleanup(**_kwargs):
+        raise ShellSessionFinalizationError("shell_result_commit_failed")
+
+    engine = RuntimeEngine(e.store, None, lambda _event: None)
+    with monkeypatch.context() as patch:
+        patch.setattr(e.resources.shell_process_manager, "cleanup", fail_cleanup)
+        with pytest.raises(ShellSessionFinalizationError):
+            engine._settle_sample_boundary(
+                e.run["id"], LoopDecision(action=LoopAction.COMPLETE),
+                SimpleNamespace(assistant_item=item), SimpleNamespace(status="no_tools"),
+                None, e.resources, None, threading.Event(),
+            )
+    assert e.store.read_run(e.run["id"])["status"] == "running"
+    assert e.store.read_item(item["id"])["status"] == "in_progress"
+
+
+def test_cancel_during_shell_cleanup_still_wins_over_completion(execution, monkeypatch):
+    e = execution
+    _start_shell(e)
+    step = _step(e)
+    item = e.store.create_assistant_item(e.run["id"], step.step_index)
+    cleanup = e.resources.shell_process_manager.cleanup
+
+    def cleanup_then_cancel(**kwargs):
+        stopped = cleanup(**kwargs)
+        e.store.request_cancel_committed(e.run["id"])
+        return stopped
+
+    engine = RuntimeEngine(e.store, None, lambda _event: None)
+    with monkeypatch.context() as patch:
+        patch.setattr(e.resources.shell_process_manager, "cleanup", cleanup_then_cancel)
+        with pytest.raises(RuntimeCancelled):
+            engine._settle_sample_boundary(
+                e.run["id"], LoopDecision(action=LoopAction.COMPLETE),
+                SimpleNamespace(assistant_item=item), SimpleNamespace(status="no_tools"),
+                None, e.resources, None, threading.Event(),
+            )
+    current = e.store.read_run(e.run["id"])
+    assert current["status"] == "running"
+    assert current["cancelRequestedAt"] is not None
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Secure file commit helper requires macOS descriptor identity")
 def test_live_shell_allows_actual_file_commit_and_second_shell(execution):
     e = execution

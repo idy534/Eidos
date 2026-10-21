@@ -1,3 +1,5 @@
+import { webSearchOfficialUrl } from "./web-search-links.js";
+import { isWebSearchReadRequest, isWebSearchSaveRequest } from "../shared/web-search.js";
 import type { CustomProviderRequest } from "../shared/custom-models.js";
 import { isChannelSaveRequest, isChannelReadRequest } from "../shared/channels.js";
 import { isSessionForkRequest } from "../shared/session-fork.js";
@@ -602,6 +604,20 @@ ipcMain.handle(IPC.WORKSPACE_SELECT, async () => {
 });
 
 ipcMain.handle(IPC.PROJECT_LIST, () => clientOrThrow().listProjects());
+ipcMain.handle(IPC.WEB_SEARCH_READ, (_event, request: unknown) => {
+  const value = request ?? {};
+  if (!isWebSearchReadRequest(value)) throw new Error("网页搜索读取参数无效。");
+  return clientOrThrow().readWebSearch(value);
+});
+ipcMain.handle(IPC.WEB_SEARCH_SAVE, (_event, request: unknown) => {
+  if (!isWebSearchSaveRequest(request)) throw new Error("网页搜索配置无效，请检查各项参数。");
+  return clientOrThrow().saveWebSearch(request);
+});
+ipcMain.handle(IPC.WEB_SEARCH_OFFICIAL_PAGE, (event, request: unknown) => {
+  previewOwner(event);
+  return electronShell.openExternal(webSearchOfficialUrl(request));
+});
+
 ipcMain.handle(IPC.CHANNEL_READ, (_event, request: unknown) => {
   const value = request === undefined ? {} : request;
   if (!isChannelReadRequest(value)) throw new Error("助理类型无效，请刷新后重试。");

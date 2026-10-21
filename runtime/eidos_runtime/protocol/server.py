@@ -16,6 +16,10 @@ from pydantic import BaseModel, ValidationError
 from eidos_runtime import __version__
 from eidos_runtime.application.channels import ChannelApplication
 from eidos_runtime.domain.channels import ChannelError
+from eidos_runtime.application.web_search import WebSearchApplication
+from eidos_runtime.infrastructure.secret_files import SecretFiles
+from eidos_runtime.persistence.web_search import WebSearchRepository
+from eidos_runtime.protocol.web_search import WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse
 from eidos_runtime.protocol.channels import ChannelReadRequest, ChannelSaveRequest, ChannelResponse
 from eidos_runtime.infrastructure.channel_secrets import ChannelSecrets
 from eidos_runtime.persistence.channels import ChannelRepository
@@ -869,6 +873,8 @@ class RuntimeServer:
         handlers: tuple[
             tuple[str, type[BaseModel], type[method_dtos.MethodResultDto], Any], ...
         ] = (
+            ("webSearch/read", WebSearchReadRequest, WebSearchResponse, lambda _id, _request: self._web_search_application().read()),
+            ("webSearch/save", WebSearchSaveRequest, WebSearchResponse, lambda _id, request: self._web_search_save(request)),
             ("channel/read", ChannelReadRequest, ChannelResponse, lambda _id, request: self._channel_read(request)),
             ("channel/save", ChannelSaveRequest, ChannelResponse, lambda _id, request: self._channel_save(request)),
             (
@@ -1475,6 +1481,7 @@ class RuntimeServer:
             ),
         )
         draining_blocked = {
+            "webSearch/save",
             "channel/save",
             "schedule/execute", "schedule/runNow",
             "run/updateQueued",
@@ -1501,7 +1508,7 @@ class RuntimeServer:
             "mcp/remove",
         }
         draining_blocked.update(method for method, _request, _response in MEMORY_METHODS if method not in {"memory/list", "memory/get", "memory/export"})
-        reconfiguration_blocked = {"channel/save", "run/start", "schedule/execute", "schedule/runNow"}
+        reconfiguration_blocked = {"webSearch/save", "channel/save", "run/start", "schedule/execute", "schedule/runNow"}
         for name, request_type, response_type, handler in handlers:
             registry.register(
                 MethodRegistration(
@@ -1634,6 +1641,17 @@ class RuntimeServer:
     def _planning_application(self) -> PlanningApplication:
         return PlanningApplication(self.store, self.supervisor.schedule_next,
                                    self.supervisor.events.deliver_pending, self._scan_text)
+
+    def _web_search_application(self) -> WebSearchApplication:
+        directory = self.store.database.data_directory
+        if directory is None:
+            raise ApplicationError("INVALID_STATE", "数据目录尚未就绪。")
+        return WebSearchApplication(WebSearchRepository(self.store.database), SecretFiles(directory / "web-search-secrets"))
+
+    def _web_search_save(self, request: WebSearchSaveRequest) -> WebSearchResponse:
+        response = self._web_search_application().save(request)
+        self.supervisor.events.deliver_pending()
+        return response
 
     def _channel_read(self, request: ChannelReadRequest) -> ChannelResponse:
         if self.channel_service is None:

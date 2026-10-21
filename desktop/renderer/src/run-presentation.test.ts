@@ -23,9 +23,10 @@ test("distinguishes request timeout, account permission, and unknown model failu
   assert.doesNotMatch(terminalRunPresentation({ status: "failed", errorCode: "SECRET_UNKNOWN_ERROR" })!.label, /SECRET|网络|重试/);
 });
 
-test("reports unknown operation results independently of lifecycle status", () => {
-  for (const status of ["failed", "stopped", "interrupted", "canceled"] as const) {
-    assert.match(terminalRunPresentation({ status, reconciliationRequired: true })!.label, /部分操作结果尚未确认/);
+test("keeps operation uncertainty out of the task ending notice", () => {
+  for (const status of ["succeeded", "failed", "stopped", "interrupted", "canceled"] as const) {
+    assert.deepEqual(terminalRunPresentation({ status, reconciliationRequired: true }),
+      terminalRunPresentation({ status, reconciliationRequired: false }));
   }
   assert.doesNotMatch(terminalRunPresentation({ status: "interrupted" })!.label, /重新启动|未能确认/);
   assert.equal(terminalRunPresentation({ status: "running" }), undefined);

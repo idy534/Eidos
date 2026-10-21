@@ -1,3 +1,4 @@
+import { isWebSearchResponse, type WebSearchReadRequest, type WebSearchSaveRequest, type WebSearchResponse } from "../shared/web-search.js";
 import { isSearchResponse, isFileFindResponse, type SearchRequest, type SearchResponse, type ReadAroundRequest, type FileFindRequest } from "../shared/search.js";
 import { isCustomModelSettings, isCustomProviderResult } from "../shared/custom-models.js";
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
@@ -61,6 +62,8 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "STORAGE_HEALTH_ONLY",
   "OPERATION_ID_REUSED",
   "OPERATION_IN_PROGRESS",
+  "WEB_SEARCH_CONFIG_CONFLICT",
+  "WEB_SEARCH_CREDENTIALS_UNAVAILABLE",
   "INTERNAL_ERROR",
   "SENSITIVE_CONTENT_REJECTED",
   "SENSITIVE_SCAN_FAILED",
@@ -490,6 +493,14 @@ export class RuntimeClient {
 
   listProjects(): Promise<ProjectListResult> {
     return this.validatedRequest("project/list", {}, isProjectListResult);
+  }
+
+  readWebSearch(request: WebSearchReadRequest = {}): Promise<WebSearchResponse> {
+    return this.validatedRequest("webSearch/read", { ...request }, isWebSearchResponse);
+  }
+
+  saveWebSearch(request: WebSearchSaveRequest): Promise<WebSearchResponse> {
+    return this.validatedRequest("webSearch/save", { ...request }, isWebSearchResponse);
   }
 
   readChannel(request: ChannelReadRequest = {}): Promise<ChannelResponse> {

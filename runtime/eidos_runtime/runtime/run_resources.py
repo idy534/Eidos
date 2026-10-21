@@ -246,9 +246,24 @@ class RunResources:
                 task = self.store.automations.repository.read(automation_origin.automation_id)
                 if task.status == "ACTIVE" and task.kind == "cron":
                     automation_tools = (automation_entry(self.store.automations, self_pause_only=True),)
+        from eidos_runtime.infrastructure.secret_files import SecretFiles
+        from eidos_runtime.persistence.web_search import WebSearchRepository
+        from eidos_runtime.tools.web_search import web_search_entry
+        search_snapshot = WebSearchRepository(self.store.database).snapshot(self.run_id)
+        search_tools = ()
+        directory = self.store.database.data_directory
+        if search_snapshot is not None and directory is not None and self.async_kernel is not None:
+            secrets = SecretFiles(directory / "web-search-secrets")
+            try:
+                secrets.read(search_snapshot.credential_ref)
+            except (OSError, ValueError):
+                pass
+            else:
+                search_tools = (web_search_entry(search_snapshot, secrets),)
         base = ToolRegistry.build(
             builtin_entries=(
                 *automation_tools,
+                *search_tools,
                 *self.tool_executor.registry.entries,
                 read_tool_output_entry(self.store, self.run_id, self.shell_process_manager),
                 declare_outputs_entry(self.tool_executor.workspace),

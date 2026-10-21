@@ -1,5 +1,7 @@
 # Eidos 当前能力
 
+用户可以在“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch，并手动勾选默认服务。两家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置，搜索继续使用现有审批、Durable Intent、取消和有界结果投影。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](current-web-search.md)。
+
 Eidos 已增加钉钉应用机器人接入。用户可以在设置的“渠道”页配置应用凭证、模型、项目和审批模式。Runtime 默认接收单聊文字消息，群聊需要 @ 机器人，系统不设置用户和群白名单。渠道支持经 Desktop 二次确认并保存的完全访问模式，后续消息使用已保存的授权。Runtime 使用普通 Session / Run 执行，并向原会话回复。真实单聊和有效群 @ 已验证，完全访问的渠道到 Run 执行由定向集成测试覆盖；长期重连仍待验收。配置和边界见 [当前渠道接入](current-channels.md)。
 
 本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](current-automations.md)。
@@ -531,7 +533,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 - Run 启动捕获当前可用 Repository generation；首次索引由已有 Workspace watcher 所有者构建，缺少索引时模型可使用文件和搜索工具，不等待索引就绪。
 - stage、commit、fetch、push 不再因当前 Session 有活动 Run 而禁用；切换分支、创建分支、merge、rebase、pull 仍保留工作树生命周期互斥及 Git 原有版本和锁检查。
 - Plan 可以直接说明调查结论或阻塞原因，无需为了结束答复伪造计划。提交可审阅计划仍由 `write_plan` 保存，必要的子任务依赖由 Runtime 等待。
-- Run 收尾仍终止其自有进程。只有实际终止尚存活的进程才记录 `active_shell_stopped`，不会因为清理前的旧状态误判自然退出的命令。
+- Run 正常收尾仍终止其自有进程。清理成功后，Run 和执行段均按完成提交；系统不再因为停止了存活命令而记为中断或失败。命令终止情况和未知结果保留在工具记录中，真实清理失败仍返回错误。启动恢复会按已提交的完整答复修正旧版仅因 `active_shell_stopped` 中断的记录，并保留取消、未完成任务和未知结果事实。
 - 全部保留、调整和移除项见 [执行门控清单](current-execution-gates.md)。
 
 ### 交互与资源门禁细化（PR #103）

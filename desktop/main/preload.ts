@@ -1,3 +1,4 @@
+import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "../shared/web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "../shared/custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "../shared/channels.js";
 import type { MemoryMethods } from "../shared/memory.js";
@@ -158,6 +159,9 @@ const api: EidosRuntimeAPI = {
     return () => ipcRenderer.removeListener(IPC.TERMINAL_EXIT_EVENT, listener);
   },
 
+  readWebSearch: (request: WebSearchReadRequest = {}): Promise<WebSearchResponse> => ipcRenderer.invoke(IPC.WEB_SEARCH_READ, request),
+  saveWebSearch: (request: WebSearchSaveRequest): Promise<WebSearchResponse> => ipcRenderer.invoke(IPC.WEB_SEARCH_SAVE, request),
+  openWebSearchOfficialPage: (request: WebSearchOfficialPageRequest): Promise<void> => ipcRenderer.invoke(IPC.WEB_SEARCH_OFFICIAL_PAGE, request),
   readChannel: (request: ChannelReadRequest = {}): Promise<ChannelResponse> => ipcRenderer.invoke(IPC.CHANNEL_READ, request),
   saveChannel: (request: ChannelSaveRequest): Promise<ChannelResponse> => ipcRenderer.invoke(IPC.CHANNEL_SAVE, request),
   automation: (request: AutomationExecuteRequest): Promise<AutomationResponse> => ipcRenderer.invoke(IPC.AUTOMATION_EXECUTE, request),

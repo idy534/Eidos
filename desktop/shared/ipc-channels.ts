@@ -6,6 +6,9 @@
  */
 
 export const IPC = {
+  WEB_SEARCH_READ: "web-search:read",
+  WEB_SEARCH_SAVE: "web-search:save",
+  WEB_SEARCH_OFFICIAL_PAGE: "web-search:official-page",
   CHANNEL_READ: "channel:read",
   CHANNEL_SAVE: "channel:save",
   AUTOMATION_EXECUTE: "automation:execute",

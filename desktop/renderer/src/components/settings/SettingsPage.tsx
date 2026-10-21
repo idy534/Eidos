@@ -17,6 +17,7 @@ import { SkillSettings } from "./SkillSettings.js";
 import { McpSettings } from "./McpSettings.js";
 import { RuntimeSettings } from "./RuntimeSettings.js";
 import { MemorySettings } from "./MemorySettings.js";
+import { WebSearchSettings } from "./WebSearchSettings.js";
 import { ChannelSettings } from "./ChannelSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
 import { AgentSettings } from "./AgentSettings.js";
@@ -97,7 +98,7 @@ export function SettingsPage({
     setToasts((prev) => [...prev, { id, type, message }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, 3500);
   }
 
   const storageReady = runtime.state === "ready" && runtime.storageHealth.state === "ready";
@@ -106,6 +107,7 @@ export function SettingsPage({
   const mcpHasError = mcpServers.some((s) => Boolean(s.errorCode));
   const categories: SettingsCategoryItem[] = [
     { id: "model", label: "模型" },
+    { id: "web_search", label: "网页搜索" },
     { id: "channels", label: "助理" },
     { id: "memory", label: "记忆" },
     { id: "plugins", label: "Plugins", count: plugins.length },
@@ -157,6 +159,7 @@ export function SettingsPage({
               <p className="error-banner" role="alert">{extensionError}</p>
             )}
 
+            {activeCategory === "web_search" && (storageReady ? <WebSearchSettings onShowToast={showToast}/> : <p role="alert">Runtime 尚未就绪。</p>)}
             {activeCategory === "channels" && (storageReady ? <ChannelSettings modelList={modelList}/> : <p role="alert">Runtime 尚未就绪。</p>)}
             {activeCategory === "memory" && storageReady && <MemorySettings sessionId={sessionId} onOpenSource={onOpenMemorySource}/>}
             {activeCategory === "memory" && !storageReady && <p role="alert">Runtime 尚未就绪。</p>}
@@ -219,7 +222,11 @@ export function SettingsPage({
       {toasts.length > 0 && (
         <div className="settings-toast-container" aria-live="polite">
           {toasts.map((toast) => (
-            <div key={toast.id} className={`settings-toast settings-toast--${toast.type}`}>
+            <div
+              key={toast.id}
+              className={`settings-toast settings-toast--${toast.type}`}
+              role={toast.type === "error" ? "alert" : "status"}
+            >
               <span className="toast-icon">
                 {toast.type === "success" ? "✓" : toast.type === "error" ? "✕" : "ℹ"}
               </span>

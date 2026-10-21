@@ -1,3 +1,4 @@
+import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "./web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "./custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "./channels.js";
 import type { SessionForkRequest } from "./session-fork.generated.js";
@@ -84,6 +85,9 @@ export interface EidosRuntimeAPI {
   readWorkspaceFileForFind(request: import("./search.js").FileFindRequest): Promise<WorkspaceFilePreview>;
   searchSessions(request: import("./search.js").SearchRequest): Promise<import("./search.js").SearchResponse>;
   readSessionAround(request: import("./search.js").ReadAroundRequest): Promise<SessionSnapshot>;
+  readWebSearch(request?: WebSearchReadRequest): Promise<WebSearchResponse>;
+  saveWebSearch(request: WebSearchSaveRequest): Promise<WebSearchResponse>;
+  openWebSearchOfficialPage(request: WebSearchOfficialPageRequest): Promise<void>;
   readChannel(request?: ChannelReadRequest): Promise<ChannelResponse>;
   saveChannel(request: ChannelSaveRequest): Promise<ChannelResponse>;
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;

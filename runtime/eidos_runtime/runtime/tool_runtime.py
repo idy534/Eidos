@@ -35,6 +35,7 @@ from eidos_runtime.runtime.approval import (
     ApprovalCoordinator,
     ApprovalOutcome,
 )
+from eidos_runtime.tools.web_search import WebSearchToolRuntime
 from eidos_runtime.runtime.async_kernel import (
     AsyncKernelClosedError,
     RuntimeAsyncKernel,
@@ -1700,6 +1701,13 @@ class ToolCallRuntime:
                 diff_hash=data.get("workspaceDiffHash"),
             )
         return self.shell_runtime.execute(run_id, item, call, cancel, runtime)
+
+    def invoke_web_search(
+        self, runtime: WebSearchToolRuntime, run_id: str, item: dict[str, object],
+        call: ModelToolCall, cancel: threading.Event,
+    ) -> HandlerOutcome:
+        from eidos_runtime.runtime.web_search import invoke_web_search
+        return invoke_web_search(self, runtime, run_id, item, call, cancel)
 
     def invoke_external(
         self, runtime: ExternalToolRuntime, run_id: str,

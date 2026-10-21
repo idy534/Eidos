@@ -1409,7 +1409,7 @@ class ExecutionRepository(Repository):
         return self.complete_assistant_and_run_committed(item_id, run_id).value
 
     def complete_assistant_and_run_committed(
-        self, item_id: str, run_id: str, *, shell_stopped: bool = False,
+        self, item_id: str, run_id: str, *,
         expected_collaboration: CollaborationState | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         with self.lock, self._connection() as connection:
@@ -1448,8 +1448,6 @@ class ExecutionRepository(Repository):
                 current = CollaborationRepository(self.database).state_in_connection(connection, run_id)
                 if current != expected_collaboration:
                     raise RunCompletionDeferred("collaboration_changed")
-            interrupted = shell_stopped
-            reason = "active_shell_stopped" if shell_stopped else None
             item_update = connection.execute(
                 """
                 UPDATE items SET status = 'completed', completed_at = ?
@@ -1463,9 +1461,9 @@ class ExecutionRepository(Repository):
                 connection,
                 run_id,
                 frozenset({SegmentStatus.RUNNING}),
-                SegmentStatus.FAILED if interrupted else SegmentStatus.COMPLETED,
+                SegmentStatus.COMPLETED,
                 now,
-                reason or "run_succeeded",
+                "run_succeeded",
             )
             item_event = append_event(
                 connection,
@@ -1481,8 +1479,8 @@ class ExecutionRepository(Repository):
                 connection,
                 run_id,
                 frozenset({RunStatus.RUNNING}),
-                RunStatus.INTERRUPTED if interrupted else RunStatus.SUCCEEDED,
-                reason,
+                RunStatus.SUCCEEDED,
+                None,
             )
         item = self.read_item(item_id)
         return CommittedMutation(

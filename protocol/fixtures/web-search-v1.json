@@ -1,0 +1,87 @@
+{
+  "validReadRequests": [
+    {}
+  ],
+  "invalidReadRequests": [
+    {
+      "apiKey": "leak"
+    }
+  ],
+  "validRequests": [
+    {
+      "expectedRevision": 0,
+      "config": {}
+    },
+    {
+      "expectedRevision": 1,
+      "config": {
+        "defaultProvider": "deepseek"
+      },
+      "credentialChanges": [
+        {
+          "provider": "deepseek",
+          "action": "set",
+          "value": "fixture-key"
+        }
+      ]
+    }
+  ],
+  "invalidRequests": [
+    {
+      "expectedRevision": -1,
+      "config": {}
+    },
+    {
+      "expectedRevision": 0,
+      "config": {
+        "defaultProvider": "duckduckgo"
+      }
+    },
+    {
+      "expectedRevision": 0,
+      "config": {
+        "deepseek": {
+          "defaultCount": 51
+        }
+      }
+    },
+    {
+      "expectedRevision": 0,
+      "config": {},
+      "credentialChanges": [
+        {
+          "provider": "langsearch",
+          "action": "clear",
+          "value": "forbidden"
+        }
+      ]
+    }
+  ],
+  "validResponses": [
+    {
+      "revision": 0,
+      "config": {
+        "defaultProvider": null
+      },
+      "credentials": {
+        "deepseek": "missing",
+        "langsearch": "stored"
+      }
+    }
+  ],
+  "invalidResponses": [
+    {
+      "revision": 0,
+      "config": {},
+      "credentials": {},
+      "apiKey": "leak"
+    },
+    {
+      "revision": 0,
+      "config": {},
+      "credentials": {
+        "deepseek": "connected"
+      }
+    }
+  ]
+}

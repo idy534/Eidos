@@ -59,7 +59,6 @@ const messages: Record<string, string> = {
   SKILL_SNAPSHOT_INVALID: "任务使用的技能已变化或无法读取",
   INTERNAL_ERROR: "Eidos 内部错误导致任务失败",
   RUNTIME_INTERRUPTED: "任务执行已中断",
-  active_shell_stopped: "任务已结束，仍在运行的命令已停止",
 };
 
 const toolNames: Record<string, string> = {
@@ -90,27 +89,18 @@ function failureMessage(run: RunOutcome): string {
 }
 
 export function terminalRunPresentation(run: RunOutcome): RunStatusPresentation | undefined {
-  let presentation: RunStatusPresentation;
   switch (run.status) {
     case "succeeded":
       return { label: "已完成", tone: "success" };
     case "failed":
-      presentation = { label: failureMessage(run), tone: "error" };
-      break;
+      return { label: failureMessage(run), tone: "error" };
     case "stopped":
-      presentation = { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务已停止", tone: "warning" };
-      break;
+      return { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务已停止", tone: "warning" };
     case "interrupted":
-      presentation = { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务执行已中断", tone: "warning" };
-      break;
+      return { label: messages[run.termination?.reason ?? run.stopReason ?? ""] ?? "任务执行已中断", tone: "warning" };
     case "canceled":
-      presentation = { label: "任务已取消", tone: "neutral" };
-      break;
+      return { label: "任务已取消", tone: "neutral" };
     default:
       return undefined;
   }
-  if (run.reconciliationRequired) {
-    presentation.label += "；部分操作结果尚未确认，请查看操作记录";
-  }
-  return presentation;
 }

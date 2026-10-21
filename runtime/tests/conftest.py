@@ -131,6 +131,7 @@ INTEGRATION_FILES = frozenset(
         "test_events_operations.py",
         "test_execution_attempt_persistence.py",
         "test_execution_gates.py",
+        "test_shell_completion_recovery.py",
         "test_extension_storage.py",
         "test_git_backend.py",
         "test_git_observation_integrity.py",

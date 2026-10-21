@@ -1,5 +1,7 @@
 # Eidos 当前架构
 
+网页搜索使用 `typed IPC → webSearch/read、webSearch/save → WebSearchApplication → WebSearchRepository / SecretFiles`。Schema v34 保存配置和 Run 搜索快照。RunResources 按用户明确选择的默认服务发布内置 `web_search`。搜索经过现有 Controller 的审批和 Durable Intent，再由 RuntimeAsyncKernel 托管官方 HTTPS 请求。网络等待不持有 Run 的提交窗口，搜索不增加 Shell 网络 Grant，也不自动切换服务。具体字段、迁移和结果边界见[当前网页搜索](current-web-search.md)。
+
 钉钉渠道使用 `Stream SDK → ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复 → HTTPS OpenAPI`。配置沿用 typed IPC 和 stdio JSON-RPC。渠道服务由现有 AnyIO Kernel 与 Supervisor 管理，准备使用现有 managed task。Schema v30 保存渠道配置、映射、来源和投递事实。具体边界见 [当前渠道接入](current-channels.md)。
 
 本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](current-automations.md)。
@@ -179,11 +181,13 @@ Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归
 
 正常 assistant-only 完成调用在 SQLite 写事务中检查取消、input_mailbox、活动子 Run 与原采样协作投影。事务拒绝过期完成后，Engine 保存有效回答并重新构建 Context，或进入已有 waiting_agents；这些控制事实不依赖额外模型判分。正常无工具 follow-up 先完成 Item/Step，取消在采样边界优先处理。合法受管轮询对 LoopGuard 为中性，不覆盖先前收敛证据。
 
+正常完成前，Runtime 仍清理该 Run 的自有 Shell。清理成功后，Run 和执行段保持完成状态，不因停止了存活命令而降为中断或失败。工具结果继续保留命令终止情况和未知副作用；真实清理失败仍交给基础设施错误路径。启动恢复会修正旧版仅因 `active_shell_stopped` 中断、最终完整答复已提交且没有取消、待消费输入或活动子任务的记录。修正与 Event/Outbox 在同一事务提交，保留原结束时间和工具事实，不重新执行操作。
+
 Runtime 不再发送 `_eidos_assess_completion` 模型审查。完成审查的请求、候选答复去重、反馈注入和 `completion_unconfirmed` 生产路径已移除。Loop 保留 Provider 的 `needs_follow_up`、`end_turn` 和消息 phase；文件交付仍来自 `declare_outputs` 的实际核验结果。旧 ModelProfile 的 `completion_check_version` 与旧 completionCheck Event 只用于兼容读取，不能重新启用审查。
 
 Run 的失败、停止和中断使用统一的 `termination` 记录解释结束原因。记录只保存阶段、原因码，以及必要的 Step、ModelAttempt、工具名称、参数位置和 HTTP 状态。Runtime 在结束状态与 Event/Outbox 的同一事务中保存该记录。模型失败绑定当前 Step 的最后一次失败 Attempt；Repository 在提交时核对所属 Run 和状态，不能引用其他任务或已成功的请求。该记录不增加第二套状态机，也不改变审批、取消、重试和 Reconciliation 决策。
 
-Desktop 的主任务提示和子 Agent 提示使用同一份中文文案规则。界面优先使用具体原因，再使用已有错误码能证明的通用原因；未知原因不会被猜测为网络错误或工具执行失败。Session 正文只展示中文结束原因，不提供诊断信息区块。Runtime 和协议继续保留技术错误码、步骤和请求标识。子 Agent 摘要分别保留错误码和停止原因，不再混用字段。界面只为当前原因维护专用文案，已移除的完成检查和执行预算原因使用通用停止提示。操作结果未确认继续根据 `reconciliationRequired` 单独说明。
+Desktop 的主任务提示和子 Agent 提示使用同一份中文文案规则。界面优先使用具体原因，再使用已有错误码能证明的通用原因；未知原因不会被猜测为网络错误或工具执行失败。Session 正文只展示中文结束原因，不提供诊断信息区块。Runtime 和协议继续保留技术错误码、步骤和请求标识。子 Agent 摘要分别保留错误码和停止原因，不再混用字段。界面只为当前原因维护专用文案，已移除的完成检查和执行预算原因使用通用停止提示。操作结果未确认只在对应工具记录中说明，不追加到任务结束提示，也不改变正常完成状态。
 
 Schema v23→v24 为 `runs` 增加可空的 `termination_json`。迁移在事务内完成，失败回滚；已有记录保持原值，不推断或补写结束原因。Python 的 `RunTermination` 通过 `scripts/generate-run-termination-contracts.mjs` 和协作契约生成器提供 TypeScript 类型。两端使用 `protocol/fixtures/run-termination-v1.json` 验证有界字段与未知字段拒绝规则。
 

@@ -1123,13 +1123,12 @@ class SessionStore:
         )
 
     def complete_assistant_and_run_committed(
-        self, item_id: str, run_id: str, *, shell_stopped: bool = False,
+        self, item_id: str, run_id: str, *,
         expected_collaboration: CollaborationState | None = None,
     ) -> CommittedMutation[tuple[dict[str, object], dict[str, object]]]:
         return self._repository(self._execution).complete_assistant_and_run_committed(
             item_id,
             run_id,
-            shell_stopped=shell_stopped,
             expected_collaboration=expected_collaboration,
         )
 

@@ -235,6 +235,8 @@ class RunRepository(Repository):
                 if "one_active_run" in str(error) or "UNIQUE constraint failed" in str(error):
                     raise ActiveRunError("another run is active") from None
                 raise
+            from eidos_runtime.persistence.web_search import WebSearchRepository
+            WebSearchRepository.freeze(connection, run_id)
             if agent_catalog is not None:
                 snapshots = AgentSnapshotRepository(self.database)
                 snapshots.insert(connection, run_id, snapshots.encode(agent_catalog))

@@ -20,9 +20,63 @@ from eidos_runtime.runtime.state_machine import (
 )
 
 
+def _recover_completed_shell_cleanup(connection: sqlite3.Connection, now: int) -> None:
+    """Correct the old cleanup-only interruption without replaying any work."""
+    while rows := connection.execute("""
+        SELECT r.id, r.session_id FROM runs r
+        WHERE r.status = 'interrupted' AND r.stop_reason = 'active_shell_stopped'
+          AND r.error_code = 'RUNTIME_INTERRUPTED'
+          AND r.cancel_requested_at IS NULL AND r.completed_at IS NOT NULL
+          AND (r.termination_json IS NULL OR (
+              json_extract(r.termination_json, '$.stage') = 'lifecycle'
+              AND json_extract(r.termination_json, '$.reason') = 'active_shell_stopped'))
+          AND EXISTS (
+              SELECT 1 FROM items i WHERE i.run_id = r.id
+                AND i.ordinal = (SELECT MAX(last.ordinal) FROM items last WHERE last.run_id = r.id)
+                AND i.kind = 'assistant_message' AND i.status = 'completed'
+                AND i.incomplete = 0 AND length(trim(i.content)) > 0)
+          AND NOT EXISTS (SELECT 1 FROM items i WHERE i.run_id = r.id AND i.status = 'in_progress')
+          AND NOT EXISTS (SELECT 1 FROM input_mailbox m WHERE m.run_id = r.id AND m.status = 'pending')
+          AND NOT EXISTS (
+              SELECT 1 FROM agent_delegations d JOIN runs child ON child.session_id = d.child_session_id
+              WHERE d.parent_run_id = r.id
+                AND child.status IN ('queued', 'running', 'waiting_approval', 'waiting_input', 'waiting_agents', 'finalizing'))
+        ORDER BY r.creation_seq LIMIT 100
+    """).fetchall():
+        for row in rows:
+            # Only segments explicitly failed by this old completion path change.
+            segments = connection.execute("""
+                SELECT s.id FROM execution_segments s
+                WHERE s.run_id = ? AND s.status = 'failed' AND EXISTS (
+                    SELECT 1 FROM events e WHERE e.run_id = s.run_id
+                      AND e.event_type = 'segment.status_changed'
+                      AND json_extract(e.payload_json, '$.entity_id') = s.id
+                      AND json_extract(e.payload_json, '$.current') = 'failed'
+                      AND json_extract(e.payload_json, '$.reason') = 'active_shell_stopped')
+            """, (row["id"],)).fetchall()
+            for segment in segments:
+                connection.execute(
+                    "UPDATE execution_segments SET status = 'completed' WHERE id = ?",
+                    (segment["id"],),
+                )
+                append_event(connection, EventType.SEGMENT_STATUS_CHANGED, now, {
+                    "entity_id": segment["id"], "previous": "failed", "current": "completed",
+                    "reason": "shell_cleanup_completion_recovered",
+                }, session_id=row["session_id"], run_id=row["id"])
+            connection.execute("""
+                UPDATE runs SET status = 'succeeded', error_code = NULL,
+                    stop_reason = NULL, termination_json = NULL WHERE id = ?
+            """, (row["id"],))
+            append_event(connection, EventType.RUN_STATUS_CHANGED, now, {
+                "previous": RunStatus.INTERRUPTED, "current": RunStatus.SUCCEEDED,
+                "reason": "shell_cleanup_completion_recovered",
+            }, session_id=row["session_id"], run_id=row["id"])
+
+
 def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     """Recover abandoned persisted facts without consulting in-memory phases."""
     now = _now_ms()
+    _recover_completed_shell_cleanup(connection, now)
     from eidos_runtime.persistence.automation_recovery import recover_automation_results
     recover_automation_results(connection, now)
     legacy_paused = connection.execute(
