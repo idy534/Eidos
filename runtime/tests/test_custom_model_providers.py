@@ -237,6 +237,7 @@ def test_stored_credentials_are_only_reused_for_the_same_custom_address(tmp_path
 def test_custom_model_rpc_roundtrip_and_fixture(tmp_path, automatic):
     fixture = json.loads((Path(__file__).parents[2] / "protocol/fixtures/custom-models-v1.json").read_text())
     ModelCreateRequestDto.model_validate(fixture["create"])
+    assert ModelOptionDto.model_validate(fixture["modelOption"]).api_key == "fixture-local-api-key"
     CustomProviderRequest.model_validate(fixture["discover"])
     CustomProviderResult.model_validate(fixture["discovered"])
     output = io.StringIO()
@@ -253,7 +254,7 @@ def test_custom_model_rpc_roundtrip_and_fixture(tmp_path, automatic):
         result = ModelOptionDto.model_validate(response["result"])
         assert result.provider == "custom" and result.model_id == "company/model"
         assert result.custom.max_output_tokens == 8192
-        assert "apiKey" not in response["result"]
+        assert response["result"]["apiKey"] == create["apiKey"]
         from eidos_runtime.sandbox.sensitive import SensitiveScanner
         server.sensitive = SensitiveScanner()
         server.supervisor.prepare_next = lambda: None

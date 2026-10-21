@@ -1084,6 +1084,7 @@ class ModelReasoningDto(ClosedModel):
 
 
 class ModelOptionDto(ClosedModel):
+    api_key: StrictStr | None = Field(default=None, alias="apiKey", repr=False)
     id: StrictStr
     name: StrictStr
     vendor: StrictStr

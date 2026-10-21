@@ -32,6 +32,7 @@ from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.protocol.schemas import SkillMetadataDto
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
 from eidos_runtime.tools.contracts import (
+    SKILL_READ_PAGE_BYTES,
     SkillChangeResultData,
     SkillCreateInput,
     SkillInstallInput,
@@ -623,7 +624,7 @@ class _SkillReadAdapter:
         assert isinstance(source, dict)
         try:
             page = _skill_content_page(
-                str(skill["content"]), arguments.get("offset", 0), arguments.get("maxBytes", 12_000),
+                str(skill["content"]), arguments.get("offset", 0), arguments.get("maxBytes", SKILL_READ_PAGE_BYTES),
             )
         except SkillReadError as error:
             return _skill_error("skill_read", str(error), "Use a returned nextOffset to continue reading")
@@ -674,7 +675,7 @@ class _SkillResourceAdapter:
         assert isinstance(source, dict)
         try:
             page = _skill_content_page(
-                str(resource["content"]), arguments.get("offset", 0), arguments.get("maxBytes", 12_000),
+                str(resource["content"]), arguments.get("offset", 0), arguments.get("maxBytes", SKILL_READ_PAGE_BYTES),
             )
         except SkillReadError as error:
             return _skill_error("skill_read_resource", str(error), "Use a returned nextOffset to continue reading")
@@ -691,7 +692,7 @@ def _skill_content_page(content: str, offset: object, max_bytes: object) -> Skil
     encoded = content.encode("utf-8")
     if (
         type(offset) is not int or not 0 <= offset <= len(encoded)
-        or type(max_bytes) is not int or not 4 <= max_bytes <= 12_000
+        or type(max_bytes) is not int or not 4 <= max_bytes <= SKILL_READ_PAGE_BYTES
         or (offset < len(encoded) and encoded[offset] & 0xC0 == 0x80)
     ):
         raise SkillReadError("skill_resource_invalid_offset")

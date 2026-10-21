@@ -25,6 +25,7 @@ const modelList: ModelListResult = {
     provider: "deepseek", url: "https://api.deepseek.com/chat/completions",
     supportsToolCall: true, supportsImages: false, supportsReasoning: true,
     reasoning: { defaultSelection: "high", selections: ["high", "max"] },
+    apiKey: "sk-saved-deepseek-key",
   }],
 };
 const presets: ModelPresetsResult = {
@@ -144,7 +145,7 @@ describe("Model settings", () => {
     expect(onModelsChanged).toHaveBeenCalledTimes(1);
   });
 
-  it("editing with an empty key keeps the existing key", async () => {
+  it("edits an existing model, displays masked api key by default, reveals on click, and saves the key", async () => {
     const user = userEvent.setup();
     const updateModel = vi.fn().mockResolvedValue(modelList.models[0]);
     (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
@@ -153,10 +154,21 @@ describe("Model settings", () => {
     render(<SettingsPage {...props()} />);
 
     await user.click(await screen.findByRole("button", { name: "编辑 DeepSeek-V4 Flash" }));
-    expect(screen.getByPlaceholderText("留空表示保持原值")).toHaveValue("");
+    const input = screen.getByLabelText("API Key");
+    expect(input).toHaveValue("sk-saved-deepseek-key");
+    expect(input).toHaveAttribute("type", "password");
+    expect(input).toHaveAttribute("placeholder", "请输入 API Key");
+
+    const toggle = screen.getByRole("button", { name: "显示 API Key" });
+    await user.click(toggle);
+    expect(input).toHaveAttribute("type", "text");
+    await user.click(screen.getByRole("button", { name: "隐藏 API Key" }));
+    expect(input).toHaveAttribute("type", "password");
+
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(updateModel).toHaveBeenCalledWith({
       id: "deepseek-v4-flash", provider: "deepseek", modelId: "deepseek-v4-flash",
+      apiKey: "sk-saved-deepseek-key",
     });
   });
 
@@ -252,6 +264,12 @@ describe("Model settings", () => {
     expect(screen.getByRole("heading", { name: "编辑 MCP Server" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("名称")).toHaveFocus());
     expect(screen.getByLabelText("启动命令")).toHaveValue("npx");
+    expect(screen.getByLabelText("环境变量名 1")).toHaveValue("PATH");
+    const envValInput = screen.getByLabelText("环境变量值 1");
+    await user.type(envValInput, "custom-path");
+    expect(envValInput).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: "显示变量值" }));
+    expect(envValInput).toHaveAttribute("type", "text");
     await user.clear(screen.getByLabelText("启动命令"));
     await user.type(screen.getByLabelText("启动命令"), "node");
     await user.click(screen.getByRole("button", { name: "保存" }));

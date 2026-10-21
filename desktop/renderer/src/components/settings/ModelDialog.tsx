@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelProviderPreset, ModelPresetsResult } from "../../contracts.js";
 import type { CustomModelSettings } from "../../../../shared/custom-models.js";
 import { Button } from "../Button.js";
+import { Tooltip } from "../Tooltip.js";
 import { ProviderLogo } from "../ProviderLogo.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { CustomModelFields } from "./CustomModelFields.js";
+import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 
 export interface ModelDraft {
   originalId?: string;
@@ -36,6 +38,7 @@ interface ModelDialogProps {
 }
 
 export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, onSave }: ModelDialogProps) {
+  const [showKey, setShowKey] = useState(false);
   const providerSelectRef = useRef<HTMLSelectElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocusLifecycle({ open: Boolean(draft), initialFocusRef: providerSelectRef });
@@ -105,15 +108,34 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
           {draft.custom ? <CustomModelFields key={draft.originalId ?? "new"} draft={draft} busy={busy} onChange={onChange} /> : <>
           <label>
             <span>API Key</span>
-            <input
-              type="password"
-              autoComplete="off"
-              aria-label="API Key"
-              placeholder={draft.originalId ? "留空表示保持原值" : "请输入 API Key"}
-              value={draft.apiKey}
-              disabled={busy}
-              onChange={(event) => onChange({ ...draft, apiKey: event.target.value })}
-            />
+            <div className="custom-model-secret">
+              <div className="custom-model-secret-input">
+                <input
+                  type={showKey ? "text" : "password"}
+                  autoComplete="off"
+                  aria-label="API Key"
+                  placeholder="请输入 API Key"
+                  value={draft.apiKey}
+                  disabled={busy}
+                  onChange={(event) => onChange({ ...draft, apiKey: event.target.value })}
+                />
+                <Tooltip content={showKey ? "隐藏 API Key" : "显示 API Key"}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="small"
+                    className="custom-model-secret-toggle"
+                    aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
+                    title={showKey ? "隐藏 API Key" : "显示 API Key"}
+                    aria-pressed={showKey}
+                    disabled={busy}
+                    onClick={() => setShowKey(!showKey)}
+                  >
+                    {showKey ? <EyeOffIcon /> : <EyeIcon />}
+                  </Button>
+                </Tooltip>
+              </div>
+            </div>
           </label>
           <label>
             <span>模型名称</span>

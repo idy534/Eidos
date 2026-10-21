@@ -277,19 +277,24 @@ describe("Custom provider settings", () => {
     expect(api.createModel).not.toHaveBeenCalled();
   });
 
-  it("preserves an untouched key and sends no old credential after the endpoint changes", async () => {
+  it("reveals a saved key and sends the key explicitly after editing", async () => {
     const custom = { providerId: "company-gateway", providerName: "公司网关", baseUrl: "https://gateway.invalid/v1", name: "已保存模型", contextWindowTokens: 64000, maxOutputTokens: 4096 };
-    const model = { id: "custom-stable", modelId: "remote-id", name: custom.name, provider: "custom", vendor: custom.providerName, url: custom.baseUrl + "/chat/completions", custom, supportsToolCall: true, supportsImages: false, supportsReasoning: false } satisfies ModelOption;
+    const model = { id: "custom-stable", modelId: "remote-id", name: custom.name, provider: "custom", vendor: custom.providerName, url: custom.baseUrl + "/chat/completions", custom, supportsToolCall: true, supportsImages: false, supportsReasoning: false, apiKey: "saved-key" } satisfies ModelOption;
     const user = userEvent.setup(); const api = setup({}, [model]);
     await user.click(await screen.findByRole("button", { name: "编辑 已保存模型" }));
+    const keyInput = screen.getByLabelText("API Key");
+    expect(keyInput).toHaveValue("saved-key");
+    expect(keyInput).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: "显示 API Key" }));
+    expect(keyInput).toHaveAttribute("type", "text");
     await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(api.updateModel).toHaveBeenCalledTimes(1));
-    expect(api.updateModel.mock.calls[0]![0]).not.toHaveProperty("apiKey");
+    expect(api.updateModel.mock.calls[0]![0]).toHaveProperty("apiKey", "saved-key");
     await user.click(screen.getByRole("button", { name: "编辑 已保存模型" }));
     await user.clear(screen.getByLabelText("接口地址"));
     await user.type(screen.getByLabelText("接口地址"), "https://other.invalid/v1");
     await user.click(screen.getByRole("button", { name: "测试连接" }));
-    expect(api.discoverCustomModels).toHaveBeenCalledWith({ provider: "custom", configId: model.id, baseUrl: "https://other.invalid/v1", apiKey: "" });
+    expect(api.discoverCustomModels).toHaveBeenCalledWith({ provider: "custom", configId: model.id, baseUrl: "https://other.invalid/v1", apiKey: "saved-key" });
   });
 
   it("supports token presets, keyboard selection and editable custom limits", async () => {

@@ -81,9 +81,9 @@ class ModelGatewayProtocolTests(unittest.TestCase):
                     "deepseek-v4-flash-ga-260731",
                 ],
             )
-            self.assertNotIn(
+            self.assertEqual(
+                results["list"]["result"]["models"][0]["apiKey"],
                 "sk-deepseek-secret-value",
-                json.dumps(results["list"], ensure_ascii=False),
             )
 
             session = server.store.create_session(workspace)

@@ -68,6 +68,12 @@ export function WebSearchSettings({
           draftRef.current = value.config;
           setSaved(value);
           setDraft(value.config);
+          if (value.credentialValues) {
+            setKeys((prev) => ({
+              deepseek: { visible: prev.deepseek.visible, value: value.credentialValues?.deepseek ?? "" },
+              langsearch: { visible: prev.langsearch.visible, value: value.credentialValues?.langsearch ?? "" },
+            }));
+          }
         }
       })
       .catch(() => {
@@ -116,6 +122,12 @@ export function WebSearchSettings({
       setSaved(res);
       draftRef.current = res.config;
       setDraft(res.config);
+      if (res.credentialValues) {
+        setKeys((prev) => ({
+          deepseek: { visible: prev.deepseek.visible, value: res.credentialValues?.deepseek ?? prev.deepseek.value },
+          langsearch: { visible: prev.langsearch.visible, value: res.credentialValues?.langsearch ?? prev.langsearch.value },
+        }));
+      }
       onShowToast?.("设置已保存", "success");
       return res;
     } catch {
@@ -139,6 +151,12 @@ export function WebSearchSettings({
       setSaved(value);
       draftRef.current = value.config;
       setDraft(value.config);
+      if (value.credentialValues) {
+        setKeys((prev) => ({
+          deepseek: { visible: prev.deepseek.visible, value: value.credentialValues?.deepseek ?? "" },
+          langsearch: { visible: prev.langsearch.visible, value: value.credentialValues?.langsearch ?? "" },
+        }));
+      }
       onShowToast?.("配置已刷新", "info");
     } catch {
       triggerError("网页搜索配置无法读取。请重试。");
@@ -164,8 +182,17 @@ export function WebSearchSettings({
       delete keyDebounceTimers.current[provider];
     }
     const rawValue = keys[provider].value.trim();
-    if (!rawValue || !draftRef.current) return;
-    setKey(provider, { value: "" });
+    if (!draftRef.current) return;
+    const currentStored = savedRef.current?.credentialValues?.[provider] ?? "";
+    if (rawValue === currentStored && (rawValue ? savedRef.current?.credentials[provider] === "stored" : savedRef.current?.credentials[provider] !== "stored")) {
+      return;
+    }
+    if (!rawValue) {
+      if (savedRef.current?.credentials[provider] === "stored") {
+        await executeSave(draftRef.current, [{ provider, action: "clear" }]);
+      }
+      return;
+    }
     await executeSave(draftRef.current, [{ provider, action: "set", value: rawValue }]);
   }
 
@@ -196,7 +223,6 @@ export function WebSearchSettings({
       const changes: Credentialchanges = [];
       if (keyVal) {
         changes.push({ provider, action: "set", value: keyVal });
-        setKey(provider, { value: "" });
       }
       const nextConfig: WebSearchConfig = { ...currentDraft, defaultProvider: provider };
       setDraft(nextConfig);
@@ -395,9 +421,7 @@ export function WebSearchSettings({
                             type={key.visible ? "text" : "password"}
                             maxLength={1024}
                             value={key.value}
-                            placeholder={
-                              status === "stored" ? "输入新 Key 以替换已保存凭证" : "输入 API Key"
-                            }
+                            placeholder="输入 API Key"
                             onChange={(event) => handleKeyChange(provider, event.target.value)}
                             onBlur={() => void commitKeyInput(provider)}
                             onKeyDown={(event) => {

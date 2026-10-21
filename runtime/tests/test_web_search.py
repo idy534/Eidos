@@ -99,7 +99,7 @@ def test_default_is_explicit_and_keys_never_enter_sqlite_or_public_response(
     result = save(app, config=WebSearchConfig())
     assert result.config.default_provider is None
     assert result.credentials.langsearch == "stored"
-    assert "fixture-search-key" not in result.model_dump_json()
+    assert result.credential_values.langsearch == "fixture-search-key"
     assert "credential_ref" not in result.model_dump_json()
     assert "fixture-search-key" not in "\n".join(store.connection.iterdump())
     reference = repo.read().credentials.langsearch

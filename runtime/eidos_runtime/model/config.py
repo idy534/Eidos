@@ -200,6 +200,7 @@ class ModelPublicConfig(EidosFrozenStrictModel):
     model_id: str | None = None
     context_window_tokens: int | None = None
     max_output_tokens: int | None = None
+    api_key: str = Field(default="", alias="apiKey", repr=False)
 
 
 class ModelProfileSpec(EidosFrozenStrictModel):
@@ -842,6 +843,7 @@ def public_model_config(config: ModelConfig) -> ModelPublicConfig:
         **config.model_dump(
             mode="json", by_alias=True, exclude={"api_key", "reasoning", "custom", "model_id"}
         ),
+        api_key=config.api_key,
         provider="custom" if custom else MODEL_CATALOG.provider_id_for(config.id, vendor=config.vendor),
         reasoning=reasoning, custom=custom, model_id=config.model_id,
         context_window_tokens=profile.context_window_tokens, max_output_tokens=profile.max_output_tokens,

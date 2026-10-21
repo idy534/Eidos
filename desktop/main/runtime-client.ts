@@ -1554,8 +1554,9 @@ function isModelOption(value: unknown): value is ModelOption {
     isRecord(value)
     && hasOnlyKeys(value, [
       "id", "name", "vendor", "provider", "url", "supportsToolCall",
-      "supportsImages", "supportsReasoning", "reasoning", "custom", "modelId", "contextWindowTokens", "maxOutputTokens",
+      "supportsImages", "supportsReasoning", "reasoning", "custom", "modelId", "contextWindowTokens", "maxOutputTokens", "apiKey",
     ])
+    && (value.apiKey === undefined || typeof value.apiKey === "string")
     && (value.custom == null || isCustomModelSettings(value.custom))
     && (value.modelId == null || isModelId(value.modelId))
     && (value.contextWindowTokens == null || (Number.isSafeInteger(value.contextWindowTokens) && Number(value.contextWindowTokens) > 0))

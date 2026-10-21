@@ -523,6 +523,9 @@ class WriteStdinInput(StrictToolModel):
         return _utf8_limit(value, 16 * 1024, "stdin_input_too_large")
 
 
+SKILL_READ_PAGE_BYTES = 24_000
+
+
 class SkillReadInput(StrictToolModel):
     qualifiedId: StrictStr = Field(
         min_length=1,
@@ -530,7 +533,7 @@ class SkillReadInput(StrictToolModel):
         description="Use the name value from the available Skill catalog to select the enabled local Skill.",
     )
     offset: int = Field(default=0, ge=0, le=1024 * 1024, description="UTF-8 byte offset; use nextOffset from the previous page.")
-    maxBytes: int = Field(default=12_000, ge=4, le=12_000, description="Maximum content bytes per page.")
+    maxBytes: int = Field(default=SKILL_READ_PAGE_BYTES, ge=4, le=SKILL_READ_PAGE_BYTES, description="Maximum content bytes per page.")
 
     @field_validator("qualifiedId")
     @classmethod
@@ -1220,7 +1223,12 @@ def _project_tool_result(
             if key in {"durationMs"}:
                 continue
             value, value_truncated = _bounded_projection_value(
-                value, budget, depth=1
+                value, budget, depth=1,
+                max_string_bytes=(
+                    SKILL_READ_PAGE_BYTES
+                    if tool_name in {"skill_read", "skill_read_resource"} and key == "content"
+                    else _MODEL_STRING_BYTES
+                ),
             )
             truncated = truncated or value_truncated
             projected[key] = value
@@ -1484,13 +1492,14 @@ def _bounded_string(value: str) -> str:
 
 
 def _bounded_projection_value(
-    value: object, budget: _ProjectionBudget, *, depth: int
+    value: object, budget: _ProjectionBudget, *, depth: int,
+    max_string_bytes: int = _MODEL_STRING_BYTES,
 ) -> tuple[object, bool]:
     if not budget.node() or depth > _MODEL_MAX_DEPTH:
         return None, True
     if isinstance(value, str):
         encoded = value.encode("utf-8")
-        accepted = encoded[:_MODEL_STRING_BYTES]
+        accepted = encoded[:max_string_bytes]
         return (
             accepted.decode("utf-8", errors="ignore"),
             len(accepted) < len(encoded),

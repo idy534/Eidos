@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type { Channel, ChannelConfig, ChannelPublicConnection, ChannelSaveRequest, State } from "../../../../shared/channels.js";
 import type { ModelOption, Project } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";
@@ -57,11 +57,17 @@ export function ChannelForm({
     enabled: false, clientId: "", modelId: models[0]?.id ?? "",
     projectId: null, approvalMode: "manual",
   });
-  const [secret, setSecret] = useState("");
+  const [secret, setSecret] = useState(connection?.clientSecret ?? "");
   const [showSecret, setShowSecret] = useState(false);
   const [error, setError] = useState("");
   const [showFullAccessDialog, setShowFullAccessDialog] = useState(false);
   const [fullAccessConfirmed, setFullAccessConfirmed] = useState(false);
+
+  useEffect(() => {
+    if (connection?.clientSecret !== undefined) {
+      setSecret(connection.clientSecret);
+    }
+  }, [connection?.clientSecret]);
 
   const change = <K extends keyof ChannelConfig>(key: K, value: ChannelConfig[K]) => setConfig((old) => ({ ...old, [key]: value }));
   const missingProject = config.projectId && !projects.some((project) => project.id === config.projectId);
@@ -74,7 +80,7 @@ export function ChannelForm({
         if (showFullAccessDialog) return;
         setError("");
         if (!config.modelId) { setError("请选择模型。"); return; }
-        if (!secret && (!connection?.hasSecret || config.clientId !== connection.config.clientId)) {
+        if (!secret.trim()) {
           setError(`请填写 ${secretLabel}。`);
           return;
         }
@@ -83,9 +89,7 @@ export function ChannelForm({
           expectedRevision: connection?.revision ?? 0,
           config,
           ...(config.approvalMode === "full_access" && fullAccessConfirmed ? { fullAccessConfirmation: "full-access-v1" as const } : {}),
-          ...(secret ? { clientSecret: secret } : {}),
-        }).then((saved) => {
-          if (saved) setSecret("");
+          clientSecret: secret.trim(),
         });
       }}
     >
@@ -189,7 +193,7 @@ export function ChannelForm({
                     maxLength={1024}
                     value={secret}
                     autoComplete="new-password"
-                    placeholder={connection?.hasSecret ? "留空保留已保存的凭证" : `请输入 ${secretLabel}`}
+                    placeholder={`请输入 ${secretLabel}`}
                     onChange={(event) => setSecret(event.target.value)}
                   />
                   <Tooltip content={showSecret ? "隐藏密码" : "显示密码"}>

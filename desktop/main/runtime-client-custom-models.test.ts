@@ -47,9 +47,11 @@ test("custom provider discovery and configuration roundtrip through the real Run
     assert.equal(first.supportsImages, true);
     const wireReasoning = { selections: automaticReasoning.selections };
     assert.deepEqual(first.reasoning, wireReasoning);
-    assert.equal("apiKey" in first, false);
+    assert.equal(first.apiKey, "");
+    assert.equal(second.apiKey, "explicit-fixture-key");
     const edited = await client.updateModel({ provider: "custom", id: second.id, modelId: "same-model", custom: { ...custom, name: "模型乙已编辑" } });
     assert.equal(edited.id, second.id);
+    assert.equal(edited.apiKey, "explicit-fixture-key");
     assert.equal(edited.custom?.supportsImages, true);
     await client.discoverCustomModels({ provider: "custom", baseUrl, configId: second.id });
     assert.equal(received.at(-1)?.authorization, "Bearer explicit-fixture-key");
@@ -68,6 +70,8 @@ test("custom provider discovery and configuration roundtrip through the real Run
     assert.equal(models.models[0]?.supportsImages, true);
     assert.equal(models.models[1]?.custom?.supportsImages, true);
     assert.equal(models.models[1]?.name, "模型乙已编辑");
+    assert.equal(models.models[0]?.apiKey, "");
+    assert.equal(models.models[1]?.apiKey, "explicit-fixture-key");
     assert.equal(models.models[1]?.custom?.providerId, "company-gateway");
     assert.equal(diagnostics.join("\n").includes("explicit-fixture-key"), false);
     await client.shutdown();
@@ -108,6 +112,37 @@ test("pending custom discovery leaves health responsive and shuts down with its 
     await client.waitForExit().catch(() => undefined);
     http.closeAllConnections();
     await new Promise<void>(resolve => http.close(() => resolve()));
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
+
+test("saved built-in models remain readable and editable after Runtime restart", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-saved-models-"));
+  const diagnostics: string[] = [];
+  const createClient = () => new RuntimeClient({ pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory, onStderr: line => diagnostics.push(line) });
+  let client = createClient();
+  try {
+    await client.initialize();
+    const created = await client.createModel({ provider: "deepseek", modelId: "deepseek-flash", apiKey: "fixture-saved-key" });
+    assert.equal(created.apiKey, "fixture-saved-key");
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+    client = createClient();
+    await client.initialize();
+    const listed = await client.listModels();
+    assert.equal(listed.defaultModelId, created.id);
+    assert.equal(listed.models[0]?.apiKey, "fixture-saved-key");
+    const updated = await client.updateModel({ id: created.id, provider: "deepseek", modelId: "deepseek-flash", apiKey: "fixture-replacement-key" });
+    assert.equal(updated.apiKey, "fixture-replacement-key");
+    assert.equal((await client.listModels()).models[0]?.apiKey, "fixture-replacement-key");
+    assert.ok(!diagnostics.join("\n").includes("fixture-saved-key"));
+    assert.ok(!diagnostics.join("\n").includes("fixture-replacement-key"));
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+  } finally {
+    client.terminate();
+    await client.waitForExit().catch(() => undefined);
     await rm(dataDirectory, { recursive: true, force: true });
   }
 });

@@ -101,11 +101,11 @@ export function CustomModelFields({ draft, busy, onChange }: Props) {
     <label><span>API Key</span><div className="custom-model-secret">
       <div className="custom-model-secret-input">
       <input aria-label="API Key" type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false} maxLength={512}
-        placeholder={draft.originalId && !draft.apiKeyEdited ? "留空表示保持原值" : ""} value={draft.apiKey} disabled={busy}
+        placeholder="" value={draft.apiKey} disabled={busy}
         onChange={event => { setShowKey(false); onChange({ ...draft, apiKey: event.target.value, apiKeyEdited: true }); }} />
       <Tooltip content={showKey ? "隐藏 API Key" : "显示 API Key"}>
         <Button type="button" variant="ghost" size="small" className="custom-model-secret-toggle" aria-label={showKey ? "隐藏 API Key" : "显示 API Key"}
-          title={showKey ? "隐藏 API Key" : "显示 API Key"} aria-pressed={showKey} disabled={busy || !draft.apiKey} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOffIcon /> : <EyeIcon />}</Button>
+          title={showKey ? "隐藏 API Key" : "显示 API Key"} aria-pressed={showKey} disabled={busy} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOffIcon /> : <EyeIcon />}</Button>
       </Tooltip>
       </div>
     </div></label>

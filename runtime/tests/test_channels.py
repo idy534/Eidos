@@ -658,3 +658,18 @@ def test_channel_reasoning_persists_across_restart(channels, selection):
 def test_channel_reasoning_rejects_unknown_values():
     with pytest.raises(ValidationError):
         ChannelConfig.model_validate(configuration().model_dump() | {"reasoningSelection": "ultra"})
+
+
+def test_channel_read_reveals_client_secret_for_local_display(channels):
+    from eidos_runtime.application.channels import ChannelApplication
+    store, repository, _, _ = channels
+    secrets = ChannelSecrets(store.data_directory)
+    application = ChannelApplication(repository, secrets, None, None, None)
+    request = ChannelSaveRequest(config=configuration(), expected_revision=1, client_secret="my-super-secret-key")
+    application.save(request)
+    read_resp = application.read("dingtalk")
+    assert read_resp.connection is not None
+    assert read_resp.connection.has_secret is True
+    assert read_resp.connection.client_secret == "my-super-secret-key"
+    wire = read_resp.model_dump(mode="json", by_alias=True)
+    assert wire["connection"]["clientSecret"] == "my-super-secret-key"

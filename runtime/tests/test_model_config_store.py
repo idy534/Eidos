@@ -399,3 +399,17 @@ def test_invalid_existing_file_fails_closed(tmp_path: Path) -> None:
     store = ModelConfigStore(data)
     with pytest.raises(ModelConfigError, match="invalid"):
         store.initialize()
+
+
+def test_public_model_config_includes_api_key_for_local_display(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.create(
+        provider_id="deepseek",
+        model_id="deepseek-flash",
+        api_key="sk-local-secret",
+    )
+    public_models = store.public_list()
+    assert len(public_models) == 1
+    assert public_models[0].api_key == "sk-local-secret"
+    wire_dict = public_models[0].to_wire_dict(exclude_none=True)
+    assert wire_dict["apiKey"] == "sk-local-secret"

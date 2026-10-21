@@ -482,6 +482,7 @@ export interface ModelOption {
   supportsImages: boolean;
   supportsReasoning: boolean;
   reasoning?: ModelReasoning | null;
+  apiKey?: string;
 }
 
 export interface ModelListResult {

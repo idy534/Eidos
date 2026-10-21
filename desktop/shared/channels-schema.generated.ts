@@ -196,6 +196,11 @@ export const channelSchema = {
         "hasSecret": {
           "title": "Hassecret",
           "type": "boolean"
+        },
+        "clientSecret": {
+          "default": "",
+          "title": "Clientsecret",
+          "type": "string"
         }
       },
       "required": [

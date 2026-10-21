@@ -69,7 +69,7 @@ export function ModelSettings({
       provider: model.custom ? "custom" : model.provider as ModelDraft["provider"],
       modelId: model.modelId ?? model.id,
       ...(model.custom ? { custom: { ...model.custom }, originalBaseUrl: model.custom.baseUrl } : {}),
-      apiKey: "",
+      apiKey: model.apiKey ?? "",
     });
   };
   const openCopy = (model: ModelOption) => {
@@ -91,7 +91,7 @@ export function ModelSettings({
   };
 
   async function save() {
-    if (!draft || (!draft.custom && !draft.originalId && !draft.apiKey.trim())) {
+    if (!draft || (!draft.custom && !draft.apiKey.trim())) {
       setLocalError("API Key 必填");
       return;
     }
@@ -131,15 +131,13 @@ export function ModelSettings({
     setLocalError(undefined);
     try {
       const extra = resolvedCustom ? { custom: resolvedCustom } : {};
-      const keyChanged = draft.apiKeyEdited || Boolean(draft.apiKey.trim())
-        || (resolvedCustom && draft.originalBaseUrl !== resolvedCustom.baseUrl);
       if (draft.originalId) {
         await window.eidosRuntime.updateModel({
           id: draft.originalId,
           provider: draft.provider,
           modelId: draft.modelId,
           ...extra,
-          ...(keyChanged ? { apiKey: draft.apiKey.trim() } : {}),
+          apiKey: draft.apiKey.trim(),
         });
       } else {
         await window.eidosRuntime.createModel({

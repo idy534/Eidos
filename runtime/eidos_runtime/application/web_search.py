@@ -10,6 +10,7 @@ from eidos_runtime.infrastructure.secret_files import SecretFiles
 from eidos_runtime.persistence.web_search import WebSearchRepository
 from eidos_runtime.protocol.web_search import (
     SearchCredentialState,
+    SearchCredentialValues,
     WebSearchResponse,
     WebSearchSaveRequest,
 )
@@ -23,12 +24,14 @@ class WebSearchApplication:
     def read(self) -> WebSearchResponse:
         settings = self.repository.read()
         states: dict[str, str] = {}
+        values: dict[str, str] = {}
         for provider in ("deepseek", "langsearch"):
             reference = settings.credentials.get(provider)
             states[provider] = "missing"
+            values[provider] = ""
             if reference:
                 try:
-                    self.secrets.read(reference)
+                    values[provider] = self.secrets.read(reference)
                     states[provider] = "stored"
                 except (OSError, ValueError):
                     states[provider] = "unavailable"
@@ -36,6 +39,7 @@ class WebSearchApplication:
             revision=settings.revision,
             config=settings.config,
             credentials=SearchCredentialState.model_validate(states),
+            credential_values=SearchCredentialValues.model_validate(values),
         )
 
     def save(self, request: WebSearchSaveRequest) -> WebSearchResponse:

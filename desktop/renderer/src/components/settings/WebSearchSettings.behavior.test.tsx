@@ -14,11 +14,18 @@ const initial = (): WebSearchResponse => ({
 function setup(value = initial()) {
   const api = {
     readWebSearch: vi.fn().mockResolvedValue(value),
-    saveWebSearch: vi.fn().mockImplementation(async (request) => ({
-      revision: request.expectedRevision + 1,
-      config: request.config,
-      credentials: { deepseek: "stored", langsearch: "stored" },
-    })),
+    saveWebSearch: vi.fn().mockImplementation(async (request) => {
+      const vals: Record<string, string> = {};
+      for (const change of request.credentialChanges ?? []) {
+        if (change.action === "set") vals[change.provider] = change.value;
+      }
+      return {
+        revision: request.expectedRevision + 1,
+        config: request.config,
+        credentials: { deepseek: "stored", langsearch: "stored" },
+        credentialValues: vals,
+      };
+    }),
     openWebSearchOfficialPage: vi.fn().mockResolvedValue(undefined),
   };
   Object.defineProperty(window, "eidosRuntime", { configurable: true, value: api });
@@ -111,11 +118,17 @@ it("shows alert when auto-save fails and allows refreshing revision", async () =
   expect(screen.queryByText(/Eidos 已读取最新配置/)).not.toBeInTheDocument();
 });
 
-it("toggles API key visibility with the eye icon button", async () => {
+it("reveals a saved API key and toggles visibility with the eye icon button", async () => {
   const user = userEvent.setup();
-  setup();
+  setup({
+    ...initial(),
+    credentials: { deepseek: "stored", langsearch: "missing" },
+    credentialValues: { deepseek: "sk-saved-deepseek-key", langsearch: "" },
+  });
   const input = await screen.findByLabelText("DeepSeek Search API Key", { selector: "input" });
   expect(input).toHaveAttribute("type", "password");
+  expect(input).toHaveValue("sk-saved-deepseek-key");
+  expect(input).toHaveAttribute("placeholder", "输入 API Key");
 
   const toggleBtn = screen.getByRole("button", { name: "显示 DeepSeek Search API Key" });
   await user.click(toggleBtn);

@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { McpCreateInput, McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { Tooltip } from "../Tooltip.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
+import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 
 interface McpCreateDialogProps {
   open: boolean;
@@ -39,11 +41,14 @@ function initialDraft() {
 }
 
 function draftFromServer(server: McpServerRecord) {
+  const envEntries = server.envNames.length
+    ? server.envNames.map((name) => ({ name, value: "" }))
+    : [{ name: "", value: "" }];
   return {
     serverId: server.serverId,
     executable: server.executable,
     argv: server.argv.length ? [...server.argv] : [""],
-    env: [{ name: "", value: "" }] as EnvRow[],
+    env: envEntries as EnvRow[],
     envNames: server.envNames.length ? [...server.envNames] : [""],
     cwd: server.cwd ?? "",
     permissionProfile: server.permissionProfile,
@@ -64,6 +69,7 @@ export function McpCreateDialog({
   onCancel,
 }: McpCreateDialogProps) {
   const [draft, setDraft] = useState(initialDraft);
+  const [showEnv, setShowEnv] = useState<Record<number, boolean>>({});
   const [localError, setLocalError] = useState<string>();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const serverIdRef = useRef<HTMLInputElement>(null);
@@ -252,18 +258,35 @@ export function McpCreateDialog({
                     env: draft.env.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item),
                   })}
                 />
-                <input
-                  aria-label={`环境变量值 ${index + 1}`}
-                  type="password"
-                  autoComplete="off"
-                  placeholder={server ? "留空保持原值" : "值"}
-                  value={row.value}
-                  disabled={busy}
-                  onChange={(event) => setDraft({
-                    ...draft,
-                    env: draft.env.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item),
-                  })}
-                />
+                <div className="custom-model-secret-input" style={{ flex: 1, minWidth: 0, position: "relative" }}>
+                  <input
+                    aria-label={`环境变量值 ${index + 1}`}
+                    type={showEnv[index] ? "text" : "password"}
+                    autoComplete="off"
+                    placeholder="值"
+                    value={row.value}
+                    disabled={busy}
+                    onChange={(event) => setDraft({
+                      ...draft,
+                      env: draft.env.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item),
+                    })}
+                  />
+                  <Tooltip content={showEnv[index] ? "隐藏变量值" : "显示变量值"}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="small"
+                      className="custom-model-secret-toggle"
+                      aria-label={showEnv[index] ? "隐藏变量值" : "显示变量值"}
+                      title={showEnv[index] ? "隐藏变量值" : "显示变量值"}
+                      aria-pressed={Boolean(showEnv[index])}
+                      disabled={busy}
+                      onClick={() => setShowEnv((prev) => ({ ...prev, [index]: !prev[index] }))}
+                    >
+                      {showEnv[index] ? <EyeOffIcon /> : <EyeIcon />}
+                    </Button>
+                  </Tooltip>
+                </div>
                 <Button
                   variant="ghost"
                   size="small"

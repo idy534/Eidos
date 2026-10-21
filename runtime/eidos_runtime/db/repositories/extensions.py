@@ -436,6 +436,7 @@ class ExtensionRepository(Repository):
         }
         if error_code is None:
             projection.pop("errorCode")
+        projection.pop("env", None)
         with self.lock, self._connection() as connection:
             connection.execute(
                 """

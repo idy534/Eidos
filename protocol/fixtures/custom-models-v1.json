@@ -16,6 +16,17 @@
       "reasoning": { "defaultSelection": "high", "selections": ["none", "high", "xhigh"] }
     }
   },
+  "modelOption": {
+    "id": "deepseek-v4-flash-ga-260731",
+    "name": "DeepSeek V4 Flash GA",
+    "vendor": "Volcengine",
+    "provider": "volcengine",
+    "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+    "supportsToolCall": true,
+    "supportsImages": false,
+    "supportsReasoning": false,
+    "apiKey": "fixture-local-api-key"
+  },
   "automaticReasoning": { "defaultSelection": null, "selections": ["low", "high", "max"] },
   "discover": { "provider": "custom", "baseUrl": "http://127.0.0.1:3425/v1", "apiKey": "" },
   "discovered": {

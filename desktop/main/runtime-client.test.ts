@@ -249,7 +249,7 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
   }
 });
 
-test("accepts Volcengine model presets and models without reasoning metadata", async () => {
+test("accepts saved model API keys and legacy responses without API keys or reasoning metadata", async () => {
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-volcengine-model-runtime-"));
   const packageRoot = path.join(runtimeRoot, "eidos_runtime");
   await mkdir(packageRoot);
@@ -263,6 +263,7 @@ test("accepts Volcengine model presets and models without reasoning metadata", a
       "presets = {'providers': [{'id': 'volcengine', 'name': '火山引擎 / Volcengine', 'models': [preset_model]}]}",
       "listed_model = dict(model)",
       "del listed_model['reasoning']",
+      `with open(${JSON.stringify(path.join(projectRoot, "protocol/fixtures/custom-models-v1.json"))}) as fixture: saved_model = json.load(fixture)['modelOption']`,
       "def send(request, result):",
       "    print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}, ensure_ascii=False), flush=True)",
       "for line in sys.stdin:",
@@ -272,7 +273,7 @@ test("accepts Volcengine model presets and models without reasoning metadata", a
       "    elif request['method'] == 'model/presets':",
       "        send(request, presets)",
       "    elif request['method'] == 'model/list':",
-      "        send(request, {'models': [listed_model], 'defaultModelId': listed_model['id']})",
+      "        send(request, {'models': [listed_model, saved_model], 'defaultModelId': listed_model['id']})",
       "    elif request['method'] == 'runtime/shutdown':",
       "        send(request, {})",
       "        break",
@@ -290,6 +291,8 @@ test("accepts Volcengine model presets and models without reasoning metadata", a
     const models = await client.listModels();
     assert.equal(models.models[0]?.id, "deepseek-v4-flash-ga-260731");
     assert.equal(models.models[0]?.reasoning, undefined);
+    assert.equal(models.models[0]?.apiKey, undefined);
+    assert.equal(models.models[1]?.apiKey, "fixture-local-api-key");
 
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);

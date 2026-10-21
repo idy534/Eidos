@@ -22,6 +22,7 @@ const connection: ChannelPublicConnection = {
   id: "connection",
   revision: 2,
   hasSecret: true,
+  clientSecret: "saved-dingtalk-secret",
   config: {
     enabled: true,
     clientId: "app",
@@ -55,7 +56,11 @@ it("loads connection state, navigates to dingtalk details, masks credentials and
   await user.click(screen.getByRole("button", { name: "设置" }));
 
   expect(screen.getByLabelText("Client Secret")).toHaveAttribute("type", "password");
-  expect(screen.getByLabelText("Client Secret")).toHaveValue("");
+  expect(screen.getByLabelText("Client Secret")).toHaveValue("saved-dingtalk-secret");
+  await user.click(screen.getByRole("button", { name: "显示密码" }));
+  expect(screen.getByLabelText("Client Secret")).toHaveAttribute("type", "text");
+  await user.click(screen.getByRole("button", { name: "隐藏密码" }));
+  expect(screen.getByLabelText("Client Secret")).toHaveAttribute("type", "password");
   expect(screen.getByText("发送结果未知")).toBeInTheDocument();
   expect(screen.getByText("网络中断，结果未知。")).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "完全访问" })).toBeInTheDocument();
@@ -146,7 +151,7 @@ it("automatically dismisses toast notification after 3.5 seconds", async () => {
   vi.useRealTimers();
 });
 
-it("saves only current options and retains an existing secret without resending it", async () => {
+it("saves current options and resends the revealed secret explicitly", async () => {
   const user = userEvent.setup();
   const save = vi.fn().mockResolvedValue(true);
   render(<ChannelForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
@@ -161,7 +166,7 @@ it("saves only current options and retains an existing secret without resending 
   const request = save.mock.calls[0]![0];
   expect(request.expectedRevision).toBe(2);
   expect(request.config).toEqual(connection.config);
-  expect(request).not.toHaveProperty("clientSecret");
+  expect(request).toHaveProperty("clientSecret", "saved-dingtalk-secret");
 });
 
 it("creates a connection with just app credentials and the default model and permissions", async () => {
@@ -179,7 +184,7 @@ it("creates a connection with just app credentials and the default model and per
     clientSecret: "new-secret",
     config: { enabled: true, clientId: "new-app", modelId: model.id, projectId: null, approvalMode: "manual" },
   });
-  expect(screen.getByLabelText("Client Secret")).toHaveValue("");
+  expect(screen.getByLabelText("Client Secret")).toHaveValue("new-secret");
 });
 
 it("requires a danger confirmation before selecting full access and saves its confirmation", async () => {
@@ -233,6 +238,7 @@ it("requires a fresh secret when changing the app and preserves it after failure
   render(<ChannelForm connection={connection} models={[model]} projects={[]} busy={false} onSave={save} />);
   await user.clear(screen.getByLabelText("Client ID"));
   await user.type(screen.getByLabelText("Client ID"), "other");
+  await user.clear(screen.getByLabelText("Client Secret"));
   await user.click(screen.getByRole("button", { name: "保存助理配置" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Client Secret");
   expect(save).not.toHaveBeenCalled();
