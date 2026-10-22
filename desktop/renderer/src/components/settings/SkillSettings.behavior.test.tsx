@@ -145,6 +145,21 @@ describe("Skill settings", () => {
     expect(card).toHaveFocus();
   });
 
+  it("toggles the skill directly from the card switch without opening detail dialog", async () => {
+    const user = userEvent.setup();
+    setRuntime(vi.fn().mockResolvedValue({}));
+    const onToggleSkill = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsPage {...props({ skills: [skill()], onToggleSkill })} />);
+
+    await user.click(screen.getByRole("tab", { name: /技能/ }));
+    const toggleSwitch = screen.getByRole("switch", { name: "启用或停用 Writer" });
+    expect(toggleSwitch).toBeChecked();
+
+    await user.click(toggleSwitch);
+    expect(onToggleSkill).toHaveBeenCalledWith("user:writer", false);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("requires confirmation before removing a personal skill", async () => {
     const user = userEvent.setup();
     const readSkillDetail = vi.fn().mockResolvedValue({

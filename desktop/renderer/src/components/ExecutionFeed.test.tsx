@@ -1469,6 +1469,254 @@ test("renders view_image fallback label gracefully when path is absent", () => {
   assert.doesNotMatch(completedHtml, /已查看图像 ·/);
 });
 
+test("renders request_permissions with shield question icon and custom running/completed labels", () => {
+  const runningHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "req-perm-run",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "in_progress",
+          toolCall: {
+            id: "tc-perm-1",
+            itemId: "req-perm-run",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-perm-1",
+            toolName: "request_permissions",
+            status: "running",
+            startedAt: 1000,
+            argumentsJson: JSON.stringify({
+              permissions: { network: { enabled: true } },
+            }),
+          },
+        }),
+      ]}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(runningHtml, /正在申请权限 网络访问/);
+  assert.doesNotMatch(runningHtml, /申请权限 \[/);
+  assert.doesNotMatch(runningHtml, /正在运行 request_permissions|已运行 request_permissions/);
+  assert.match(runningHtml, /class="tool-item tool-item--read-done"/);
+  assert.doesNotMatch(runningHtml, /<details class="tool-item"/);
+  assert.match(runningHtml, /d="M9\.1 9a3 3 0 0 1 5\.82 1c0 2-3 3-3 3"/);
+
+  const completedHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "req-perm-done",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-perm-2",
+            itemId: "req-perm-done",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-perm-2",
+            toolName: "request_permissions",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({
+              permissions: {
+                fileSystem: [{ path: "/outside/dir", access: "read" }],
+              },
+            }),
+            resultJson: JSON.stringify({ outcome: "success", code: "permission_granted" }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(completedHtml, /已申请权限 读取 \/outside\/dir/);
+  assert.doesNotMatch(completedHtml, /申请权限 \[/);
+  assert.doesNotMatch(completedHtml, /已运行 request_permissions/);
+  assert.match(completedHtml, /class="tool-item tool-item--read-done"/);
+  assert.doesNotMatch(completedHtml, /<details class="tool-item"/);
+  assert.match(completedHtml, /d="M9\.1 9a3 3 0 0 1 5\.82 1c0 2-3 3-3 3"/);
+
+  const multiPermHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "req-perm-multi",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-perm-3",
+            itemId: "req-perm-multi",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-perm-3",
+            toolName: "request_permissions",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({
+              permissions: {
+                network: { enabled: true },
+                fileSystem: [{ path: "/opt/app", access: "write" }],
+              },
+            }),
+            resultJson: JSON.stringify({ outcome: "success", code: "permission_granted" }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(multiPermHtml, /已申请权限 网络访问、写入 \/opt\/app/);
+  assert.doesNotMatch(multiPermHtml, /申请权限 \[/);
+
+  const fallbackHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "req-perm-empty",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "completed",
+          toolCall: {
+            id: "tc-perm-4",
+            itemId: "req-perm-empty",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-perm-4",
+            toolName: "request_permissions",
+            status: "completed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({}),
+            resultJson: JSON.stringify({ outcome: "success", code: "permission_granted" }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(fallbackHtml, />已申请权限</);
+  assert.doesNotMatch(fallbackHtml, />已申请权限 \[/);
+
+  const errorHtml = renderToStaticMarkup(
+    <ExecutionFeed
+      items={[
+        item({
+          id: "req-perm-err",
+          ordinal: 1,
+          kind: "tool_call",
+          status: "failed",
+          toolCall: {
+            id: "tc-perm-err",
+            itemId: "req-perm-err",
+            modelStepIndex: 1,
+            batchOrder: 0,
+            providerCallId: "p-perm-err",
+            toolName: "request_permissions",
+            status: "failed",
+            startedAt: 1000,
+            completedAt: 1100,
+            argumentsJson: JSON.stringify({
+              permissions: { network: { enabled: true } },
+            }),
+            resultJson: JSON.stringify({ outcome: "error", code: "permission_not_requestable", summary: "权限不可申请" }),
+          },
+        }),
+      ]}
+      runs={[run]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(errorHtml, /<details class="tool-item"/);
+  assert.match(errorHtml, /class="tool-summary--error">权限不可申请<\/p>/);
+  assert.match(errorHtml, /失败 申请权限 网络访问/);
+  assert.doesNotMatch(errorHtml, /申请权限 \[/);
+});
+
+test("permission rows omit resolved approval labels and retain rejection feedback", () => {
+  for (const approvalMode of ["manual", "auto_review"] as const) {
+    for (const decision of ["approve", "reject"] as const) {
+      const html = renderToStaticMarkup(<ExecutionFeed
+        items={[item({ id: "permission", ordinal: 1, kind: "tool_call",
+          status: decision === "approve" ? "completed" : "declined",
+          toolCall: {
+            id: "permission-tool", itemId: "permission", modelStepIndex: 1, batchOrder: 0,
+            providerCallId: "permission-provider", toolName: "request_permissions",
+            status: decision === "approve" ? "completed" : "failed", startedAt: 1000,
+            approvalStatus: "resolved", approvalDecision: decision,
+            ...(decision === "reject" ? { approvalFeedback: "本次任务不需要联网" } : {}),
+            argumentsJson: JSON.stringify({ permissions: { network: { enabled: true } } }),
+            resultJson: JSON.stringify({ outcome: decision === "approve" ? "success" : "error",
+              code: decision === "approve" ? "permission_granted" : "user_rejected" }),
+          },
+        })]}
+        runs={[{ ...run, approvalMode }]} approvals={[]} onApprove={() => {}} onReject={() => {}}
+      />);
+      assert.doesNotMatch(html, /<p class="feed-label">(?:审批 · )?(?:已批准|已拒绝) · request_permissions/);
+      assert.doesNotMatch(html, /申请权限 \[/);
+      if (decision === "approve") assert.match(html, /已申请权限 网络访问/);
+      else {
+        assert.match(html, /已拒绝 申请权限 网络访问/);
+        assert.match(html, /本次任务不需要联网/);
+      }
+    }
+  }
+});
+
+test("permission rows read network names from fallback data and handle existing grants", () => {
+  for (const source of [
+    { argumentsJson: JSON.stringify({ network: { enabled: true } }) },
+    { data: { permissions: { network: { enabled: true } } } },
+    { data: { network: { enabled: true } } },
+  ]) {
+    const html = renderToStaticMarkup(<ExecutionFeed
+      items={[item({ id: "permission", ordinal: 1, kind: "tool_call", toolCall: {
+        id: "permission-tool", itemId: "permission", modelStepIndex: 1, batchOrder: 0,
+        providerCallId: "permission-provider", toolName: "request_permissions",
+        status: "completed", startedAt: 1000, argumentsJson: source.argumentsJson ?? "{}",
+        resultJson: JSON.stringify({ outcome: "success", code: "already_granted", data: source.data }),
+      } })]}
+      runs={[run]} approvals={[]} onApprove={() => {}} onReject={() => {}}
+    />);
+    assert.match(html, /已申请权限 网络访问/);
+    assert.doesNotMatch(html, /<details class="tool-item"/);
+  }
+});
+
 test("renders memory tools as static rows with unified icon and accurate copy", () => {
   const items = [
     item({

@@ -217,6 +217,36 @@ test("an item update preserves content and merges the latest tool evidence", () 
   assert.equal(result?.items[0]?.toolCall?.resultJson, '{"ok":true}');
 });
 
+test("permission updates retain known arguments when display arguments are empty", () => {
+  const argumentsJson = JSON.stringify({ permissions: { network: { enabled: true } } });
+  const existing: Item = {
+    id: "permission-item", sessionId: session.id, runId: "run-1", ordinal: 1,
+    kind: "tool_call", status: "in_progress", createdAt: 1,
+    toolCall: {
+      id: "permission-tool", itemId: "permission-item", modelStepIndex: 1, batchOrder: 0,
+      providerCallId: "permission-provider", toolName: "request_permissions",
+      status: "running", startedAt: 1, argumentsJson,
+    },
+  };
+  const changedArguments = JSON.stringify({ permissions: { fileSystem: [{ path: "/outside", access: "read" }] } });
+  for (const incomingArguments of [undefined, "", "{}", changedArguments]) {
+    const incoming: Item = {
+      ...existing, status: "completed", toolCall: {
+        ...existing.toolCall!, status: "completed",
+        resultJson: JSON.stringify({ outcome: "success", code: "permission_granted" }),
+      },
+    };
+    if (incomingArguments === undefined) delete incoming.toolCall!.argumentsJson;
+    else incoming.toolCall!.argumentsJson = incomingArguments;
+    const result = applyNotification({ session, runs: [], items: [existing], stepResolutions: [] }, {
+      method: "item/updated",
+      params: { sessionId: session.id, runId: "run-1", item: incoming },
+    });
+    assert.equal(result?.items[0]?.toolCall?.argumentsJson, incomingArguments === changedArguments ? changedArguments : argumentsJson);
+    assert.equal(result?.items[0]?.toolCall?.status, "completed");
+  }
+});
+
 test("a new run's user item stays after the preceding run's items", () => {
   const previousUser: Item = {
     id: "item-previous-user",

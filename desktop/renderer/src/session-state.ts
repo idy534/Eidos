@@ -307,10 +307,10 @@ export function applyNotification(
     : incoming;
   if (existing?.toolCall && incoming.toolCall) {
     const mergedToolCall = { ...existing.toolCall, ...incoming.toolCall };
-    if (mergedToolCall.argumentsJson === undefined) {
-      if (existing.toolCall.argumentsJson !== undefined) {
+    if (mergedToolCall.argumentsJson === undefined || mergedToolCall.argumentsJson === "{}" || mergedToolCall.argumentsJson === "") {
+      if (existing.toolCall.argumentsJson && existing.toolCall.argumentsJson !== "{}" && existing.toolCall.argumentsJson !== "") {
         mergedToolCall.argumentsJson = existing.toolCall.argumentsJson;
-      } else {
+      } else if (mergedToolCall.argumentsJson === undefined) {
         delete mergedToolCall.argumentsJson;
       }
     }

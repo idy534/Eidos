@@ -25,20 +25,81 @@
 .skill-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem 1.25rem; }
 .skill-card {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  align-items: stretch;
+  justify-content: space-between;
   min-width: 0;
-  padding: 0.6rem 0.6rem;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm, 6px);
   background: transparent;
   color: var(--text);
   font: inherit;
-  text-align: left;
-  cursor: pointer;
+  transition: background-color 120ms ease;
 }
 .skill-card:hover { background: var(--surface-muted); }
 .skill-card--disabled { color: var(--muted); }
+.skill-card-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.55rem 0.35rem 0.55rem 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm, 6px) 0 0 var(--radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.skill-card-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0.55rem 0.6rem 0.55rem 0.35rem;
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+}
+.skill-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+.skill-card-toggle .toggle-track {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: inherit;
+  background: #eaebec;
+  box-shadow: none;
+  transition: background-color 160ms ease;
+}
+.skill-card-toggle.toggle-switch--checked .toggle-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.skill-card-toggle .toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  transition: transform 160ms var(--apple-spring);
+}
+.skill-card-toggle.toggle-switch--checked .toggle-thumb {
+  transform: translateX(14px);
+}
+.skill-card-toggle .toggle-switch__input:not(:disabled):hover + .toggle-track,
+.skill-card-toggle.toggle-switch--checked .toggle-switch__input:not(:disabled):hover + .toggle-track {
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
 .skill-initial,
 .skill-icon {
   display: inline-flex;
@@ -63,7 +124,6 @@
 .skill-card-name, .skill-card-description { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .skill-card-name { font-size: 0.925rem; font-weight: 500; }
 .skill-card-description { color: var(--muted); font-size: 0.825rem; }
-.skill-card-check { width: 1rem; flex-shrink: 0; color: var(--muted); font-size: 1rem; }
 .skill-detail-dialog {
   display: flex;
   flex-direction: column;
@@ -165,12 +225,32 @@
   margin: 0;
   flex-shrink: 0;
 }
+.skill-detail-header-right .toggle-switch .toggle-track {
+  border: 0;
+  border-radius: inherit;
+  background: #eaebec;
+  box-shadow: none;
+  transition: background-color 160ms ease;
+}
+.skill-detail-header-right .toggle-switch.toggle-switch--checked .toggle-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
 .skill-detail-header-right .toggle-switch .toggle-thumb {
+  top: 2px;
+  left: 2px;
   width: 16px;
   height: 16px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  transition: transform 160ms var(--apple-spring);
 }
 .skill-detail-header-right .toggle-switch.toggle-switch--checked .toggle-thumb {
   transform: translateX(16px);
+}
+.skill-detail-header-right .toggle-switch .toggle-switch__input:not(:disabled):hover + .toggle-track,
+.skill-detail-header-right .toggle-switch.toggle-switch--checked .toggle-switch__input:not(:disabled):hover + .toggle-track {
+  box-shadow: 0 0 0 2px var(--accent-glow);
 }
 .skill-detail-actions {
   display: flex;
@@ -241,7 +321,7 @@
 .skill-detail-body .markdown-body {
   overflow-wrap: anywhere;
 }
-.skill-card:focus-visible, .skill-categories button:focus-visible, .skill-detail-body:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.skill-card-main:focus-visible, .skill-categories button:focus-visible, .skill-detail-body:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
 .skill-search:focus,
 .skill-search:focus-visible {
   outline: none;

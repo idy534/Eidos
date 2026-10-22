@@ -413,6 +413,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Approval R1
 
 - 模型可以通过 `request_permissions` 申请当前 Run 的网络或具体路径权限。用户只作批准或拒绝决策。重复申请已有权限不会再次审批。
+- Feed 使用盾牌问号图标展示权限申请。运行中的文案为“正在申请权限 权限名”，完成后的文案为“已申请权限 权限名”。权限名不加方括号，可以包含网络访问、文件访问类型和路径。正常申请显示为静态行；失败、拒绝和取消保留状态与详情。已处理的权限申请不再显示重复的审批标题，审批反馈仍然保留。其他工具的审批标题不变。历史快照通过现有权限参数模型校验后保留展示参数，无效参数不直接复制到展示快照。
 - 普通 Shell 会继承 Run Grant。显式 `networkAccess=request`、`sandboxPermissions`、`additionalPermissions` 和 `justification` 保持兼容，显式动作审批不会建立 Run Grant。
 - 普通 Shell 遭遇可识别的网络 denial 后可以进入审批。批准后，模型收到 `permission_granted_retry_required`，再自行决定下一次调用。Runtime 不会自动重跑 Shell。拒绝只阻止同一审批请求的重复打扰。
 - R1 结构化待批请求可以在重启后恢复。Runtime 保留原审批，并重新核对 Tool 契约和待执行动作。网络 denial 的已完成结果可以恢复。不确定执行、契约变化和取消仍保持原有安全边界。

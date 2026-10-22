@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
 import type { SkillMetadata, SkillRemoval } from "../../contracts.js";
+import { userFacingError } from "../../session-state.js";
 import type { SettingsPendingAction } from "./settings-types.js";
 import { EmptySettingsState } from "./EmptySettingsState.js";
-import { SkillDetailDialog, SkillIcon, SkillInitial } from "./SkillDetailDialog.js";
+import { SkillDetailDialog, SkillIcon } from "./SkillDetailDialog.js";
+import { Toggle } from "./Toggle.js";
 
 interface SkillSettingsProps {
   skills: SkillMetadata[];
@@ -14,9 +16,11 @@ interface SkillSettingsProps {
 }
 
 export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
+  const { onToggleSkill, pendingAction, storageReady, onShowToast } = actions;
   const [category, setCategory] = useState<"personal" | "system">("personal");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
+  const [togglingId, setTogglingId] = useState<string>();
   const searchRef = useRef<HTMLInputElement>(null);
   const selected = skills.find((skill) => skill.qualifiedId === selectedId);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -24,6 +28,24 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
     (category === "system" ? skill.sourceKind === "system" : skill.sourceKind !== "system")
     && `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(normalizedQuery)
   )).sort((a, b) => a.name.localeCompare(b.name));
+
+  const isBusy = Boolean(pendingAction) || Boolean(togglingId);
+
+  async function handleToggle(qualifiedId: string, enabled: boolean) {
+    if (isBusy || !onToggleSkill) return;
+    setTogglingId(qualifiedId);
+    try {
+      await onToggleSkill(qualifiedId, enabled);
+      onShowToast(
+        enabled ? "技能已启用，将从下一次任务生效" : "技能已禁用，将从下一次任务生效",
+        "success",
+      );
+    } catch (cause) {
+      onShowToast(userFacingError(cause), "error");
+    } finally {
+      setTogglingId(undefined);
+    }
+  }
 
   return (
     <div className="settings-panel skill-settings">
@@ -47,20 +69,32 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
         </div>
         <div className="skill-grid">
           {visible.map((skill) => (
-            <button
-              type="button"
+            <div
               key={skill.qualifiedId}
               className={`skill-card${skill.enabled ? "" : " skill-card--disabled"}`}
-              aria-label={`${skill.name}，${skill.enabled ? "已启用" : "已禁用"}，查看详情`}
-              onClick={() => setSelectedId(skill.qualifiedId)}
             >
-              <SkillIcon name={skill.name} icon={skill.icon} />
-              <span className="skill-card-copy">
-                <span className="skill-card-name">{skill.name}</span>
-                <span className="skill-card-description">{skill.description || "未提供技能说明"}</span>
-              </span>
-              <span className="skill-card-check" aria-hidden="true">{skill.enabled ? "✓" : ""}</span>
-            </button>
+              <button
+                type="button"
+                className="skill-card-main"
+                aria-label={`${skill.name}，${skill.enabled ? "已启用" : "已禁用"}，查看详情`}
+                onClick={() => setSelectedId(skill.qualifiedId)}
+              >
+                <SkillIcon name={skill.name} icon={skill.icon} />
+                <span className="skill-card-copy">
+                  <span className="skill-card-name">{skill.name}</span>
+                  <span className="skill-card-description">{skill.description || "未提供技能说明"}</span>
+                </span>
+              </button>
+              <div className="skill-card-action" onClick={(event) => event.stopPropagation()}>
+                <Toggle
+                  className="skill-card-toggle"
+                  checked={Boolean(skill.enabled)}
+                  disabled={isBusy || !storageReady}
+                  label={`启用或停用 ${skill.name}`}
+                  onChange={(enabled) => void handleToggle(skill.qualifiedId, enabled)}
+                />
+              </div>
+            </div>
           ))}
         </div>
         {visible.length === 0 && (

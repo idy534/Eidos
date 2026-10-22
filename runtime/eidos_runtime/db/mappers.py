@@ -92,6 +92,17 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         except ValidationError:
             return None
         return request.model_dump_json(by_alias=True, exclude_none=True)
+    if tool_call.get("toolName") == "request_permissions" and arguments is not None:
+        from eidos_runtime.tools.request_permissions import RequestPermissionsInput
+
+        try:
+            request = RequestPermissionsInput.model_validate_json(json.dumps({
+                "permissions": arguments.get("permissions"),
+                "reason": arguments.get("reason"),
+            }))
+        except ValidationError:
+            return None
+        return request.model_dump_json(by_alias=True, exclude_none=True)
     if fields is None or arguments is None:
         return None
     projected: dict[str, object] = {}

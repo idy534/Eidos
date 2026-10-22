@@ -220,3 +220,47 @@ def test_snapshot_rejects_boolean_values_for_numeric_display_arguments() -> None
         "argumentsJson": json.dumps({"title": True, "expectedRevision": True, "readyForReview": True}),
     }) or "null")
     assert projected == {"readyForReview": True}
+
+
+def test_snapshot_preserves_request_permissions_arguments() -> None:
+    network_projected = json.loads(_snapshot_display_arguments({
+        "toolName": "request_permissions",
+        "argumentsJson": json.dumps({
+            "permissions": {"network": {"enabled": True}},
+            "reason": "需要网络权限",
+            "ignored": "not projected",
+        }),
+    }) or "null")
+
+    assert network_projected == {
+        "permissions": {"fileSystem": [], "network": {"enabled": True}},
+        "reason": "需要网络权限",
+    }
+
+    fs_projected = json.loads(_snapshot_display_arguments({
+        "toolName": "request_permissions",
+        "argumentsJson": json.dumps({
+            "permissions": {
+                "fileSystem": [{"path": "/Users/test/dir", "access": "read"}],
+            },
+        }),
+    }) or "null")
+
+    assert fs_projected == {
+        "permissions": {
+            "fileSystem": [{"access": "read", "path": "/Users/test/dir", "recursive": True}],
+        },
+    }
+
+
+def test_permission_snapshot_omits_invalid_arguments_instead_of_copying_raw_permissions() -> None:
+    for arguments in (
+        {"permissions": {"network": {"enabled": True, "unknown": "not projected"}}},
+        {"permissions": {"fileSystem": [{"path": "relative", "access": "read"}]}},
+        {"permissions": {"network": {"enabled": False}}},
+        {"permissions": {"network": {"enabled": True}}, "reason": "海" * 2001},
+    ):
+        assert _snapshot_display_arguments({
+            "toolName": "request_permissions",
+            "argumentsJson": json.dumps(arguments),
+        }) is None

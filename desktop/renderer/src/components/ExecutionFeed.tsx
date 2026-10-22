@@ -1009,7 +1009,7 @@ function ProcessItem({
     return <><p className="feed-label">需要批准 · {{ file_change: "文件变更", command_execution: "Shell 命令", network_access: "网络访问", external_tool: "MCP 工具", permission_request: "权限申请" }[approval.kind]} · <span>{approval.summary}</span></p>{toolItem}</>;
   }
   if (item.toolCall.approvalDecision && run.approvalMode !== "full_access") {
-    return <div><p className="feed-label">{run.approvalMode === "auto_review" ? "审批 · " : ""}{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>
+    return <div>{item.toolCall.toolName !== "request_permissions" && <p className="feed-label">{run.approvalMode === "auto_review" ? "审批 · " : ""}{item.toolCall.approvalDecision === "approve" ? "已批准" : "已拒绝"} · {item.toolCall.toolName}</p>}
       {item.toolCall.approvalFeedback && <p className="feed-label">{item.toolCall.approvalFeedback}</p>}
       {toolItem}</div>;
   }
@@ -1802,7 +1802,7 @@ function ToolItem({
   const isToolSearch = toolCall.toolName === "tool_search";
   const isError = Boolean(
     result.outcome === "error"
-    || (typeof result.code === "string" && result.code && result.code !== "ok")
+    || (typeof result.code === "string" && result.code && result.code !== "ok" && !(toolCall.toolName === "request_permissions" && ["permission_granted", "already_granted"].includes(result.code)))
     || item.status === "failed"
     || item.status === "declined"
     || item.status === "canceled"
@@ -1810,6 +1810,18 @@ function ToolItem({
     || toolCall.status === "canceled"
     || isReconciliationGate(result),
   );
+
+  if (toolCall.toolName === "request_permissions" && !isError) {
+    const summaryText = toolSummary(toolCall, item.status, agents);
+    return (
+      <div className="tool-item tool-item--read-done" title={summaryText}>
+        <span className="tool-icon" aria-hidden="true">
+          {toolIcon(toolCall.toolName)}
+        </span>
+        <span>{summaryText}</span>
+      </div>
+    );
+  }
   const summary = safeToolSummary(toolCall.resultJson, item.status);
   const isRedundantFileSummary = Boolean(
     summary && (
@@ -2064,6 +2076,93 @@ function isSkillReadTool(name: string): boolean {
   return name === "skill_read" || name === "skill_read_resource";
 }
 
+function formatPermissionNames(args: Record<string, unknown>, data?: Record<string, unknown>): string {
+  const perms = objectField(args, "permissions");
+  const dataPerms = data ? objectField(data, "permissions") : {};
+  const rawPerms = args.permissions || (data ? data.permissions : undefined);
+  const items: string[] = [];
+
+  const networkEnabled = [perms, args, dataPerms, data ?? {}].some(
+    source => source.network === true || objectField(source, "network").enabled === true,
+  );
+  if (networkEnabled) {
+    items.push("网络访问");
+  }
+
+  const rawFs = Array.isArray(perms.fileSystem)
+    ? perms.fileSystem
+    : Array.isArray(perms.file_system)
+      ? perms.file_system
+      : Array.isArray(args.fileSystem)
+        ? args.fileSystem
+        : Array.isArray(args.file_system)
+          ? args.file_system
+          : Array.isArray(dataPerms.fileSystem)
+            ? dataPerms.fileSystem
+            : Array.isArray(dataPerms.file_system)
+              ? dataPerms.file_system
+              : data && Array.isArray(data.fileSystem)
+                ? data.fileSystem
+                : data && Array.isArray(data.file_system)
+                  ? data.file_system
+                  : undefined;
+
+  if (rawFs) {
+    const accessMap: Record<string, string> = {
+      read: "读取",
+      write: "写入",
+      execute: "执行",
+      deny: "禁止访问",
+    };
+    for (const entry of rawFs) {
+      if (typeof entry === "string" && entry.trim()) {
+        items.push(entry.trim());
+      } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        const obj = entry as Record<string, unknown>;
+        const p = stringField(obj, "path").trim();
+        const accessKey = stringField(obj, "access").trim();
+        const access = accessMap[accessKey] ?? accessKey;
+        if (access && p) {
+          items.push(`${access} ${p}`);
+        } else if (p) {
+          items.push(p);
+        } else if (access) {
+          items.push(access);
+        }
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    if (typeof rawPerms === "string" && rawPerms.trim()) {
+      const trimmed = rawPerms.trim();
+      items.push(trimmed === "network" ? "网络访问" : trimmed);
+    } else if (Array.isArray(rawPerms)) {
+      for (const p of rawPerms) {
+        if (typeof p === "string" && p.trim()) {
+          items.push(p.trim() === "network" ? "网络访问" : p.trim());
+        }
+      }
+    } else if (typeof args.permission === "string" && args.permission.trim()) {
+      const p = args.permission.trim();
+      items.push(p === "network" ? "网络访问" : p);
+    } else if (data && typeof data.permission === "string" && data.permission.trim()) {
+      const p = data.permission.trim();
+      items.push(p === "network" ? "网络访问" : p);
+    } else if (typeof args.permissionName === "string" && args.permissionName.trim()) {
+      items.push(args.permissionName.trim());
+    } else if (typeof args.permission_name === "string" && args.permission_name.trim()) {
+      items.push(args.permission_name.trim());
+    } else if (data && typeof data.permissionName === "string" && data.permissionName.trim()) {
+      items.push(data.permissionName.trim());
+    } else if (data && typeof data.permission_name === "string" && data.permission_name.trim()) {
+      items.push(data.permission_name.trim());
+    }
+  }
+
+  return items.join("、");
+}
+
 function extractSkillInfo(toolCall: ToolCall): { qualifiedId: string; name: string; description?: string | undefined } {
   const args = parseObject(toolCall.argumentsJson);
   const result = parseObject(toolCall.resultJson);
@@ -2178,11 +2277,14 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const isSkillRead = isSkillReadTool(toolCall.toolName);
   const skillInfo = isSkillRead ? extractSkillInfo(toolCall) : undefined;
   const skillName = skillInfo?.name || "";
+  const isPermissions = toolCall.toolName === "request_permissions";
+  const permissionName = isPermissions ? formatPermissionNames(args, data) : "";
 
   const baseLabels: Record<string, string> = {
     automation: "定时任务",
     web_search: query ? `搜索 ${query}` : "网页搜索",
     tool_search: query ? `搜索工具 [${query}]` : "搜索工具",
+    request_permissions: permissionName ? `申请权限 ${permissionName}` : "申请权限",
     spawn_agent: subagentName ? `创建智能体 · ${subagentName}` : "创建智能体",
     wait_agents: subagentName ? `等待智能体 · ${subagentName}` : "等待智能体",
     list_agents: subagentName ? `查询智能体 · ${subagentName}` : "查询智能体",
@@ -2205,6 +2307,8 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     : toolCall.toolName === "web_search"
     ? baseLabels[toolCall.toolName]
     : toolCall.toolName === "tool_search"
+    ? baseLabels[toolCall.toolName]
+    : toolCall.toolName === "request_permissions"
     ? baseLabels[toolCall.toolName]
     : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
@@ -2263,6 +2367,9 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     automation: running
       ? (taskName ? `正在配置定时任务 · ${taskName}` : "正在配置定时任务")
       : (taskName ? `定时任务 · ${taskName}` : "已运行定时任务"),
+    request_permissions: running
+      ? (permissionName ? `正在申请权限 ${permissionName}` : "正在申请权限")
+      : (permissionName ? `已申请权限 ${permissionName}` : "已申请权限"),
   };
   return labels[toolCall.toolName] ?? `${running ? "正在运行" : "已运行"} ${toolCall.toolName}`;
 }
@@ -2378,6 +2485,16 @@ function WebSearchIcon() {
   );
 }
 
+function ShieldQuestionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <path d="M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
 function DefaultToolIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -2390,6 +2507,7 @@ function toolIcon(name: string): ReactNode {
   if (name === "automation") return <AutomationsIcon />;
   if (name === "web_search") return <WebSearchIcon />;
   if (name === "declare_outputs") return <DeclareOutputsIcon />;
+  if (name === "request_permissions") return <ShieldQuestionIcon />;
   if (name === "run_shell" || name === "read_tool_output") return <ShellIcon />;
   if (name === "list_files") return <FileListIcon />;
   if (["read_file", "read_file_range"].includes(name)) return <FileReadIcon />;
