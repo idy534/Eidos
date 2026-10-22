@@ -1,6 +1,6 @@
 import React from "react";
 
-interface SettingRowProps {
+export interface SettingRowProps {
   title: React.ReactNode;
   description?: React.ReactNode;
   meta?: React.ReactNode;

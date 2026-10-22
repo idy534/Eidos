@@ -5,6 +5,7 @@
 @import "./styles/overlays.css";
 @import "./styles/feedback.css";
 @import "./styles/scrollbars.css";
+@import "./components/common.css";
 @import "./app/AppShell.css";
 @import "./components/SessionSidebar.css";
 @import "./components/Search.css";

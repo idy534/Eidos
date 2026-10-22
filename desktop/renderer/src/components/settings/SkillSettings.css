@@ -61,45 +61,6 @@
   padding: 0.55rem 0.6rem 0.55rem 0.35rem;
   border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
 }
-.skill-card-toggle {
-  display: inline-flex;
-  align-items: center;
-  width: 32px;
-  height: 18px;
-  margin: 0;
-  flex: 0 0 auto;
-}
-.skill-card-toggle .toggle-track {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  border-radius: inherit;
-  background: #eaebec;
-  box-shadow: none;
-  transition: background-color 160ms ease;
-}
-.skill-card-toggle.toggle-switch--checked .toggle-track {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.skill-card-toggle .toggle-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
-  transition: transform 160ms var(--apple-spring);
-}
-.skill-card-toggle.toggle-switch--checked .toggle-thumb {
-  transform: translateX(14px);
-}
-.skill-card-toggle .toggle-switch__input:not(:disabled):hover + .toggle-track,
-.skill-card-toggle.toggle-switch--checked .toggle-switch__input:not(:disabled):hover + .toggle-track {
-  box-shadow: 0 0 0 2px var(--accent-glow);
-}
 .skill-initial,
 .skill-icon {
   display: inline-flex;
@@ -216,41 +177,6 @@
   align-items: center;
   gap: 0.65rem;
   flex-shrink: 0;
-}
-.skill-detail-header-right .toggle-switch {
-  display: inline-flex;
-  align-items: center;
-  width: 36px;
-  height: 20px;
-  margin: 0;
-  flex-shrink: 0;
-}
-.skill-detail-header-right .toggle-switch .toggle-track {
-  border: 0;
-  border-radius: inherit;
-  background: #eaebec;
-  box-shadow: none;
-  transition: background-color 160ms ease;
-}
-.skill-detail-header-right .toggle-switch.toggle-switch--checked .toggle-track {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.skill-detail-header-right .toggle-switch .toggle-thumb {
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  background: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
-  transition: transform 160ms var(--apple-spring);
-}
-.skill-detail-header-right .toggle-switch.toggle-switch--checked .toggle-thumb {
-  transform: translateX(16px);
-}
-.skill-detail-header-right .toggle-switch .toggle-switch__input:not(:disabled):hover + .toggle-track,
-.skill-detail-header-right .toggle-switch.toggle-switch--checked .toggle-switch__input:not(:disabled):hover + .toggle-track {
-  box-shadow: 0 0 0 2px var(--accent-glow);
 }
 .skill-detail-actions {
   display: flex;

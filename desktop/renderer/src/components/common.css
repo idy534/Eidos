@@ -1,0 +1,676 @@
+/* ==========================================================================
+   Common Global Component Styles (common.css)
+
+   Centralized home for shared, reusable global UI components across Eidos.
+   All common UI components (switches, buttons, badges, setting rows, etc.)
+   have their baseline styles maintained here for app-wide consistency.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Toggle Switch (Unified Compact Eidos Green Theme)
+   Used by: components/Toggle.tsx, SkillSettings, AgentSettings, SettingsPage, etc.
+   Dimensions: 32x18px track, 14px thumb, Eidos green on-state (#2e624c)
+   -------------------------------------------------------------------------- */
+
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 32px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch__input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: inherit;
+  background: #eaebec;
+  box-shadow: none;
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  transition: transform 160ms var(--apple-spring);
+}
+
+.toggle-switch--checked .toggle-track {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.toggle-switch--checked .toggle-thumb {
+  transform: translateX(14px);
+}
+
+.toggle-switch__input:focus-visible + .toggle-track {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.toggle-switch .toggle-switch__input:not(:disabled):hover + .toggle-track,
+.toggle-switch--checked .toggle-switch__input:not(:disabled):hover + .toggle-track {
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.toggle-switch--disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.toggle-switch--disabled .toggle-switch__input {
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   2. Unified Button Primitives (.btn)
+   Used by: components/Button.tsx
+   -------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--radius);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: var(--control-disabled-opacity);
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* Button Sizes */
+
+.btn--small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--font-size-caption);
+}
+
+.btn--medium {
+  height: 34px;
+  padding: 0 14px;
+  font-size: var(--font-size-sidebar);
+}
+
+.btn--large {
+  height: 42px;
+  padding: 0 18px;
+  font-size: var(--font-size-body);
+}
+
+/* Button Variants */
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: 1px solid var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.btn--primary:hover:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-primary-hover);
+  border-color: var(--action-primary-hover);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(49, 95, 74, 0.2);
+}
+
+.btn--primary:active:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-primary-active);
+  border-color: var(--action-primary-active);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.btn--secondary {
+  background: var(--surface-raised, #ffffff);
+  color: var(--text);
+  border: 1px solid var(--line, var(--line));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover, #f3f2eb);
+  border-color: #c5c4bc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.btn--secondary:active:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted, #f0efe9);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--muted, var(--muted));
+  border: 1px solid transparent;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+  border-color: transparent;
+}
+
+.btn--ghost:active:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted, rgba(0, 0, 0, 0.06));
+  border-color: transparent;
+}
+
+.btn--danger {
+  background: var(--danger, #913d34);
+  color: var(--text-on-accent);
+  border: 1px solid var(--danger, #913d34);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.btn--danger:hover:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-danger-hover);
+  border-color: var(--action-danger-hover);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(145, 61, 52, 0.2);
+}
+
+.btn--danger:active:not(:disabled) {
+  color: var(--text-on-accent);
+  background: var(--action-danger-active);
+  border-color: var(--action-danger-active);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* Button Loading & Spinner */
+
+.btn--loading {
+  position: relative;
+  pointer-events: none;
+}
+
+.btn-spinner {
+  animation: btn-spin 0.8s linear infinite;
+  flex: none;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.btn-label {
+  display: inline-block;
+}
+
+.btn-label:empty,
+.btn-label:has(> .sr-only:only-child) {
+  display: contents;
+}
+
+@keyframes btn-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-spinner {
+    animation: none;
+  }
+  .btn {
+    transition: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   3. Unified Primary Action Button System - Light Sage Theme
+   Used by: components/PrimaryActionButton.tsx
+   -------------------------------------------------------------------------- */
+
+.primary-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--primary-action-border);
+  border-radius: var(--radius);
+  color: var(--primary-action-text);
+  background: var(--primary-action-bg);
+  box-shadow: var(--primary-action-shadow);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.primary-action-btn:hover:not(:disabled) {
+  background: var(--primary-action-bg-hover);
+  border-color: var(--primary-action-border-hover);
+  box-shadow: var(--primary-action-shadow-hover);
+}
+
+.primary-action-btn:active:not(:disabled) {
+  background: var(--primary-action-bg-active);
+  box-shadow: none;
+}
+
+.primary-action-btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.primary-action-btn:disabled {
+  cursor: not-allowed;
+  color: rgba(48, 70, 58, 0.48);
+  background: rgba(223, 233, 226, 0.55);
+  border-color: rgba(49, 95, 74, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+.primary-action-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.primary-action-text-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+.primary-action-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primary-action-icon {
+  flex: none;
+  color: var(--primary-action-icon);
+}
+
+.primary-action-arrow {
+  flex: none;
+  color: rgba(41, 72, 58, 0.48);
+  transition: color 140ms ease;
+}
+
+.primary-action-btn:hover:not(:disabled) .primary-action-arrow {
+  color: rgba(41, 72, 58, 0.75);
+}
+
+/* Shortcut: Hidden by default, fades in on hover/focus */
+
+.primary-action-shortcut {
+  flex: 0 0 24px;
+  width: 24px;
+  text-align: right;
+  margin-left: auto;
+  color: rgba(41, 72, 58, 0.42);
+  font-family: var(--font-code);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+  line-height: 1;
+}
+
+.primary-action-btn:hover:not(:disabled) .primary-action-shortcut,
+.primary-action-btn:focus-visible .primary-action-shortcut {
+  opacity: 1;
+}
+
+.primary-action-btn:disabled .primary-action-shortcut {
+  opacity: 0;
+  display: none;
+}
+
+.primary-action-spinner {
+  flex: none;
+  animation: spin 0.8s linear infinite;
+  color: var(--primary-action-icon);
+}
+
+/* Compact Variant (Sidebar "新建任务") */
+
+.primary-action-btn--compact {
+  width: 100%;
+  margin-bottom: 1.25rem;
+  padding: 0 12px;
+  min-height: 38px;
+  height: 38px;
+}
+
+.primary-action-btn--compact .primary-action-label {
+  font-size: var(--font-size-sidebar);
+}
+
+/* Large Variant (Home Empty State "选择工作空间目录") */
+
+.primary-action-btn--large {
+  width: min(100%, 360px);
+  min-height: 58px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+}
+
+.primary-action-btn--large .primary-action-main {
+  gap: 10px;
+}
+
+.primary-action-btn--large .primary-action-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--primary-action-text);
+}
+
+.primary-action-btn--large .primary-action-subtitle {
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+  color: rgba(48, 70, 58, 0.62);
+  margin-top: 2px;
+}
+
+@media (max-width: 760px) {
+  .primary-action-btn--compact { width: auto; margin: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary-action-btn,
+  .primary-action-arrow,
+  .primary-action-shortcut,
+  .primary-action-spinner {
+    transition: none;
+    animation: none;
+    transform: none !important;
+  }
+  .primary-action-btn:hover:not(:disabled) .primary-action-arrow {
+    transform: none;
+  }
+  .primary-action-btn:hover:not(:disabled) .primary-action-shortcut,
+  .primary-action-btn:focus-visible .primary-action-shortcut {
+    transform: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   4. Icon Button Primitives
+   Used by: WorkspaceDock, Dialogs, Header controls, etc.
+   -------------------------------------------------------------------------- */
+
+.icon-button {
+  min-width: 1.6rem;
+  height: 1.6rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+/* --------------------------------------------------------------------------
+   5. Setting Row
+   Used by: components/settings/SettingRow.tsx (and across settings views)
+   -------------------------------------------------------------------------- */
+
+.setting-row {
+  padding: 0.9rem 1.25rem;
+  border-bottom: 1px solid var(--surface-muted);
+  transition: background-color 120ms ease;
+}
+
+.setting-row:last-child {
+  border-bottom: 0;
+}
+
+.setting-row--disabled {
+  opacity: 0.6;
+}
+
+.setting-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+.setting-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.setting-row-title {
+  font-size: 0.88rem;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.setting-row-desc {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.setting-row-meta {
+  margin-top: 0.2rem;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+
+.setting-row-action {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.setting-row-body {
+  margin-top: 0.75rem;
+}
+
+.setting-row-expandable {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--line);
+}
+
+.setting-row-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.setting-row-expand-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: transparent;
+  box-shadow: none;
+}
+
+.expand-chevron {
+  display: inline-block;
+  transition: transform 180ms var(--apple-spring);
+}
+
+.expand-chevron--open {
+  transform: rotate(180deg);
+}
+
+.setting-row-details-content {
+  margin-top: 0.65rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* --------------------------------------------------------------------------
+   6. Status Badge
+   Used by: components/settings/StatusBadge.tsx, AgentSettings.tsx, etc.
+   -------------------------------------------------------------------------- */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: var(--radius-pill);
+  padding: 0.2rem 0.6rem;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.2;
+  user-select: none;
+}
+
+.status-badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.status-badge--success {
+  color: var(--status-success);
+  background: var(--status-success-bg);
+}
+
+.status-badge--warning {
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+}
+
+.status-badge--danger {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+}
+
+.status-badge--neutral {
+  color: var(--status-neutral);
+  background: var(--status-neutral-bg);
+}
+
+.status-badge--info {
+  color: var(--status-info);
+  background: var(--status-info-bg);
+}
+
+/* --------------------------------------------------------------------------
+   7. Code Copy Button
+   Used by: CodeBlock.tsx, diff viewers, etc.
+   -------------------------------------------------------------------------- */
+
+.code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: none !important;
+  transition:
+    color 150ms var(--apple-spring),
+    background-color 150ms var(--apple-spring),
+    border-color 150ms var(--apple-spring),
+    transform 150ms var(--apple-spring);
+  flex-shrink: 0;
+}
+
+.code-copy-btn:hover {
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--surface);
+  transform: scale(1.05);
+  box-shadow: none !important;
+}
+
+.code-copy-btn:active {
+  background: var(--surface-muted);
+  transform: scale(0.94);
+  box-shadow: none !important;
+}
+
+.code-copy-btn .copy-icon-svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  display: block;
+}
+
+.code-copy-btn .copy-icon-svg--copied {
+  color: var(--status-success);
+}

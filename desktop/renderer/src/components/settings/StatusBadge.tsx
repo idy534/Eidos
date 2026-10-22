@@ -2,7 +2,7 @@ import React from "react";
 
 export type StatusTone = "success" | "warning" | "danger" | "neutral" | "info";
 
-interface StatusBadgeProps {
+export interface StatusBadgeProps {
   tone?: StatusTone;
   children: React.ReactNode;
   className?: string;

@@ -87,7 +87,6 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
               </button>
               <div className="skill-card-action" onClick={(event) => event.stopPropagation()}>
                 <Toggle
-                  className="skill-card-toggle"
                   checked={Boolean(skill.enabled)}
                   disabled={isBusy || !storageReady}
                   label={`启用或停用 ${skill.name}`}
