@@ -122,6 +122,10 @@ class VerifiedCompactionRepository(Repository):
                                 "failed_attempts": verified.summary.failed_attempts,
                                 "pending_approvals": verified.summary.pending_approvals,
                                 "uncertain_side_effects": verified.summary.uncertain_side_effects,
+                                **({"continuity_version": 1,
+                                    "continuity_notes": [note.model_dump(mode="json")
+                                                         for note in verified.summary.continuity_notes]}
+                                   if verified.summary.continuity_notes else {}),
                                 "verified_summary_id": identifier,
                             },
                             ensure_ascii=False,

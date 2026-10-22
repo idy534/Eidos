@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from eidos_runtime.context.facts import CompactSummary, ContextFacts
+from eidos_runtime.context.summary_evidence import ground_note
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
 
@@ -23,7 +24,7 @@ class VerifiedCompactSummary(EidosFrozenStrictModel):
     source_tool_call_ids: tuple[str, ...]
     source_evidence_ids: tuple[str, ...]
     compaction_input_range: tuple[int, int]
-    compaction_version: int = 1
+    compaction_version: Literal[1, 2] = 1
     pending_approval_facts: tuple[str, ...]
     reconciliation_facts: tuple[str, ...]
     verification_result: Literal["verified"]
@@ -32,6 +33,8 @@ class VerifiedCompactSummary(EidosFrozenStrictModel):
 
     @model_validator(mode="after")
     def verify_hash(self) -> VerifiedCompactSummary:
+        if self.summary.continuity_notes and self.compaction_version != 2:
+            raise ValueError("continuity evidence requires compaction version 2")
         payload = self.model_dump(
             mode="json", exclude={"summary_hash", "verified_at_ms"}
         )
@@ -94,6 +97,27 @@ class ContextCompactionVerifier:
             or max(ordinals.values()) > input_range[1]
         ):
             raise CompactionVerificationError("compaction input range skips source facts")
+        previous = facts.compact_summary
+        if previous is not None:
+            if not set(previous.constraints) <= set(summary.constraints):
+                raise CompactionVerificationError("continuity constraint omitted")
+            retained = {note.model_dump_json() for note in summary.continuity_notes}
+            if any(note.model_dump_json() not in retained for note in previous.continuity_notes):
+                raise CompactionVerificationError("continuity note omitted")
+            legacy = {value for value in previous.important_facts
+                      if value.startswith("Model note (")}
+            if not legacy <= set(summary.important_facts):
+                raise CompactionVerificationError("continuity report omitted")
+        originals = {item.item_id: item for item in facts.items}
+        for note in summary.continuity_notes:
+            if any(ref.item_id not in summary.source_item_ids for ref in note.evidence):
+                raise CompactionVerificationError("continuity source is not covered")
+            try:
+                grounded = ground_note(note.kind, note.evidence, originals, note.interpretation)
+            except ValueError as error:
+                raise CompactionVerificationError("continuity evidence is invalid") from error
+            if grounded != note:
+                raise CompactionVerificationError("continuity evidence type is invalid")
         payload = {
             "schema_version": 1,
             "summary": summary.model_dump(mode="json"),
@@ -102,7 +126,7 @@ class ContextCompactionVerifier:
             "source_tool_call_ids": tuple(dict.fromkeys(source_tool_call_ids)),
             "source_evidence_ids": tuple(dict.fromkeys(source_evidence_ids)),
             "compaction_input_range": input_range,
-            "compaction_version": 1,
+            "compaction_version": 2 if summary.continuity_notes else 1,
             "pending_approval_facts": tuple(dict.fromkeys(pending_approval_facts)),
             "reconciliation_facts": tuple(dict.fromkeys(reconciliation_facts)),
             "verification_result": "verified",
@@ -116,7 +140,7 @@ class ContextCompactionVerifier:
             source_tool_call_ids=payload["source_tool_call_ids"],
             source_evidence_ids=payload["source_evidence_ids"],
             compaction_input_range=input_range,
-            compaction_version=1,
+            compaction_version=payload["compaction_version"],
             pending_approval_facts=payload["pending_approval_facts"],
             reconciliation_facts=payload["reconciliation_facts"],
             verification_result="verified",

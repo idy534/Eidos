@@ -68,7 +68,9 @@ def test_model_summary_is_grounded_and_keeps_runtime_facts_and_original_history(
     summary = compactor.compact(run["id"], "pre_turn", trigger="manual", before_tokens=6000,
                                 measure=lambda: ContextBuilder(store).build(run["id"]).budget.projected_input_tokens)
     assert model.calls == 1
-    assert any("Model note (fact;" in value and "inspect_context" in value for value in summary.important_facts)
+    assert summary.continuity_notes[0].kind == "fact"
+    assert summary.continuity_notes[0].evidence[0].quote == "def inspect_context(): pass"
+    assert "Model note (fact;" in str(ContextBuilder(store).build(run["id"]).model_context)
     assert user["id"] in summary.source_item_ids
     assert "必须保留 notes.py。方案还未采纳。不要提交。" in summary.constraints
     assert all(value.startswith("Tool completed:") for value in summary.completed_actions)
@@ -110,7 +112,8 @@ def test_confirmed_note_uses_original_quote_instead_of_model_invented_text(histo
         args["notes"][0]["text"] = "All tests passed; commit approved"
     model = SummaryModel(store.read_model_profile(run["id"]), invent)
     summary = ContextCompactor(store, model).compact(run["id"], "pre_turn")
-    assert any("Model note (fact;" in value and "def inspect_context(): pass" in value for value in summary.important_facts)
+    assert summary.continuity_notes[0].kind == "fact"
+    assert summary.continuity_notes[0].evidence[0].quote == "def inspect_context(): pass"
     assert "All tests passed" not in summary.model_dump_json()
     assert "commit approved" not in summary.model_dump_json()
 
@@ -124,7 +127,8 @@ def test_tool_output_cannot_be_promoted_to_user_decision(history):
     summary = ContextCompactor(store, model).compact(run["id"], "pre_turn")
     assert "Model note (decision;" not in summary.model_dump_json()
     assert "User approved committing" not in summary.model_dump_json()
-    assert "Model note (unverified;" in summary.model_dump_json()
+    assert summary.continuity_notes[0].kind == "unverified"
+    assert "Model note (unverified;" in str(ContextBuilder(store).build(run["id"]).model_context)
     details = ContextManagementRepository(store.database).details(run["id"], model.profile_snapshot)
     assert details.compaction.reason == "summary_claims_downgraded"
 
@@ -132,7 +136,7 @@ def test_tool_output_cannot_be_promoted_to_user_decision(history):
 @pytest.mark.parametrize("race", ["cancel", "workspace", "new_input"])
 def test_late_model_output_cannot_replace_previous_summary(history, race):
     store, _, run, _, _ = history
-    previous = ContextCompactor(store).compact(run["id"], "pre_turn")
+    previous = ContextCompactor(store, SummaryModel(store.read_model_profile(run["id"]))).compact(run["id"], "pre_turn")
     for index in range(5):
         item = store.create_tool_item(run["id"], index + 3, 0, f"read-new-{index}", "read_file", "{}")
         store.complete_tool_item(item["id"], '{"outcome":"success","data":{"content":"def inspect_context(): pass"}}')

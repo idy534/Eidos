@@ -131,6 +131,7 @@ def main() -> int:
                         run, goal = store.create_run(session["id"], "继续任务。请使用历史中的目标、约束和验证事实。", model_id=profile.model_id, model_profile=profile)
                         target = "inspect_" + case["name"]
                         previous_sources: set[str] = set()
+                        previous_notes: set[str] = set()
                         cycles = []
                         raw_digest = hashlib.sha256()
                         raw_items = []
@@ -160,6 +161,9 @@ def main() -> int:
                             retained = all(value in serialized for value in ("context.py", target, "preserve" if case["name"] == "english_constraints" else "必须"))
                             lineage = previous_sources <= set(summary.source_item_ids) and goal["id"] not in summary.source_item_ids
                             previous_sources = set(summary.source_item_ids)
+                            current_notes = {note.model_dump_json() for note in summary.continuity_notes}
+                            continuity_preserved = previous_notes <= current_notes
+                            previous_notes = current_notes
                             no_false_completion = not any("All tests passed" in value for value in summary.completed_actions)
                             details = ContextManagementRepository(store.database).details(run["id"], profile)
                             record = details.compaction.to_wire_dict()
@@ -192,7 +196,8 @@ def main() -> int:
                                 except ValueError as error:
                                     check = False
                                     check_failure = error.args[0] if error.args and error.args[0] in {"incomplete_response", "missing_structured_answer"} else "invalid_structured_answer"
-                            cycles.append({"retained": retained, "lineage": lineage, "no_false_completion": no_false_completion,
+                            cycles.append({"retained": retained, "lineage": lineage, "continuity_preserved": continuity_preserved,
+                                           "no_false_completion": no_false_completion,
                                            "compaction": record, "continuation_passed": check, "continuation_failure": check_failure,
                                            "continuation_usage": check_usage, "continuation_answer": check_answer})
                         digest = hashlib.sha256()
@@ -227,7 +232,7 @@ def main() -> int:
                                     "compaction": ContextManagementRepository(store.database).details(continued["id"], profile).compaction.to_wire_dict()}
                         result = {"case": case["name"], "scale": scale, "originals_unchanged": digest.digest() == raw_digest.digest(), "cycles": cycles, "repository_task": task}
                         results.append(result)
-                        print(json.dumps({"case": case["name"], "scale": scale, "passed": result["originals_unchanged"] and all(c["retained"] and c["lineage"] and c["no_false_completion"] and c["continuation_passed"] is not False for c in cycles)}, ensure_ascii=False), flush=True)
+                        print(json.dumps({"case": case["name"], "scale": scale, "passed": result["originals_unchanged"] and all(c["retained"] and c["lineage"] and c["continuity_preserved"] and c["no_false_completion"] and c["continuation_passed"] is not False for c in cycles)}, ensure_ascii=False), flush=True)
                     finally:
                         store.close()
     finally:
@@ -239,7 +244,11 @@ def main() -> int:
                   "started_at": started_at, "duration_ms": round((time.monotonic() - started) * 1000),
                   "source_sha256": {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in (
                       Path(__file__).relative_to(Path.cwd()), Path("scripts/fixtures/context-compaction-cases.json"),
-                      *(Path("runtime/eidos_runtime") / path for path in ("context/model_summary.py", "context/compactor.py", "context/budget.py", "model/pydantic_ai_client.py", "model/native_custom.py")),
+                      *(Path("runtime/eidos_runtime") / path for path in (
+                          "context/model_summary.py", "context/summary_evidence.py", "context/facts.py",
+                          "context/compactor.py", "context/verified_compaction.py", "context/budget.py",
+                          "context/builder.py", "model/context_projection.py", "model/pydantic_ai_client.py", "model/native_custom.py",
+                      )),
                   )},
                   "provider_usage": {"responses_with_usage": model.usage_responses, "calls_without_usage": model.calls - model.usage_responses,
                                      "failed_calls": model.failed_calls, "input_tokens": model.input_tokens, "output_tokens": model.output_tokens} if model else None,
@@ -247,7 +256,7 @@ def main() -> int:
                   "real_repository_task_completion": "isolated_fixture_only" if args.task else "not_measured", "results": results}
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-    return 0 if results and all(row["originals_unchanged"] and all(c["retained"] and c["lineage"] and c["no_false_completion"] and c["continuation_passed"] is not False for c in row["cycles"])
+    return 0 if results and all(row["originals_unchanged"] and all(c["retained"] and c["lineage"] and c["continuity_preserved"] and c["no_false_completion"] and c["continuation_passed"] is not False for c in row["cycles"])
                                and (row["repository_task"] is None or (row["repository_task"]["failed_before"] and row["repository_task"]["external_tests_passed"] and row["repository_task"]["preserved_files"] and row["repository_task"]["run_status"] == "succeeded")) for row in results) else 1
 
 

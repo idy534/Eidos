@@ -18,6 +18,9 @@ from eidos_runtime.model.client import ModelClient
 from eidos_runtime.persistence.context_management import ContextManagementRepository
 from eidos_runtime.context.model_summary import AssistedSummary, assist_summary
 from eidos_runtime.context.working_set import recent_item_ids
+from eidos_runtime.context.summary_evidence import continuity_context
+from eidos_runtime.context.policy import CONTINUITY_CONTEXT_MAX_BYTES
+from eidos_runtime.model.context_projection import text_preview
 
 
 class ContextCompactionError(RuntimeError):
@@ -216,7 +219,11 @@ class ContextCompactor:
             important_facts=(workspace_state, *_merge(
                 tuple(value for value in existing.important_facts if not value.startswith("workspace state:")) if existing else (),
                 (*input_references, *(
-                    _bounded(f"Historical user request item={item.item_id}: {item.content or ''}", SUMMARY_ENTRY_MAX_BYTES)
+                    text_preview(
+                        f"Historical user request item={item.item_id}: {item.content or ''}",
+                        SUMMARY_ENTRY_MAX_BYTES,
+                        continuation=f"read_tool_output(callId='{item.item_id}', stream='context') reads the saved original.",
+                    )
                     for item in eligible if item.kind == "user_message"
                 ), *(
                     _bounded(f"Assistant report, unverified, item={item.item_id}: {item.content or ''}", SUMMARY_ENTRY_MAX_BYTES)
@@ -247,16 +254,21 @@ class ContextCompactor:
                     if facts.side_effects_may_exist else ()
                 )),
             ),
+            continuity_notes=existing.continuity_notes if existing else (),
         )
         input_budget = profile.context_window_tokens - profile.max_output_tokens
         proposal = _fit_summary(summary, max_tokens=min(4_096, max(512, input_budget // 12)))
         if self.model is not None and hasattr(self.model, "profile_snapshot"):
-            self._assisted = assist_summary(self.model, proposal, eligible, cancel)
+            retained_ids = {ref.item_id for note in proposal.continuity_notes for ref in note.evidence}
+            self._assisted = assist_summary(
+                self.model, proposal, eligible, cancel,
+                prior_items=tuple(item for item in source_facts.items if item.item_id in retained_ids),
+                task_context=str(self.store.read_run(run_id).get("userInput") or ""),
+            )
             if self._assisted.accepted:
-                try:
-                    proposal = _fit_summary(self._assisted.summary, max_tokens=min(4_096, max(512, input_budget // 12)))
-                except ContextCompactionError:
-                    self._assisted = AssistedSummary(proposal, False, "summary_output_limit", self._assisted.usage)
+                # Do not accept source coverage after silently discarding newly
+                # grounded facts just to make the summary smaller.
+                proposal = _fit_summary(self._assisted.summary, max_tokens=min(4_096, max(512, input_budget // 12)))
         if cancel.is_set() or self.store.read_run(run_id).get("cancelRequestedAt") is not None:
             raise ContextCompactionError("compaction canceled")
         ordinals = tuple(
@@ -471,14 +483,24 @@ def _fit_summary(summary: CompactSummary, *, max_tokens: int = 4_096) -> Compact
         "next_actions", "important_decisions", "failed_attempts",
     )
     candidate = summary
+    if len(candidate.continuity_notes) > 128:
+        raise ContextCompactionError("critical summary facts exceed context budget")
     while (_summary_size(candidate) > SUMMARY_MAX_SERIALIZED_BYTES
+           or len(continuity_context(candidate.continuity_notes).encode("utf-8")) > CONTINUITY_CONTEXT_MAX_BYTES
            or estimate_text_tokens(candidate.model_dump_json(exclude={"source_item_ids"})) > max_tokens):
         for field in fields:
             values = getattr(candidate, field)
             if len(values) > 1:
                 # Keep the newest reports/actions rather than discarding them
                 # first. Control facts and explicit constraints are not trimmed.
-                remaining = (values[0], *values[2:]) if field == "important_facts" else values[1:]
+                if field == "important_facts":
+                    removable = next((i for i, value in enumerate(values[1:], 1)
+                                      if not _protected_legacy_fact(value)), None)
+                    if removable is None:
+                        continue
+                    remaining = (*values[:removable], *values[removable + 1:])
+                else:
+                    remaining = values[1:]
                 candidate = candidate.model_copy(update={field: remaining})
                 break
         else:
@@ -495,16 +517,22 @@ def _summary_size(summary: CompactSummary) -> int:
     ).encode("utf-8"))
 
 
+def _protected_legacy_fact(value: str) -> bool:
+    return value.startswith("Model note (")
+
+
 def _merge(existing: tuple[str, ...], values) -> tuple[str, ...]:
     merged = tuple(dict.fromkeys(
-        _bounded(str(value), SUMMARY_ENTRY_MAX_BYTES)
+        str(value) if _protected_legacy_fact(str(value)) else _bounded(str(value), SUMMARY_ENTRY_MAX_BYTES)
         for value in (*existing, *values)
         if value
     ))
-    if len(merged) <= SUMMARY_MAX_ITEMS:
-        return merged
+    protected = tuple(value for value in merged if _protected_legacy_fact(value))
+    ordinary = tuple(value for value in merged if not _protected_legacy_fact(value))
+    if len(ordinary) <= SUMMARY_MAX_ITEMS:
+        return (*protected, *ordinary)
     preserved = SUMMARY_MAX_ITEMS // 4
-    return (*merged[:preserved], *merged[-(SUMMARY_MAX_ITEMS - preserved):])
+    return (*protected, *ordinary[:preserved], *ordinary[-(SUMMARY_MAX_ITEMS - preserved):])
 
 
 def _bounded(value: str, limit: int = SUMMARY_ENTRY_MAX_BYTES) -> str:

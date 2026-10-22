@@ -213,6 +213,12 @@ pnpm test:runtime:bundled-seatbelt
 
 上下文清理与压缩的定向验证入口如下。测试使用隔离数据和脚本模型，不访问真实 Provider 或用户聊天。
 
+延续记录的定向入口覆盖 20 轮连续压缩、来源回读、预算不足、重启、旧摘要 Hash、取消与迟到结果，以及验证说明的来源类型：
+
+```bash
+uv run --locked pytest runtime/tests/test_context_compaction_continuity.py runtime/tests/test_context_model_compaction.py runtime/tests/test_verified_compaction.py runtime/tests/test_verified_compaction_persistence.py
+```
+
 ```bash
 uv run --locked pytest runtime/tests/test_context_history_pruning.py runtime/tests/test_runtime_context.py runtime/tests/test_verified_compaction.py runtime/tests/test_verified_compaction_persistence.py runtime/tests/test_read_tool_output.py runtime/tests/test_read_tool_output_runtime.py runtime/tests/test_context_plan.py runtime/tests/test_model_attempt_context_snapshot.py runtime/tests/test_model_reasoning_replay.py runtime/tests/test_context_usage_protocol.py runtime/tests/test_session_fork_application.py
 ```
@@ -240,7 +246,7 @@ pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/com
 pnpm exec electron scripts/test-feed-scroll.cjs
 ```
 
-离线回放使用六类合成资料与五种长度，共 30 组，每组默认连续压缩三次。脚本检查约束、路径与 Symbol、失败和未验证状态、累计来源与原始结果 Hash。脚本不读取真实聊天，也不代表真实仓库任务成功率：
+离线回放使用六类合成资料与五种长度，共 30 组，每组默认连续压缩三次。脚本检查约束、路径与 Symbol、失败和未验证状态、累计来源、已有延续记录与原始结果 Hash。无模型的规则回放没有模型延续记录；20 轮脚本模型保留回归由 `test_context_compaction_continuity.py` 单独覆盖。脚本不读取真实聊天，也不代表真实仓库任务成功率：
 
 ```bash
 PYTHONPATH=runtime uv run --locked python scripts/evaluate-context-compaction.py --output /absolute/path/context-offline.json

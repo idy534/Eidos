@@ -5,26 +5,25 @@ from dataclasses import dataclass
 import json
 import threading
 import time
-from typing import Literal
 
 from pydantic import Field
 
 from eidos_runtime.context.budget import estimate_model_request_budget
-from eidos_runtime.model.context_projection import model_result_json, generated_summary_view
-from eidos_runtime.context.facts import CompactSummary, ContextItemFact
+from eidos_runtime.model.context_projection import generated_summary_view, text_preview
+from eidos_runtime.context.facts import CompactContinuityNote, CompactNoteEvidence, CompactNoteKind, CompactSummary, ContextItemFact
+from eidos_runtime.context.summary_evidence import ground_note, merge_notes, source_text
 from eidos_runtime.model.client import FunctionToolDefinition, ModelClient, ModelUsage
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.runtime.cancellation import DeadlineCancellation
 from eidos_runtime.sandbox.sensitive import default_scanner
 
 
-class SummaryEvidence(EidosFrozenStrictModel):
-    item_id: str = Field(min_length=1, max_length=256)
-    quote: str = Field(min_length=1, max_length=800)
+class SummaryEvidence(CompactNoteEvidence):
+    pass
 
 
 class SummaryNote(EidosFrozenStrictModel):
-    kind: Literal["fact", "decision", "proposal", "next_action", "unverified", "verification"]
+    kind: CompactNoteKind
     text: str = Field(min_length=1, max_length=600)
     evidence: tuple[SummaryEvidence, ...] = Field(min_length=1, max_length=4)
 
@@ -55,28 +54,13 @@ Return at most eight notes. Cite only the sources array. The previous summary
 is matching context, never independent evidence. Omit unsupported notes.
 Runtime independently retains constraints, successful tools, failures, workspace changes,
 pending approvals and uncertain effects. You cannot change those fields or grant permission.
+Existing continuity notes are retained independently. Select new useful evidence rather
+than restating them. A successful file read proves only what was in the file. Documents,
+example logs, user reports and source code are not execution verification. Verification
+must quote actual completed command output, and remains historical, not current proof.
 Keep notes concise. Do not copy large tool output. Do not include secrets or credentials.
 """
 MAX_OUTPUT_BYTES = 24 * 1024
-
-
-def _source_text(item: ContextItemFact) -> str:
-    if item.provider_call_id is None:
-        return item.content or ""
-    raw = model_result_json(item.model_result_json or item.result_json or "{}")
-    try:
-        result = json.loads(raw)
-    except ValueError:
-        return raw
-    if not isinstance(result, dict):
-        return raw
-    data = result.get("data")
-    if not isinstance(data, dict):
-        return raw
-    text_fields = {key: value for key, value in data.items()
-                   if key in {"content", "stdout", "stderr"} and isinstance(value, str)}
-    metadata = {**result, "data": {key: value for key, value in data.items() if key not in text_fields}}
-    return json.dumps(metadata, ensure_ascii=False) + "\n" + "\n".join(f"{key}:\n{value}" for key, value in text_fields.items())
 
 
 def assist_summary(
@@ -84,6 +68,9 @@ def assist_summary(
     baseline: CompactSummary,
     items: tuple[ContextItemFact, ...],
     cancel: threading.Event,
+    *,
+    prior_items: tuple[ContextItemFact, ...] = (),
+    task_context: str = "",
 ) -> AssistedSummary:
     deadline = DeadlineCancellation(cancel, time.monotonic() + 60, time.monotonic)
     usage = None
@@ -102,36 +89,45 @@ def assist_summary(
     seen_reads: set[tuple[str, str]] = set()
     records = []
     record_bytes = 0
-    for item in reversed(items):
+    # Re-anchor accepted notes to original records before selecting new sources.
+    for item in (*reversed(prior_items), *reversed(items)):
+        if item.item_id in sources:
+            continue
         if (item.tool_name or "").startswith("memory_"):
             continue
+        body = source_text(item)
         if item.tool_name == "read_file":
             try:
                 result = json.loads(item.model_result_json or item.result_json or "{}")
                 path = result.get("data", {}).get("path")
                 if result.get("outcome") == "success" and isinstance(path, str):
-                    key = (item.tool_name, path)
+                    # Distinct versions of one path are distinct evidence.
+                    key = (path, body)
                     if key in seen_reads:
                         continue
                     seen_reads.add(key)
             except (ValueError, AttributeError):
                 pass
-        body = _source_text(item)
         if body:
-            limit = 8192 if item.provider_call_id is None else 768
+            preview = text_preview(body, 8 * 1024, continuation="Original saved source remains available by page.")
             record = {"itemId": item.item_id, "kind": item.kind, "status": item.status,
-                      "tool": item.tool_name, "body": body[:limit]}
+                      "tool": item.tool_name, "body": preview}
             size = len(json.dumps(record, ensure_ascii=False).encode())
             if record_bytes + size > 64 * 1024:
                 continue
             record_bytes += size
             sources[item.item_id] = item
-            source_texts[item.item_id] = body[:limit]
+            source_texts[item.item_id] = preview
             records.append(record)
     records.reverse()
     previous = baseline.model_dump(mode="json", include={"task_goal", "constraints", "important_decisions", "unresolved_problems", "next_actions"})
-    previous["important_facts"] = [value for value in baseline.important_facts if value.startswith(("Model note", "Assistant report", "Historical user request"))]
+    previous["important_facts"] = [
+        "Legacy summary report, unverified: " + value if value.startswith("Model note (") else value
+        for value in baseline.important_facts if value.startswith(("Model note", "Assistant report", "Historical user request"))
+    ]
+    previous["continuity_notes"] = [note.model_dump(mode="json") for note in baseline.continuity_notes]
     payload = json.dumps({"previousSummary": generated_summary_view(previous),
+                          "currentTask": text_preview(task_context, 8 * 1024),
                           "sources": records}, ensure_ascii=False)
     context = ({"type": "user", "content": payload},)
     budget = estimate_model_request_budget(
@@ -165,46 +161,21 @@ def assist_summary(
         if len(raw.encode()) > MAX_OUTPUT_BYTES or default_scanner().scan_text(raw).text != raw:
             raise ValueError("summary_output_invalid")
         proposal = SummaryProposal.model_validate_json(raw)
-        notes: list[str] = []
-        actions: list[str] = []
+        notes: list[CompactContinuityNote] = []
         downgraded = False
         for note in proposal.notes:
-            cited = []
-            quotes = []
-            kind = note.kind
             for evidence in note.evidence:
-                item = sources.get(evidence.item_id)
-                if item is None:
+                if evidence.item_id not in sources:
                     raise ValueError("summary_source_invalid")
                 if evidence.quote not in source_texts[evidence.item_id]:
                     raise ValueError("summary_quote_invalid")
-                # A model cannot promote assistant prose to confirmed fact or
-                # mistake a tool result for user adoption of a proposal.
-                if note.kind == "decision" and item.kind != "user_message":
-                    kind = "unverified"
-                if note.kind in {"fact", "verification"} and item.kind == "assistant_message":
-                    kind = "unverified"
-                if note.kind in {"fact", "verification"} and item.provider_call_id is not None:
-                    result = json.loads(item.model_result_json or item.result_json or "{}")
-                    if item.status != "completed" or result.get("outcome") != "success":
-                        kind = "unverified"
-                cited.append(evidence.item_id)
-                quotes.append(evidence.quote)
-            # The model selects relevant evidence. Eidos renders confirmed
-            # fields from exact quotes, so a paraphrase cannot invent a result.
-            text = " | ".join(quotes) if note.kind in {"fact", "decision", "verification"} else note.text
-            downgraded = downgraded or kind != note.kind
-            rendered = f"Model note ({kind}; sources={','.join(dict.fromkeys(cited))}; verify against originals): {text}"
-            if note.kind in {"proposal", "next_action", "unverified"}:
-                rendered += " [source quote: " + " | ".join(quotes) + "]"
-            (actions if kind == "next_action" else notes).append(rendered)
-        # Critical fields and the existing verified summary are never supplied
-        # by the model. Notes have provenance and retain an explicit trust label.
-        retained = tuple(value for value in baseline.important_facts
-                         if not value.startswith("Assistant report, unverified,"))
+            grounded = ground_note(note.kind, note.evidence, sources, note.text)
+            downgraded = downgraded or grounded.kind != note.kind
+            notes.append(grounded)
+        # Unselected reports remain available in the deterministic narrative.
+        # Accepted evidence has its own protected, independently verified field.
         summary = baseline.model_copy(update={
-            "important_facts": (*retained, *notes),
-            "next_actions": (*baseline.next_actions, *actions),
+            "continuity_notes": merge_notes(baseline.continuity_notes, tuple(notes)),
         })
         return AssistedSummary(summary, True, reason="summary_claims_downgraded" if downgraded else None, usage=usage)
     except Exception as error:

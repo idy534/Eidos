@@ -225,11 +225,11 @@ Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否
 
 压缩成功后，Engine 使用同一批工具定义、规则、Skill 和仓库上下文重新构建投影，并把新的 ContextPlan 与 Run Updated Event/Outbox 一起保存。系统不为统计伪造 ModelAttempt，也不等待下一次模型响应才刷新。新的 Provider Usage 只覆盖它实际对应的请求。若摘要已经提交，但新投影无法构建，系统显示暂无统计，旧请求总量不能重新冒充压缩后用量。ContextPlan 的原始分项仍保存参考 Token 数；详情按这个构成估算分项，并使分项 Token 合计严格等于当前总量。界面分项与总占用均使用设置上限作为百分比分母，十分之一百分点的舍入也保持合计一致。分项仍属于估算，Provider 没有返回逐项实测。
 
-统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。新的 Run 在产生自己的投影前显示暂无统计。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或一次安全恢复。没有新的可压缩历史或 Context 投影没有进展时，Run 以 `context_still_over_budget` 停止。
+统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。新的 Run 在产生自己的投影前显示暂无统计。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或安全恢复。没有新的可压缩历史或投影没有进展时，Runtime 使用更小的历史证据视图继续可取消恢复；系统不创建容量暂停，也不重放不确定操作。
 
 Runtime 在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自动摘要压缩。系统直接比较未取整的 Token 数量，不使用界面四舍五入后的百分比。系统不再使用固定 65,536 Tokens 或新增 32 条 Item 作为摘要触发条件。这个路径在输入仍符合请求预算、没有待处理 Approval 或 reconciliation 时执行，并按 Token 预算保留完整近期响应、用户消息和 Skill 读取正文。系统复用现有事实验证与事务提交，不删除原始历史。自动摘要失败后，Runtime 保留原投影；同一上下文状态不会重复尝试这个提前压缩路径。输入预算已经不足时，系统继续执行原有窗口压力保护。
 
-在线历史投影继续使用有界数据库读取与完整响应分组。摘要候选批次和在线资源预算保持独立；系统不会删除原始 Item、Blob 或冻结历史。投影资源不足时，Engine 尝试摘要恢复；必需事实仍装不下或恢复没有进展时，系统暂停 Run，保留继续和取消入口。
+在线历史投影继续使用有界数据库读取与完整响应分组。摘要候选批次和在线资源预算保持独立；系统不会删除原始 Item、Blob 或冻结历史。投影资源不足时，Engine 尝试摘要和更小的证据视图，并保留取消入口。当前延续记录有独立的资源上限，系统不会通过恢复预览悄悄截断有效记录。
 
 ContextBuilder 在摘要前独立清理旧工具正文。清理阈值是 65,536 与可用输入预算 75% 中的较小值，目标是阈值的 75%；这个阈值只控制工具正文清理，不触发摘要请求或压缩过程记录。Builder 按可用输入预算的 1/8 保留近期证据，参考 Token 目标限制在 1,024～16,384。系统按完整模型响应保留记录，至少保留最后一个响应，即使该响应本身超过目标。系统只清理较大的、已完成且成功的文件读取、文件列表、搜索和已结束 Shell 结果。失败、运行中、需要 reconciliation、Skill、记忆、MCP 和带图片正文的结果保持原样。模型输入保留结果状态、文件版本、来源 Item、原文 Hash 和 `read_tool_output` 回读参数。系统不修改 SQLite 原始结果，也不重新执行原操作。内部候选投影超限仍沿用已有摘要恢复。旧的直接调用仍支持按数量保留近期记录；在线百分比摘要使用 Token 预算。
 
@@ -240,6 +240,16 @@ Token 计量优先使用 Provider 返回的实际 Usage。该值只代表对应�
 本地辅助计数使用已锁定的 `tiktoken==0.13.0` 和随应用提供、带固定 SHA-256 的 cl100k 词表。Runtime 不下载词表，也不按模型名称猜测 tokenizer。系统按完整模型响应只计一次思考回放。校准读取同一已完成 ModelAttempt 的 Provider Usage 和冻结 Plan 估算，并核对估算器版本及完整 ModelProfile Hash。新快照还保存连接配置指纹，指纹不包含 API Key 或展示名称。同 Session 的新 Run 可以复用同配置请求的配对；不同模型、端点、协议、推理和请求配置不能混用。缺少连接指纹的旧快照只在当前 Run 内配对。预览、重复构建和重启不改变配对。旧估算器的 Plan 仍可读取，但不参与新校准。新 Plan 的 diagnostics 记录估算器版本，omissions 记录清理的工具调用。Plan 的可选计量来源与分项预算在缺省时不写入序列化，因此旧 Plan/Snapshot Hash 保持兼容。
 
 在线 compactor 先生成确定性的有界候选，再通过当前 Run 已持有的 ModelClient 请求模型辅助说明。这个独立请求只暴露 `submit_context_summary` 输出 Schema，不提供可执行工具。请求最多等待 60 秒，请求中的输出参数最多为 4,096 Tokens，输入有 96 KiB 和模型窗口双重限制。Provider 对思考 Tokens 的统计方式仍以实际 Usage 为准。模型逐条返回分类、来源 Item ID 与精确引句。事实、决定和验证说明必须摘取原文；模型只能改写明确标记的提议、计划和未验证报告。Runtime 拒绝未知来源、无效引句和不符合 Schema 的结果。Runtime 会把 Assistant 自述、失败工具的确认声明和来自非用户消息的决定降为未验证说明。模型请求失败、超时、不支持结构化工具输出或预算不够时，Runtime 使用规则候选。
+
+摘要模型的单条来源使用最多 8 KiB UTF-8 预览。较小资料完整提供，长资料保留头尾和明确的省略标记；全部来源继续受 64 KiB 预算约束。相同路径的不同内容版本分别取材。后续压缩先为已有延续记录重新加载原始来源，再选择新增资料。请求包含有界的当前用户目标；旧摘要只提供背景，不成为独立证据。模型不能引用只存在于预览省略标记中的句子。
+
+模型接受的说明保存为 `CompactContinuityNote`，字段包含说明类型、来源类型、精确引句，以及 Runtime 从原记录派生的工具名称和 Call ID。确认类说明只保存引句；模型改写文本只用于提议、下一步和未验证说明。文档、源码和用户报告不能成为实际执行验证。`verification` 必须引用已完成、成功退出且结果完整的 Shell 输出；这仍是当时执行的历史证据，不证明当前文件状态或完整测试套件已经通过。持久化验证器会再次检查来源、引句、类型和回读引用。
+
+延续记录独立于可裁剪的过程叙述。后续摘要必须保留上一份有效记录和用户约束，系统不会用“保留前四条与最后十二条”的规则裁剪它们。模型未选中的 Assistant 历史报告继续留在规则叙述中，随后仍受普通叙述预算约束。旧版字符串模型说明继续保留，但模型投影会将它们标为未重新验证的历史报告。长用户历史的预览保留头尾和 `read_tool_output(stream="context")` 原文入口。
+
+延续记录仍计入 512～4,096 参考 Tokens 与 24 KiB 的摘要正文预算，并限制为最多 128 条；单独的模型展示部分不超过 32 KiB。系统不会为了接纳新摘要而删除已接受的记录。超限时，本次候选不提交，上一份摘要和原始历史保持不变，Engine 继续使用原有恢复策略。普通模型输入和更小的恢复视图都保留有界的延续记录，ContextPlan 将其计入摘要分项。
+
+新记录复用 `summary_metadata_json`，其 `continuity_version=1`；对应验证记录使用 `compaction_version=2`。缺省字段不写入旧摘要，因此旧版摘要和已保存 Hash 继续读取。未知版本或无效记录 fail closed。系统没有新增表、SQLite Schema、公开 RPC 字段、依赖、后台 Worker 或第二套状态权威；旧 Runtime 不支持新增延续格式的降级读取。
 
 模型不能改写确定性的目标、明确约束、成功工具、工作区变更、失败记录、待审批和不确定副作用字段。候选摘要不会直接成为模型事实。Runtime 会从 `state.sqlite` 重载事实，再执行 `ContextCompactionVerifier`。Tool provenance 由 source Item IDs 解析到真实 ToolCall IDs。只有验证通过的 `VerifiedCompactSummary` 才会在同一个事务中写入权威 `compact_summaries`、增加计数并产生 `context.compacted` Event。Outbox 会投影 `context/compacted` 通知，Desktop 随后重新读取 Context Usage。事务再次核对取消、工作区版本、reconciliation epoch、上一摘要计数和新用户输入。原始历史与上一份有效摘要会在验证失败、取消或来源过期时保留。
 

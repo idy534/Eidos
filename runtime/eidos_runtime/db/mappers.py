@@ -10,7 +10,8 @@ from pydantic import ValidationError
 from eidos_runtime.domain.planning import RequestUserInput
 
 from eidos_runtime.protocol.tool_text import project_tool_text
-from eidos_runtime.context.facts import CompactSummary
+from eidos_runtime.context.facts import CompactContinuityNote, CompactSummary
+from eidos_runtime.persistence.errors import PersistenceCorruptionError
 from eidos_runtime.model.client import ModelUsage
 from eidos_runtime.protocol.schemas import (
     ItemDto,
@@ -171,6 +172,18 @@ def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
             return ()
         return tuple(item for item in value if isinstance(item, str))
 
+    notes = metadata.get("continuity_notes", [])
+    try:
+        if "continuity_notes" in metadata and (
+            type(metadata.get("continuity_version")) is not int or metadata["continuity_version"] != 1
+        ):
+            raise ValueError("unsupported continuity format")
+        if not isinstance(notes, list) or len(notes) > 128:
+            raise ValueError("invalid continuity notes")
+        continuity_notes = tuple(CompactContinuityNote.model_validate_json(json.dumps(note)) for note in notes)
+    except (ValueError, TypeError) as error:
+        raise PersistenceCorruptionError("persistence_record_invalid", record="compact_summary") from error
+
     return CompactSummary(
         task_goal=str(row["task_goal"]),
         constraints=tuple(json.loads(row["constraints_json"])),
@@ -184,6 +197,7 @@ def _compact_summary_from_row(row: sqlite3.Row | None) -> CompactSummary | None:
         failed_attempts=metadata_tuple("failed_attempts"),
         pending_approvals=metadata_tuple("pending_approvals"),
         uncertain_side_effects=metadata_tuple("uncertain_side_effects"),
+        continuity_notes=continuity_notes,
     )
 
 def _run_from_row(

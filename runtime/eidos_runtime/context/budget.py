@@ -13,6 +13,7 @@ from eidos_runtime.model.client import (
 )
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 from eidos_runtime.context.tokens import estimate_text_tokens
+from eidos_runtime.context.policy import CONTINUITY_SECTION_ID
 from eidos_runtime.model.replay import group_response_context
 from eidos_runtime.domain.context_management import ContextTokenSection
 
@@ -176,7 +177,8 @@ def estimate_model_request_budget(
         kind = item.get("type")
         name = ("tool_results" if kind == "tool_result" else
                 "tools" if item.get("sectionId") in {"agent-catalog", "selected-agents"} else
-                "summary" if str(item.get("content", "")).startswith("Compact summary:") else
+                "summary" if (item.get("sectionId") == CONTINUITY_SECTION_ID
+                              or str(item.get("content", "")).startswith("Compact summary:")) else
                 "conversation" if kind in {"user", "assistant", "model_response", "tool_call"} else "other")
         media = int(item.get("imageTokenEstimate", 4096)) if item.get("inputImage") else _tool_media_tokens(item)
         weights[name] = weights.get(name, 0) + estimate_text_tokens(json.dumps(_text_budget_item(item), ensure_ascii=False)) + media

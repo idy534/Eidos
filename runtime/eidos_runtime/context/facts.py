@@ -6,7 +6,44 @@ from eidos_runtime.domain.input_reference import InputReference
 from eidos_runtime.model.response_phase import AssistantMessagePhase
 from eidos_runtime.model.replay import ModelResponseReplay
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from eidos_runtime.models import EidosFrozenStrictModel
+
+
+CompactNoteKind = Literal["fact", "decision", "proposal", "next_action", "unverified", "verification"]
+CompactSourceKind = Literal["user", "assistant", "artifact", "execution", "mixed"]
+
+
+class CompactNoteEvidence(EidosFrozenStrictModel):
+    item_id: str = Field(min_length=1, max_length=256)
+    quote: str = Field(min_length=1, max_length=800)
+
+
+class CompactNoteSource(CompactNoteEvidence):
+    tool_name: str | None = Field(default=None, max_length=256, exclude_if=lambda value: value is None)
+    call_id: str | None = Field(default=None, max_length=256, exclude_if=lambda value: value is None)
+
+
+class CompactContinuityNote(EidosFrozenStrictModel):
+    """Source-backed historical evidence, separate from expendable narrative."""
+
+    kind: CompactNoteKind
+    source_kind: CompactSourceKind
+    evidence: tuple[CompactNoteSource, ...] = Field(min_length=1, max_length=4)
+    interpretation: str | None = Field(default=None, max_length=600, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def validate_claim_type(self) -> CompactContinuityNote:
+        if self.kind in {"fact", "decision", "verification"} and self.interpretation is not None:
+            raise ValueError("confirmed notes must use source quotes")
+        if self.kind == "verification" and self.source_kind != "execution":
+            raise ValueError("verification requires execution evidence")
+        if self.kind == "decision" and self.source_kind != "user":
+            raise ValueError("decisions require user evidence")
+        if self.kind == "fact" and self.source_kind == "assistant":
+            raise ValueError("assistant reports are not confirmed facts")
+        return self
 
 
 class _Fact(BaseModel):
@@ -46,6 +83,10 @@ class CompactSummary(_Fact):
     failed_attempts: tuple[str, ...] = ()
     pending_approvals: tuple[str, ...] = ()
     uncertain_side_effects: tuple[str, ...] = ()
+    # Keep the serialized shape and hashes of old verified summaries unchanged.
+    continuity_notes: tuple[CompactContinuityNote, ...] = Field(
+        default=(), max_length=128, exclude_if=lambda value: not value,
+    )
 
 
 class ReconciliationOrigin(_Fact):

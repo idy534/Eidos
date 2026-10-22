@@ -4,6 +4,14 @@ from __future__ import annotations
 import json
 import re
 
+from eidos_runtime.context.policy import CONTINUITY_CONTEXT_MAX_BYTES, CONTINUITY_SECTION_ID
+
+
+def _protected_continuity(item: dict[str, object]) -> bool:
+    content = item.get("content")
+    return (item.get("sectionId") == CONTINUITY_SECTION_ID and isinstance(content, str)
+            and len(content.encode("utf-8")) <= CONTINUITY_CONTEXT_MAX_BYTES)
+
 
 _HASH_KEYS = frozenset({
     "sha256", "hash", "digest", "checksum", "fingerprint", "fingerprints",
@@ -48,6 +56,9 @@ def project_context(context: tuple[dict[str, object], ...], *, text_bytes: int =
     projected = []
     for original in context:
         item = dict(original)
+        if _protected_continuity(item):
+            projected.append(item)
+            continue
         if item.get('sectionId') == 'agent-evidence':
             from eidos_runtime.context.agent_evidence import project_agent_evidence
             projected.append(project_agent_evidence(item, text_bytes))
@@ -81,6 +92,8 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int) ->
     # permission and policy instructions live outside this working set.
     retained = messages[:2] + messages[-10:] if len(messages) > 12 else messages
     for item in messages:
+        if _protected_continuity(item) and item not in retained:
+            retained.insert(0, item)
         if item.get('sectionId') == 'agent-evidence' and item not in retained:
             retained.insert(0, item)
     tool_results = [item for item in context if item.get("type") == "tool_result"][-12:]
@@ -97,6 +110,9 @@ def recovery_context(context: tuple[dict[str, object], ...], byte_limit: int) ->
     per_message = max(256, byte_limit // max(1, len(retained)))
     result = []
     for item in retained:
+        if _protected_continuity(item):
+            result.append(dict(item))
+            continue
         if item.get('sectionId') == 'agent-evidence':
             from eidos_runtime.context.agent_evidence import project_agent_evidence
             result.append(project_agent_evidence(item, per_message))
