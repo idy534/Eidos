@@ -6,12 +6,13 @@ import type {
   MemoryState,
 } from "../../../../shared/memory.generated.js";
 import { Button } from "../Button.js";
-import { SettingSection } from "./SettingSection.js";
-import { SettingRow } from "./SettingRow.js";
-import { Toggle } from "./Toggle.js";
-import { ConfirmDialog } from "./ConfirmDialog.js";
-import { StatusBadge, type StatusTone } from "./StatusBadge.js";
-import { EmptySettingsState } from "./EmptySettingsState.js";
+import { SettingSection } from "../SettingSection.js";
+import { SettingRow } from "../SettingRow.js";
+import { Toggle } from "../Toggle.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
+import { StatusBadge, type StatusTone } from "../StatusBadge.js";
+import { EmptyState } from "../EmptyState.js";
+import { AlertBanner } from "../AlertBanner.js";
 
 const statusLabels: Record<string, string> = {
   active: "已生效",
@@ -261,7 +262,7 @@ export function MemorySettings({
         </div>
       </div>
 
-      {error && <p className="error-banner" role="alert">{error}</p>}
+      {error && <AlertBanner tone="error">{error}</AlertBanner>}
 
       {!selected ? (
         <div className="memory-loading-card">
@@ -552,7 +553,7 @@ export function MemorySettings({
 
             {state?.entries.length === 0 ? (
               <div className="memory-empty-state">
-                <EmptySettingsState
+                <EmptyState
                   title="没有符合条件的记忆。"
                   description={
                     query.trim()

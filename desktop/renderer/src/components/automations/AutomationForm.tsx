@@ -3,7 +3,7 @@ import type { Automation, AutomationDesktopRequest } from "../../../../shared/au
 import type { ApprovalMode, ModelOption, ModelReasoningSelection, Project, Session } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
-import { ConfirmDialog } from "../settings/ConfirmDialog.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
 import { userFacingError } from "../../session-state.js";
 
 export interface InitialAutomationValues {

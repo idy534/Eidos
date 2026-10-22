@@ -218,46 +218,8 @@
   max-width: 42rem;
 }
 
-/* Setting Section & Cards */
-
-.setting-section {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--apple-shadow-sm);
-  overflow: hidden;
-}
-
-.setting-section-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.1rem 1.25rem 0.9rem;
-  border-bottom: 1px solid var(--surface-muted);
-  background: rgba(246, 246, 248, 0.5);
-}
-
-.setting-section-title-group h2 {
-  margin: 0 0 0.2rem;
-  font-size: 0.95rem;
-  font-weight: 650;
-  color: var(--text);
-}
-
-.setting-section-desc {
-  color: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.setting-section-content {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Note: Setting Rows (.setting-row), Status Badges (.status-badge), and Toggle Switches
-   (.toggle-switch) are centralized globally in components/common.css */
+/* Note: Setting Sections (.setting-section), Setting Rows (.setting-row), Status Badges
+   (.status-badge), and Toggle Switches (.toggle-switch) are centralized globally in components/common.css */
 
 /* Model Settings Row Details */
 
@@ -591,15 +553,6 @@
   font-size: var(--font-size-caption);
 }
 
-.setting-banner-error {
-  margin: 0 0 1rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
-  color: var(--danger);
-  background: var(--danger-soft);
-  font-size: 12.5px;
-}
 
 /* Plugin Stats & Actions */
 
@@ -675,15 +628,6 @@
   border-radius: var(--radius-xs);
 }
 
-.runtime-error-banner {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.25rem;
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-lg);
-  background: var(--danger-soft);
-}
 
 /* MCP Review Dialog specifics */
 
@@ -781,31 +725,7 @@
   word-break: break-all;
 }
 
-/* Empty Settings State */
-
-.empty-settings-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2.5rem 1.5rem;
-  text-align: center;
-}
-
-.empty-settings-title {
-  margin: 0 0 0.35rem;
-  font-size: 0.98rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.empty-settings-desc {
-  margin: 0 0 1rem;
-  color: var(--muted);
-  font-size: 0.82rem;
-  max-width: 24rem;
-  line-height: 1.45;
-}
+/* Note: Empty states (.empty-state, .empty-settings-state) are centralized in components/common.css */
 
 /* Responsive Narrow Window Adjustments (<768px) */
 

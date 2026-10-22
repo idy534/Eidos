@@ -20,16 +20,6 @@
   letter-spacing: -0.01em;
 }
 
-.agent-error-banner {
-  margin: 12px 14px 0;
-  padding: 8px 12px;
-  background: var(--status-danger-bg);
-  border: 1px solid rgba(158, 53, 43, 0.2);
-  border-radius: var(--radius-sm);
-  color: var(--status-danger);
-  font-size: var(--font-size-caption);
-  line-height: 1.4;
-}
 
 /* ========================================================================= */
 /* 1. Agent Overview & List View                                             */
@@ -116,37 +106,6 @@
   box-shadow: none;
 }
 
-/* Agent Empty State */
-.agent-empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 48px 24px;
-  color: var(--muted);
-  margin: auto 0;
-}
-
-.agent-empty-state__icon {
-  margin-bottom: 12px;
-  color: var(--muted);
-  opacity: 0.6;
-}
-
-.agent-empty-state h3 {
-  margin: 0 0 6px;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  color: var(--text);
-}
-
-.agent-empty-state p {
-  margin: 0;
-  font-size: var(--font-size-caption);
-  line-height: 1.5;
-  max-width: 280px;
-}
 
 /* Agent Card List */
 .agent-list {

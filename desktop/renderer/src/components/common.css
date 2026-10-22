@@ -674,3 +674,442 @@
 .code-copy-btn .copy-icon-svg--copied {
   color: var(--status-success);
 }
+
+/* --------------------------------------------------------------------------
+   8. Setting Section Container (.setting-section)
+   Used by: components/SettingSection.tsx (and settings/panels)
+   -------------------------------------------------------------------------- */
+
+.setting-section {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+  overflow: hidden;
+}
+
+.setting-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem 0.9rem;
+  border-bottom: 1px solid var(--surface-muted);
+  background: rgba(246, 246, 248, 0.5);
+}
+
+.setting-section-title-group h2 {
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.setting-section-desc {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.setting-section-content {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --------------------------------------------------------------------------
+   9. Unified Empty State (.empty-state)
+   Used by: components/EmptyState.tsx, EmptySettingsState.tsx
+   -------------------------------------------------------------------------- */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+}
+
+.empty-state__icon {
+  margin-bottom: 0.75rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-state__title {
+  margin: 0 0 0.35rem;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-state__desc {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  max-width: 24rem;
+  line-height: 1.45;
+}
+
+.empty-state__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* Backward compatibility for settings views */
+.empty-settings-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+}
+
+.empty-settings-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-settings-desc {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  max-width: 24rem;
+  line-height: 1.45;
+}
+
+/* --------------------------------------------------------------------------
+   10. Search Input (.search-input-box)
+   Used by: components/SearchInput.tsx
+   -------------------------------------------------------------------------- */
+
+.search-input-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+  box-sizing: border-box;
+}
+
+.search-input-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.search-input-box--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.search-input-icon {
+  position: absolute;
+  left: 0.65rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--muted);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.search-input-field {
+  width: 100%;
+  height: 32px;
+  padding: 0 2rem 0 2rem;
+  border: none !important;
+  background: transparent !important;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sidebar, 0.82rem);
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.search-input-field::-webkit-search-cancel-button {
+  display: none;
+}
+
+.search-input-clear {
+  position: absolute;
+  right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.search-input-clear:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+/* --------------------------------------------------------------------------
+   11. Alert Banner / Callout (.alert-banner)
+   Used by: components/AlertBanner.tsx
+   -------------------------------------------------------------------------- */
+
+.alert-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  font-size: var(--font-size-sidebar, 0.82rem);
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.alert-banner__icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.alert-banner__content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.alert-banner__title {
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.alert-banner__message {
+  margin: 0;
+}
+
+.alert-banner__action {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.alert-banner__close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: currentColor;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.alert-banner__close:hover {
+  opacity: 1;
+}
+
+.alert-banner--error {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+  border: 1px solid rgba(145, 61, 52, 0.15);
+}
+
+.alert-banner--warning {
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  border: 1px solid rgba(180, 83, 9, 0.15);
+}
+
+.alert-banner--info {
+  color: var(--status-info);
+  background: var(--status-info-bg);
+  border: 1px solid rgba(43, 93, 167, 0.15);
+}
+
+.alert-banner--success {
+  color: var(--status-success);
+  background: var(--status-success-bg);
+  border: 1px solid rgba(46, 98, 76, 0.15);
+}
+
+/* --------------------------------------------------------------------------
+   12. Universal Spinner (.spinner)
+   Used by: components/Spinner.tsx
+   -------------------------------------------------------------------------- */
+
+.spinner {
+  display: inline-block;
+  animation: spinner-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.spinner--sm {
+  width: 14px;
+  height: 14px;
+}
+
+.spinner--md {
+  width: 18px;
+  height: 18px;
+}
+
+.spinner--lg {
+  width: 24px;
+  height: 24px;
+}
+
+.spinner--accent {
+  color: var(--accent);
+}
+
+.spinner--muted {
+  color: var(--muted);
+}
+
+.spinner--white {
+  color: #ffffff;
+}
+
+@keyframes spinner-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   13. Badge & Pill (.badge)
+   Used by: components/Badge.tsx
+   -------------------------------------------------------------------------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.2;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.badge--count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 9px;
+}
+
+/* Subtle */
+.badge--subtle.badge--neutral {
+  color: var(--status-neutral);
+  background: var(--status-neutral-bg);
+}
+
+.badge--subtle.badge--accent {
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.badge--subtle.badge--danger {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+}
+
+.badge--subtle.badge--warning {
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+}
+
+.badge--subtle.badge--success {
+  color: var(--status-success);
+  background: var(--status-success-bg);
+}
+
+.badge--subtle.badge--info {
+  color: var(--status-info);
+  background: var(--status-info-bg);
+}
+
+/* Solid */
+.badge--solid.badge--neutral {
+  color: #ffffff;
+  background: var(--muted);
+}
+
+.badge--solid.badge--accent {
+  color: var(--text-on-accent);
+  background: var(--accent);
+}
+
+.badge--solid.badge--danger {
+  color: #ffffff;
+  background: var(--danger, #913d34);
+}
+
+/* Outline */
+.badge--outline {
+  background: transparent;
+  border: 1px solid currentColor;
+}
+
+.badge--outline.badge--neutral {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.badge--outline.badge--accent {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.badge--outline.badge--danger {
+  color: var(--status-danger);
+  border-color: var(--status-danger);
+}
+
+/* --------------------------------------------------------------------------
+   14. Keyboard Shortcut Keycap (.kbd-key)
+   Used by: components/Kbd.tsx
+   -------------------------------------------------------------------------- */
+
+.kbd-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.1rem 0.35rem;
+  min-width: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-family: var(--font-code, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+  user-select: none;
+}

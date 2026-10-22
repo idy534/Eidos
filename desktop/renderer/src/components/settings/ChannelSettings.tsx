@@ -8,8 +8,8 @@ import type {
 import type { ModelListResult, Project } from "../../contracts.js";
 import { ToastContainer, type ToastItem, type ToastType } from "../ToastContainer.js";
 import { Button } from "../Button.js";
-import { StatusBadge, type StatusTone } from "./StatusBadge.js";
-import { Toggle } from "./Toggle.js";
+import { StatusBadge, type StatusTone } from "../StatusBadge.js";
+import { Toggle } from "../Toggle.js";
 import { DeliveryDetailModal } from "./DeliveryDetailModal.js";
 import {
   ChannelForm,

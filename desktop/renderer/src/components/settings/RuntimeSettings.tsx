@@ -2,9 +2,10 @@ import React from "react";
 import { ShellEnvironmentSettings } from "./ShellEnvironmentSettings.js";
 import type { RuntimeStatus } from "../../contracts";
 import { deriveRuntimePresentation } from "../../session-state";
-import { SettingSection } from "./SettingSection";
-import { SettingRow } from "./SettingRow";
-import { StatusBadge } from "./StatusBadge";
+import { SettingSection } from "../SettingSection.js";
+import { SettingRow } from "../SettingRow.js";
+import { StatusBadge } from "../StatusBadge.js";
+import { AlertBanner } from "../AlertBanner.js";
 
 interface RuntimeSettingsProps {
   runtime: RuntimeStatus;
@@ -21,10 +22,12 @@ export function RuntimeSettings({ runtime, onShowToast }: RuntimeSettingsProps) 
           <h1>Runtime 状态</h1>
           <p className="settings-panel-subtitle">系统引擎当前未准备就绪。</p>
         </div>
-        <div className="runtime-error-banner" role="alert">
-          <StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>
-          <p>{presentation.description ?? "引擎初始化中…"}</p>
-        </div>
+        <AlertBanner
+          tone={presentation.tone === "danger" ? "error" : presentation.tone === "warning" ? "warning" : "info"}
+          title={<StatusBadge tone={presentation.tone}>{presentation.label}</StatusBadge>}
+        >
+          {presentation.description ?? "引擎初始化中…"}
+        </AlertBanner>
       </div>
     );
   }

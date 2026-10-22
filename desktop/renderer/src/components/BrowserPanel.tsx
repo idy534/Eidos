@@ -241,7 +241,6 @@ export function BrowserPanel({
               {address}
             </span>
           )}
-          <span className="browser-loading__tip">外部站点加载受网络与节点速度影响，请稍候</span>
         </div>
       )}
       {!page.url && !page.loading && <div className="browser-empty" role="status">

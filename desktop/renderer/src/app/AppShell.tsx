@@ -21,7 +21,7 @@ import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
-import { ConfirmDialog } from "../components/settings/ConfirmDialog.js";
+import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
 import { CreateBranchDialog } from "../components/CreateBranchDialog.js";
 import { HandoffDialog } from "../components/HandoffDialog.js";

@@ -10,7 +10,7 @@ import type {
   WebSearchSaveRequest,
 } from "../../../../shared/web-search.generated.js";
 import { Button } from "../Button.js";
-import { StatusBadge } from "./StatusBadge.js";
+import { StatusBadge } from "../StatusBadge.js";
 import { WebSearchProviderFields } from "./WebSearchProviderFields.js";
 
 type KeyDraft = { value: string; visible: boolean };

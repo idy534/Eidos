@@ -2,9 +2,10 @@ import { useRef, useState } from "react";
 import type { SkillMetadata, SkillRemoval } from "../../contracts.js";
 import { userFacingError } from "../../session-state.js";
 import type { SettingsPendingAction } from "./settings-types.js";
-import { EmptySettingsState } from "./EmptySettingsState.js";
+import { EmptyState } from "../EmptyState.js";
+import { SearchInput } from "../SearchInput.js";
 import { SkillDetailDialog, SkillIcon } from "./SkillDetailDialog.js";
-import { Toggle } from "./Toggle.js";
+import { Toggle } from "../Toggle.js";
 
 interface SkillSettingsProps {
   skills: SkillMetadata[];
@@ -54,14 +55,12 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
           <h1>技能</h1>
           <p className="settings-panel-subtitle">通过任务专用技能扩展 Eidos</p>
         </div>
-        <input
-          ref={searchRef}
+        <SearchInput
           className="skill-search"
-          type="search"
-          aria-label="搜索技能"
+          ariaLabel="搜索技能"
           placeholder="搜索技能"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={setQuery}
         />
         <div className="skill-categories" role="group" aria-label="技能分类">
           <button type="button" aria-pressed={category === "personal"} onClick={() => setCategory("personal")}>个人</button>
@@ -97,7 +96,7 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
           ))}
         </div>
         {visible.length === 0 && (
-          <EmptySettingsState
+          <EmptyState
             title={query.trim() ? "没有匹配的技能" : category === "system" ? "没有系统技能" : "还没有个人技能"}
             description={query.trim() ? "请尝试其他名称或关键词。" : "安装后的技能会显示在这里。"}
           />

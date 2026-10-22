@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { McpCreateInput, McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { Tooltip } from "../Tooltip.js";
-import { ConfirmDialog } from "./ConfirmDialog.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { EyeIcon, EyeOffIcon } from "./ChannelIcons.js";
 

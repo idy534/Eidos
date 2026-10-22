@@ -7,8 +7,8 @@ import { DropdownMenu } from "../DropdownMenu.js";
 import { FinderIcon, CopyIcon } from "../MenuIcons.js";
 import { MarkdownContent } from "../MarkdownContent.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
-import { ConfirmDialog } from "./ConfirmDialog.js";
-import { Toggle } from "./Toggle.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
+import { Toggle } from "../Toggle.js";
 import type { SettingsPendingAction } from "./settings-types.js";
 
 export function SkillInitial({ name }: { name: string }) {

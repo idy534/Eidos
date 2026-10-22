@@ -3,7 +3,7 @@ import type { ChannelDelivery } from "../../../../shared/channels.js";
 import { Button } from "../Button.js";
 import { MarkdownContent } from "../MarkdownContent.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
-import { StatusBadge, type StatusTone } from "./StatusBadge.js";
+import { StatusBadge, type StatusTone } from "../StatusBadge.js";
 
 interface DeliveryDetailModalProps {
   delivery: ChannelDelivery;

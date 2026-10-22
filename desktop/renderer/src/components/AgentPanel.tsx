@@ -7,6 +7,8 @@ import { userFacingError } from "../session-state.js";
 import { terminalRunPresentation } from "../run-presentation.js";
 import { getProviderName } from "./ProviderLogo.js";
 import { mergeContextCompactions } from "../context-compaction.js";
+import { EmptyState } from "./EmptyState.js";
+import { AlertBanner } from "./AlertBanner.js";
 
 const active = new Set([
   "queued",
@@ -563,7 +565,7 @@ export function AgentWorkspacePanel({
 
   return (
     <section className="agent-workspace" aria-label="智能体工作区">
-      {error && <p className="agent-error-banner" role="alert">{error}</p>}
+      {error && <AlertBanner tone="error">{error}</AlertBanner>}
 
       {!agent && (
         <div className="agent-workspace__overview">
@@ -612,18 +614,19 @@ export function AgentWorkspacePanel({
           </header>
 
           {agents.length === 0 ? (
-            <div className="agent-empty-state">
-              <div className="agent-empty-state__icon" aria-hidden="true">
+            <EmptyState
+              className="agent-empty-state"
+              icon={
                 <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="4" width="18" height="16" rx="3" />
                   <circle cx="9" cy="10" r="1.5" />
                   <circle cx="15" cy="10" r="1.5" />
                   <path d="M8 15h8" />
                 </svg>
-              </div>
-              <h3>暂无智能体任务</h3>
-              <p>主任务派生的通用任务 Default、调查 Explorer 和工作 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。</p>
-            </div>
+              }
+              title="暂无智能体任务"
+              description="主任务派生的通用任务 Default、调查 Explorer 和工作 Worker 会汇总在此处。子任务继承父任务的权限和普通工具。"
+            />
           ) : (
             <AgentList
               agents={filteredAgents}

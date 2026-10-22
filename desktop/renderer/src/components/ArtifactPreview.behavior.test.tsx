@@ -427,6 +427,7 @@ describe("artifact previews and feedback", () => {
     expect(screen.getByRole("progressbar", { name: "网页加载进度" })).toBeInTheDocument();
     expect(screen.getByText("正在连接并加载网页…")).toBeInTheDocument();
     expect(screen.getByText("https://news.web.nhk/item1")).toBeInTheDocument();
+    expect(screen.queryByText("外部站点加载受网络与节点速度影响，请稍候")).not.toBeInTheDocument();
     const stopBtn = screen.getByRole("button", { name: "停止加载" });
     expect(stopBtn).not.toBeDisabled();
     expect(stopBtn.querySelector(".browser-navigation__stop-icon")).toBeInTheDocument();

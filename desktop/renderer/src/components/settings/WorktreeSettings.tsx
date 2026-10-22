@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { WorktreeSettings as WorktreeSettingsValue } from "../../../../shared/domain-contracts.js";
 import { Button } from "../Button.js";
-import { SettingRow } from "./SettingRow.js";
-import { SettingSection } from "./SettingSection.js";
-import { StatusBadge } from "./StatusBadge.js";
-import { Toggle } from "./Toggle.js";
+import { SettingRow } from "../SettingRow.js";
+import { SettingSection } from "../SettingSection.js";
+import { StatusBadge } from "../StatusBadge.js";
+import { Toggle } from "../Toggle.js";
+import { AlertBanner } from "../AlertBanner.js";
+import { Spinner } from "../Spinner.js";
 
 export interface WorktreeSettingsProps {
   onShowToast?: (message: string, type?: "success" | "info" | "error") => void;
@@ -159,15 +161,19 @@ export function WorktreeSettings({ onShowToast }: WorktreeSettingsProps = {}) {
           <p className="settings-panel-subtitle">管理本地 Git Managed Worktree 的生命周期与清理策略。</p>
         </div>
         {error ? (
-          <div className="setting-banner-error" role="alert">
-            <p>{error}</p>
-            <Button variant="secondary" size="small" onClick={() => void loadSettings()}>
-              重试
-            </Button>
-          </div>
+          <AlertBanner
+            tone="error"
+            action={
+              <Button variant="secondary" size="small" onClick={() => void loadSettings()}>
+                重试
+              </Button>
+            }
+          >
+            {error}
+          </AlertBanner>
         ) : (
           <div className="worktree-loading-state">
-            <div className="worktree-loading-spinner" aria-hidden="true" />
+            <Spinner size="md" tone="muted" ariaLabel="正在读取 Worktree 设置…" />
             <p>正在读取 Worktree 设置…</p>
           </div>
         )}
@@ -194,7 +200,7 @@ export function WorktreeSettings({ onShowToast }: WorktreeSettingsProps = {}) {
         </div>
       </div>
 
-      {error && <p className="setting-banner-error" role="alert">{error}</p>}
+      {error && <AlertBanner tone="error">{error}</AlertBanner>}
 
       {/* Summary / Metric Cards */}
       <div className="worktree-summary-grid">

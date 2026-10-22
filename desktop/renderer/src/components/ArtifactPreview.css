@@ -196,10 +196,6 @@
   border-radius: 9999px;
   border: 1px solid var(--line);
 }
-.browser-loading__tip {
-  font-size: var(--font-size-caption, 0.8rem);
-  color: var(--muted);
-}
 .workspace-dock__tab-spinner {
   display: inline-grid;
   place-items: center;

@@ -14,9 +14,9 @@ import {
   ModelDialog,
   type ModelDraft,
 } from "./ModelDialog.js";
-import { ConfirmDialog } from "./ConfirmDialog.js";
-import { SettingSection } from "./SettingSection.js";
-import { SettingRow } from "./SettingRow.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
+import { SettingSection } from "../SettingSection.js";
+import { SettingRow } from "../SettingRow.js";
 
 interface ModelSettingsProps {
   modelList?: ModelListResult | undefined;

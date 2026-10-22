@@ -1,14 +1,6 @@
 .skill-settings { width: 100%; }
 .skill-search {
-  width: 100%;
   margin: 0.5rem 0 1.25rem;
-  padding: 0.45rem 0.85rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.875rem;
 }
 .skill-categories { display: flex; gap: 0.35rem; margin-bottom: 1.25rem; }
 .skill-categories button {
@@ -248,12 +240,6 @@
   overflow-wrap: anywhere;
 }
 .skill-card-main:focus-visible, .skill-categories button:focus-visible, .skill-detail-body:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
-.skill-search:focus,
-.skill-search:focus-visible {
-  outline: none;
-  border-color: var(--line);
-  box-shadow: none;
-}
 @media (max-width: 900px) { .skill-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-height: 650px) {
   .skill-detail-dialog { gap: 0.65rem; padding: 1rem; }

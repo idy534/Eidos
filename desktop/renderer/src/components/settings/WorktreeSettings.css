@@ -353,18 +353,3 @@
   color: var(--muted);
   font-size: 0.88rem;
 }
-
-.worktree-loading-spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--surface-muted);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: worktree-spin 700ms linear infinite;
-}
-
-@keyframes worktree-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}

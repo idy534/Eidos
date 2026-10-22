@@ -27,7 +27,7 @@ import { DropdownMenu } from "./DropdownMenu.js";
 import { CopyIcon, CheckmarkIcon, AutomationsIcon, CloseIcon } from "./MenuIcons.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { TurnResults } from "./TurnResults.js";
-import { ConfirmDialog } from "./settings/ConfirmDialog.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { Tooltip } from "./Tooltip.js";

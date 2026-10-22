@@ -22,6 +22,7 @@ import { ChannelSettings } from "./ChannelSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
 import { AgentSettings } from "./AgentSettings.js";
 import { Button } from "../Button.js";
+import { AlertBanner } from "../AlertBanner.js";
 
 interface SettingsPageProps {
   initialCategory?: SettingsCategory;
@@ -156,7 +157,7 @@ export function SettingsPage({
 
           <section className="settings-content-col">
             {extensionError && (
-              <p className="error-banner" role="alert">{extensionError}</p>
+              <AlertBanner tone="error">{extensionError}</AlertBanner>
             )}
 
             {activeCategory === "web_search" && (storageReady ? <WebSearchSettings onShowToast={showToast}/> : <p role="alert">Runtime 尚未就绪。</p>)}

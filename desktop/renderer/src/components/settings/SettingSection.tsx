@@ -1,6 +1,6 @@
 import React from "react";
 
-interface SettingSectionProps {
+export interface SettingSectionProps {
   title: string;
   description?: React.ReactNode;
   headerAction?: React.ReactNode;

@@ -4,7 +4,7 @@ import type { McpToolDetail } from "../../../../shared/mcp-details.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { SearchIcon } from "../FindBar.js";
 import { CloseIcon } from "../MenuIcons.js";
-import { StatusBadge } from "./StatusBadge.js";
+import { StatusBadge } from "../StatusBadge.js";
 import { McpToolRow } from "./McpToolRow.js";
 import { McpSchemaDialog } from "./McpSchemaDialog.js";
 import { useMcpTools } from "./useMcpTools.js";

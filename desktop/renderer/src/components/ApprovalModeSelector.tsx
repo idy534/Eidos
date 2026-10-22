@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ApprovalMode } from "../contracts.js";
-import { ConfirmDialog } from "./settings/ConfirmDialog.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 
 export interface ApprovalModeSelectorProps {
   mode: ApprovalMode;

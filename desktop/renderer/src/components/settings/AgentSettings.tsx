@@ -5,9 +5,11 @@ import { formatAgentModelDisplay } from "../AgentPanel.js";
 import { AgentEditorDialog, AgentRoleIcon, agentRoleLabels } from "./AgentEditorDialog.js";
 import { Button } from "../Button.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
-import { Toggle } from "./Toggle.js";
-import { ConfirmDialog } from "./ConfirmDialog.js";
-import { EmptySettingsState } from "./EmptySettingsState.js";
+import { Toggle } from "../Toggle.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
+import { EmptyState } from "../EmptyState.js";
+import { SearchInput } from "../SearchInput.js";
+import { StatusBadge } from "../StatusBadge.js";
 import { userFacingError } from "../../session-state.js";
 import { CopyIcon, TrashIcon } from "../MenuIcons.js";
 
@@ -111,44 +113,13 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
         </header>
 
         <div className="agent-settings__toolbar">
-          <div className="agent-settings__search-box">
-            <svg
-              className="agent-settings__search-icon"
-              viewBox="0 0 16 16"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="7" cy="7" r="4.5" />
-              <path d="M10.5 10.5 14 14" />
-            </svg>
-            <input
-              ref={searchRef}
-              type="search"
-              aria-label="搜索智能体"
-              placeholder="搜索智能体名称或用途…"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            {query && (
-              <button
-                type="button"
-                className="agent-settings__search-clear"
-                aria-label="清空搜索"
-                onClick={() => {
-                  setQuery("");
-                  searchRef.current?.focus();
-                }}
-              >
-                ✕
-              </button>
-            )}
-          </div>
+          <SearchInput
+            className="agent-settings__search-box"
+            ariaLabel="搜索智能体"
+            placeholder="搜索智能体名称或用途…"
+            value={query}
+            onChange={setQuery}
+          />
           <Button
             variant="secondary"
             size="small"
@@ -261,7 +232,7 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
         )}
 
         {!loading && ready && !visible.length && (
-          <EmptySettingsState
+          <EmptyState
             title={needle ? "没有匹配的智能体" : "还没有自定义智能体"}
             description={
               needle

@@ -4,12 +4,13 @@ import type { SettingsPendingAction } from "./settings-types";
 import { Button } from "../Button.js";
 import { DropdownMenu } from "../DropdownMenu.js";
 import { TrashIcon } from "../MenuIcons.js";
-import { SettingSection } from "./SettingSection";
-import { SettingRow } from "./SettingRow";
-import { Toggle } from "./Toggle";
-import { ConfirmDialog } from "./ConfirmDialog";
-import { EmptySettingsState } from "./EmptySettingsState";
-import { StatusBadge } from "./StatusBadge";
+import { SettingSection } from "../SettingSection.js";
+import { SettingRow } from "../SettingRow.js";
+import { Toggle } from "../Toggle.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
+import { EmptyState } from "../EmptyState.js";
+import { StatusBadge } from "../StatusBadge.js";
+import { AlertBanner } from "../AlertBanner.js";
 
 interface PluginSettingsProps {
   plugins: PluginRecord[];
@@ -95,7 +96,7 @@ export function PluginSettings({
         </div>
       </div>
 
-      {localError && <p className="setting-banner-error" role="alert">{localError}</p>}
+      {localError && <AlertBanner tone="error">{localError}</AlertBanner>}
 
       <div className="plugin-stats-summary">
         <div className="stat-badge">已导入 {plugins.length} 项</div>
@@ -104,7 +105,7 @@ export function PluginSettings({
 
       <SettingSection title="已安装的 Plugins">
         {plugins.length === 0 ? (
-          <EmptySettingsState
+          <EmptyState
             title="尚未导入任何 Plugin"
             description="导入 Plugin 后，相关的 Skills 能力和 MCP Servers 将显示在设置列表中。"
             action={

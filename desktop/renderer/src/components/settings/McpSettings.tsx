@@ -3,7 +3,8 @@ import { Button } from "../Button.js";
 import { CodeBlock } from "../CodeBlock.js";
 import type { McpCreateInput, McpServerRecord, McpUpdateInput } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
-import { StatusBadge } from "./StatusBadge";
+import { StatusBadge } from "../StatusBadge.js";
+import { AlertBanner } from "../AlertBanner.js";
 import { McpReviewDialog } from "./McpReviewDialog";
 import { McpCreateDialog } from "./McpCreateDialog";
 import { McpDetailDialog } from "./McpDetailDialog.js";
@@ -393,9 +394,9 @@ export function McpSettings({
       </div>
 
       {localError && (
-        <p className="setting-banner-error" role="alert">
+        <AlertBanner tone="error">
           {localError}
-        </p>
+        </AlertBanner>
       )}
 
       {/* Main Content Area */}

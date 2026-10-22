@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, fireEvent } from "@testing-library/react";
 import { useRef, useState } from "react";
 import userEvent from "@testing-library/user-event";
-import { ConfirmDialog } from "./settings/ConfirmDialog.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 
 function controlAnimationFrames() {
   let nextId = 1;

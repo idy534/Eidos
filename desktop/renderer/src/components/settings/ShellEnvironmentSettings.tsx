@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import type { ShellEnvironmentPolicy, ShellEnvironmentResponse } from "../../../../shared/shell-environment.js";
 import { Button } from "../Button.js";
 import { Tooltip } from "../Tooltip.js";
-import { SettingRow } from "./SettingRow.js";
-import { SettingSection } from "./SettingSection.js";
+import { SettingRow } from "../SettingRow.js";
+import { SettingSection } from "../SettingSection.js";
+import { AlertBanner } from "../AlertBanner.js";
 
 function Help({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -77,7 +78,7 @@ export function ShellEnvironmentSettings({ onShowToast }: {
 
   return (
     <SettingSection title="沙盒环境设置" className="shell-environment-settings">
-      {error && <p className="error-banner" role="alert">{error}</p>}
+      {error && <AlertBanner tone="error">{error}</AlertBanner>}
       <SettingRow
         title={
           <span className="shell-environment-label">

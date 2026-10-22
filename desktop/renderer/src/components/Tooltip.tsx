@@ -17,6 +17,7 @@ import {
   type Ref,
 } from "react";
 import { createPortal } from "react-dom";
+import { Kbd } from "./Kbd.js";
 
 export type TooltipPlacement = "top" | "bottom" | "left" | "right";
 
@@ -481,7 +482,7 @@ export function Tooltip({
       aria-hidden={!visible}
     >
       <span className="eidos-tooltip__content">{content}</span>
-      {shortcut && <kbd className="eidos-tooltip__shortcut">{shortcut}</kbd>}
+      {shortcut && <Kbd className="eidos-tooltip__shortcut">{shortcut}</Kbd>}
     </div>
   ) : null;
 

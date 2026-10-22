@@ -3,9 +3,9 @@ import type { Channel, ChannelConfig, ChannelPublicConnection, ChannelSaveReques
 import type { ModelOption, Project } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { Tooltip } from "../Tooltip.js";
-import { StatusBadge, type StatusTone } from "./StatusBadge.js";
-import { Toggle } from "./Toggle.js";
-import { ConfirmDialog } from "./ConfirmDialog.js";
+import { StatusBadge, type StatusTone } from "../StatusBadge.js";
+import { Toggle } from "../Toggle.js";
+import { ConfirmDialog } from "../ConfirmDialog.js";
 import { BackArrowIcon, DingTalkLogo, FeishuLogo, WeChatWorkLogo, EyeIcon, EyeOffIcon, RefreshIcon } from "./ChannelIcons.js";
 
 export const channelStateLabels: Record<State, string> = {

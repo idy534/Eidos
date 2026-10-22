@@ -3,7 +3,7 @@ import React, { useEffect, useRef } from "react";
 import { Button } from "../Button.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 
-interface ConfirmDialogProps {
+export interface ConfirmDialogProps {
   open: boolean;
   title: string;
   description: React.ReactNode;
