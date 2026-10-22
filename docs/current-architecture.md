@@ -640,7 +640,7 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 `SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
-MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，并按 external Tool 经过 Approval、Sandbox、timeout、结果校验和 reconciliation。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
+MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，继续按 external Tool 保留 Durable Intent、Sandbox、timeout、结果校验和 reconciliation；只有需要审批的工具进入 Approval。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
 
 每个 MCP Connection 在 macOS 的 canonical `/private/tmp` 下使用标准库创建私有短目录 `eidos-mcp-<随机值>/`，不再在 `~/.eidos/extensions/mcp-runtime/<uuid>/` 下分配运行目录。默认 HOME、TMPDIR 和启动器 PID 文件位于该连接目录内，服务显式配置和环境透传仍然优先。长数据目录、长主进程 TMPDIR 和服务工作目录不参与连接临时路径拼接。目录初始权限为 `0700`。启动前、进程组终止前和清理前核对目录类型及 device、inode、owner。连接关闭仍先等待进程组、Service 和 callback 停止，再删除自建目录。目录被替换时不跟随替代路径；Runtime 保留原有关闭失败和未知结果语义。
 
@@ -810,13 +810,17 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 
 调用链保持为 `Composer → preload → Main → run/start → Run 快照 → PermissionPolicyEvaluator → ApprovalCoordinator → 原 Tool 执行链`。权限决定仍属于 Eidos。实现复用现有 Model Gateway、Approval 事务和权限物化，没有新增依赖、独立 Agent Loop 或第二套审批状态机。
 
+低风险操作使用同一 ToolExecutionController 的免审批入口，继续先提交 Durable Intent，再执行和核验。用户已经审阅启用的 MCP Server，其工具明确声明 `readOnlyHint=true` 时不逐次审批，也不调用自动审查模型。缺失或非只读声明继续审批；非破坏性和幂等声明不能代替只读声明。Runtime 信任已启用服务的只读声明，但该声明不是操作系统保证。声明进入现有工具契约 Hash；MCP 继续按 external 类型保留提交窗口、取消、Sandbox、结果校验和未知结果记录。此调整不把 MCP 改为并行只读工具。旧待审批工具只接受审批标记从 true 到 false 的兼容恢复，参数、结果、来源 Hash 及其他契约字段必须保持一致；新工具调用继续使用严格的当前契约绑定。
+
+内置 `web_search` 使用用户选择的默认服务授权，不逐次审批，也不产生 Shell 网络 Grant。Skill 安装的下载阶段复用已有的基础网络权限或当前 Run 网络 Grant；没有网络授权时继续申请下载审批，最终安装仍审批。Shell 对普通宿主文件的读取已经由默认 Seatbelt 放行，显式申请相同读取权限直接返回 `already_granted`；请求涉及受保护读取范围、额外写入、联网或沙盒外执行时继续按原权限判断。文件工具的读取范围保持不变。新规则不扩展单次批准的范围，Run Grant 仍只来自 `permission_request + grantScope=run`。旧版可安全恢复的待审批记录继续处理原决定；存在未完成 Intent 时，系统保留原中断与未知结果记录，不自动重放操作。
+
 Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。已有 Run 的会话从同一个最近 Run 读取模型和审批模式。Draft 会话在首个 Run 被 Runtime 接受后，Renderer 将返回 Run 的模型和审批模式保存到 `localStorage`，作为新会话默认值。Draft 和没有 Run 的会话使用这组默认值；没有有效默认值时，审批模式使用 `manual`，模型使用列表中的第一个模型。设置控件的临时修改只影响当前会话。已有会话的后续 Run 不会改写新会话默认值。
 
 审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。保存的默认值可以是 `full_access`，后续新 Draft 会沿用该模式，载入默认值时不会再次弹出确认框。模型和 Tool 参数没有切换模式的入口。重新回答和编辑后重发会携带 Composer 当前选择的审批模式。Main 沿用普通发送的完全访问确认标记，Runtime 通过同一个 Run 创建入口固定模式和权限。旧调用方省略模式时，Runtime 从 SQLite 读取原 Run 的模式，保留自动审批；原 Run 为完全访问时，旧调用仍按人工模式创建新 Run。原 Run 的模式和权限快照保持不变。
 
 Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 在 `runs` 增加 `approval_mode`，旧 Run 默认为 `manual`；该版本在 `approvals` 增加 `review_json`，旧审批默认为空。迁移沿用事务和失败回滚。Runtime 在执行前检查 Run 模式与权限快照一致。当前自定义权限没有配置、解析器或 UI；后续可以在既有 Run 权限快照工厂和 PermissionPolicyEvaluator 中接入 `config.toml`，本期不接受 `custom` 模式。
 
-请求审批模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。Runtime 将原路径硬拒绝和显式取消沙盒保护改为高危人工请求。auto_review 对这些请求不调用审查模型；用户通过 danger 样式的审批窗口决定。参数无效、身份变化、版本冲突、取消和结果不确定仍按实际错误处理。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请、MCP 和 Eidos-state 的原有审批。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。
+请求审批模式继续使用原有审批入口。自动模式只接管原本进入 ApprovalCoordinator 的动作，普通 Workspace 写入和默认沙盒 Shell 不额外调用模型。Runtime 将原路径硬拒绝和显式取消沙盒保护改为高危人工请求。auto_review 对这些请求不调用审查模型；用户通过 danger 样式的审批窗口决定。参数无效、身份变化、版本冲突、取消和结果不确定仍按实际错误处理。自动审批覆盖文件扩权、Shell 扩权、权限 Grant、网络拒绝后的申请，以及仍需审批的 MCP 和 Eidos-state 操作。Coordinator 先持久化 pending，再使用当前 Run 固定的模型进行独立请求。请求不包含主执行模型的对话状态，也不开放可执行工具。支持 Function Tool 的模型通过一个结果 Schema 返回判断；其他模型返回严格 JSON。Runtime 验证完整返回结构、风险和理由，未知风险不能批准。
 
 审查证据包括当前 Run 及之前最近 32 条用户消息、具体 Tool 参数、权限请求和完整 Diff。Base Hash 等工程校验值仅用于内部检查，不进入审查模型上下文。策略把项目内容、工具输出和操作理由作为不可信数据。请求最多 48 KiB、答复最多 8 KiB、审查超时 60 秒、理由最多 400 字符。明确风险拒绝保留；无法完成可信审查或未知风险时通过原审批通道交由用户决定。请求指纹纳入用户证据，新用户指令可触发重新评估，模型重复相同请求仍去重。
 
@@ -995,3 +999,11 @@ Runtime 重启只恢复现有 Recovery 允许的纯模型阶段。恢复沿用�
 排队消息在入队时就保存用户 Item。ContextRepository 按 `runs.creation_seq` 和 Run 内的 `items.ordinal` 选择、排列历史和识别最新用户输入。系统不能用 Item 的全局写入顺序，把排队消息插入上一轮仍在生成的工具记录和最终回复之间。ContextBuilder 沿用这个顺序。压缩候选继续排除当前目标和受保护的近期事实；已有引导仍在消费边界进入所属 Run。修复不改写历史 Item、已保存的 ContextSnapshot、Run 配置或 FIFO 状态，也不增加数据库字段。
 
 思考模式下，Chat Completions Adapter 在已有 response replay、但没有 thinking part 时，使用 Pydantic AI Provider Profile 声明的 `openai_chat_thinking_field` 创建空 ThinkingPart。Pydantic AI 继续负责请求字段映射。纯文本的历史最终回复也会携带空 reasoning 字段，系统不生成或补造思考正文。没有回放记录的历史仍使用原有的历史文本降级；未开启思考或 Profile 未声明字段时，Adapter 不增加这个空 part。工具调用和结果仍按原有批次规则配对，系统不重放工具。
+
+## MCP 设置页工具目录
+
+`readMcpTools` 通过 typed preload IPC → Main 参数校验 → RuntimeClient → `mcp/tools` Method Registry → ExtensionApplication → McpDetails。请求和响应以 Python Pydantic 模型为源，`scripts/generate-mcp-details-contracts.mjs` 生成 TypeScript DTO 和 AJV Schema，两端共用 `protocol/fixtures/mcp-details-v1.json`。
+
+首个请求由 Supervisor 管理的任务完成，JSON-RPC 输入循环可以继续处理其他请求。McpDetails 先读取当前 Plugin/手动 MCP 配置及授权，再使用已有 McpConnection、官方 MCP SDK、沙盒和资源登记执行初始化及工具目录发现。它只读取 `serverInfo.description` 作为服务描述，不执行 Tool。它复用现有 Tool Schema 校验判断条目是否可用，并在 finally 中关闭连接。
+
+设置页目录是有界的短期展示缓存，不是第二套业务状态。每个目录保存本次发现的工具及获取时间，具有随机目录 ID、配置绑定和 5 分钟有效期；系统最多保留 8 个、每个 512 KiB 的目录。后续查询重新校验服务授权和配置，以游标在同一目录中搜索并返回最多 10 条。用户撤销授权时不会继续返回条目。缓存不写入 SQLite，不更改 Run/Step Extension Snapshot、Tool Registry 或审批规则。旧游标在 Runtime 重启后失效，页面允许重新获取。

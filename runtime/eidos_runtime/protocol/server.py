@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO
 
 from pydantic import BaseModel, ValidationError
+from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
+from eidos_runtime.extensions.mcp_details import McpDetails
 
 from eidos_runtime import __version__
 from eidos_runtime.application.channels import ChannelApplication
@@ -498,6 +500,29 @@ class _DeferredGitPushAdapter:
             self._server.send(business_error(request_id, "INTERNAL_ERROR"))
             return
         self._server.send(response(request_id, result.to_json_value()))
+
+
+class _McpToolsAdapter:
+    def __init__(self, server: "RuntimeServer") -> None:
+        self._server = server
+
+    def __call__(self, request_id: str, request: McpToolsRequest) -> DeferredMethodResult:
+        application = self._server._applications_or_error().extensions
+
+        def run(cancel: threading.Event) -> None:
+            try:
+                result = application.read_mcp_tools(request, cancel)
+                payload = McpToolsResponse.model_validate(result).to_wire_dict()
+                self._server.send(response(request_id, payload))
+            except ApplicationError as error:
+                self._server.send(business_error(request_id, error.code))
+            except Exception:
+                # Do not log server-supplied descriptions, credentials or exceptions.
+                self._server.send(business_error(request_id, "MCP_DISCOVERY_FAILED"))
+
+        if not self._server.supervisor.start_managed_task("mcp-tools", run):
+            raise ApplicationError("RUNTIME_DRAINING")
+        return DeferredMethodResult()
 
 
 class _CustomProviderAdapter:
@@ -1509,6 +1534,7 @@ class RuntimeServer:
             "plugin/setEnabled",
             "plugin/remove",
             "mcp/setEnabled",
+            "mcp/tools",
             "mcp/create",
             "mcp/update",
             "mcp/remove",
@@ -1527,6 +1553,11 @@ class RuntimeServer:
                     error_mapper=_application_error_mapping,
                 )
             )
+        registry.register(MethodRegistration(
+            name="mcp/tools", request_type=McpToolsRequest, response_type=McpToolsResponse,
+            handler=_McpToolsAdapter(self), allowed_when_draining=False,
+            allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
+        ))
         registry.register(MethodRegistration(
             name="model/discoverCustom", request_type=CustomProviderRequest,
             response_type=CustomProviderResult, handler=_CustomProviderAdapter(self),
@@ -1831,6 +1862,7 @@ class RuntimeServer:
             extensions=ExtensionApplication(
                 store=self.store,
                 plugins=lambda: self.plugins,
+                mcp_details=McpDetails(lambda: self.plugins, self._required_async_kernel, self.supervisor.resources),
             ),
             repository_factory=self.repository_factory,
             repository_runtime=self.repository_runtime,

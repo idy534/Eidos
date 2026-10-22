@@ -32,6 +32,10 @@ export function useDialogFocusLifecycle({
       if (initialFocusRef) {
         rafRef.current = requestAnimationFrame(() => {
           rafRef.current = null;
+          const currentActive = document.activeElement;
+          if (currentActive && currentActive !== document.body && currentActive !== triggerRef.current) {
+            return;
+          }
           const target = initialFocusRef.current;
           if (target?.isConnected) target.focus();
         });

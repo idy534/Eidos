@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import tempfile
 import threading
@@ -12,6 +14,8 @@ import unittest
 from unittest.mock import patch
 
 import anyio
+import pytest
+from mcp import types as mcp_types
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,6 +26,7 @@ from eidos_runtime.extensions.mcp import (  # noqa: E402
     McpManager,
     McpShutdownTimeout,
     McpUnavailable,
+    _tool_entry,
 )
 from eidos_runtime.extensions.plugins import PluginCatalog  # noqa: E402
 from eidos_runtime.extensions.skills import SkillCatalog  # noqa: E402
@@ -35,7 +40,54 @@ from eidos_runtime.runtime.resource_registry import (  # noqa: E402
     ResourceRegistry,
     RuntimeResourceKind,
 )
+from eidos_runtime.runtime.tool_dispatcher import ToolDispatcher  # noqa: E402
 from eidos_runtime.tools.registry import ToolRegistry  # noqa: E402
+
+
+@pytest.mark.parametrize('annotations,required', [
+    (None, True),
+    ({'readOnlyHint': False}, True),
+    ({'destructiveHint': False}, True),
+    ({'idempotentHint': True}, True),
+    ({'readOnlyHint': True}, False),
+    ({'readOnlyHint': True, 'openWorldHint': True}, False),
+])
+def test_mcp_approval_policy_uses_only_explicit_read_only_hint(annotations, required):
+    connection = SimpleNamespace(config=SimpleNamespace(tool_timeout_seconds=30))
+    tool = mcp_types.Tool.model_validate({
+        'name': 'read_data', 'description': 'Read data',
+        'inputSchema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+        'annotations': annotations,
+    })
+    server = {'serverId': 'fixture', 'pluginId': 'demo', 'pluginVersion': '1'}
+    entry = _tool_entry(connection, tool, server)
+    assert entry.spec.approval_required is required
+    assert entry.spec.side_effect == 'external'
+    assert entry.spec.batch_policy == 'single'
+    changed = _tool_entry(connection, tool.model_copy(update={'annotations':
+        mcp_types.ToolAnnotations(read_only_hint=required)}), server)
+    assert entry.provenance.content_hash != changed.provenance.content_hash
+    if not required:
+        legacy = replace(entry, spec=entry.spec.model_copy(update={'approval_required': True}),
+            runtime=None, execution_policy=None)
+        dispatcher = ToolDispatcher(ToolRegistry((entry,)))
+        call = ModelToolCall('pending', entry.spec.name, {})
+        assert dispatcher.plan(call, legacy.contract_fingerprint).descriptor is None
+        restored = dispatcher.plan_pending_approval(call, legacy.contract_fingerprint)
+        assert restored.descriptor is not None and dispatcher.validate_execution(call, restored)
+        changed_contract = replace(legacy, spec=legacy.spec.model_copy(update={'description': 'Changed description'}))
+        assert dispatcher.plan_pending_approval(call, changed_contract.contract_fingerprint).descriptor is None
+        changed_source = replace(legacy, provenance=legacy.provenance.model_copy(update={'content_hash': 'd' * 64}))
+        assert dispatcher.plan_pending_approval(call, changed_source.contract_fingerprint).descriptor is None
+        unrelated = replace(entry, provenance=entry.provenance.model_copy(update={
+            'kind': 'builtin', 'source_id': 'test.other_read_only',
+        }))
+        old_unrelated = replace(unrelated, execution_policy=unrelated.execution_policy.model_copy(
+            update={'approval_required': True},
+        ))
+        assert ToolDispatcher(ToolRegistry((unrelated,))).plan_pending_approval(
+            call, old_unrelated.contract_fingerprint,
+        ).descriptor is None
 
 
 class McpManagerTests(unittest.TestCase):
@@ -95,6 +147,129 @@ class McpManagerTests(unittest.TestCase):
         self.assertEqual(self.resources.active_resources(), ())
         self.store.close()
         self.temporary.cleanup()
+
+    def test_read_only_mcp_skips_approval_and_review_but_commits_intent(self) -> None:
+        for mode in ('manual', 'auto_review', 'full_access'):
+            with self.subTest(mode=mode):
+                session = self.store.create_session(str(self.workspace))
+                run, _ = self.store.create_run(
+                    session['id'], 'Read structured data', approval_mode=mode,
+                    extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+                )
+                model = ScriptedModel([
+                    ModelResponse(tool_calls=(ModelToolCall('find', 'tool_search', {
+                        'query': 'mcp__fixture__structured', 'limit': 1,
+                    }),)),
+                    ModelResponse(tool_calls=(ModelToolCall('read', 'mcp__fixture__structured', {}),)),
+                    ModelResponse(text='Done.'),
+                ])
+                original = McpConnection.call
+
+                def call_after_intent(connection, name, arguments, cancel):
+                    self.assertEqual(name, 'structured')
+                    row = self.store.connection.execute(
+                        'SELECT status FROM durable_intents WHERE run_id=?', (run['id'],),
+                    ).fetchone()
+                    self.assertEqual(row[0], 'running')
+                    return original(connection, name, arguments, cancel)
+
+                with patch.object(McpConnection, 'call', call_after_intent), patch(
+                    'eidos_runtime.runtime.approval.review_approval',
+                    side_effect=AssertionError('Read-only tools must not call a reviewer'),
+                ) as review:
+                    RuntimeEngine(
+                        self.store, model, lambda _message: None,
+                        request_approval=lambda *_args: self.fail('Read-only MCP must not request approval'),
+                        async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+                    ).run(run['id'], threading.Event())
+                    review.assert_not_called()
+                self.assertEqual(self.store.read_run(run['id'])['status'], 'succeeded')
+                self.assertEqual(self.store.connection.execute(
+                    'SELECT count(*) FROM approvals WHERE run_id=?', (run['id'],),
+                ).fetchone()[0], 0)
+                intent = self.store.connection.execute(
+                    'SELECT preconditions_json,status FROM durable_intents WHERE run_id=?', (run['id'],),
+                ).fetchone()
+                self.assertEqual(intent['status'], 'completed')
+                if mode != 'full_access':
+                    self.assertEqual(json.loads(intent['preconditions_json'])['authorization'], 'mcp_read_only')
+
+    def test_pending_read_only_mcp_approval_recovers_without_skipping_user_decision(self) -> None:
+        class ProcessCrash(BaseException):
+            pass
+
+        for decision in ('approve', 'reject'):
+            with self.subTest(decision=decision):
+                session = self.store.create_session(str(self.workspace))
+                run, _ = self.store.create_run(
+                    session['id'], 'Read data',
+                    extension_snapshot=SkillCatalog(PluginCatalog(self.store)).extension_snapshot(),
+                )
+                model = ScriptedModel([
+                    ModelResponse(tool_calls=(ModelToolCall('find', 'tool_search', {'query': 'mcp__fixture__structured', 'limit': 1}),)),
+                    ModelResponse(tool_calls=(ModelToolCall('read', 'mcp__fixture__structured', {}),)),
+                ])
+
+                def legacy_entry(connection, tool, server):
+                    entry = _tool_entry(connection, tool, server)
+                    return replace(entry, spec=entry.spec.model_copy(update={'approval_required': True}),
+                        runtime=None, execution_policy=None)
+
+                def crash(*_args):
+                    raise ProcessCrash()
+
+                with patch('eidos_runtime.extensions.mcp._tool_entry', legacy_entry):
+                    with self.assertRaises(ProcessCrash):
+                        RuntimeEngine(
+                            self.store, model, lambda _message: None, request_approval=crash,
+                            async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+                        ).run(run['id'], threading.Event())
+                pending = self.store.typed_runtime_repository().read_pending_approval(run['id'])
+                self.store.close()
+                self.store = SessionStore(self.data)
+                self.store.initialize()
+                requests = []
+                RuntimeEngine(
+                    self.store, ScriptedModel([ModelResponse(text='Done.')]), lambda _message: None,
+                    request_approval=lambda request, _cancel: requests.append(request) or ApprovalDecision(decision),
+                    async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+                ).run(run['id'], threading.Event())
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(self.store.read_run(run['id'])['status'], 'succeeded')
+                rows = self.store.connection.execute('SELECT id,decision FROM approvals WHERE run_id=?', (run['id'],)).fetchall()
+                self.assertEqual([(row['id'], row['decision']) for row in rows], [(pending.id, decision)])
+                self.assertEqual(self.store.connection.execute(
+                    'SELECT count(*) FROM durable_intents WHERE run_id=?', (run['id'],),
+                ).fetchone()[0], int(decision == 'approve'))
+
+    def test_cancel_wins_over_a_late_read_only_mcp_result(self) -> None:
+        session = self.store.create_session(str(self.workspace))
+        run, _ = self.store.create_run(
+            session['id'], 'Read data', extension_snapshot=SkillCatalog(self.plugins).extension_snapshot(),
+        )
+        cancel = threading.Event()
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall('find', 'tool_search', {'query': 'mcp__fixture__structured', 'limit': 1}),)),
+            ModelResponse(tool_calls=(ModelToolCall('read', 'mcp__fixture__structured', {}),)),
+        ])
+        original = McpConnection.call
+
+        def late_result(connection, name, arguments, controlled_cancel):
+            result = original(connection, name, arguments, controlled_cancel)
+            cancel.set()
+            return result
+
+        with patch.object(McpConnection, 'call', late_result):
+            RuntimeEngine(
+                self.store, model, lambda _message: None,
+                async_kernel=self.kernel, resource_registry=self.resources, mcp_sandbox=False,
+            ).run(run['id'], cancel)
+        self.assertEqual(self.store.read_run(run['id'])['status'], 'canceled')
+        result = self.store.connection.execute(
+            "SELECT result_json FROM tool_calls WHERE tool_name='mcp__fixture__structured'",
+        ).fetchone()[0]
+        self.assertNotEqual(json.loads(result)['outcome'], 'success')
+        self.assertEqual(self.store.connection.execute('SELECT count(*) FROM approvals').fetchone()[0], 0)
 
     def test_inactive_mcp_tool_is_reported_then_model_searches_and_recovers(self) -> None:
         session = self.store.create_session(str(self.workspace))

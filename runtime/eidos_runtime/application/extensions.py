@@ -12,6 +12,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Literal, Mapping, Protocol, TypeVar
 import uuid
+from threading import Event
 
 from pydantic import JsonValue, ValidationError
 
@@ -31,6 +32,11 @@ from eidos_runtime.extensions.skills import SkillCatalog, SkillReadError
 from eidos_runtime.extensions.skill_management import SkillManagement
 from eidos_runtime.models.skill_settings import ManagedSkill, SkillDetail, SkillRemoval
 from eidos_runtime.models import EidosFrozenStrictModel
+from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
+
+
+class McpDetailsPort(Protocol):
+    def read(self, request: McpToolsRequest, cancel: Event) -> McpToolsResponse: ...
 
 
 ExtensionResultT = TypeVar(
@@ -262,9 +268,16 @@ class ExtensionApplication:
         *,
         store: ExtensionStore,
         plugins: PluginCatalog | None | Callable[[], PluginCatalog | None],
+        mcp_details: McpDetailsPort | None = None,
     ) -> None:
         self._store = store
         self._plugins = plugins
+        self._mcp_details = mcp_details
+
+    def read_mcp_tools(self, request: McpToolsRequest, cancel: Event) -> McpToolsResponse:
+        if self._mcp_details is None:
+            raise ApplicationError("RUNTIME_NOT_INITIALIZED")
+        return self._mcp_details.read(request, cancel)
 
     def list_plugins(self) -> PluginList:
         return PluginList(

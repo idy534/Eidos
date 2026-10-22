@@ -42,6 +42,89 @@ def test_permission_request_round_trip(tmp_path, decision):
         store.close()
 
 
+def test_ordinary_host_read_request_needs_no_approval_or_new_grant(tmp_path):
+    workspace = tmp_path / 'workspace'
+    outside = tmp_path / 'outside'
+    workspace.mkdir()
+    outside.mkdir()
+    store = SessionStore(tmp_path / 'data')
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        run, _ = store.create_run(session['id'], 'Read the ordinary external directory')
+        model = ScriptedModel([
+            ModelResponse(tool_calls=(ModelToolCall('read', 'request_permissions', {
+                'permissions': {'fileSystem': [{'path': str(outside), 'access': 'read'}]},
+            }),)),
+            ModelResponse(text='Done.'),
+        ])
+
+        def unexpected_approval(*_args):
+            pytest.fail('An already permitted host read must not request approval')
+
+        RuntimeEngine(
+            store, model, lambda _message: None, request_approval=unexpected_approval,
+        ).run(run['id'], threading.Event())
+        assert store.read_run(run['id'])['status'] == 'succeeded'
+        result = store.connection.execute('SELECT result_json FROM tool_calls').fetchone()[0]
+        assert json.loads(result)['code'] == 'already_granted'
+        assert store.connection.execute('SELECT count(*) FROM approvals').fetchone()[0] == 0
+        assert store.run_permission_grants(run['id']).is_empty
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('decision', ['approve', 'reject'])
+def test_pending_host_read_approval_keeps_original_decision_after_restart(tmp_path, monkeypatch, decision):
+    from eidos_runtime.runtime.permission_policy import PermissionDisposition, PermissionPolicyEvaluator
+
+    class ProcessCrash(BaseException):
+        pass
+
+    workspace = tmp_path / 'workspace'
+    outside = tmp_path / 'outside'
+    workspace.mkdir()
+    outside.mkdir()
+    data = tmp_path / 'data'
+    store = SessionStore(data)
+    store.initialize()
+    try:
+        session = store.create_session(str(workspace))
+        run, _ = store.create_run(session['id'], 'Read outside')
+        model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall('read', 'request_permissions', {
+            'permissions': {'fileSystem': [{'path': str(outside), 'access': 'read'}]},
+        }),))])
+        original = PermissionPolicyEvaluator.evaluate
+
+        def legacy_policy(policy, *args, **kwargs):
+            return original(policy, *args, **kwargs).model_copy(update={
+                'disposition': PermissionDisposition.ASK, 'reason_code': 'approval_required',
+            })
+
+        def crash(*_args):
+            raise ProcessCrash()
+
+        with monkeypatch.context() as legacy:
+            legacy.setattr(PermissionPolicyEvaluator, 'evaluate', legacy_policy)
+            with pytest.raises(ProcessCrash):
+                RuntimeEngine(store, model, lambda _message: None, request_approval=crash).run(run['id'], threading.Event())
+        pending = store.typed_runtime_repository().read_pending_approval(run['id'])
+        store.close()
+        store = SessionStore(data)
+        store.initialize()
+        requests = []
+        RuntimeEngine(
+            store, ScriptedModel([ModelResponse(text='Done.')]), lambda _message: None,
+            request_approval=lambda request, _cancel: requests.append(request) or ApprovalDecision(decision),
+        ).run(run['id'], threading.Event())
+        assert len(requests) == 1
+        assert store.read_run(run['id'])['status'] == 'succeeded'
+        row = store.connection.execute('SELECT id,decision FROM approvals').fetchone()
+        assert (row['id'], row['decision']) == (pending.id, decision)
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize('decision', ['approve', 'reject'])
 def test_network_denial_does_not_replay_shell_and_persists_raw_arguments(tmp_path, decision, monkeypatch):
     data = tmp_path / 'data'

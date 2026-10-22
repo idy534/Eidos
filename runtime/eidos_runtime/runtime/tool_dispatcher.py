@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 from eidos_runtime.model.client import (
@@ -282,6 +282,32 @@ class ToolDispatcher:
                 except (ValueError, ValidationError):
                     pass
         return ToolDispatchPlan(binding, activation_required=activation_required, invocation_side_effect=effect)
+
+    def plan_pending_approval(self, call: ModelToolCall, expected_hash: str) -> ToolDispatchPlan:
+        """Accept only the approval-flag change for the new read-only policy."""
+        plan = self.plan(call, expected_hash)
+        if plan.descriptor is not None:
+            return plan
+        entry = self._registry.get(call.name)
+        if (
+            entry is None or entry.execution_policy is None
+            or entry.spec.approval_required or entry.execution_policy.approval_required
+            or entry.spec.side_effect != "external"
+            or not (
+                entry.provenance.kind == "mcp"
+                or (entry.provenance.kind == "builtin"
+                    and entry.provenance.source_id == "eidos.web-search")
+            )
+        ):
+            return plan
+        legacy = replace(entry, execution_policy=entry.execution_policy.model_copy(
+            update={"approval_required": True},
+        ))
+        if legacy.contract_fingerprint != expected_hash:
+            return plan
+        # The pending request still goes through its original approval and
+        # evidence checks. Every contract field except this flag must match.
+        return self.plan(call, entry.contract_fingerprint)
 
     def argument_validation(
         self, call: ModelToolCall, plan: ToolDispatchPlan

@@ -239,9 +239,11 @@
   transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
 }
 
-.memory-search-input:focus {
+.memory-search-input:focus,
+.memory-search-input:focus-visible {
   background: var(--surface-raised);
-  border-color: var(--accent);
+  border-color: var(--line);
+  outline: none;
   box-shadow: none;
 }
 

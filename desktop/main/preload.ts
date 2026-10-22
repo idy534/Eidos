@@ -414,6 +414,7 @@ const api: EidosRuntimeAPI = {
 
   // MCP
   listMcpServers: (): Promise<McpListResult> => ipcRenderer.invoke(IPC.MCP_LIST),
+  readMcpTools: (request) => ipcRenderer.invoke(IPC.MCP_TOOLS, request),
   setMcpEnabled: (pluginId: string, serverId: string, enabled: boolean): Promise<McpServerRecord> =>
     ipcRenderer.invoke(IPC.MCP_SET_ENABLED, pluginId, serverId, enabled),
   createMcpServer: (input: McpCreateInput): Promise<McpServerRecord> =>

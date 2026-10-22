@@ -24,7 +24,7 @@ void test("official pages are a fixed allowlist", () => {
   assert.throws(() => webSearchOfficialUrl({ provider: "deepseek", target: "keys", url: "https://evil.invalid" }));
   assert.throws(() => webSearchOfficialUrl({ provider: "duckduckgo", target: "keys" }));
 });
-void test("settings remain redacted, revision guarded and persist across Runtime restart", { timeout: 30000 }, async () => {
+void test("settings return local keys, remain revision guarded and persist across Runtime restart", { timeout: 30000 }, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "eidos-web-search-"));
   const options = { pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory: path.join(temporary, "data"),
     environment: { EIDOS_PROJECTLESS_ROOT: path.join(temporary, "workspaces") } };
@@ -36,16 +36,15 @@ void test("settings remain redacted, revision guarded and persist across Runtime
       credentialChanges: [{ provider: "langsearch" as const, action: "set" as const, value: "sample-search-secret" }] };
     const saved = await client.saveWebSearch(request);
     assert.equal(saved.revision, 1); assert.equal(saved.credentials.langsearch, "stored");
-    assert.equal(JSON.stringify(saved).includes("sample-search-secret"), false);
-    assert.equal(Object.hasOwn(saved, "credentialValues"), false);
+    assert.equal(saved.credentialValues?.langsearch, "sample-search-secret");
     await assert.rejects(client.saveWebSearch(request), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "WEB_SEARCH_CONFIG_CONFLICT");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
     client = new RuntimeClient(options); await client.initialize();
     const restored = await client.readWebSearch();
     assert.equal(restored.config.defaultProvider, "langsearch"); assert.equal(restored.credentials.langsearch, "stored");
-    assert.equal(JSON.stringify(restored).includes("sample-search-secret"), false);
-    assert.equal(Object.hasOwn(restored, "credentialValues"), false);
+    assert.equal(restored.credentialValues?.langsearch, "sample-search-secret");
     const cleared = await client.saveWebSearch({ expectedRevision: 1, config: restored.config, credentialChanges: [{ provider: "langsearch", action: "clear" }] });
+    assert.equal(cleared.credentialValues?.langsearch, "");
     assert.equal(cleared.config.defaultProvider ?? null, null); assert.equal(cleared.credentials.langsearch, "missing");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
   } finally {

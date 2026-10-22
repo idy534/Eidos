@@ -56,6 +56,63 @@ def test_filesystem_policy_respects_path_and_recursion(tmp_path):
     assert policy.evaluate(base, requested, requested).disposition == 'allow'
 
 
+@pytest.mark.parametrize('recursive', [False, True])
+def test_ordinary_host_read_is_already_allowed(tmp_path, recursive):
+    workspace = tmp_path / 'workspace'
+    outside = tmp_path / 'outside'
+    workspace.mkdir()
+    outside.mkdir()
+    base = BasePermissionProfile.for_workspace(workspace_root=workspace)
+    requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(outside), access=FileSystemAccessMode.READ, recursive=recursive,
+    ),))
+    decision = PermissionPolicyEvaluator().evaluate(base, None, requested)
+    assert decision.disposition == 'allow'
+    assert decision.reason_code == 'already_granted'
+
+
+@pytest.mark.parametrize('protection', ['protected_paths', 'hard_confidentiality_paths'])
+@pytest.mark.parametrize('target', ['protected', 'ancestor'])
+def test_host_read_exception_keeps_protected_scopes_requiring_confirmation(
+    tmp_path, protection, target,
+):
+    workspace = tmp_path / 'workspace'
+    private = tmp_path / 'private'
+    workspace.mkdir()
+    private.mkdir()
+    base = BasePermissionProfile.for_workspace(
+        workspace_root=workspace, **{protection: (private,)},
+    )
+    requested = AdditionalPermissionProfile(fileSystem=(FileSystemPermissionEntry(
+        path=str(private if target == 'protected' else tmp_path),
+        access=FileSystemAccessMode.READ,
+    ),))
+    decision = PermissionPolicyEvaluator().evaluate(base, None, requested)
+    assert decision.disposition == 'ask'
+    assert decision.requires_human_confirmation
+
+
+@pytest.mark.parametrize('extra', ['network', 'write', 'unsandboxed'])
+def test_host_read_does_not_authorize_other_permissions(tmp_path, extra):
+    workspace = tmp_path / 'workspace'
+    outside = tmp_path / 'outside'
+    workspace.mkdir()
+    outside.mkdir()
+    base = BasePermissionProfile.for_workspace(workspace_root=workspace)
+    entries = [FileSystemPermissionEntry(path=str(outside), access=FileSystemAccessMode.READ)]
+    if extra == 'write':
+        entries.append(FileSystemPermissionEntry(path=str(outside), access=FileSystemAccessMode.WRITE))
+    requested = AdditionalPermissionProfile(
+        fileSystem=tuple(entries),
+        network=NetworkPermissions(enabled=True) if extra == 'network' else None,
+    )
+    decision = PermissionPolicyEvaluator().evaluate(
+        base, None, requested, unsandboxed=extra == 'unsandboxed',
+    )
+    assert decision.disposition == 'ask'
+    assert decision.requires_human_confirmation == (extra == 'unsandboxed')
+
+
 def test_verified_git_metadata_write_requires_approval_then_stays_scoped(tmp_path):
     workspace = tmp_path / 'workspace'
     git = workspace / '.git'

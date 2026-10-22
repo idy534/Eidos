@@ -1,6 +1,6 @@
 # Eidos 当前能力
 
-用户可以在“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch，并手动勾选默认服务。两家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置，搜索继续使用现有审批、Durable Intent、取消和有界结果投影。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](current-web-search.md)。
+用户可以在“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch，并手动勾选默认服务。两家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](current-web-search.md)。
 
 Eidos 已增加钉钉应用机器人接入。用户可以在设置的“渠道”页配置应用凭证、模型、项目和审批模式。Runtime 默认接收单聊文字消息，群聊需要 @ 机器人，系统不设置用户和群白名单。渠道支持经 Desktop 二次确认并保存的完全访问模式，后续消息使用已保存的授权。Runtime 使用普通 Session / Run 执行，并向原会话回复。真实单聊和有效群 @ 已验证，完全访问的渠道到 Run 执行由定向集成测试覆盖；长期重连仍待验收。配置和边界见 [当前渠道接入](current-channels.md)。
 
@@ -307,6 +307,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Plugin / Skill / MCP
 
+- Settings 的 MCP 名称按钮可以打开单列工具详情弹窗。弹窗展示工具名称、描述、输入参数、必填项和原始 Schema，并支持按名称或描述搜索。Runtime 每页固定返回 10 条，页面滚动接近底部时自动追加下一页。弹窗没有“完成”按钮，用户可以通过右上角关闭、Esc 或背景关闭，并回到原名称按钮。标题下方读取 MCP 初始化响应的 `serverInfo.description`；服务缺失或提供空白描述时，页面显示实际启动命令，不把 `instructions` 当作描述。
 - PluginCatalog 支持本地 Plugin v1 的导入、启用、禁用和移除。
 - Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
 - Skill 采用三层边界：Catalog 负责 Discovery 和 immutable Catalog Snapshot；Activation 负责 Selection、`SkillAccess` 和 Run-scoped activation；Resource 负责按需读取 `SKILL.md`、`references/`、`scripts/`、`assets/`，再进入现有 Tools 和 Sandbox。Skill 内容、产品依赖和 `runtime.json` 彼此分离。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。
@@ -319,6 +320,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - RunResources 会收集 active Skill 的 MCP dependency，并与本 Run extension snapshot 中 available 的 Plugin 或手动 MCP server 比较，生成 installed、missing 或 unsupported 诊断。未满足项会进入低权限 user context warning。Runtime 不会静默安装、启用或启动 MCP server。Plugin 和手动 MCP 都使用独立的 server consent、官方 Python MCP SDK stdio client、Tool discovery、Tool call、Approval 和 Sandbox 链路。
 - `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型只能把 Catalog 给出的 canonical absolute root 用于已激活 Skill 的只读文件 Tool；任意 absolute path 不能扩大读写或 Shell 权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative 或 Workspace 内 canonical absolute cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
 - MCP 当前支持 stdio Tools。Settings 可以创建、编辑和卸载手动 MCP，并配置名称、启动命令、参数、环境变量、环境变量透传名、工作目录和 `connector`/`workspace_read` permission profile。保存或编辑后的 Server 默认未授权，用户需要通过现有审阅入口重新启用。环境变量值不会出现在 MCP 列表、事件或日志中，编辑时留空会保留已保存的环境变量值。Server consent、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
+- 已经审阅启用的 MCP Server，其工具明确声明 `readOnlyHint=true` 时免逐次审批。缺失或非只读声明仍走原审批流程。系统信任该服务的声明，不根据名称、非破坏性或幂等声明猜测只读。进程权限、外部 Tool 的 Durable Intent、提交窗口、结果校验和未知结果记录继续保留。
+- Skill 安装下载可以复用已有的当前 Run 网络权限，最终安装仍需审批。Shell 申请默认已允许的普通宿主文件读取时直接返回已有权限，受保护读取和其他扩权仍按原规则处理。审批 UI、记忆逻辑和 Run Grant 的作用域不变。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
 - MCP Connection 的默认 HOME、TMPDIR 和 PID 文件使用 `/private/tmp/eidos-mcp-<随机值>/` 下的短路径，不随数据目录或服务工作目录变长。连接在进程和异步资源停止后核对身份并清理自身目录。显式 HOME、TMPDIR 配置继续优先。
 - 手动 MCP 的工作目录留空时，Runtime 创建并使用 `~/Eidos/eidos-mcp/<服务 ID>/`，不同服务分开保存，初始权限为 `0700`。已有配置不自动迁移。cwd 控制相对参数和产物路径，HOME 仍单独配置，原有沙盒权限继续生效。工具描述和文件名参数不追加或改写。

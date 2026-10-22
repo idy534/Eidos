@@ -49,10 +49,11 @@
   opacity: 0.75;
 }
 
-.agent-settings__search-box input[type="search"]:focus {
-  border-color: var(--accent);
+.agent-settings__search-box input[type="search"]:focus,
+.agent-settings__search-box input[type="search"]:focus-visible {
+  border-color: var(--line);
   outline: none;
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: none;
 }
 
 .agent-settings__search-clear {

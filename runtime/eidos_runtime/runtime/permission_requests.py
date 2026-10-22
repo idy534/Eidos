@@ -52,7 +52,8 @@ class PermissionRequests:
         decision = PermissionPolicyEvaluator().evaluate(
             self.base, self.store.run_permission_grants(run_id), permissions,
         )
-        if decision.disposition is not PermissionDisposition.ASK:
+        pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
+        if decision.disposition is not PermissionDisposition.ASK and pending is None:
             return decision.reason_code
         scanner = default_scanner()
         intent = PermissionIntent(

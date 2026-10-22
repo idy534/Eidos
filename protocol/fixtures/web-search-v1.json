@@ -67,6 +67,18 @@
         "deepseek": "missing",
         "langsearch": "stored"
       }
+    },
+    {
+      "revision": 0,
+      "config": {},
+      "credentials": {
+        "deepseek": "stored",
+        "langsearch": "missing"
+      },
+      "credentialValues": {
+        "deepseek": "sample-secret",
+        "langsearch": ""
+      }
     }
   ],
   "invalidResponses": [
@@ -80,19 +92,30 @@
       "revision": 0,
       "config": {},
       "credentials": {
-        "deepseek": "stored",
-        "langsearch": "missing"
-      },
-      "credentialValues": {
-        "deepseek": "sample-secret",
-        "langsearch": ""
+        "deepseek": "connected"
       }
     },
     {
       "revision": 0,
       "config": {},
       "credentials": {
-        "deepseek": "connected"
+        "deepseek": "stored",
+        "langsearch": "missing"
+      },
+      "credentialValues": {
+        "deepseek": 42
+      }
+    },
+    {
+      "revision": 0,
+      "config": {},
+      "credentials": {
+        "deepseek": "stored",
+        "langsearch": "missing"
+      },
+      "credentialValues": {
+        "deepseek": "secret",
+        "other": "unknown"
       }
     }
   ]

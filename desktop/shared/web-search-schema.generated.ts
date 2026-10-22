@@ -153,6 +153,25 @@ export const webSearchSchema = {
       "title": "SearchCredentialState",
       "type": "object"
     },
+    "SearchCredentialValues": {
+      "additionalProperties": false,
+      "properties": {
+        "deepseek": {
+          "default": "",
+          "maxLength": 1024,
+          "title": "Deepseek",
+          "type": "string"
+        },
+        "langsearch": {
+          "default": "",
+          "maxLength": 1024,
+          "title": "Langsearch",
+          "type": "string"
+        }
+      },
+      "title": "SearchCredentialValues",
+      "type": "object"
+    },
     "SetSearchCredential": {
       "additionalProperties": false,
       "properties": {
@@ -261,6 +280,9 @@ export const webSearchSchema = {
         },
         "credentials": {
           "$ref": "#/$defs/SearchCredentialState"
+        },
+        "credentialValues": {
+          "$ref": "#/$defs/SearchCredentialValues"
         }
       },
       "required": [

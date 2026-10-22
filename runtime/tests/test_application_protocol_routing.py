@@ -34,6 +34,7 @@ def test_business_method_registry_has_no_legacy_server_handler_adapter(tmp_path)
         "_DeferredGitObserveAdapter",
         "_DeferredSessionForkAdapter",
         "_CustomProviderAdapter",
+        "_McpToolsAdapter",
     }
     assert all(registration.error_mapper is not None for registration in server.method_registry)
     assert not {

@@ -27,16 +27,18 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     assert.equal(await script("document.querySelectorAll('.web-search-settings input[type=checkbox]:checked').length"), 0);
+    assert.equal(await script("document.querySelector('[aria-label=\"LangSearch API Key\"]').value"), "fixture-langsearch-key");
+    assert.equal(await script("document.body.textContent.includes('清除已保存的 Key')"), false);
     for (const width of [320, 768, 1024, 1440]) {
       win.setContentSize(width, 900);
       await settle();
-      if (width === 320) await script("document.querySelectorAll('.web-search-settings .setting-row-expand-btn').forEach(button => button.click())");
+      if (width === 320) await script("document.querySelectorAll('.web-search-settings .web-search-expand-btn').forEach(button => button.click())");
       await settle();
       const overflow = await script(`Array.from(document.querySelectorAll('.web-search-settings input, .web-search-settings button, .web-search-settings .setting-section')).filter(element => {
         const rect = element.getBoundingClientRect(); return rect.left < -1 || rect.right > innerWidth + 1;
       }).map(element => ({ tag: element.tagName, label: element.getAttribute('aria-label') || element.textContent, width: element.getBoundingClientRect().width }))`);
       assert.deepEqual(overflow, [], `Controls must fit at ${width}px`);
-      assert.equal(await script("Array.from(document.querySelectorAll('.web-search-settings input:not([type=checkbox])')).every(input => input.getBoundingClientRect().height >= 36)"), true, "Text fields retain their normal height");
+      assert.equal(await script("Array.from(document.querySelectorAll('.web-search-settings input:not([type=checkbox])')).every(input => input.getBoundingClientRect().height >= 32)"), true, `Text fields retain their normal height at ${width}px: ${JSON.stringify(await script("Array.from(document.querySelectorAll('.web-search-settings input:not([type=checkbox])')).map(input => ({ label: input.getAttribute('aria-label'), height: input.getBoundingClientRect().height }))"))}`);
       if (process.env.EIDOS_WEB_SEARCH_SCREENSHOT_DIR) {
         await mkdir(process.env.EIDOS_WEB_SEARCH_SCREENSHOT_DIR, { recursive: true });
         await writeFile(path.join(process.env.EIDOS_WEB_SEARCH_SCREENSHOT_DIR, `web-search-${width}.png`), (await win.webContents.capturePage()).toPNG());

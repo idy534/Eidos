@@ -80,6 +80,7 @@ TOOLS = [
     {
         "name": "structured",
         "description": "Return structured content",
+        "annotations": {"readOnlyHint": True},
         "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
         "outputSchema": {
             "type": "object",

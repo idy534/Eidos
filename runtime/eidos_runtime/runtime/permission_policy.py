@@ -95,6 +95,10 @@ class PermissionPolicyEvaluator:
                 )
                 if protected_request:
                     dangerous = True
+                # Default Shell already permits host reads outside protected
+                # scopes. An explicit request adds no access there.
+                if entry.access is FileSystemAccessMode.READ and not protected_request:
+                    continue
                 needs_explicit_grant = protected_request or (entry.access is FileSystemAccessMode.WRITE and any(
                     PurePath(entry.path).is_relative_to(root)
                     or (entry.recursive and PurePath(root).is_relative_to(entry.path))

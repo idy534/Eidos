@@ -91,7 +91,7 @@ def session(store, tmp_path):
     return store.create_session(str(path))["id"]
 
 
-def test_default_is_explicit_and_keys_never_enter_sqlite_or_public_response(
+def test_default_is_explicit_and_local_key_display_never_enters_sqlite(
     configured, tmp_path
 ):
     store, repo, secrets, app = configured
@@ -99,8 +99,9 @@ def test_default_is_explicit_and_keys_never_enter_sqlite_or_public_response(
     result = save(app, config=WebSearchConfig())
     assert result.config.default_provider is None
     assert result.credentials.langsearch == "stored"
-    assert not hasattr(result, "credential_values")
-    assert "fixture-search-key" not in result.model_dump_json()
+    assert result.credential_values.langsearch == "fixture-search-key"
+    assert result.to_wire_dict()["credentialValues"]["langsearch"] == "fixture-search-key"
+    assert "fixture-search-key" not in repr(result)
     assert "credential_ref" not in result.model_dump_json()
     assert "fixture-search-key" not in "\n".join(store.connection.iterdump())
     reference = repo.read().credentials.langsearch
@@ -162,6 +163,7 @@ def test_restart_and_secret_permissions(configured, tmp_path):
     reference = repo.read().credentials.langsearch
     os.chmod(secrets.directory / reference, 0o644)
     assert app.read().credentials.langsearch == "unavailable"
+    assert app.read().credential_values.langsearch == ""
     with pytest.raises(ApplicationError):
         save(app, key=None)
     os.chmod(secrets.directory / reference, 0o600)
@@ -175,6 +177,7 @@ def test_restart_and_secret_permissions(configured, tmp_path):
         ).read()
         assert restored.config.default_provider == "langsearch"
         assert restored.credentials.langsearch == "stored"
+        assert restored.credential_values.langsearch == "fixture-search-key"
     finally:
         reopened.close()
 
@@ -426,12 +429,9 @@ def wait_for(predicate, output):
     pytest.fail(output.getvalue())
 
 
-@pytest.mark.parametrize(
-    "mode,decision",
-    [("full_access", "approve"), ("manual", "approve"), ("manual", "reject")],
-)
-def test_real_runtime_search_approval_intent_result_and_no_shell_network_grant(
-    tmp_path, monkeypatch, mode, decision
+@pytest.mark.parametrize("mode", ["manual", "auto_review", "full_access"])
+def test_real_runtime_search_needs_no_approval_but_keeps_intent_and_shell_network_boundary(
+    tmp_path, monkeypatch, mode
 ):
     from eidos_runtime.infrastructure.web_search import SearchPage, SearchHit
 
@@ -453,6 +453,10 @@ def test_real_runtime_search_approval_intent_result_and_no_shell_network_grant(
         )
 
     monkeypatch.setattr("eidos_runtime.tools.web_search.search", fake)
+    def unexpected_review(*_args, **_kwargs):
+        pytest.fail("Configured web search must not request model review")
+
+    monkeypatch.setattr("eidos_runtime.runtime.approval.review_approval", unexpected_review)
     model = ScriptedModel(
         [
             ModelResponse(
@@ -460,6 +464,7 @@ def test_real_runtime_search_approval_intent_result_and_no_shell_network_grant(
                     ModelToolCall("search-call", "web_search", {"query": "query"}),
                 )
             ),
+            ModelResponse(tool_calls=(ModelToolCall("search-again", "web_search", {"query": "next query"}),)),
             ModelResponse(text="已完成。"),
         ]
     )
@@ -486,57 +491,103 @@ def test_real_runtime_search_approval_intent_result_and_no_shell_network_grant(
         )
         outcome.release_after_commit()
         run_id = outcome.response.id
-        if mode == "manual":
-            wait_for(
-                lambda: server.store.typed_runtime_repository().read_pending_approval(
-                    run_id
-                ),
-                output,
-            )
-            assert not calls
-            request_id = wait_for(
-                lambda: next(
-                    (
-                        json.loads(line)["id"]
-                        for line in output.getvalue().splitlines()
-                        if json.loads(line).get("method") == "item/requestApproval"
-                    ),
-                    None,
-                ),
-                output,
-            )
-            if decision == "approve":
-                server._applications_or_error().approvals.approve(request_id)
-            else:
-                server._applications_or_error().approvals.reject(request_id)
         wait_for(
             lambda: server.store.read_run(run_id)["status"]
             in {"succeeded", "failed", "interrupted"},
             output,
         )
         assert server.store.read_run(run_id)["status"] == "succeeded", output.getvalue()
-        assert calls == (
-            [("langsearch", "fixture-search-key", "query", 5)]
-            if decision == "approve"
-            else []
-        )
+        assert calls == [
+            ("langsearch", "fixture-search-key", "query", 5),
+            ("langsearch", "fixture-search-key", "next query", 5),
+        ]
         assert server.store.connection.execute(
             "SELECT count(*) FROM durable_intents"
-        ).fetchone()[0] == (1 if decision == "approve" else 0)
+        ).fetchone()[0] == 2
         assert server.store.connection.execute(
             "SELECT count(*) FROM approvals"
-        ).fetchone()[0] == (1 if mode == "manual" else 0)
+        ).fetchone()[0] == 0
+        assert '"method": "item/requestApproval"' not in output.getvalue()
         assert server.store.run_permission_grants(run_id).network is None
         rows = server.store.connection.execute(
             "SELECT result_json FROM tool_calls WHERE tool_name='web_search'"
         ).fetchall()
-        assert len(rows) == 1 and json.loads(rows[0][0])["outcome"] == (
-            "success" if decision == "approve" else "error"
-        )
+        assert len(rows) == 2 and all(json.loads(row[0])["outcome"] == "success" for row in rows)
         assert "fixture-search-key" not in output.getvalue()
         assert "fixture-search-key" not in json.dumps(model.contexts, default=str)
     finally:
         server.close()
+
+
+@pytest.mark.parametrize('decision', ['approve', 'reject'])
+def test_legacy_pending_search_approval_recovers_after_restart(tmp_path, monkeypatch, decision):
+    from dataclasses import replace
+    import threading
+
+    from eidos_runtime.infrastructure.web_search import SearchPage
+    from eidos_runtime.runtime.approval import ApprovalDecision
+    from eidos_runtime.runtime.engine import RuntimeEngine
+    from eidos_runtime.runtime.tool_execution import ToolExecutionController
+    from eidos_runtime.tools.web_search import web_search_entry
+
+    class ProcessCrash(BaseException):
+        pass
+
+    calls = []
+
+    async def search(*_args):
+        calls.append('search')
+        return SearchPage(results=[], truncated=False, retrieved_at='2026-10-22T00:00:00+00:00')
+
+    monkeypatch.setattr('eidos_runtime.tools.web_search.search', search)
+    data = tmp_path / 'data'
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    store = SessionStore(data)
+    store.initialize()
+    kernel = RuntimeAsyncKernel()
+    kernel.start()
+    try:
+        save(WebSearchApplication(WebSearchRepository(store.database), SecretFiles(data / 'web-search-secrets')))
+        session = store.create_session(str(workspace))
+        run, _ = store.create_run(session['id'], 'Search query')
+        model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall('search', 'web_search', {'query': 'query'}),))])
+        cancel = threading.Event()
+
+        def legacy_authorize(controller, *, item, prepared):
+            return controller.authorize_side_effect(run_id=run['id'], item=item, prepared=prepared, cancel=cancel)
+
+        def legacy_entry(*args):
+            entry = web_search_entry(*args)
+            spec = entry.spec.model_copy(update={'approval_required': True})
+            return replace(entry, spec=spec, runtime=replace(entry.runtime, spec=spec), execution_policy=None)
+
+        def crash(*_args):
+            raise ProcessCrash()
+
+        with monkeypatch.context() as legacy:
+            legacy.setattr(ToolExecutionController, 'authorize_workspace_side_effect', legacy_authorize)
+            legacy.setattr('eidos_runtime.tools.web_search.web_search_entry', legacy_entry)
+            with pytest.raises(ProcessCrash):
+                RuntimeEngine(store, model, lambda _message: None,
+                    request_approval=crash, async_kernel=kernel).run(run['id'], cancel)
+        assert not calls
+        pending = store.typed_runtime_repository().read_pending_approval(run['id'])
+        store.close()
+        store = SessionStore(data)
+        store.initialize()
+        requests = []
+        RuntimeEngine(store, ScriptedModel([ModelResponse(text='Done.')]), lambda _message: None,
+            request_approval=lambda request, _cancel: requests.append(request) or ApprovalDecision(decision),
+            async_kernel=kernel).run(run['id'], threading.Event())
+        assert store.read_run(run['id'])['status'] == 'succeeded'
+        assert len(requests) == 1
+        assert calls == (['search'] if decision == 'approve' else [])
+        rows = store.connection.execute('SELECT id,decision FROM approvals').fetchall()
+        assert [(row['id'], row['decision']) for row in rows] == [(pending.id, decision)]
+    finally:
+        kernel.close()
+        store.close()
 
 
 def test_shared_protocol_fixture_matches_python_contract():
@@ -669,8 +720,9 @@ def test_failed_search_returns_to_model_without_provider_switch(tmp_path, monkey
         server.close()
 
 
+@pytest.mark.parametrize("mode", ["manual", "auto_review", "full_access"])
 def test_cancel_cleans_owned_network_task_and_late_result_cannot_replace_cancellation(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, mode
 ):
     from eidos_runtime.infrastructure.web_search import SearchPage
     import threading
@@ -713,8 +765,8 @@ def test_cancel_cleans_owned_network_task_and_late_result_cannot_replace_cancell
                 sessionId=created.id,
                 userInput="搜索",
                 modelId=profile.id,
-                approvalMode="full_access",
-                fullAccessConfirmation="full-access-v1",
+                approvalMode=mode,
+                fullAccessConfirmation="full-access-v1" if mode == "full_access" else None,
             )
         )
         outcome.release_after_commit()

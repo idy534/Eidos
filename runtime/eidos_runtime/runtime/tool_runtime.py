@@ -1441,23 +1441,35 @@ class ExternalToolHandler:
                 "timeoutSeconds": details.get("timeoutSeconds"),
             },
         )
-        approval, verified = self.dependencies.execute_side_effect(
-            run_id=run_id,
-            item=item,
-            prepared=prepared,
-            cancel=cancel,
-            execute=lambda: implementation.execute(call.arguments, cancel),
-        )
-        if approval.decision != "approve":
-            return HandlerOutcome(
-                tool_result(
-                    call.name,
+        pending = self.dependencies.store.typed_runtime_repository().read_pending_approval(run_id)
+        if runtime.spec.approval_required or pending is not None:
+            approval, verified = self.dependencies.execute_side_effect(
+                run_id=run_id,
+                item=item,
+                prepared=prepared,
+                cancel=cancel,
+                execute=lambda: implementation.execute(call.arguments, cancel),
+            )
+            if approval.decision != "approve":
+                return HandlerOutcome(
+                    tool_result(
+                        call.name,
+                        "declined",
+                        "user_rejected",
+                        approval.feedback or APPROVAL_REJECTION_GUIDANCE,
+                    ),
                     "declined",
-                    "user_rejected",
-                    approval.feedback or APPROVAL_REJECTION_GUIDANCE,
-                ),
-                "declined",
-                "failed",
+                    "failed",
+                )
+        else:
+            verified = self.dependencies.execute_workspace_side_effect(
+                item=item,
+                prepared=prepared.model_copy(update={"intent_preconditions": {
+                    **prepared.intent_preconditions,
+                    "authorization": "mcp_read_only",
+                }}),
+                cancel=cancel,
+                execute=lambda: implementation.execute(call.arguments, cancel),
             )
         assert verified is not None
         result = verified.result
@@ -1499,27 +1511,49 @@ class EidosStateToolHandler:
                     "target": details.get("target", ""),
                 },
             )
-            approval, verified = self.dependencies.execute_side_effect(
-                run_id=run_id,
-                item=item,
-                prepared=network_execution,
-                cancel=cancel,
-                execute=lambda: {
+
+            def download() -> dict[str, object]:
+                return {
                     "prepared": implementation.download_eidos_state(  # type: ignore[attr-defined]
                         call.arguments, cancel
                     )
-                },
+                }
+
+            grants = self.dependencies.store.run_permission_grants(run_id)
+            base = self.dependencies.base_permissions
+            network_enabled = bool(
+                (base is not None and base.network_enabled)
+                or (grants.network is not None and grants.network.enabled is True)
             )
-            if approval.decision != "approve":
-                return HandlerOutcome(
-                    tool_result(
-                        call.name,
-                        "declined",
-                        "user_rejected_network",
-                        approval.feedback or APPROVAL_REJECTION_GUIDANCE,
-                    ),
-                    "declined",
+            pending = self.dependencies.store.typed_runtime_repository().read_pending_approval(run_id)
+            if network_enabled and pending is None:
+                verified = self.dependencies.execute_workspace_side_effect(
+                    item=item,
+                    prepared=network_execution.model_copy(update={"intent_preconditions": {
+                        **network_execution.intent_preconditions,
+                        "authorization": "existing_network_permission",
+                    }}),
+                    cancel=cancel,
+                    execute=download,
                 )
+            else:
+                approval, verified = self.dependencies.execute_side_effect(
+                    run_id=run_id,
+                    item=item,
+                    prepared=network_execution,
+                    cancel=cancel,
+                    execute=download,
+                )
+                if approval.decision != "approve":
+                    return HandlerOutcome(
+                        tool_result(
+                            call.name,
+                            "declined",
+                            "user_rejected_network",
+                            approval.feedback or APPROVAL_REJECTION_GUIDANCE,
+                        ),
+                        "declined",
+                    )
             assert verified is not None
             prepared = verified.result["prepared"]
         else:

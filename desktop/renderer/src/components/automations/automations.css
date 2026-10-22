@@ -136,8 +136,11 @@
   box-sizing: border-box;
 }
 
-.automation-search-input:focus {
-  border-color: var(--accent);
+.automation-search-input:focus,
+.automation-search-input:focus-visible {
+  border-color: var(--line);
+  outline: none;
+  box-shadow: none;
 }
 
 .automation-create-btn {

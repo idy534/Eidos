@@ -1,0 +1,10 @@
+{
+  "request": { "pluginId": "manual", "serverId": "playwright", "query": "navigate", "cursor": null },
+  "response": {
+    "state": "ready",
+    "description": "Browser automation tools",
+    "tools": [{ "name": "browser_navigate", "description": "Open a URL", "inputSchema": { "type": "object", "properties": { "url": { "type": "string", "description": "Target URL" } }, "required": ["url"] }, "available": true }],
+    "total": 1, "catalogId": "00000000-0000-4000-8000-000000000001", "nextCursor": null,
+    "fetchedAt": 1792627200000, "errorCode": null
+  }
+}

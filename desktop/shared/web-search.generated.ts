@@ -32,6 +32,8 @@ export type Credentialchanges = (SetSearchCredential | ClearSearchCredential)[];
 export type Revision = number;
 export type Deepseek = "missing" | "stored" | "unavailable";
 export type Langsearch = "missing" | "stored" | "unavailable";
+export type Deepseek1 = string;
+export type Langsearch1 = string;
 export type Provider2 = "deepseek" | "langsearch";
 export type Target = "keys" | "docs" | "pricing";
 
@@ -81,10 +83,15 @@ export interface WebSearchResponse {
   revision: Revision;
   config: WebSearchConfig;
   credentials: SearchCredentialState;
+  credentialValues?: SearchCredentialValues;
 }
 export interface SearchCredentialState {
   deepseek?: Deepseek;
   langsearch?: Langsearch;
+}
+export interface SearchCredentialValues {
+  deepseek?: Deepseek1;
+  langsearch?: Langsearch1;
 }
 export interface WebSearchOfficialPageRequest {
   provider: Provider2;

@@ -17,10 +17,16 @@ class SearchCredentialState(EidosFrozenStrictModel):
     langsearch: Literal["missing", "stored", "unavailable"] = "missing"
 
 
+class SearchCredentialValues(EidosFrozenStrictModel):
+    deepseek: str = Field(default="", max_length=1024, repr=False)
+    langsearch: str = Field(default="", max_length=1024, repr=False)
+
+
 class WebSearchResponse(EidosFrozenStrictModel):
     revision: int = Field(ge=0, le=9_007_199_254_740_991)
     config: WebSearchConfig
     credentials: SearchCredentialState
+    credential_values: SearchCredentialValues = Field(default_factory=SearchCredentialValues, repr=False)
 
 
 class SetSearchCredential(EidosFrozenStrictModel):

@@ -113,6 +113,7 @@ class McpConnection:
         self.sandbox = sandbox
         self.closed = threading.Event()
         self.tools: tuple[mcp_types.Tool, ...] = ()
+        self.description: str | None = None
         self.error_code: str | None = None
         # Keep the whole connection tree short, including TMPDIR and the
         # server's own socket subdirectories. Never inherit a deep temp root.
@@ -367,7 +368,8 @@ class McpConnection:
                         async with ClientSession(
                             streams[0], streams[1], message_handler=message_handler
                         ) as session:
-                            await session.initialize()
+                            initialized = await session.initialize()
+                            self.description = initialized.server_info.description
                             tools = await _discover_tools(session)
                             self._session = session
                             self._session_lock = anyio.Lock()
@@ -865,7 +867,11 @@ def _tool_entry(
             "name": name,
             "description": tool.description or f"MCP tool {tool.name}",
             "sideEffect": "external",
-            "approvalRequired": True,
+            # Discovery only includes servers the user has reviewed and enabled.
+            # Their explicit read-only hint does not change the process sandbox.
+            "approvalRequired": (
+                tool.annotations is None or tool.annotations.read_only_hint is not True
+            ),
             "timeoutSeconds": connection.config.tool_timeout_seconds,
             "batchPolicy": "single",
             "visibility": "deferred",

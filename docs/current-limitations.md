@@ -1,5 +1,14 @@
 # Eidos 当前限制
 
+## 低风险操作审批（2026-10-22）
+
+- MCP 免批只接受已审阅启用服务的明确 `readOnlyHint=true`。Runtime 信任该声明，但声明不能证明服务实际只读。缺失或非只读声明继续审批。该策略不扩大 Server 的文件和网络权限，也不改变 MCP 的并发与未知结果语义。
+- 默认网页搜索不再逐次审批。查询会上传到用户选择的服务，请求也可能计费。搜索不会产生 Shell 网络 Grant。
+- Shell 普通宿主文件读取的免批不扩大内置文件工具范围。受保护读取、额外写入和沙盒外执行继续按原规则处理。Skill 下载仅在已有网络权限时跳过网络审批，安装审批保留。旧版可安全恢复的待审批记录仍处理原决定；存在未完成 Intent 时不自动重放操作。
+- 本次没有修改 UI、记忆、协议结构、SQLite Schema 或依赖。真实 MCP 服务声明的准确性和真实搜索账户费用不由模拟测试证明。
+- Runtime 核心定向验证通过 196 项，既有 Skill 创建与安装回归通过 6 项，真实 Seatbelt 验证通过 15 项，Desktop 契约验证通过 4 项。Ruff、Deptry 和 git diff --check 通过。测试覆盖三种模式的免批、取消、旧审批重启恢复、严格工具契约校验、受保护路径和已有网络 Grant。系统只兼容 MCP 与内置搜索的审批标记变化，其他契约变化仍拒绝恢复。
+- 当前 Python 生产依赖审计未通过：已锁定的 certifi 2026.7.22 和 Pillow 12.3.0 合计 25 项已知漏洞。独立 Runtime Python 依赖审计通过。开发者本次未升级依赖，未运行 Full Suite、真实外部服务验收、Desktop 构建或打包验证。
+
 ## 内置网页搜索（2026-10-21）
 
 网页搜索第一版接入 DeepSeek Search 和 LangSearch。用户需要自行取得 Key，并在设置页手动勾选默认服务。保存只验证格式和本地文件，不验证远端账号、余额、额度或实时可用性。系统没有自动切换、通用网页抓取或独立 `web_fetch`。现有 Run 使用冻结配置，修改设置不会中途换服务。
@@ -272,6 +281,7 @@
 
 ### Extension 与 MCP
 
+- MCP 设置页只对已启用、已授权的服务执行工具目录发现。首次查询会启动受现有 Seatbelt 控制的短连接，使用官方 SDK 初始化并取得有界目录，随后关闭连接；该入口不会调用工具。页面按 10 条分页读取 Runtime 的展示缓存。缓存最多 8 个目录，每个目录最多 512 KiB，有效期为 5 分钟，不写 SQLite，也不作为 Run 工具或授权的事实来源。Runtime 重启、缓存淘汰、配置变化或到期后，旧游标会失效，页面提示重新加载。目录描述最多展示 4096 个字符；不受支持的工具 Schema 仍可查看，但会标为不可用。设置页连接启动期限最多为 15 秒，关闭弹窗会忽略迟到结果。
 - Plugin 当前只支持本地受管 Plugin v1。当前没有远程 Plugin marketplace、OAuth 安装或任意运行时动态 import 用户 Plugin 的能力。
 - Skill Catalog 当前只投影 `SKILL.md` frontmatter 中的顶层 `name` 和 `description`。`agents/eidos.yaml` 的 `runtimeDependencies` 使用严格 typed parser。其他字段可以保留在原始 Skill 内容中，但不会进入 Catalog、协议或权限判断。
 - MCP 当前只支持 stdio Tools。Settings 支持创建、编辑和卸载本地手动 MCP。新建或编辑后的 Server 默认未授权，需要通过审阅入口重新授权。当前没有连接测试入口，也没有 Streamable HTTP、远程 MCP transport、OAuth、Resources、Prompts、Sampling 或 Tasks。

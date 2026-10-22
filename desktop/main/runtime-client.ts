@@ -26,6 +26,8 @@ import path from "node:path";
 import readline from "node:readline";
 
 
+import { isMcpToolsResponse, type McpToolsRequest, type McpToolsResponse } from "../shared/mcp-details.js";
+
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const RUNTIME_BUSINESS_CODES = new Set([
   "AGENT_DEFINITION_INVALID",
@@ -181,6 +183,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "SKILL_UNAVAILABLE",
   "SYSTEM_SKILL_PROTECTED",
   "MCP_SERVER_DISABLED",
+  "MCP_DISCOVERY_FAILED",
   "MCP_SERVER_ID_CONFLICT",
   "MCP_CWD_INVALID",
   "MCP_CONFIG_INVALID",
@@ -1131,6 +1134,10 @@ export class RuntimeClient {
 
   listMcpServers(): Promise<{ servers: McpServerRecord[] }> {
     return this.validatedRequest("mcp/list", {}, isMcpServerListResult);
+  }
+
+  readMcpTools(request: McpToolsRequest): Promise<McpToolsResponse> {
+    return this.validatedRequest("mcp/tools", { ...request }, isMcpToolsResponse);
   }
 
   setMcpEnabled(

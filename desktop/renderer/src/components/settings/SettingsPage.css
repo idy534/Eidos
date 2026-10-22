@@ -97,6 +97,7 @@
   overflow-y: auto;
   padding-right: 0.5rem;
   scroll-behavior: smooth;
+  scrollbar-gutter: stable;
 }
 
 /* Settings Navigation */

@@ -291,6 +291,51 @@ describe("Model settings", () => {
     expect(await screen.findByText("MCP Server “filesystem” 已卸载")).toBeInTheDocument();
   });
 
+  it("toggles technical details with the '其他设置' button in MCP settings", async () => {
+    const user = userEvent.setup();
+    const server: McpServerRecord = {
+      schemaVersion: 1,
+      pluginId: "manual",
+      pluginVersion: "manual",
+      pluginHash: "a".repeat(64),
+      serverId: "filesystem",
+      executable: "npx",
+      argv: ["-y", "@modelcontextprotocol/server-everything"],
+      envNames: ["PATH"],
+      cwd: "/Users/xielei",
+      permissionProfile: "connector",
+      startupTimeoutSeconds: 15,
+      toolTimeoutSeconds: 60,
+      declaredEnabled: true,
+      consented: false,
+      available: false,
+      updatedAt: 1,
+    };
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      listModelPresets: vi.fn().mockResolvedValue(presets),
+    } as EidosRuntimeAPI;
+    const { container } = render(<SettingsPage {...props({ mcpServers: [server] })} />);
+
+    await screen.findByRole("button", { name: "添加模型" });
+    await user.click(screen.getByRole("tab", { name: /MCP Servers/ }));
+
+    expect(screen.queryByRole("button", { name: "展开技术参数" })).not.toBeInTheDocument();
+    expect(screen.queryByText("启动指令")).not.toBeInTheDocument();
+    expect(container.querySelector(".mcp-meta-cmd-preview")).not.toBeInTheDocument();
+
+    const toggleButton = screen.getByRole("button", { name: "其他设置" });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggleButton);
+    expect(toggleButton).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("启动指令")).toBeInTheDocument();
+    expect(screen.getByText("工作目录 (CWD)")).toBeInTheDocument();
+
+    await user.click(toggleButton);
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("启动指令")).not.toBeInTheDocument();
+  });
+
   it("deleting a model requires confirmation and can be canceled or confirmed", async () => {
     const user = userEvent.setup();
     const deleteModel = vi.fn().mockResolvedValue(undefined);

@@ -18,6 +18,10 @@ const emptyKeys = (): Record<Provider, KeyDraft> => ({
   deepseek: { value: "", visible: false },
   langsearch: { value: "", visible: false },
 });
+const keysFromResponse = (value: WebSearchResponse): Record<Provider, KeyDraft> => ({
+  deepseek: { value: value.credentialValues?.deepseek ?? "", visible: false },
+  langsearch: { value: value.credentialValues?.langsearch ?? "", visible: false },
+});
 const providers = ["deepseek", "langsearch"] as const;
 const names = { deepseek: "DeepSeek Search", langsearch: "LangSearch" };
 
@@ -34,6 +38,7 @@ export function WebSearchSettings({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const keysRef = useRef(keys);
   const savedRef = useRef<WebSearchResponse | null>(null);
   const draftRef = useRef<WebSearchConfig | null>(null);
   const busyRef = useRef(false);
@@ -68,6 +73,8 @@ export function WebSearchSettings({
           draftRef.current = value.config;
           setSaved(value);
           setDraft(value.config);
+          keysRef.current = keysFromResponse(value);
+          setKeys(keysRef.current);
         }
       })
       .catch(() => {
@@ -104,7 +111,9 @@ export function WebSearchSettings({
     setBusy(true);
 
     try {
-      const allChanges = [...credentialChanges, ...queuedChangesRef.current];
+      const allChanges = [...new Map(
+        [...queuedChangesRef.current, ...credentialChanges].map((change) => [change.provider, change]),
+      ).values()];
       queuedChangesRef.current = [];
       const req: WebSearchSaveRequest = {
         expectedRevision: savedRef.current.revision,
@@ -114,17 +123,9 @@ export function WebSearchSettings({
       const res = await window.eidosRuntime.saveWebSearch(req);
       savedRef.current = res;
       setSaved(res);
-      draftRef.current = res.config;
-      setDraft(res.config);
-      if (allChanges.length > 0) {
-        const changedProviders = new Set(allChanges.map((change) => change.provider));
-        setKeys((prev) => {
-          const next = { ...prev };
-          for (const provider of changedProviders) {
-            next[provider] = { ...next[provider], value: "" };
-          }
-          return next;
-        });
+      if (draftRef.current === nextConfig) {
+        draftRef.current = res.config;
+        setDraft(res.config);
       }
       onShowToast?.("设置已保存", "success");
       return res;
@@ -149,6 +150,8 @@ export function WebSearchSettings({
       setSaved(value);
       draftRef.current = value.config;
       setDraft(value.config);
+      keysRef.current = keysFromResponse(value);
+      setKeys(keysRef.current);
       onShowToast?.("配置已刷新", "info");
     } catch {
       triggerError("网页搜索配置无法读取。请重试。");
@@ -165,19 +168,23 @@ export function WebSearchSettings({
     }
   }
 
-  const setKey = (provider: Provider, change: Partial<KeyDraft>) =>
-    setKeys((old) => ({ ...old, [provider]: { ...old[provider], ...change } }));
+  const setKey = (provider: Provider, change: Partial<KeyDraft>) => {
+    keysRef.current = { ...keysRef.current, [provider]: { ...keysRef.current[provider], ...change } };
+    setKeys(keysRef.current);
+  };
 
   async function commitKeyInput(provider: Provider) {
     if (keyDebounceTimers.current[provider]) {
       clearTimeout(keyDebounceTimers.current[provider]);
       delete keyDebounceTimers.current[provider];
     }
-    const rawValue = keys[provider].value.trim();
+    const rawValue = keysRef.current[provider].value.trim();
     if (!draftRef.current) return;
     if (!rawValue) {
+      if (savedRef.current?.credentials[provider] !== "missing" || busyRef.current) await clearKey(provider);
       return;
     }
+    if (!busyRef.current && rawValue === savedRef.current?.credentialValues?.[provider]) return;
     await executeSave(draftRef.current, [{ provider, action: "set", value: rawValue }]);
   }
 
@@ -201,21 +208,18 @@ export function WebSearchSettings({
     if (keyDebounceTimers.current[provider]) {
       clearTimeout(keyDebounceTimers.current[provider]);
     }
-    if (value.trim()) {
-      keyDebounceTimers.current[provider] = setTimeout(() => {
-        void commitKeyInput(provider);
-      }, 1200);
-    }
+    keyDebounceTimers.current[provider] = setTimeout(() => {
+      void commitKeyInput(provider);
+    }, 1200);
   }
 
   async function handleToggleDefault(provider: Provider, checked: boolean) {
     if (!savedRef.current || !draftRef.current) return;
-    const currentSaved = savedRef.current;
     const currentDraft = draftRef.current;
-    const keyVal = keys[provider].value.trim();
+    const keyVal = keysRef.current[provider].value.trim();
 
     if (checked) {
-      const isAvailable = Boolean(keyVal) || currentSaved.credentials[provider] === "stored";
+      const isAvailable = Boolean(keyVal);
       if (!isAvailable) {
         triggerError("请先为默认搜索服务填写 API Key。");
         return;
@@ -310,7 +314,7 @@ export function WebSearchSettings({
               const key = keys[provider];
               const status = saved.credentials[provider] ?? "missing";
               const selected = draft.defaultProvider === provider;
-              const available = Boolean(key.value.trim()) || status === "stored";
+              const available = Boolean(key.value.trim());
 
               return (
                 <section
@@ -421,7 +425,7 @@ export function WebSearchSettings({
                             type={key.visible ? "text" : "password"}
                             maxLength={1024}
                             value={key.value}
-                            placeholder={status === "stored" ? "已保存，留空则保留" : status === "unavailable" ? "文件不可用，输入新 Key" : "输入 API Key"}
+                            placeholder={status === "unavailable" ? "文件不可用，输入新 Key" : "输入 API Key"}
                             onChange={(event) => handleKeyChange(provider, event.target.value)}
                             onBlur={() => void commitKeyInput(provider)}
                             onKeyDown={(event) => {
@@ -454,17 +458,6 @@ export function WebSearchSettings({
                             )}
                           </button>
                         </div>
-                        {(status === "stored" || status === "unavailable") && (
-                          <Button
-                            size="small"
-                            variant="ghost"
-                            className="web-search-clear-key-btn"
-                            disabled={busy}
-                            onClick={() => void clearKey(provider)}
-                          >
-                            清除已保存的 Key
-                          </Button>
-                        )}
                       </div>
                     </div>
                   </div>

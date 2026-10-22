@@ -412,7 +412,7 @@ class RuntimeEngine:
                 CustomToolPayload(input=value["input"]) if tool["payloadKind"] == "custom" else value)
             resolution = self.store.read_step_resolution_snapshots(run.run_id)[-1]
             expected = json.loads(resolution.tool_snapshot_json)["specHashes"].get(call.name)
-            plan = resources.dispatcher.plan(call, expected or "missing")
+            plan = resources.dispatcher.plan_pending_approval(call, expected or "missing")
             if plan.descriptor is None:
                 raise InvalidRunStateError("pending approval tool contract changed")
             tools = ToolCallRuntime(

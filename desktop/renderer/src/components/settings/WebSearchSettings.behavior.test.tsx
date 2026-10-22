@@ -12,11 +12,13 @@ const initial = (): WebSearchResponse => ({
 });
 
 function setup(value = initial()) {
+  let credentialValues = { deepseek: "", langsearch: "", ...value.credentialValues };
   let credentials: WebSearchResponse["credentials"] = { ...value.credentials };
   const api = {
     readWebSearch: vi.fn().mockResolvedValue(value),
     saveWebSearch: vi.fn().mockImplementation(async (request) => {
       for (const change of request.credentialChanges ?? []) {
+        credentialValues = { ...credentialValues, [change.provider]: change.action === "set" ? change.value : "" };
         credentials = {
           ...credentials,
           [change.provider]: change.action === "set" ? "stored" : "missing",
@@ -26,6 +28,7 @@ function setup(value = initial()) {
         revision: request.expectedRevision + 1,
         config: request.config,
         credentials: { ...credentials },
+        credentialValues: { ...credentialValues },
       };
     }),
     openWebSearchOfficialPage: vi.fn().mockResolvedValue(undefined),
@@ -59,7 +62,7 @@ it("requires an explicit default, allows neither selection and auto-saves creden
       credentialChanges: [{ provider: "deepseek", action: "set", value: "deep-key" }],
     }),
   );
-  await waitFor(() => expect(deepInput).toHaveValue(""));
+  await waitFor(() => expect(deepInput).toHaveValue("deep-key"));
 
   const langInput = screen.getByLabelText("LangSearch API Key", { selector: "input" });
   await user.type(langInput, "lang-key{Enter}");
@@ -121,33 +124,75 @@ it("shows alert when auto-save fails and allows refreshing revision", async () =
   expect(screen.queryByText(/Eidos 已读取最新配置/)).not.toBeInTheDocument();
 });
 
-it("keeps saved API keys hidden and clears them only through the explicit action", async () => {
+it("restores both saved keys masked, supports viewing, and clears a key through its current input", async () => {
   const user = userEvent.setup();
   const api = setup({
     ...initial(),
     config: { defaultProvider: "deepseek" },
-    credentials: { deepseek: "stored", langsearch: "missing" },
+    credentials: { deepseek: "stored", langsearch: "stored" },
+    credentialValues: { deepseek: "saved-deep-key", langsearch: "saved-lang-key" },
   });
   const input = await screen.findByLabelText("DeepSeek Search API Key", { selector: "input" });
+  const lang = screen.getByLabelText("LangSearch API Key", { selector: "input" });
   expect(input).toHaveAttribute("type", "password");
-  expect(input).toHaveValue("");
-  expect(input).toHaveAttribute("placeholder", "已保存，留空则保留");
-
+  expect(input).toHaveValue("saved-deep-key");
+  expect(lang).toHaveAttribute("type", "password");
+  expect(lang).toHaveValue("saved-lang-key");
+  expect(screen.queryByRole("button", { name: "清除已保存的 Key" })).not.toBeInTheDocument();
+  expect(input).toHaveAttribute("placeholder", "输入 API Key");
   fireEvent.blur(input);
   expect(api.saveWebSearch).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "显示 DeepSeek Search API Key" }));
+  expect(input).toHaveAttribute("type", "text");
+  await user.click(screen.getByRole("button", { name: "隐藏 DeepSeek Search API Key" }));
+  expect(input).toHaveAttribute("type", "password");
+  await user.clear(input);
+  fireEvent.blur(input);
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenCalledWith({
+    expectedRevision: 0,
+    config: { defaultProvider: null },
+    credentialChanges: [{ provider: "deepseek", action: "clear" }],
+  }));
+  expect(input).toHaveValue("");
+  expect(lang).toHaveValue("saved-lang-key");
+});
 
-  const toggleBtn = screen.getByRole("button", { name: "显示 DeepSeek Search API Key" });
-  expect(toggleBtn).toBeDisabled();
+it("refreshes the actual key and resets its visibility", async () => {
+  const user = userEvent.setup();
+  const api = setup({ ...initial(), credentials: { deepseek: "stored", langsearch: "missing" }, credentialValues: { deepseek: "old-key" } });
+  const input = await screen.findByLabelText("DeepSeek Search API Key", { selector: "input" });
+  await user.click(screen.getByRole("button", { name: "显示 DeepSeek Search API Key" }));
+  api.readWebSearch.mockResolvedValueOnce({ ...initial(), credentialValues: { deepseek: "new-key" } });
+  await user.click(screen.getByRole("button", { name: "刷新配置" }));
+  await waitFor(() => expect(input).toHaveValue("new-key"));
+  expect(input).toHaveAttribute("type", "password");
+});
 
-  await user.click(screen.getByRole("button", { name: "清除已保存的 Key" }));
-  await waitFor(() =>
-    expect(api.saveWebSearch).toHaveBeenCalledWith({
-      expectedRevision: 0,
-      config: { defaultProvider: null },
-      credentialChanges: [{ provider: "deepseek", action: "clear" }],
-    }),
-  );
-  await waitFor(() => expect(input).toHaveAttribute("placeholder", "输入 API Key"));
+it("preserves a newer edit during a pending save and debounces the latest value", async () => {
+  const user = userEvent.setup();
+  const api = setup();
+  const input = await screen.findByLabelText("DeepSeek Search API Key", { selector: "input" });
+  let resolveSave!: (value: WebSearchResponse) => void;
+  api.saveWebSearch.mockImplementationOnce(() => new Promise<WebSearchResponse>(resolve => { resolveSave = resolve; }));
+  await user.type(input, "first-key{Enter}");
+  await user.clear(input);
+  await user.type(input, "newer-key");
+  resolveSave({ revision: 1, config: { defaultProvider: null }, credentials: { deepseek: "stored", langsearch: "missing" }, credentialValues: { deepseek: "first-key" } });
+  await waitFor(() => expect(input).toHaveValue("newer-key"));
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenLastCalledWith(expect.objectContaining({
+    expectedRevision: 1, credentialChanges: [{ provider: "deepseek", action: "set", value: "newer-key" }],
+  })), { timeout: 2500 });
+  expect(input).toHaveValue("newer-key");
+});
+
+it("keeps edited keys after a failed save", async () => {
+  const user = userEvent.setup();
+  const api = setup();
+  const input = await screen.findByLabelText("LangSearch API Key", { selector: "input" });
+  api.saveWebSearch.mockRejectedValueOnce(new Error("offline"));
+  await user.type(input, "retry-key{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent("保存失败");
+  expect(input).toHaveValue("retry-key");
 });
 
 it("opens official links and auto-saves other settings without extra summaries", async () => {
@@ -279,4 +324,36 @@ it("correctly restores existing custom freshness range from saved config", async
   const endInput = within(section).getByLabelText("截止日期（可选）");
   expect(startInput).toHaveValue("2026-05-01");
   expect(endInput).toHaveValue("2026-05-31");
+});
+
+
+it("queues only the latest value per provider and clears a key entered during an unfinished save", async () => {
+  const user = userEvent.setup();
+  const api = setup();
+  const input = await screen.findByLabelText("DeepSeek Search API Key", { selector: "input" });
+  let resolveSave!: (value: WebSearchResponse) => void;
+  api.saveWebSearch.mockImplementationOnce(() => new Promise<WebSearchResponse>(resolve => { resolveSave = resolve; }));
+  await user.type(input, "first-key{Enter}");
+  fireEvent.change(input, { target: { value: "second-key" } });
+  fireEvent.blur(input);
+  fireEvent.change(input, { target: { value: "third-key" } });
+  fireEvent.blur(input);
+  fireEvent.change(input, { target: { value: "" } });
+  fireEvent.blur(input);
+  resolveSave({ revision: 1, config: { defaultProvider: null }, credentials: { deepseek: "stored", langsearch: "missing" }, credentialValues: { deepseek: "first-key" } });
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenLastCalledWith({
+    expectedRevision: 1, config: { defaultProvider: null }, credentialChanges: [{ provider: "deepseek", action: "clear" }],
+  }));
+  expect(api.saveWebSearch).toHaveBeenCalledTimes(2);
+  expect(input).toHaveValue("");
+});
+
+it("debounces clearing a saved key without requiring blur", async () => {
+  const user = userEvent.setup();
+  const api = setup({ ...initial(), credentials: { deepseek: "missing", langsearch: "stored" }, credentialValues: { langsearch: "saved-lang-key" } });
+  const input = await screen.findByLabelText("LangSearch API Key", { selector: "input" });
+  await user.clear(input);
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenCalledWith(expect.objectContaining({
+    credentialChanges: [{ provider: "langsearch", action: "clear" }],
+  })), { timeout: 2500 });
 });

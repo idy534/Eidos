@@ -337,6 +337,7 @@ export interface EidosRuntimeAPI {
   removeSkill(qualifiedId: string): Promise<SkillRemoval>;
 
   listMcpServers(): Promise<McpListResult>;
+  readMcpTools(request: import("./mcp-details.js").McpToolsRequest): Promise<import("./mcp-details.js").McpToolsResponse>;
   setMcpEnabled(pluginId: string, serverId: string, enabled: boolean): Promise<McpServerRecord>;
   createMcpServer(input: McpCreateInput): Promise<McpServerRecord>;
   updateMcpServer(input: McpUpdateInput): Promise<McpServerRecord>;

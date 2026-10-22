@@ -20,6 +20,7 @@ import path from "node:path";
 import * as nodePty from "node-pty";
 
 import { RuntimeClient } from "./runtime-client.js";
+import { isMcpToolsRequest } from "../shared/mcp-details.js";
 import { isAutomationRequest, isAutomationHistoryRequest, isAutomationRunNowRequest } from "../shared/automation.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
@@ -1523,6 +1524,10 @@ ipcMain.handle(IPC.SKILL_SET_ENABLED, (_event, id: unknown, enabled: unknown) =>
 ipcMain.handle(IPC.SKILL_REMOVE, (_event, id: unknown) =>
   clientOrThrow().removeSkill(skillId(id)));
 ipcMain.handle(IPC.MCP_LIST, () => clientOrThrow().listMcpServers());
+ipcMain.handle(IPC.MCP_TOOLS, (_event, request: unknown) => {
+  if (!isMcpToolsRequest(request)) throw new Error("INVALID_PARAMS");
+  return clientOrThrow().readMcpTools(request);
+});
 ipcMain.handle(IPC.EXTENSION_READ, () => clientOrThrow().readExtensions());
 ipcMain.handle(IPC.EXTENSION_READ_EVENTS, (_event, afterEventId: unknown) => {
   if (typeof afterEventId !== "number") throw new Error("Extension Event 参数无效。");

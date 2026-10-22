@@ -153,6 +153,7 @@ export const IPC = {
 
   // MCP
   MCP_LIST: "mcp:list",
+  MCP_TOOLS: "mcp:tools",
   MCP_SET_ENABLED: "mcp:set-enabled",
   MCP_CREATE: "mcp:create",
   MCP_UPDATE: "mcp:update",

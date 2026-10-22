@@ -427,6 +427,13 @@ select:focus {
   box-shadow: none;
 }
 
+input[type="search"]:focus,
+input[type="search"]:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: var(--line);
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 760px) {

@@ -6,6 +6,7 @@ import type { SettingsPendingAction } from "./settings-types";
 import { StatusBadge } from "./StatusBadge";
 import { McpReviewDialog } from "./McpReviewDialog";
 import { McpCreateDialog } from "./McpCreateDialog";
+import { McpDetailDialog } from "./McpDetailDialog.js";
 
 interface McpSettingsProps {
   servers: McpServerRecord[];
@@ -240,6 +241,7 @@ export function McpSettings({
   onShowToast,
 }: McpSettingsProps) {
   const [reviewingServer, setReviewingServer] = useState<McpServerRecord | null>(null);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
   const [expandedServerIds, setExpandedServerIds] = useState<Set<string>>(new Set());
   const [localError, setLocalError] = useState<string>();
   const [createOpen, setCreateOpen] = useState(false);
@@ -360,6 +362,9 @@ export function McpSettings({
     }
     return true;
   });
+
+  const detailServer = servers.find(server => `${server.pluginId}:${server.serverId}` === detailKey) ?? null;
+  const DetailIcon = detailServer ? getCategoryInfo(detailServer.serverId, detailServer.executable).icon : TerminalIcon;
 
   return (
     <div className="settings-panel mcp-settings-panel">
@@ -553,7 +558,10 @@ export function McpSettings({
                     className={`mcp-card ${!server.declaredEnabled ? "mcp-card--disabled" : ""}`}
                   >
                     {/* Main Row */}
-                    <div className="mcp-card__main">
+                    <div
+                      className="mcp-card__main mcp-card__main--clickable"
+                      onClick={() => setDetailKey(serverKey)}
+                    >
                       {/* Avatar Icon */}
                       <div className={`mcp-card__avatar mcp-card__avatar--${category.type}`}>
                         <CategoryIcon />
@@ -562,7 +570,19 @@ export function McpSettings({
                       {/* Info & Specs */}
                       <div className="mcp-card__info">
                         <div className="mcp-card__title-row">
-                          <h2 className="mcp-card__name">{server.serverId}</h2>
+                          <h2 className="mcp-card__name">
+                            <button
+                              type="button"
+                              className="mcp-card__name-button"
+                              aria-label={`查看 ${server.serverId} 工具`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDetailKey(serverKey);
+                              }}
+                            >
+                              {server.serverId}
+                            </button>
+                          </h2>
                           {server.pluginId !== "manual" && (
                             <span className="mcp-pill-tag">Plugin: {server.pluginId}</span>
                           )}
@@ -571,16 +591,13 @@ export function McpSettings({
                             {statusLabel}
                           </StatusBadge>
                         </div>
-
-                        <div className="mcp-card__meta-row">
-                          <span className="mcp-meta-cmd-preview" title={`$ ${fullCommand}`}>
-                            $ {fullCommand}
-                          </span>
-                        </div>
                       </div>
 
                       {/* Right Action Buttons */}
-                      <div className="mcp-card__actions">
+                      <div
+                        className="mcp-card__actions"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {server.pluginId === "manual" && (
                           <Button
                             variant="ghost"
@@ -616,92 +633,111 @@ export function McpSettings({
                             启用
                           </Button>
                         )}
-
-                        {/* Expand / Collapse Button */}
-                        <button
-                          type="button"
-                          className={`mcp-expand-trigger ${isExpanded ? "is-expanded" : ""}`}
-                          aria-expanded={isExpanded}
-                          onClick={() => toggleExpand(serverKey)}
-                        >
-                          <span>{isExpanded ? "收起技术参数" : "展开技术参数"}</span>
-                          <ChevronDownIcon className="mcp-chevron" />
-                        </button>
                       </div>
                     </div>
 
-                    {/* Expandable Technical Details Console */}
-                    {isExpanded && (
-                      <div className="mcp-card__details">
-                        {/* 1. Terminal / Shell Command Block */}
-                        <CodeBlock className="language-bash" title="启动指令">
-                          {fullCommand}
-                        </CodeBlock>
+                    {/* Card Footer: 其他设置 (Web Search Style) */}
+                    <div className="mcp-card__footer">
+                      <button
+                        type="button"
+                        className="mcp-card__expand-btn"
+                        aria-expanded={isExpanded}
+                        onClick={() => toggleExpand(serverKey)}
+                      >
+                        <span className="mcp-card__expand-title">
+                          <svg
+                            className={`mcp-chevron ${isExpanded ? "mcp-chevron--open" : ""}`}
+                            width="12"
+                            height="12"
+                            viewBox="0 0 12 12"
+                            fill="none"
+                            aria-hidden="true"
+                          >
+                            <path
+                              d="M2.5 4.5L6 8L9.5 4.5"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                          其他设置
+                        </span>
+                      </button>
 
-                        {/* 2. Specs Metric Cards Grid */}
-                        <dl className="mcp-specs-grid">
-                          <div className="mcp-spec-tile mcp-spec-tile--wide">
-                            <dt>
-                              <FolderIcon /> 工作目录 (CWD)
-                            </dt>
-                            <dd title={server.cwd || `默认 ~/Eidos/eidos-mcp/${server.serverId}`}>
-                              {server.cwd ? (
-                                <code>{server.cwd}</code>
-                              ) : (
-                                <span className="mcp-spec-muted">默认 (~/Eidos/eidos-mcp/{server.serverId})</span>
-                              )}
-                            </dd>
-                          </div>
+                      {/* Expandable Technical Details Console */}
+                      {isExpanded && (
+                        <div className="mcp-card__details">
+                          {/* 1. Terminal / Shell Command Block */}
+                          <CodeBlock className="language-bash" title="启动指令">
+                            {fullCommand}
+                          </CodeBlock>
 
-                          <div className="mcp-spec-tile">
-                            <dt>
-                              <TimerIcon /> 启动超时
-                            </dt>
-                            <dd>{server.startupTimeoutSeconds} 秒</dd>
-                          </div>
-
-                          <div className="mcp-spec-tile">
-                            <dt>
-                              <TimerIcon /> 工具超时
-                            </dt>
-                            <dd>{server.toolTimeoutSeconds} 秒</dd>
-                          </div>
-
-                          <div className="mcp-spec-tile">
-                            <dt>
-                              <ShieldIcon /> 权限范围
-                            </dt>
-                            <dd>
-                              <code>{server.permissionProfile}</code>
-                            </dd>
-                          </div>
-
-                          <div className="mcp-spec-tile mcp-spec-tile--wide">
-                            <dt>
-                              <KeyIcon /> 声明的环境变量
-                            </dt>
-                            <dd>
-                              {server.envNames.length > 0 ? (
-                                <code>{server.envNames.join(", ")}</code>
-                              ) : (
-                                <span className="mcp-spec-muted">无</span>
-                              )}
-                            </dd>
-                          </div>
-                        </dl>
-
-                        {/* 3. Error Callout if error code */}
-                        {server.errorCode && (
-                          <div className="mcp-error-callout" role="alert">
-                            <WarningIcon />
-                            <div className="mcp-error-content">
-                              <strong>运行异常错误码: <code>{server.errorCode}</code></strong>
-                              <p>请核实启动命令的依赖环境（如 Node.js / npx 或 Python uvx）以及指定的工作目录路径有效性。</p>
+                          {/* 2. Specs Metric Cards Grid */}
+                          <dl className="mcp-specs-grid">
+                            <div className="mcp-spec-tile mcp-spec-tile--wide">
+                              <dt>
+                                <FolderIcon /> 工作目录 (CWD)
+                              </dt>
+                              <dd title={server.cwd || `默认 ~/Eidos/eidos-mcp/${server.serverId}`}>
+                                {server.cwd ? (
+                                  <code>{server.cwd}</code>
+                                ) : (
+                                  <span className="mcp-spec-muted">默认 (~/Eidos/eidos-mcp/{server.serverId})</span>
+                                )}
+                              </dd>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+
+                            <div className="mcp-spec-tile">
+                              <dt>
+                                <TimerIcon /> 启动超时
+                              </dt>
+                              <dd>{server.startupTimeoutSeconds} 秒</dd>
+                            </div>
+
+                            <div className="mcp-spec-tile">
+                              <dt>
+                                <TimerIcon /> 工具超时
+                              </dt>
+                              <dd>{server.toolTimeoutSeconds} 秒</dd>
+                            </div>
+
+                            <div className="mcp-spec-tile">
+                              <dt>
+                                <ShieldIcon /> 权限范围
+                              </dt>
+                              <dd>
+                                <code>{server.permissionProfile}</code>
+                              </dd>
+                            </div>
+
+                            <div className="mcp-spec-tile mcp-spec-tile--wide">
+                              <dt>
+                                <KeyIcon /> 声明的环境变量
+                              </dt>
+                              <dd>
+                                {server.envNames.length > 0 ? (
+                                  <code>{server.envNames.join(", ")}</code>
+                                ) : (
+                                  <span className="mcp-spec-muted">无</span>
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+
+                          {/* 3. Error Callout if error code */}
+                          {server.errorCode && (
+                            <div className="mcp-error-callout" role="alert">
+                              <WarningIcon />
+                              <div className="mcp-error-content">
+                                <strong>运行异常错误码: <code>{server.errorCode}</code></strong>
+                                <p>请核实启动命令的依赖环境（如 Node.js / npx 或 Python uvx）以及指定的工作目录路径有效性。</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -711,6 +747,7 @@ export function McpSettings({
       )}
 
       {/* Dialogs */}
+      <McpDetailDialog server={detailServer} icon={<DetailIcon />} onClose={() => setDetailKey(null)} />
       <McpReviewDialog
         server={reviewingServer}
         busy={pendingAction?.type === "toggle_mcp"}

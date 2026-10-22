@@ -54,15 +54,26 @@ def invoke_web_search(
         },
         transition_reason="web_search_network_approval",
     )
-    approval = context.controller.authorize_side_effect(
-        run_id=run_id, item=item, prepared=execution, cancel=cancel
-    )
-    if approval.decision != "approve":
-        return HandlerOutcome(
-            search_error(
-                "user_rejected_network", approval.feedback or "用户拒绝了本次网页搜索。"
-            ),
-            "declined",
+    pending = context.store.typed_runtime_repository().read_pending_approval(run_id)
+    if pending is not None:
+        # Keep an already pending decision recoverable across a policy upgrade.
+        approval = context.controller.authorize_side_effect(
+            run_id=run_id, item=item, prepared=execution, cancel=cancel
+        )
+        if approval.decision != "approve":
+            return HandlerOutcome(
+                search_error(
+                    "user_rejected_network", approval.feedback or "用户拒绝了本次网页搜索。"
+                ),
+                "declined",
+            )
+    else:
+        context.controller.authorize_workspace_side_effect(
+            item=item,
+            prepared=execution.model_copy(update={"intent_preconditions": {
+                **execution.intent_preconditions,
+                "authorization": "configured_web_search",
+            }}),
         )
     if context.async_kernel is None:
         return HandlerOutcome(

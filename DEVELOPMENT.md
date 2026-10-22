@@ -615,3 +615,9 @@ pnpm test:composer-layout
 ```
 
 开发者可以设置 `EIDOS_WELCOME_SCREENSHOT=/absolute/path.png` 保存欢迎页截图。行为测试另外覆盖创建失败、Run 启动失败后的草稿恢复、项目选择和系统减少动态效果设置。
+
+### MCP 工具详情定向验证
+
+`uv run --locked pytest runtime/tests/test_mcp_details.py` 覆盖目录发现、描述、10 条分页、搜索、授权撤销、游标失效、关闭和非阻塞协议。`pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/McpDetailDialog.behavior.test.tsx` 覆盖页面交互。`pnpm build:main` 后，`node --test dist/main/runtime-client-mcp-details.test.js` 在 macOS 上使用本地 Fixture 和真实 Seatbelt，验证 Main → Runtime → SDK 及重启后的游标失效。
+
+`node_modules/.bin/electron scripts/test-mcp-details.cjs` 使用隔离 user-data 和生产组件，检查 320、768、1024、1440px、10→20→23 条的真实滚动追加、展开状态和焦点返回。`EIDOS_MCP_SCREENSHOT` 可以指定截图路径。该 UI 验证使用测试数据，不读取真实 MCP 配置，也不启动真实第三方服务。这些入口都不属于 Full Suite。
