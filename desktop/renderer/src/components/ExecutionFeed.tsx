@@ -1418,6 +1418,59 @@ function WebSearchResultsViewer({
   );
 }
 
+function ToolSearchResultsViewer({
+  toolCall,
+  item,
+  isError,
+  errorSummary,
+}: {
+  toolCall: ToolCall;
+  item: Item;
+  isError: boolean;
+  errorSummary?: string | undefined;
+}) {
+  if (isError) {
+    return <p className="tool-summary--error">{errorSummary || "搜索失败"}</p>;
+  }
+  if (item.status === "in_progress") {
+    return <p className="tool-search-empty">正在搜索工具…</p>;
+  }
+
+  const resultObj = parseObject(toolCall.resultJson);
+  const dataObj = objectField(resultObj, "data");
+  const rawHits = Array.isArray(dataObj.hits)
+    ? dataObj.hits
+    : Array.isArray(resultObj.hits)
+    ? resultObj.hits
+    : [];
+  const hits = rawHits.filter((h): h is Record<string, unknown> => Boolean(h) && typeof h === "object");
+
+  if (hits.length === 0) {
+    return <p className="tool-search-empty">未搜索到相关工具</p>;
+  }
+
+  return (
+    <div className="tool-search-results" role="list">
+      {hits.map((hit, index) => {
+        const name = stringField(hit, "name");
+        const description = stringField(hit, "description");
+        return (
+          <div
+            key={index}
+            className="tool-search-item"
+            role="listitem"
+            title={description || name}
+          >
+            <span className="tool-search-bullet" aria-hidden="true">•</span>
+            <span className="tool-search-name">{name}</span>
+            {description && <span className="tool-search-desc">{description}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SkillReadToolItem({
   item,
   toolCall,
@@ -1746,6 +1799,7 @@ function ToolItem({
   const isDeclareOutputs = toolCall.toolName === "declare_outputs";
   const isViewImage = toolCall.toolName === "view_image";
   const isWebSearch = toolCall.toolName === "web_search";
+  const isToolSearch = toolCall.toolName === "tool_search";
   const isError = Boolean(
     result.outcome === "error"
     || (typeof result.code === "string" && result.code && result.code !== "ok")
@@ -1785,6 +1839,13 @@ function ToolItem({
           />
         ) : isWebSearch ? (
           <WebSearchResultsViewer
+            toolCall={toolCall}
+            item={item}
+            isError={isError}
+            errorSummary={isError ? summary : undefined}
+          />
+        ) : isToolSearch ? (
+          <ToolSearchResultsViewer
             toolCall={toolCall}
             item={item}
             isError={isError}
@@ -2121,6 +2182,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
   const baseLabels: Record<string, string> = {
     automation: "定时任务",
     web_search: query ? `搜索 ${query}` : "网页搜索",
+    tool_search: query ? `搜索工具 [${query}]` : "搜索工具",
     spawn_agent: subagentName ? `创建智能体 · ${subagentName}` : "创建智能体",
     wait_agents: subagentName ? `等待智能体 · ${subagentName}` : "等待智能体",
     list_agents: subagentName ? `查询智能体 · ${subagentName}` : "查询智能体",
@@ -2142,6 +2204,8 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     ? baseLabels[toolCall.toolName]
     : toolCall.toolName === "web_search"
     ? baseLabels[toolCall.toolName]
+    : toolCall.toolName === "tool_search"
+    ? baseLabels[toolCall.toolName]
     : (path || query || baseLabels[toolCall.toolName] || toolCall.toolName);
   if (isReconciliationGate(result)) {
     return `未执行：与尚未确认的操作冲突 ${targetLabel}`;
@@ -2158,6 +2222,9 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
       : (imageFileName ? `已查看图像 · ${imageFileName}` : "已查看图像"),
     search_text: running ? `正在搜索 ${query || "文本"}` : `已搜索 ${query || "文本"}`,
     web_search: running ? `正在搜索 ${query || "网页"}` : `已搜索 ${query || "网页"}`,
+    tool_search: running
+      ? (query ? `正在搜索工具 [${query}]` : "正在搜索工具")
+      : (query ? `已搜索工具 [${query}]` : "已搜索工具"),
     write_file: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     apply_patch: running ? `正在编辑 ${path || "文件"}` : `已编辑 ${path || "文件"}`,
     delete_file: running ? `正在删除 ${path || "文件"}` : `已删除 ${path || "文件"}`,

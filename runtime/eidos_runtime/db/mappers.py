@@ -76,6 +76,7 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
             "query", "path", "regex", "maxResults", "includeGlobs"
         ),
         "web_search": ("query",),
+        "tool_search": ("query", "limit"),
         "write_file": ("path",),
         "apply_patch": (),
         "delete_file": ("path",),
@@ -112,7 +113,7 @@ def _snapshot_display_arguments(tool_call: dict[str, object]) -> str | None:
         elif field in {"regex", "readyForReview"}:
             if isinstance(value, bool):
                 projected[field] = value
-        elif field in {"maxDepth", "maxEntries", "startLine", "endLine", "maxResults", "yieldTimeMs", "expectedRevision"}:
+        elif field in {"maxDepth", "maxEntries", "startLine", "endLine", "maxResults", "yieldTimeMs", "expectedRevision", "limit"}:
             if isinstance(value, int) and not isinstance(value, bool):
                 projected[field] = value
         elif isinstance(value, str):

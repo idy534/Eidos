@@ -306,7 +306,15 @@ export function applyNotification(
     ? { ...incoming, content: existing.content }
     : incoming;
   if (existing?.toolCall && incoming.toolCall) {
-    merged = { ...merged, toolCall: { ...existing.toolCall, ...incoming.toolCall } };
+    const mergedToolCall = { ...existing.toolCall, ...incoming.toolCall };
+    if (mergedToolCall.argumentsJson === undefined) {
+      if (existing.toolCall.argumentsJson !== undefined) {
+        mergedToolCall.argumentsJson = existing.toolCall.argumentsJson;
+      } else {
+        delete mergedToolCall.argumentsJson;
+      }
+    }
+    merged = { ...merged, toolCall: mergedToolCall };
   }
   return { ...snapshot, items: upsertItem(snapshot.items, merged) };
 }

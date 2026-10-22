@@ -935,6 +935,7 @@ class ToolSearchResultData(StrictToolModel):
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "hits", "totalMatches", "truncated",
     )
+    query: StrictStr | None = None
     hits: tuple[ToolSearchHit, ...] | None = None
     totalMatches: StrictInt | None = Field(default=None, ge=0)
     truncated: bool | None = None

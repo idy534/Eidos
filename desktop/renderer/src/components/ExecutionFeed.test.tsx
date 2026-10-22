@@ -1993,4 +1993,212 @@ test("falls back to result data.query when argumentsJson is missing in historica
   assert.match(html, /杭州今日多云/);
 });
 
+test("renders tool_search in progress and completed with query in brackets and hits list", () => {
+  const items: Item[] = [
+    item({
+      id: "tool-search-running",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-ts-1",
+        itemId: "tool-search-running",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-ts-1",
+        toolName: "tool_search",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: JSON.stringify({ query: "automation", limit: 10 }),
+      },
+    }),
+    item({
+      id: "tool-search-completed",
+      ordinal: 2,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-ts-2",
+        itemId: "tool-search-completed",
+        modelStepIndex: 1,
+        batchOrder: 1,
+        providerCallId: "p-ts-2",
+        toolName: "tool_search",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1200,
+        argumentsJson: JSON.stringify({ query: "automation", limit: 10 }),
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Tool search completed",
+          data: {
+            hits: [
+              {
+                name: "automation",
+                description: "定时任务与计划调度管理工具",
+                provenance: { kind: "builtin" },
+                score: 100,
+              },
+            ],
+            totalMatches: 1,
+            truncated: false,
+          },
+        }),
+      },
+    }),
+  ];
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={items}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // Status copy with query
+  assert.match(html, /正在搜索工具 \[automation\]/);
+  assert.match(html, /已搜索工具 \[automation\]/);
+
+  // Search icon (cx="6.75" cy="6.75" r="4.25")
+  assert.match(html, /cx="6.75" cy="6.75" r="4.25"/);
+
+  // Expanded hits list
+  assert.match(html, /class="tool-search-results"/);
+  assert.match(html, /class="tool-search-item"/);
+  assert.match(html, /class="tool-search-name"[^>]*>automation<\/span>/);
+  assert.match(html, /class="tool-search-desc"[^>]*>定时任务与计划调度管理工具<\/span>/);
+});
+
+test("renders tool_search fallback copy when query is absent and handles empty hits", () => {
+  const items: Item[] = [
+    item({
+      id: "tool-search-no-query-running",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "in_progress",
+      toolCall: {
+        id: "tc-ts-nq-1",
+        itemId: "tool-search-no-query-running",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-ts-nq-1",
+        toolName: "tool_search",
+        status: "running",
+        startedAt: 1000,
+        argumentsJson: "{}",
+      },
+    }),
+    item({
+      id: "tool-search-empty-hits",
+      ordinal: 2,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-ts-empty",
+        itemId: "tool-search-empty-hits",
+        modelStepIndex: 1,
+        batchOrder: 1,
+        providerCallId: "p-ts-empty",
+        toolName: "tool_search",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1200,
+        argumentsJson: "{}",
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Tool search completed",
+          data: {
+            hits: [],
+            totalMatches: 0,
+          },
+        }),
+      },
+    }),
+  ];
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={items}
+      runs={[{ ...run, status: "running" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  // Status copy without query
+  assert.match(html, /正在搜索工具/);
+  assert.doesNotMatch(html, /正在搜索工具 \[/);
+  assert.match(html, /已搜索工具/);
+  assert.doesNotMatch(html, /已搜索工具 \[/);
+
+  // Empty hits text
+  assert.match(html, /class="tool-search-empty"[^>]*>未搜索到相关工具<\/p>/);
+});
+
+test("falls back to result data.query when argumentsJson is missing for tool_search", () => {
+  const items: Item[] = [
+    item({
+      id: "tool-search-restored",
+      ordinal: 1,
+      kind: "tool_call",
+      status: "completed",
+      toolCall: {
+        id: "tc-ts-restored",
+        itemId: "tool-search-restored",
+        modelStepIndex: 1,
+        batchOrder: 0,
+        providerCallId: "p-ts-restored",
+        toolName: "tool_search",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 1200,
+        argumentsJson: "{}",
+        resultJson: JSON.stringify({
+          outcome: "success",
+          code: "ok",
+          summary: "Tool search completed",
+          data: {
+            query: "automation",
+            hits: [
+              {
+                name: "automation",
+                description: "定时任务",
+                provenance: { kind: "builtin" },
+                score: 100,
+              },
+            ],
+            totalMatches: 1,
+          },
+        }),
+      },
+    }),
+  ];
+
+  const html = renderToStaticMarkup(
+    <ExecutionFeed
+      items={items}
+      runs={[{ ...run, status: "succeeded" }]}
+      approvals={[]}
+      respondingApprovalIds={new Set()}
+      respondingKindByApprovalId={{}}
+      onApprove={() => {}}
+      onReject={() => {}}
+    />,
+  );
+
+  assert.match(html, /已搜索工具 \[automation\]/);
+  assert.match(html, /class="tool-search-name"[^>]*>automation<\/span>/);
+});
+
+
 

@@ -409,6 +409,47 @@ span.tool-file-link:hover {
   color: var(--muted);
   font-size: var(--font-size-caption);
 }
+.tool-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+.tool-search-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+.tool-search-bullet {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+.tool-search-name {
+  flex-shrink: 0;
+  font-family: var(--font-code);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--text);
+}
+.tool-search-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+.tool-search-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}
 .tool-image-container {
   display: flex;
   flex-direction: column;

@@ -35,6 +35,14 @@ def test_discovery_snapshot_keeps_scoped_arguments_and_bounded_globs() -> None:
             "ignored": "not projected",
         }),
     }) or "null")
+    tool_search_arguments = json.loads(_snapshot_display_arguments({
+        "toolName": "tool_search",
+        "argumentsJson": json.dumps({
+            "query": "automation",
+            "limit": 10,
+            "ignored": "not projected",
+        }),
+    }) or "null")
 
     assert list_arguments == {
         "maxDepth": 2,
@@ -50,6 +58,10 @@ def test_discovery_snapshot_keeps_scoped_arguments_and_bounded_globs() -> None:
     }
     assert web_search_arguments == {
         "query": "杭州天气",
+    }
+    assert tool_search_arguments == {
+        "limit": 10,
+        "query": "automation",
     }
 
 

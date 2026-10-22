@@ -64,6 +64,7 @@ class ToolSearchAdapter:
             "code": "ok",
             "summary": "Tool search completed",
             "data": {
+                "query": str(arguments["query"]),
                 "hits": [{
                     "name": entry.spec.name,
                     "description": entry.spec.description,
