@@ -610,7 +610,9 @@ class ReconciliationConsistencyTests(unittest.TestCase):
             argv = getattr(launch, "argv")
             command = argv[-1]
             assert isinstance(command, str)
-            invocations.append(command)
+            invocations.append(
+                command.removeprefix("\\builtin \\unsetopt NOMATCH\n")
+            )
             return shell_results[len(invocations) - 1]
 
         with (

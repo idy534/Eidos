@@ -680,8 +680,8 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path, auto
     _bundle, manifest = _make_bundle(tmp_path)
     catalog = RuntimeDependencyCatalog.from_manifest(manifest)
     loader = tmp_path / "runtime-bundle" / "dependencies/node/runtime-loader.mjs"
-    additional_read_root = tmp_path / "additional-read"
-    additional_read_root.mkdir()
+    additional_write_root = tmp_path / "additional-write"
+    additional_write_root.mkdir()
 
     def approve(_request: dict[str, object], _cancel: threading.Event) -> ApprovalDecision:
         loader.unlink()
@@ -705,13 +705,13 @@ def test_bound_shell_reverifies_after_approval_before_spawn(tmp_path: Path, auto
             sandboxPermissions="with_additional_permissions",
             additionalPermissions={
                 "fileSystem": [{
-                    "path": str(additional_read_root),
-                    "access": "read",
+                    "path": str(additional_write_root),
+                    "access": "write",
                     "recursive": True,
                 }],
                 "network": None,
             },
-            justification="read workspace",
+            justification="write temporary path",
         )
         if automatic:
             del arguments["dependencyBindingId"]
