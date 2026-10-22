@@ -1424,11 +1424,12 @@ ipcMain.handle(IPC.CONTEXT_COMPACT, (_event, runId: unknown) => {
   if (typeof runId !== "string") throw new Error("上下文参数无效。");
   return clientOrThrow().requestContextCompaction(runId);
 });
-ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown, references: unknown) => {
+ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown, references: unknown, approvalMode: unknown) => {
   inputOwner(_event);
   if (
     (references !== undefined && (!Array.isArray(references) || references.length > 20 || !references.every((id) => typeof id === "string" && /^[a-f0-9]{64}$/.test(id))))
     || typeof sourceRunId !== "string"
+    || (approvalMode !== undefined && (typeof approvalMode !== "string" || !["manual", "auto_review", "full_access"].includes(approvalMode)))
     || (userInput !== undefined && typeof userInput !== "string")
     || (typeof userInput === "string" && (
       (!userInput.trim() && !(Array.isArray(references) && references.length)) || Buffer.byteLength(userInput, "utf8") > 64 * 1024
@@ -1440,7 +1441,14 @@ ipcMain.handle(IPC.RUN_REVISE, (_event, sourceRunId: unknown, userInput: unknown
     sourceRunId,
     kind: userInput === undefined ? "regenerate" : "edit",
   });
-  return clientOrThrow().reviseRun(sourceRunId, userInput, undefined, references as string[] | undefined);
+  return clientOrThrow().reviseRun(
+    sourceRunId,
+    userInput,
+    undefined,
+    references as string[] | undefined,
+    approvalMode as ApprovalMode | undefined,
+    approvalMode === "full_access" ? "full-access-v1" : undefined,
+  );
 });
 
 ipcMain.handle(IPC.RESPONSE_ACTION_STATE, (_event, sessionId: unknown) => {

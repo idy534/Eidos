@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { ApprovalMode } from "../shared/domain-contracts.js";
 import type {
   ItemFeedbackResult,
   ResponseActionState,
@@ -30,6 +31,8 @@ declare module "./runtime-client.js" {
       userInput?: string,
       operationId?: string,
       references?: string[],
+      approvalMode?: ApprovalMode,
+      fullAccessConfirmation?: "full-access-v1",
     ): Promise<RunRevisionResult>;
   }
 }
@@ -66,6 +69,8 @@ RuntimeClient.prototype.reviseRun = function reviseRun(
   userInput?: string,
   operationId = randomUUID(),
   references?: string[],
+  approvalMode?: ApprovalMode,
+  fullAccessConfirmation?: "full-access-v1",
 ): Promise<RunRevisionResult> {
   return requestBoundary(this).validatedRequest(
     "run/revise",
@@ -73,6 +78,8 @@ RuntimeClient.prototype.reviseRun = function reviseRun(
       sourceRunId,
       ...(userInput === undefined ? {} : { userInput }),
       ...(references === undefined ? {} : { references }),
+      ...(approvalMode === undefined ? {} : { approvalMode }),
+      ...(fullAccessConfirmation === undefined ? {} : { fullAccessConfirmation }),
       operationId,
     },
     isRunRevisionResult,

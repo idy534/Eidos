@@ -78,6 +78,11 @@ class ResponseActionApplication:
             if request.user_input is not None
             else str(source["userInput"])
         )
+        approval_mode = request.approval_mode
+        if approval_mode is None:
+            # Older callers may inherit auto review, but full access still
+            # requires an explicit, confirmed Desktop request.
+            approval_mode = "auto_review" if source.get("approvalMode") == "auto_review" else "manual"
         start_request = RunStartRequestDto.model_validate({
             "sessionId": source["sessionId"],
             "userInput": user_input,
@@ -86,7 +91,8 @@ class ResponseActionApplication:
             "modelId": source["modelId"],
             "operationId": request.operation_id,
             "reasoningSelection": source_profile.reasoning_selection,
-            "approvalMode": "auto_review" if source.get("approvalMode") == "auto_review" else "manual",
+            "approvalMode": approval_mode,
+            "fullAccessConfirmation": request.full_access_confirmation,
         })
         outcome = self._runs.start(start_request, regenerate_source_run_id=request.source_run_id if revision_kind == "regenerate" else None, agent_source_run_id=request.source_run_id)
         run_id = str(outcome.response.root["id"])

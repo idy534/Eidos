@@ -375,8 +375,8 @@ const api: EidosRuntimeAPI = {
     ipcRenderer.invoke(IPC.CONTEXT_USAGE, runId),
   readContextDetails: (runId: string): Promise<ContextDetails> => ipcRenderer.invoke(IPC.CONTEXT_DETAILS, runId),
   requestContextCompaction: (runId: string): Promise<ContextCompactionRecord> => ipcRenderer.invoke(IPC.CONTEXT_COMPACT, runId),
-  reviseRun: (sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult> =>
-    ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput, references),
+  reviseRun: (sourceRunId: string, userInput?: string, references?: string[], approvalMode?: ApprovalMode): Promise<RunRevisionResult> =>
+    ipcRenderer.invoke(IPC.RUN_REVISE, sourceRunId, userInput, references, approvalMode),
 
   // Response actions
   readResponseActionState: (sessionId: string): Promise<ResponseActionState> =>

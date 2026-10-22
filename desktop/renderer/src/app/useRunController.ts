@@ -50,6 +50,7 @@ export interface RunControllerActions {
   reviseRun: (params: {
     snapshot: SessionSnapshot;
     sourceRunId: string;
+    approvalMode?: ApprovalMode;
     userInput?: string;
     references?: string[];
     isStorageReady: boolean;
@@ -207,6 +208,7 @@ export function useRunController(
   const reviseRun = useCallback(async ({
     snapshot: currentSnapshot,
     sourceRunId,
+    approvalMode,
     userInput,
     references,
     isStorageReady: storageReady,
@@ -216,6 +218,7 @@ export function useRunController(
   }: {
     snapshot: SessionSnapshot;
     sourceRunId: string;
+    approvalMode?: ApprovalMode;
     userInput?: string;
     references?: string[];
     isStorageReady: boolean;
@@ -244,6 +247,7 @@ export function useRunController(
         sourceRunId,
         userInput?.trim(),
         references,
+        approvalMode,
       );
       if (revision.run.sessionId !== sessionId) return false;
       onRevisionProjected?.(revision);

@@ -304,7 +304,7 @@ export interface EidosRuntimeAPI {
   readContextUsage(runId: string): Promise<ContextUsage | null>;
   readContextDetails(runId: string): Promise<ContextDetails>;
   requestContextCompaction(runId: string): Promise<ContextCompactionRecord>;
-  reviseRun(sourceRunId: string, userInput?: string, references?: string[]): Promise<RunRevisionResult>;
+  reviseRun(sourceRunId: string, userInput?: string, references?: string[], approvalMode?: ApprovalMode): Promise<RunRevisionResult>;
 
   // Response actions
   readResponseActionState(sessionId: string): Promise<ResponseActionState>;

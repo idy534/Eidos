@@ -59,7 +59,7 @@ describe("WorkspaceDock", () => {
 
     const emptyStatus = screen.getByRole("status");
     expect(emptyStatus).toHaveTextContent("打开工作区");
-    expect(emptyStatus).toHaveTextContent("查看代码改动、浏览文件、运行命令或预览网页");
+    expect(emptyStatus).not.toHaveTextContent("查看代码改动、浏览文件、运行命令或预览网页");
     expect(container.querySelector(".workspace-dock__empty-hero")).not.toBeInTheDocument();
 
     const reviewBtn = screen.getByRole("button", { name: "审查" });
@@ -212,6 +212,27 @@ describe("WorkspaceDock", () => {
     rerender(<Harness initialTabs={[{ id: "files", kind: "files" }]} />);
     fireEvent.click(screen.getByRole("button", { name: "添加窗口" }));
     expect(screen.queryByRole("menuitem", { name: "计划" })).not.toBeInTheDocument();
+  });
+
+  it("applies single-item modifier to empty state list when only one tool is available", () => {
+    const { container } = render(
+      <WorkspaceDock
+        activeTabId={undefined}
+        availableTools={["browser"]}
+        expanded={true}
+        openTabs={[]}
+        onAddTool={() => {}}
+        onCloseTab={() => {}}
+        onSelectTab={() => {}}
+        onToggleExpanded={() => {}}
+        renderTab={() => null}
+      />,
+    );
+
+    const emptyList = container.querySelector(".workspace-dock__empty-list");
+    expect(emptyList).toBeInTheDocument();
+    expect(emptyList).toHaveClass("workspace-dock__empty-list--single");
+    expect(screen.getByRole("button", { name: "网页" })).toBeInTheDocument();
   });
 });
 

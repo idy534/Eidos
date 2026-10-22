@@ -111,7 +111,8 @@ class ResponseActionRepository:
     def validate_revision_source_in(connection: sqlite3.Connection, source_run_id: str) -> dict[str, object]:
         source = connection.execute(
             """
-            SELECT id, session_id, user_input, model_id, status, creation_seq, work_mode
+            SELECT id, session_id, user_input, model_id, status, creation_seq, work_mode,
+                   approval_mode
             FROM runs WHERE id = ?
             """,
             (source_run_id,),
@@ -145,6 +146,7 @@ class ResponseActionRepository:
             "userInput": str(source["user_input"]),
             "modelId": str(source["model_id"]),
             "workMode": str(source["work_mode"]),
+            "approvalMode": str(source["approval_mode"]),
             "status": str(source["status"]),
         }
 

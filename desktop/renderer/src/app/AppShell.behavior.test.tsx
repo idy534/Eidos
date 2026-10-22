@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Item, Run, SessionSnapshot } from "../contracts.js";
+import type { ApprovalMode, Item, Run, SessionSnapshot } from "../contracts.js";
 import { deriveRuntimePresentation } from "../session-state.js";
 import { AppShell } from "./AppShell.js";
 import { isQueuedRunListRequest } from "../../../shared/queued-runs.js";
@@ -10,6 +10,7 @@ const fixture = vi.hoisted(() => ({
   draft: undefined as SessionSnapshot | undefined,
   forkSession: vi.fn(),
   startDraft: vi.fn(),
+  reviseRun: vi.fn(),
 }));
 vi.mock("./useSessionController.js", () => ({
   useSessionController: () => [{
@@ -17,7 +18,7 @@ vi.mock("./useSessionController.js", () => ({
   }, { loadProjects: vi.fn(), loadSessions: vi.fn(), forkSession: fixture.forkSession, startDraft: fixture.startDraft }],
 }));
 vi.mock("./useRunController.js", () => ({
-  useRunController: () => [{ composerMode: "idle", input: "", references: [], draftReady: false }, {}],
+  useRunController: () => [{ composerMode: "idle", input: "", references: [], draftReady: false }, { reviseRun: fixture.reviseRun }],
 }));
 vi.mock("./useApprovalController.js", () => ({
   useApprovalController: () => [{
@@ -37,8 +38,15 @@ vi.mock("./useContextUsageController.js", () => ({ useContextUsageController: ()
 vi.mock("./usePlanningState.js", () => ({ usePlanningState: () => ({}) }));
 vi.mock("../components/AgentPanel.js", () => ({ useAgentState: () => ({}) }));
 vi.mock("../components/SessionSidebar.js", () => ({ SessionSidebar: () => null }));
-vi.mock("../components/Composer.js", () => ({ Composer: () => null }));
-vi.mock("../components/ComposerSlot.js", () => ({ ComposerSlot: () => null }));
+vi.mock("../components/Composer.js", async () => {
+  const { ApprovalModeSelector } = await import("../components/ApprovalModeSelector.js");
+  return { Composer: ({ approvalMode, onApprovalModeChange }: {
+    approvalMode: ApprovalMode; onApprovalModeChange: (mode: ApprovalMode) => void;
+  }) => <ApprovalModeSelector mode={approvalMode} onChange={onApprovalModeChange} /> };
+});
+vi.mock("../components/ComposerSlot.js", () => ({
+  ComposerSlot: ({ children }: { children: React.ReactNode }) => children,
+}));
 vi.mock("../components/BrowserPanel.js", () => ({ BrowserPanel: () => <p>网页面板</p> }));
 vi.mock("../components/InputContext.js", () => ({
   InputContextProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -48,7 +56,15 @@ vi.mock("../components/InputContext.js", () => ({
 vi.mock("../components/ExecutionFeed.js", async () => {
   const { MarkdownContent } = await import("../components/MarkdownContent.js");
   const { TurnResults } = await import("../components/TurnResults.js");
-  return { ExecutionFeed: ({ runs, items, onFork }: { runs: Run[]; items: Item[]; onFork?: (item: Item) => void }) => <>
+  return { ExecutionFeed: ({ runs, items, onFork, onRegenerate, onEditResend }: {
+    runs: Run[]; items: Item[]; onFork?: (item: Item) => void;
+    onRegenerate?: (run: Run) => void;
+    onEditResend?: (run: Run, input: string) => void;
+  }) => <>
+    {runs.map((run) => <div key={run.id}>
+      <button onClick={() => onRegenerate?.(run)}>重新回答</button>
+      <button onClick={() => onEditResend?.(run, "edited question")}>编辑并重新发送</button>
+    </div>)}
     {items.filter((item) => item.kind === "assistant_message").map((item) => <button key={item.id} onClick={() => onFork?.(item)}>从这里分叉</button>)}
     <MarkdownContent content={[
     "[第一个文件](/workspace/one.txt)",
@@ -123,6 +139,7 @@ beforeEach(() => {
   fixture.draft = undefined;
   fixture.forkSession.mockReset().mockImplementation(async () => fixture.snapshot);
   fixture.startDraft.mockReset();
+  fixture.reviseRun.mockReset().mockResolvedValue(true);
   fixture.snapshot = {
     session: {
       id: "session-a", workspaceRoot: "/workspace", executionMode: "local",
@@ -155,6 +172,43 @@ function shell() {
 }
 
 function renderShell() { return render(shell()); }
+
+describe("AppShell revision approval modes", () => {
+  const cases = (["manual", "auto_review", "full_access"] as const).flatMap((mode) => (
+    (["重新回答", "编辑并重新发送"] as const).flatMap((action) => (
+      [false, true].map((changed) => ({ mode, action, changed }))
+    ))
+  ));
+  const names = { manual: "请求审批", auto_review: "替我审批", full_access: "完全访问" };
+
+  it.each(cases)("$action uses $mode with changed=$changed", async ({ mode, action, changed }) => {
+    const snapshot = fixture.snapshot!;
+    const sourceMode = changed ? (mode === "manual" ? "full_access" : "manual") : mode;
+    snapshot.runs = [{
+      id: "source", sessionId: snapshot.session.id, status: "succeeded", modelId: "test-model",
+      approvalMode: sourceMode, modelStepCount: 1, createdAt: 1, updatedAt: 1,
+    }];
+    renderShell();
+
+    if (changed) {
+      fireEvent.click(screen.getByRole("button", { name: `审批模式：${names[sourceMode]}` }));
+      fireEvent.click(screen.getByRole("radio", { name: new RegExp(names[mode]) }));
+      if (mode === "full_access") {
+        expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "开启完全访问" }));
+      }
+    }
+
+    expect(screen.getByRole("button", { name: `审批模式：${names[mode]}` })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: action, exact: true }));
+    await waitFor(() => expect(fixture.reviseRun).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRunId: "source", approvalMode: mode,
+      ...(action === "编辑并重新发送" ? { userInput: "edited question" } : {}),
+    })));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(snapshot.runs[0]?.approvalMode).toBe(sourceMode);
+  });
+});
 
 describe("AppShell queued messages in draft Sessions", () => {
   it.each(["projectless", "project"] as const)("reads the %s queue only after the draft becomes a persisted Session", async (kind) => {

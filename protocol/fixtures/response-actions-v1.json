@@ -1,0 +1,60 @@
+{
+  "validRequests": [
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "manual"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "auto_review"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "full_access",
+      "fullAccessConfirmation": "full-access-v1"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "userInput": "edited question",
+      "approvalMode": "full_access",
+      "fullAccessConfirmation": "full-access-v1"
+    }
+  ],
+  "invalidRequests": [
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "unknown"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "full_access"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "full_access",
+      "fullAccessConfirmation": "full-access-v0"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "manual",
+      "fullAccessConfirmation": "full-access-v1"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "fullAccessConfirmation": "full-access-v1"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "auto_review",
+      "fullAccessConfirmation": "full-access-v1"
+    },
+    {
+      "sourceRunId": "00000000-0000-0000-0000-000000000001",
+      "approvalMode": "manual",
+      "unexpected": true
+    }
+  ]
+}

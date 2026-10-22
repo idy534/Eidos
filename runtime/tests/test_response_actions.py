@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from uuid import uuid4
+
+import pytest
+from pydantic import ValidationError
 
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.domain.approval_policy import ApprovalMode
 from eidos_runtime.persistence.response_actions import ResponseActionRepository
+from eidos_runtime.protocol.response_actions import RunReviseRequestDto
+
+
+def test_revision_request_matches_the_shared_approval_mode_fixture() -> None:
+    fixture = json.loads((
+        Path(__file__).resolve().parents[2] / "protocol/fixtures/response-actions-v1.json"
+    ).read_text())
+    for request in fixture["validRequests"]:
+        assert RunReviseRequestDto.model_validate(request).to_json_value() == request
+    for request in fixture["invalidRequests"]:
+        with pytest.raises(ValidationError):
+            RunReviseRequestDto.model_validate(request)
 
 
 class ResponseActionTests(unittest.TestCase):
@@ -80,14 +98,31 @@ class ResponseActionTests(unittest.TestCase):
         self.assertNotIn(source_run_id, {item.run_id for item in facts.items})
         store.close()
 
-    def _completed_run_with_response(self) -> tuple[SessionStore, str, str]:
+    def test_revision_source_reads_the_persisted_approval_mode(self) -> None:
+        for mode in ("manual", "auto_review", "full_access"):
+            with self.subTest(mode=mode):
+                store, run_id, _ = self._completed_run_with_response(mode)
+                store.close()
+                reopened = SessionStore(self.data)
+                reopened.initialize()
+                try:
+                    source = ResponseActionRepository(reopened).validate_revision_source(run_id)
+                    self.assertEqual(source["approvalMode"], mode)
+                finally:
+                    reopened.close()
+
+    def _completed_run_with_response(
+        self, approval_mode: ApprovalMode = "manual",
+    ) -> tuple[SessionStore, str, str]:
         store = SessionStore(self.data)
         store.initialize()
         self.assertEqual(store.health(), {"state": "ready"})
         session = store.create_session(str(self.workspace))
-        run, _user = store.create_run(str(session["id"]), "original question")
+        run, _user = store.create_run(
+            str(session["id"]), "original question", approval_mode=approval_mode,
+        )
         run_id = str(run["id"])
-        assistant_item_id = "11111111-1111-4111-8111-111111111111"
+        assistant_item_id = str(uuid4())
         assert store.connection is not None
         with store.lock, store.connection:
             store.connection.execute(

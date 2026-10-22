@@ -15,6 +15,7 @@ from eidos_runtime.application.runs import RunApplication
 from eidos_runtime.application.response_actions import ResponseActionApplication
 from eidos_runtime.application.sessions import SessionApplication
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.domain.approval_policy import ApprovalMode
 from eidos_runtime.model.config import default_profile_snapshot
 from eidos_runtime.persistence.response_actions import ResponseActionRepository
 from eidos_runtime.protocol.methods import (
@@ -601,6 +602,70 @@ def test_revision_inherits_source_run_reasoning_selection(
         expected_selection = selection or "high"
         assert store.read_model_profile(revised_run_id).reasoning_selection == expected_selection
         outcome.mark_response_delivered()
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("user_input", [None, "edited question"], ids=["regenerate", "edit"])
+@pytest.mark.parametrize(("source_mode", "selected_mode", "expected_mode"), [
+    ("manual", None, "manual"),
+    ("auto_review", None, "auto_review"),
+    ("full_access", None, "manual"),
+    ("manual", "auto_review", "auto_review"),
+    ("manual", "full_access", "full_access"),
+    ("auto_review", "manual", "manual"),
+    ("auto_review", "full_access", "full_access"),
+    ("full_access", "manual", "manual"),
+    ("full_access", "auto_review", "auto_review"),
+    ("full_access", "full_access", "full_access"),
+])
+def test_revision_uses_the_selected_approval_mode_and_freezes_its_permissions(
+    tmp_path: Path,
+    user_input: str | None,
+    source_mode: ApprovalMode,
+    selected_mode: ApprovalMode | None,
+    expected_mode: ApprovalMode,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = _store(tmp_path)
+    try:
+        session = store.create_session(str(workspace))
+        source, _ = store.create_run(
+            session["id"], "original question", approval_mode=source_mode,
+        )
+        assert store.connection is not None
+        with store.lock, store.connection:
+            store.connection.execute(
+                "UPDATE runs SET status='succeeded', completed_at=2 WHERE id=?",
+                (source["id"],),
+            )
+        runtime = _RuntimePort(store)
+        actions = ResponseActionApplication(
+            ResponseActionRepository(store), _run_application(store, runtime),
+        )
+        request = RunReviseRequestDto.model_validate({
+            "sourceRunId": source["id"],
+            **({"userInput": user_input} if user_input is not None else {}),
+            **({"approvalMode": selected_mode} if selected_mode is not None else {}),
+            **({"fullAccessConfirmation": "full-access-v1"} if selected_mode == "full_access" else {}),
+        })
+
+        outcome = actions.revise(request)
+        revised = outcome.response.root["run"]
+        run_id = str(revised["id"])
+        assert revised.get("approvalMode", "manual") == expected_mode
+        assert store.read_run(run_id).get("approvalMode", "manual") == expected_mode
+        policy = json.loads(store.read_run_resolution_snapshot(run_id).sandbox_policy_json)
+        assert policy["approvalMode"] == expected_mode
+        assert (policy["sandboxType"] == "none") == (expected_mode == "full_access")
+        assert policy.get("fullAccessConfirmation") == (
+            "full-access-v1" if expected_mode == "full_access" else None
+        )
+        assert store.read_run(str(source["id"])).get("approvalMode", "manual") == source_mode
+        assert runtime.released == []
+        outcome.mark_response_delivered()
+        assert runtime.released == runtime.prepared
     finally:
         store.close()
 

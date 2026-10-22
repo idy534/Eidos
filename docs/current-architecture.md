@@ -18,7 +18,7 @@ Local 与 Projectless 分叉可以共享当前目录。独立 Worktree 分叉复
 
 分叉是已持久化的正常 Session。创建事务同时保存来源标题和 Session created Event。分叉没有自己的 Run 时，侧栏也会展示它，空 Session 清理也不会删除它。v26→v27 是数据迁移。迁移按创建顺序补齐未命名分叉的标题，并在同一事务中提交 Title updated Event/Outbox。嵌套分叉会使用已补齐的父标题。来源已删除时，迁移使用“新会话”。现有非空标题不变。
 
-Renderer 的 `ForkIcon` 统一侧栏、回答操作栏和分叉弹窗的图标。侧栏根据 `forkedFrom.sessionId` 从已有 Session 列表读取直接来源的当前名称。气泡通过既有 `onSelect` 跳转到来源，并关闭气泡。来源缺失时，气泡不提供跳转。该显示和导航变化不修改 RPC、SQLite Schema 或历史记录。
+Renderer 的 `ForkIcon` 统一侧栏、回答操作栏和分叉弹窗的图标。侧栏会话行常驻显示分叉图标，并根据 `forkedFrom.sessionId` 从已有 Session 列表读取直接来源的当前名称。气泡通过既有 `onSelect` 跳转到来源，并关闭气泡。来源缺失时，气泡不提供跳转。该显示和导航变化不修改 RPC、SQLite Schema 或历史记录。
 
 ## 聊天与文件查找（2026-10-20）
 
@@ -383,6 +383,10 @@ ApprovalCoordinator 把扩权 Approval request、用户 decision、feedback、�
 HostShellResolver 先读取当前账户的 login shell，再读取 `SHELL`，最后按 `/bin/zsh`、`/bin/bash`、`/bin/sh` 顺序选择 fallback。Resolver 只接受存在、可执行且 basename 为 `zsh`、`bash` 或 `sh` 的绝对路径。
 
 ShellEnvironmentSnapshotProvider 使用 resolved shell 的 `-lc` 做一次 bounded 环境捕获。默认 attempt 会先验证 Seatbelt profile，然后在同一个 effective Seatbelt 边界内执行 trusted capture script。捕获使用 NUL 分隔的环境格式。捕获上限是 512 KiB，超时是 10 秒。缓存 key 包含 shell executable、canonical cwd、实际 capture launch identity 和环境策略标识。缓存最多保留 64 项。成功结果在用户保存设置或重新读取环境前复用；失败回退只复用 1 秒，后续调用可以再次捕获。普通命令使用 resolved shell 的 `-c`，不会使用 `-lc`。
+
+Agent zsh 在用户启动脚本加载后，先通过不受 alias 影响的 builtin 关闭 `NOMATCH`，再执行原命令。没有匹配文件的模式默认作为字面参数交给程序，已有匹配的通配符仍然展开。Runtime 只添加固定初始化行，不解析或改写原命令片段，不自动重试。SQLite 和 Desktop 继续保存和显示模型提交的原命令。环境继承、`pipefail`、权限、Durable Intent、取消和进程组清理沿用现有链路；bash、sh 和 Desktop Terminal 不受这项初始化影响。
+
+每步 Runtime 提示只在 `search_text` 可用时用两句话引导模型优先使用该工具做工作区文本搜索，并通过 `includeGlobs` 传递文件过滤条件。提示不列举具体后缀，也不增加工具参数或强制改写模型的工具选择。
 
 捕获失败时，Provider 使用 sanitized parent environment，并记录有界的稳定 warning。Snapshot 不恢复 aliases、functions 或其他 shell state。
 
@@ -808,7 +812,7 @@ SQLite schema v12 增加 `skill_states`。Runtime 将技能开关、卸载标记
 
 Composer 提供 `manual`（请求审批，默认）、`auto_review`（替我审批，推荐）和 `full_access`（完全访问，风险）。选择只影响下一次创建的 Run。已有 Run 的会话从同一个最近 Run 读取模型和审批模式。Draft 会话在首个 Run 被 Runtime 接受后，Renderer 将返回 Run 的模型和审批模式保存到 `localStorage`，作为新会话默认值。Draft 和没有 Run 的会话使用这组默认值；没有有效默认值时，审批模式使用 `manual`，模型使用列表中的第一个模型。设置控件的临时修改只影响当前会话。已有会话的后续 Run 不会改写新会话默认值。
 
-审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。保存的默认值可以是 `full_access`，后续新 Draft 会沿用该模式，载入默认值时不会再次弹出确认框。模型和 Tool 参数没有切换模式的入口。重新生成回答保留自动审批模式，但不会继承完全访问；完全访问必须重新通过 Composer 选择并确认。
+审批模式选择器位于 Composer 底栏左侧，采用无外边框的自定义下拉菜单（ApprovalModeSelector），与模型选择器保持一致的视觉风格。用户在下拉菜单切换至完全访问模式时，由 Desktop 弹出应用内风险确认对话框（ConfirmDialog）；确认后切换为完全访问，任务启动前不再重复弹窗。Main 在完全访问请求中发送 `fullAccessConfirmation=full-access-v1`；Runtime DTO 拒绝缺少确认版本的完全访问请求。保存的默认值可以是 `full_access`，后续新 Draft 会沿用该模式，载入默认值时不会再次弹出确认框。模型和 Tool 参数没有切换模式的入口。重新回答和编辑后重发会携带 Composer 当前选择的审批模式。Main 沿用普通发送的完全访问确认标记，Runtime 通过同一个 Run 创建入口固定模式和权限。旧调用方省略模式时，Runtime 从 SQLite 读取原 Run 的模式，保留自动审批；原 Run 为完全访问时，旧调用仍按人工模式创建新 Run。原 Run 的模式和权限快照保持不变。
 
 Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 在 `runs` 增加 `approval_mode`，旧 Run 默认为 `manual`；该版本在 `approvals` 增加 `review_json`，旧审批默认为空。迁移沿用事务和失败回滚。Runtime 在执行前检查 Run 模式与权限快照一致。当前自定义权限没有配置、解析器或 UI；后续可以在既有 Run 权限快照工厂和 PermissionPolicyEvaluator 中接入 `config.toml`，本期不接受 `custom` 模式。
 

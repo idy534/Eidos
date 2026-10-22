@@ -908,6 +908,7 @@ export function AppShell({ runtime }: AppShellProps) {
     return runActions.reviseRun({
       snapshot,
       sourceRunId: run.id,
+      approvalMode,
       ...(userInput !== undefined ? { userInput } : {}),
       ...(references !== undefined ? { references } : {}),
       isStorageReady,
@@ -917,7 +918,7 @@ export function AppShell({ runtime }: AppShellProps) {
       },
       onRefreshSession: sessionActions.refreshCompletedSession,
     });
-  }, [isStorageReady, responseActionActions, runActions, sessionActions, sessionState.snapshot]);
+  }, [approvalMode, isStorageReady, responseActionActions, runActions, sessionActions, sessionState.snapshot]);
 
   // -----------------------------------------------------------------------
   // Render

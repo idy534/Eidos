@@ -325,9 +325,32 @@ describe("useRunController real behavior", () => {
       });
 
       expect(reviseRunSpy).toHaveBeenCalledWith(
-        "run-source", "Use the reference", [mockReference.id],
+        "run-source", "Use the reference", [mockReference.id], undefined,
       );
     });
+
+    it.each(["manual", "auto_review", "full_access"] as const)(
+      "passes the selected %s mode for regenerate and edit resend",
+      async (approvalMode) => {
+        const revision = { run: { ...mockRunA, approvalMode }, sourceRunId: "run-source", kind: "regenerate" };
+        const reviseRunSpy = vi.fn().mockResolvedValue(revision);
+        setupMockRuntime({ reviseRun: reviseRunSpy });
+        const { result } = renderHook(() => useRunController(mockSnapshotA, true));
+        const onRunProjected = vi.fn();
+
+        for (const userInput of [undefined, "edited question"]) {
+          await act(async () => {
+            await result.current[1].reviseRun({
+              snapshot: mockSnapshotA, sourceRunId: "run-source", approvalMode,
+              ...(userInput === undefined ? {} : { userInput }),
+              isStorageReady: true, onRunProjected,
+            });
+          });
+          expect(reviseRunSpy).toHaveBeenLastCalledWith("run-source", userInput, undefined, approvalMode);
+          expect(onRunProjected).toHaveBeenLastCalledWith("session-A", revision.run);
+        }
+      },
+    );
 
     it("Mismatched sessionId response does not clear input or project cross-session", async () => {
       const mismatchedRun = { ...mockRunA, sessionId: "session-OTHER" };

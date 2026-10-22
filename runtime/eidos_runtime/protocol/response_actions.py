@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar, Literal
 
+from eidos_runtime.domain.approval_policy import ApprovalMode, FULL_ACCESS_WARNING_VERSION
 from eidos_runtime.domain.input_reference import InputReferenceId
 
 from pydantic import Field, StrictStr, model_validator
@@ -40,6 +41,10 @@ class ItemSetFeedbackRequestDto(_CanonicalRequest):
 
 
 class RunReviseRequestDto(_CanonicalRequest):
+    approval_mode: ApprovalMode | None = Field(default=None, alias="approvalMode")
+    full_access_confirmation: Literal["full-access-v1"] | None = Field(
+        default=None, alias="fullAccessConfirmation"
+    )
     references: list[InputReferenceId] | None = Field(default=None, max_length=20)
     source_run_id: StrictStr = Field(alias="sourceRunId")
     user_input: StrictStr | None = Field(
@@ -55,6 +60,10 @@ class RunReviseRequestDto(_CanonicalRequest):
 
     @model_validator(mode="after")
     def _validate_revision_input(self) -> "RunReviseRequestDto":
+        if self.approval_mode == "full_access" and self.full_access_confirmation != FULL_ACCESS_WARNING_VERSION:
+            raise ValueError("full access requires explicit confirmation")
+        if self.approval_mode != "full_access" and self.full_access_confirmation is not None:
+            raise ValueError("full access confirmation does not match approval mode")
         if self.user_input is not None and not self.user_input.strip() and not self.references:
             raise ValueError("userInput must not be blank")
         return self

@@ -111,6 +111,7 @@ describe("interactive color tokens", () => {
     expect(dockStyles).toMatch(/\.workspace-dock__empty-option\s*\{[^}]*border:\s*1px solid var\(--line\);[^}]*background:\s*var\(--surface-raised\);/s);
     expect(dockStyles).toMatch(/\.workspace-dock__empty-option-label\s*\{[^}]*font-size:\s*var\(--font-size-sidebar\);/s);
     expect(dockStyles).toMatch(/\.workspace-dock--expanded\s+\.workspace-dock__empty-list\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s);
+    expect(dockStyles).toMatch(/\.workspace-dock--expanded\s+\.workspace-dock__empty-list--single[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\);/);
   });
 
   it("renders compact single-column diff colors", () => {

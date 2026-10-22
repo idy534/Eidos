@@ -19,7 +19,7 @@ from eidos_runtime.context.builder import ContextBuilder  # noqa: E402
 from eidos_runtime.db.storage import SessionStore  # noqa: E402
 from eidos_runtime.workspace.projectless import projectless_root  # noqa: E402
 from eidos_runtime.extensions.skills import RetainedContextSection  # noqa: E402
-from eidos_runtime.model.instructions import InstructionResolver  # noqa: E402
+from eidos_runtime.model.instructions import InstructionResolver, StepPermissionPolicy  # noqa: E402
 from eidos_runtime.model.prompts import (  # noqa: E402
     BASE_AGENT_INSTRUCTIONS,
     PROJECT_FILE_REFERENCE_INSTRUCTIONS,
@@ -167,6 +167,31 @@ class InstructionResolverTests(unittest.TestCase):
         )
         self.assertNotIn("project-rule:", resolved.text)
         self.assertNotIn("selected-skill:", resolved.text)
+
+    def test_workspace_search_guidance_uses_structured_filename_filters(self) -> None:
+        for tools in (("search_text",), ("run_shell", "search_text")):
+            with self.subTest(tools=tools):
+                resolved = InstructionResolver().resolve(step_policy=StepPermissionPolicy(
+                    sandbox_mode="workspace-write",
+                    workspace_root="/workspace",
+                    available_tools=tools,
+                ))
+                layer = next(layer for layer in resolved.layers if layer.id == "runtime-permissions")
+                self.assertEqual(layer.role, "developer")
+                self.assertIn("Prefer search_text", layer.content)
+                self.assertIn("Use includeGlobs for filename filters.", layer.content)
+
+    def test_workspace_search_guidance_does_not_recommend_an_unavailable_tool(self) -> None:
+        for tools in ((), ("run_shell",), ("read_file",)):
+            with self.subTest(tools=tools):
+                resolved = InstructionResolver().resolve(step_policy=StepPermissionPolicy(
+                    sandbox_mode="workspace-write",
+                    workspace_root="/workspace",
+                    available_tools=tools,
+                ))
+                layer = next(layer for layer in resolved.layers if layer.id == "runtime-permissions")
+                self.assertNotIn("Workspace text search:", layer.content)
+                self.assertNotIn("includeGlobs", layer.content)
 
     def test_project_file_reference_layer_is_added_only_for_project_sessions(self) -> None:
         resolver = InstructionResolver()

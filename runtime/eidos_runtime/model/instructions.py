@@ -93,6 +93,13 @@ def _build_runtime_permissions_content(policy: StepPermissionPolicy) -> str:
             "Use cd inside command only when the command itself needs to switch directories after it starts.",
         ))
 
+    if "search_text" in policy.available_tools:
+        lines.extend((
+            "\nWorkspace text search:",
+            "Prefer search_text for workspace text searches. "
+            "Use includeGlobs for filename filters.",
+        ))
+
     if policy.writable_roots:
         lines.append("\nWritable roots:")
         for root in policy.writable_roots:

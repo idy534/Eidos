@@ -253,8 +253,7 @@ export function WorkspaceDock({
         {openTabs.length === 0 && (
           <div className="workspace-dock__empty" role="status">
             <p className="workspace-dock__empty-title">打开工作区</p>
-            <p className="workspace-dock__empty-subtitle">查看代码改动、浏览文件、运行命令或预览网页</p>
-            <div className="workspace-dock__empty-list">
+            <div className={`workspace-dock__empty-list${availableTools.length <= 1 ? " workspace-dock__empty-list--single" : ""}`}>
               {availableTools.map((tool) => (
                 <button
                   type="button"

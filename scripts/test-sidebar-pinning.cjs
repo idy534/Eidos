@@ -38,14 +38,14 @@ app.whenReady().then(async () => {
     const forkRow = '[data-session-id="44444444-4444-4444-4444-444444444444"]';
     assert.equal(await evaluate(`document.querySelector(${JSON.stringify(forkRow)} + ' .session-title')?.textContent`), "排查模型错误", "A fork appears before its first Run with its source title");
     const forkOpacity = () => evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(forkRow)} + ' .session-fork-indicator')).opacity`);
-    assert.equal(await forkOpacity(), "0", "Fork marker is hidden before hover");
+    assert.equal(await forkOpacity(), "1", "Fork marker is permanently visible before hover");
     const forkPoint = await evaluate(`(() => { const bounds = document.querySelector(${JSON.stringify(forkRow)} + ' button').getBoundingClientRect(); return { x: Math.round(bounds.left + 10), y: Math.round(bounds.top + bounds.height / 2) }; })()`);
     win.webContents.sendInputEvent({ type: "mouseMove", ...forkPoint });
     await settle();
-    assert.equal(await forkOpacity(), "1", "Native hover reveals the fork marker");
+    assert.equal(await forkOpacity(), "1", "Native hover keeps the fork marker visible");
     win.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });
     await settle();
-    assert.equal(await forkOpacity(), "0", "Leaving the row hides the marker again");
+    assert.equal(await forkOpacity(), "1", "Leaving the row keeps the fork marker visible");
     const click = async (selector, button = "left") => {
       const point = await evaluate(`(() => {
         const element = document.querySelector(${JSON.stringify(selector)});

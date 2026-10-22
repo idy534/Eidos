@@ -439,7 +439,11 @@ def prepare_shell_launch(
         shell_argv.append("-f")
     if shell.kind in {"zsh", "bash"}:
         shell_argv.extend(("-o", "pipefail"))
-    shell_argv.extend(("-c", command))
+    execution_command = command
+    if shell.kind == "zsh":
+        # Run after .zshenv and bypass its aliases without disabling startup files.
+        execution_command = "\\builtin \\unsetopt NOMATCH\n" + command
+    shell_argv.extend(("-c", execution_command))
     argv = (
         profile.command(shell_argv)
         if sandboxed

@@ -121,7 +121,7 @@ app.whenReady().then(async () => {
     await settle();
     const sourceRow = '[data-session-id="66666666-6666-6666-6666-666666666666"]';
     assert.equal(await evaluate(`document.querySelector('${sourceRow} .session-title').textContent`), "检查部署");
-    assert.equal(await evaluate("getComputedStyle(document.querySelector('.session-automation-indicator')).opacity"), "0");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.session-automation-indicator')).opacity"), "1");
     const hoverPoint = await evaluate(`(() => { const rect=document.querySelector('${sourceRow} button').getBoundingClientRect(); return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)}; })()`);
     win.webContents.sendInputEvent({ type: "mouseMove", ...hoverPoint });
     await new Promise(resolve => setTimeout(resolve, 400)); await settle();

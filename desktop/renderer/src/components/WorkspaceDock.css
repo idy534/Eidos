@@ -551,14 +551,6 @@ button.environment-popover__row:hover:not(:disabled) {
   line-height: 1.35;
 }
 
-.workspace-dock__empty .workspace-dock__empty-subtitle {
-  margin-top: 0.3rem;
-  max-width: 20rem;
-  color: var(--muted);
-  font-size: var(--font-size-caption);
-  line-height: 1.45;
-}
-
 .workspace-dock__empty-list {
   display: grid;
   width: min(100%, 17.75rem);
@@ -573,11 +565,23 @@ button.environment-popover__row:hover:not(:disabled) {
   gap: 0.65rem;
 }
 
+.workspace-dock--expanded .workspace-dock__empty-list--single,
+.workspace-dock--expanded .workspace-dock__empty-list:has(> :only-child) {
+  width: min(100%, 17.75rem);
+  grid-template-columns: minmax(0, 1fr);
+}
+
 @container workspace-dock (min-width: 34rem) {
   .workspace-dock__empty-list {
     width: min(100%, 34rem);
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.65rem;
+  }
+
+  .workspace-dock__empty-list--single,
+  .workspace-dock__empty-list:has(> :only-child) {
+    width: min(100%, 17.75rem);
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

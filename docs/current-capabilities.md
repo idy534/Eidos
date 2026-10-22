@@ -257,7 +257,9 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Shell 环境可以继承全部、仅基础环境或不继承。系统默认继承宿主机变量，不按 KEY、TOKEN、SECRET 名称统一排除，仍排除 Eidos 内部变量。SQLite 只保存继承方式与版本，不保存实际变量。并发保存使用 revision 检查。保存影响后续启动的命令；重新读取环境清除快照，后续命令重新捕获。配置不增加文件或网络权限。
 
 - Runtime 在每一步的提示中写出 Shell 默认启动目录的实际路径，并说明进程在执行命令前已经位于该目录。模型省略 `cwd` 或传入 `.` 就使用当前 Run 的工作区。有项目、无项目和完全访问 Run 都使用这条规则。提示使用 `{"command":"pwd"}` 展示默认目录下的直接调用。
-- `run_shell` 的工具和字段说明要求模型直接提交当前目录的命令，并通过 `cwd` 指定其他启动目录。每次调用创建新的 Shell，上次命令中的 `cd` 不会影响下次调用。命令执行过程中仍可按需切换目录。Runtime 不改写模型提交的 Shell 命令；提示对冗余 `cd` 的实际改善效果尚未通过真实模型调用验证。
+- `run_shell` 的工具和字段说明要求模型直接提交当前目录的命令，并通过 `cwd` 指定其他启动目录。每次调用创建新的 Shell，上次命令中的 `cd` 不会影响下次调用。命令执行过程中仍可按需切换目录。Runtime 不解析或改写原命令片段；Agent zsh 只在原命令前执行固定的 `NOMATCH` 初始化。提示对冗余 `cd` 的实际改善效果尚未通过真实模型调用验证。
+- Agent zsh 在用户启动脚本加载后关闭 `NOMATCH`，避免 `--include=*.tsx` 等没有文件匹配的参数被 Shell 提前拒绝。正常匹配的通配符继续展开，程序仍返回自己的真实退出码。该行为适用于各审批模式和环境继承方式，不改变 Desktop Terminal。
+- 当 `search_text` 可用时，每步 Runtime 提示用两句话引导模型优先使用该工具搜索工作区文本，并通过 `includeGlobs` 传递文件过滤条件。提示不列举具体后缀。真实模型选择比例的变化尚未验证。
 - Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；持久化失败仍保留未知结果记录。
 - Runtime 会投影未决 Intent 的对账来源。未知结果不设核验门；有效 Shell 空输入等待保持中性。系统不会通过删除缓存、申请新权限或换一条命令解除未知 Shell Intent。
 
@@ -301,6 +303,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 最新可见的用户输入支持 edit resend。
 - Response Action 通过 `responseAction/state`、`item/setFeedback` 和 `run/revise` 持久化到 `response_feedback` 与 `run_revisions`。
 - Revision 会创建新的 Run，并保存 source Run 与 revision kind。Source Run 的历史不会被当作新的可见 Run 重复参与后续 Revision。
+- 重新回答和编辑后重发会使用输入框当前选择的审批模式。用户已确认的完全访问模式沿用普通发送的确认流程；新 Run 会保存对应模式和权限快照。
 
 ## Plugin / Skill / MCP
 

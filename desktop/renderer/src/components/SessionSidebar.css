@@ -363,18 +363,12 @@
   width: 0.85rem;
   height: 0.85rem;
   color: var(--muted);
-  opacity: 0;
   pointer-events: none;
 }
 
 .session-fork-indicator svg {
   width: 100%;
   height: 100%;
-}
-
-.session-item > button:hover .session-fork-indicator,
-.session-item > button:focus-visible .session-fork-indicator {
-  opacity: 1;
 }
 
 .session-labels {
@@ -389,18 +383,12 @@
   width: 0.8rem;
   height: 0.8rem;
   color: var(--muted);
-  opacity: 0;
   pointer-events: none;
 }
 
 .session-automation-indicator svg {
   width: 100%;
   height: 100%;
-}
-
-.session-item > button:hover .session-automation-indicator,
-.session-item > button:focus-visible .session-automation-indicator {
-  opacity: 1;
 }
 
 .session-branch {
