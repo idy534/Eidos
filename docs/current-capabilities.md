@@ -312,6 +312,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - PluginCatalog 支持本地 Plugin v1 的导入、启用、禁用和移除。
 - Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
 - Plugin 安装目录使用 `~/.eidos/extensions/plugins/<pluginId>/<version>/`，不附加 Hash 目录。完整 Hash 继续用于内容核验、运行快照和 Hook 信任。本次调整不兼容旧目录，需要清理旧安装后重新导入。
+- Plugin 卸载后允许重新导入相同 ID、版本和内容。Runtime 恢复历史安装记录，保持未启用，并清除旧的 Hook 信任和 MCP 授权。Runtime 保留私有数据和历史调用；非终态 Run 仍引用该插件时，Runtime 拒绝重装。不同版本、同版本不同内容和已有版本目录继续受原冲突规则限制。
 - 设置页按所属插件管理资源。用户点击插件名称后，可以查看该插件的 Skills、MCP Servers、Hooks 和兼容信息。插件 Skill 可以在插件详情中打开正文和调整启用状态；界面不提供单独卸载插件 Skill 的入口。插件 MCP 可以在详情中查看工具，并经过独立的命令与权限审阅后授权启用，或撤销启用。Hook 继续使用内容版本绑定的信任流程。
 - 独立技能页只列出个人和系统技能。独立 MCP 页只列出手动配置的服务。侧栏数量与各自的列表一致。设置页的分类不会过滤 Runtime Catalog 或聊天引用选择器，模型继续按原快照、激活和授权规则使用插件资源。
 - Skill 采用三层边界：Catalog 负责 Discovery 和 immutable Catalog Snapshot；Activation 负责 Selection、`SkillAccess` 和 Run-scoped activation；Resource 负责按需读取 `SKILL.md`、`references/`、`scripts/`、`assets/`，再进入现有 Tools 和 Sandbox。Skill 内容、产品依赖和 `runtime.json` 彼此分离。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。

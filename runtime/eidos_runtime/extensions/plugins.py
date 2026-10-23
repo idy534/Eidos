@@ -63,15 +63,16 @@ class PluginCatalog:
         content_hash = _content_hash(files)
         existing = self.store.plugin_record(manifest.id)
         if existing is not None:
-            if (
-                existing["version"] == manifest.version
-                and existing["contentHash"] == content_hash
-                and existing["status"] == "installed"
-            ):
-                return self._describe(existing, package)
-            if existing["version"] == manifest.version:
+            if existing["version"] != manifest.version:
+                raise PluginImportError("plugin_id_conflict")
+            if existing["contentHash"] != content_hash:
                 raise PluginImportError("plugin_version_conflict")
-            raise PluginImportError("plugin_id_conflict")
+            if existing["status"] == "installed":
+                return self._describe(existing, package)
+            if self.store.plugin_referenced_by_nonterminal_run(
+                manifest.id, content_hash
+            ):
+                raise PluginImportError("plugin_version_conflict")
 
         destination = self._installed_path(manifest.id, manifest.version)
         if os.path.lexists(destination):

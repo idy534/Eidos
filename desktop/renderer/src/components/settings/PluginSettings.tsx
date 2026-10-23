@@ -23,7 +23,7 @@ interface PluginSettingsProps {
   onToggleSkill?: ((qualifiedId: string, enabled: boolean) => Promise<void>) | undefined;
   onToggleMcp?: ((pluginId: string, serverId: string, enabled: boolean) => Promise<void>) | undefined;
   pendingAction: SettingsPendingAction;
-  onImportPlugin: () => Promise<void>;
+  onImportPlugin: () => Promise<PluginRecord | null>;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
   onRemovePlugin: (pluginId: string) => Promise<void>;
@@ -59,8 +59,8 @@ export function PluginSettings({
   async function handleImport() {
     setLocalError(undefined);
     try {
-      await onImportPlugin();
-      onShowToast("Plugin 导入成功", "success");
+      const imported = await onImportPlugin();
+      if (imported) onShowToast("Plugin 导入成功", "success");
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "导入 Plugin 失败";
       onShowToast(msg, "error");

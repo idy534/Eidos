@@ -125,18 +125,37 @@ class ExtensionRepository(Repository):
     def insert_plugin_record(self, record: dict[str, object]) -> dict[str, object]:
         now = _now_ms()
         with self.lock, self._connection() as connection:
-            connection.execute(
+            inserted = connection.execute(
                 """
                 INSERT INTO plugins (
                     id, name, version, description, manifest_json, content_hash,
                     enabled, status, installed_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, 0, 'installed', ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    manifest_json = excluded.manifest_json,
+                    enabled = 0,
+                    status = 'installed',
+                    installed_at = excluded.installed_at,
+                    updated_at = excluded.updated_at
+                WHERE plugins.status = 'removed'
+                    AND plugins.version = excluded.version
+                    AND plugins.content_hash = excluded.content_hash
                 """,
                 (
                     record["id"], record["name"], record["version"],
                     record["description"], record["manifestJson"],
                     record["contentHash"], now, now,
                 ),
+            )
+            if inserted.rowcount != 1:
+                raise StorageError("plugin record changed before import")
+            connection.execute(
+                "DELETE FROM plugin_hook_trust WHERE plugin_id = ?", (record["id"],)
+            )
+            connection.execute(
+                "DELETE FROM mcp_server_states WHERE plugin_id = ?", (record["id"],)
             )
             row = connection.execute(
                 "SELECT * FROM plugins WHERE id = ?", (record["id"],)

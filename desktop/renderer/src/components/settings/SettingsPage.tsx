@@ -40,7 +40,7 @@ interface SettingsPageProps {
   hasBlockingModal?: boolean | undefined;
   onClose: () => void;
   onModelsChanged: () => Promise<void>;
-  onImportPlugin: () => Promise<void>;
+  onImportPlugin: () => Promise<PluginRecord | null>;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
   onRemovePlugin: (pluginId: string) => Promise<void>;

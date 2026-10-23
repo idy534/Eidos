@@ -21,7 +21,7 @@ export interface ExtensionControllerState {
 
 export interface ExtensionControllerActions {
   load: () => Promise<void>;
-  importPlugin: () => Promise<void>;
+  importPlugin: () => Promise<PluginRecord | null>;
   setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<void>;
   setPluginHookTrust: (pluginId: string, contentHash: string, trusted: boolean) => Promise<void>;
   removePlugin: (pluginId: string) => Promise<void>;
@@ -68,7 +68,7 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     }
   }, []);
 
-  const importPlugin = useCallback(async (): Promise<void> => {
+  const importPlugin = useCallback(async (): Promise<PluginRecord | null> => {
     setPendingAction({ type: "import_plugin" });
     setError(undefined);
     try {
@@ -76,6 +76,7 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
       if (imported) {
         await fetchAndApplySnapshot();
       }
+      return imported;
     } catch (cause) {
       const msg = userFacingError(cause);
       setError(msg);
