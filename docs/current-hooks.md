@@ -12,7 +12,9 @@
 | Codex 兼容格式 | `.codex-plugin/plugin.json` | Runtime 使用 `name` 作为插件身份，并解析 Skills 和 Hooks。 |
 | Portable Agent Plugin | 根目录 `plugin.json` | 根清单决定身份。`extensions.com.openai` 存在时，它整体替代 Codex 兼容清单的设置。 |
 
-清单没有声明 `hooks` 时，Runtime 发现 `hooks/hooks.json`。显式声明可以是相对路径、路径数组或内联 Hook 配置。显式声明整体替代默认发现，Runtime 不把两者合并。路径必须使用 `./`，且必须留在包内。Runtime 拒绝重复 JSON 键、重复来源、不支持的正则表达式、符号链接和多硬链接文件。Runtime 保留包内源文件，并按内容 Hash 安装。带 shebang 的脚本具有执行权限。
+清单没有声明 `hooks` 时，Runtime 发现 `hooks/hooks.json`。显式声明可以是相对路径、路径数组或内联 Hook 配置。显式声明整体替代默认发现，Runtime 不把两者合并。路径必须使用 `./`，且必须留在包内。Runtime 拒绝重复 JSON 键、重复来源、不支持的正则表达式、符号链接和多硬链接文件。Runtime 保留包内源文件，并安装到 `~/.eidos/extensions/plugins/<pluginId>/<version>/`。目录不包含内容 Hash；SQLite、快照、内容核验和 Hook 信任继续保存并使用完整 Hash。带 shebang 的脚本具有执行权限。
+
+本次目录调整不兼容旧的 `<pluginId>/<version>/<contentHash>/` 布局。旧安装需要移除并重新导入，不提供旧目录回退或旧快照路径迁移。正在被任务引用的资源仍遵循原有延后清理规则。安装使用同级临时目录发布，遇到已有版本目录时拒绝覆盖；发布失败不会删除其他安装，记录提交失败只清理本次新建的目录。
 
 Runtime 在导入和读取已安装包时忽略各层目录中的普通 `.DS_Store` 文件。这些文件不进入安装内容和内容 Hash。Runtime 仍然检查符号链接、文件所有者和多硬链接，也继续核验其他文件的内容变化。
 

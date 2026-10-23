@@ -632,6 +632,8 @@ Runtime 使用 typed Git observations，并在 observation failure、timeout 或
 
 PluginCatalog 只接收受控的本地 Plugin v1 包。Runtime 校验 manifest、文件数量、单文件和总大小、content hash，并把安装内容写入私有 extensions 目录。Plugin 可以声明 Skill 和 MCP Server。Settings 也可以创建本地 stdio MCP Server。手动 MCP 保存在独立的 `manual_mcp_servers` 表中，不伪装成 Plugin。Plugin 和手动 MCP 会在统一 MCP Catalog 中投影。Plugin 的启用状态、版本、hash 和引用关系进入 SQLite。
 
+Plugin 的安装根目录是 `extensions/plugins/<pluginId>/<version>/`。内容 Hash 仅作为内部内容身份参与 SQLite、快照、信任和完整性核验，不再作为目录层级。Runtime 不兼容旧的 Hash 子目录布局。旧安装需要清理后重新导入，历史快照不迁移。目录发布失败不会清理其他已存在的版本目录。
+
 Skill 当前按以下边界工作：
 
 ```text

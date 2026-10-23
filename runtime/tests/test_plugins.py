@@ -99,11 +99,76 @@ class PluginCatalogTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertFalse(first["enabled"])
         installed = self.catalog.installed_root("demo")
+        self.assertEqual(installed, self.catalog.root / "demo" / "1.0.0")
+        self.assertFalse((installed / str(first["contentHash"])).exists())
         self.assertEqual(installed.stat().st_mode & 0o777, 0o700)
         self.assertEqual(
             (installed / "plugin.json").stat().st_mode & 0o777, 0o600
         )
         self.assertFalse(any(path.name.startswith(".import-") for path in installed.parent.iterdir()))
+
+    def test_short_install_path_survives_restart_with_content_validation(self) -> None:
+        imported = self.catalog.import_directory(self.source)
+        installed = self.catalog.installed_root("demo")
+        self.catalog.set_enabled("demo", True)
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        self.catalog = PluginCatalog(self.store)
+        self.assertEqual(self.catalog.installed_root("demo"), installed)
+        self.assertEqual(self.catalog.package("demo").manifest.id, "demo")
+        self.assertEqual(self.catalog.extension_snapshot()["plugins"][0]["contentHash"], imported["contentHash"])
+        (installed / "skills/review/SKILL.md").write_text("changed", encoding="utf-8")
+        with self.assertRaisesRegex(PluginImportError, "plugin_unavailable"):
+            self.catalog.package("demo")
+
+    def test_occupied_version_directory_is_not_overwritten_or_deleted(self) -> None:
+        destination = self.catalog.root / "demo" / "1.0.0"
+        destination.mkdir(parents=True)
+        marker = destination / "keep.txt"
+        marker.write_text("existing package", encoding="utf-8")
+        with self.assertRaisesRegex(PluginImportError, "plugin_version_conflict"):
+            self.catalog.import_directory(self.source)
+        self.assertEqual(marker.read_text(), "existing package")
+        self.assertIsNone(self.store.plugin_record("demo"))
+
+    def test_publish_collision_does_not_delete_the_other_directory(self) -> None:
+        destination = self.catalog.root / "demo" / "1.0.0"
+
+        def collide(_source: Path, target: Path) -> None:
+            self.assertEqual(target, destination)
+            target.mkdir()
+            (target / "keep.txt").write_text("other import", encoding="utf-8")
+            raise FileExistsError("publish collision")
+
+        with patch("eidos_runtime.extensions.plugins.os.replace", side_effect=collide):
+            with self.assertRaises(FileExistsError):
+                self.catalog.import_directory(self.source)
+        self.assertEqual((destination / "keep.txt").read_text(), "other import")
+        self.assertFalse(any(path.name.startswith(".import-") for path in destination.parent.iterdir()))
+
+    def test_failed_record_commit_removes_only_the_new_package(self) -> None:
+        private_data = self.catalog.root / "demo" / "hook-data"
+        private_data.mkdir(parents=True)
+        (private_data / "keep.txt").write_text("private data", encoding="utf-8")
+        with patch.object(self.store, "insert_plugin_record", side_effect=RuntimeError("commit failed")):
+            with self.assertRaisesRegex(RuntimeError, "commit failed"):
+                self.catalog.import_directory(self.source)
+        self.assertFalse((self.catalog.root / "demo" / "1.0.0").exists())
+        self.assertEqual((private_data / "keep.txt").read_text(), "private data")
+        self.assertIsNone(self.store.plugin_record("demo"))
+
+    def test_legacy_hash_layout_is_not_loaded_and_can_be_removed(self) -> None:
+        imported = self.catalog.import_directory(self.source)
+        installed = self.catalog.installed_root("demo")
+        staging = installed.parent / ".legacy-fixture"
+        installed.rename(staging)
+        installed.mkdir()
+        staging.rename(installed / str(imported["contentHash"]))
+        with self.assertRaisesRegex(PluginImportError, "plugin_unavailable"):
+            self.catalog.package("demo")
+        self.catalog.remove("demo")
+        self.assertFalse(installed.exists())
 
     def test_finder_metadata_is_ignored_on_import_and_runtime_validation(self) -> None:
         for relative in (".DS_Store", "skills/review/.DS_Store"):

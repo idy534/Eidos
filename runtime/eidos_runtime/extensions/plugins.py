@@ -73,14 +73,16 @@ class PluginCatalog:
                 raise PluginImportError("plugin_version_conflict")
             raise PluginImportError("plugin_id_conflict")
 
-        destination = self._installed_path(
-            manifest.id, manifest.version, content_hash
-        )
+        destination = self._installed_path(manifest.id, manifest.version)
+        if os.path.lexists(destination):
+            raise PluginImportError("plugin_version_conflict")
         _private_directory(destination.parent)
         temporary = destination.parent / f".import-{uuid.uuid4().hex}"
+        published = False
         try:
             _install_files(temporary, files)
             os.replace(temporary, destination)
+            published = True
             _fsync_directory(destination.parent)
             record = self.store.insert_plugin_record({
                 "id": manifest.id,
@@ -97,7 +99,8 @@ class PluginCatalog:
             })
         except Exception:
             _remove_tree(temporary, self.root)
-            _remove_tree(destination, self.root)
+            if published:
+                _remove_tree(destination, self.root)
             raise
         return self._describe(record, package)
 
@@ -481,12 +484,10 @@ class PluginCatalog:
             raise PluginImportError("plugin_unavailable") from None
 
     def _path_from_record(self, record: dict[str, object]) -> Path:
-        return self._installed_path(
-            str(record["id"]), str(record["version"]), str(record["contentHash"])
-        )
+        return self._installed_path(str(record["id"]), str(record["version"]))
 
-    def _installed_path(self, plugin_id: str, version: str, content_hash: str) -> Path:
-        return self.root / plugin_id / version / content_hash
+    def _installed_path(self, plugin_id: str, version: str) -> Path:
+        return self.root / plugin_id / version
 
 
 def _read_source(source: Path) -> dict[str, bytes]:

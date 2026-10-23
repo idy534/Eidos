@@ -247,26 +247,29 @@ class SkillCatalogTests(unittest.TestCase):
         self.assertEqual(resource["content"], "Keep changes small.\n")
 
     def test_rejects_escape_symlink_binary_and_non_utf8_resources(self) -> None:
+        # Resource reads in a Run use its pinned catalog, not fresh discovery
+        # of the intentionally changed package used by this boundary test.
+        snapshot = self.skills.catalog_snapshot(self.snapshot)
         with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
-            self.skills.read_resource(self.snapshot, "demo:review", "../plugin.json")
+            self.skills.read_resource(snapshot, "demo:review", "../plugin.json")
 
         root = self.plugins.installed_root("demo") / "skills" / "review"
         os.symlink("references/rules.md", root / "linked.md")
         with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
-            self.skills.read_resource(self.snapshot, "demo:review", "linked.md")
+            self.skills.read_resource(snapshot, "demo:review", "linked.md")
         outside = root.parent.parent / "outside-resource"
         outside.mkdir()
         (outside / "secret.md").write_text("outside\n", encoding="utf-8")
         os.symlink(outside, root / "linked-dir", target_is_directory=True)
         with self.assertRaisesRegex(SkillReadError, "skill_path_invalid"):
-            self.skills.read_resource(self.snapshot, "demo:review", "linked-dir/secret.md")
+            self.skills.read_resource(snapshot, "demo:review", "linked-dir/secret.md")
 
         (root / "binary.bin").write_bytes(b"a\x00b")
         with self.assertRaisesRegex(SkillReadError, "skill_resource_not_text"):
-            self.skills.read_resource(self.snapshot, "demo:review", "binary.bin")
+            self.skills.read_resource(snapshot, "demo:review", "binary.bin")
         (root / "invalid.txt").write_bytes(b"\xff")
         with self.assertRaisesRegex(SkillReadError, "skill_resource_not_text"):
-            self.skills.read_resource(self.snapshot, "demo:review", "invalid.txt")
+            self.skills.read_resource(snapshot, "demo:review", "invalid.txt")
 
     def test_deploys_system_skills_and_discovers_user_skills(self) -> None:
         assert self.store.data_directory is not None
