@@ -22,7 +22,7 @@ import { ChannelSettings } from "./ChannelSettings.js";
 import { WorktreeSettings } from "./WorktreeSettings.js";
 import { AgentSettings } from "./AgentSettings.js";
 import { Button } from "../Button.js";
-import { AlertBanner } from "../AlertBanner.js";
+import { ToastContainer, type ToastItem } from "../ToastContainer.js";
 
 interface SettingsPageProps {
   initialCategory?: SettingsCategory;
@@ -80,7 +80,7 @@ export function SettingsPage({
   onRemoveMcp,
 }: SettingsPageProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
-  const [toasts, setToasts] = useState<SettingsToast[]>([]);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -96,13 +96,20 @@ export function SettingsPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [hasBlockingModal, onClose]);
 
+  function dismissToast(id: string) {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }
+
   function showToast(message: string, type: "success" | "info" | "error" = "info") {
     const id = `${Date.now()}-${Math.random()}`;
-    setToasts((prev) => [...prev, { id, type, message }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
+    setToasts((prev) => [...prev, { id, type, message, duration: 3500 }]);
   }
+
+  useEffect(() => {
+    if (extensionError) {
+      showToast(extensionError, "error");
+    }
+  }, [extensionError]);
 
   const storageReady = runtime.state === "ready" && runtime.storageHealth.state === "ready";
   const standaloneSkills = skills.filter((skill) => skill.sourceKind !== "plugin");
@@ -160,13 +167,9 @@ export function SettingsPage({
           </aside>
 
           <section className="settings-content-col">
-            {extensionError && (
-              <AlertBanner tone="error">{extensionError}</AlertBanner>
-            )}
-
             {activeCategory === "web_search" && (storageReady ? <WebSearchSettings onShowToast={showToast}/> : <p role="alert">Runtime 尚未就绪。</p>)}
             {activeCategory === "channels" && (storageReady ? <ChannelSettings modelList={modelList}/> : <p role="alert">Runtime 尚未就绪。</p>)}
-            {activeCategory === "memory" && storageReady && <MemorySettings sessionId={sessionId} onOpenSource={onOpenMemorySource}/>}
+            {activeCategory === "memory" && storageReady && <MemorySettings sessionId={sessionId} onOpenSource={onOpenMemorySource} onShowToast={showToast} />}
             {activeCategory === "memory" && !storageReady && <p role="alert">Runtime 尚未就绪。</p>}
             {activeCategory === "model" && (
               <ModelSettings
@@ -231,22 +234,7 @@ export function SettingsPage({
         </div>
       </main>
 
-      {toasts.length > 0 && (
-        <div className="settings-toast-container" aria-live="polite">
-          {toasts.map((toast) => (
-            <div
-              key={toast.id}
-              className={`settings-toast settings-toast--${toast.type}`}
-              role={toast.type === "error" ? "alert" : "status"}
-            >
-              <span className="toast-icon">
-                {toast.type === "success" ? "✓" : toast.type === "error" ? "✕" : "ℹ"}
-              </span>
-              <span className="toast-message">{toast.message}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

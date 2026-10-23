@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Automation, AutomationOccurrence, AutomationDesktopRequest, AutomationSummary } from "../../../../shared/automation.js";
 import type { ModelOption, Project, Session } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { AutomationForm, type InitialAutomationValues } from "./AutomationForm.js";
 import { AutomationTaskList } from "./AutomationTaskList.js";
 import { userFacingError } from "../../session-state.js";
@@ -180,44 +181,6 @@ export function AutomationPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const remainingRef = useRef<number>(3500);
-  const startTimeRef = useRef<number>(Date.now());
-
-  useEffect(() => {
-    if (!error) return;
-    remainingRef.current = 3500;
-    startTimeRef.current = Date.now();
-    timerRef.current = setTimeout(() => {
-      setError("");
-    }, 3500);
-
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [error]);
-
-  const handleToastMouseEnter = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-      const elapsed = Date.now() - startTimeRef.current;
-      remainingRef.current = Math.max(1000, remainingRef.current - elapsed);
-    }
-  };
-
-  const handleToastMouseLeave = () => {
-    if (!timerRef.current && error) {
-      startTimeRef.current = Date.now();
-      timerRef.current = setTimeout(() => {
-        setError("");
-      }, remainingRef.current);
-    }
-  };
-
   const refresh = useCallback(async (after?: string) => {
     const version = ++listVersion.current;
     try {
@@ -395,31 +358,10 @@ export function AutomationPage({
 
   return (
     <div className="automation-page-wrapper">
-      {error && (
-        <div className="app-toast-container automation-toast-container" aria-live="polite">
-          <div
-            className="app-toast app-toast--error"
-            role="alert"
-            onMouseEnter={handleToastMouseEnter}
-            onMouseLeave={handleToastMouseLeave}
-          >
-            <span className="app-toast-icon" aria-hidden="true">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                <path d="M8 1a7 7 0 1 0 7 7A7.008 7.008 0 0 0 8 1zm3.2 9.5l-.7.7L8 8.7l-2.5 2.5-.7-.7L7.3 8 4.8 5.5l.7-.7L8 7.3l2.5-2.5.7.7L8.7 8z" />
-              </svg>
-            </span>
-            <span className="app-toast-message">{error}</span>
-            <button
-              type="button"
-              className="app-toast-close"
-              onClick={() => setError("")}
-              aria-label="关闭提示"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
+      <ToastContainer
+        toasts={error ? [{ id: "automation-error", message: error, type: "error", duration: 3500 }] : []}
+        onDismiss={() => setError("")}
+      />
       <header className="automation-page-header">
         <div className="header-left">
           <Button

@@ -12,7 +12,7 @@ import { Toggle } from "../Toggle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { StatusBadge, type StatusTone } from "../StatusBadge.js";
 import { EmptyState } from "../EmptyState.js";
-import { AlertBanner } from "../AlertBanner.js";
+import { ToastContainer } from "../ToastContainer.js";
 
 const statusLabels: Record<string, string> = {
   active: "已生效",
@@ -59,9 +59,11 @@ const jobToneMap: Record<string, StatusTone> = {
 export function MemorySettings({
   sessionId,
   onOpenSource,
+  onShowToast,
 }: {
   sessionId?: string | undefined;
   onOpenSource?: ((id: string) => void) | undefined;
+  onShowToast?: ((message: string, type: "success" | "info" | "error") => void) | undefined;
 }) {
   const [state, setState] = useState<MemoryState>();
   const [scope, setScope] = useState<"current" | "global">(sessionId ? "current" : "global");
@@ -131,7 +133,10 @@ export function MemorySettings({
           setState(value);
         }
       } catch {
-        if (!canceled) setError("无法读取记忆，请检查 Runtime 状态。");
+        if (!canceled) {
+          setError("无法读取记忆，请检查 Runtime 状态。");
+          onShowToast?.("无法读取记忆，请检查 Runtime 状态。", "error");
+        }
       } finally {
         pending = false;
         if (!canceled && latest) scheduleJobs(latest);
@@ -262,7 +267,12 @@ export function MemorySettings({
         </div>
       </div>
 
-      {error && <AlertBanner tone="error">{error}</AlertBanner>}
+      {!onShowToast && error && (
+        <ToastContainer
+          toasts={[{ id: "memory-error", message: error, type: "error", duration: 3500 }]}
+          onDismiss={() => setError("")}
+        />
+      )}
 
       {!selected ? (
         <div className="memory-loading-card">

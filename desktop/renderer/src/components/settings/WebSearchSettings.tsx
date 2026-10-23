@@ -11,6 +11,7 @@ import type {
 } from "../../../../shared/web-search.generated.js";
 import { Button } from "../Button.js";
 import { StatusBadge } from "../StatusBadge.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { WebSearchProviderFields } from "./WebSearchProviderFields.js";
 
 type KeyDraft = { value: string; visible: boolean };
@@ -261,24 +262,10 @@ export function WebSearchSettings({
     <div className="web-search-settings">
       {/* 独立环境下的全局悬浮条兜底（3.5 秒自动关闭） */}
       {error && (
-        <div className="web-search-toast-container" aria-live="assertive">
-          <div className="web-search-toast web-search-toast--error" role="alert">
-            <span className="web-search-toast-icon">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM7.25 5v4a.75.75 0 0 0 1.5 0V5a.75.75 0 0 0-1.5 0zm.75 6.5a.875.875 0 1 0 0-1.75.875.875 0 0 0 0 1.75z" />
-              </svg>
-            </span>
-            <span className="web-search-toast-message">{error}</span>
-            <button
-              type="button"
-              className="web-search-toast-close"
-              onClick={() => setError("")}
-              aria-label="关闭提示"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+        <ToastContainer
+          toasts={[{ id: "web-search-error", message: error, type: "error", duration: 3500 }]}
+          onDismiss={() => setError("")}
+        />
       )}
 
       <header className="web-search-header">

@@ -9,6 +9,7 @@ import { Kbd } from "./Kbd.js";
 import { SearchInput } from "./SearchInput.js";
 import { SettingSection } from "./SettingSection.js";
 import { Spinner } from "./Spinner.js";
+import { ToastContainer } from "./Toast.js";
 
 describe("Global common components", () => {
   describe("SearchInput", () => {
@@ -181,6 +182,67 @@ describe("Global common components", () => {
       expect(screen.getByRole("alertdialog")).toBeInTheDocument();
       expect(screen.getByText("确认删除此项？")).toBeInTheDocument();
       expect(screen.getByText("该操作不可撤销。")).toBeInTheDocument();
+    });
+  });
+
+  describe("ToastContainer", () => {
+    it("renders toast items at top center with messages, icons and correct ARIA roles", () => {
+      const onDismiss = vi.fn();
+      render(
+        <ToastContainer
+          toasts={[
+            { id: "1", message: "操作成功完成", type: "success" },
+            { id: "2", message: "配置已被变更", type: "warning" },
+            { id: "3", message: "请求执行失败", type: "error" },
+            { id: "4", message: "正在同步数据", type: "info" },
+          ]}
+          onDismiss={onDismiss}
+        />,
+      );
+
+      expect(screen.getByText("操作成功完成")).toBeInTheDocument();
+      expect(screen.getByText("配置已被变更")).toBeInTheDocument();
+      expect(screen.getByText("请求执行失败")).toBeInTheDocument();
+      expect(screen.getByText("正在同步数据")).toBeInTheDocument();
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(2); // error + warning
+
+      const statuses = screen.getAllByRole("status");
+      expect(statuses).toHaveLength(2); // success + info
+    });
+
+    it("triggers onDismiss when close button is clicked", () => {
+      const onDismiss = vi.fn();
+      render(
+        <ToastContainer
+          toasts={[{ id: "t1", message: "提示测试", type: "info" }]}
+          onDismiss={onDismiss}
+        />,
+      );
+
+      const closeBtn = screen.getByRole("button", { name: "关闭提示" });
+      fireEvent.click(closeBtn);
+      expect(onDismiss).toHaveBeenCalledWith("t1");
+    });
+
+    it("automatically dismisses toast after configured duration", () => {
+      vi.useFakeTimers();
+      try {
+        const onDismiss = vi.fn();
+        render(
+          <ToastContainer
+            toasts={[{ id: "auto1", message: "自动消失", type: "success", duration: 2000 }]}
+            onDismiss={onDismiss}
+          />,
+        );
+
+        expect(onDismiss).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(2000);
+        expect(onDismiss).toHaveBeenCalledWith("auto1");
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

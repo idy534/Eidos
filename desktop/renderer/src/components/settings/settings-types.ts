@@ -1,3 +1,5 @@
+import type { ToastItem } from "../ToastContainer.js";
+
 export type SettingsCategory = "web_search" | "channels" | "memory" | "model" | "plugins" | "skills" | "agents" | "mcp" | "worktrees" | "runtime";
 
 export type SettingsPendingAction =
@@ -13,8 +15,4 @@ export type SettingsPendingAction =
   | { type: "remove_mcp"; serverId: string }
   | undefined;
 
-export interface SettingsToast {
-  id: string;
-  type: "success" | "info" | "error";
-  message: string;
-}
+export type SettingsToast = ToastItem;

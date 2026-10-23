@@ -4,7 +4,6 @@ import { CodeBlock } from "../CodeBlock.js";
 import type { McpCreateInput, McpServerRecord, McpUpdateInput } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { StatusBadge } from "../StatusBadge.js";
-import { AlertBanner } from "../AlertBanner.js";
 import { McpReviewDialog } from "./McpReviewDialog";
 import { McpCreateDialog } from "./McpCreateDialog";
 import { McpDetailDialog } from "./McpDetailDialog.js";
@@ -258,7 +257,7 @@ export function McpSettings({
       setReviewingServer(null);
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "启用 MCP Server 失败";
-      setLocalError(msg);
+      onShowToast(msg, "error");
     }
   }
 
@@ -269,7 +268,7 @@ export function McpSettings({
       onShowToast(`MCP Server “${server.serverId}” 已停用`, "info");
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "停用 MCP Server 失败";
-      setLocalError(msg);
+      onShowToast(msg, "error");
     }
   }
 
@@ -281,7 +280,8 @@ export function McpSettings({
       setCreateOpen(false);
       setPresetDraft(null);
     } catch (cause) {
-      setLocalError(cause instanceof Error ? cause.message : "保存 MCP Server 失败");
+      const msg = cause instanceof Error ? cause.message : "保存 MCP Server 失败";
+      onShowToast(msg, "error");
       throw cause;
     }
   }
@@ -293,7 +293,8 @@ export function McpSettings({
       onShowToast(`MCP Server “${input.serverId}” 已保存，请重新审阅后启用`, "success");
       setEditingServer(null);
     } catch (cause) {
-      setLocalError(cause instanceof Error ? cause.message : "保存 MCP Server 失败");
+      const msg = cause instanceof Error ? cause.message : "保存 MCP Server 失败";
+      onShowToast(msg, "error");
       throw cause;
     }
   }
@@ -305,7 +306,8 @@ export function McpSettings({
       onShowToast(`MCP Server “${serverId}” 已卸载`, "success");
       setEditingServer(null);
     } catch (cause) {
-      setLocalError(cause instanceof Error ? cause.message : "卸载 MCP Server 失败");
+      const msg = cause instanceof Error ? cause.message : "卸载 MCP Server 失败";
+      onShowToast(msg, "error");
       throw cause;
     }
   }
@@ -362,12 +364,6 @@ export function McpSettings({
           </Button>
         </div>
       </div>
-
-      {localError && (
-        <AlertBanner tone="error">
-          {localError}
-        </AlertBanner>
-      )}
 
       {/* Main Content Area */}
       {servers.length === 0 ? (

@@ -63,7 +63,7 @@ export function PluginSettings({
       onShowToast("Plugin 导入成功", "success");
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "导入 Plugin 失败";
-      setLocalError(msg);
+      onShowToast(msg, "error");
     }
   }
 
@@ -81,7 +81,7 @@ export function PluginSettings({
       );
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "更新 Plugin 状态失败";
-      setLocalError(msg);
+      onShowToast(msg, "error");
     }
   }
 
@@ -95,7 +95,9 @@ export function PluginSettings({
       setReview(null);
       onShowToast("Hook 已信任，将在后续任务中自动运行。", "success");
     } catch (cause) {
-      setLocalError(cause instanceof Error ? cause.message : "保存 Hook 信任失败");
+      const msg = cause instanceof Error ? cause.message : "保存 Hook 信任失败";
+      setLocalError(msg);
+      onShowToast(msg, "error");
     } finally {
       setReviewBusy(false);
     }
@@ -107,7 +109,8 @@ export function PluginSettings({
       await onTrustPluginHooks(plugin.id, plugin.contentHash, false);
       onShowToast("Hook 信任已撤销，后续调用将跳过。", "info");
     } catch (cause) {
-      setLocalError(cause instanceof Error ? cause.message : "撤销 Hook 信任失败");
+      const msg = cause instanceof Error ? cause.message : "撤销 Hook 信任失败";
+      onShowToast(msg, "error");
     }
   }
 
@@ -120,7 +123,7 @@ export function PluginSettings({
       setPluginToRemove(null);
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "移除 Plugin 失败";
-      setLocalError(msg);
+      onShowToast(msg, "error");
     }
   }
 
@@ -147,8 +150,6 @@ export function PluginSettings({
           </Button>
         </div>
       </div>
-
-      {localError && <AlertBanner tone="error">{localError}</AlertBanner>}
 
       <div className="plugin-stats-summary">
         <div className="stat-badge">已导入 {plugins.length} 项</div>
