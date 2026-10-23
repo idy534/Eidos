@@ -3,3 +3,7 @@
 本目录保存外部技术参考资料。参考资料不是 Eidos 当前架构规范，也不代表 Eidos 已经实现其中的能力。
 
 当前行为请阅读 [当前架构](../../current-architecture.md)、[当前能力](../../current-capabilities.md) 和 [当前限制](../../current-limitations.md)。
+
+## 资料索引
+
+- [Codex 技术架构参考](codex-technical-architecture.md)：历史外部资料，不作为当前 Eidos 的设计约束。

@@ -1,5 +1,7 @@
 # 自定义子 Agent 设计方案
 
+> 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
+
 日期：2026-10-15。
 
 状态：核心能力已在 `codex/custom-subagents` 分支实现。本文记录配置规范、实际实现与待补充项。功能尚未发布；验证范围与限制见第 15 节。
@@ -36,14 +38,14 @@ Eidos 允许用户通过 TOML 文件定义新的子 Agent 类型。用户可以�
 
 当前实现入口：
 
-- [类型与调用参数](../runtime/eidos_runtime/domain/collaboration.py)。
-- [协作工具](../runtime/eidos_runtime/tools/collaboration.py)。
-- [协作应用](../runtime/eidos_runtime/application/collaboration.py)。
-- [子 Run 创建与结果摘要](../runtime/eidos_runtime/persistence/collaboration.py)。
-- [指令组装](../runtime/eidos_runtime/model/instructions.py)。
-- [子任务工具范围](../runtime/eidos_runtime/runtime/run_resources.py)。
-- [输入引用](../runtime/eidos_runtime/domain/input_reference.py)、[输入引用应用](../runtime/eidos_runtime/application/input_context.py)。
-- [输入候选列表](../desktop/renderer/src/components/InputPicker.tsx)、[子任务面板](../desktop/renderer/src/components/AgentPanel.tsx)。
+- [类型与调用参数](../../runtime/eidos_runtime/domain/collaboration.py)。
+- [协作工具](../../runtime/eidos_runtime/tools/collaboration.py)。
+- [协作应用](../../runtime/eidos_runtime/application/collaboration.py)。
+- [子 Run 创建与结果摘要](../../runtime/eidos_runtime/persistence/collaboration.py)。
+- [指令组装](../../runtime/eidos_runtime/model/instructions.py)。
+- [子任务工具范围](../../runtime/eidos_runtime/runtime/run_resources.py)。
+- [输入引用](../../runtime/eidos_runtime/domain/input_reference.py)、[输入引用应用](../../runtime/eidos_runtime/application/input_context.py)。
+- [输入候选列表](../../desktop/renderer/src/components/InputPicker.tsx)、[子任务面板](../../desktop/renderer/src/components/AgentPanel.tsx)。
 
 ## 3. 定义目录与身份
 
@@ -356,7 +358,7 @@ Runtime 增加 `agent/definitionRead`、`agent/definitionSave` 和 `agent/defini
 - 升级、失败回滚、备份恢复和 Blob 保留覆盖新增快照关联。
 - Desktop 正确显示名称、模型、不可用原因、历史引用和完整配置预览。
 
-实现阶段先执行相关 Runtime、协议和 Renderer/Main 定向测试。开发者不因跨层修改自动执行 Full Suite。具体命令遵循 [DEVELOPMENT.md](../DEVELOPMENT.md) 和相应目录的 `AGENTS.md`。
+实现阶段先执行相关 Runtime、协议和 Renderer/Main 定向测试。开发者不因跨层修改自动执行 Full Suite。基础流程见 [开发指南](../../DEVELOPMENT.md)，专题命令见 [自定义子 Agent 验证](../development/README.md#自定义子-agent)，执行门槛遵循相应目录的 `AGENTS.md`。
 
 本次设计文档不宣称上述测试已经通过。生产实现完成后，开发者需要同步 `docs/current-*`，再依据实际验证报告能力与限制。
 

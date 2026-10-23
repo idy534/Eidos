@@ -1,6 +1,8 @@
 # automation：Session 内定时任务工具详细设计 V3
 
-修订日期：2026-10-15。本文保留实现前的设计依据，并补充 [本地定时任务方案 V3](scheduled-tasks-research-and-design.md) 和 [源码与缺口复核](scheduled-tasks-gap-review.md)。当前实现、协议和验证边界以 [当前本地定时任务](current-automations.md)、生产代码与测试为准。
+> 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
+
+修订日期：2026-10-15。本文保留实现前的设计依据，并补充 [本地定时任务方案 V3](scheduled-tasks-research-and-design.md) 和 [源码与缺口复核](../research/scheduled-tasks-gap-review.md)。当前实现、协议和验证边界以 [当前本地定时任务](../current-automations.md)、生产代码与测试为准。
 
 **模型只使用一个定时任务工具 `automation`。工具通过 mode 处理查看、创建、更新、删除和时间预览。工具默认 deferred，模型通过 tool_search 激活后使用。创建时传 sessionId 表示复用已有 Session；不传表示每次触发新建 Session。**
 
@@ -38,7 +40,7 @@
   → Runtime 返回真实保存或查询结果
 ```
 
-当前 tool_search 只返回名称、描述、来源、分数等摘要，不直接附带 inputSchema。完整 Schema 由下一次模型请求中的 Tool Definition 提供。未激活调用沿用 tool_not_activated，不执行工具、创建计划或提交 Intent。[搜索](../runtime/eidos_runtime/tools/search.py)、[快照](../runtime/eidos_runtime/tools/registry.py#L653)
+当前 tool_search 只返回名称、描述、来源、分数等摘要，不直接附带 inputSchema。完整 Schema 由下一次模型请求中的 Tool Definition 提供。未激活调用沿用 tool_not_activated，不执行工具、创建计划或提交 Intent。[搜索](../../runtime/eidos_runtime/tools/search.py)、[快照](../../runtime/eidos_runtime/tools/registry.py#L653)
 
 激活按 Run 持久化，不成为 Session 永久状态。当前激活历史最多保留 32 个名称；快照最多接受 16 个激活工具，总定义最多 128 KiB。工具因预算被移出后，模型可以再次精确搜索。已在快照中的工具无需重复搜索。
 
@@ -194,7 +196,7 @@ model 的结构沿用现有 Run 模型选择：
 }
 ```
 
-modelId 必须对应已有配置；上例只是字段示例。reasoningSelection 复用当前 none / thinking / low / medium / high / max 选择，并按实际模型能力校验。[现有 Run 参数](../runtime/eidos_runtime/protocol/methods.py#L434)
+modelId 必须对应已有配置；上例只是字段示例。reasoningSelection 复用当前 none / thinking / low / medium / high / max 选择，并按实际模型能力校验。[现有 Run 参数](../../runtime/eidos_runtime/protocol/methods.py#L434)
 
 - create 省略 model 时，Runtime 固定当前调用 Run 的有效模型与思考选择，并在结果中返回。
 - 提供 model 时，modelId 必填；reasoningSelection 省略时使用该模型的有效默认值，不套用另一个模型的选择。
@@ -206,7 +208,7 @@ approvalMode 是计划的独立字段。create 省略时，Runtime 保存 auto_r
 
 每次触发时，Runtime 将计划的 approvalMode 固定到本次 Run。修改计划只影响后续接受的 Run，不改变已经入队或正在执行的 Run，也不改变用户对话的审批选择。view、写入回执和任务卡片均显示实际保存的模式。
 
-auto_review 复用现有替我审批流程：系统只审查原本需要审批的操作；高危请求继续由用户决定，审查失败、超时或无法判断时转为人工处理。待审批继续占用该计划的未完成执行，同计划后续时刻按既有忙碌规则跳过。未来 Run 不继承旧 Grant 或完全访问确认。[当前审批行为](current-capabilities.md#L432)
+auto_review 复用现有替我审批流程：系统只审查原本需要审批的操作；高危请求继续由用户决定，审查失败、超时或无法判断时转为人工处理。待审批继续占用该计划的未完成执行，同计划后续时刻按既有忙碌规则跳过。未来 Run 不继承旧 Grant 或完全访问确认。[当前审批行为](../current-capabilities.md#L432)
 
 ## 7. update 与 delete
 
@@ -255,7 +257,7 @@ delete 只接受上述三个字段。系统软删除计划并停止未来触发�
 
 ### 当前事实与本版取舍
 
-当前 ToolSpec 和 ToolExecutionPolicy 按工具固定声明 sideEffect。ToolDispatchPlan.side_effect 读取这个声明；Controller 在 Handler 前检查 Reconciliation。Registry 也只允许 sideEffect=none 的 parallel 工具进入并行片段。[Spec](../runtime/eidos_runtime/tools/registry.py#L52)、[Dispatch](../runtime/eidos_runtime/runtime/tool_dispatcher.py#L35)、[前置检查](../runtime/eidos_runtime/runtime/tool_execution.py#L568)
+当前 ToolSpec 和 ToolExecutionPolicy 按工具固定声明 sideEffect。ToolDispatchPlan.side_effect 读取这个声明；Controller 在 Handler 前检查 Reconciliation。Registry 也只允许 sideEffect=none 的 parallel 工具进入并行片段。[Spec](../../runtime/eidos_runtime/tools/registry.py#L52)、[Dispatch](../../runtime/eidos_runtime/runtime/tool_dispatcher.py#L35)、[前置检查](../../runtime/eidos_runtime/runtime/tool_execution.py#L568)
 
 因此，合并工具不能只合并 Schema，然后让所有 mode 都走状态写入。查询应当在存在未知副作用时仍能读取，查询取消或异常也不能凭工具名字被误报为未知写入。
 
@@ -306,7 +308,7 @@ Runtime 从持久 ToolCall / Item 派生 operationId，模型不填写。计划�
 
 regenerate 会产生新 Run 和用户 Item，因此 Runtime 通过 run_revisions 解析原逻辑请求。已经保存的计划不因重新生成回答再创建一份。原操作未提交时，系统可以按原逻辑请求完成第一次写入。真实用户编辑或新输入表达新要求时，系统按新请求处理。
 
-当前工具控制器在 Handler 返回后提交最终 ToolResult；该提交接口没有外部事务参数。[控制器](../runtime/eidos_runtime/runtime/tool_execution.py#L895)、[结果提交](../runtime/eidos_runtime/db/repositories/execution.py#L1521)
+当前工具控制器在 Handler 返回后提交最终 ToolResult；该提交接口没有外部事务参数。[控制器](../../runtime/eidos_runtime/runtime/tool_execution.py#L895)、[结果提交](../../runtime/eidos_runtime/db/repositories/execution.py#L1521)
 
 计划写入需要适应这两个提交点。系统复用 operations 保存 automation/tool 与 automation/create 回执；回执、计划、领域事件先原子提交，最终 ToolResult 继续由现有 Controller 提交。恢复时先读回执，准确收敛两个提交点间的失败，不重放写入，也不把已取消 Run 改成成功。
 

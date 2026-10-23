@@ -10,6 +10,10 @@
 
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。
 
+[交互式架构图](architecture-overview.html) 按系统总览、一次 Run、权限与恢复、数据与目录、源码索引提供五个视图。总览中的模块按职责分组，模块框不代表独立进程。图中区分 Renderer、Main 与 Python Runtime，并单独标出请求通道和持久事实回传。模块详情与索引记录本次核对的源码入口，HTML 可以离线打开，也支持打印全部视图。
+
+图中的当前实现包含受管 Run Worker 线程与共享 AnyIO 内核，不把异步目标画成全面完成。同 Session 保留 FIFO，不同 Session 可以并行；每个父 Run 最多同时执行 8 个子 Agent。Model Gateway 的普通路径使用 Pydantic AI Model API，Responses 路径使用独立原生适配器。图中也区分 state.sqlite 执行事实、可重建仓库库和受控文件，不把模型凭据与大正文都画进 SQLite。
+
 当前 Model Gateway 使用 `pydantic_ai_client.map_model_error → ModelRequestFailure`，Usage 使用 `client.ModelUsage`。源码已移除未接入调用链的旧 Gateway 事件、Usage/Cost 定义和 HTTP 错误转换器。重试判断仍保留 `EidosModelError` 基类。实际压缩仍由 `ContextCompactor → VerifiedCompactionRepository.verify_and_persist` 执行验证与持久化；Application 保留已有验证接口，移除无人调用的持久化包装与依赖注入。
 
 Renderer 的新建会话继续使用 `AppShell → useSessionController` 的草稿流程。源码已移除无人使用的 CreateSessionDialog、AgentSourceDialog、EmptySettingsState 和仅由组件测试使用的 Badge。ExecutionFeed 只接收审批展示所需的数据，不再逐层传递未使用的审批操作回调、响应状态、projectless 和 stepResolutions。审批交互继续由现有审批输入区及控制器处理；`session/read` 的 stepResolutions 兼容字段和双端校验保持原样。
@@ -911,7 +915,7 @@ Schema v29 增加 `run_agent_catalogs`，它关联父 Run 与现有 Blob 存储�
 
 输入链路沿用 `input/prepare → run/start.references`。新引用类型为 `agent`，Runtime 保存完整定义供预览，并在 Run 接纳时复核版本。父模型只看到目录摘要与本轮选择；历史引用不会自动激活新一轮。编辑重发和重新生成通过已验证的源 Run 复用原定义。目录修改只影响新 Run，已有实例续派不重读 TOML。
 
-Desktop 通过 `agent/catalog`、typed IPC 和现有 `+` 选择类型，子任务面板展示实际类型、提供商与模型。Blob GC 和现有明文备份保留目录快照，备份同时保存用户 TOML，模型凭证继续排除。子 Run 保留父工作模式，Plan 子任务不暴露 `write_plan`。详细规范和后续范围见 [自定义子 Agent 方案](custom-subagents-design.md)。
+Desktop 通过 `agent/catalog`、typed IPC 和现有 `+` 选择类型，子任务面板展示实际类型、提供商与模型。Blob GC 和现有明文备份保留目录快照，备份同时保存用户 TOML，模型凭证继续排除。子 Run 保留父工作模式，Plan 子任务不暴露 `write_plan`。详细规范和后续范围见 [自定义子 Agent 方案](design/custom-subagents-design.md)。
 
 Desktop 的设置页和输入框共用智能体编辑表单。模型与思考强度直接使用公共 `ModelSelector`，所选配置提供实际 `provider_id` 与 `config_id`。配置管理沿用 `Renderer → preload → Main → RuntimeClient → Method Registry → AgentDefinitionsApplication`，增加 `agent/definitionRead`、`agent/definitionSave` 和 `agent/definitionRemove`。`AgentDefinitionFiles` 复用 Catalog 的有界安全读取，负责固定目录、文件身份、原始内容版本与非阻塞目录锁。新文件排他创建；已有文件在版本核验后通过受控 fd 原地写入并 fsync，结果再次读取核验。失败不自动重试；写入或删除后无法确认持久化时，接口返回明确的不确定结果。配置仍以 TOML 为来源，没有新增业务数据库或执行循环。DTO 与 Ajv Schema 从 Python 生成，Main 同时校验请求和响应。凭证仍由已有模型配置管理。
 

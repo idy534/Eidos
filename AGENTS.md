@@ -3,7 +3,7 @@
 本文件约束 Eidos 仓库中的编码、重构、测试和文档修改。
 更深层目录存在更具体的 `AGENTS.md` 时，以更具体规则为准。
 执行任务前必须阅读本文件、当前任务和相关 `docs/current-*`。
-安装、启动、环境要求、测试命令和人工验收统一遵循 `DEVELOPMENT.md`。
+安装、启动、基础环境和常用开发命令统一遵循 `DEVELOPMENT.md`。专题配置、详细验证与人工验收统一遵循 `docs/development/README.md`。
 规则优先级：System Safety > User Rules > 当前任务 > 本文件 > Workspace Rules > Path Rules > Skill Instructions > 当前代码和测试。
 发现冲突时必须指出来源，不得静默选择低优先级规则。
 当前代码和测试是实现事实；历史 Phase、PRD 和 TDD 只提供背景。
@@ -47,7 +47,7 @@ Main 负责 Desktop 生命周期、Runtime 子进程和协议边界。
 Runtime stdout 只能输出协议；日志写 stderr 或受控本地日志文件。
 未经明确架构决策，不得把本地控制面改成 HTTP、WebSocket 或远程服务。
 ## 4. Startup chain
-启动、安装和验证细节只维护在 `DEVELOPMENT.md`。
+`DEVELOPMENT.md` 只维护基础开发指南。专题配置、详细验证、人工验收、打包细节与诊断步骤维护在 `docs/development/README.md`，不得继续堆入开发入口。
 基础入口：
 ```bash
 pnpm install
@@ -61,7 +61,7 @@ pnpm test:electron-smoke
 ```
 不得重新引入 `pip install -r runtime/requirements.txt`。
 修改 Python 生产依赖必须同时更新 `pyproject.toml` 和 `uv.lock`。
-启动链路、环境变量或进程模型变化时必须同步 `DEVELOPMENT.md`。
+安装、启动链路或基础开发环境变化时必须同步 `DEVELOPMENT.md`。专题环境变量、进程配置或详细验证变化时必须同步 `docs/development/README.md`。
 ## 5. Current control flow
 ```text
 Renderer

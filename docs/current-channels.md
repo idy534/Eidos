@@ -14,7 +14,7 @@ channel/read 与 channel/save 增加可选 channel。省略时仍为 dingtalk，
 
 当前适配只执行文字消息。飞书使用群内真实机器人提及；企业微信使用平台投递的群回调。系统忽略其他机器人或不相关事件，并对收到的未支持消息发送文字提示。回复内容仍限制为约 24 KiB；钉钉和飞书每段不超过 6000 字节，企业微信 Markdown 每段不超过 3000 字节。unknown 记录继续禁止自动重发。一个渠道连接失败时，其他渠道继续连接。
 
-完整调研、配置步骤、依赖选择、个人微信的二维码与长轮询方案，以及待补充的真实平台验收见 [飞书与微信渠道方案](feishu-wechat-channel-design.md)。本次代码实现的是企业微信。个人微信仍需要独立的扫码登录、Token、持久游标和 context_token 处理，不能仅替换凭证字段。
+完整调研、配置步骤、依赖选择、个人微信的二维码与长轮询方案，以及待补充的真实平台验收见 [飞书与微信渠道方案](design/feishu-wechat-channel-design.md)。本次代码实现的是企业微信。个人微信仍需要独立的扫码登录、Token、持久游标和 context_token 处理，不能仅替换凭证字段。
 
 ## 钉钉配置与通用运行规则
 
@@ -66,7 +66,7 @@ Schema v30 增加 channel_connections、channel_sessions、channel_inbound、cha
 
 协议增加 channel/read 和 channel/save。Python DTO 与 Domain 模型分别保存；TypeScript DTO 和验证 Schema 由 scripts/generate-channel-contracts.mjs 生成。共享 Fixture 为 protocol/fixtures/channels-v1.json。
 
-实现使用 dingtalk-stream 0.24.4b1。该版本是预发布版，包含上游的取消、关闭与重连修复。Stream 在既有 asyncio 后端 AnyIO Kernel 内运行。Eidos 没有使用 start_forever 或 SDK 自带的线程池 Handler。发送使用已有 httpx2。具体方案、验证结果和未完成的真实平台验收见 [方案与实现记录](dingtalk-channel-design.md)。
+实现使用 dingtalk-stream 0.24.4b1。该版本是预发布版，包含上游的取消、关闭与重连修复。Stream 在既有 asyncio 后端 AnyIO Kernel 内运行。Eidos 没有使用 start_forever 或 SDK 自带的线程池 Handler。发送使用已有 httpx2。具体方案、验证结果和未完成的真实平台验收见 [方案与实现记录](design/dingtalk-channel-design.md)。
 
 ## 公共模型选择
 

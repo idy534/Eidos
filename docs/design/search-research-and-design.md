@@ -1,5 +1,7 @@
 # Eidos 搜索调研与实施方案
 
+> 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
+
 调研日期：2026-10-20。本文保留原始调研和多阶段方案。当前实现范围以以下记录和 `docs/current-*` 为准。
 
 本轮按用户确认完成侧栏全局搜索、当前 Session 全部持久正文查找，以及当前已打开文件内查找。侧栏入口位于品牌行右侧。聊天和文件查找只用快捷键打开，并共用一行悬浮条。其他阶段暂不实施。当前实现会在空搜索时显示最近活动的 10 个会话，但没有会话结果展开；系统每个会话显示一条结果，用户进入会话后继续查找。索引通过搜索请求推进持久队列，后台刷新保留已显示结果。短词直接扫描完整投影。文件查找上限为 2 MiB，并提示截断。下文提出的其他接口、调度和交互仍是后续建议。
@@ -59,10 +61,10 @@ OpenAI 已把旧 macOS 应用称为 ChatGPT Classic。新版桌面应用包含 C
 
 主要证据：
 
-- [`SessionSidebar.tsx`](../desktop/renderer/src/components/SessionSidebar.tsx)、[`useSessionController.ts`](../desktop/renderer/src/app/useSessionController.ts)、[`SessionRepository`](../runtime/eidos_runtime/db/repositories/sessions.py)
-- [`WorkspaceExplorer.tsx`](../desktop/renderer/src/components/WorkspaceExplorer.tsx)、[`WorkspaceExplorerApplication`](../runtime/eidos_runtime/application/workspace.py)、[`search_driver.py`](../runtime/eidos_runtime/workspace/search_driver.py)
-- [`schema.py`](../runtime/eidos_runtime/db/schema.py)、[`SessionHistoryRepository`](../runtime/eidos_runtime/persistence/session_history.py)、[`MemoryRepository`](../runtime/eidos_runtime/memory/repository.py)
-- [`AutomationTaskList.tsx`](../desktop/renderer/src/components/automations/AutomationTaskList.tsx)、[`TerminalPanel.tsx`](../desktop/renderer/src/components/TerminalPanel.tsx)、[`PdfViewer.tsx`](../desktop/renderer/src/components/PdfViewer.tsx)
+- [`SessionSidebar.tsx`](../../desktop/renderer/src/components/SessionSidebar.tsx)、[`useSessionController.ts`](../../desktop/renderer/src/app/useSessionController.ts)、[`SessionRepository`](../../runtime/eidos_runtime/db/repositories/sessions.py)
+- [`WorkspaceExplorer.tsx`](../../desktop/renderer/src/components/WorkspaceExplorer.tsx)、[`WorkspaceExplorerApplication`](../../runtime/eidos_runtime/application/workspace.py)、[`search_driver.py`](../../runtime/eidos_runtime/workspace/search_driver.py)
+- [`schema.py`](../../runtime/eidos_runtime/db/schema.py)、[`SessionHistoryRepository`](../../runtime/eidos_runtime/persistence/session_history.py)、[`MemoryRepository`](../../runtime/eidos_runtime/memory/repository.py)
+- [`AutomationTaskList.tsx`](../../desktop/renderer/src/components/automations/AutomationTaskList.tsx)、[`TerminalPanel.tsx`](../../desktop/renderer/src/components/TerminalPanel.tsx)、[`PdfViewer.tsx`](../../desktop/renderer/src/components/PdfViewer.tsx)
 
 当前 `items.content` 保存消息正文。分叉的冻结历史另有 `session_history_entries` 和 Blob；系统不能只查询 `items`。当前 Schema 版本是 31，实施时需要重新确认版本，并在最新版本上增加迁移。
 

@@ -539,7 +539,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 - 提供商与模型配置 ID 必须成对填写。Runtime 校验实际提供商和思考档位，错误时不静默使用其他模型。现有模型存储仍以配置 ID 唯一索引。
 - 续派与恢复保留定义和子任务模型快照。备份保存 TOML 与目录快照，模型凭证继续排除。Schema v28→v29 保留历史角色并增加定义、创建请求和目录快照存储。
 - 子 Run 保留父 `work_mode`，Plan 子任务返回调查和草稿，主 Session 负责 `write_plan` 与确认。父模型已支持分页读取完整结果；引用传递仍待补充。
-- 配置规范、完整示例和验证边界见 [自定义子 Agent 方案](custom-subagents-design.md)。
+- 配置规范、完整示例和验证边界见 [自定义子 Agent 方案](design/custom-subagents-design.md)。
 
 ### Loop 校验与协作放行（PR #102）
 

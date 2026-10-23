@@ -9,3 +9,11 @@
 - [`../../current-limitations.md`](../../current-limitations.md)
 
 目录内文档之间的旧链接按历史上下文保留。
+
+## 阶段索引
+
+- [MVP Lite](mvp-lite.md)
+- [Phase 2 计划](mvp-phase-2.md)
+- [Phase 2 基线](mvp-phase-2-baseline.md)
+- [Phase 3 计划](mvp-phase-3.md)
+- [Phase 3 基线](mvp-phase-3-baseline.md)

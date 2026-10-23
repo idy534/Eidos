@@ -1,5 +1,7 @@
 # Session 聊天分叉：Codex 调研与 Eidos 方案
 
+> 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
+
 调研日期：2026-10-13。实现日期：2026-10-14。本文保留调研依据和设计过程。当前实现使用 `session/fork`，分支为 `feat/session-conversation-fork`。当前能力与限制以 `docs/current-*` 和源码为准。
 
 **建议：Eidos 增加独立的 `session/fork`。用户可以从一次已经结束的回答创建新 Session。新 Session 默认保留到该回答为止的完整聊天历史，包含该回答。新 Session 等待用户输入下一条消息。**
@@ -40,17 +42,17 @@ Codex App Server 用 `thread/fork` 创建新的聊天 ID。参数 `lastTurnId` �
 
 ## 2. Eidos 现状与缺口
 
-当前实现已经支持 `checkpoint/fork`。Local 路径创建新 Session，然后把父 Run 的 `userInput`、引用和模型再次入队。Managed 路径先恢复 Checkpoint 的 Git 状态，再创建新 Session 和新 Run。两条路径都没有复制整个 Session 的聊天前缀。[Checkpoint 实现](../runtime/eidos_runtime/application/checkpoints.py#L536)、[Managed Fork 实现](../runtime/eidos_runtime/application/checkpoints.py#L652)
+当前实现已经支持 `checkpoint/fork`。Local 路径创建新 Session，然后把父 Run 的 `userInput`、引用和模型再次入队。Managed 路径先恢复 Checkpoint 的 Git 状态，再创建新 Session 和新 Run。两条路径都没有复制整个 Session 的聊天前缀。[Checkpoint 实现](../../runtime/eidos_runtime/application/checkpoints.py#L536)、[Managed Fork 实现](../../runtime/eidos_runtime/application/checkpoints.py#L652)
 
-当前 Checkpoint Fork 还要求 Session 绑定 Project。因此，它不能直接作为通用的 Projectless 聊天分叉入口。[Project 检查](../runtime/eidos_runtime/application/checkpoints.py#L547)
+当前 Checkpoint Fork 还要求 Session 绑定 Project。因此，它不能直接作为通用的 Projectless 聊天分叉入口。[Project 检查](../../runtime/eidos_runtime/application/checkpoints.py#L547)
 
-当前 `session/read` 按 Session 查询真实 Run、Item 和 ToolCall，并支持历史分页。当前 Context 也只查询该 Session 的 Item。两个读取路径都需要增加继承历史的支持。[历史读取](../runtime/eidos_runtime/db/repositories/sessions.py#L906)、[Context 事实读取](../runtime/eidos_runtime/db/repositories/context.py#L43)
+当前 `session/read` 按 Session 查询真实 Run、Item 和 ToolCall，并支持历史分页。当前 Context 也只查询该 Session 的 Item。两个读取路径都需要增加继承历史的支持。[历史读取](../../runtime/eidos_runtime/db/repositories/sessions.py#L906)、[Context 事实读取](../../runtime/eidos_runtime/db/repositories/context.py#L43)
 
-当前模型上下文还依赖 Tool Result、用户引用、图片和 `ModelResponseReplay`。只复制用户消息和回答文字会遗漏这些内容，也可能破坏工具调用与结果的对应关系。[Context 构建](../runtime/eidos_runtime/context/builder.py#L176)、[模型回放读取](../runtime/eidos_runtime/db/repositories/context.py#L350)
+当前模型上下文还依赖 Tool Result、用户引用、图片和 `ModelResponseReplay`。只复制用户消息和回答文字会遗漏这些内容，也可能破坏工具调用与结果的对应关系。[Context 构建](../../runtime/eidos_runtime/context/builder.py#L176)、[模型回放读取](../../runtime/eidos_runtime/db/repositories/context.py#L350)
 
-当前 Session 删除会删除它的 Run、Item、ToolCall 和模型记录。只保存父 Session ID 和截止 Item ID，会让新 Session 依赖父 Session 的存活。[Session 删除](../runtime/eidos_runtime/db/repositories/sessions.py#L648)
+当前 Session 删除会删除它的 Run、Item、ToolCall 和模型记录。只保存父 Session ID 和截止 Item ID，会让新 Session 依赖父 Session 的存活。[Session 删除](../../runtime/eidos_runtime/db/repositories/sessions.py#L648)
 
-当前 `memory.lifecycle.fork_source` 只记录记忆来源关系和临时状态。该函数没有回答截止点，也没有复制聊天历史。[记忆来源实现](../runtime/eidos_runtime/memory/lifecycle.py#L65)
+当前 `memory.lifecycle.fork_source` 只记录记忆来源关系和临时状态。该函数没有回答截止点，也没有复制聊天历史。[记忆来源实现](../../runtime/eidos_runtime/memory/lifecycle.py#L65)
 
 ## 3. 第一版产品规则
 
@@ -107,7 +109,7 @@ Runtime 不能通过新 Session ID 清除原工作区的未知副作用。新 Ru
 | Projectless | 相同目录，并保留 Projectless 属性 | 两个 Session 共享当前文件。分叉不把目录自动注册为 Project |
 | Managed Worktree | 新的独立 Managed Worktree | 新 Worktree 从来源当前 HEAD 和受支持的本地变更创建。新 Session 不共用父 Session 的受管 Worktree 所有权 |
 
-Projectless 的现有普通创建流程会分配新目录。分叉需要单独的“绑定已核验来源目录”路径。该路径只允许绑定当前来源 Session 的执行目录，并保留无项目属性。[当前 Projectless 创建](../runtime/eidos_runtime/application/sessions.py#L646)、[当前目录与 Session 校验](../runtime/eidos_runtime/db/repositories/sessions.py#L132)
+Projectless 的现有普通创建流程会分配新目录。分叉需要单独的“绑定已核验来源目录”路径。该路径只允许绑定当前来源 Session 的执行目录，并保留无项目属性。[当前 Projectless 创建](../../runtime/eidos_runtime/application/sessions.py#L646)、[当前目录与 Session 校验](../../runtime/eidos_runtime/db/repositories/sessions.py#L132)
 
 Managed 来源需要复用 `WorktreeManager`、`GitBackend` 和现有 durable lifecycle。Runtime 在创建前后核验来源 HEAD、文件身份和变更。Runtime 不对来源执行 stash、reset、checkout 或 add。忽略文件继续遵守 `.worktreeinclude` 规则。运行中的来源改变了文件时，Runtime 返回来源变化错误，不生成一份混合状态。
 
@@ -140,9 +142,9 @@ Managed 来源需要复用 `WorktreeManager`、`GitBackend` 和现有 durable li
 
 新 Session 再次分叉时，Runtime 直接固定它的历史块和自有记录。新快照可以复用不可变内容块，但目标 Session 持有独立引用。读取时不沿父 Session 链递归查询。
 
-Blob GC 必须扫描新增资源引用。输入引用的七天清理也必须计入继承历史。目前这两个入口只识别既有表，因此它们是实现范围的一部分。[Blob 引用扫描](../runtime/eidos_runtime/db/layout.py#L1063)、[输入引用清理](../runtime/eidos_runtime/persistence/input_context.py#L15)
+Blob GC 必须扫描新增资源引用。输入引用的七天清理也必须计入继承历史。目前这两个入口只识别既有表，因此它们是实现范围的一部分。[Blob 引用扫描](../../runtime/eidos_runtime/db/layout.py#L1063)、[输入引用清理](../../runtime/eidos_runtime/persistence/input_context.py#L15)
 
-调研时仓库使用 Schema 25。当前实现增加了 v25 → v26 的事务迁移。旧 Session 默认没有继承历史。[当前 Schema](../runtime/eidos_runtime/db/schema.py#L9)
+调研时仓库使用 Schema 25。当前实现增加了 v25 → v26 的事务迁移。旧 Session 默认没有继承历史。[当前 Schema](../../runtime/eidos_runtime/db/schema.py#L9)
 
 ## 7. 截止点与一致性
 
@@ -152,7 +154,7 @@ Runtime 根据 `sourceItemId` 找到来源 Run，并验证这条 Item 属于来�
 
 Runtime 按 Run 的持久顺序和 Run 内 Item 的顺序确定范围。Runtime 不能只使用时间戳，也不能只写 `items.creation_seq <= anchor.creation_seq`。排队的后续用户输入可能在当前 Run 结束前就已经入库。这样的输入属于后续 Run，不应进入分叉。
 
-Runtime 固定截止点内生效的编辑和重新生成关系。截止点之后发生的替换不能隐藏当时选中的旧回答。Context 和界面需要使用同一条固定历史路径。[当前回答替换校验](../runtime/eidos_runtime/persistence/response_actions.py#L106)
+Runtime 固定截止点内生效的编辑和重新生成关系。截止点之后发生的替换不能隐藏当时选中的旧回答。Context 和界面需要使用同一条固定历史路径。[当前回答替换校验](../../runtime/eidos_runtime/persistence/response_actions.py#L106)
 
 历史保存需要有界分批读取。Runtime 不能用只返回最近 200 条的 `session/read` 响应，也不能用已经受模型预算裁剪的 `ContextFacts` 作为完整复制源。Runtime 应从持久记录读取完整前缀，并保留原始正文和引用。
 

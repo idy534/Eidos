@@ -3,468 +3,574 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Eidos 当前宏观架构</title>
+  <meta name="color-scheme" content="light">
+  <title>Eidos 当前架构 · 源码视图</title>
   <style>
     :root {
-      color-scheme: light;
-      --ink: #172033;
-      --muted: #647087;
-      --line: #cbd3e1;
-      --blue: #2f6fed;
-      --blue-soft: #edf3ff;
-      --green: #16866a;
-      --green-soft: #eaf8f3;
-      --amber: #ae7418;
-      --amber-soft: #fff7e8;
-      --purple: #7656b8;
-      --purple-soft: #f5f0ff;
-      --card: #ffffff;
-      --page: #f5f7fb;
-      --shadow: 0 14px 34px rgba(26, 43, 75, 0.08);
+      --canvas: #f3f6f8;
+      --surface: #ffffff;
+      --ink: #193347;
+      --muted: #526575;
+      --line: #d5dfe6;
+      --blue: #285c83;
+      --blue-soft: #edf4fa;
+      --teal: #196d68;
+      --teal-soft: #edf6f4;
+      --amber: #8d5d17;
+      --amber-soft: #fbf5e9;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
     }
-
     * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      background: var(--page);
-      color: var(--ink);
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
-      line-height: 1.5;
+    body { margin: 0; background: var(--canvas); color: var(--ink); font: 14px/1.65 var(--body); }
+    button, input { font: inherit; }
+    button, a, input, summary { -webkit-tap-highlight-color: transparent; }
+    button { color: inherit; cursor: pointer; }
+    a { color: var(--blue); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    :focus-visible { outline: 3px solid var(--blue); outline-offset: 4px; }
+    [hidden] { display: none !important; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-family: "Iowan Old Style", "Songti SC", serif; font-size: clamp(28px, 3vw, 38px); font-weight: 600; line-height: 1.25; }
+    h2 { font-size: 22px; line-height: 1.4; }
+    h3 { font-size: 15px; }
+    code { font: .88em/1.6 var(--mono); overflow-wrap: anywhere; }
+    .page { width: min(1480px, calc(100% - 64px)); margin: 0 auto; padding: 28px 0 32px; }
+    .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font: 600 12px var(--mono); letter-spacing: .08em; }
+    .brand-mark { width: 18px; height: 18px; border: 2px solid var(--blue); border-right-color: var(--teal); border-bottom-color: var(--teal); border-radius: 50%; }
+    .subtitle { margin-top: 10px; color: var(--muted); max-width: 780px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 13px; color: var(--muted); font-size: 12px; }
+    .print-button { padding: 8px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); white-space: nowrap; }
+    .navigation { display: flex; flex-wrap: wrap; gap: 4px; margin: 24px 0; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); width: fit-content; }
+    .navigation button { border: 0; border-radius: 4px; padding: 9px 20px; background: transparent; color: var(--muted); font-weight: 600; }
+    .navigation button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+    .navigation button:hover:not([aria-pressed="true"]) { background: var(--blue-soft); color: var(--blue); }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .section-heading p { color: var(--muted); font-size: 13px; max-width: 730px; }
+    .overview-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; }
+    .architecture { min-width: 0; }
+    .process { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 16px; }
+    .process-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 12px; font-weight: 700; }
+    .process-title small { font-weight: 400; color: var(--muted); }
+    .desktop-processes { display: grid; grid-template-columns: minmax(0, 1fr) 100px minmax(0, 1fr); align-items: stretch; }
+    .desktop-processes .process { border-top: 3px solid var(--blue); }
+    .connector { display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--blue); font: 11px/1.4 var(--mono); text-align: center; }
+    .connector.horizontal { flex-direction: column; }
+    .connector.horizontal b { font: 22px/1 var(--body); }
+    .transport { padding: 10px 0; text-align: center; color: var(--blue); font-size: 12px; }
+    .transport span { display: inline-block; padding: 0 12px; background: var(--canvas); }
+    .runtime-process { border-color: #a9cac5; border-top: 3px solid var(--teal); }
+    .runtime-process > .process-title { color: var(--teal); }
+    .chain { display: grid; grid-template-columns: minmax(0, 1fr) 22px minmax(0, 1fr) 22px minmax(0, 1fr); align-items: stretch; }
+    .arrow { display: grid; place-items: center; color: var(--teal); font-size: 18px; }
+    .node { display: block; width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--surface); text-align: left; transition: border-color .15s, background .15s; }
+    .node:hover { border-color: var(--teal); background: #f8fbfb; }
+    .node[aria-pressed="true"] { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); background: var(--teal-soft); }
+    .node strong { display: block; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+    .node span { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .node .technical { font: 10px/1.5 var(--mono); color: var(--muted); }
+    .node.blue { background: var(--blue-soft); }
+    .node.teal { background: var(--teal-soft); }
+    .node.amber { background: var(--amber-soft); }
+    .core { margin-top: 12px; padding: 14px; border: 1px solid #a9cac5; border-radius: 6px; background: #f8fbfa; }
+    .engine-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: center; }
+    .engine-note { font-size: 12px; color: var(--teal); }
+    .capability-label { display: flex; gap: 12px; align-items: center; color: var(--muted); margin: 10px 0 8px; font-size: 11px; }
+    .capability-label::before, .capability-label::after { content: ""; flex: 1; border-top: 1px solid #bdd3ce; }
+    .capabilities { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .capabilities .node { padding: 10px; }
+    .services { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .services > span { color: var(--muted); font-size: 11px; margin-right: 3px; }
+    .chip { padding: 4px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); font-size: 11px; }
+    .chip:hover, .chip[aria-pressed="true"] { border-color: var(--teal); background: var(--teal-soft); }
+    .external-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+    .external { border: 1px dashed #9caeba; border-radius: 6px; padding: 10px 12px; font-size: 12px; }
+    .external strong { display: block; }
+    .external span { display: block; color: var(--muted); font-size: 11px; }
+    .return-path { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; border-left: 3px solid var(--teal); padding: 10px 12px; margin-top: 12px; background: var(--teal-soft); font-size: 11px; }
+    .return-path b { color: var(--teal); }
+    .caption { margin-top: 10px; color: var(--muted); font-size: 11px; }
+    .inspector { position: sticky; top: 20px; border: 1px solid var(--line); border-radius: 8px; padding: 20px; background: var(--surface); }
+    .inspector-label { color: var(--teal); font-size: 11px; font-weight: 700; letter-spacing: .04em; margin-bottom: 10px; }
+    .inspector h3 { font-size: 20px; line-height: 1.35; margin-bottom: 6px; overflow-wrap: anywhere; }
+    .inspector .role { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+    .inspector p { font-size: 13px; }
+    .inspector dl { margin: 16px 0; border-top: 1px solid var(--line); }
+    .inspector dt { margin-top: 13px; font-size: 11px; color: var(--muted); }
+    .inspector dd { margin: 3px 0 0; font-size: 12px; }
+    .inspector .detail-note { padding: 10px; background: var(--canvas); font-size: 12px; margin-top: 16px; }
+    .source-link { display: block; font: 10px/1.65 var(--mono); overflow-wrap: anywhere; margin-top: 7px; }
+    .inspector-help { margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px !important; }
+    .reading-notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }
+    .reading-notes article { padding-top: 12px; border-top: 2px solid var(--line); }
+    .reading-notes h3 { font-size: 13px; margin-bottom: 5px; }
+    .reading-notes p { font-size: 12px; color: var(--muted); }
+    .panel-card { border: 1px solid var(--line); border-radius: 8px; padding: 22px; background: var(--surface); }
+    .flow-intro { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; color: var(--muted); font-size: 12px; }
+    .flow-intro strong { color: var(--blue); }
+    .run-stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px; list-style: none; margin: 0; padding: 0; }
+    .run-stages li { position: relative; padding: 16px; border: 1px solid var(--line); border-top: 3px solid var(--teal); border-radius: 5px; }
+    .run-stages li:not(:last-child)::after { content: "→"; position: absolute; right: -19px; top: 50%; transform: translateY(-50%); color: var(--teal); }
+    .stage-number { color: var(--teal); font: 12px var(--mono); margin-bottom: 10px; }
+    .run-stages h3 { margin-bottom: 7px; }
+    .run-stages p { color: var(--muted); font-size: 12px; }
+    .run-stages code { display: block; margin-top: 12px; color: var(--blue); font-size: 10px; }
+    .branch-label { margin: 16px 0; text-align: center; color: var(--teal); font-size: 12px; }
+    .branches { display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; }
+    .branch { padding: 18px; border: 1px solid var(--line); border-radius: 6px; }
+    .branch.tools { background: var(--amber-soft); border-color: #dac7a7; }
+    .branch.finish { background: var(--teal-soft); border-color: #a9cac5; }
+    .branch p { font-size: 12px; color: var(--muted); margin: 7px 0; }
+    .pipeline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; margin: 16px 0; }
+    .pipeline span { border: 1px solid var(--line); background: var(--surface); border-radius: 4px; padding: 6px 9px; }
+    .pipeline b { font-weight: 400; color: var(--muted); }
+    .loop-back { padding: 10px 12px; border-left: 3px solid var(--amber); background: #fffaf1; font-size: 12px; color: var(--amber); }
+    .callout { margin-top: 18px; border-left: 3px solid var(--blue); padding: 12px 16px; background: var(--blue-soft); font-size: 12px; }
+    .callout p + p { margin-top: 5px; }
+    .source-caption { font-size: 11px; color: var(--muted); margin-top: 14px; }
+    .mode-picker { border: 0; padding: 0; margin: 0 0 20px; }
+    .mode-picker legend { font-weight: 700; margin-bottom: 12px; }
+    .mode-options { display: flex; flex-wrap: wrap; gap: 10px; }
+    .mode-options label { padding: 10px 14px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; background: var(--surface); }
+    .mode-options label:has(input:checked) { background: var(--blue-soft); border-color: var(--blue); }
+    .mode-options input { margin: 0 7px 0 0; accent-color: var(--blue); }
+    .mode-explanation { padding: 18px; background: var(--canvas); border-radius: 5px; min-height: 144px; }
+    .mode-explanation h3 { margin-bottom: 8px; }
+    .mode-explanation p { color: var(--muted); font-size: 13px; }
+    .mode-path { color: var(--ink) !important; margin-top: 12px; font-weight: 600; }
+    .two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 20px; }
+    .rule-list { display: grid; gap: 0; margin-top: 10px; }
+    .rule-list article { padding: 15px 0; border-bottom: 1px solid var(--line); }
+    .rule-list article:last-child { border-bottom: 0; padding-bottom: 0; }
+    .rule-list p { font-size: 12px; color: var(--muted); margin-top: 5px; }
+    .subheading { margin: 28px 0 14px; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+    th { color: var(--muted); font-weight: 500; background: var(--canvas); }
+    th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    td p { margin-top: 4px; color: var(--muted); }
+    .tree { font: 12px/2 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 14px 0 0; }
+    .tree-comment { font-family: var(--body); color: var(--muted); }
+    .filter { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .filter label { font-weight: 600; }
+    .filter input { width: min(100%, 420px); padding: 10px 12px; border: 1px solid #8b9fac; border-radius: 5px; background: var(--surface); color: var(--ink); }
+    .filter output { color: var(--muted); font-size: 12px; }
+    .source-table th:first-child { width: 18%; }
+    .source-table td:last-child { width: 42%; }
+    .empty { padding: 24px; color: var(--muted); text-align: center; }
+    footer { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 28px; font-size: 11px; color: var(--muted); }
+    .skip-link { position: fixed; left: 16px; top: -60px; z-index: 2; padding: 10px 14px; background: var(--surface); }
+    .skip-link:focus { top: 12px; }
+    noscript p { border: 1px solid var(--line); padding: 12px; margin-top: 16px; }
+    @media (min-width: 1700px) { .page { padding-top: 36px; } }
+    @media (max-width: 1150px) {
+      .page { width: calc(100% - 40px); }
+      .overview-layout { grid-template-columns: minmax(0, 1fr); }
+      .inspector { position: static; }
+      .inspector dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: baseline; gap: 6px 12px; padding-top: 12px; }
+      .inspector dt { margin: 0; }
+      .inspector dd { margin: 0; }
+      .section-heading { display: block; }
+      .section-heading p { margin-top: 7px; }
     }
-
-    .page {
-      width: min(1440px, calc(100% - 48px));
-      margin: 0 auto;
-      padding: 42px 0 64px;
+    @media (max-width: 760px) {
+      .page { width: calc(100% - 32px); padding-top: 20px; }
+      .masthead { gap: 12px; }
+      .brand { font-size: 10px; }
+      .print-button { font-size: 11px; padding: 7px 9px; }
+      .navigation { width: 100%; }
+      .navigation button { padding: 8px 12px; flex-grow: 1; font-size: 12px; }
+      .desktop-processes { grid-template-columns: minmax(0, 1fr); }
+      .connector.horizontal { flex-direction: row; padding: 7px; }
+      .connector.horizontal b { transform: rotate(90deg); }
+      .capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .reading-notes, .two-column { grid-template-columns: minmax(0, 1fr); }
+      .run-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .run-stages li:not(:last-child)::after { display: none; }
+      .branches { grid-template-columns: minmax(0, 1fr); }
+      .panel-card { padding: 16px; }
+      .source-table { min-width: 640px; }
     }
-
-    header {
-      display: flex;
-      align-items: end;
-      justify-content: space-between;
-      gap: 24px;
-      margin-bottom: 28px;
+    @media (max-width: 480px) {
+      body { font-size: 13px; }
+      .page { width: calc(100% - 24px); }
+      .masthead { display: block; }
+      .print-button { margin-top: 14px; }
+      .chain { grid-template-columns: minmax(0, 1fr); }
+      .chain .arrow { height: 24px; transform: rotate(90deg); }
+      .engine-row, .external-row, .run-stages { grid-template-columns: minmax(0, 1fr); }
+      .engine-note { font-size: 11px; }
+      .runtime-process, .process { padding: 12px; }
+      .core { padding: 10px; }
+      .capabilities { grid-template-columns: minmax(0, 1fr); }
+      .services > span { width: 100%; }
+      .navigation button { padding: 8px 10px; }
+      .inspector { padding: 16px; }
+      .inspector dl { grid-template-columns: 66px minmax(0, 1fr); }
+      .mode-options { flex-direction: column; }
     }
-
-    .eyebrow {
-      margin: 0 0 8px;
-      color: var(--blue);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-    }
-
-    h1, h2, h3, p { margin-top: 0; }
-    h1 { margin-bottom: 8px; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.035em; line-height: 1.08; }
-    h2 { margin-bottom: 8px; font-size: 23px; letter-spacing: -.02em; }
-    h3 { margin-bottom: 6px; font-size: 15px; }
-
-    .lede {
-      max-width: 720px;
-      margin-bottom: 0;
-      color: var(--muted);
-      font-size: 15px;
-    }
-
-    .source-note {
-      flex: 0 0 auto;
-      max-width: 330px;
-      padding: 12px 14px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: rgba(255, 255, 255, .75);
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    section { margin-top: 34px; }
-    .section-intro { color: var(--muted); font-size: 14px; }
-
-    .diagram-card, .authority-card, .trust-card {
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: var(--card);
-      box-shadow: var(--shadow);
-    }
-
-    .diagram-card { overflow: hidden; padding: 18px; }
-    svg { display: block; width: 100%; height: auto; }
-    svg text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif; }
-    .svg-title { fill: var(--ink); font-size: 19px; font-weight: 700; }
-    .svg-subtitle { fill: var(--muted); font-size: 12px; }
-    .svg-label { fill: var(--ink); font-size: 14px; font-weight: 650; }
-    .svg-small { fill: var(--muted); font-size: 11px; }
-    .svg-panel { fill: #fff; stroke: var(--line); stroke-width: 1.5; }
-    .svg-blue { fill: var(--blue-soft); stroke: #a9c1f7; }
-    .svg-green { fill: var(--green-soft); stroke: #9ad7c4; }
-    .svg-purple { fill: var(--purple-soft); stroke: #c9b9ed; }
-    .svg-amber { fill: var(--amber-soft); stroke: #e9c889; }
-    .svg-external { fill: #fbfcfe; stroke: #a8b4c8; stroke-width: 1.5; stroke-dasharray: 7 6; }
-    .svg-partial { stroke-dasharray: 7 6; }
-    .svg-arrow { fill: none; stroke: var(--blue); stroke-width: 2.4; marker-end: url(#arrow); }
-    .svg-arrow-soft { fill: none; stroke: #8290aa; stroke-width: 2; marker-end: url(#arrowSoft); }
-    .svg-arrow-partial { fill: none; stroke: #8290aa; stroke-width: 2; stroke-dasharray: 7 6; marker-end: url(#arrowSoft); }
-    .svg-boundary { fill: none; stroke: #b7c1d1; stroke-width: 1.5; stroke-dasharray: 8 7; }
-
-    .legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px 22px;
-      align-items: center;
-      margin-top: 14px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .legend-item { display: inline-flex; align-items: center; gap: 8px; }
-    .legend-line { width: 34px; height: 0; border-top: 2px solid var(--blue); }
-    .legend-line.dashed { border-top-style: dashed; border-top-color: #8290aa; }
-    .legend-boundary { width: 34px; height: 16px; border: 1px dashed #8290aa; border-radius: 4px; }
-
-    .authority-grid {
-      display: grid;
-      grid-template-columns: 270px 1fr;
-      gap: 16px;
-      align-items: stretch;
-    }
-
-    .authority-card { padding: 20px; }
-    .authority-source {
-      display: flex;
-      min-height: 190px;
-      flex-direction: column;
-      justify-content: space-between;
-      border-color: #9ad7c4;
-      background: var(--green-soft);
-    }
-
-    .authority-source strong { font-size: 22px; }
-    .authority-source span { color: #246d5c; font-size: 12px; }
-    .fact-list {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-
-    .fact-list li {
-      min-height: 72px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 11px;
-      background: #fbfcff;
-      color: var(--ink);
-      font-size: 13px;
-    }
-
-    .trust-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .trust-card { min-height: 114px; padding: 16px; box-shadow: none; }
-    .trust-card p { margin-bottom: 0; color: var(--muted); font-size: 13px; }
-    .trust-card.presentation { border-color: #a9c1f7; background: var(--blue-soft); }
-    .trust-card.proposal { border-color: #e9c889; background: var(--amber-soft); }
-    .trust-card.authority { border-color: #9ad7c4; background: var(--green-soft); }
-    .trust-card.enforcement { border-color: #c9b9ed; background: var(--purple-soft); }
-
-    footer {
-      margin-top: 36px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    @media (max-width: 900px) {
-      .page { width: min(100% - 28px, 760px); padding-top: 26px; }
-      header { display: block; }
-      .source-note { max-width: none; margin-top: 16px; }
-      .authority-grid { grid-template-columns: 1fr; }
-      .fact-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .trust-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-
-    @media (max-width: 520px) {
-      .page { width: min(100% - 20px, 480px); }
-      .diagram-card { padding: 8px; border-radius: 14px; }
-      .fact-list, .trust-grid { grid-template-columns: 1fr; }
-      .legend { display: grid; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
+    @media print {
+      body { background: white; font-size: 11px; }
+      .page { width: 100%; padding: 0; }
+      .navigation, .print-button, .skip-link, .filter, .inspector-help { display: none; }
+      .view[hidden] { display: block !important; }
+      .view { break-before: page; margin-top: 24px; }
+      .view:first-of-type { break-before: auto; }
+      .overview-layout { display: block; }
+      .inspector { display: none; }
+      .two-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .source-table { min-width: 0; }
+      .table-scroll { overflow: visible; }
+      .source-table tr[hidden] { display: table-row !important; }
+      .process, .panel-card, .branch, .run-stages li, tr { break-inside: avoid; }
+      .source-link { color: var(--ink); text-decoration: none; }
+      footer { margin-top: 20px; }
     }
   </style>
 </head>
 <body>
-  <main class="page">
-    <header>
+  <a class="skip-link" href="#main">跳到架构内容</a>
+  <main class="page" id="main">
+    <header class="masthead">
       <div>
-        <p class="eyebrow">Eidos / Current Documentation Baseline</p>
-        <h1>宏观架构</h1>
-        <p class="lede">这张图只显示当前代码中已经存在的边界、默认在线路径和持久事实。虚线表示已经实现但还没有全部接入默认 Run 的基础设施。</p>
+        <div class="brand"><span class="brand-mark" aria-hidden="true"></span>EIDOS / SOURCE ATLAS</div>
+        <h1>Eidos 当前架构</h1>
+        <p class="subtitle">Electron Desktop 负责交互。本地 Python Runtime 管理执行、权限与恢复。SQLite 保存运行事实。</p>
+        <div class="meta"><span>源码核对：2026-10-24</span><span>基线 HEAD：<code>ffa687a2</code></span><span>本图按职责分组，框不等于独立进程。</span></div>
       </div>
-      <div class="source-note">事实顺序：生产代码 + 自动化测试 → Current 文档 → 本图。历史 PRD、TDD、Decision 和参考资料不作为当前行为证据。</div>
+      <button class="print-button" id="print-button" type="button">打印全部视图 / 保存 PDF</button>
     </header>
 
-    <section aria-labelledby="system-title">
-      <h2 id="system-title">System Architecture</h2>
-      <p class="section-intro">Presentation、Desktop Control Plane、Python Runtime、Agent Core 和 Infrastructure / External 的边界。</p>
-      <div class="diagram-card">
-        <svg viewBox="0 0 1440 930" role="img" aria-labelledby="system-svg-title system-svg-desc">
-          <title id="system-svg-title">Eidos system architecture</title>
-          <desc id="system-svg-desc">Electron Renderer 通过 typed IPC 进入 Electron Main，再通过 JSON-RPC over stdio 进入 Python Runtime。Runtime 调度 Agent Core 和受控的基础设施。</desc>
-          <defs>
-            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f6fed"></path></marker>
-            <marker id="arrowSoft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8290aa"></path></marker>
-          </defs>
+    <nav class="navigation" aria-label="架构视图">
+      <button type="button" data-view="overview" aria-controls="overview" aria-pressed="true">系统总览</button>
+      <button type="button" data-view="run" aria-controls="run" aria-pressed="false">一次 Run</button>
+      <button type="button" data-view="permissions" aria-controls="permissions" aria-pressed="false">权限与恢复</button>
+      <button type="button" data-view="data" aria-controls="data" aria-pressed="false">数据与目录</button>
+      <button type="button" data-view="sources" aria-controls="sources" aria-pressed="false">源码索引</button>
+    </nav>
 
-          <rect class="svg-boundary" x="12" y="12" width="1416" height="906" rx="20"></rect>
-          <text class="svg-small" x="34" y="35">Eidos local runtime boundary</text>
-
-          <rect class="svg-panel svg-blue" x="34" y="52" width="1372" height="112" rx="15"></rect>
-          <text class="svg-title" x="58" y="82">Presentation</text>
-          <text class="svg-subtitle" x="58" y="103">untrusted presentation boundary</text>
-          <text class="svg-label" x="350" y="86">Electron Renderer</text>
-          <text class="svg-small" x="350" y="109">Session · Execution Feed · Composer</text>
-          <text class="svg-small" x="350" y="128">Model Settings · Approval / Diff</text>
-          <text class="svg-label" x="900" y="86">typed IPC</text>
-          <text class="svg-small" x="900" y="109">context-isolated preload API</text>
-          <path class="svg-arrow" d="M 720 164 L 720 198"></path>
-          <text class="svg-small" x="744" y="185">typed IPC</text>
-
-          <rect class="svg-panel svg-blue" x="34" y="200" width="1372" height="116" rx="15"></rect>
-          <text class="svg-title" x="58" y="230">Desktop Control Plane</text>
-          <text class="svg-subtitle" x="58" y="251">Electron Main owns lifecycle and protocol client</text>
-          <text class="svg-label" x="430" y="234">Electron Main</text>
-          <text class="svg-small" x="430" y="257">RuntimeClient · Window / App Lifecycle</text>
-          <text class="svg-small" x="430" y="276">Runtime Path Resolution · notification / approval bridge</text>
-          <text class="svg-label" x="1010" y="234">JSON-RPC 2.0</text>
-          <text class="svg-small" x="1010" y="257">JSONL · stdio · bounded protocol lines</text>
-          <path class="svg-arrow" d="M 720 316 L 720 350"></path>
-          <text class="svg-small" x="744" y="337">JSON-RPC 2.0 / JSONL / stdio</text>
-
-          <rect class="svg-panel svg-green" x="34" y="352" width="1372" height="156" rx="15"></rect>
-          <text class="svg-title" x="58" y="382">Python Runtime</text>
-          <text class="svg-subtitle" x="58" y="403">protocol, application and durable coordination</text>
-          <rect class="svg-panel" x="360" y="374" width="230" height="96" rx="11"></rect>
-          <text class="svg-label" x="382" y="405">RuntimeServer</text>
-          <text class="svg-small" x="382" y="428">initialize · health · shutdown</text>
-          <text class="svg-small" x="382" y="447">Method Registry</text>
-          <rect class="svg-panel" x="620" y="374" width="230" height="96" rx="11"></rect>
-          <text class="svg-label" x="642" y="405">Application Layer</text>
-          <text class="svg-small" x="642" y="428">Sessions · Runs · Models</text>
-          <text class="svg-small" x="642" y="447">Extensions · Context · Checkpoints</text>
-          <rect class="svg-panel" x="880" y="374" width="230" height="96" rx="11"></rect>
-          <text class="svg-label" x="902" y="405">RunSupervisor</text>
-          <text class="svg-small" x="902" y="428">FIFO · single execution slot</text>
-          <text class="svg-small" x="902" y="447">park approval wait · schedule next Run</text>
-          <rect class="svg-panel" x="1140" y="374" width="230" height="96" rx="11"></rect>
-          <text class="svg-label" x="1162" y="405">RuntimeEngine</text>
-          <text class="svg-small" x="1162" y="428">Run / Step coordination</text>
-          <text class="svg-small" x="1162" y="447">uses RuntimeAsyncKernel for async I/O</text>
-          <path class="svg-arrow-soft" d="M 590 422 L 620 422"></path>
-          <path class="svg-arrow-soft" d="M 850 422 L 880 422"></path>
-          <path class="svg-arrow-soft" d="M 1110 422 L 1140 422"></path>
-          <text class="svg-small" x="58" y="486">RuntimeServer process also owns RuntimeAsyncKernel and TelemetryProvider · OpenTelemetry tracing defaults to exporter=none</text>
-          <path class="svg-arrow" d="M 720 508 L 720 542"></path>
-
-          <rect class="svg-panel" x="34" y="544" width="1372" height="202" rx="15"></rect>
-          <text class="svg-title" x="58" y="574">Agent Core</text>
-          <text class="svg-subtitle" x="58" y="595">每个 Step 使用 immutable resolution、tool 和 extension snapshot</text>
-
-          <rect class="svg-panel svg-blue" x="72" y="615" width="300" height="105" rx="12"></rect>
-          <text class="svg-label" x="94" y="646">Context</text>
-          <text class="svg-small" x="94" y="667">Project Rules · Instructions</text>
-          <text class="svg-small" x="94" y="685">Context Builder · Compaction</text>
-          <rect class="svg-external svg-partial" x="94" y="694" width="230" height="18" rx="6"></rect>
-          <text class="svg-small" x="104" y="707">Repository Intelligence · partial path</text>
-
-          <rect class="svg-panel svg-purple" x="400" y="615" width="300" height="105" rx="12"></rect>
-          <text class="svg-label" x="422" y="646">Model</text>
-          <text class="svg-small" x="422" y="667">Model Gateway · Sampling Runtime</text>
-          <text class="svg-small" x="422" y="685">Chat Completions · SSE · Usage</text>
-          <text class="svg-small" x="422" y="704">Model Attempt snapshot</text>
-
-          <rect class="svg-panel svg-amber" x="728" y="615" width="300" height="105" rx="12"></rect>
-          <text class="svg-label" x="750" y="646">Tools</text>
-          <text class="svg-small" x="750" y="667">Tool Registry · ToolCallRuntime</text>
-          <text class="svg-small" x="750" y="685">ExecutionController · Approval</text>
-          <text class="svg-small" x="750" y="704">ToolOrchestrator · Reconciliation</text>
-
-          <rect class="svg-panel svg-green" x="1056" y="615" width="300" height="105" rx="12"></rect>
-          <text class="svg-label" x="1078" y="646">Extensions</text>
-          <text class="svg-small" x="1078" y="667">Plugin · Skill · MCP stdio</text>
-          <text class="svg-small" x="1078" y="685">Catalog / activation / provenance</text>
-          <text class="svg-small" x="1078" y="704">MCP Tool snapshot · partial activation</text>
-
-          <path class="svg-arrow-partial" d="M 230 746 L 230 782"></path>
-          <path class="svg-arrow" d="M 550 746 L 550 782"></path>
-          <path class="svg-arrow" d="M 878 746 L 878 782"></path>
-          <path class="svg-arrow-partial" d="M 1206 746 L 1206 782"></path>
-
-          <rect class="svg-external" x="34" y="784" width="1372" height="108" rx="15"></rect>
-          <text class="svg-title" x="58" y="814">Infrastructure / External</text>
-          <text class="svg-subtitle" x="58" y="835">process, network, sandbox and observability boundaries</text>
-          <text class="svg-label" x="362" y="818">SQLite</text>
-          <text class="svg-small" x="362" y="842">durable business facts · Event / Outbox</text>
-          <text class="svg-label" x="620" y="818">Workspace · Git</text>
-          <text class="svg-small" x="620" y="842">fd-relative paths · identity · diff evidence</text>
-          <text class="svg-label" x="930" y="818">/usr/bin/sandbox-exec</text>
-          <text class="svg-small" x="930" y="842">Seatbelt Policy · OS enforcement</text>
-          <text class="svg-label" x="1210" y="818">Provider · MCP · OTel backend</text>
-          <text class="svg-small" x="1210" y="842">HTTP/SSE · stdio · console/OTLP HTTP</text>
-        </svg>
-        <div class="legend" aria-label="图例">
-          <span class="legend-item"><span class="legend-line"></span>Solid line = current default online path</span>
-          <span class="legend-item"><span class="legend-line dashed"></span>Dashed line = implemented infrastructure but partial / not always default online path</span>
-          <span class="legend-item"><span class="legend-boundary"></span>External boundary = process / network / sandbox / observability boundary</span>
+    <section class="view" id="overview" aria-labelledby="overview-title">
+      <div class="section-heading">
+        <h2 id="overview-title">进程边界与主要职责</h2>
+        <p>蓝色标出 Desktop 通道，绿色标出 Runtime 与事实回传。点击模块可以查看职责、上下游与源码。</p>
+      </div>
+      <div class="overview-layout">
+        <div class="architecture">
+          <div class="desktop-processes">
+            <div class="process">
+              <div class="process-title">Electron Renderer <small>界面进程</small></div>
+              <button class="node blue" type="button" data-module="renderer" aria-pressed="false" aria-controls="module-inspector">
+                <strong>工作台与交互</strong><span>Session · Feed · Composer · 审批 · Diff<br>隔离的 preload 暴露 typed API</span>
+              </button>
+            </div>
+            <div class="connector horizontal"><span>typed IPC</span><b aria-hidden="true">⇄</b><span>请求 / 通知</span></div>
+            <div class="process">
+              <div class="process-title">Electron Main <small>主进程</small></div>
+              <button class="node blue" type="button" data-module="main" aria-pressed="false" aria-controls="module-inspector">
+                <strong>桌面生命周期与 RuntimeClient</strong><span>Main 启动 Python 子进程并校验协议。<br>Main 也管理窗口、终端和产物预览。</span>
+              </button>
+            </div>
+          </div>
+          <div class="transport"><span>↓ 命令　 JSON-RPC 2.0 / JSONL / stdio　 ↑ 响应与通知</span></div>
+          <div class="process runtime-process">
+            <div class="process-title">Python Runtime <small>本地子进程 · stdout 只承载协议</small></div>
+            <div class="chain">
+              <button class="node" type="button" data-module="server" aria-pressed="false" aria-controls="module-inspector"><strong>RuntimeServer</strong><span>Server 校验请求，并通过<br>MethodRegistry 分发。</span></button>
+              <span class="arrow" aria-hidden="true">→</span>
+              <button class="node" type="button" data-module="application" aria-pressed="false" aria-controls="module-inspector"><strong>Application</strong><span>用例创建 Session / Run，<br>处理配置、计划和工作树。</span></button>
+              <span class="arrow" aria-hidden="true">→</span>
+              <button class="node" type="button" data-module="supervisor" aria-pressed="false" aria-controls="module-inspector"><strong>RunSupervisor</strong><span>Supervisor 按 Session 调度，<br>并管理 Worker 与取消。</span></button>
+            </div>
+            <div class="core">
+              <div class="engine-row">
+                <button class="node teal" type="button" data-module="engine" aria-pressed="true" aria-controls="module-inspector"><strong>↓ RuntimeEngine</strong><span>Engine 推进 Step，并决定调用工具、继续采样或结束。</span></button>
+                <p class="engine-note">Eidos 自己管理 Agent Loop。<br>每个 Run Worker 调用 Engine，Engine 使用下列能力。</p>
+              </div>
+              <div class="capability-label">Engine 使用的运行能力</div>
+              <div class="capabilities">
+                <button class="node" type="button" data-module="context" aria-pressed="false" aria-controls="module-inspector"><strong>上下文</strong><span>规则 · 历史 · 仓库证据<br>快照 · Token 预算 · 压缩</span><span class="technical">ContextBuilder</span></button>
+                <button class="node" type="button" data-module="model" aria-pressed="false" aria-controls="module-inspector"><strong>模型采样</strong><span>Gateway · 配置快照<br>流式响应 · Usage · 重试</span><span class="technical">SamplingRuntime</span></button>
+                <button class="node amber" type="button" data-module="tools" aria-pressed="false" aria-controls="module-inspector"><strong>工具执行</strong><span>参数 · 权限 · Intent<br>执行 · 核验 · 结果提交</span><span class="technical">ToolCallRuntime</span></button>
+                <button class="node" type="button" data-module="extensions" aria-pressed="false" aria-controls="module-inspector"><strong>扩展资源</strong><span>Plugin · Skill · MCP<br>Hooks · 授权 · 固定快照</span><span class="technical">RunResources</span></button>
+              </div>
+            </div>
+            <div class="services">
+              <span>同进程支持能力</span>
+              <button class="chip" type="button" data-module="kernel" aria-pressed="false" aria-controls="module-inspector">共享 AnyIO 内核</button>
+              <button class="chip" type="button" data-module="repo" aria-pressed="false" aria-controls="module-inspector">仓库检索</button>
+              <button class="chip" type="button" data-module="memory" aria-pressed="false" aria-controls="module-inspector">记忆服务</button>
+              <button class="chip" type="button" data-module="channels" aria-pressed="false" aria-controls="module-inspector">渠道收发</button>
+              <button class="chip" type="button" data-module="automations" aria-pressed="false" aria-controls="module-inspector">定时调度</button>
+              <button class="chip" type="button" data-module="git" aria-pressed="false" aria-controls="module-inspector">Git / Worktree</button>
+            </div>
+          </div>
+          <div class="external-row">
+            <div class="external"><strong>模型服务 ← 模型采样</strong><span>Provider API · HTTP 流式请求</span></div>
+            <div class="external"><strong>本机资源 ← 工具 / Git / Hooks</strong><span>Workspace · 文件 · Shell · Seatbelt</span></div>
+            <div class="external"><strong>MCP 服务 ← 扩展资源</strong><span>stdio 子进程 / Streamable HTTP</span></div>
+          </div>
+          <div class="return-path" aria-label="持久事实回传路径">
+            <b>事实回传 ↑</b><button class="chip" type="button" data-module="persistence" aria-pressed="false" aria-controls="module-inspector">SQLite 事务 + Event / Outbox</button><span aria-hidden="true">→</span><span>JSON-RPC 通知</span><span aria-hidden="true">→</span><span>Main</span><span aria-hidden="true">→</span><span>Renderer</span>
+          </div>
+          <p class="caption">虚线框表示进程外服务或本机执行资源。图中的模块关系表示主要调用；数据提交与事件投递贯穿执行过程。</p>
         </div>
+        <aside class="inspector" id="module-inspector" aria-label="所选模块详情">
+          <div class="inspector-label">所选模块 / SOURCE DETAIL</div>
+          <div id="module-detail" aria-live="polite" aria-atomic="true"></div>
+          <p class="inspector-help">模块按钮支持 Tab 与 Enter。小屏幕会把详情放在图下方；源码索引提供完整入口。</p>
+        </aside>
+      </div>
+      <div class="reading-notes">
+        <article><h3>不同 Session 可以并行</h3><p>同 Session 的 Run 保持 FIFO。每个父 Run 最多同时运行 8 个子 Agent。Runtime 没有跨 Session 的 Run 总量配额。</p></article>
+        <article><h3>三个入口共用 Run</h3><p>Desktop 输入、渠道消息和定时触发都通过 RunApplication 接纳任务。渠道与定时调度在 Runtime 内运行。</p></article>
+        <article><h3>运行事实与辅助资料分开保存</h3><p>state.sqlite 保存执行状态。仓库索引可以重建。模型配置、凭据与大正文使用各自的受控文件存储。</p></article>
       </div>
     </section>
 
-    <section aria-labelledby="run-title">
-      <h2 id="run-title">One Run</h2>
-      <p class="section-intro">Runtime 以 SQLite 事实、immutable snapshots、受控 Tool 执行和语义进展推进一次 Run。多个非终态 Run 可以共存，但只有一个 Run 占用全局 Execution Slot；等待 Approval 的 Run 会释放 Slot。</p>
-      <div class="diagram-card">
-        <svg viewBox="0 0 1440 520" role="img" aria-labelledby="run-svg-title run-svg-desc">
-          <title id="run-svg-title">One Run execution flow</title>
-          <desc id="run-svg-desc">用户输入进入队列，Runtime 构建规则、Context 和 Tool 快照，执行 Model Attempt，验证结果，再执行 Tool 或生成最终回答。</desc>
-          <defs>
-            <marker id="runArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f6fed"></path></marker>
-          </defs>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 190 88 L 226 88"></path>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 386 88 L 422 88"></path>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 582 88 L 618 88"></path>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 778 88 L 814 88"></path>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 974 88 L 1010 88"></path>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1170 88 L 1206 88"></path>
-
-          <rect class="svg-panel svg-blue" x="30" y="48" width="160" height="80" rx="12"></rect>
-          <text class="svg-label" x="52" y="81">User Input</text>
-          <text class="svg-small" x="52" y="103">typed IPC</text>
-          <rect class="svg-panel" x="226" y="48" width="160" height="80" rx="12"></rect>
-          <text class="svg-label" x="248" y="78">Run Created</text>
-          <text class="svg-small" x="248" y="101">/ Queued</text>
-          <rect class="svg-panel" x="422" y="48" width="160" height="80" rx="12"></rect>
-          <text class="svg-label" x="444" y="81">Execution Slot</text>
-          <text class="svg-small" x="444" y="103">FIFO supervisor</text>
-          <rect class="svg-panel svg-blue" x="618" y="48" width="160" height="80" rx="12"></rect>
-          <text class="svg-label" x="640" y="74">Build Rules</text>
-          <text class="svg-small" x="640" y="96">Context + Tool Snapshot</text>
-          <rect class="svg-panel svg-purple" x="814" y="48" width="160" height="80" rx="12"></rect>
-          <text class="svg-label" x="836" y="81">Model Attempt</text>
-          <text class="svg-small" x="836" y="103">Chat Completions / SSE</text>
-          <rect class="svg-panel svg-purple" x="1010" y="48" width="160" height="80" rx="12"></rect>
-          <text class="svg-label" x="1032" y="81">Text / Tool Calls</text>
-          <text class="svg-small" x="1032" y="103">untrusted proposal</text>
-          <rect class="svg-panel svg-amber" x="1206" y="48" width="160" height="80" rx="12"></rect>
-          <text class="svg-label" x="1228" y="81">Validation</text>
-          <text class="svg-small" x="1228" y="103">contract + policy</text>
-
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1286 128 C 1286 181 1120 190 1000 236"></path>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1286 128 C 1286 181 1340 190 1340 236"></path>
-          <text class="svg-small" x="1018" y="177">ToolCall branch</text>
-          <text class="svg-small" x="1310" y="177">final branch</text>
-
-          <rect class="svg-panel svg-amber" x="870" y="236" width="260" height="78" rx="12"></rect>
-          <text class="svg-label" x="892" y="268">Tool execution</text>
-          <text class="svg-small" x="892" y="291">Approval · Sandbox · Execute · Verify</text>
-          <rect class="svg-panel svg-blue" x="1150" y="236" width="220" height="78" rx="12"></rect>
-          <text class="svg-label" x="1172" y="268">Final Answer</text>
-          <text class="svg-small" x="1172" y="291">RunFinalizer / no Tool</text>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 870 275 L 735 275"></path>
-          <rect class="svg-panel" x="480" y="236" width="255" height="78" rx="12"></rect>
-          <text class="svg-label" x="502" y="268">Context updated</text>
-          <text class="svg-small" x="502" y="291">facts · Tool Result · progress</text>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 480 275 L 340 275 C 290 275 290 145 840 145"></path>
-          <text class="svg-small" x="354" y="216">next model step</text>
-
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1260 314 L 1260 386"></path>
-          <path class="svg-arrow" marker-end="url(#runArrow)" d="M 1000 314 C 1000 368 1080 386 1180 386"></path>
-          <rect class="svg-panel svg-green" x="1060" y="386" width="300" height="78" rx="12"></rect>
-          <text class="svg-label" x="1082" y="418">Run terminal state</text>
-          <text class="svg-small" x="1082" y="441">succeeded · stopped · failed · canceled</text>
-        </svg>
-      </div>
-
-      <div class="diagram-card" style="margin-top: 14px;">
-        <svg viewBox="0 0 1440 190" role="img" aria-labelledby="approval-svg-title approval-svg-desc">
-          <title id="approval-svg-title">Approval branch</title>
-          <desc id="approval-svg-desc">副作用 Tool 先进入 Approval，再进入受控 Sandbox 和执行，最后验证或进入 reconciliation。</desc>
-          <defs>
-            <marker id="approvalArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ae7418"></path></marker>
-          </defs>
-          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 260 93 L 380 93"></path>
-          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 590 93 L 710 93"></path>
-          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 920 93 L 1040 93"></path>
-          <path class="svg-arrow-soft" stroke="#ae7418" marker-end="url(#approvalArrow)" d="M 1250 93 L 1370 93"></path>
-          <rect class="svg-panel svg-amber" x="50" y="52" width="210" height="82" rx="12"></rect>
-          <text class="svg-label" x="72" y="84">Side-effect Tool</text>
-          <text class="svg-small" x="72" y="108">file · shell · external</text>
-          <rect class="svg-panel svg-amber" x="380" y="52" width="210" height="82" rx="12"></rect>
-          <text class="svg-label" x="402" y="84">Approval</text>
-          <text class="svg-small" x="402" y="108">user authorization</text>
-          <rect class="svg-panel svg-purple" x="710" y="52" width="210" height="82" rx="12"></rect>
-          <text class="svg-label" x="732" y="84">Seatbelt / Policy</text>
-          <text class="svg-small" x="732" y="108">effective permissions</text>
-          <rect class="svg-panel svg-amber" x="1040" y="52" width="210" height="82" rx="12"></rect>
-          <text class="svg-label" x="1062" y="84">Execute</text>
-          <text class="svg-small" x="1062" y="108">bounded process / write</text>
-          <rect class="svg-panel svg-green" x="1370" y="52" width="60" height="82" rx="12"></rect>
-          <text class="svg-small" transform="translate(1401 80) rotate(90)">Verify / Reconcile</text>
-        </svg>
-      </div>
-    </section>
-
-    <section aria-labelledby="authority-title">
-      <h2 id="authority-title">State Authority</h2>
-      <p class="section-intro">SQLite 是 durable business fact authority。In-memory state 和 OpenTelemetry 只服务于 Runtime coordination / observability。</p>
-      <div class="authority-grid">
-        <div class="authority-card authority-source">
-          <div><strong>SQLite</strong><br><span>durable business fact authority</span></div>
-          <div><span>Events / Outbox 与业务状态在同一 transaction 中提交。</span></div>
+    <section class="view" id="run" aria-labelledby="run-title" hidden>
+      <div class="section-heading"><h2 id="run-title">一次 Run 如何推进</h2><p>这张图展示正常执行的主要分支。Runtime 在各个安全点处理取消、用户输入、审批与子任务等待。</p></div>
+      <div class="panel-card">
+        <div class="flow-intro"><strong>Desktop 输入 / 渠道消息 / 定时触发</strong><span>→ RunApplication.start → 同一套持久执行链路</span></div>
+        <ol class="run-stages">
+          <li><div class="stage-number">01 / 接纳</div><h3>Runtime 创建并提交 Run</h3><p>Runtime 核对 Session、模型、输入和权限模式，并持久保存本次执行来源与快照。</p><code>application/runs.py</code></li>
+          <li><div class="stage-number">02 / 调度</div><h3>Supervisor 启动 Worker</h3><p>同 Session 按 FIFO 执行。Supervisor 为 Run 持有线程、模型租约与取消资源。</p><code>runtime/supervisor.py</code></li>
+          <li><div class="stage-number">03 / 构建</div><h3>Engine 准备当前 Step</h3><p>Builder 组合规则、历史、工具、记忆与可用仓库证据，并绑定上下文快照。</p><code>engine.py · context/builder.py</code></li>
+          <li><div class="stage-number">04 / 采样</div><h3>Sampling 请求模型</h3><p>Runtime 保存 ModelAttempt，处理流式文本、ToolCall、思考回放与实际 Usage。</p><code>sampling.py · model/gateway.py</code></li>
+        </ol>
+        <div class="branch-label">↓ Engine 根据模型结果、待处理输入与运行事实选择分支</div>
+        <div class="branches">
+          <article class="branch tools">
+            <h3>模型请求工具 → Runtime 执行工具</h3>
+            <p>ToolDispatcher 校验调用与工具可用性。ToolCallRuntime 选择 Handler，Controller 管理实际执行边界。</p>
+            <div class="pipeline" aria-label="工具执行顺序"><span>校验参数</span><b>→</b><span>准备与 Diff</span><b>→</b><span>判定权限</span><b>→</b><span>提交 Intent</span><b>→</b><span>执行</span><b>→</b><span>核验</span><b>→</b><span>提交结果</span></div>
+            <p>实际副作用发生前，Controller 提交 Durable Intent。无需修改文件的操作可以返回 no_changes。权限阶段是否需要审批取决于模式和已授权范围。</p>
+            <div class="loop-back">↰ ToolResult + Event / Outbox 提交后，Engine 回到步骤 03，构建下一次模型请求。</div>
+          </article>
+          <article class="branch finish">
+            <h3>模型无需继续 → Runtime 检查完成条件</h3>
+            <p>Engine 处理尚未消费的输入、必要子任务和 Stop / SubagentStop Hook。Hook 要求继续时，Engine 返回模型循环。</p>
+            <p>满足完成条件后，Runtime 提交终态并投递通知。普通完成使用已有模型回答。</p>
+            <p><strong>RunFinalizer</strong> 为需要提前收尾的路径生成有界、无工具回答；它不负责每一次普通完成。</p>
+          </article>
         </div>
-        <div class="authority-card">
-          <ul class="fact-list">
-            <li>Session / Run / Item</li>
-            <li>Step / ModelAttempt</li>
-            <li>ToolCall / Approval / Intent</li>
-            <li>Event / Outbox</li>
-            <li>Context / Compaction</li>
-            <li>Repository Snapshots</li>
-            <li>Checkpoints</li>
-            <li>Response Feedback / Revisions</li>
-          </ul>
+        <div class="callout">
+          <p><strong>并行范围：</strong>Dispatcher 只把连续且满足 parallel_safe 的只读调用分组并行，并按模型声明顺序汇总结果。</p>
+          <p><strong>副作用顺序：</strong>每个 Run 只串行自己的提交 / 启动窗口。活动 Shell 不会持续持有这个门，其他 Run 也不共享这个门。</p>
+          <p><strong>Hook 位置：</strong>UserPromptSubmit 位于采样前，PreToolUse 位于准备与审批前，PostToolUse 位于结果提交后。</p>
         </div>
+        <p class="source-caption">源码：<a href="../runtime/eidos_runtime/runtime/engine.py">RuntimeEngine</a> · <a href="../runtime/eidos_runtime/runtime/tool_dispatcher.py">ToolDispatcher</a> · <a href="../runtime/eidos_runtime/runtime/tool_execution.py">ToolExecutionController</a> · <a href="../runtime/eidos_runtime/runtime/hooks.py">HookService</a></p>
+      </div>
+      <div class="reading-notes">
+        <article><h3>Session 组织对话与工作空间</h3><p>一个 Session 可以包含多个 Run。Session 持有 Local 或 Worktree 执行位置；Projectless 会话也有独立工作空间。</p></article>
+        <article><h3>Run 组织一次任务执行</h3><p>Run 固定模型与权限模式。Step、ModelAttempt、ToolCall 和 Durable Intent 保存更细的执行证据。</p></article>
+        <article><h3>子 Agent 仍使用普通 Run</h3><p>协作记录关联父 Run 与子 Session。每个子任务使用自身的执行、上下文与取消资源。</p></article>
       </div>
     </section>
 
-    <section aria-labelledby="trust-title">
-      <h2 id="trust-title">Trust Boundary</h2>
-      <p class="section-intro">Proposal、authorization、policy enforcement 和 durable facts 属于不同边界。</p>
-      <div class="trust-grid">
-        <div class="trust-card presentation"><h3>Renderer</h3><p>Untrusted presentation boundary。只通过 typed IPC 观察和请求状态。</p></div>
-        <div class="trust-card proposal"><h3>Model output</h3><p>Untrusted proposal。文本和 ToolCall 必须经过 Runtime validation。</p></div>
-        <div class="trust-card authority"><h3>Runtime</h3><p>Validation、Tool contract、lifecycle、policy 和 reconciliation authority。</p></div>
-        <div class="trust-card proposal"><h3>Approval</h3><p>User authorization。Approval 不能改变 Tool 参数或移除 hard deny。</p></div>
-        <div class="trust-card enforcement"><h3>Seatbelt</h3><p>OS enforcement。默认 Shell attempt 使用 Seatbelt Policy 和有效权限。</p></div>
-        <div class="trust-card authority"><h3>SQLite</h3><p>Durable fact authority。内存对象和 Trace 不能替代已提交的业务事实。</p></div>
+    <section class="view" id="permissions" aria-labelledby="permissions-title" hidden>
+      <div class="section-heading"><h2 id="permissions-title">权限决定能做什么，恢复保留已经发生的事实</h2><p>模型输出只提出调用。Runtime 根据当前 Run 的固定权限模式，决定审批、沙盒与实际执行。</p></div>
+      <div class="panel-card">
+        <fieldset class="mode-picker">
+          <legend>查看不同权限模式的执行路径</legend>
+          <div class="mode-options">
+            <label><input type="radio" name="permission-mode" value="manual" checked>请求审批 <code>manual</code></label>
+            <label><input type="radio" name="permission-mode" value="auto_review">替我审批 <code>auto_review</code></label>
+            <label><input type="radio" name="permission-mode" value="full_access">完全访问 <code>full_access</code></label>
+          </div>
+        </fieldset>
+        <div class="mode-explanation" id="mode-explanation" aria-live="polite" aria-atomic="true"></div>
+        <div class="callout"><strong>所有模式都保留：</strong>参数校验、文件身份与版本检查、实际副作用前的 Durable Intent、取消、结果核验和未知结果记录。模型、项目文本与工具参数不能切换 Run 模式。本页控件只解释源码行为，不修改 Eidos 设置。</div>
       </div>
+      <div class="two-column">
+        <article class="panel-card"><h3>Runtime 如何执行权限</h3><div class="rule-list">
+          <article><h3>PermissionPolicyEvaluator 判定范围</h3><p>普通工作空间操作使用已有权限。额外路径、网络与无沙盒执行进入相应的授权流程。</p></article>
+          <article><h3>Seatbelt 与受控文件访问执行限制</h3><p>manual / auto_review 默认使用既有保护。Shell 使用有效沙盒策略；文件执行器核对目录、FD、身份和版本。</p></article>
+          <article><h3>高危人工批准可以放开具体限制</h3><p>受保护路径和裸 Shell 无沙盒执行需要高危人工确认。自动审查不能代替这个确认。</p></article>
+        </div></article>
+        <article class="panel-card"><h3>Runtime 如何取消与恢复</h3><div class="rule-list">
+          <article><h3>取消先成为持久事实</h3><p>Runtime 先写入取消状态，再通知 Worker、模型、工具进程和等待任务。迟到结果不能覆盖取消。</p></article>
+          <article><h3>重启先核对未完成执行</h3><p>Recovery 处理 Run、ToolCall、Approval、Intent 与 Outbox。满足条件的安全任务可以重新排队。</p></article>
+          <article><h3>系统保留未知结果，并继续后续工作</h3><p>Runtime 不猜测未知副作用，也不自动重放。未知记录本身不建立后续核验门，不阻止 Run 正常完成。</p></article>
+        </div></article>
+      </div>
+      <p class="source-caption">源码：<a href="../runtime/eidos_runtime/runtime/permission_policy.py">PermissionPolicyEvaluator</a> · <a href="../runtime/eidos_runtime/runtime/approval.py">ApprovalCoordinator</a> · <a href="../runtime/eidos_runtime/db/recovery.py">recover_runtime_facts</a> · <a href="../runtime/eidos_runtime/runtime/supervisor.py">RunSupervisor</a></p>
     </section>
 
-    <section aria-labelledby="observability-title">
-      <h2 id="observability-title">Observability</h2>
-      <p class="section-intro">OpenTelemetry 是非权威诊断层。默认 exporter 为 none；显式启用后可以写 console 或 OTLP HTTP。</p>
-      <div class="trust-grid">
-        <div class="trust-card presentation"><h3>eidos.run</h3><p>Run、Session、Model 与最终状态。Trace 不驱动 Run 状态迁移。</p></div>
-        <div class="trust-card proposal"><h3>eidos.model.attempt</h3><p>Provider、model、finish reason、TTFT、duration、retry 与 token usage。</p></div>
-        <div class="trust-card enforcement"><h3>eidos.tool.call</h3><p>Tool、Call ID、Tool status、Workspace changed 与异常状态。</p></div>
+    <section class="view" id="data" aria-labelledby="data-title" hidden>
+      <div class="section-heading"><h2 id="data-title">状态归属与实际代码目录</h2><p>本视图区分执行事实、受控文件、可重建索引和内存资源。目录树只列出当前源码中存在的主要部分。</p></div>
+      <div class="panel-card">
+        <div class="table-scroll"><table>
+          <thead><tr><th scope="col">保存位置</th><th scope="col">保存内容</th><th scope="col">架构含义</th></tr></thead>
+          <tbody>
+            <tr><td><strong>state.sqlite</strong></td><td>Session / Run / Step / ModelAttempt / ToolCall / Approval / Intent / Event / Outbox，以及协作、计划、扩展和记忆元数据。</td><td>Runtime 以已提交的执行状态为准。业务变化与对应事件在同一事务中保存。</td></tr>
+            <tr><td><strong>受控文件与工作空间</strong></td><td>Workspace 文件、模型配置 models.json、独立凭据文件、Blob、记忆正文、插件包与快照产物。</td><td>文件内容有各自的身份、权限与校验规则。API Key 不写入 SQLite 或普通事件。</td></tr>
+            <tr><td><strong>repository.sqlite</strong></td><td>仓库 Inventory、Index、Symbol、Chunk、Map 与 FTS 检索资料。</td><td>仓库库是可重建缓存。Watcher 只用于失效与索引更新，文件核验仍读取实际目标。</td></tr>
+            <tr><td><strong>内存与诊断</strong></td><td>Worker 句柄、模型租约、CancelScope、活动 Shell、缓存与 Trace。</td><td>这些对象服务于当前协调与诊断。它们不能替代持久执行事实。</td></tr>
+          </tbody>
+        </table></div>
+        <div class="return-path"><b>事务与投递分开</b><span>业务更新 + Event + Outbox 同事务提交</span><span aria-hidden="true">→</span><span>EventDelivery 投影并发送通知</span><span aria-hidden="true">→</span><span>Main 转发给 Renderer</span></div>
+        <p class="source-caption">布局还包含 thread_history.sqlite、logs.sqlite 和兼容用 memories.sqlite。新记忆的业务元数据由 state.sqlite 管理。各文件职责以 <a href="../runtime/eidos_runtime/db/layout.py">db/layout.py</a> 和 <a href="../runtime/eidos_runtime/memory/service.py">MemoryService</a> 为准。</p>
       </div>
+      <div class="two-column">
+        <article class="panel-card"><h3>Desktop 的代码入口</h3><pre class="tree">desktop/
+├─ renderer/     <span class="tree-comment">界面、Feed、用户交互</span>
+├─ main/
+│  ├─ main.ts    <span class="tree-comment">窗口、IPC 与桌面资源</span>
+│  ├─ preload.ts <span class="tree-comment">context-isolated API</span>
+│  └─ runtime-client.ts
+│                <span class="tree-comment">Python 子进程与协议客户端</span>
+└─ shared/       <span class="tree-comment">类型、协议与生成契约</span></pre></article>
+        <article class="panel-card"><h3>Runtime 的当前职责目录</h3><pre class="tree">runtime/eidos_runtime/
+├─ protocol/             <span class="tree-comment">Server、Registry、DTO</span>
+├─ application/          <span class="tree-comment">完整用例</span>
+├─ runtime/              <span class="tree-comment">Engine、Supervisor、工具协调</span>
+├─ domain/ · models/     <span class="tree-comment">领域约束与模型</span>
+├─ db/ · persistence/    <span class="tree-comment">SQL、事务、映射与恢复</span>
+├─ context/ · model/     <span class="tree-comment">上下文与模型接入</span>
+├─ tools/ · sandbox/     <span class="tree-comment">工具、文件与进程权限</span>
+├─ extensions/ · memory/ <span class="tree-comment">扩展与记忆</span>
+└─ repo_intelligence/ · workspace/ · git/
+                        <span class="tree-comment">仓库、工作空间与工作树</span></pre></article>
+      </div>
+      <div class="callout"><strong>当前实现仍有新旧边界共存。</strong>SessionStore 仍承担兼容入口，db/ 与 persistence/ 并存。Run Worker 仍使用 threading.Thread；共享 RuntimeAsyncKernel 通过 AnyIO BlockingPortal 管理异步 I/O。图中没有把目标目录或全面异步迁移画成已完成实现。</div>
+      <h3 class="subheading">Eidos 自己管理什么，成熟依赖负责什么</h3>
+      <div class="panel-card table-scroll"><table>
+        <thead><tr><th scope="col">模块</th><th scope="col">Eidos 继续管理</th><th scope="col">当前使用的机制</th></tr></thead>
+        <tbody>
+          <tr><td>Agent 循环</td><td>Run / Step 状态、决策、审批、取消、未知结果与恢复。</td><td>Eidos RuntimeEngine / Supervisor。</td></tr>
+          <tr><td>模型</td><td>Profile、快照、租约、错误映射与安全重试判断。</td><td>Pydantic AI Model API；Responses 使用独立原生适配器与 OpenAI SDK。</td></tr>
+          <tr><td>异步 I/O / MCP</td><td>资源所有者、取消、关闭、授权与冻结快照。</td><td>AnyIO；官方 MCP SDK 的 stdio / Streamable HTTP。</td></tr>
+          <tr><td>仓库与搜索</td><td>检索范围、排名、预算与安全核验。</td><td>bundled ripgrep、Tree-sitter、SQLite FTS5、RapidFuzz、watchfiles。</td></tr>
+          <tr><td>持久化与协议</td><td>状态转换、事务、Outbox、RPC 方法与领域契约。</td><td>sqlite3、Pydantic v2、生成或校验的 TypeScript 契约。</td></tr>
+        </tbody>
+      </table></div>
     </section>
 
-    <footer>Current baseline · 离线单文件 · HTML + inline CSS + inline SVG · 不依赖 CDN 或 npm package</footer>
+    <section class="view" id="sources" aria-labelledby="sources-title" hidden>
+      <div class="section-heading"><h2 id="sources-title">从图回到源码</h2><p>下列入口支持本图的主要结论。行号对应本次核对的源码；后续改动可能使行号移动。</p></div>
+      <div class="panel-card">
+        <div class="filter"><label for="source-filter">查找模块或文件</label><input id="source-filter" type="search" placeholder="例如：并发、MCP、memory、gateway" autocomplete="off"><output id="source-count" for="source-filter" aria-live="polite"></output></div>
+        <div class="table-scroll"><table class="source-table"><thead><tr><th scope="col">模块</th><th scope="col">本图采用的实现事实</th><th scope="col">源码入口</th></tr></thead><tbody id="source-rows"></tbody></table></div>
+        <p class="empty" id="source-empty" hidden>没有匹配的模块。你可以换一个文件名或关键词。</p>
+        <p class="source-caption">本页的相对链接指向同一仓库内的源码。浏览器是否直接显示源码取决于本地文件与预览方式。图中的结论来自源码核对；本次文档更新不代表产品完成了完整回归。</p>
+      </div>
+    </section>
+    <noscript><p>你需要启用 JavaScript 才能切换视图与查看模块详情。系统总览仍可直接阅读。</p></noscript>
+    <footer><span>离线单文件 · 内联 CSS 与 JavaScript · 无 CDN、字体下载或网络请求</span><span><a href="current-architecture.md">当前架构文档</a> · <a href="current-limitations.md">当前限制</a> · <a href="README.md">文档入口</a></span></footer>
   </main>
+  <script>
+    "use strict";
+    const modules = [
+      { id: "renderer", title: "Renderer / preload", role: "界面与隔离桥接", fact: "Renderer 通过 window.eidosRuntime 请求操作，并订阅 Main 转发的通知。BrowserWindow 开启 contextIsolation 与 sandbox，关闭 nodeIntegration。", input: "用户输入、Main 的状态与运行通知", output: "typed IPC 请求；Feed、审批与 Diff 展示", note: "preload 只暴露明确 API。Renderer 不直接连接 Python 或使用 Node 系统能力。", files: [["desktop/main/main.ts", 324], ["desktop/main/preload.ts", 450], ["desktop/shared/ipc-api.ts", 1]] },
+      { id: "main", title: "Electron Main", role: "桌面资源与协议客户端", fact: "RuntimeClient 通过 spawn 启动 python -u -m eidos_runtime，使用三条 pipe 传递协议与日志。Main 管理窗口、终端和产物预览等桌面资源。", input: "preload IPC 请求、Python stdout / stderr", output: "JSON-RPC 请求、Renderer 通知、桌面资源操作", note: "Main 在协议边界校验数据。Runtime stdout 与 stderr 有不同用途。", files: [["desktop/main/runtime-client.ts", 406], ["desktop/main/main.ts", 196], ["desktop/main/terminal-manager.ts", 1], ["desktop/main/artifact-preview.ts", 1]] },
+      { id: "server", title: "RuntimeServer", role: "协议入口与进程组装", fact: "Server 接收有界 JSON-RPC 消息，使用 MethodRegistry 注册方法，并组装应用、存储、模型网关、异步内核和受管服务。", input: "Main 发送的 JSON-RPC / JSONL", output: "Application 调用、响应与通知", note: "控制通道是本地 stdio。远程 MCP 的 HTTP 和 OAuth 回环不替代这个通道。", files: [["runtime/eidos_runtime/protocol/server.py", 1256], ["runtime/eidos_runtime/protocol/server.py", 1940], ["runtime/eidos_runtime/protocol/registry.py", 1]] },
+      { id: "application", title: "Application", role: "完整产品用例", fact: "应用用例处理项目、Session、Run、工作树、审批、模型、扩展、记忆与计划。Desktop、渠道与定时触发使用同一个 RunApplication.start 入口。", input: "经过校验的请求与内部触发", output: "事务结果、Run 接纳与调度动作", note: "这些框按职责分组。当前部分编排与兼容逻辑仍分布在 Server 和 SessionStore。", files: [["runtime/eidos_runtime/application/runs.py", 1], ["runtime/eidos_runtime/protocol/server.py", 1840], ["runtime/eidos_runtime/application/channels.py", 114], ["runtime/eidos_runtime/protocol/server.py", 1795]] },
+      { id: "supervisor", title: "RunSupervisor", role: "Run 调度、Worker 与资源所有者", fact: "Supervisor 循环领取可运行任务，并为 Run 创建受管线程。数据库查询阻止同 Session 的活动 Run 重叠，并限制每个父 Run 同时执行的子 Agent 为 8 个。", input: "已提交的排队 Run、取消、审批响应", output: "RuntimeEngine 调用、资源取消与静止检查", note: "Runtime 没有跨 Session 的 Run 总量配额。不同 Run 不共享工作区副作用门。", files: [["runtime/eidos_runtime/runtime/supervisor.py", 224], ["runtime/eidos_runtime/runtime/supervisor.py", 904], ["runtime/eidos_runtime/db/repositories/runs.py", 404], ["runtime/eidos_runtime/domain/collaboration.py", 16]] },
+      { id: "engine", title: "RuntimeEngine", role: "Eidos 自己管理的 Agent Loop", fact: "Engine 准备 Run 资源，构建 Step 上下文，调用 SamplingRuntime，再根据模型输出、工具结果和持久事实推进下一步或完成任务。", input: "Run、模型租约、规则与扩展快照", output: "ModelAttempt、ToolCall、Step 与 Run 状态", note: "Pydantic AI 提供模型能力。Eidos 继续管理 Agent Loop、审批与持久状态。", files: [["runtime/eidos_runtime/runtime/engine.py", 172], ["runtime/eidos_runtime/runtime/engine.py", 366], ["runtime/eidos_runtime/runtime/decision.py", 1], ["runtime/eidos_runtime/runtime/finalizer.py", 1]] },
+      { id: "context", title: "Context", role: "从持久事实构建模型输入", fact: "ContextBuilder 组合规则、历史、工具、输入引用、记忆访问与可用仓库证据。ContextPlan 和 ContextSnapshot 绑定请求；压缩保留来源并有确定性回退。", input: "持久历史、当前任务、冻结规则与工具集", output: "模型上下文、预算、快照与压缩记录", note: "下一请求大小可能是估算。Provider Usage 只对应实际发出的那次请求。", files: [["runtime/eidos_runtime/context/builder.py", 52], ["runtime/eidos_runtime/context/compactor.py", 1], ["runtime/eidos_runtime/persistence/context_snapshots.py", 1]] },
+      { id: "model", title: "Sampling / Model Gateway", role: "模型租约与实际请求", fact: "Gateway 固定 Profile 并创建模型租约。普通路径使用 PydanticAIModelClient；wire_api 为 openai_responses 时使用 OpenAIResponsesModelClient。SamplingRuntime 保存流式输出与 Attempt 结果。", input: "ContextSnapshot、工具定义与模型配置", output: "文本、ToolCall、思考回放、Usage 与稳定错误", note: "当前 Responses 仍有独立原生适配路径。图中不把全部协议处理都归给 Pydantic AI。", files: [["runtime/eidos_runtime/model/gateway.py", 70], ["runtime/eidos_runtime/model/pydantic_ai_client.py", 390], ["runtime/eidos_runtime/model/native_custom.py", 1], ["runtime/eidos_runtime/runtime/sampling.py", 87]] },
+      { id: "tools", title: "Tool Runtime", role: "工具调用与副作用边界", fact: "Dispatcher 验证工具和参数，ToolCallRuntime 选择 Handler，ToolExecutionController 处理权限、Durable Intent、执行、核验与结果提交。连续 parallel_safe 只读调用可以分组并行。", input: "模型 ToolCall、固定 Registry、有效权限", output: "ToolResult、文件或进程效果、未知结果记录", note: "副作用门只覆盖所属 Run 的提交 / 启动窗口。活动 Shell 不会一直占有这个门。", files: [["runtime/eidos_runtime/runtime/tool_dispatcher.py", 391], ["runtime/eidos_runtime/runtime/tool_runtime.py", 1634], ["runtime/eidos_runtime/runtime/tool_execution.py", 348], ["runtime/eidos_runtime/runtime/tool_orchestrator.py", 1]] },
+      { id: "extensions", title: "Extensions / RunResources", role: "插件、技能与 MCP 的运行快照", fact: "RunResources 从固定扩展快照构建 Skill Catalog、SkillAccess、MCP 与工具资源。MCP 使用官方 SDK 的 stdio 和 Streamable HTTP；插件还可以提供已支持的 command Hooks。", input: "已安装插件、启用与授权状态、Run 快照", output: "可用工具、技能正文与脚本、受控 MCP / Hook 调用", note: "插件导入、启用、MCP 授权与 Hook 信任分别管理。安装不等于执行授权。", files: [["runtime/eidos_runtime/runtime/run_resources.py", 125], ["runtime/eidos_runtime/extensions/mcp.py", 381], ["runtime/eidos_runtime/extensions/plugins.py", 1], ["runtime/eidos_runtime/extensions/plugin_package.py", 1]] },
+      { id: "kernel", title: "RuntimeAsyncKernel", role: "进程共享的异步 I/O 内核", fact: "Kernel 使用 AnyIO start_blocking_portal，backend 为 asyncio。模型请求、MCP 与受管任务共享这个内核，并通过 ResourceRegistry 管理所有者与关闭。", input: "Run Worker 的同步桥接调用与受管服务", output: "有所有者的异步任务、取消和资源诊断", note: "当前 Run Worker 仍使用 threading.Thread。共享 AnyIO 内核不表示整个执行循环已经改成纯异步。", files: [["runtime/eidos_runtime/runtime/async_kernel.py", 276], ["runtime/eidos_runtime/runtime/supervisor.py", 923], ["runtime/eidos_runtime/runtime/resource_registry.py", 1]] },
+      { id: "repo", title: "Repository Intelligence", role: "有界仓库理解与证据检索", fact: "Engine 在非 Projectless 工作空间读取可用仓库代际。快照完整且存在索引时，Engine 构建查询并自动检索，再把概览和证据交给 Context。", input: "Workspace、Git 状态、任务与索引代际", output: "Repository Map、排名后的源码证据", note: "bundled ripgrep、Tree-sitter、FTS5、RapidFuzz 与 watchfiles 提供机制。索引和 watcher 不能替代文件安全核验。", files: [["runtime/eidos_runtime/runtime/engine.py", 172], ["runtime/eidos_runtime/context/repository.py", 1], ["runtime/eidos_runtime/repo_intelligence/retrieval.py", 1], ["runtime/eidos_runtime/db/layout.py", 336]] },
+      { id: "memory", title: "MemoryService / MemoryJobs", role: "有来源与作用域的长期资料", fact: "MemoryService 从 SQLite 读取资格、条目与版本。受管 MemoryJobs 处理已授权的历史整理，正文使用受控文件发布，FTS 与 generation 是派生投影。", input: "授权来源、全局 / 项目设置、真实证据", output: "有来源的长期条目、检索结果与使用快照", note: "记忆不授予权限。临时会话、渠道和定时来源有各自的使用与写入限制。", files: [["runtime/eidos_runtime/memory/service.py", 68], ["runtime/eidos_runtime/memory/jobs.py", 39], ["runtime/eidos_runtime/runtime/run_resources.py", 238]] },
+      { id: "channels", title: "ChannelService", role: "钉钉、飞书与企业微信收发", fact: "ChannelService 使用渠道 Adapter 接收消息。ChannelApplication 处理持久来源与路由，再调用普通 RunApplication.start。回复使用渠道自身的传输链路。", input: "渠道连接配置与外部消息", output: "普通 Run、持久路由与渠道回复", note: "外部消息不会直接调用工具。后续执行仍受该 Run 的固定权限模式约束。", files: [["runtime/eidos_runtime/runtime/channel_service.py", 22], ["runtime/eidos_runtime/application/channels.py", 79], ["runtime/eidos_runtime/application/channels.py", 114]] },
+      { id: "automations", title: "AutomationScheduler", role: "Runtime 内的本地定时入口", fact: "Scheduler 在受管 AnyIO 任务中检查未来触发时刻。触发准备完成后，Server 使用普通 RunApplication.start，并保存 automation occurrence 来源。", input: "SQLite 中的计划与未来触发时刻", output: "普通 Run、执行历史与计划事件", note: "Runtime 退出或电脑休眠时不执行。调度器不补跑漏过的时刻；同计划和目标 Session 有独立占用检查。", files: [["runtime/eidos_runtime/runtime/automation_scheduler.py", 33], ["runtime/eidos_runtime/protocol/server.py", 1795], ["runtime/eidos_runtime/persistence/automations.py", 232]] },
+      { id: "git", title: "Git / Worktree", role: "执行位置、快照与恢复", fact: "WorktreeManager 与 Session 用例处理受管工作树、位置切换和恢复。Checkpoint 与快照记录保存 Git 状态和关联元数据，生命周期操作使用持久 Intent。", input: "用户操作、项目仓库与当前 Session 位置", output: "Local / Worktree 执行位置、快照与恢复记录", note: "Local Session 可能共享同一真实目录。独立 Worktree 提供文件修改隔离；非 Git 目录没有通用文件系统回滚。", files: [["runtime/eidos_runtime/git/manager.py", 1], ["runtime/eidos_runtime/application/checkpoints.py", 1], ["runtime/eidos_runtime/application/worktree_snapshots.py", 1], ["runtime/eidos_runtime/persistence/session_handoff.py", 1]] },
+      { id: "hooks", title: "HookService", role: "受信任的 command Hooks", fact: "Runtime 已接入 UserPromptSubmit、PreToolUse、PostToolUse、Stop 与 SubagentStop。Hook 调用记录 Intent，并使用现有 Shell 沙盒和 Run 所有者。", input: "Run 的已启用、已信任 Hook 快照", output: "附加上下文、拒绝、参数改写或继续要求", note: "Runtime 重新校验改写参数。原始执行结果仍保存；其他兼容事件不等于已经触发。", files: [["runtime/eidos_runtime/runtime/hooks.py", 41], ["runtime/eidos_runtime/extensions/codex_hooks.py", 1], ["runtime/eidos_runtime/persistence/hooks.py", 1]] },
+      { id: "permissions", title: "Permission / Approval", role: "权限判定与人工授权", fact: "PermissionPolicyEvaluator 判断有效范围与是否必须人工确认。ApprovalCoordinator 按 manual、auto_review、full_access 处理授权；完全访问不创建逐操作审批。", input: "固定模式、已有 Grant、具体路径与网络请求", output: "允许、审批或拒绝；有效权限", note: "高危确认可开放具体保护范围。full_access 由用户确认，关闭 Seatbelt，但保留身份、版本与结果校验。", files: [["runtime/eidos_runtime/runtime/permission_policy.py", 37], ["runtime/eidos_runtime/runtime/approval.py", 124], ["runtime/eidos_runtime/runtime/tool_execution.py", 379]] },
+      { id: "persistence", title: "SQLite / Outbox", role: "执行事实与事件投递", fact: "状态更新与对应 Event / Outbox 在事务中提交。EventDelivery 读取待投递记录，通过 EventProjector 生成通知，再由 Main 转交界面。", input: "业务状态变更与已验证结果", output: "已提交事实、可恢复投递与界面通知", note: "state.sqlite 管理执行状态；repository.sqlite 是可重建仓库缓存。模型 Key 与大正文有独立文件存储。", files: [["runtime/eidos_runtime/db/database.py", 124], ["runtime/eidos_runtime/db/events.py", 227], ["runtime/eidos_runtime/runtime/event_delivery.py", 37], ["runtime/eidos_runtime/db/layout.py", 73]] },
+      { id: "recovery", title: "Recovery / Cancel", role: "中断后的事实收敛", fact: "Recovery 核对未完成 Run、模型 Attempt、工具、审批与 Intent，恢复安全等待并记录失去结果的执行。Supervisor 管理取消传播与资源静止。", input: "重启后的持久状态、用户取消与资源结果", output: "恢复排队、终态、未知记录与 Outbox 重投", note: "系统不自动重放不确定副作用。未知结果本身不建立后续核验门，也不强制暂停整个 Run。", files: [["runtime/eidos_runtime/db/recovery.py", 76], ["runtime/eidos_runtime/runtime/supervisor.py", 336], ["runtime/eidos_runtime/runtime/supervisor.py", 575]] }
+    ];
+
+    const moduleById = new Map(modules.map(function (module) { return [module.id, module]; }));
+    function sourceLink(file) {
+      const link = document.createElement("a");
+      link.className = "source-link";
+      link.href = "../" + file[0];
+      link.textContent = file[0] + ":" + file[1];
+      return link;
+    }
+    function textElement(tag, text, className) {
+      const element = document.createElement(tag);
+      element.textContent = text;
+      if (className) element.className = className;
+      return element;
+    }
+    function showModule(id) {
+      const module = moduleById.get(id);
+      if (!module) return;
+      const detail = document.getElementById("module-detail");
+      detail.replaceChildren(textElement("h3", module.title), textElement("p", module.role, "role"), textElement("p", module.fact));
+      const relations = document.createElement("dl");
+      relations.append(textElement("dt", "主要输入"), textElement("dd", module.input), textElement("dt", "主要输出"), textElement("dd", module.output));
+      detail.append(relations, textElement("p", module.note, "detail-note"));
+      module.files.forEach(function (file) { detail.append(sourceLink(file)); });
+      document.querySelectorAll("[data-module]").forEach(function (button) {
+        button.setAttribute("aria-pressed", String(button.dataset.module === id));
+      });
+    }
+    document.querySelectorAll("[data-module]").forEach(function (button) {
+      button.addEventListener("click", function () { showModule(button.dataset.module); });
+    });
+
+    function showView(id) {
+      const target = document.getElementById(id);
+      if (!target || !target.classList.contains("view")) return;
+      document.querySelectorAll(".view").forEach(function (view) { view.hidden = view.id !== id; });
+      document.querySelectorAll("[data-view]").forEach(function (button) {
+        button.setAttribute("aria-pressed", String(button.dataset.view === id));
+      });
+    }
+    document.querySelectorAll("[data-view]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        showView(button.dataset.view);
+        history.replaceState(null, "", "#" + button.dataset.view);
+      });
+    });
+    window.addEventListener("hashchange", function () { showView(location.hash.slice(1)); });
+    document.getElementById("print-button").addEventListener("click", function () { window.print(); });
+
+    const modes = {
+      manual: ["manual · 用户处理需要审批的操作", "Runtime 直接允许已有权限覆盖的操作。额外路径、网络或其他需要审批的操作等待用户决定。受保护路径与裸 Shell 无沙盒执行使用高危人工确认。", "权限判定 → 必要时人工审批 → 有效权限 / Seatbelt → Intent → 执行与核验"],
+      auto_review: ["auto_review · 审查模型处理普通审批", "Runtime 允许已有权限覆盖的操作。审查模型判断普通审批请求。审查失败、超时、不可用或风险未知时，Runtime 转给人工；高危请求始终需要用户确认。", "权限判定 → 必要时自动审查 / 人工确认 → 有效权限 / Seatbelt → Intent → 执行与核验"],
+      full_access: ["full_access · 用户确认后的完全访问", "Desktop 用户确认并创建的 Run 可以关闭 Seatbelt，使用当前 macOS 用户的文件与网络权限，并跳过逐操作审批。Runtime 不再承诺原有受保护目录限制。渠道和定时 Run 只能继承用户已确认的配置。", "已确认的 Run 模式 → Intent → 当前用户权限下执行 → 身份、版本与结果核验"]
+    };
+    function showMode(mode) {
+      const content = modes[mode];
+      if (!content) return;
+      document.getElementById("mode-explanation").replaceChildren(textElement("h3", content[0]), textElement("p", content[1]), textElement("p", content[2], "mode-path"));
+    }
+    document.querySelectorAll('[name="permission-mode"]').forEach(function (input) {
+      input.addEventListener("change", function () { showMode(input.value); });
+    });
+
+    const rows = modules.map(function (module) {
+      const row = document.createElement("tr");
+      const name = document.createElement("td");
+      name.append(textElement("strong", module.title), textElement("p", module.role));
+      const fact = textElement("td", module.fact);
+      const files = document.createElement("td");
+      module.files.forEach(function (file) { files.append(sourceLink(file)); });
+      row.append(name, fact, files);
+      row.dataset.search = [module.id, module.title, module.role, module.fact, module.note, module.files.map(function (file) { return file[0]; }).join(" ")].join(" ").toLowerCase();
+      document.getElementById("source-rows").append(row);
+      return row;
+    });
+    function filterSources() {
+      const query = document.getElementById("source-filter").value.trim().toLowerCase();
+      let count = 0;
+      rows.forEach(function (row) { row.hidden = !row.dataset.search.includes(query); if (!row.hidden) count++; });
+      document.getElementById("source-count").textContent = count + " / " + rows.length + " 个模块";
+      document.getElementById("source-empty").hidden = count !== 0;
+    }
+    document.getElementById("source-filter").addEventListener("input", filterSources);
+    showModule("engine");
+    showMode("manual");
+    filterSources();
+    showView(location.hash.slice(1) || "overview");
+  </script>
 </body>
 </html>

@@ -1,8 +1,10 @@
 # 本地定时任务：延迟工具与方案缺口复核
 
-复核日期：2026-10-15。本文保留实现前的源码复核与规则依据。当前实现、协议和验证边界以 [当前本地定时任务](current-automations.md)、生产代码与测试为准。
+> 文档分类：调研与对照。本文保留调研时的事实、建议和缺口，不作为当前实现或最终决策的证明。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
 
-相关方案：[总方案 V3](scheduled-tasks-research-and-design.md)、[automation 详细设计](automation-tool-design.md)。
+复核日期：2026-10-15。本文保留实现前的源码复核与规则依据。当前实现、协议和验证边界以 [当前本地定时任务](../current-automations.md)、生产代码与测试为准。
+
+相关方案：[总方案 V3](../design/scheduled-tasks-research-and-design.md)、[automation 详细设计](../design/automation-tool-design.md)。
 
 **模型只使用一个 automation 工具，mode 区分管理操作。工具采用 deferred：初始模型请求不包含完整定义，模型先使用 tool_search，后续 Step 才取得工具定义并调用。Runtime 仍负责权限、触发、持久化和恢复。**
 
@@ -22,14 +24,14 @@
 
 源码入口：
 
-- [搜索与激活输出](../runtime/eidos_runtime/tools/search.py)
-- [工具可见性与快照预算](../runtime/eidos_runtime/tools/registry.py#L653)
-- [Run 中的激活记录](../runtime/eidos_runtime/db/repositories/extensions.py#L463)
-- [下一 Step 的定义](../runtime/eidos_runtime/runtime/step_context.py#L39)
-- [未激活调用](../runtime/eidos_runtime/runtime/tool_execution.py#L557)
-- [MCP 名称与来源](../runtime/eidos_runtime/extensions/mcp.py#L860)
+- [搜索与激活输出](../../runtime/eidos_runtime/tools/search.py)
+- [工具可见性与快照预算](../../runtime/eidos_runtime/tools/registry.py#L653)
+- [Run 中的激活记录](../../runtime/eidos_runtime/db/repositories/extensions.py#L463)
+- [下一 Step 的定义](../../runtime/eidos_runtime/runtime/step_context.py#L39)
+- [未激活调用](../../runtime/eidos_runtime/runtime/tool_execution.py#L557)
+- [MCP 名称与来源](../../runtime/eidos_runtime/extensions/mcp.py#L860)
 
-当前测试已经有“搜索前隐藏、下一快照可见”的用例。本轮只读取用例，没有重新运行，也没有证明新定时工具已经通过测试。[现有测试](../runtime/tests/test_tool_registry.py#L77)
+当前测试已经有“搜索前隐藏、下一快照可见”的用例。本轮只读取用例，没有重新运行，也没有证明新定时工具已经通过测试。[现有测试](../../runtime/tests/test_tool_registry.py#L77)
 
 ## 2. 推荐的发现与调用流程
 
@@ -69,7 +71,7 @@
 
 ### 单工具合并后的新增接入点
 
-当前 ToolSpec 按工具固定声明 sideEffect，ToolDispatchPlan 读取该声明，Controller 在 Handler 前使用它决定屏障。单纯把只读与写模式放进同一个 eidos_state 工具，会使查询也受写入屏障影响。[Spec](../runtime/eidos_runtime/tools/registry.py#L52)、[Dispatch](../runtime/eidos_runtime/runtime/tool_dispatcher.py#L35)、[屏障](../runtime/eidos_runtime/runtime/tool_execution.py#L568)
+当前 ToolSpec 按工具固定声明 sideEffect，ToolDispatchPlan 读取该声明，Controller 在 Handler 前使用它决定屏障。单纯把只读与写模式放进同一个 eidos_state 工具，会使查询也受写入屏障影响。[Spec](../../runtime/eidos_runtime/tools/registry.py#L52)、[Dispatch](../../runtime/eidos_runtime/runtime/tool_dispatcher.py#L35)、[屏障](../../runtime/eidos_runtime/runtime/tool_execution.py#L568)
 
 V3 保留一个 deferred 工具，并统一顺序执行。可信内置 AutomationToolRuntime 对已校验命令提供纯分类，view / preview 为只读，其余为状态写入。分类结果进入本次 DispatchPlan，供屏障、取消和结果核验共用；无效参数不能取得只读类别。该接入点尚未实现，不能只改 Schema 就宣称单工具已经可用。
 
@@ -85,7 +87,7 @@ create 有 sessionId 时，系统复用该已有 Session，并从它解析项目
 
 ### 当前事实
 
-create_run 会把 Run 输入写成 completed user_message。memory_source_insert 会收录新 Item，memory_source_items 的 eligible 默认是 1。[Run 输入](../runtime/eidos_runtime/db/repositories/runs.py#L272)、[记忆来源](../runtime/eidos_runtime/memory/schema.py#L19)、[插入触发器](../runtime/eidos_runtime/memory/schema.py#L105)
+create_run 会把 Run 输入写成 completed user_message。memory_source_insert 会收录新 Item，memory_source_items 的 eligible 默认是 1。[Run 输入](../../runtime/eidos_runtime/db/repositories/runs.py#L272)、[记忆来源](../../runtime/eidos_runtime/memory/schema.py#L19)、[插入触发器](../../runtime/eidos_runtime/memory/schema.py#L105)
 
 ### 缺口与推断
 
@@ -105,7 +107,7 @@ Runtime 在接受定时 Run 的同一事务中保存明确的 ExecutionOrigin，
 
 ### 当前事实
 
-side_effects_blocked(run_id) 读取当前 Run 的 reconciliation_required。当前 Run admission 的 Workspace 检查主要验证执行身份。[屏障查询](../runtime/eidos_runtime/db/repositories/runs.py#L661)、[工作区接纳](../runtime/eidos_runtime/application/runs.py#L493)
+side_effects_blocked(run_id) 读取当前 Run 的 reconciliation_required。当前 Run admission 的 Workspace 检查主要验证执行身份。[屏障查询](../../runtime/eidos_runtime/db/repositories/runs.py#L661)、[工作区接纳](../../runtime/eidos_runtime/application/runs.py#L493)
 
 这些入口不能证明新 Run 会继承上一次的副作用屏障。依赖模型阅读历史后自行避免重放，也不能替代调度判断。
 
@@ -123,7 +125,7 @@ side_effects_blocked(run_id) 读取当前 Run 的 reconciliation_required。当�
 
 ### 当前事实
 
-当前 Run 创建支持外部事务连接。普通 run/start 本来允许排队，不会天然满足“定时任务遇到忙碌就跳过”的产品规则。[Run 创建](../runtime/eidos_runtime/db/repositories/runs.py#L122)、[FIFO](../runtime/eidos_runtime/db/repositories/runs.py#L375)
+当前 Run 创建支持外部事务连接。普通 run/start 本来允许排队，不会天然满足“定时任务遇到忙碌就跳过”的产品规则。[Run 创建](../../runtime/eidos_runtime/db/repositories/runs.py#L122)、[FIFO](../../runtime/eidos_runtime/db/repositories/runs.py#L375)
 
 ### 本版决定
 
@@ -148,7 +150,7 @@ side_effects_blocked(run_id) 读取当前 Run 的 reconciliation_required。当�
 
 ### 当前事实
 
-response_actions.revise 会调用普通 Run start，用原 userInput 创建新的 Run；随后记录 regenerate 或 edit 的 run_revisions。[修订入口](../runtime/eidos_runtime/application/response_actions.py#L62)
+response_actions.revise 会调用普通 Run start，用原 userInput 创建新的 Run；随后记录 regenerate 或 edit 的 run_revisions。[修订入口](../../runtime/eidos_runtime/application/response_actions.py#L62)
 
 因此，“同 ToolCall 防重”和“同用户 Item 防重”都不足以覆盖重新生成，因为新的 Run 会创建新的用户 Item。
 
@@ -179,11 +181,11 @@ Fork、Checkpoint 或历史重放不复制定时计划，不撤销已经发生�
 | Session 或 Project 被删除 | 系统在同一删除事务中暂停目标计划，保留历史与原因 |
 | 独立任务的创建者 Session 被删除 | 独立任务继续存在，来源引用可以清空，不把目标项目引用误当来源引用 |
 
-Project 删除导致 projectId 缺失时，系统不能把一个项目任务解释为 Projectless。持久 binding 必须保留目标类型与不可用状态。现有项目删除只检查 Session、Worktree 等条件，实施时需要增加关联计划处理。[项目删除](../runtime/eidos_runtime/application/projects.py#L84)
+Project 删除导致 projectId 缺失时，系统不能把一个项目任务解释为 Projectless。持久 binding 必须保留目标类型与不可用状态。现有项目删除只检查 Session、Worktree 等条件，实施时需要增加关联计划处理。[项目删除](../../runtime/eidos_runtime/application/projects.py#L84)
 
 ## 8. 本版需要明确：历史、工作区和上下文增长
 
-当前 Session 上下文会保留已有 Run 和 Item，定时任务每次新建会话时也会产生真实 Session / Workspace。当前 Worktree retention 根据活跃执行、安全和最近使用等事实处理目录，不识别定时结果是否已读。[Retention](../runtime/eidos_runtime/application/worktree_retention.py#L303)
+当前 Session 上下文会保留已有 Run 和 Item，定时任务每次新建会话时也会产生真实 Session / Workspace。当前 Worktree retention 根据活跃执行、安全和最近使用等事实处理目录，不识别定时结果是否已读。[Retention](../../runtime/eidos_runtime/application/worktree_retention.py#L303)
 
 本版采用以下规则：
 
@@ -197,7 +199,7 @@ Project 删除导致 projectId 缺失时，系统不能把一个项目任务解�
 
 ## 9. 本版需要明确：生命周期、时间与一次性状态
 
-Runtime 目前使用 RUNNING、RECONFIGURING 和 DRAINING 控制状态，持续受管任务也有 persistent 标记。[控制状态](../runtime/eidos_runtime/runtime/supervisor.py#L84)、[重配置](../runtime/eidos_runtime/runtime/supervisor.py#L792)
+Runtime 目前使用 RUNNING、RECONFIGURING 和 DRAINING 控制状态，持续受管任务也有 persistent 标记。[控制状态](../../runtime/eidos_runtime/runtime/supervisor.py#L84)、[重配置](../../runtime/eidos_runtime/runtime/supervisor.py#L792)
 
 定时模块需要接入这些已有状态。系统在 DRAINING 和 RECONFIGURING 时不接收新触发，不把常驻调度本身计入需要用户取消的业务 Run。恢复调度时只计算未来时间。系统不新增永久线程或第二个 Event Loop。
 

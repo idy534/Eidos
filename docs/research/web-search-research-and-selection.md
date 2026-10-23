@@ -1,5 +1,7 @@
 # Eidos 内置 web_search 方案调研与筛选
 
+> 文档分类：调研与对照。本文保留调研时的事实、建议和缺口，不作为当前实现或最终决策的证明。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
+
 调研日期：2026-10-21（北京时间）。
 
 本文核对了服务商的官方价格页、接口文档、服务条款，以及 Eidos 当前源码。本文只提出选型建议，不代表这些服务已经接入。本文没有使用用户的 API Key，也没有执行搜索质量、延迟或中国大陆网络连通性实测。厂商公布的速度和准确率不作为本次排名依据。
@@ -26,12 +28,12 @@
 ### 2.1 当前源码事实
 
 - 当前 `runtime/` 和 `desktop/` 源码中没有 `web_search` 或 `web_fetch` 实现。
-- [`tools/workspace.py`](../runtime/eidos_runtime/tools/workspace.py) 的 `builtin_tool_registry()` 已经通过 `ToolRegistryEntry` 注册内置工具。
-- [`tools/registry.py`](../runtime/eidos_runtime/tools/registry.py) 已经定义输入契约、结果契约、执行策略、取消策略和并发策略。
-- [`runtime/tool_execution.py`](../runtime/eidos_runtime/runtime/tool_execution.py) 会校验工具结果，并提交 canonical、model 和 UI 三种结果。因此，搜索服务的结果保存条件会直接影响 Eidos 的历史回放。
-- [`pyproject.toml`](../pyproject.toml) 已经包含 `httpx2`、AnyIO、Tenacity、Pydantic 和官方 MCP SDK。搜索接入不需要再引入 Agent 框架。
+- [`tools/workspace.py`](../../runtime/eidos_runtime/tools/workspace.py) 的 `builtin_tool_registry()` 已经通过 `ToolRegistryEntry` 注册内置工具。
+- [`tools/registry.py`](../../runtime/eidos_runtime/tools/registry.py) 已经定义输入契约、结果契约、执行策略、取消策略和并发策略。
+- [`runtime/tool_execution.py`](../../runtime/eidos_runtime/runtime/tool_execution.py) 会校验工具结果，并提交 canonical、model 和 UI 三种结果。因此，搜索服务的结果保存条件会直接影响 Eidos 的历史回放。
+- [`pyproject.toml`](../../pyproject.toml) 已经包含 `httpx2`、AnyIO、Tenacity、Pydantic 和官方 MCP SDK。搜索接入不需要再引入 Agent 框架。
 
-相关说明见 [`current-architecture.md`](current-architecture.md) 的 Tool Execution 部分和 [`current-capabilities.md`](current-capabilities.md) 的 Tools 部分。本文以源码作为当前实现的依据。
+相关说明见 [`current-architecture.md`](../current-architecture.md) 的 Tool Execution 部分和 [`current-capabilities.md`](../current-capabilities.md) 的 Tools 部分。本文以源码作为当前实现的依据。
 
 ### 2.2 本次筛选标准
 

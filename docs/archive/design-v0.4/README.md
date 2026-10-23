@@ -12,3 +12,10 @@
 - [宏观架构图](../../architecture-overview.html)
 
 历史 PRD 和 TDD 使用各自目录中的 README 作为索引。历史 Decision 保留原文，不再作为 Current 设计约束。
+
+## 文档索引
+
+- [产品需求 PRD](prd/README.md)
+- [技术设计 TDD](tdd/README.md)
+- [历史决策](decisions.md)
+- [历史 Model Gateway 设计](architecture/model-gateway.md)

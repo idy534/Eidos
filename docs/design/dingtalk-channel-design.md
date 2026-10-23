@@ -1,5 +1,7 @@
 # 钉钉渠道接入方案与实现记录
 
+> 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
+
 飞书与企业微信扩展沿用本文的 Session、Run 和回复记录设计，新增内容见 [飞书与微信渠道方案](feishu-wechat-channel-design.md)。
 
 本方案对应分支 `codex/dingtalk-channel`。该分支从 `codex/custom-subagents` 创建。文档会随实现更新，未验证内容不会记为完成。
@@ -112,7 +114,7 @@ Runtime 的七个定向文件为 test_channels.py、test_storage_schema.py、tes
 
 pip-audit 在主依赖中发现已有 pydantic-ai-slim 2.43.0 的五条问题：PYSEC-2026-4285、4286、4284、4290、4291。当前基线已锁定相同版本。本次新增的钉钉依赖没有出现在审计结果中。本次没有升级该已有模型依赖，也没有新增忽略规则。因此，主依赖审计仍明确记为未通过。
 
-实现保留既有 Agent Loop、Session FIFO、Sandbox、Approval、Grant、Durable Intent、Verification 和 Reconciliation。实现没有替换旧机制，没有移动已有模块，也没有新增云端控制通道。协议继续使用 v1，新 RPC 与 channelOrigin 为本次扩展；Desktop 和 Runtime 需要配套更新。完整当前行为见 [当前渠道接入](current-channels.md)。
+实现保留既有 Agent Loop、Session FIFO、Sandbox、Approval、Grant、Durable Intent、Verification 和 Reconciliation。实现没有替换旧机制，没有移动已有模块，也没有新增云端控制通道。协议继续使用 v1，新 RPC 与 channelOrigin 为本次扩展；Desktop 和 Runtime 需要配套更新。完整当前行为见 [当前渠道接入](../current-channels.md)。
 
 首版 Diff 覆盖 61 个文件，约新增 2,860 行、删除 15 行。其中 417 行是自动生成的 TypeScript 契约和 Schema，uv.lock 新增 329 行。改动集中在钉钉接入、Runtime 接纳与来源、持久化迁移、typed IPC、设置页面、定向验证和文档。
 

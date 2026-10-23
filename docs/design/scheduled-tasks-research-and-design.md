@@ -1,10 +1,12 @@
 # Eidos 本地定时任务：修订方案 V3
 
-修订日期：2026-10-15。本文保留实现前的方案与调研依据。当前实现、协议和验证边界以 [当前本地定时任务](current-automations.md)、生产代码与测试为准。
+> 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
+
+修订日期：2026-10-15。本文保留实现前的方案与调研依据。当前实现、协议和验证边界以 [当前本地定时任务](../current-automations.md)、生产代码与测试为准。
 
 Session 工具的参数、绑定、幂等、权限和失败处理见 [automation 详细设计](automation-tool-design.md)。本文中的 schedule/* 是 Desktop 与 Runtime 的协议接口；模型只使用一个内置工具 automation，通过 mode 处理管理操作。
 
-工具延迟加载和实现前的来源、触发竞争及恢复缺口见 [方案复核](scheduled-tasks-gap-review.md)。automation 默认 deferred，模型通过 tool_search 激活后在后续 Step 使用。
+工具延迟加载和实现前的来源、触发竞争及恢复缺口见 [方案复核](../research/scheduled-tasks-gap-review.md)。automation 默认 deferred，模型通过 tool_search 激活后在后续 Step 使用。
 
 **本版采用本地 Runtime 调度。周期任务使用受限的五段 Cron，一次性任务使用明确时间戳。固定间隔只提供 10 分钟、30 分钟和 1 小时。模型提出规则，Runtime 校验并计算时间。产品不实现漏跑检测、补跑或云端执行。**
 
