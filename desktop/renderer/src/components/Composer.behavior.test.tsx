@@ -643,4 +643,92 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(textarea).toHaveFocus();
     expect(textarea).toHaveValue("");
   });
+
+  it("splits shelf attachments above input and inline tokens inside editor, and removes last inline token on Backspace at caret 0", () => {
+    const onRemoveReference = vi.fn();
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      writable: true,
+      value: {
+        onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+      },
+    });
+    const skillRef: InputReference = {
+      ...composerReference,
+      id: "skill-ref-1",
+      kind: "skill",
+      label: "frontend-design",
+      source: "skills/frontend-design",
+    };
+    const historyRef: InputReference = {
+      ...composerReference,
+      id: "history-ref-2",
+      kind: "history",
+      label: "上次对话",
+      source: "session-prev",
+    };
+
+    const { container, rerender } = render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <Composer
+          {...defaultProps}
+          input="请继续优化"
+          references={[composerReference, skillRef, historyRef]}
+          onRemoveReference={onRemoveReference}
+        />
+      </InputContextProvider>,
+    );
+
+    const shelfList = container.querySelector(".composer > .input-reference-list--shelf");
+    const inlineEditor = container.querySelector(".composer-inline-editor--has-inline");
+    const inlineList = inlineEditor?.querySelector(".input-reference-list--inline");
+
+    expect(shelfList).not.toBeNull();
+    expect(shelfList?.textContent).toContain("notes.txt");
+    expect(shelfList?.textContent).not.toContain("frontend-design");
+
+    expect(inlineList).not.toBeNull();
+    expect(inlineList?.textContent).toContain("frontend-design");
+    expect(inlineList?.textContent).toContain("上次对话");
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    // Caret not at start -> Backspace does not remove inline token
+    textarea.setSelectionRange(2, 2);
+    fireEvent.keyDown(textarea, { key: "Backspace" });
+    expect(onRemoveReference).not.toHaveBeenCalled();
+
+    // Caret at 0 -> Backspace removes the last inline token ("history-ref-2")
+    textarea.setSelectionRange(0, 0);
+    fireEvent.keyDown(textarea, { key: "Backspace" });
+    expect(onRemoveReference).toHaveBeenCalledWith("history-ref-2");
+
+    // When only shelf references remain, Backspace at caret 0 does not remove shelf cards
+    onRemoveReference.mockClear();
+    rerender(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <Composer
+          {...defaultProps}
+          input=""
+          references={[composerReference]}
+          onRemoveReference={onRemoveReference}
+        />
+      </InputContextProvider>,
+    );
+    const updatedTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    updatedTextarea.setSelectionRange(0, 0);
+    fireEvent.keyDown(updatedTextarea, { key: "Backspace" });
+    expect(onRemoveReference).not.toHaveBeenCalled();
+  });
 });

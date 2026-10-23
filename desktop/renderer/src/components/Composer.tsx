@@ -1,5 +1,5 @@
 import type { InputReference, InputPrepareRequest } from "../../../shared/input-context.js";
-import { InputReferenceCards, useInputContext } from "./InputContext.js";
+import { InputReferenceCards, isInlineReference, isShelfReference, useInlineTokenMetrics, useInputContext } from "./InputContext.js";
 import { InputPicker, type InputPickerMode, LightbulbIcon } from "./InputPicker.js";
 import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
@@ -208,6 +208,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const modelReasoning = selectedModel?.reasoning ?? undefined;
   const selectedReasoning = reasoningSelection ?? modelReasoning?.defaultSelection ?? undefined;
   const projectName = project?.name?.trim() || (project ? basename(project.workspaceRoot) : undefined);
+  const shelfReferences = references.filter(isShelfReference);
+  const inlineReferences = references.filter(isInlineReference);
+  const inlineEditorRef = useRef<HTMLDivElement>(null);
+  useInlineTokenMetrics(inlineEditorRef, inlineReferences);
 
   return (
     <form
@@ -294,10 +298,11 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           )}
         </div>
       )}
-      {references.length > 0 && (
+      {shelfReferences.length > 0 && (
         <InputReferenceCards
-          references={references}
+          references={shelfReferences}
           variant="composer"
+          placement="shelf"
           {...(onRemoveReference ? { onRemove: onRemoveReference } : {})}
         />
       )}
@@ -326,37 +331,75 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           setAgentCreator(undefined); textareaRef.current?.focus();
         }} />}
       <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
-      <textarea
-        ref={textareaRef}
-        id="task-input"
-        rows={1}
-        maxLength={65536}
-        role={picker ? "combobox" : undefined}
-        aria-autocomplete="list"
-        aria-expanded={Boolean(picker)}
-        aria-controls={picker ? list?.id : undefined}
-        aria-activedescendant={picker ? list?.active : undefined}
-        placeholder={placeholder}
-        value={input}
-        disabled={inputDisabled}
-        onChange={(e) => { onInputChange(e.target.value); if (!(e.nativeEvent as InputEvent).isComposing) updateMention(e.target.value, e.target.selectionStart); }}
-        onCompositionEnd={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-        onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-        onPaste={(event) => {
-          const files = Array.from(event.clipboardData.files);
-          if (!files.length) return;
-          event.preventDefault();
-          const paths = files.map((file) => window.eidosRuntime.inputPathForFile(file)).filter(Boolean);
-          if (paths.length) void context?.paths(paths);
-          else if (files.some((file) => file.type.startsWith("image/"))) void context?.paste();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            if (!isSubmitDisabled) onSubmit();
+      <div
+        ref={inlineEditorRef}
+        className={`composer-inline-editor${inlineReferences.length > 0 ? " composer-inline-editor--has-inline" : ""}`}
+        onClick={(event) => {
+          if (event.target === event.currentTarget && !inputDisabled) {
+            textareaRef.current?.focus();
           }
         }}
-      />
+      >
+        {inlineReferences.length > 0 && (
+          <InputReferenceCards
+            references={inlineReferences}
+            variant="composer"
+            placement="inline"
+            {...(onRemoveReference ? { onRemove: onRemoveReference } : {})}
+          />
+        )}
+        <textarea
+          ref={textareaRef}
+          id="task-input"
+          rows={1}
+          maxLength={65536}
+          role={picker ? "combobox" : undefined}
+          aria-autocomplete="list"
+          aria-expanded={Boolean(picker)}
+          aria-controls={picker ? list?.id : undefined}
+          aria-activedescendant={picker ? list?.active : undefined}
+          placeholder={placeholder}
+          value={input}
+          disabled={inputDisabled}
+          onScroll={(event) => {
+            if (inlineReferences.length > 0) {
+              inlineEditorRef.current?.style.setProperty(
+                "--composer-inline-scroll-top",
+                `${event.currentTarget.scrollTop}px`,
+              );
+            }
+          }}
+          onChange={(e) => { onInputChange(e.target.value); if (!(e.nativeEvent as InputEvent).isComposing) updateMention(e.target.value, e.target.selectionStart); }}
+          onCompositionEnd={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData.files);
+            if (!files.length) return;
+            event.preventDefault();
+            const paths = files.map((file) => window.eidosRuntime.inputPathForFile(file)).filter(Boolean);
+            if (paths.length) void context?.paths(paths);
+            else if (files.some((file) => file.type.startsWith("image/"))) void context?.paste();
+          }}
+          onKeyDown={(e) => {
+            if (
+              e.key === "Backspace"
+              && !e.nativeEvent.isComposing
+              && e.currentTarget.selectionStart === 0
+              && e.currentTarget.selectionEnd === 0
+              && inlineReferences.length > 0
+              && onRemoveReference
+            ) {
+              e.preventDefault();
+              onRemoveReference(inlineReferences.at(-1)!.id);
+              return;
+            }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              if (!isSubmitDisabled) onSubmit();
+            }
+          }}
+        />
+      </div>
       <div className="composer-actions">
         <div className="composer-meta">
           <Tooltip content="添加文件、扩展或历史对话">

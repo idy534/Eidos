@@ -203,6 +203,17 @@
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.04);
 }
 
+.user-message-editor .composer-inline-editor--has-inline > .input-reference-list--inline {
+  top: 10px;
+  left: 12px;
+  right: 12px;
+}
+
+.user-message-editor .composer-inline-editor--has-inline textarea {
+  padding-top: calc(10px + var(--composer-inline-offset-top, 0px));
+  text-indent: var(--composer-inline-indent, 0px);
+}
+
 .user-message-editor-actions {
   display: flex;
   justify-content: flex-end;

@@ -363,7 +363,11 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 className="input-picker__action-btn"
                 aria-label="添加文件"
                 onClick={() => {
-                  void window.eidosRuntime.pickInputPaths().then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
+                  void window.eidosRuntime.pickInputPaths().then((paths) => {
+                    if (!paths.length) return;
+                    onClose();
+                    return context?.paths(paths);
+                  }).catch((cause) => setError(userFacingError(cause)));
                 }}
               >
                 <UploadFileIcon />
@@ -376,7 +380,11 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 className="input-picker__action-btn"
                 aria-label="添加文件夹"
                 onClick={() => {
-                  void window.eidosRuntime.pickInputPaths(true).then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
+                  void window.eidosRuntime.pickInputPaths(true).then((paths) => {
+                    if (!paths.length) return;
+                    onClose();
+                    return context?.paths(paths);
+                  }).catch((cause) => setError(userFacingError(cause)));
                 }}
               >
                 <FolderPlusIcon />

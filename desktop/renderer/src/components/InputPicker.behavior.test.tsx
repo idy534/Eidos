@@ -85,11 +85,14 @@ describe("InputPicker behavior", () => {
     expect(onChoose).toHaveBeenCalledWith({ kind: "skill", source: "system:plugin-creator" });
   });
 
-  it("prepares a file selected by the quick action and adds it to the current draft", async () => {
+  it("prepares a file or folder selected by the quick action, adds it to the current draft, and closes the picker", async () => {
     const api = setupRuntime({
-      pickInputPaths: vi.fn().mockResolvedValue(["/workspace/notes.txt"]),
+      pickInputPaths: vi.fn()
+        .mockResolvedValueOnce(["/workspace/notes.txt"])
+        .mockResolvedValueOnce(["/workspace/docs"]),
     });
     const onAdd = vi.fn();
+    const onClose = vi.fn();
 
     render(
       <InputContextProvider
@@ -99,18 +102,23 @@ describe("InputPicker behavior", () => {
         onAdd={onAdd}
         onSettings={vi.fn()}
       >
-        <InputPicker {...pickerProps} mode="all" />
+        <InputPicker {...pickerProps} onClose={onClose} mode="all" />
       </InputContextProvider>,
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "添加文件" }));
 
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith("session-1", reference));
+    expect(onClose).toHaveBeenCalledTimes(1);
     expect(api.prepareInput).toHaveBeenCalledWith({
       kind: "file",
       source: "/workspace/notes.txt",
       sessionId: "session-1",
     });
+
+    fireEvent.click(screen.getByRole("button", { name: "添加文件夹" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(2));
+    expect(api.pickInputPaths).toHaveBeenCalledWith(true);
   });
 
   it("keeps unavailable skill candidates disabled", async () => {

@@ -1,5 +1,5 @@
 import { highlightText, clearHighlights } from "./find-text.js";
-import { InputReferenceCards } from "./InputContext.js";
+import { InputReferenceCards, isInlineReference, isShelfReference, useInlineTokenMetrics } from "./InputContext.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -549,36 +549,75 @@ function UserMessage({
     if (accepted !== false) setEditing(false);
   }
 
+  const activeReferences = (editing ? draftReferences : item.references) ?? [];
+  const shelfReferences = activeReferences.filter(isShelfReference);
+  const inlineReferences = activeReferences.filter(isInlineReference);
+  const inlineEditorRef = useRef<HTMLDivElement>(null);
+  useInlineTokenMetrics(inlineEditorRef, editing ? inlineReferences : []);
+  const removeDraftReference = (id: string) =>
+    setDraftReferences((previous) => previous.filter((reference) => reference.id !== id));
+
   return (
     <div id={`item-${item.id}`} className="feed-item feed-item--user">
       {run.channelOrigin && <p className="feed-label">{run.channelOrigin.channel === "feishu" ? "飞书" : run.channelOrigin.channel === "wecom" ? "企业微信" : "钉钉"}消息</p>}
       {run.automationOrigin && <p className="feed-label">定时任务自动执行</p>}
       <div className="user-message-bubble">
-        {(editing ? draftReferences : item.references)?.length ? (
+        {shelfReferences.length > 0 ? (
           <InputReferenceCards
-            references={editing ? draftReferences : item.references ?? []}
+            references={shelfReferences}
             variant={editing ? "composer" : "bubble"}
-            {...(editing
-              ? { onRemove: (id: string) => setDraftReferences((previous) => previous.filter((reference) => reference.id !== id)) }
-              : {})}
+            placement="shelf"
+            {...(editing ? { onRemove: removeDraftReference } : {})}
           />
         ) : null}
         {editing ? (
           <div className="user-message-editor">
-            <textarea
-              autoFocus
-              value={draft}
-              disabled={revisionSubmitting}
-              aria-label="编辑最近一次提问"
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setEditing(false);
-                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  void submitEdit();
-                }
-              }}
-            />
+            <div
+              ref={inlineEditorRef}
+              className={`composer-inline-editor${inlineReferences.length > 0 ? " composer-inline-editor--has-inline" : ""}`}
+            >
+              {inlineReferences.length > 0 && (
+                <InputReferenceCards
+                  references={inlineReferences}
+                  variant="composer"
+                  placement="inline"
+                  onRemove={removeDraftReference}
+                />
+              )}
+              <textarea
+                autoFocus
+                value={draft}
+                disabled={revisionSubmitting}
+                aria-label="编辑最近一次提问"
+                onScroll={(event) => {
+                  if (inlineReferences.length > 0) {
+                    inlineEditorRef.current?.style.setProperty(
+                      "--composer-inline-scroll-top",
+                      `${event.currentTarget.scrollTop}px`,
+                    );
+                  }
+                }}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Backspace"
+                    && !event.nativeEvent.isComposing
+                    && event.currentTarget.selectionStart === 0
+                    && event.currentTarget.selectionEnd === 0
+                    && inlineReferences.length > 0
+                  ) {
+                    event.preventDefault();
+                    removeDraftReference(inlineReferences.at(-1)!.id);
+                    return;
+                  }
+                  if (event.key === "Escape") setEditing(false);
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    void submitEdit();
+                  }
+                }}
+              />
+            </div>
             <div className="user-message-editor-actions">
               <button type="button" disabled={revisionSubmitting} onClick={() => setEditing(false)}>取消</button>
               <button
@@ -591,9 +630,20 @@ function UserMessage({
               </button>
             </div>
           </div>
-        ) : item.content ? (
-          <p className="eidos-chat-prose">{item.content}</p>
-        ) : null}
+        ) : (
+          <>
+            {inlineReferences.length > 0 ? (
+              <InputReferenceCards
+                references={inlineReferences}
+                variant="bubble"
+                placement="inline"
+              />
+            ) : null}
+            {item.content ? (
+              <p className="eidos-chat-prose">{item.content}</p>
+            ) : null}
+          </>
+        )}
       </div>
       {!editing && (
         <div className="feed-item-footer response-footer">
@@ -916,14 +966,25 @@ function ProcessItem({
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
 }) {
   if (item.kind === "user_message") {
+    const steeringReferences = item.references ?? [];
+    const steeringShelf = steeringReferences.filter(isShelfReference);
+    const steeringInline = steeringReferences.filter(isInlineReference);
     return (
       <div id={`item-${item.id}`} className="process-steering" data-status={item.status}>
         <p className="feed-label">引导对话</p>
         <div className="user-message-bubble">
-          {item.references?.length ? (
+          {steeringShelf.length > 0 ? (
             <InputReferenceCards
-              references={item.references}
+              references={steeringShelf}
               variant="bubble"
+              placement="shelf"
+            />
+          ) : null}
+          {steeringInline.length > 0 ? (
+            <InputReferenceCards
+              references={steeringInline}
+              variant="bubble"
+              placement="inline"
             />
           ) : null}
           {item.content && <MarkdownContent className="eidos-chat-prose" content={item.content} />}

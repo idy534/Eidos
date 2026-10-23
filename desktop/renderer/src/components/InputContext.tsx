@@ -1,12 +1,78 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type DragEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
+import type { McpServerRecord } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
 import { FieldError } from "./FieldError.js";
 import { FileIcon, FolderIcon, AgentIcon, SkillIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
+import { McpDetailDialog } from "./settings/McpDetailDialog.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
+
+export function isShelfReference(reference: InputReference): boolean {
+  return (
+    reference.kind === "image"
+    || reference.kind === "file"
+    || reference.kind === "directory"
+    || reference.kind === "excerpt"
+  );
+}
+
+export function isInlineReference(reference: InputReference): boolean {
+  return !isShelfReference(reference);
+}
+
+export function useInlineTokenMetrics(
+  editorRef: RefObject<HTMLElement | null>,
+  inlineReferences: readonly InputReference[],
+): void {
+  useLayoutEffect(() => {
+    const editorEl = editorRef.current;
+    if (!editorEl) return;
+    if (inlineReferences.length === 0) {
+      editorEl.style.removeProperty("--composer-inline-indent");
+      editorEl.style.removeProperty("--composer-inline-offset-top");
+      editorEl.style.removeProperty("--composer-inline-scroll-top");
+      return;
+    }
+    const updateInlineMetrics = () => {
+      const listEl = editorEl.querySelector<HTMLElement>(".input-reference-list--inline");
+      const lastToken = listEl?.lastElementChild as HTMLElement | null;
+      if (!listEl || !lastToken) {
+        editorEl.style.removeProperty("--composer-inline-indent");
+        editorEl.style.removeProperty("--composer-inline-offset-top");
+        return;
+      }
+      const listWidth = listEl.clientWidth;
+      const tokenRight = lastToken.offsetLeft + lastToken.offsetWidth;
+      const tokenTop = lastToken.offsetTop;
+      if (listWidth === 0 && tokenRight === 0) {
+        editorEl.style.setProperty("--composer-inline-indent", "0px");
+        editorEl.style.setProperty("--composer-inline-offset-top", "0px");
+        return;
+      }
+      const gap = 6;
+      if (listWidth > 0 && listWidth - (tokenRight + gap) < 64) {
+        editorEl.style.setProperty("--composer-inline-indent", "0px");
+        editorEl.style.setProperty(
+          "--composer-inline-offset-top",
+          `${tokenTop + (lastToken.offsetHeight || 23)}px`,
+        );
+      } else {
+        editorEl.style.setProperty("--composer-inline-indent", `${tokenRight + gap}px`);
+        editorEl.style.setProperty("--composer-inline-offset-top", `${tokenTop}px`);
+      }
+    };
+    updateInlineMetrics();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateInlineMetrics);
+    observer.observe(editorEl);
+    const listEl = editorEl.querySelector<HTMLElement>(".input-reference-list--inline");
+    if (listEl) observer.observe(listEl);
+    return () => observer.disconnect();
+  }, [editorRef, inlineReferences]);
+}
 
 interface InputContextValue {
   sessionId: string;
@@ -104,28 +170,43 @@ export function InputReferenceCards({
   references,
   onRemove,
   variant = "composer",
+  placement = "all",
 }: {
   references: InputReference[];
   onRemove?: (id: string) => void;
   variant?: "composer" | "bubble";
+  placement?: "all" | "shelf" | "inline";
 }) {
   const context = useInputContext();
   const [preview, setPreview] = useState<InputPreview>();
+  const [mcpServer, setMcpServer] = useState<McpServerRecord | null>(null);
   const [error, setError] = useState<string>();
   const request = useRef(0);
+
+  const visibleReferences =
+    placement === "shelf"
+      ? references.filter(isShelfReference)
+      : placement === "inline"
+        ? references.filter(isInlineReference)
+        : references;
+
+  if (visibleReferences.length === 0) return null;
 
   return (
     <>
       <div
-        className={`input-reference-list input-reference-list--${variant}`}
+        className={`input-reference-list input-reference-list--${variant} input-reference-list--${placement}`}
         data-variant={variant}
-        aria-label="输入引用"
+        data-placement={placement}
+        aria-label={placement === "inline" ? "内联输入引用" : "输入引用"}
       >
-        {references.map((reference) => {
+        {visibleReferences.map((reference) => {
           const cat = getReferenceCategory(reference);
+          const shelf = isShelfReference(reference);
+          const zoneClass = shelf ? "input-reference--shelf-card" : "input-reference--inline-token";
           return (
             <div
-              className={`input-reference input-reference--${variant} input-reference--kind-${reference.kind}`}
+              className={`input-reference input-reference--${variant} input-reference--kind-${reference.kind} ${zoneClass}`}
               key={reference.id}
             >
               <button
@@ -138,8 +219,26 @@ export function InputReferenceCards({
                       ? `在 Finder 中显示：${reference.source}`
                       : reference.kind === "skill"
                         ? `查看技能详情：${reference.label}`
-                        : reference.source
+                        : reference.kind === "agent"
+                          ? `查看智能体详情：${reference.label}`
+                          : reference.kind === "mcp"
+                            ? `查看 MCP 详情：${reference.label}`
+                            : reference.kind === "plugin"
+                              ? `查看插件详情：${reference.label}`
+                              : reference.kind === "excerpt"
+                                ? `查看引用文本：${reference.label}`
+                                : reference.source
                 }
+                onKeyDown={(event) => {
+                  if (
+                    !shelf
+                    && onRemove
+                    && (event.key === "Backspace" || event.key === "Delete")
+                  ) {
+                    event.preventDefault();
+                    onRemove(reference.id);
+                  }
+                }}
                 onClick={async () => {
                   if (reference.kind === "history") {
                     context?.navigateToSession?.(reference.source);
@@ -155,6 +254,24 @@ export function InputReferenceCards({
                   }
                   const token = ++request.current;
                   setError(undefined);
+                  if (
+                    reference.kind === "mcp"
+                    && typeof window.eidosRuntime?.listMcpServers === "function"
+                  ) {
+                    try {
+                      const result = await window.eidosRuntime.listMcpServers();
+                      if (token !== request.current) return;
+                      const matched = result.servers.find(
+                        (server) => server.serverId === reference.source || server.serverId === reference.label,
+                      );
+                      if (matched) {
+                        setMcpServer(matched);
+                        return;
+                      }
+                    } catch {
+                      // Fall back to snapshot preview below
+                    }
+                  }
                   void window.eidosRuntime.readInput(reference.id).then((value) => {
                     if (token === request.current) setPreview(value);
                   }, (cause) => {
@@ -162,14 +279,56 @@ export function InputReferenceCards({
                   });
                 }}
               >
-                <span
-                  className={`input-reference__icon input-reference__icon--${reference.kind} input-reference__icon--cat-${cat}`}
-                >
-                  {renderReferenceIcon(reference, cat)}
-                </span>
-                <span className="input-reference__label">{reference.label}</span>
+                {reference.kind === "image" ? (
+                  <>
+                    <span
+                      className={`input-reference__icon input-reference__icon--${reference.kind} input-reference__icon--cat-${cat}`}
+                    >
+                      {renderReferenceIcon(reference, cat)}
+                    </span>
+                    <span className="input-reference__label sr-only">{reference.label}</span>
+                  </>
+                ) : reference.kind === "file" || reference.kind === "excerpt" ? (
+                  <>
+                    <InputTextSnippet
+                      id={reference.id}
+                      status={reference.status}
+                      category={cat}
+                      label={reference.label}
+                    />
+                    <span className="input-reference__card-footer">
+                      <span
+                        className={`input-reference__icon input-reference__icon--${reference.kind} input-reference__icon--cat-${cat}`}
+                      >
+                        {renderReferenceIcon(reference, cat)}
+                      </span>
+                      <span className="input-reference__label">{reference.label}</span>
+                    </span>
+                  </>
+                ) : reference.kind === "directory" ? (
+                  <>
+                    <span
+                      className={`input-reference__icon input-reference__icon--${reference.kind} input-reference__icon--cat-${cat}`}
+                    >
+                      {renderReferenceIcon(reference, cat)}
+                    </span>
+                    <span className="input-reference__dir-meta">
+                      <span className="input-reference__label">{reference.label}</span>
+                      <span className="input-reference__sublabel">文件夹</span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className={`input-reference__icon input-reference__icon--${reference.kind} input-reference__icon--cat-${cat}`}
+                    >
+                      {renderReferenceIcon(reference, cat)}
+                    </span>
+                    <span className="input-reference__label">{reference.label}</span>
+                  </>
+                )}
               </button>
-              {onRemove && (
+              {onRemove && shelf && (
                 <button
                   type="button"
                   className="input-reference-remove"
@@ -188,6 +347,13 @@ export function InputReferenceCards({
         })}
       </div>
       <FieldError className="input-reference-error" error={error} />
+      {mcpServer && (
+        <McpDetailDialog
+          server={mcpServer}
+          icon={<ServerIcon />}
+          onClose={() => setMcpServer(null)}
+        />
+      )}
       {preview && (
         preview.reference.kind === "image" ? (
           <ImageLightboxModal
@@ -214,9 +380,105 @@ export function InputReferenceCards({
             readOnly
             onClose={() => setPreview(undefined)}
           />
-        ) : null
+        ) : (
+          <ReferenceTextPreviewDialog
+            preview={preview}
+            onClose={() => setPreview(undefined)}
+          />
+        )
       )}
     </>
+  );
+}
+
+function ReferenceTextPreviewDialog({
+  preview,
+  onClose,
+}: {
+  preview: InputPreview;
+  onClose(): void;
+}) {
+  const titleId = useId();
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const bodyRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const trigger = document.activeElement;
+    closeRef.current?.focus();
+    return () => {
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
+    };
+  }, []);
+  const kindLabel =
+    preview.reference.kind === "mcp"
+      ? "MCP"
+      : preview.reference.kind === "plugin"
+        ? "插件"
+        : preview.reference.kind === "excerpt"
+          ? "引用文本"
+          : "引用详情";
+  const closeLabel = `关闭${kindLabel}详情`;
+  return createPortal(
+    <div className="modal-backdrop skill-detail-backdrop" onClick={onClose}>
+      <div
+        className="skill-detail-dialog agent-definition-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            onClose();
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            (document.activeElement === closeRef.current ? bodyRef.current : closeRef.current)?.focus();
+          }
+        }}
+      >
+        <div className="skill-detail-header">
+          <div className="skill-detail-header-left">
+            <span className="skill-icon agent-icon" aria-hidden="true">
+              {preview.reference.kind === "mcp" ? (
+                <ServerIcon />
+              ) : preview.reference.kind === "plugin" ? (
+                <PuzzleIcon />
+              ) : (
+                <ExcerptIcon />
+              )}
+            </span>
+            <div className="skill-detail-title-group">
+              <h2 id={titleId}>{preview.reference.label}</h2>
+              <span className="skill-type-label">{kindLabel}</span>
+            </div>
+          </div>
+          <div className="skill-detail-header-right">
+            <div className="skill-detail-actions">
+              <button
+                ref={closeRef}
+                type="button"
+                className="skill-detail-close-btn"
+                aria-label={closeLabel}
+                onClick={onClose}
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="skill-detail-body">
+          <pre
+            ref={bodyRef}
+            tabIndex={0}
+            className="agent-definition-content"
+            aria-label={`${kindLabel}内容`}
+          >
+            {preview.text}
+          </pre>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -398,17 +660,86 @@ function InputThumbnail({ id, label }: { id: string; label: string }) {
   const root = useRef<HTMLSpanElement>(null);
   const [source, setSource] = useState<string>();
   useEffect(() => {
+    if (typeof window.eidosRuntime?.readInput !== "function") return;
     let active = true;
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      observer.disconnect();
+    const load = () => {
       void window.eidosRuntime.readInput(id).then((value) => {
         if (active && value.thumbnail) setSource(value.thumbnail);
       }, () => {});
+    };
+    if (typeof IntersectionObserver === "undefined") {
+      load();
+      return () => { active = false; };
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      load();
     });
     if (root.current) observer.observe(root.current);
     return () => { active = false; observer.disconnect(); };
   }, [id]);
   return <span ref={root} className="input-thumbnail">{source ? <img src={source} alt={label} /> : <ImageIcon />}</span>;
+}
+
+function InputTextSnippet({
+  id,
+  status,
+  category,
+  label,
+}: {
+  id: string;
+  status: InputReference["status"];
+  category: string;
+  label: string;
+}) {
+  const root = useRef<HTMLSpanElement>(null);
+  const [snippet, setSnippet] = useState<string>();
+  useEffect(() => {
+    if ((status !== "content" && status !== "selection") || typeof window.eidosRuntime?.readInput !== "function") return;
+    let active = true;
+    const load = () => {
+      void window.eidosRuntime.readInput(id).then((value) => {
+        if (active && value.text) {
+          setSnippet(value.text.slice(0, 320));
+        }
+      }, () => {});
+    };
+    if (typeof IntersectionObserver === "undefined") {
+      load();
+      return () => { active = false; };
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      load();
+    });
+    if (root.current) observer.observe(root.current);
+    return () => { active = false; observer.disconnect(); };
+  }, [id, status]);
+
+  const dotIndex = label.lastIndexOf(".");
+  const ext = dotIndex > 0 && dotIndex < label.length - 1 ? label.slice(dotIndex + 1).toUpperCase().slice(0, 6) : category.toUpperCase();
+
+  return (
+    <span
+      ref={root}
+      className={`input-reference__mini-preview${snippet ? "" : " input-reference__mini-preview--placeholder"}`}
+      aria-hidden="true"
+    >
+      {snippet ? (
+        <span className="input-reference__mini-doc">{snippet}</span>
+      ) : status === "location" ? (
+        <span className="input-reference__mini-badge">{ext}</span>
+      ) : (
+        <span className="input-reference__mini-lines">
+          <span />
+          <span />
+          <span />
+          <span />
+        </span>
+      )}
+    </span>
+  );
 }
 

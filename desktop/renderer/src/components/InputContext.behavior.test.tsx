@@ -229,4 +229,205 @@ describe("InputContext behavior", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("renders shelf cards (file miniature preview, directory two-line card, excerpt dialog) and filters out inline kinds when placement='shelf'", async () => {
+    const contentFileRef: InputReference = {
+      ...fileReference,
+      id: "file-content-1",
+      label: "AGENTS.md",
+      source: "/workspace/AGENTS.md",
+      status: "content",
+    };
+    const locationFileRef: InputReference = {
+      ...fileReference,
+      id: "file-loc-1",
+      label: "large-bundle.ts",
+      source: "/workspace/large-bundle.ts",
+      status: "location",
+    };
+    const dirRef: InputReference = {
+      ...fileReference,
+      id: "dir-1",
+      kind: "directory",
+      label: "Eidos",
+      source: "/workspace/Eidos",
+      status: "location",
+    };
+    const excerptRef: InputReference = {
+      ...fileReference,
+      id: "excerpt-1",
+      kind: "excerpt",
+      label: "选中内容",
+      source: "editor-selection",
+      status: "selection",
+    };
+    const skillRef: InputReference = {
+      ...fileReference,
+      id: "skill-ignored",
+      kind: "skill",
+      label: "frontend-design",
+      source: "skills/frontend-design",
+    };
+
+    setupRuntime({
+      readInput: vi.fn().mockImplementation(async (id: string) => {
+        if (id === "file-content-1") {
+          return { reference: contentFileRef, text: "# AGENTS.md\nScope and authority" };
+        }
+        return { reference: excerptRef, text: "引用的一段完整代码与说明文字" };
+      }),
+    });
+
+    const { container } = render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <InputReferenceCards
+          references={[contentFileRef, locationFileRef, dirRef, excerptRef, skillRef]}
+          placement="shelf"
+        />
+      </InputContextProvider>,
+    );
+
+    expect(container.querySelector(".input-reference-list--shelf")).not.toBeNull();
+    // Skill is an inline reference and must not appear in shelf placement
+    expect(screen.queryByText("frontend-design")).not.toBeInTheDocument();
+
+    // Directory card shows name + "文件夹" subtitle
+    expect(screen.getByText("Eidos")).toBeInTheDocument();
+    expect(screen.getByText("文件夹")).toBeInTheDocument();
+
+    // Location-only file shows extension badge
+    expect(screen.getByText("TS")).toBeInTheDocument();
+
+    // Content file loads miniature text snippet
+    await waitFor(() => {
+      expect(container.querySelector(".input-reference__mini-doc")?.textContent).toContain("# AGENTS.md");
+    });
+
+    // Clicking excerpt opens full text preview dialog
+    fireEvent.click(screen.getByRole("button", { name: /选中内容/ }));
+    const dialog = await screen.findByRole("dialog", { name: "选中内容" });
+    expect(dialog).toHaveTextContent("引用的一段完整代码与说明文字");
+    fireEvent.click(screen.getByRole("button", { name: "关闭引用文本详情" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("renders inline tokens and opens preview dialogs for skill, mcp, and plugin references", async () => {
+    const skillRef: InputReference = {
+      ...fileReference,
+      id: "skill-1",
+      kind: "skill",
+      label: "frontend-design",
+      source: "skills/frontend-design",
+    };
+    const mcpRef: InputReference = {
+      ...fileReference,
+      id: "mcp-1",
+      kind: "mcp",
+      label: "Context7",
+      source: "context7",
+    };
+    const pluginRef: InputReference = {
+      ...fileReference,
+      id: "plugin-1",
+      kind: "plugin",
+      label: "chrome-devtools-plugin",
+      source: "chrome-devtools-plugin",
+    };
+
+    setupRuntime({
+      readInput: vi.fn().mockImplementation(async (id: string) => {
+        if (id === "skill-1") {
+          return {
+            reference: skillRef,
+            text: "---\nname: frontend-design\ndescription: UI design skill\n---\nUse intentional typography.",
+          };
+        }
+        return {
+          reference: pluginRef,
+          text: "Plugin: chrome-devtools-plugin\nProvides DevTools debugging skills.",
+        };
+      }),
+      listMcpServers: vi.fn().mockResolvedValue({
+        servers: [
+          {
+            serverId: "context7",
+            executable: "npx",
+            argv: ["-y", "@upstash/context7-mcp"],
+            consented: true,
+            declaredEnabled: true,
+            available: true,
+          },
+        ],
+      }),
+      readMcpTools: vi.fn().mockResolvedValue({
+        state: "ready",
+        tools: [],
+        total: 0,
+      }),
+    });
+
+    const { container } = render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <InputReferenceCards
+          references={[fileReference, skillRef, mcpRef, pluginRef]}
+          placement="inline"
+        />
+      </InputContextProvider>,
+    );
+
+    expect(container.querySelector(".input-reference-list--inline")).not.toBeNull();
+    // Shelf file reference is excluded from inline placement
+    expect(screen.queryByText("a.txt")).not.toBeInTheDocument();
+
+    // Skill token opens SkillDetailDialog
+    fireEvent.click(screen.getByRole("button", { name: "frontend-design" }));
+    const skillDialog = await screen.findByRole("dialog", { name: "frontend-design" });
+    expect(skillDialog).toHaveTextContent("Use intentional typography.");
+    fireEvent.click(screen.getByRole("button", { name: "关闭技能详情" }));
+
+    // MCP token opens McpDetailDialog
+    fireEvent.click(screen.getByRole("button", { name: "Context7" }));
+    const mcpDialog = await screen.findByRole("dialog", { name: "context7" });
+    expect(mcpDialog).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭 MCP 详情" }));
+
+    // Plugin token opens ReferenceTextPreviewDialog
+    fireEvent.click(screen.getByRole("button", { name: "chrome-devtools-plugin" }));
+    const pluginDialog = await screen.findByRole("dialog", { name: "chrome-devtools-plugin" });
+    expect(pluginDialog).toHaveTextContent("Provides DevTools debugging skills.");
+    fireEvent.click(screen.getByRole("button", { name: "关闭插件详情" }));
+
+    // Even when onRemove is provided, inline tokens never render a hover × remove button
+    const onRemove = vi.fn();
+    const { container: editableContainer } = render(
+      <InputContextProvider
+        sessionId="session-1"
+        workspaceRoot="/workspace"
+        ready
+        onAdd={vi.fn()}
+        onSettings={vi.fn()}
+      >
+        <InputReferenceCards
+          references={[skillRef]}
+          placement="inline"
+          onRemove={onRemove}
+        />
+      </InputContextProvider>,
+    );
+    expect(editableContainer.querySelector(".input-reference-remove")).toBeNull();
+    const skillBtn = editableContainer.querySelector(".input-reference__btn") as HTMLElement;
+    fireEvent.keyDown(skillBtn, { key: "Backspace" });
+    expect(onRemove).toHaveBeenCalledWith("skill-1");
+  });
 });
