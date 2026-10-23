@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "./Button.js";
+import { FieldError } from "./FieldError.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface HandoffDialogProps {
@@ -286,7 +287,7 @@ export function HandoffDialog({
               </div>
             )}
           </section>
-          {error && <p className="setting-field-error" role="alert">{error}</p>}
+          <FieldError error={error} />
         </div>
         <div className="modal-footer handoff-modal-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>

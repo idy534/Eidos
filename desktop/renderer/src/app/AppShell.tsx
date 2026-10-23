@@ -20,6 +20,7 @@ import { SessionSidebar } from "../components/SessionSidebar.js";
 import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
+import { FieldError } from "../components/FieldError.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
@@ -1564,7 +1565,7 @@ export function AppShell({ runtime }: AppShellProps) {
                   >
                     取消
                   </Button>
-                  {renameError && <span className="approval-error" role="alert">{renameError}</span>}
+                  <FieldError error={renameError} inline />
                 </form>
               ) : (
                 <div className="session-title-group">
@@ -1602,11 +1603,7 @@ export function AppShell({ runtime }: AppShellProps) {
             <div className="workspace-content">
               <div className="workspace-main">
                 <InputDropZone>
-                {responseActionState.error && (
-                  <p className="approval-error response-action-error" role="alert">
-                    {responseActionState.error}
-                  </p>
-                )}
+                <FieldError className="response-action-error" error={responseActionState.error} />
                 <SessionCanvas
                   sessionId={currentSnapshot.session.id}
                   welcome={showWelcome}

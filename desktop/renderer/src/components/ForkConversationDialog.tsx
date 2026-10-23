@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Session } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
+import { FieldError } from "./FieldError.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
@@ -181,7 +182,7 @@ export function ForkConversationDialog({
             </div>
           </fieldset>
 
-          {error && <p className="setting-field-error" role="alert">{error}</p>}
+          <FieldError error={error} />
         </div>
 
         <div className="modal-footer fork-dialog-footer">

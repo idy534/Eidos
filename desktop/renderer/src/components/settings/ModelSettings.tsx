@@ -6,6 +6,7 @@ import type {
   ModelPresetsResult,
 } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { FieldError } from "../FieldError.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
 import {
   DEFAULT_CUSTOM_CONTEXT_WINDOW_TOKENS,
@@ -244,8 +245,8 @@ export function ModelSettings({
         )}
       </SettingSection>
 
-      {(localError ?? modelError) && !modelToDelete && !draft && (
-        <p className="setting-field-error" role="alert">{localError ?? modelError}</p>
+      {!modelToDelete && !draft && (
+        <FieldError error={localError ?? modelError} />
       )}
       <ModelDialog
         draft={draft}

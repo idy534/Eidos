@@ -4,6 +4,8 @@ import type { ModelOption } from "../../contracts.js";
 import { formatAgentModelDisplay } from "../AgentPanel.js";
 import { AgentEditorDialog, AgentRoleIcon, agentRoleLabels } from "./AgentEditorDialog.js";
 import { Button } from "../Button.js";
+import { DropdownMenu } from "../DropdownMenu.js";
+import { FieldError } from "../FieldError.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
 import { Toggle } from "../Toggle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
@@ -130,8 +132,8 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
           </Button>
         </div>
 
-        {!ready && <p role="alert" className="setting-field-error">Runtime 尚未就绪。</p>}
-        {error && <p className="setting-field-error" role="alert">{error}</p>}
+        {!ready && <FieldError>Runtime 尚未就绪。</FieldError>}
+        {error && <FieldError>{error}</FieldError>}
         {loading && <p role="status" className="agent-settings__loading">正在读取智能体…</p>}
 
         {/* 自定义智能体列表 */}
@@ -355,82 +357,30 @@ interface AgentActionMenuProps {
 }
 
 function AgentActionMenu({ agent, busy, onCopy, onDelete }: AgentActionMenuProps) {
-  const detailsRef = useRef<HTMLDetailsElement>(null);
-
-  useEffect(() => {
-    function closeIfOutside(target: Node | null) {
-      const details = detailsRef.current;
-      if (!details || !details.hasAttribute("open")) return;
-      if (target && !details.contains(target)) {
-        details.removeAttribute("open");
-      }
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      closeIfOutside(event.target as Node | null);
-    }
-
-    function handleClick(event: MouseEvent) {
-      closeIfOutside(event.target as Node | null);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      const details = detailsRef.current;
-      if (!details || !details.hasAttribute("open")) return;
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        event.preventDefault();
-        details.removeAttribute("open");
-        details.querySelector<HTMLElement>("summary")?.focus();
-      }
-    }
-
-    window.addEventListener("pointerdown", handlePointerDown, true);
-    window.addEventListener("click", handleClick, true);
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown, true);
-      window.removeEventListener("click", handleClick, true);
-      window.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, []);
-
   return (
-    <details ref={detailsRef} className="agent-settings__more">
-      <summary className="agent-more-trigger" aria-label={`${agent.name} 的更多操作`}>
-        ⋯
-      </summary>
-      <div className="dropdown-menu">
-        <button
-          type="button"
-          className="dropdown-menu-item"
-          disabled={busy || !agent.definitionVersion}
-          onClick={(event) => {
-            event.currentTarget.closest("details")?.removeAttribute("open");
-            onCopy();
-          }}
-        >
-          <span className="dropdown-menu-item__icon" aria-hidden="true">
-            <CopyIcon />
-          </span>
-          <span className="dropdown-menu-item__label">复制为新智能体</span>
-        </button>
-        <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />
-        <button
-          type="button"
-          className="dropdown-menu-item danger-action"
-          disabled={busy || !agent.definitionVersion}
-          onClick={(event) => {
-            event.currentTarget.closest("details")?.removeAttribute("open");
-            onDelete();
-          }}
-        >
-          <span className="dropdown-menu-item__icon" aria-hidden="true">
-            <TrashIcon />
-          </span>
-          <span className="dropdown-menu-item__label">删除</span>
-        </button>
-      </div>
-    </details>
+    <DropdownMenu
+      trigger="⋯"
+      className="agent-settings__more"
+      triggerClassName="agent-more-trigger"
+      triggerAriaLabel={`${agent.name} 的更多操作`}
+      label={`${agent.name} 选项`}
+      items={[
+        {
+          key: "copy",
+          label: "复制为新智能体",
+          icon: <CopyIcon />,
+          disabled: busy || !agent.definitionVersion,
+          onClick: onCopy,
+        },
+        {
+          key: "delete",
+          label: "删除",
+          icon: <TrashIcon />,
+          danger: true,
+          disabled: busy || !agent.definitionVersion,
+          onClick: onDelete,
+        },
+      ]}
+    />
   );
 }

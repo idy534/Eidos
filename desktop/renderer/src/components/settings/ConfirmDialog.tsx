@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 
 import { Button } from "../Button.js";
+import { FieldError } from "../FieldError.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 
 export interface ConfirmDialogProps {
@@ -121,7 +122,7 @@ export function ConfirmDialog({
         </div>
         <div id="confirm-dialog-desc" className="modal-body">
           {typeof description === "string" ? <p>{description}</p> : description}
-          {error && <p className="setting-field-error" role="alert">{error}</p>}
+          <FieldError error={error} />
         </div>
         <div className="modal-footer">
           <Button

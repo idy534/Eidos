@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "./Button.js";
+import { FieldError } from "./FieldError.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface CreateBranchDialogProps {
@@ -114,7 +115,7 @@ export function CreateBranchDialog({
                 spellCheck={false}
               />
             </label>
-            {error && <p className="setting-field-error" role="alert">{error}</p>}
+            <FieldError error={error} />
           </div>
           <div className="modal-footer">
             <Button ref={cancelButtonRef} variant="ghost" disabled={busy} onClick={onCancel}>

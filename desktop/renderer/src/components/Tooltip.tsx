@@ -438,6 +438,7 @@ export function Tooltip({
   };
 
   const stringContent = typeof content === "string" ? content : undefined;
+  const fullTooltipTitle = shortcut && stringContent ? `${stringContent} (${shortcut})` : stringContent;
 
   // Clone trigger element with merged handlers and accessibility attributes
   const triggerElement = cloneElement(children, {
@@ -447,7 +448,7 @@ export function Tooltip({
     // Do not override accessible name if child has its own text content
     "aria-label": childProps["aria-label"] as string | undefined,
     // Preserve title for testing environments (jsdom / static markup)
-    title: (childProps.title as string | undefined) ?? stringContent,
+    title: (childProps.title as string | undefined) ?? fullTooltipTitle,
     onMouseEnter: handleMouseEnter,
     onMouseLeave: handleMouseLeave,
     onPointerDown: handlePointerDown,

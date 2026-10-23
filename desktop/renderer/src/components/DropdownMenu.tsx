@@ -46,6 +46,7 @@ interface DropdownMenuProps {
   menuClassName?: string;
   title?: string;
   triggerAriaLabel?: string;
+  triggerClassName?: string;
 }
 
 /**
@@ -67,6 +68,7 @@ export function DropdownMenu({
   menuClassName = "",
   title,
   triggerAriaLabel,
+  triggerClassName = "",
 }: DropdownMenuProps) {
   const [open, setOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -212,7 +214,7 @@ export function DropdownMenu({
         <button
           ref={triggerRef}
           type="button"
-          className="icon-button dropdown-trigger"
+          className={`icon-button dropdown-trigger ${triggerClassName}`.trim()}
           aria-haspopup="menu"
           aria-expanded={open}
           title={title}

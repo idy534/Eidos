@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelProviderPreset, ModelPresetsResult } from "../../contracts.js";
 import type { CustomModelSettings } from "../../../../shared/custom-models.js";
 import { Button } from "../Button.js";
+import { FieldError } from "../FieldError.js";
 import { Tooltip } from "../Tooltip.js";
 import { ProviderLogo } from "../ProviderLogo.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -156,7 +157,7 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
             </div>
           </label>
           </>}
-          {error && <p className="setting-field-error" role="alert">{error}</p>}
+          <FieldError error={error} />
         </div>
         <div className="modal-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>

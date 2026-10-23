@@ -5,6 +5,7 @@ import { committedFileDiff, projectNetFileDiff } from "../persisted-file-diff.js
 import { userFacingError } from "../session-state.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
+import { FieldError } from "./FieldError.js";
 import { Tooltip } from "./Tooltip.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
@@ -423,16 +424,11 @@ export function TextReviewPanel({
         </div>
       </header>
 
-      {error && (
-        <p className="approval-error git-review-error" role="alert">
-          修改记录尚未完整读取：{error}
-        </p>
-      )}
-      {openError && (
-        <p className="approval-error git-review-error" role="alert">
-          {openError}
-        </p>
-      )}
+      <FieldError
+        className="git-review-error"
+        error={error ? `修改记录尚未完整读取：${error}` : undefined}
+      />
+      <FieldError className="git-review-error" error={openError} />
 
       <div className="git-review-files">
         {loading && fileSummaries.length === 0 && (

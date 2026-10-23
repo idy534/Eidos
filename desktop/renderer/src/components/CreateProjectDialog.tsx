@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "./Button.js";
+import { FieldError } from "./FieldError.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface CreateProjectDialogProps {
@@ -110,7 +111,7 @@ export function CreateProjectDialog({
               <span>{sourceFolder || "添加 Eidos 可读写的文件夹"}</span>
             </button>
           </div>
-          {error && <p className="setting-field-error" role="alert">{error}</p>}
+          <FieldError error={error} />
         </div>
         <div className="create-project-dialog-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>

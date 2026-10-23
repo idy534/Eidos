@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { AgentDefinition, AgentDefinitionDocument, AgentModelSelection } from "../../../../shared/collaboration.generated.js";
 import type { ModelOption } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { FieldError } from "../FieldError.js";
 import { Tooltip } from "../Tooltip.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -182,7 +183,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                       onChange={(event) => setDraft({ ...draft, name: event.target.value })}
                     />
                   </div>
-                  {attempted && nameError && <span className="setting-field-error" role="alert">{nameError}</span>}
+                  {attempted && <FieldError error={nameError} inline />}
                 </label>
 
                 {/* 基础角色 */}
@@ -226,7 +227,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                   className="agent-editor__text-input"
                   onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                 />
-                {attempted && descriptionError && <span className="setting-field-error" role="alert">{descriptionError}</span>}
+                {attempted && <FieldError error={descriptionError} inline />}
               </label>
 
               {/* 模型选择 */}
@@ -282,7 +283,7 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                 </div>
 
                 {configured && selection?.configId && !model && (
-                  <small className="setting-field-error">已保存的模型配置不可用或提供商不匹配，请重新选择。</small>
+                  <FieldError as="small">已保存的模型配置不可用或提供商不匹配，请重新选择。</FieldError>
                 )}
                 {configured && selection?.reasoningSelection && (
                   <div className="agent-editor__reasoning-action">
@@ -299,8 +300,8 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                   </p>
                 )}
                 {modelLoading && <p role="status" className="agent-editor__status-hint">正在读取模型配置…</p>}
-                {modelError && <p role="alert" className="setting-field-error">{modelError}</p>}
-                {attempted && modelValidationError && <p role="alert" className="setting-field-error">{modelValidationError}</p>}
+                <FieldError error={modelError} />
+                {attempted && <FieldError error={modelValidationError} />}
                 {!modelLoading && !models.length && <p className="agent-editor__hint">你还没有配置模型。智能体可以先继承父任务模型。</p>}
               </div>
             </div>
@@ -388,10 +389,10 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
                   )}
                 </div>
               )}
-              {attempted && instructionsError && <span className="setting-field-error" role="alert">{instructionsError}</span>}
+              {attempted && <FieldError error={instructionsError} inline />}
             </div>
           </fieldset>
-          {error && <p className="setting-field-error" role="alert">{error}</p>}
+          <FieldError error={error} />
         </div>
 
         <footer className="modal-footer agent-editor__footer">

@@ -3,6 +3,7 @@ import type { Automation, AutomationDesktopRequest } from "../../../../shared/au
 import type { ApprovalMode, ModelOption, ModelReasoningSelection, Project, Session } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
+import { FieldError } from "../FieldError.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { userFacingError } from "../../session-state.js";
 
@@ -149,7 +150,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
           <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as "ACTIVE" | "PAUSED")}><option value="ACTIVE">启用</option><option value="PAUSED">暂停</option></select></label></div>
       </div>
 
-      {previewError && <p role="alert" className="approval-error">{previewError}</p>}
+      <FieldError error={previewError} />
       <div className="automation-form-actions">
         <Button type="submit" variant="primary" disabled={busy}>{busy ? "正在保存…" : "保存任务"}</Button>
         {onCancel && (

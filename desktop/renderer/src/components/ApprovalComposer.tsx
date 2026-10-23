@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ApprovalFileSystemAccess, ApprovalRequest, CommandApprovalRequest, Run } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
+import { FieldError } from "./FieldError.js";
 import { ToolTextView } from "./ToolTextView.js";
 
 export interface ApprovalComposerProps {
@@ -92,7 +93,7 @@ export function ApprovalComposer({
         </div>}
         <ApprovalContent approval={approval} />
       </div>
-      {localError && <p className="approval-error" role="alert">{localError}</p>}
+      <FieldError error={localError} />
       {approval.reviewFallback && <p className="approval-fallback-note" role="status">{approval.reviewFallback} 可在此手动决定。</p>}
       <div className="approval-actions">
         <div className="approval-actions-hint" aria-hidden="true">

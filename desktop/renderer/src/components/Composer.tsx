@@ -9,6 +9,7 @@ import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
 import type { ContextDetails } from "../../../shared/context-management.js";
+import { FieldError } from "./FieldError.js";
 import { ModelSelector } from "./ModelSelector.js";
 import { Tooltip } from "./Tooltip.js";
 import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
@@ -300,9 +301,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           {...(onRemoveReference ? { onRemove: onRemoveReference } : {})}
         />
       )}
-      {unsupportedImage && <p className="input-reference-error" role="alert">当前模型不支持图片。请选择支持图片的模型，或移除图片引用。</p>}
+      {unsupportedImage && <FieldError error="当前模型不支持图片。请选择支持图片的模型，或移除图片引用。" className="input-reference-error" />}
       {showBusyHint && <p className="input-reference-hint" role="status">正在准备引用…</p>}
-      {context?.error && <p className="input-reference-error" role="alert">{context.error}</p>}
+      <FieldError error={context?.error} className="input-reference-error" />
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
         anchor={composerRef}
@@ -359,7 +360,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       <div className="composer-actions">
         <div className="composer-meta">
           <Tooltip content="添加文件、扩展或历史对话">
-            <button type="button" className="composer-add" aria-label="添加引用" title="添加文件、扩展或历史对话" aria-expanded={Boolean(picker)}
+            <button type="button" className="composer-add" aria-label="添加引用" aria-expanded={Boolean(picker)}
               disabled={!draftReady || isSubmitting || !context}
               onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
           </Tooltip>
@@ -378,7 +379,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                 disabled={isSubmitting}
                 onClick={() => onWorkModeChange?.("execute")}
                 aria-label="退出 Plan 模式"
-                title="退出 Plan 模式"
               >
                 <span className="composer-plan-badge__icon" aria-hidden="true">
                   <LightbulbIcon className="composer-plan-badge__bulb" />
@@ -420,7 +420,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                 loading={Boolean(cancelingRunId)}
                 onClick={onCancel}
                 aria-label={cancelingRunId ? "取消中…" : "取消 Run"}
-                title={cancelingRunId ? "取消中…" : "取消 Run"}
                 icon={!cancelingRunId ? <StopSquareIcon /> : undefined}
               >
                 <span className="sr-only">{cancelingRunId ? "取消中…" : "取消 Run"}</span>
@@ -436,7 +435,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
                 disabled={isSubmitDisabled}
                 loading={isSubmitting || composerMode === "starting"}
                 aria-label={buttonLabel}
-                title={buttonLabel}
                 icon={
                   !isSubmitting && composerMode !== "starting" ? (
                     <UpArrowIcon />

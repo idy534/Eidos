@@ -32,7 +32,6 @@ export function NavigationControls({
             className={`nav-icon-btn nav-sidebar-toggle${sidebarOpen ? " nav-sidebar-toggle--open" : ""}`}
             aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
             aria-expanded={sidebarOpen}
-            title={sidebarOpen ? "收起侧边栏 (⌘B)" : "展开侧边栏 (⌘B)"}
             onClick={onToggleSidebar}
           >
             <svg viewBox="0 0 20 20" aria-hidden="true" strokeLinecap="round" strokeLinejoin="round">
@@ -47,7 +46,6 @@ export function NavigationControls({
             type="button"
             className="nav-icon-btn nav-back-btn"
             aria-label="后退"
-            title="后退 (⌘[)"
             disabled={!canGoBack}
             onClick={onGoBack}
           >
@@ -62,7 +60,6 @@ export function NavigationControls({
             type="button"
             className="nav-icon-btn nav-forward-btn"
             aria-label="前进"
-            title="前进 (⌘])"
             disabled={!canGoForward}
             onClick={onGoForward}
           >

@@ -1130,3 +1130,36 @@
     animation: none !important;
   }
 }
+
+/* --------------------------------------------------------------------------
+   16. Field Error (.field-error)
+   Standardized inline and block-level field validation error indicators.
+   Replaces fragmented: .setting-field-error, .approval-error,
+   .input-reference-error, .workspace-explorer-error, .chat-search-error
+   -------------------------------------------------------------------------- */
+
+.field-error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--danger, #b42318);
+  font-size: var(--font-size-caption, 11px);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.field-error--inline {
+  display: inline-flex;
+}
+
+.field-error__icon {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: currentColor;
+}
+
+.field-error__text {
+  flex: 1 1 auto;
+}

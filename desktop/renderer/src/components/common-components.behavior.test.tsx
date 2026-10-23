@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AlertBanner } from "./AlertBanner.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { EmptyState } from "./EmptyState.js";
+import { FieldError } from "./FieldError.js";
 import { Kbd } from "./Kbd.js";
 import { SearchInput } from "./SearchInput.js";
 import { SettingSection } from "./SettingSection.js";
@@ -243,6 +244,35 @@ describe("Global common components", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("FieldError", () => {
+    it("renders error message with alert role and subtle icon", () => {
+      render(<FieldError error="用户名不能为空" />);
+      const alert = screen.getByRole("alert");
+      expect(alert).toBeInTheDocument();
+      expect(alert).toHaveTextContent("用户名不能为空");
+      expect(alert).toHaveClass("field-error");
+      expect(alert.querySelector("svg")).toBeInTheDocument();
+    });
+
+    it("renders children syntax and custom tag/inline mode", () => {
+      render(
+        <FieldError as="span" inline icon={false}>
+          必须填写有效数值
+        </FieldError>,
+      );
+      const alert = screen.getByRole("alert");
+      expect(alert.tagName.toLowerCase()).toBe("span");
+      expect(alert).toHaveClass("field-error", "field-error--inline");
+      expect(alert).toHaveTextContent("必须填写有效数值");
+      expect(alert.querySelector("svg")).not.toBeInTheDocument();
+    });
+
+    it("returns null when error is empty or null", () => {
+      const { container } = render(<FieldError error="" />);
+      expect(container.firstChild).toBeNull();
     });
   });
 });

@@ -19,6 +19,7 @@ import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
+import { FieldError } from "./FieldError.js";
 import { FileDiffIcon, HistoryIcon, TaskScopeIcon, GitBranchIcon, SendIcon } from "./MenuIcons.js";
 import { LastTurnChanges, type ItemReviewStats } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
@@ -520,7 +521,6 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
               className="git-icon-button"
               icon={<ExpandIcon collapse={toolbarAllExpanded} />}
               aria-label={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
-              title={toolbarAllExpanded ? "折叠全部差异" : "展开全部差异"}
               disabled={toolbarExpandDisabled}
               onClick={() => {
                 if (isItemTab) {
@@ -551,7 +551,6 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
               icon={<RefreshIcon />}
               loading={loading || summaryLoading}
               aria-label="刷新 Git 变更"
-              title="刷新 Git 变更"
               onClick={onRefresh}
             >
               <span className="sr-only">刷新 Git 变更</span>
@@ -585,11 +584,10 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           )}
         </div>
       </header>
-      {(error || summaryError || localError) && (
-        <p className="approval-error git-review-error" role="alert">
-          {localError ?? summaryError ?? error}
-        </p>
-      )}
+      <FieldError
+        className="git-review-error"
+        error={localError ?? summaryError ?? error}
+      />
 
       {isItemTab && (
         <LastTurnChanges
@@ -683,7 +681,7 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
                       id={`git-review-diff-${encodeURIComponent(key)}`}
                       className="git-file-diff-scroll"
                     >
-                      {state?.error && <p className="approval-error" role="alert">{state.error}</p>}
+                      <FieldError error={state?.error} />
                       {state?.diff?.truncated && (
                         <p className="git-diff-truncated" role="status">Diff 已截断</p>
                       )}

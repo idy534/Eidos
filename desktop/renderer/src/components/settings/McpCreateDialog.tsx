@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { McpCreateInput, McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
+import { FieldError } from "../FieldError.js";
 import { Tooltip } from "../Tooltip.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -356,7 +357,7 @@ export function McpCreateDialog({
               <option value="connector">connector：允许联网连接器</option>
             </select>
           </label>
-          {formError && <p className="setting-field-error" role="alert">{formError}</p>}
+          <FieldError error={formError} />
         </div>
         <div className="modal-footer mcp-create-footer">
           {server && onRemove ? (

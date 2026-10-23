@@ -121,10 +121,12 @@ describe("智能体设置与编辑", () => {
     expect(await screen.findByRole("dialog", { name: "编辑智能体" })).toBeInTheDocument();
     expect(api.readAgentDefinition).toHaveBeenCalledWith(document.source);
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByLabelText("luna-work 的更多操作"));
     fireEvent.click(screen.getByText("复制为新智能体"));
     expect(await screen.findByLabelText("名称")).toHaveValue("luna-work-copy");
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.click(screen.getByRole("button", { name: "删除", hidden: true }));
+    fireEvent.click(screen.getByLabelText("luna-work 的更多操作"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "删除" }));
     const confirm = await screen.findByRole("alertdialog");
     expect(api.removeAgentDefinition).not.toHaveBeenCalled();
     fireEvent.click(within(confirm).getByRole("button", { name: "删除" }));
@@ -147,22 +149,22 @@ describe("智能体设置与编辑", () => {
     expect(await screen.findByRole("heading", { name: "luna-work" })).toBeInTheDocument();
 
     const trigger = screen.getByLabelText("luna-work 的更多操作");
-    const details = trigger.closest("details")!;
-    expect(details).not.toHaveAttribute("open");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
 
     // Open menu
-    details.setAttribute("open", "");
-    expect(details).toHaveAttribute("open");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("menu")).toBeInTheDocument();
 
-    // Click outside in blank area (heading outside details)
+    // Click outside in blank area (heading outside dropdown)
     fireEvent.pointerDown(screen.getByRole("heading", { name: "智能体" }));
-    expect(details).not.toHaveAttribute("open");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
 
     // Open again and test Escape
-    details.setAttribute("open", "");
-    expect(details).toHaveAttribute("open");
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(details).not.toHaveAttribute("open");
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
   it("switches between Agent.md source and preview mode", async () => {

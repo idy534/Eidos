@@ -4,6 +4,7 @@ import type { SearchHit, SearchResponse } from "../../../shared/search.js";
 import { userFacingError } from "../session-state.js";
 import { FindBar, SearchIcon } from "./FindBar.js";
 import { DEFAULT_FIND_OPTIONS, findText } from "./find-text.js";
+import { FieldError } from "./FieldError.js";
 import { CloseIcon } from "./MenuIcons.js";
 import { FolderIcon } from "./InputPicker.js";
 import { formatSessionTime } from "./SidebarTooltip.js";
@@ -136,7 +137,7 @@ export function ChatSearch({ mode, sessionId, projects, sessions = [], onClose, 
       <option value="">所有项目</option><option value="projectless">无项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.workspaceRoot.split("/").at(-1)}</option>)}
     </select><button className="chat-search-close-btn" aria-label="关闭搜索" onClick={onClose}><CloseIcon /></button></div>
     <div ref={results} className={`chat-search-results${recent ? " chat-search-results--recent" : ""}`} aria-busy={busy}>
-      {error && <p role="alert" className="chat-search-error">{error}</p>}
+      <FieldError className="chat-search-error" error={error} />
       {recent && !recentSessions.length && (
         <div className="chat-search-empty-state">
           <div className="chat-search-empty-icon"><SearchIcon /></div>

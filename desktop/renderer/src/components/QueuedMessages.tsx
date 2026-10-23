@@ -3,6 +3,7 @@ import type { QueuedMessage as QueuedMessageData, QueuedRunChange } from "../../
 import { userFacingError } from "../session-state.js";
 import { useQueuedMessages } from "../app/useQueuedMessages.js";
 import { EditIcon, MessageQueueIcon, SteerIcon, TrashIcon } from "./MenuIcons.js";
+import { FieldError } from "./FieldError.js";
 import { Tooltip } from "./Tooltip.js";
 import { Button } from "./Button.js";
 
@@ -29,7 +30,12 @@ export function QueuedMessages({ sessionId, ready, activeRunId, onChanged, onRef
           onRefresh={() => { void queue.refresh(); onRefresh(); }} />
       ))}
       {queue.nextSequence != null && <li className="queued-message-more"><Button size="small" disabled={queue.loading} onClick={() => void queue.refresh(queue.nextSequence!)}>加载更多</Button></li>}
-      {queue.error && <li className="queued-message-error" role="alert">{queue.error}<Button size="small" onClick={() => void queue.refresh()}>重试</Button></li>}
+      {queue.error && (
+        <FieldError as="li" className="queued-message-error">
+          <span>{queue.error}</span>
+          <Button size="small" onClick={() => void queue.refresh()}>重试</Button>
+        </FieldError>
+      )}
     </ol>
   );
 }
@@ -88,20 +94,20 @@ function QueuedMessage({ message, position, ready, activeRunId, onChanged, onRef
         </button>
         <div className="queued-message-actions">
           <Tooltip content="引导当前任务">
-            <button type="button" title="引导当前任务" aria-label={`将第 ${position} 条排队消息用于引导当前任务`}
+            <button type="button" aria-label={`将第 ${position} 条排队消息用于引导当前任务`}
               disabled={!ready || busy || !activeRunId || !!edit} onClick={() => void change("steered")}>
               <SteerIcon />
             </button>
           </Tooltip>
           <Tooltip content="编辑">
-            <button type="button" title="编辑" aria-label={`编辑第 ${position} 条排队消息`}
+            <button type="button" aria-label={`编辑第 ${position} 条排队消息`}
               disabled={!ready || busy}
               onClick={() => { setEdit({ original: text, text }); setError(undefined); }}>
               <EditIcon /><span>编辑</span>
             </button>
           </Tooltip>
           <Tooltip content="删除">
-            <button type="button" title="删除" aria-label={`删除第 ${position} 条排队消息`}
+            <button type="button" aria-label={`删除第 ${position} 条排队消息`}
               disabled={!ready || busy} onClick={() => void change("deleted")}>
               <TrashIcon />
             </button>
@@ -129,7 +135,7 @@ function QueuedMessage({ message, position, ready, activeRunId, onChanged, onRef
           </div>
         </form>
       )}
-      {error && <p role="alert" className="queued-message-error">{error}</p>}
+      <FieldError className="queued-message-error" error={error} />
     </li>
   );
 }

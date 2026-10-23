@@ -4,6 +4,7 @@ import { userFacingError } from "../../session-state.js";
 import { ArtifactProvider } from "../ArtifactContext.js";
 import { Button } from "../Button.js";
 import { DropdownMenu } from "../DropdownMenu.js";
+import { FieldError } from "../FieldError.js";
 import { FinderIcon, CopyIcon } from "../MenuIcons.js";
 import { MarkdownContent } from "../MarkdownContent.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -292,7 +293,7 @@ export function SkillDetailDialog({
           </div>
           <p className="skill-detail-description">{effectiveDescription || "未提供技能说明"}</p>
           {!effectiveAvailable && <p className="skill-availability" role="status">所属插件尚未启用。你可以保存技能开关状态，插件启用后才会生效。</p>}
-          {error && !confirmRemove && <p className="setting-field-error" role="alert">{error}</p>}
+          {!confirmRemove && <FieldError error={error} />}
           <div className="skill-detail-body" tabIndex={0} aria-label="技能说明" aria-busy={!currentDetail && !loadError}>
             {currentDetail ? (
               <ArtifactProvider value={undefined}><MarkdownContent content={currentDetail.body} /></ArtifactProvider>

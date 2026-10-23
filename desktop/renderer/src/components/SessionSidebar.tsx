@@ -11,6 +11,7 @@ import { EidosMark } from "./EidosMark.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { PrimaryActionButton } from "./PrimaryActionButton.js";
 import { SidebarTooltip, type SidebarTooltipState, type SidebarTooltipTarget } from "./SidebarTooltip.js";
+import { Tooltip } from "./Tooltip.js";
 import settingsIcon from "./settings.svg";
 
 export const COLLAPSED_PROJECTS_KEY = "eidos.sidebarCollapsedProjects";
@@ -578,7 +579,9 @@ export function SessionSidebar({
           <span className="brand-name">Eidos</span>
           <span className="brand-badge">Desktop</span>
         </div>
-        <button className="brand-search" aria-label="搜索所有会话" title="搜索所有会话 ⌘K" disabled={disabled} onClick={onSearch}><SearchIcon /></button>
+        <Tooltip content="搜索所有会话" shortcut="⌘K">
+          <button className="brand-search" aria-label="搜索所有会话" disabled={disabled} onClick={onSearch}><SearchIcon /></button>
+        </Tooltip>
       </div>
       <PrimaryActionButton
         size="compact"

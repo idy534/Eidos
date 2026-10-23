@@ -16,6 +16,7 @@ import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 import { DropdownMenu } from "./DropdownMenu.js";
+import { FieldError } from "./FieldError.js";
 import { GitBranchIcon, PlusIcon } from "./MenuIcons.js";
 
 
@@ -490,7 +491,7 @@ export function GitWorkflowControls({
     return (
       <div className="git-workflow-controls git-workflow-controls--dialog-only" aria-label="Git workflow">
         {dialogContent}
-        {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
+        <FieldError className="git-workflow-error" error={error} />
       </div>
     );
   }
@@ -531,7 +532,7 @@ export function GitWorkflowControls({
           />
         </div>
         {dialogContent}
-        {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
+        <FieldError className="git-workflow-error" error={error} />
       </div>
     );
   }
@@ -593,7 +594,7 @@ export function GitWorkflowControls({
       </button>
       {dialogContent}
 
-      {error && <p className="approval-error git-workflow-error" role="alert">{error}</p>}
+      <FieldError className="git-workflow-error" error={error} />
     </section>
   );
 }

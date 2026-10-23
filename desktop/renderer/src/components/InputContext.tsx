@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { userFacingError } from "../session-state.js";
 import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
+import { FieldError } from "./FieldError.js";
 import { FileIcon, FolderIcon, AgentIcon, SkillIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
@@ -186,7 +187,7 @@ export function InputReferenceCards({
           );
         })}
       </div>
-      {error && <p role="alert" className="input-reference-error">{error}</p>}
+      <FieldError className="input-reference-error" error={error} />
       {preview && (
         preview.reference.kind === "image" ? (
           <ImageLightboxModal

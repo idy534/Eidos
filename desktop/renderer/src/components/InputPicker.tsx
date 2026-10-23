@@ -332,7 +332,6 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                     searchInputRef.current?.focus();
                   }}
                   aria-label="清空搜索"
-                  title="清空搜索"
                   tabIndex={-1}
                 >
                   <ClearIcon />
@@ -348,7 +347,6 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                     onQuery("");
                   }}
                   aria-label="收起搜索"
-                  title="收起搜索"
                 >
                   收起
                 </button>
@@ -364,7 +362,6 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 type="button"
                 className="input-picker__action-btn"
                 aria-label="添加文件"
-                title="添加文件"
                 onClick={() => {
                   void window.eidosRuntime.pickInputPaths().then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
                 }}
@@ -378,7 +375,6 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 type="button"
                 className="input-picker__action-btn"
                 aria-label="添加文件夹"
-                title="添加文件夹"
                 onClick={() => {
                   void window.eidosRuntime.pickInputPaths(true).then((paths) => context?.paths(paths)).catch((cause) => setError(userFacingError(cause)));
                 }}
@@ -395,7 +391,6 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 type="button"
                 className="input-picker__action-btn input-picker__action-btn--plan"
                 aria-label="Plan 模式"
-                title="开始 Plan 模式"
                 onClick={() => {
                   onSelectPlanMode?.();
                   onClose();
@@ -410,7 +405,6 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
                 type="button"
                 className="input-picker__action-btn input-picker__action-btn--goal"
                 aria-label="目标模式"
-                title="目标模式 (即将推出)"
                 disabled
               >
                 <TargetGoalIcon />
@@ -424,7 +418,6 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
               type="button"
               className="input-picker__search-trigger"
               aria-label="搜索引用"
-              title="搜索引用"
               onClick={() => setSearchExpanded(true)}
             >
               <SearchIcon />

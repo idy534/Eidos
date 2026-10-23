@@ -166,12 +166,12 @@ export function BrowserPanel({
     <form className="browser-navigation" onSubmit={(event) => { event.preventDefault(); void open(address); }}>
       <div className="browser-navigation__history" aria-label="网页历史导航">
         <Tooltip content="后退">
-          <button type="button" className="browser-navigation__button" aria-label="后退" title="后退" disabled>
+          <button type="button" className="browser-navigation__button" aria-label="后退" disabled>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 5 7.5 10l5 5" /></svg>
           </button>
         </Tooltip>
         <Tooltip content="前进">
-          <button type="button" className="browser-navigation__button" aria-label="前进" title="前进" disabled>
+          <button type="button" className="browser-navigation__button" aria-label="前进" disabled>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7.5 5 5 5-5 5" /></svg>
           </button>
         </Tooltip>
@@ -180,7 +180,6 @@ export function BrowserPanel({
             type="button"
             className={`browser-navigation__button browser-navigation__button--refresh${page.loading ? " browser-navigation__button--stop" : ""}`}
             aria-label={page.loading ? "停止加载" : "刷新"}
-            title={page.loading ? "停止加载" : "刷新"}
             disabled={!page.loading && (!page.url && !address.trim())}
             onClick={page.loading ? stop : refresh}
           >
