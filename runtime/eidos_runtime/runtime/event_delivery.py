@@ -5,8 +5,6 @@ import logging
 import threading
 from typing import Callable
 
-from pydantic import BaseModel, ConfigDict
-
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.runtime.event_projector import EventProjector
 
@@ -20,16 +18,6 @@ class EventOutboxError(RuntimeError):
 
 class RuntimeOutputClosedError(OSError):
     """The Runtime notification output is no longer writable."""
-
-
-class EventOutboxEntry(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-    event_id: int
-    status: str
-    attempt_count: int
-    last_error_code: str | None = None
-    delivered_at: int | None = None
 
 
 @dataclass(frozen=True)

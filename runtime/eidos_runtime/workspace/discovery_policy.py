@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 
 HARD_DISCOVERY_DIRECTORIES = frozenset({
     ".git",
@@ -14,40 +12,6 @@ HARD_DISCOVERY_DIRECTORIES = frozenset({
     "node_modules",
 })
 READABLE_METADATA_DIRECTORIES = frozenset({".git", ".agents", ".eidos"})
-SENSITIVE_DIRECTORIES = frozenset({
-    ".aws", ".config", ".eidos", ".gnupg", ".kube", ".ssh"
-})
-SENSITIVE_NAMES = frozenset({
-    ".git-credentials",
-    ".netrc",
-    ".npmrc",
-    ".pypirc",
-    "credentials",
-    "credentials.json",
-    "id_dsa",
-    "id_ed25519",
-    "id_rsa",
-})
-SENSITIVE_SUFFIXES = frozenset({".key", ".p12", ".pem", ".pfx"})
-SENSITIVE_KEYWORDS = frozenset({"credential", "secret", "token"})
-
-
-def is_sensitive_directory(name: str) -> bool:
-    return name.lower() in SENSITIVE_DIRECTORIES
-
-
-def is_sensitive_name(name: str) -> bool:
-    lowered = name.lower()
-    if lowered == ".env.example":
-        return False
-    return (
-        lowered.startswith(".eidos-")
-        or lowered == ".env"
-        or lowered.startswith(".env.")
-        or lowered in SENSITIVE_NAMES
-        or Path(lowered).suffix in SENSITIVE_SUFFIXES
-        or any(keyword in lowered for keyword in SENSITIVE_KEYWORDS)
-    )
 
 
 def is_readable_metadata_path(relative_path: str) -> bool:

@@ -3014,23 +3014,6 @@ class SessionApplication:
             )
         return projection
 
-    def _managed_binding(
-        self, session_id: str
-    ) -> tuple[ManagedWorktreePort, str]:
-        session = self._repository.read_session(session_id)
-        if session is None:
-            raise ApplicationError("RESOURCE_NOT_FOUND", "session not found")
-        if session.worktree_id is None:
-            raise ApplicationError(
-                "GIT_WORKTREE_NOT_MANAGED", "session has no managed Worktree"
-            )
-        manager = self._worktree_manager
-        if manager is None:
-            raise ApplicationError(
-                "INTERNAL_ERROR", "managed Session has no Worktree application boundary"
-            )
-        return manager, session.worktree_id
-
     def _require_manager(self) -> ManagedWorktreePort:
         manager = self._worktree_manager
         if manager is None:

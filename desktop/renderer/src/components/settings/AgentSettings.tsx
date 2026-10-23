@@ -9,7 +9,7 @@ import { Toggle } from "../Toggle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { EmptyState } from "../EmptyState.js";
 import { SearchInput } from "../SearchInput.js";
-import { StatusBadge } from "../StatusBadge.js";
+
 import { userFacingError } from "../../session-state.js";
 import { CopyIcon, TrashIcon } from "../MenuIcons.js";
 

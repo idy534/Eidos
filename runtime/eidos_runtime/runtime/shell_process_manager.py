@@ -436,20 +436,6 @@ class ShellProcessManager:
                 cancel=None if cancel_sent else cancel,
             )
 
-    @staticmethod
-    def _emit_output(
-        snapshot: dict[str, object], on_output: Callable[[str], None] | None
-    ) -> None:
-        if on_output is None:
-            return
-        data = snapshot.get("data")
-        if not isinstance(data, dict):
-            return
-        for stream in ("stdout", "stderr"):
-            text = data.get(stream)
-            if isinstance(text, str) and text:
-                on_output(text)
-
     def _write(
         self, session: ShellProcessSession, chars: str,
         *, cancel: threading.Event | None = None,

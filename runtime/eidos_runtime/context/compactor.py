@@ -402,29 +402,6 @@ def _matches(data: dict[str, object]) -> tuple[str, ...]:
     return tuple(values)
 
 
-def _tool_changes_workspace(item: ContextItemFact) -> bool:
-    result = _tool_result(item)
-    if item.tool_name in {"write_file", "apply_patch", "delete_file"}:
-        return result.get("outcome") == "success"
-    if item.tool_name == "run_shell" and result.get("outcome") != "success":
-        return False
-    if item.tool_name == "run_shell":
-        data = result.get("data")
-        return isinstance(data, dict) and (
-            data.get("workspaceChanged") is True
-            or data.get("workspaceChangeState") in {"changed", "unknown"}
-        )
-    if result.get("sideEffectsMayExist") is True or result.get(
-        "reconciliationRequired"
-    ) is True:
-        return True
-    data = result.get("data")
-    return isinstance(data, dict) and (
-        data.get("workspaceChanged") is True
-        or data.get("workspaceChangeState") in {"changed", "unknown"}
-    )
-
-
 def _tool_has_uncertain_side_effects(item: ContextItemFact) -> bool:
     result = _tool_result(item)
     return result.get("sideEffectsMayExist") is True or result.get(

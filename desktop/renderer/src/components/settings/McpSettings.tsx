@@ -23,13 +23,6 @@ interface McpSettingsProps {
    SVG ICONS - macOS Native Vector Icons
    ========================================================================== */
 
-function PlusIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M8 3.5v9M3.5 8h9" />
-    </svg>
-  );
-}
 
 function BrowserIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -122,30 +115,8 @@ function SearchIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-function CopyIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1.5" />
-      <path d="M4 10.5H3.5A1.5 1.5 0 0 1 2 9V3.5A1.5 1.5 0 0 1 3.5 2H9a1.5 1.5 0 0 1 1.5 1.5V4" />
-    </svg>
-  );
-}
 
-function CheckmarkIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="m3.5 8.5 3 3 6-7" />
-    </svg>
-  );
-}
 
-function ChevronDownIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="m4 6 4 4 4-4" />
-    </svg>
-  );
-}
 
 function WarningIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -343,7 +314,6 @@ export function McpSettings({
   const totalCount = servers.length;
   const activeCount = servers.filter((s) => s.consented && s.available).length;
   const pendingCount = servers.filter((s) => !s.consented).length;
-  const errorCount = servers.filter((s) => Boolean(s.errorCode)).length;
 
   // Filtering
   const filteredServers = servers.filter((server) => {

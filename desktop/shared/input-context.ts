@@ -1,4 +1,4 @@
-import type { InputReference, InputPrepareRequest, InputPreviewResponse, DraftResponse, InputReadAssetRequest, InputReadAssetResponse } from "./input-context.generated.js";
+import type { InputReference, InputPrepareRequest, InputPreviewResponse, DraftResponse, InputReadAssetResponse } from "./input-context.generated.js";
 export type { InputReference, InputPrepareRequest, InputReadAssetRequest, InputReadAssetResponse } from "./input-context.generated.js";
 export type InputReferenceKind = InputReference["kind"];
 export type InputPreview = InputPreviewResponse;

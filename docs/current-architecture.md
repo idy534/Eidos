@@ -10,6 +10,10 @@
 
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。
 
+当前 Model Gateway 使用 `pydantic_ai_client.map_model_error → ModelRequestFailure`，Usage 使用 `client.ModelUsage`。源码已移除未接入调用链的旧 Gateway 事件、Usage/Cost 定义和 HTTP 错误转换器。重试判断仍保留 `EidosModelError` 基类。实际压缩仍由 `ContextCompactor → VerifiedCompactionRepository.verify_and_persist` 执行验证与持久化；Application 保留已有验证接口，移除无人调用的持久化包装与依赖注入。
+
+Renderer 的新建会话继续使用 `AppShell → useSessionController` 的草稿流程。源码已移除无人使用的 CreateSessionDialog、AgentSourceDialog、EmptySettingsState 和仅由组件测试使用的 Badge。ExecutionFeed 只接收审批展示所需的数据，不再逐层传递未使用的审批操作回调、响应状态、projectless 和 stepResolutions。审批交互继续由现有审批输入区及控制器处理；`session/read` 的 stepResolutions 兼容字段和双端校验保持原样。
+
 回答级分叉经过 Renderer → typed preload IPC → Main → `session/fork` → `SessionForkApplication` → `SessionHistoryRepository`。Application 复用现有 Supervisor 托管任务，历史捕获和 Git IO 不占用协议输入循环。Repository 使用 SQLite WAL 只读视图捕获历史前缀。JsonBlobStore 保存严格类型的不可变记录。Runtime 在短事务中创建目标 Session，提交历史清单、资源引用、来源、Event/Outbox 和幂等结果。Runtime 在提交前重新检查回答、来源、引用与 Reconciliation。
 
 `session/read` 将继承记录放在 `inheritedHistory` 中，并与真实 Item 共用分页游标。Main 在验证协议后把历史记录加入展示列表，并添加仅供界面使用的 `inherited` 标记。历史 Run 不进入 `runs` 表、调度、恢复和授权。Context Repository 将继承事实与自有事实合并，继续使用现有预算和压缩校验。模型响应回放只进入模型上下文。界面看不到私有回放。

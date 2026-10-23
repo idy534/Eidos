@@ -1091,18 +1091,6 @@
 
 /* Source Dialog & Picker */
 
-.agent-settings__source {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: var(--font-code);
-  font-size: 12px;
-  line-height: 1.55;
-  padding: 0.85rem 1rem;
-  background: var(--surface-muted);
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-}
-
 .input-picker__agent-actions {
   display: flex;
   justify-content: space-between;

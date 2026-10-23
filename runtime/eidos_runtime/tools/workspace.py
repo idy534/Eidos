@@ -5,10 +5,8 @@ import difflib
 import errno
 import fcntl
 import hashlib
-import heapq
 import os
 from pathlib import Path
-import re
 import stat
 import threading
 import time
@@ -34,10 +32,6 @@ from eidos_runtime.sandbox.workspace_index import (
 from eidos_runtime.workspace.discovery_scope import (
     DiscoveryScopeError,
     WorkspaceDiscoveryScope,
-)
-from eidos_runtime.workspace.discovery_policy import (
-    SENSITIVE_NAMES,
-    SENSITIVE_SUFFIXES,
 )
 from eidos_runtime.workspace.codex_patch import (
     AddFile,
@@ -71,8 +65,6 @@ from eidos_runtime.model.client import CustomToolFormat
 from eidos_runtime.tools.contracts import (
     ApplyPatchInput,
     ApplyPatchResultData,
-    LIST_FILES_MAX_DEPTH,
-    LIST_FILES_MAX_ENTRIES,
     ListFilesInput,
     ListFilesResultData,
     ReadFileInput,
@@ -83,7 +75,6 @@ from eidos_runtime.tools.contracts import (
     RunShellResultData,
     WriteStdinInput,
     WriteStdinResultData,
-    SEARCH_TEXT_MAX_RESULTS,
     SearchTextInput,
     SearchTextWaitInput,
     SearchTextResultData,
@@ -93,10 +84,6 @@ from eidos_runtime.tools.contracts import (
 
 MAX_FILE_BYTES = 256 * 1024
 MAX_READ_FILE_BYTES = MAX_EDIT_FILE_BYTES
-MAX_RANGE_LINES = 2_000
-MAX_LIST_DEPTH = LIST_FILES_MAX_DEPTH
-MAX_LIST_ENTRIES = LIST_FILES_MAX_ENTRIES
-MAX_SEARCH_RESULTS = SEARCH_TEXT_MAX_RESULTS
 MAX_FILE_CHANGE_BYTES = MAX_EDIT_FILE_BYTES
 MAX_DIFF_BYTES = MAX_PATCH_WORKING_BYTES
 TOOL_DEADLINE_SECONDS = 5.0
@@ -104,26 +91,6 @@ SEARCH_LIFETIME_SECONDS = 600.0
 MAX_ACTIVE_SEARCHES = 4
 MAX_RETAINED_SEARCHES = 16
 SHELL_PREFLIGHT_DEADLINE_SECONDS = 10.0
-MAX_SHELL_PREFLIGHT_ENTRIES = 250_000
-SHELL_SOURCE_SUFFIXES = {
-    ".c",
-    ".cc",
-    ".cpp",
-    ".go",
-    ".h",
-    ".hpp",
-    ".java",
-    ".js",
-    ".jsx",
-    ".md",
-    ".mjs",
-    ".py",
-    ".pyc",
-    ".rs",
-    ".ts",
-    ".tsx",
-}
-MAX_PEM_SCAN_BYTES = 1024 * 1024
 _PROTECTED_WORKSPACE_METADATA_NAMES = frozenset({".git", ".agents", ".eidos"})
 
 
@@ -1916,25 +1883,6 @@ class ToolExecutor:
             raise WorkspacePathError("unsupported_file_type")
         return descriptor
 
-    @staticmethod
-    def _bounded_names(
-        directory_fd: int,
-        limit: int,
-        cancel: threading.Event,
-        deadline: float,
-    ) -> tuple[list[str], bool]:
-        def names() -> Iterator[str]:
-            try:
-                with os.scandir(directory_fd) as entries:
-                    for entry in entries:
-                        _check_budget(cancel, deadline)
-                        yield entry.name
-            except OSError:
-                return
-
-        selected = heapq.nsmallest(limit, names())
-        return selected[: limit - 1], len(selected) == limit
-
 
 def _read_regular_file(
     descriptor: int, cancel: threading.Event, *, limit: int = MAX_FILE_BYTES
@@ -2287,71 +2235,9 @@ def _has_unsupported_text_control(value: str) -> bool:
     )
 
 
-def _is_shell_sensitive_name(name: str) -> bool:
-    lowered = name.lower()
-    if lowered == ".env.example":
-        return False
-    suffix = Path(lowered).suffix
-    keyword_name = re.search(
-        r"(?:^|[._-])(credentials?|secrets?|tokens?)(?:[._-]|$)", lowered
-    )
-    return (
-        lowered.startswith(".eidos-")
-        or lowered == ".env"
-        or lowered.startswith(".env.")
-        or lowered in SENSITIVE_NAMES
-        or suffix in SENSITIVE_SUFFIXES - {".pem"}
-        or keyword_name is not None and suffix not in SHELL_SOURCE_SUFFIXES
-    )
-
-
-def _contains_sensitive_pem(
-    directory_fd: int, name: str, metadata: os.stat_result
-) -> bool:
-    if Path(name.lower()).suffix != ".pem":
-        return False
-    if metadata.st_size > MAX_PEM_SCAN_BYTES:
-        return True
-    flags = os.O_RDONLY | os.O_NONBLOCK
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(name, flags, dir_fd=directory_fd)
-        try:
-            content = bytearray()
-            while len(content) <= MAX_PEM_SCAN_BYTES:
-                chunk = os.read(
-                    descriptor,
-                    min(64 * 1024, MAX_PEM_SCAN_BYTES + 1 - len(content)),
-                )
-                if not chunk:
-                    break
-                content.extend(chunk)
-            after = os.fstat(descriptor)
-        finally:
-            os.close(descriptor)
-    except OSError:
-        raise WorkspacePathError("workspace_changed") from None
-    if (
-        (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        or len(content) != metadata.st_size
-    ):
-        raise WorkspacePathError("workspace_changed")
-    return (
-        b"PRIVATE KEY-----" in content
-        or b"-----BEGIN CERTIFICATE-----" not in content
-        or b"-----END CERTIFICATE-----" not in content
-    )
-
-
 def _check_cancel(cancel: threading.Event) -> None:
     if cancel.is_set():
         raise ToolCancelled
-
-
-def _ascii_lower(value: str) -> str:
-    return "".join(chr(ord(char) + 32) if "A" <= char <= "Z" else char for char in value)
 
 
 def _check_budget(cancel: threading.Event, deadline: float) -> None:

@@ -10,7 +10,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import type { ApprovalMode, ApprovalRequest, ModelOption, Project, ResponseFeedbackValue, Run, Session, Item } from "../contracts.js";
+import type { ApprovalMode, ModelOption, Project, ResponseFeedbackValue, Run, Session, Item } from "../contracts.js";
 import { SettingsPage } from "../components/settings/SettingsPage.js";
 import { ExecutionFeed } from "../components/ExecutionFeed.js";
 import { WelcomeMessage } from "../components/WelcomeMessage.js";
@@ -955,14 +955,6 @@ export function AppShell({ runtime }: AppShellProps) {
     void approvalActions.loadPending();
   }, [approvalActions]);
 
-  const handleFeedApprove = useCallback((request: ApprovalRequest) => {
-    void approvalActions.approve(request);
-  }, [approvalActions]);
-
-  const handleFeedReject = useCallback((request: ApprovalRequest) => {
-    void approvalActions.reject(request);
-  }, [approvalActions]);
-
   const handleFeedFeedback = useCallback(async (itemId: string, feedback: ResponseFeedbackValue | null) => {
     if (currentSessionId) {
       await responseActionActions.setFeedback(currentSessionId, itemId, feedback);
@@ -1623,24 +1615,16 @@ export function AppShell({ runtime }: AppShellProps) {
                   items={currentSnapshot.items.filter((item) => !currentSnapshot.runs.some((run) => run.id === item.runId && isQueuedMessage(run)))}
                   resultItems={completeSessionItems.items}
                   contextCompactions={currentSnapshot.contextCompactions}
-                  projectless={currentSnapshot.session.projectless === true}
                   runs={currentSnapshot.runs.filter((run) => !isQueuedMessage(run))}
                   models={feedModels}
                   workspaceRoot={currentSnapshot.session.workspaceRoot}
                   responseActionState={responseActionState.responseState}
                   pendingFeedbackItemIds={responseActionState.pendingFeedbackItemIds}
                   revisionSubmitting={runState.isSubmitting}
-                  stepResolutions={currentSnapshot.stepResolutions}
                   approvals={feedApprovals}
-                  respondingApprovalIds={respondingApprovalIds}
-                  respondingKindByApprovalId={respondingKindByApprovalId}
-                  expiredApprovalIds={approvalState.expiredApprovalIds}
-                  errorsByApprovalId={errorsByApprovalId}
                   approvalLoadError={approvalState.pendingApprovalsLoadError}
                   loadingPendingApprovals={approvalState.loadingPendingApprovals}
                   onRetryLoadPending={handleFeedRetryLoadPending}
-                  onApprove={handleFeedApprove}
-                  onReject={handleFeedReject}
                   onFeedback={handleFeedFeedback}
                   onFork={handleFeedFork}
                   onLoadOlder={currentSnapshot.previousItemId ? () => void sessionActions.loadOlderSession() : undefined}

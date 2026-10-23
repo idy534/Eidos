@@ -281,15 +281,9 @@ describe("useApprovalController real behavior", () => {
           items={items}
           runs={[run]}
           approvals={state.approvals}
-          respondingApprovalIds={state.respondingApprovalIds}
-          respondingKindByApprovalId={state.respondingKindByApprovalId}
-          expiredApprovalIds={state.expiredApprovalIds}
-          errorsByApprovalId={state.errorsByApprovalId}
           approvalLoadError={state.pendingApprovalsLoadError}
           loadingPendingApprovals={state.loadingPendingApprovals}
           onRetryLoadPending={() => { void actions.loadPending(); }}
-          onApprove={(request) => { void actions.approve(request); }}
-          onReject={(request) => { void actions.reject(request); }}
         />
       );
     }

@@ -72,8 +72,6 @@ function render(
       models={models}
       responseActionState={responseActionState}
       approvals={[]}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 }

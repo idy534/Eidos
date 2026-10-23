@@ -1,4 +1,4 @@
-import React from "react";
+
 
 export function DingTalkLogo({ size = 44, className = "" }: { size?: number; className?: string }) {
   return (

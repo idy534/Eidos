@@ -48,10 +48,6 @@ test("provides an accessible jump to the latest content control", () => {
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "向上浏览" })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -60,43 +56,12 @@ test("provides an accessible jump to the latest content control", () => {
   assert.match(html, /hidden=""/);
 });
 
-test("does not render request snapshot tail in execution feed", () => {
+test("renders the feed without request snapshot metadata", () => {
   const html = renderToStaticMarkup(
     <ExecutionFeed
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "检查规则" })]}
       runs={[run]}
-      stepResolutions={[{
-        id: `step_${"4".repeat(64)}`,
-        stepId: "step-1",
-        runId: run.id,
-        stepOrdinal: 1,
-        snapshotHash: "4".repeat(64),
-        requestHash: "5".repeat(64),
-        ruleSnapshotId: `rule_${"6".repeat(64)}`,
-        ruleSnapshotHash: "6".repeat(64),
-        rules: [{
-          absolutePath: "/workspace/EIDOS.md",
-          relativePath: "EIDOS.md",
-          filename: "EIDOS.md",
-          contentHash: "7".repeat(64),
-          byteCount: 12,
-          includedByteCount: 12,
-          directoryLevel: 0,
-          selectionReason: "eidos_native",
-          truncated: false,
-        }],
-        shadowed: [{
-          absolutePath: "/workspace/AGENTS.md",
-          relativePath: "AGENTS.md",
-          filename: "AGENTS.md",
-          directoryLevel: 0,
-          reason: "higher_precedence_candidate_selected",
-        }],
-        warnings: [],
-      }]}
       approvals={[]}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -164,10 +129,6 @@ test("groups multi-stage commentary with tools and reserves response actions for
       items={items}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -201,10 +162,6 @@ test("streams a tool-free answer without a process group", () => {
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -224,10 +181,6 @@ test("shows a thinking indicator before the first model item", () => {
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "开始任务" })]}
       runs={[activeRun]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -257,10 +210,6 @@ test("shows safe MCP provenance and duration without internal diagnostics", () =
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -286,10 +235,6 @@ test("does not describe a failed file write as edited", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -315,10 +260,6 @@ test("shows the completed diff for an automatic workspace file change", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -348,10 +289,6 @@ test("shows canonical shell failure code, summary, and stderr", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -380,10 +317,6 @@ test("distinguishes a reconciliation gate from an executed shell failure", () =>
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -413,10 +346,6 @@ test("shows shell termination and bounded-output diagnostics", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -449,10 +378,6 @@ test("hides shell_exit_nonzero error lines and shows exit code pill next to 失�
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -495,10 +420,6 @@ test("uses the accumulated stream content once and preserves its stdout/stderr o
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -532,10 +453,6 @@ test("shows the recorded facts for an escalated retry", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -574,10 +491,6 @@ test("falls back to legacy final streams only when accumulated content is absent
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
   assert.match(html, /legacy stdout/);
@@ -612,10 +525,6 @@ test("distinguishes in-progress no output from completed no output", () => {
       })]}
       runs={[activeRun]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
   assert.match(activeHtml, /尚未输出/);
@@ -640,10 +549,6 @@ test("distinguishes in-progress no output from completed no output", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
   assert.match(completedHtml, /无输出/);
@@ -684,10 +589,6 @@ test("does not show success for an error or a result that still needs reconcilia
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -716,10 +617,6 @@ test("distinguishes a reconciliation gate for a non-shell tool", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -733,10 +630,6 @@ test("does not override completed Run status with unknown operation evidence", (
       items={[item({ id: "user", ordinal: 1, kind: "user_message", content: "检查" })]}
       runs={[{ ...run, reconciliationRequired: true }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -768,10 +661,6 @@ test("shows pending approval history without decision buttons", () => {
         summary: "Download a public GitHub skill", toolName: "skill_install",
         target: "example/skills@main:grilling", hosts: ["codeload.github.com:443"],
       }]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -806,10 +695,6 @@ test("renders pending run_shell approval with the Shell details", () => {
         summary: "Allow network access", command: "curl https://example.com", cwd: "/workspace",
         networkEnabled: true, timeoutSeconds: 30,
       }]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -838,10 +723,6 @@ test("renders approved run_shell with the Shell details and output", () => {
       })]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -864,7 +745,7 @@ test("hides legacy approval labels for full-access Shell execution", () => {
         data: { stdout: "direct", stderr: "", exitCode: 0 } }),
     } })]}
     runs={[{ ...run, approvalMode: "full_access" }]} approvals={[]}
-    onApprove={() => {}} onReject={() => {}} />);
+    />);
   assert.doesNotMatch(html, /已批准|需要批准|完全访问授权/);
   assert.match(html, /printf direct/);
 });
@@ -970,10 +851,6 @@ test("renders minimalist SVG icons for file operations, skills, and shell calls"
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1011,10 +888,6 @@ test("renders subagent collaboration tools with custom label, subagent name, and
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
       onOpenSubagent={() => {}}
     />,
   );
@@ -1037,10 +910,6 @@ test("renders more actions dropdown on assistant messages", () => {
       runs={[run]}
       workspaceRoot="/Users/test/workspace"
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1075,10 +944,6 @@ test("renders completed read_file as a static row without details/arrow and with
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
       onOpenFile={() => {}}
     />,
   );
@@ -1120,10 +985,6 @@ test("renders in-progress read_file as an expandable details element", () => {
       ]}
       runs={[activeRun]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1144,7 +1005,7 @@ test("keeps a managed command running and hides normal Shell followups", () => {
     providerCallId: "poll", toolName: "write_stdin", status: "completed", startedAt: 2_000,
     argumentsJson: JSON.stringify({ sessionId: "shell-1" }), resultJson: JSON.stringify({ code: "shell_running" }),
   } });
-  const html = renderToStaticMarkup(<ExecutionFeed items={[command, followup]} runs={[{ ...run, status: "running" }]} approvals={[]} respondingApprovalIds={new Set()} onApprove={() => {}} onReject={() => {}} />);
+  const html = renderToStaticMarkup(<ExecutionFeed items={[command, followup]} runs={[{ ...run, status: "running" }]} approvals={[]} />);
   assert.match(html, /正在运行 pnpm test/);
   assert.match(html, /progress/);
   assert.doesNotMatch(html, /write_stdin|✓ 成功|失败 · shell_running/);
@@ -1172,7 +1033,7 @@ function pollingFeedItems(): Item[] {
 }
 
 function renderPollingFeed(items: Item[], status: Run["status"]): string {
-  return renderToStaticMarkup(<ExecutionFeed items={items} runs={[{ ...run, status }]} approvals={[]} respondingApprovalIds={new Set()} onApprove={() => {}} onReject={() => {}} />);
+  return renderToStaticMarkup(<ExecutionFeed items={items} runs={[{ ...run, status }]} approvals={[]} />);
 }
 
 test("classifies progress before hiding repeated Shell observations", () => {
@@ -1246,10 +1107,6 @@ test("renders successful declare_outputs without disclaimer and with each output
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
       onOpenFile={() => {}}
     />,
   );
@@ -1297,10 +1154,6 @@ test("renders errored declare_outputs with error message and no file list", () =
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
       onOpenFile={() => {}}
     />,
   );
@@ -1335,10 +1188,6 @@ test("renders view_image in progress with dynamic label, filename and custom ima
       ]}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
       onOpenFile={() => {}}
     />,
   );
@@ -1385,10 +1234,6 @@ test("renders view_image completed with 已查看图像, metadata and thumbnail 
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
       onOpenFile={() => {}}
     />,
   );
@@ -1425,10 +1270,6 @@ test("renders view_image fallback label gracefully when path is absent", () => {
       ]}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
   assert.match(runningHtml, /正在查看图像/);
@@ -1459,10 +1300,6 @@ test("renders view_image fallback label gracefully when path is absent", () => {
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
   assert.match(completedHtml, /已查看图像/);
@@ -1495,10 +1332,6 @@ test("renders request_permissions with shield question icon and custom running/c
       ]}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1538,10 +1371,6 @@ test("renders request_permissions with shield question icon and custom running/c
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1582,10 +1411,6 @@ test("renders request_permissions with shield question icon and custom running/c
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1617,10 +1442,6 @@ test("renders request_permissions with shield question icon and custom running/c
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1654,10 +1475,6 @@ test("renders request_permissions with shield question icon and custom running/c
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1684,8 +1501,7 @@ test("permission rows omit resolved approval labels and retain rejection feedbac
               code: decision === "approve" ? "permission_granted" : "user_rejected" }),
           },
         })]}
-        runs={[{ ...run, approvalMode }]} approvals={[]} onApprove={() => {}} onReject={() => {}}
-      />);
+        runs={[{ ...run, approvalMode }]} approvals={[]} />);
       assert.doesNotMatch(html, /<p class="feed-label">(?:审批 · )?(?:已批准|已拒绝) · request_permissions/);
       assert.doesNotMatch(html, /申请权限 \[/);
       if (decision === "approve") assert.match(html, /已申请权限 网络访问/);
@@ -1710,8 +1526,7 @@ test("permission rows read network names from fallback data and handle existing 
         status: "completed", startedAt: 1000, argumentsJson: source.argumentsJson ?? "{}",
         resultJson: JSON.stringify({ outcome: "success", code: "already_granted", data: source.data }),
       } })]}
-      runs={[run]} approvals={[]} onApprove={() => {}} onReject={() => {}}
-    />);
+      runs={[run]} approvals={[]} />);
     assert.match(html, /已申请权限 网络访问/);
     assert.doesNotMatch(html, /<details class="tool-item"/);
   }
@@ -1866,10 +1681,6 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
       items={items}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1920,10 +1731,6 @@ test("renders declare_outputs with custom isometric artifact icon", () => {
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1957,10 +1764,6 @@ test("renders read_tool_output as static row with run_shell icon and 正在查�
       ]}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -1994,10 +1797,6 @@ test("renders read_tool_output as static row with run_shell icon and 正在查�
       ]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -2088,10 +1887,6 @@ test("renders skill_read and skill_read_resource as static rows with SparklesIco
       items={items}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -2174,10 +1969,6 @@ test("renders web_search in progress and completed with Globe icon and single-li
       items={items}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -2230,10 +2021,6 @@ test("falls back to result data.query when argumentsJson is missing in historica
       items={items}
       runs={[{ ...run, status: "succeeded" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -2302,10 +2089,6 @@ test("renders tool_search in progress and completed with query in brackets and h
       items={items}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -2376,10 +2159,6 @@ test("renders tool_search fallback copy when query is absent and handles empty h
       items={items}
       runs={[{ ...run, status: "running" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 
@@ -2437,10 +2216,6 @@ test("falls back to result data.query when argumentsJson is missing for tool_sea
       items={items}
       runs={[{ ...run, status: "succeeded" }]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 

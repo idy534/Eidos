@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AlertBanner } from "./AlertBanner.js";
-import { Badge } from "./Badge.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { EmptyState } from "./EmptyState.js";
 import { Kbd } from "./Kbd.js";
@@ -136,23 +135,6 @@ describe("Global common components", () => {
     });
   });
 
-  describe("Badge", () => {
-    it("renders variants and tones correctly", () => {
-      const { rerender } = render(
-        <Badge variant="subtle" tone="accent">
-          推荐
-        </Badge>,
-      );
-      expect(screen.getByText("推荐")).toHaveClass("badge--subtle", "badge--accent");
-
-      rerender(
-        <Badge variant="count" tone="danger">
-          5
-        </Badge>,
-      );
-      expect(screen.getByText("5")).toHaveClass("badge--count", "badge--danger");
-    });
-  });
 
   describe("Kbd", () => {
     it("renders keyboard shortcut keycap", () => {

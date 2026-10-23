@@ -1,5 +1,14 @@
 # Eidos 当前限制
 
+## 冗余代码清理验证（2026-10-23）
+
+- 本轮只删除未接入生产调用链的代码、闲置组件及专用样式，并收窄 ExecutionFeed 的内部参数。协议、SQLite Schema、权限模式、实际重试和压缩验证保持原样。依赖声明和锁文件没有修改。
+- Runtime 定向测试通过 161 项，覆盖模型契约与重试、文件发现与读取、类型化持久化、压缩验证、事件恢复、审批、调度和 Shell 输出。Renderer 行为测试分两组通过 170 项和 63 项，Feed 与回答操作的 Node 测试通过 55 项。测试已同步删除的组件与参数。
+- Ruff、Deptry、Renderer 未使用代码检查、Renderer 测试类型检查、`pnpm build` 和 `git diff --check` 均通过。构建仍有部分 Chunk 超过 500 kB 的提示。`pnpm test:renderer-styles` 通过，覆盖 1100px 与 420px 的 8 种布局、控件状态和 13 处滚动区域；本次没有执行清理前后样式基线对照。
+- 主 Python 依赖审计未通过：现有锁定版本的 certifi、opentelemetry-api 和 Pillow 合计报告 37 条漏洞。隔离工具 Python 依赖审计通过。Desktop 和 Runtime Node 的生产依赖审计均未通过，各报告 3 条漏洞（1 条低危、1 条高危、1 条严重），高危与严重项来自 Mermaid 的 DOMPurify 依赖。本轮没有混入依赖升级，也不能据此声明全部质量门禁通过。
+- 本轮没有运行 Full Suite、真实模型请求、完整 Desktop 人工验收、Electron 生命周期 smoke 或 DMG 打包验证。
+
+
 ## 低风险操作审批（2026-10-22）
 
 - MCP 免批只接受已审阅启用服务的明确 `readOnlyHint=true`。Runtime 信任该声明，但声明不能证明服务实际只读。缺失或非只读声明继续审批。该策略不扩大 Server 的文件和网络权限，也不改变 MCP 的并发与未知结果语义。

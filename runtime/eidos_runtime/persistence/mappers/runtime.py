@@ -11,13 +11,11 @@ from pydantic import ValidationError
 
 from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.domain.execution import (
-    ExecutionSegment,
     Item,
     ItemKind,
     ItemStatus,
     ModelAttempt,
     ModelAttemptStatus,
-    SegmentStatus,
     Step,
     StepStatus,
 )
@@ -26,10 +24,6 @@ from eidos_runtime.domain.tool import (
     Approval,
     ApprovalKind,
     ApprovalStatus,
-    DurableIntent,
-    DurableIntentStatus,
-    ToolAttempt,
-    ToolAttemptStatus,
     ToolCall,
     ToolCallStatus,
 )
@@ -85,23 +79,6 @@ def run_from_row(row: RowValues | Mapping[str, object]) -> Run:
         "termination": json.loads(values.optional_json_text("termination_json") or "null") if "termination_json" in values._columns else None,
         "cancel_requested_at": values.optional_integer("cancel_requested_at"),
         "cancel_completed_at": values.optional_integer("cancel_completed_at"),
-    })
-
-
-def execution_segment_from_row(
-    row: RowValues | Mapping[str, object],
-) -> ExecutionSegment:
-    values = _reader(row, "execution_segment")
-    return _build("execution_segment", ExecutionSegment, {
-        "id": values.text("id"),
-        "run_id": values.text("run_id"),
-        "ordinal": values.integer("ordinal"),
-        "status": _enum(SegmentStatus, values.text("status"), record="execution_segment", field="status"),
-        "step_count": values.integer("step_count"),
-        "effective_ms": values.integer("effective_ms"),
-        "created_at": values.integer("created_at"),
-        "started_at": values.optional_integer("started_at"),
-        "completed_at": values.optional_integer("completed_at"),
     })
 
 
@@ -189,41 +166,6 @@ def approval_from_row(row: RowValues | Mapping[str, object]) -> Approval:
         "feedback": values.optional_text("feedback"),
         "created_at": values.integer("created_at"),
         "decided_at": values.optional_integer("decided_at"),
-    })
-
-
-def tool_attempt_from_row(row: RowValues | Mapping[str, object]) -> ToolAttempt:
-    values = _reader(row, "tool_attempt")
-    return _build("tool_attempt", ToolAttempt, {
-        "id": values.text("id"),
-        "tool_call_id": values.text("tool_call_id"),
-        "ordinal": values.integer("ordinal"),
-        "sandbox_type": values.text("sandbox_type"),
-        "sandbox_requested": values.boolean("sandbox_requested"),
-        "effective_permissions_json": values.json_text("effective_permissions_json"),
-        "profile_hash": values.optional_text("profile_hash"),
-        "escalation_reason": values.optional_text("escalation_reason"),
-        "status": _enum(ToolAttemptStatus, values.text("status"), record="tool_attempt", field="status"),
-        "started_at": values.integer("started_at"),
-        "completed_at": values.optional_integer("completed_at"),
-        "result_code": values.optional_text("result_code"),
-    })
-
-
-def durable_intent_from_row(
-    row: RowValues | Mapping[str, object],
-) -> DurableIntent:
-    values = _reader(row, "durable_intent")
-    return _build("durable_intent", DurableIntent, {
-        "id": values.text("id"),
-        "run_id": values.text("run_id"),
-        "tool_call_id": values.text("tool_call_id"),
-        "execution_nonce": values.text("execution_nonce"),
-        "arguments_hash": values.text("arguments_hash"),
-        "preconditions_json": values.json_text("preconditions_json"),
-        "status": _enum(DurableIntentStatus, values.text("status"), record="durable_intent", field="status"),
-        "created_at": values.integer("created_at"),
-        "reconciled_at": values.optional_integer("reconciled_at"),
     })
 
 

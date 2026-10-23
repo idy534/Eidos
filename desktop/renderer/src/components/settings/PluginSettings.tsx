@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import type { PluginRecord } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { Button } from "../Button.js";
@@ -30,7 +30,6 @@ export function PluginSettings({
   onShowToast,
 }: PluginSettingsProps) {
   const [pluginToRemove, setPluginToRemove] = useState<PluginRecord | null>(null);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string>();
 
   const isImporting = pendingAction?.type === "import_plugin";

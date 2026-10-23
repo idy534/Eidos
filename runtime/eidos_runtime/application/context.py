@@ -12,7 +12,6 @@ from eidos_runtime.context.budget import ContextBudget
 from eidos_runtime.repo_intelligence.retrieval import RetrievalSnapshot
 from eidos_runtime.runtime.resolution import RuleResolutionSnapshot
 from eidos_runtime.persistence.context_snapshots import ContextSnapshotRepository
-from eidos_runtime.persistence.verified_compaction import VerifiedCompactionRepository
 from eidos_runtime.persistence.context_management import ContextManagementRepository
 from eidos_runtime.domain.context_management import ContextDetails, ContextCompactionRecord
 from eidos_runtime.db.errors import ResourceNotFoundError
@@ -28,13 +27,11 @@ class ContextApplication:
         planner: ContextPlanner | None = None,
         compaction_verifier: ContextCompactionVerifier | None = None,
         snapshots: ContextSnapshotRepository | None = None,
-        verified_compactions: VerifiedCompactionRepository | None = None,
         management: ContextManagementRepository | None = None,
     ) -> None:
         self.planner = planner or ContextPlanner()
         self.compaction_verifier = compaction_verifier or ContextCompactionVerifier()
         self.snapshots = snapshots
-        self.verified_compactions = verified_compactions
         self.management = management
 
     def details(self, run_id: str) -> ContextDetails:
@@ -75,31 +72,6 @@ class ContextApplication:
         return self.compaction_verifier.verify(
             summary,
             facts,
-            input_range=input_range,
-            source_event_ids=source_event_ids,
-            source_tool_call_ids=source_tool_call_ids,
-            source_evidence_ids=source_evidence_ids,
-            pending_approval_facts=pending_approval_facts,
-            reconciliation_facts=reconciliation_facts,
-        )
-
-    def verify_and_persist_compaction(
-        self,
-        *,
-        run_id: str,
-        summary: CompactSummary,
-        input_range: tuple[int, int],
-        source_event_ids: tuple[int, ...] = (),
-        source_tool_call_ids: tuple[str, ...] = (),
-        source_evidence_ids: tuple[str, ...] = (),
-        pending_approval_facts: tuple[str, ...] = (),
-        reconciliation_facts: tuple[str, ...] = (),
-    ) -> VerifiedCompactSummary:
-        if self.verified_compactions is None:
-            raise RuntimeError("verified compaction persistence is not configured")
-        return self.verified_compactions.verify_and_persist(
-            run_id=run_id,
-            summary=summary,
             input_range=input_range,
             source_event_ids=source_event_ids,
             source_tool_call_ids=source_tool_call_ids,

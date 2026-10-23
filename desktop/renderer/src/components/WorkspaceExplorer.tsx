@@ -130,10 +130,6 @@ function isValidProgrammaticFilePath(value: string): boolean {
   return !value.split("/").some((part) => part === "" || part === "." || part === "..");
 }
 
-function parentPath(value: string): string {
-  const slash = value.lastIndexOf("/");
-  return slash < 0 ? "." : value.slice(0, slash);
-}
 
 function previewReadError(cause: unknown): string {
   return runtimeBusinessCode(cause)

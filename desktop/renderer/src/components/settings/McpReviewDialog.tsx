@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Button } from "../Button.js";
 import type { McpServerRecord } from "../../contracts";
 

@@ -47,10 +47,6 @@ function renderFeed(item: Item, run: Run = baseRun) {
       items={[item]}
       runs={[run]}
       approvals={[]}
-      respondingApprovalIds={new Set()}
-      respondingKindByApprovalId={{}}
-      onApprove={() => {}}
-      onReject={() => {}}
     />,
   );
 }
@@ -97,10 +93,6 @@ describe("automation source and tool results", () => {
         items={[shellItem({ kind: "user_message", content: "飞书来的消息", toolCall: undefined })]}
         runs={[feishuRun]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
     expect(screen.getByText("飞书消息")).toBeInTheDocument();
@@ -114,10 +106,6 @@ describe("automation source and tool results", () => {
         items={[shellItem({ kind: "user_message", content: "企微来的消息", toolCall: undefined })]}
         runs={[wecomRun]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
     expect(screen.getByText("企业微信消息")).toBeInTheDocument();
@@ -147,7 +135,7 @@ describe("automation source and tool results", () => {
     const { rerender } = renderFeed(item);
     expect(screen.getByText("执行时间预览")).toBeInTheDocument();
     rerender(<ExecutionFeed items={[{ ...item, toolCall: { ...item.toolCall!, provenance: { kind: "mcp", sourceId: "external", sourceVersion: "v1", contentHash: "hash" } } }]}
-      runs={[baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} />);
+      runs={[baseRun]} approvals={[]} />);
     expect(screen.queryByText("执行时间预览")).not.toBeInTheDocument();
   });
 
@@ -195,13 +183,13 @@ describe("conversation fork actions", () => {
     const items: Item[] = [{ id: "recent", runId: baseRun.id, sessionId: baseRun.sessionId,
       kind: "user_message", ordinal: 1, status: "completed", content: "最近输入", createdAt: 1 }];
     const { container, rerender } = render(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
-      onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} />);
+      onLoadOlder={onLoadOlder} />);
     expect(screen.queryByRole("button", { name: "加载更早的记录" })).not.toBeInTheDocument();
     const feed = container.querySelector(".feed") as HTMLElement;
     fireEvent.wheel(feed, { deltaY: -100 });
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
     rerender(<ExecutionFeed items={items} runs={[baseRun]} approvals={[]}
-      onApprove={() => {}} onReject={() => {}} onLoadOlder={onLoadOlder} loadingOlder />);
+      onLoadOlder={onLoadOlder} loadingOlder />);
     expect(screen.getByText("正在读取历史…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /历史|记录/ })).not.toBeInTheDocument();
     fireEvent.wheel(feed, { deltaY: -100 });
@@ -217,7 +205,7 @@ describe("conversation fork actions", () => {
     const selected = answer(oldRun);
     const onFork = vi.fn();
     render(<ExecutionFeed items={[selected, answer(baseRun, { id: "stream", status: "in_progress" })]}
-      runs={[oldRun, baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} onFork={onFork} />);
+      runs={[oldRun, baseRun]} approvals={[]} onFork={onFork} />);
     expect(screen.getAllByRole("button", { name: "从这里分叉" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "从这里分叉" }));
     expect(onFork).toHaveBeenCalledWith(selected);
@@ -227,7 +215,7 @@ describe("conversation fork actions", () => {
     const historical = { ...baseRun, status: "succeeded" as const, inherited: true };
     const selected = answer(historical, { inherited: true });
     render(<ExecutionFeed items={[selected]} runs={[historical]} approvals={[]}
-      onApprove={() => {}} onReject={() => {}} onFork={() => {}} allowRegenerate allowEditResend allowFeedback />);
+      onFork={() => {}} allowRegenerate allowEditResend allowFeedback />);
     expect(screen.getByRole("button", { name: "从这里分叉" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "重新生成" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "点赞" })).not.toBeInTheDocument();
@@ -236,7 +224,7 @@ describe("conversation fork actions", () => {
   it("does not offer a fork for incomplete answers or progress inside a tool round", () => {
     const ended = { ...baseRun, status: "stopped" as const };
     render(<ExecutionFeed items={[answer(ended, { incomplete: true })]} runs={[ended]} approvals={[]}
-      onApprove={() => {}} onReject={() => {}} onFork={() => {}} />);
+      onFork={() => {}} />);
     expect(screen.queryByRole("button", { name: "从这里分叉" })).not.toBeInTheDocument();
   });
 });
@@ -289,10 +277,6 @@ describe("Run failure presentation", () => {
         ]}
         runs={[run]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
     const turnResultsSection = container.querySelector(".turn-results");
@@ -320,8 +304,6 @@ describe("ExecutionFeed chat typography scope", () => {
         ]}
         runs={[baseRun]}
         approvals={[]}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -366,10 +348,6 @@ describe("ExecutionFeed shell output", () => {
         items={[completedItem]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000, updatedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -405,10 +383,6 @@ describe("ExecutionFeed shell output", () => {
         items={[failedItem]}
         runs={[{ ...baseRun, status: "failed", completedAt: 2_000, updatedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -476,10 +450,6 @@ describe("ExecutionFeed shell output", () => {
         })]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000, updatedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -502,10 +472,6 @@ describe("ExecutionFeed shell output", () => {
         items={[shellItem({ content: "first line\nsecond line\n" })]}
         runs={[baseRun]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
     const detailsDuring = container.querySelector("details.tool-item--shell");
@@ -532,10 +498,6 @@ describe("ExecutionFeed shell output", () => {
         })]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000, updatedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
     const detailsAfter = container.querySelector("details.tool-item--shell");
@@ -564,10 +526,6 @@ describe("ExecutionFeed streaming follow", () => {
         items={[assistantItem(content)]}
         runs={[baseRun]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
   }
@@ -599,10 +557,6 @@ describe("ExecutionFeed streaming follow", () => {
           items={[assistantItem("hello wo")]}
           runs={[baseRun]}
           approvals={[]}
-          respondingApprovalIds={new Set()}
-          respondingKindByApprovalId={{}}
-          onApprove={() => {}}
-          onReject={() => {}}
         />,
       );
       rerender(
@@ -610,10 +564,6 @@ describe("ExecutionFeed streaming follow", () => {
           items={[assistantItem("hello world")]}
           runs={[baseRun]}
           approvals={[]}
-          respondingApprovalIds={new Set()}
-          respondingKindByApprovalId={{}}
-          onApprove={() => {}}
-          onReject={() => {}}
         />,
       );
       expect(requestSpy).toHaveBeenCalledTimes(1);
@@ -651,10 +601,6 @@ describe("ExecutionFeed streaming follow", () => {
           items={[assistantItem("hello world, still streaming")]}
           runs={[baseRun]}
           approvals={[]}
-          respondingApprovalIds={new Set()}
-          respondingKindByApprovalId={{}}
-          onApprove={() => {}}
-          onReject={() => {}}
         />,
       );
       expect(requestSpy).not.toHaveBeenCalled();
@@ -730,10 +676,6 @@ describe("ExecutionFeed process group collapse behavior", () => {
         ]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000, updatedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -769,10 +711,6 @@ describe("ExecutionFeed process group collapse behavior", () => {
         ]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000, updatedAt: 2_500 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
     expect(processGroupAfter).toHaveAttribute("open");
@@ -800,10 +738,6 @@ describe("ExecutionFeed process group collapse behavior", () => {
         items={[completedItem]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000, updatedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -848,8 +782,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
       resultJson: JSON.stringify({outcome: "error", code: "invalid_arguments", summary: "No question was submitted"}),
     });
     render(<ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]}
-      respondingApprovalIds={new Set()} respondingKindByApprovalId={{}}
-      onApprove={() => {}} onReject={() => {}} />);
+    />);
     expect(screen.queryByText(/已询问/)).toBeNull();
     expect(screen.queryByText("已跳过")).toBeNull();
     expect(screen.getByText("No question was submitted")).toBeInTheDocument();
@@ -874,10 +807,6 @@ describe("ExecutionFeed plan and clarification rendering", () => {
         items={[item]}
         runs={[baseRun]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -927,10 +856,6 @@ describe("ExecutionFeed plan and clarification rendering", () => {
         items={[item]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -953,10 +878,6 @@ describe("ExecutionFeed plan and clarification rendering", () => {
         items={[item]}
         runs={[baseRun]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -970,8 +891,7 @@ describe("ExecutionFeed plan and clarification rendering", () => {
       resultJson: JSON.stringify({outcome: "error", code: "plan_write_rejected", summary: "plan_not_found"}),
     });
     render(<ExecutionFeed items={[item]} runs={[baseRun]} approvals={[]}
-      respondingApprovalIds={new Set()} respondingKindByApprovalId={{}}
-      onApprove={() => {}} onReject={() => {}} />);
+    />);
     expect(screen.queryByText("查看计划 →")).toBeNull();
     expect(screen.getByText("plan_not_found")).toBeInTheDocument();
   });
@@ -994,10 +914,6 @@ describe("ExecutionFeed plan and clarification rendering", () => {
         items={[item]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
         onOpenPlan={onOpenPlan}
       />,
     );
@@ -1044,10 +960,6 @@ describe("ExecutionFeed plan and clarification rendering", () => {
         items={[readFileItem, planItem]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -1098,10 +1010,6 @@ describe("ExecutionFeed plan and clarification rendering", () => {
         items={[spawnItem]}
         runs={[{ ...baseRun, status: "succeeded", completedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
         onOpenSubagent={onOpenSubagent}
       />,
     );
@@ -1145,10 +1053,6 @@ describe("ExecutionFeed plan and clarification rendering", () => {
         items={[errorItem]}
         runs={[{ ...baseRun, status: "failed", completedAt: 2_000 }]}
         approvals={[]}
-        respondingApprovalIds={new Set()}
-        respondingKindByApprovalId={{}}
-        onApprove={() => {}}
-        onReject={() => {}}
         onOpenSubagent={() => {}}
       />,
     );
@@ -1203,8 +1107,6 @@ describe("ExecutionFeed regenerate confirmation", () => {
         items={[userItem, assistantItem]}
         runs={[terminalRun]}
         approvals={[]}
-        onApprove={() => {}}
-        onReject={() => {}}
         onRegenerate={onRegenerate}
       />,
     );
@@ -1246,8 +1148,6 @@ describe("ExecutionFeed regenerate confirmation", () => {
         items={[userItem, assistantItem]}
         runs={[terminalRun]}
         approvals={[]}
-        onApprove={() => {}}
-        onReject={() => {}}
         onRegenerate={onRegenerate}
       />,
     );
@@ -1268,8 +1168,6 @@ describe("ExecutionFeed regenerate confirmation", () => {
         items={[userItem, assistantItem]}
         runs={[terminalRun]}
         approvals={[]}
-        onApprove={() => {}}
-        onReject={() => {}}
         onRegenerate={onRegenerate}
       />,
     );
@@ -1306,7 +1204,7 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
     };
     try {
       const { container } = render(<ArtifactProvider value={{ sessionId: baseRun.sessionId, executionRoot: "/workspace", openFile: vi.fn(), openBrowser: vi.fn() }}>
-        <ExecutionFeed items={[imageItem]} runs={[baseRun]} approvals={[]} onApprove={() => {}} onReject={() => {}} />
+        <ExecutionFeed items={[imageItem]} runs={[baseRun]} approvals={[]} />
       </ArtifactProvider>);
       const details = container.querySelector("details")!;
       details.open = true;
@@ -1387,8 +1285,6 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
             items={[imageItem]}
             runs={[finishedRun]}
             approvals={[]}
-            onApprove={() => {}}
-            onReject={() => {}}
             onOpenFile={openFile}
           />
         </ArtifactProvider>,
@@ -1498,8 +1394,6 @@ describe("ExecutionFeed view_image tool rendering and lightbox", () => {
             items={[imageItem]}
             runs={[finishedRun]}
             approvals={[]}
-            onApprove={() => {}}
-            onReject={() => {}}
             onOpenFile={openFile}
           />
         </ArtifactProvider>,
@@ -1572,8 +1466,6 @@ describe("ExecutionFeed memory tools static rendering", () => {
         items={memoryItems}
         runs={[{ ...baseRun, id: "run-mem", status: "running" }]}
         approvals={[]}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -1623,8 +1515,6 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
         items={[item]}
         runs={[baseRun]}
         approvals={[]}
-        onApprove={() => {}}
-        onReject={() => {}}
       />,
     );
 
@@ -1681,8 +1571,6 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
           items={[item]}
           runs={[baseRun]}
           approvals={[]}
-          onApprove={() => {}}
-          onReject={() => {}}
         />,
       );
 
@@ -1772,8 +1660,6 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
           items={[item]}
           runs={[baseRun]}
           approvals={[]}
-          onApprove={() => {}}
-          onReject={() => {}}
         />,
       );
 
@@ -1842,8 +1728,6 @@ describe("ExecutionFeed skill and read_tool_output rendering", () => {
           items={[item]}
           runs={[baseRun]}
           approvals={[]}
-          onApprove={() => {}}
-          onReject={() => {}}
         />,
       );
 

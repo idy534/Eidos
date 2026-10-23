@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import { useRef } from "react";
 import type { ChannelDelivery } from "../../../../shared/channels.js";
 import { Button } from "../Button.js";
 import { MarkdownContent } from "../MarkdownContent.js";

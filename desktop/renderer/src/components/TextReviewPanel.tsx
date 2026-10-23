@@ -7,7 +7,7 @@ import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { Tooltip } from "./Tooltip.js";
 import { ToolTextView } from "./ToolTextView.js";
-import { WorkspaceFileIcon, WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
+import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 
 function cleanFilePath(file: { oldPath: string; newPath: string }): string {
   const raw = file.newPath && file.newPath !== "/dev/null" ? file.newPath : file.oldPath;

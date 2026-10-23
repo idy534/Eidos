@@ -45,7 +45,7 @@ function ComposerLayout() {
             <div className="workspace-main">
               <div className="input-drop-zone">
                 <SessionCanvas sessionId="layout-session" welcome={false}
-                  feed={<ExecutionFeed items={items} runs={runs} approvals={[]} onApprove={noop} onReject={noop} />}>
+                  feed={<ExecutionFeed items={items} runs={runs} approvals={[]} />}>
                 <Composer
                   composerMode="idle" activeRun={undefined} input={input}
                   modelList={undefined} selectedModelId={undefined} contextUsage={undefined}

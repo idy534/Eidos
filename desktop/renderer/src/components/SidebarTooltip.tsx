@@ -40,7 +40,6 @@ export function formatSessionTime(timestamp: number): { friendly: string; exact:
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
   const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
 
   const pad = (n: number) => n.toString().padStart(2, "0");
   const year = date.getFullYear();

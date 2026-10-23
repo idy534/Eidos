@@ -56,7 +56,7 @@ function FeedScrollFixture() {
   });
   return <ArtifactProvider value={{ sessionId: run.sessionId, executionRoot: "/workspace", openFile: noop, openBrowser: noop }}>
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-      <ExecutionFeed items={items} runs={runs} contextCompactions={compactions} approvals={[]} onApprove={noop} onReject={noop} />
+      <ExecutionFeed items={items} runs={runs} contextCompactions={compactions} approvals={[]} />
     </div>
   </ArtifactProvider>;
 }

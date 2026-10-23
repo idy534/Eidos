@@ -41,7 +41,7 @@ describe("tool diff filenames", () => {
         status: "completed", startedAt: 1, changeDiff: added },
     };
     const { container } = render(<ExecutionFeed items={[item]} runs={[run]} approvals={[]}
-      onApprove={() => {}} onReject={() => {}} onOpenFile={openFile} />);
+      onOpenFile={openFile} />);
     container.querySelectorAll("details").forEach((details) => { details.open = true; });
     const tool = container.querySelector(".tool-item")!;
     expect(tool.querySelector(".diff-file-name")).toHaveTextContent(path);

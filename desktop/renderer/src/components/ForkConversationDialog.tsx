@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { Session } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
 import { ForkIcon } from "./ForkIcon.js";

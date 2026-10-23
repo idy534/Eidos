@@ -6,7 +6,6 @@ from eidos_runtime.db.database import CommittedMutation, Database, Repository
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.domain.execution import (
     Item,
-    ModelAttempt,
     Step,
 )
 from eidos_runtime.domain.run import Run
@@ -18,14 +17,12 @@ from eidos_runtime.domain.session import (
     SessionProjection,
     SessionProjectionPage,
 )
-from eidos_runtime.domain.tool import Approval, ToolCall
+from eidos_runtime.domain.tool import Approval
 from eidos_runtime.persistence.mappers.runtime import (
     approval_from_row,
     item_from_row,
-    model_attempt_from_row,
     run_from_row,
     step_from_row,
-    tool_call_from_row,
 )
 from eidos_runtime.persistence.session_handoff import SessionHandoffRepository
 from eidos_runtime.persistence.projectless_workspaces import ProjectlessWorkspaceRepository
@@ -194,13 +191,6 @@ class TypedRuntimeRepository(Repository):
             ).fetchone()
         return step_from_row(row) if row is not None else None
 
-    def read_tool_call(self, tool_call_id: str) -> ToolCall | None:
-        with self.lock:
-            row = self._connection().execute(
-                "SELECT * FROM tool_calls WHERE id = ?", (tool_call_id,)
-            ).fetchone()
-        return tool_call_from_row(row) if row is not None else None
-
     def read_approval(self, approval_id: str) -> Approval | None:
         with self.lock:
             row = self._connection().execute(
@@ -292,20 +282,6 @@ class TypedRuntimeRepository(Repository):
                 item_id, decision, feedback, requeue=requeue
             )
             return self._typed_approval_mutation(item_id, mutation.events)
-
-    def list_model_attempts(self, run_id: str) -> tuple[ModelAttempt, ...]:
-        with self.lock:
-            rows = self._connection().execute(
-                """
-                SELECT model_attempts.*
-                FROM model_attempts
-                JOIN steps ON steps.id = model_attempts.step_id
-                WHERE steps.run_id = ?
-                ORDER BY model_attempts.creation_seq ASC
-                """,
-                (run_id,),
-            ).fetchall()
-        return tuple(model_attempt_from_row(row) for row in rows)
 
     def _typed_run_mutation(
         self, mutation: CommittedMutation[object]

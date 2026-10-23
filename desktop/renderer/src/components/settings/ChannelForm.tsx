@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Channel, ChannelConfig, ChannelPublicConnection, ChannelSaveRequest, State } from "../../../../shared/channels.js";
 import type { ModelOption, Project } from "../../contracts.js";
 import { ModelSelector } from "../ModelSelector.js";

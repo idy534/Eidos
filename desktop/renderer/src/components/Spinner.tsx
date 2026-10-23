@@ -1,4 +1,4 @@
-import React from "react";
+
 
 export type SpinnerSize = "sm" | "md" | "lg";
 export type SpinnerTone = "current" | "accent" | "muted" | "white";

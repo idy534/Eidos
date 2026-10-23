@@ -15,12 +15,10 @@ import type {
   ResponseActionState,
   ResponseFeedbackValue,
   Run,
-  StepResolutionReview,
   ToolCall,
 } from "../contracts.js";
 import type { AgentSummary } from "../../../shared/collaboration.generated.js";
-import { terminalRunPresentation, userFacingError } from "../session-state.js";
-import { Button } from "./Button.js";
+import { terminalRunPresentation } from "../session-state.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import { ApprovalRecoveryBanner } from "./ApprovalRecoveryBanner.js";
 import { DropdownMenu } from "./DropdownMenu.js";
@@ -51,24 +49,16 @@ interface Props {
   contextCompactions?: readonly ContextCompactionActivity[] | undefined;
   items: Item[];
   resultItems?: Item[];
-  projectless?: boolean;
   runs: Run[];
   models?: ModelOption[];
   workspaceRoot?: string;
   responseActionState?: ResponseActionState;
   pendingFeedbackItemIds?: ReadonlySet<string>;
   revisionSubmitting?: boolean;
-  stepResolutions?: StepResolutionReview[] | undefined;
   approvals: ApprovalRequest[];
-  respondingApprovalIds?: ReadonlySet<string> | undefined;
-  respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
-  expiredApprovalIds?: ReadonlySet<string> | undefined;
-  errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
   approvalLoadError?: string | undefined;
   loadingPendingApprovals?: boolean | undefined;
   onRetryLoadPending?: (() => void) | undefined;
-  onApprove: (request: ApprovalRequest) => void;
-  onReject: (request: ApprovalRequest) => void;
   onFeedback?: FeedbackHandler;
   onFork?: ((item: Item) => void) | undefined;
   onLoadOlder?: (() => void) | undefined;
@@ -116,24 +106,16 @@ export const ExecutionFeed = memo(function ExecutionFeed({
   contextCompactions = EMPTY_COMPACTIONS,
   items,
   resultItems = items,
-  projectless = false,
   runs,
   models = [],
   workspaceRoot = "",
   responseActionState = EMPTY_RESPONSE_ACTION_STATE,
   pendingFeedbackItemIds = EMPTY_PENDING_FEEDBACK,
   revisionSubmitting = false,
-  stepResolutions = [],
   approvals,
-  respondingApprovalIds,
-  respondingKindByApprovalId,
-  expiredApprovalIds,
-  errorsByApprovalId,
   approvalLoadError,
   loadingPendingApprovals,
   onRetryLoadPending,
-  onApprove,
-  onReject,
   onFeedback = NOOP_FEEDBACK,
   onFork,
   onLoadOlder,
@@ -232,7 +214,6 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     segment={segment}
                     run={run}
                     resultItems={resultItems}
-                    projectless={projectless}
                     modelName={modelName}
                     workspaceRoot={workspaceRoot}
                     isLast={index === segments.length - 1}
@@ -241,12 +222,6 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                     pendingFeedbackItemIds={pendingFeedbackItemIds}
                     revisionSubmitting={revisionSubmitting}
                     approvals={approvals}
-                    respondingApprovalIds={respondingApprovalIds}
-                    respondingKindByApprovalId={respondingKindByApprovalId}
-                    expiredApprovalIds={expiredApprovalIds}
-                    errorsByApprovalId={errorsByApprovalId}
-                    onApprove={onApprove}
-                    onReject={onReject}
                     onFeedback={onFeedback}
                     onFork={onFork}
                     onRegenerate={onRegenerate}
@@ -283,7 +258,6 @@ const RunSegment = memo(function RunSegment({
   segment,
   run,
   resultItems,
-  projectless,
   modelName,
   workspaceRoot,
   isLast,
@@ -292,12 +266,6 @@ const RunSegment = memo(function RunSegment({
   pendingFeedbackItemIds,
   revisionSubmitting,
   approvals,
-  respondingApprovalIds,
-  respondingKindByApprovalId,
-  expiredApprovalIds,
-  errorsByApprovalId,
-  onApprove,
-  onReject,
   onFeedback,
   onFork,
   onRegenerate,
@@ -313,7 +281,6 @@ const RunSegment = memo(function RunSegment({
   segment: Segment;
   run: Run;
   resultItems: Item[];
-  projectless: boolean;
   modelName: string;
   workspaceRoot?: string | undefined;
   isLast: boolean;
@@ -322,12 +289,6 @@ const RunSegment = memo(function RunSegment({
   pendingFeedbackItemIds: ReadonlySet<string>;
   revisionSubmitting: boolean;
   approvals: ApprovalRequest[];
-  respondingApprovalIds?: ReadonlySet<string> | undefined;
-  respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
-  expiredApprovalIds?: ReadonlySet<string> | undefined;
-  errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
-  onApprove: Props["onApprove"];
-  onReject: Props["onReject"];
   onFeedback: FeedbackHandler;
   onFork?: ((item: Item) => void) | undefined;
   onRegenerate: RegenerateHandler;
@@ -376,12 +337,6 @@ const RunSegment = memo(function RunSegment({
               item={entry.item}
               run={run}
               approval={approvals.find((request) => request.itemId === entry.item.id)}
-              respondingApprovalIds={respondingApprovalIds}
-              respondingKindByApprovalId={respondingKindByApprovalId}
-              expiredApprovalIds={expiredApprovalIds}
-              errorsByApprovalId={errorsByApprovalId}
-              onApprove={onApprove}
-              onReject={onReject}
               onOpenFile={onOpenFile}
               agents={agents}
               onOpenSubagent={onOpenSubagent}
@@ -949,12 +904,6 @@ function ProcessItem({
   item,
   run,
   approval,
-  respondingApprovalIds,
-  respondingKindByApprovalId,
-  expiredApprovalIds,
-  errorsByApprovalId,
-  onApprove,
-  onReject,
   onOpenFile,
   agents,
   onOpenSubagent,
@@ -962,12 +911,6 @@ function ProcessItem({
   item: Item;
   run: Run;
   approval: ApprovalRequest | undefined;
-  respondingApprovalIds?: ReadonlySet<string> | undefined;
-  respondingKindByApprovalId?: Readonly<Record<string, "approve" | "reject">> | undefined;
-  expiredApprovalIds?: ReadonlySet<string> | undefined;
-  errorsByApprovalId?: Readonly<Record<string, string>> | undefined;
-  onApprove: Props["onApprove"];
-  onReject: Props["onReject"];
   onOpenFile?: ((path: string) => void) | undefined;
   agents?: AgentSummary[] | undefined;
   onOpenSubagent?: ((target?: { id?: string | undefined; taskName?: string | undefined }) => void) | undefined;
@@ -2571,13 +2514,6 @@ function stringArrayField(source: Record<string, unknown>, key: string): string[
 
 function booleanField(source: Record<string, unknown>, key: string): boolean {
   return source[key] === true;
-}
-
-function optionalBooleanField(
-  source: Record<string, unknown>,
-  key: string,
-): boolean | undefined {
-  return typeof source[key] === "boolean" ? source[key] : undefined;
 }
 
 function numberField(source: Record<string, unknown>, key: string): number | undefined {

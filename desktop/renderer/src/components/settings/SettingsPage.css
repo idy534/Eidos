@@ -725,7 +725,7 @@
   word-break: break-all;
 }
 
-/* Note: Empty states (.empty-state, .empty-settings-state) are centralized in components/common.css */
+/* Note: Empty states (.empty-state) are centralized in components/common.css */
 
 /* Responsive Narrow Window Adjustments (<768px) */
 

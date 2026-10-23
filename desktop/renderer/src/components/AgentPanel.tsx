@@ -461,14 +461,7 @@ function AgentTranscript({
           items={displayItems}
           contextCompactions={snapshot?.contextCompactions}
           runs={runs}
-          stepResolutions={snapshot?.stepResolutions}
           approvals={childApprovals}
-          respondingApprovalIds={respondingApprovalIds}
-          respondingKindByApprovalId={respondingKindByApprovalId}
-          expiredApprovalIds={expiredApprovalIds}
-          errorsByApprovalId={errorsByApprovalId}
-          onApprove={onApprove}
-          onReject={onReject}
           onOpenFile={onOpenFile}
           onOpenPlan={onOpenPlan}
           workspaceRoot={workspaceRoot ?? ""}

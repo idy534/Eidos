@@ -1868,7 +1868,6 @@ class RuntimeServer:
             repository_runtime=self.repository_runtime,
             context=ContextApplication(
                 snapshots=self.store.context_snapshot_repository(),
-                verified_compactions=self.store.verified_compaction_repository(),
                 management=ContextManagementRepository(self.store.database),
             ),
             checkpoints=CheckpointApplication(

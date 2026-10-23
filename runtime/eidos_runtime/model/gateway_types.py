@@ -13,24 +13,6 @@ class WireAPI(StrEnum):
     OPENAI_RESPONSES = "openai_responses"
 
 
-class RetryClassification(StrEnum):
-    TRANSPORT = "transport_error"
-    CONNECTION_RESET = "connection_reset"
-    STREAM_INTERRUPTED = "stream_interrupted"
-    RATE_LIMITED = "rate_limited"
-    PROVIDER_OVERLOADED = "provider_overloaded"
-    PROVIDER_TIMEOUT = "provider_timeout"
-    REQUEST_TIMEOUT = "request_timeout"
-    AUTHENTICATION = "authentication_error"
-    PERMISSION = "permission_error"
-    INVALID_REQUEST = "invalid_request"
-    CONTEXT_EXCEEDED = "context_exceeded"
-    TOOL_SCHEMA_REJECTED = "tool_schema_rejected"
-    MODEL_NOT_FOUND = "model_not_found"
-    CANCELLED = "cancelled"
-    UNKNOWN = "unknown_provider_error"
-
-
 class RetryPolicy(EidosFrozenStrictModel):
     max_attempts: int = Field(default=3, ge=1, le=10)
     initial_backoff_seconds: float = Field(default=0.2, ge=0, le=60)

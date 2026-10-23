@@ -1,4 +1,3 @@
-import React from "react";
 import { ShellEnvironmentSettings } from "./ShellEnvironmentSettings.js";
 import type { RuntimeStatus } from "../../contracts";
 import { deriveRuntimePresentation } from "../../session-state";

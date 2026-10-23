@@ -62,7 +62,7 @@ function ImageCloseFixture({ surface }: { surface: string }) {
   return <ArtifactProvider value={{ sessionId: session.id, executionRoot: project.workspaceRoot, openFile: noop, openBrowser: noop }}>
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", padding: "1rem" }}>
       {surface === "reference" ? <InputReferenceCards references={[reference]} /> : surface === "output" ? <TurnResults run={run} items={[output]} />
-        : <ExecutionFeed items={[tool]} runs={[run]} approvals={[]} onApprove={noop} onReject={noop} />}
+        : <ExecutionFeed items={[tool]} runs={[run]} approvals={[]} />}
     </div>
   </ArtifactProvider>;
 }

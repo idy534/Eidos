@@ -44,7 +44,7 @@ function Fixture() {
   ]);
   Object.assign(window, { consumeSteering: () => setItems((previous) => previous.map((item) => item.id === "steering-item" ? { ...item, status: "completed" } : item)) });
   return <div className="workspace"><div className="workspace-content"><div className="workspace-main"><div className="input-drop-zone">
-    <ExecutionFeed items={items} runs={[active]} approvals={[]} onApprove={noop} onReject={noop} />
+    <ExecutionFeed items={items} runs={[active]} approvals={[]} />
     <QueuedMessages sessionId="s" ready activeRunId="active" onChanged={(change) => {
       if (change.kind === "steered" && steering) setItems((previous) => [...previous, steering!]);
     }} onRefresh={noop} />

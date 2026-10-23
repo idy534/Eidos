@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { McpCreateInput, McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { Tooltip } from "../Tooltip.js";

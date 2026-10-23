@@ -15,7 +15,6 @@ from typing import Callable, Awaitable
 import anyio
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
-from pydantic import ValidationError
 
 from eidos_runtime.db.storage import (
     InvalidRunStateError,
@@ -25,7 +24,6 @@ from eidos_runtime.db.storage import (
 )
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.model.pydantic_ai_client import ModelClientLease
-from eidos_runtime.protocol.schemas import ApprovalDecisionDto
 from eidos_runtime.runtime.approval import ApprovalDecision
 from eidos_runtime.runtime.async_kernel import (
     AsyncKernelClosedError,
@@ -547,23 +545,6 @@ class RunSupervisor:
                     handle.state = RunWorkerState.RUNNING
             with self.approval_lock:
                 self.pending_approvals.pop(request_id, None)
-
-    def handle_approval_response(self, message: dict[str, object]) -> None:
-        request_id = message.get("id")
-        if not isinstance(request_id, str):
-            return
-        try:
-            parsed = ApprovalDecisionDto.model_validate(message.get("result"))
-            decision = parsed.decision
-            feedback = parsed.feedback
-        except ValidationError:
-            decision = "reject"
-            feedback = None
-        self.submit_approval_response(
-            request_id=request_id,
-            decision=decision,
-            feedback=feedback,
-        )
 
     def submit_approval_response(
         self,
