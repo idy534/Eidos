@@ -123,18 +123,22 @@
 }
 
 .clarification-option-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding-top: 2px;
   flex-shrink: 0;
 }
 
 .clarification-radio {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   width: 14px;
   height: 14px;
   border: 1.5px solid #9bbfa8;
   border-radius: 50%;
+  box-sizing: border-box;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 
@@ -143,6 +147,7 @@
 }
 
 .clarification-radio-inner {
+  display: block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -150,13 +155,14 @@
 }
 
 .clarification-checkbox {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   width: 14px;
   height: 14px;
   border: 1.5px solid #9bbfa8;
   border-radius: 3px;
+  box-sizing: border-box;
   transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
   color: var(--text-on-accent);
 }

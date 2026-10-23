@@ -400,4 +400,24 @@ describe("ClarificationComposer", () => {
       }),
     );
   });
+
+  it("renders indicator container and inner radio consistently when selected", () => {
+    setupApi();
+    render(<ClarificationComposer request={singleQuestion} ready onSaved={vi.fn()} />);
+
+    // Recommended option 'runtime' is selected by default
+    const runtimeRadio = screen.getByRole("radio", { name: /Runtime/ });
+    expect(runtimeRadio).toHaveAttribute("aria-checked", "true");
+    const runtimeIndicator = runtimeRadio.querySelector(".clarification-option-indicator");
+    expect(runtimeIndicator).toBeInTheDocument();
+    expect(runtimeIndicator?.querySelector(".clarification-radio.checked .clarification-radio-inner")).toBeInTheDocument();
+
+    // 'desktop' option is unselected
+    const desktopRadio = screen.getByRole("radio", { name: /Desktop/ });
+    expect(desktopRadio).toHaveAttribute("aria-checked", "false");
+    const desktopIndicator = desktopRadio.querySelector(".clarification-option-indicator");
+    expect(desktopIndicator).toBeInTheDocument();
+    expect(desktopIndicator?.querySelector(".clarification-radio")).toBeInTheDocument();
+    expect(desktopIndicator?.querySelector(".clarification-radio-inner")).toBeNull();
+  });
 });
