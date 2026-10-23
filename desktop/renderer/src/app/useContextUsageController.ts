@@ -25,8 +25,8 @@ interface ContextUsageControllerInput {
  * Reads the latest effective context projection for the selected Run.
  *
  * Context usage is refreshed from the Runtime after durable Run, Step and
- * compaction notifications. A new Run starts with no usage until its own
- * ContextSnapshot is available.
+ * compaction notifications. A new Run in the same Session and model retains
+ * the previous reading until its own ContextSnapshot is available.
  */
 export function useContextUsageController({
   ready,
@@ -43,16 +43,26 @@ export function useContextUsageController({
   const requestSequence = useRef(0);
   const refreshInFlight = useRef<number | undefined>(undefined);
   const refreshAgain = useRef(false);
+  const awaitingRunUsage = useRef(false);
   const current = useRef({ ready, sessionId, modelId, runId });
   const prevIds = useRef({ sessionId, modelId, runId });
 
   current.current = { ready, sessionId, modelId, runId };
+
+  const applyDetails = useCallback((next: ContextDetails): void => {
+    const nextUsage = contextUsageFromDetails(next);
+    if (!nextUsage && awaitingRunUsage.current) return;
+    if (nextUsage) awaitingRunUsage.current = false;
+    setDetails(next);
+    setUsage(nextUsage);
+  }, []);
 
   useEffect(() => {
     const sequence = ++requestSequence.current;
     refreshInFlight.current = undefined;
     refreshAgain.current = false;
     if (!ready || !sessionId || !modelId) {
+      awaitingRunUsage.current = false;
       setUsage(undefined);
       setDetails(undefined);
       setLoading(false);
@@ -63,26 +73,28 @@ export function useContextUsageController({
     if (
       prevIds.current.sessionId !== sessionId
       || prevIds.current.modelId !== modelId
-      || prevIds.current.runId !== runId
+      || !runId
     ) {
+      awaitingRunUsage.current = false;
       setUsage(undefined);
       setDetails(undefined);
-      prevIds.current = { sessionId, modelId, runId };
+    } else if (prevIds.current.runId !== runId) {
+      awaitingRunUsage.current = true;
     }
+    prevIds.current = { sessionId, modelId, runId };
 
     if (!runId) { setLoading(false); return; }
 
     setLoading(true);
     void window.eidosRuntime.readContextDetails(runId).then((next) => {
       if (sequence !== requestSequence.current) return;
-      setDetails(next);
-      setUsage(contextUsageFromDetails(next));
+      applyDetails(next);
     }).catch(() => {
       // preserve current usage on error
     }).finally(() => {
       if (sequence === requestSequence.current) setLoading(false);
     });
-  }, [modelId, ready, runId, sessionId]);
+  }, [applyDetails, modelId, ready, runId, sessionId]);
 
   const refreshFromRunId = useCallback((targetRunId: string, targetSessionId: string, targetModelId: string): void => {
     const state = current.current;
@@ -111,8 +123,7 @@ export function useContextUsageController({
       ) {
         return;
       }
-      setDetails(next);
-      setUsage(contextUsageFromDetails(next));
+      applyDetails(next);
     }).catch(() => {
       // preserve current usage
     }).finally(() => {
@@ -125,7 +136,7 @@ export function useContextUsageController({
         }
       }
     });
-  }, []);
+  }, [applyDetails]);
 
   const handleNotification = useCallback((notification: RuntimeNotification): void => {
     if (notification.method === "context/compacted") {

@@ -229,7 +229,7 @@ Context Budget 使用 `projected_input_tokens` 判断下一次模型请求是否
 
 压缩成功后，Engine 使用同一批工具定义、规则、Skill 和仓库上下文重新构建投影，并把新的 ContextPlan 与 Run Updated Event/Outbox 一起保存。系统不为统计伪造 ModelAttempt，也不等待下一次模型响应才刷新。新的 Provider Usage 只覆盖它实际对应的请求。若摘要已经提交，但新投影无法构建，系统显示暂无统计，旧请求总量不能重新冒充压缩后用量。ContextPlan 的原始分项仍保存参考 Token 数；详情按这个构成估算分项，并使分项 Token 合计严格等于当前总量。界面分项与总占用均使用设置上限作为百分比分母，十分之一百分点的舍入也保持合计一致。分项仍属于估算，Provider 没有返回逐项实测。
 
-统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。新的 Run 在产生自己的投影前显示暂无统计。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或安全恢复。没有新的可压缩历史或投影没有进展时，Runtime 使用更小的历史证据视图继续可取消恢复；系统不创建容量暂停，也不重放不确定操作。
+统计读取不加载 Snapshot 正文或 Blob，内存撤销不要求读取已撤销内容。同一 Session、同一模型的新 Run 在提供有效统计前，Renderer 保留上一轮的圆环和详情读数；这份展示缓存不会作为新 Run 的统计写回 Runtime。新 Run 提供有效统计后，Renderer 使用新读数，并恢复无数据时清空的规则。切换 Session、模型、移除 Run 或 Runtime 未就绪时，Renderer 清空展示缓存。Context pressure、Provider `context_exceeded` 和 projection overflow 会触发经验证的有界压缩或安全恢复。没有新的可压缩历史或投影没有进展时，Runtime 使用更小的历史证据视图继续可取消恢复；系统不创建容量暂停，也不重放不确定操作。
 
 Runtime 在预计输入达到当前 Run 冻结模型窗口的 85% 时尝试自动摘要压缩。系统直接比较未取整的 Token 数量，不使用界面四舍五入后的百分比。系统不再使用固定 65,536 Tokens 或新增 32 条 Item 作为摘要触发条件。这个路径在输入仍符合请求预算、没有待处理 Approval 或 reconciliation 时执行，并按 Token 预算保留完整近期响应、用户消息和 Skill 读取正文。系统复用现有事实验证与事务提交，不删除原始历史。自动摘要失败后，Runtime 保留原投影；同一上下文状态不会重复尝试这个提前压缩路径。输入预算已经不足时，系统继续执行原有窗口压力保护。
 
@@ -359,6 +359,8 @@ Shell 参数通过 Pydantic `AliasChoices` 兼容 Codex 拼写。`run_shell` 接
 `ModelToolCall` 的裸 `dict` 永远表示 Function payload。Custom payload 必须显式使用 `CustomToolPayload`。`tool_calls.payload_kind` 是 SQLite 中独立且受约束的类型 authority。ContextBuilder、DB mapper 和下一次 Provider projection 都读取这个字段，不再从 `arguments_json` 猜测类型。历史 Custom call/result 在 Responses 中继续投影为 native Custom item，在 Chat Completions 中投影为有界的普通历史信息。当前 Step 固化的 Tool Definition 仍然是当前输入 contract 的唯一 authority。 `apply_patch` builtin provenance 的 `sourceVersion` 为 `2`，新的输入 schema 和说明参与现有 Contract Hash；`contractVersion=1` 仍表示未变的 ToolSpec/ToolResult envelope 版本。历史参数和结果保持原样，不转换、不重放，不迁移 SQLite。旧输入重新提交时会得到有界的 `invalid_arguments` 提示，包含当前 `patch` 格式示例和无文件修改的说明。Patch 格式错误会提示修正标记，匹配失败会提示重新读取当前文件。模型通过现有 Loop 纠正输入；Runtime 不猜测参数、不放宽匹配、不自动重试写入。v7 到 v8 migration 只在迁移边界兼容旧的 native `apply_patch` envelope。
 
 文件编辑资源预算由 `file_limits.py` 汇集；独立提交 helper 持有单文件上限。Function 校验按工具选择参数预算，避免普通工具的 64 KiB 参数上限限制 Patch。两条 Patch 路径都验证 8 MiB 原文预算；Function 包装预算允许 JSON 转义增长。Prepare、写前版本复检、受控 helper 和写后校验统一支持 16 MiB 文件。Prepare 对旧内容、新内容和操作开销累计计费，预算为 64 MiB；完整 Diff 和 canonical result 各自有 64 MiB 预算。`apply_patch` 不执行敏感内容扫描。Runtime 没有增加自动重试、自动拆文件或自动改写 Patch 的机制。
+
+`skill_create` 的参数预算也由 `file_limits.py` 汇集。Skill 的单文件预算为 4 MiB，完整目录预算为 8 MiB，文件数量预算为 512（包含 `SKILL.md`）。Function 参数预算为 `6 × 8 MiB + 1 MiB`，用于容纳最坏情况的 JSON 转义和有界的路径、metadata 开销；这个预算不扩大实际写入内容的上限。`SkillCreateInput` 与执行 Adapter 共用 `skill_manifest.skill_document` 生成正文，字段校验按最终生成文件计费。目录加载、文本资源读取、分页 offset 和敏感内容扫描使用同一单文件预算。内置创建工具的 `sourceVersion` 更新为 2，新输入 Schema 参与原有 Contract Hash。ToolResult、公开 RPC Envelope 和 SQLite Schema 保持不变；旧工具调用不会被转换或重放。
 
 大文本的持久事实和 UI 消息分别处理。`protocol/tool_text.py` 为超过 64 KiB 的 Diff、结果生成内容哈希和字节数，通知及 Session 快照只携带引用和摘要。完整 Diff 继续存放在 `tool_calls.approval_diff`，完整 UI 结果继续存放在 `ui_result_json`；Runtime 内部的原始 Item 不受显示投影影响。审批指纹仍覆盖原始 Diff、路径、版本和权限，审批记录以 Diff 引用避免重复存储大文本，路径和指纹仍保留。Desktop 通过 typed preload IPC、Main RuntimeClient、`toolCall/readText` 和 SessionApplication 读取每页最多 16,384 个 Unicode 字符。Repository 从同一 Session 的 ToolCall 读取文本并核对 SHA-256，拒绝过期引用和越界偏移。接口不执行文件工具，不改变审批，也不引入新表或第二份业务状态。当前分页每次读取并校验整段有界文本；性能优化留待测量，不提前增加缓存或持久索引。
 

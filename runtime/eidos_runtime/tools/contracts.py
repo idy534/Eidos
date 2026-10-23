@@ -27,7 +27,10 @@ from pydantic import (
 )
 from pydantic.fields import PydanticUndefined
 
-from eidos_runtime.file_limits import MAX_PATCH_BYTES
+from eidos_runtime.file_limits import (
+    MAX_PATCH_BYTES, MAX_SKILL_FILE_BYTES, MAX_SKILL_FILES, MAX_SKILL_TOTAL_BYTES,
+)
+from eidos_runtime.extensions.skill_manifest import skill_document
 from eidos_runtime.model.context_projection import without_verification_metadata
 
 from eidos_runtime.sandbox.permissions import (
@@ -532,7 +535,7 @@ class SkillReadInput(StrictToolModel):
         max_length=129,
         description="Use the name value from the available Skill catalog to select the enabled local Skill.",
     )
-    offset: int = Field(default=0, ge=0, le=1024 * 1024, description="UTF-8 byte offset; use nextOffset from the previous page.")
+    offset: int = Field(default=0, ge=0, le=MAX_SKILL_FILE_BYTES, description="UTF-8 byte offset; use nextOffset from the previous page.")
     maxBytes: int = Field(default=SKILL_READ_PAGE_BYTES, ge=4, le=SKILL_READ_PAGE_BYTES, description="Maximum content bytes per page.")
 
     @field_validator("qualifiedId")
@@ -558,7 +561,7 @@ class SkillReadResourceInput(SkillReadInput):
 
 class SkillFileInput(StrictToolModel):
     path: StrictStr = Field(min_length=1, max_length=512)
-    content: StrictStr = Field(max_length=256 * 1024)
+    content: StrictStr = Field(max_length=MAX_SKILL_FILE_BYTES)
 
     @field_validator("path")
     @classmethod
@@ -573,14 +576,14 @@ class SkillFileInput(StrictToolModel):
     def validate_content(cls, value: str) -> str:
         if "\x00" in value:
             raise ValueError("invalid_skill_content")
-        return _utf8_limit(value, 256 * 1024, "skill_content_too_large")
+        return _utf8_limit(value, MAX_SKILL_FILE_BYTES, "skill_content_too_large")
 
 
 class SkillCreateInput(StrictToolModel):
     name: StrictStr = Field(min_length=1, max_length=64)
     description: StrictStr = Field(min_length=1, max_length=1024)
-    instructions: StrictStr = Field(min_length=1, max_length=128 * 1024)
-    files: tuple[SkillFileInput, ...] = Field(default=(), max_length=64)
+    instructions: StrictStr = Field(min_length=1, max_length=MAX_SKILL_FILE_BYTES)
+    files: tuple[SkillFileInput, ...] = Field(default=(), max_length=MAX_SKILL_FILES - 1)
 
     @field_validator("name")
     @classmethod
@@ -608,7 +611,7 @@ class SkillCreateInput(StrictToolModel):
         if not value.strip() or "\x00" in value:
             raise ValueError("invalid_skill_instructions")
         return _utf8_limit(
-            value.strip() + "\n", 128 * 1024, "skill_instructions_too_large"
+            value.strip() + "\n", MAX_SKILL_FILE_BYTES, "skill_instructions_too_large"
         )
 
     @model_validator(mode="after")
@@ -624,10 +627,13 @@ class SkillCreateInput(StrictToolModel):
             if parent != PurePosixPath(".")
         ):
             raise ValueError("conflicting_skill_path")
-        total = len(self.instructions.encode("utf-8")) + sum(
+        document_bytes = len(skill_document(self.name, self.description, self.instructions))
+        if document_bytes > MAX_SKILL_FILE_BYTES:
+            raise ValueError("skill_instructions_too_large")
+        total = document_bytes + sum(
             len(value.content.encode("utf-8")) for value in self.files
         )
-        if total > 8 * 1024 * 1024:
+        if total > MAX_SKILL_TOTAL_BYTES:
             raise ValueError("skill_too_large")
         return self
 

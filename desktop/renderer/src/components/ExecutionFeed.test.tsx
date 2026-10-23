@@ -1806,7 +1806,7 @@ test("renders read_tool_output as static row with run_shell icon and 正在查�
   assert.match(completedHtml, /class="tool-item tool-item--read-done"/);
 });
 
-test("renders skill_read and skill_read_resource as static rows with SparklesIcon and clickable skill name", () => {
+test("renders skill_read and skill_read_resource as static rows with SkillIcon and clickable skill name", () => {
   const items = [
     item({
       id: "sr-1",
@@ -1902,8 +1902,9 @@ test("renders skill_read and skill_read_resource as static rows with SparklesIco
   const staticRows = (html.match(/class="tool-item tool-item--read-done"/g) ?? []).length;
   assert.equal(staticRows, 4);
 
-  // SparklesIcon path check
-  assert.match(html, /M8 2c\.3 2\.2 1\.8 3\.7 4 4/);
+  // SkillIcon path check
+  assert.match(html, /M12 5v16/);
+  assert.match(html, /m16 12 2 2 4-4/);
 });
 
 test("renders web_search in progress and completed with Globe icon and single-line excerpt results", () => {

@@ -12,9 +12,16 @@ MAX_PATCH_WORKING_BYTES = 4 * MAX_FILE_BYTES
 MAX_PATCH_RESULT_BYTES = MAX_PATCH_WORKING_BYTES
 INLINE_TOOL_TEXT_BYTES = 64 * 1024
 TOOL_TEXT_PAGE_CHARACTERS = 16 * 1024
+MAX_SKILL_FILE_BYTES = 4 * 1024 * 1024
+MAX_SKILL_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_SKILL_FILES = 512
+# Allow the complete tree plus JSON escaping and bounded path/metadata overhead.
+MAX_SKILL_ARGUMENT_BYTES = 6 * MAX_SKILL_TOTAL_BYTES + 1024 * 1024
 
 
 def function_argument_limit(tool_name: str) -> int:
+    if tool_name == "skill_create":
+        return MAX_SKILL_ARGUMENT_BYTES
     if tool_name in {"spawn_agent", "send_message", "followup_task"}:
         return 512 * 1024
     if tool_name == "write_plan":

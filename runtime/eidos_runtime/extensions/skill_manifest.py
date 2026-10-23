@@ -27,6 +27,14 @@ class SkillManifestError(ValueError):
     """Raised when required SKILL.md metadata is malformed or incomplete."""
 
 
+def skill_document(name: str, description: str, instructions: str) -> bytes:
+    title = name.replace("-", " ").title()
+    return (
+        f"---\nname: {name}\ndescription: {description}\n---\n\n"
+        f"# {title}\n\n{instructions}"
+    ).encode("utf-8")
+
+
 @dataclass(frozen=True)
 class SkillManifest:
     name: str

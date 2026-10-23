@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 import type { SettingsCategory } from "./settings-types.js";
-import { AgentIcon } from "../InputPicker.js";
+import { AgentIcon, SkillIcon } from "../InputPicker.js";
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -112,23 +112,8 @@ export function PluginsSettingsIcon(props: IconProps) {
   );
 }
 
-export function SkillsSettingsIcon(props: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      {...props}
-    >
-      <path d="M12 5v16" />
-      <path d="m16 12 2 2 4-4" />
-      <path d="M22 6V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2h4.001A2 2 0 0 0 22 17v-1.344" />
-    </svg>
-  );
+export function SkillsSettingsIcon({ className, width = 18, height = 18, ...props }: IconProps = {}) {
+  return <SkillIcon width={width} height={height} className={className} {...props} />;
 }
 
 /**

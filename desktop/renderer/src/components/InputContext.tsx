@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
 import { userFacingError } from "../session-state.js";
 import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
-import { FileIcon, FolderIcon, AgentIcon, SparklesIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
+import { FileIcon, FolderIcon, AgentIcon, SkillIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
@@ -322,7 +322,7 @@ function renderReferenceIcon(reference: InputReference, cat: string) {
     case "agent":
       return <AgentIcon />;
     case "skill":
-      return <SparklesIcon />;
+      return <SkillIcon />;
     case "mcp":
       return <ServerIcon />;
     case "plugin":

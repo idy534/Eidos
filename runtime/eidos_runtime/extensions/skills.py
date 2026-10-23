@@ -27,6 +27,10 @@ from eidos_runtime.extensions.skill_manifest import (
     SkillManifestError,
     load_skill_agent_metadata,
     parse_skill_manifest,
+    skill_document,
+)
+from eidos_runtime.file_limits import (
+    MAX_SKILL_FILE_BYTES, MAX_SKILL_TOTAL_BYTES, MAX_SKILL_FILES,
 )
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 from eidos_runtime.protocol.schemas import SkillMetadataDto
@@ -45,11 +49,8 @@ from eidos_runtime.tools.contracts import (
 
 
 MAX_SKILLS = 64
-MAX_SKILL_BYTES = 128 * 1024
-MAX_RESOURCE_BYTES = 1024 * 1024
-MAX_SKILL_FILE_BYTES = 4 * 1024 * 1024
-MAX_SKILL_TOTAL_BYTES = 8 * 1024 * 1024
-MAX_SKILL_FILES = 512
+MAX_SKILL_BYTES = MAX_SKILL_FILE_BYTES
+MAX_RESOURCE_BYTES = MAX_SKILL_FILE_BYTES
 MAX_CATALOG_BYTES = 16 * 1024
 MAX_SKILL_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_SKILL_ARCHIVE_EXPANDED_BYTES = 256 * 1024 * 1024
@@ -737,7 +738,7 @@ class _SkillCreateAdapter:
             return _skill_error("skill_create", "skill_already_exists", "Skill already exists")
         description = str(arguments["description"])
         instructions = str(arguments["instructions"])
-        files = {"SKILL.md": _skill_document(name, description, instructions)}
+        files = {"SKILL.md": skill_document(name, description, instructions)}
         for resource in arguments.get("files", []):
             assert isinstance(resource, dict)
             files[str(resource["path"])] = str(resource["content"]).encode("utf-8")
@@ -856,7 +857,7 @@ def _skill_create_entry(adapter: object) -> ToolRegistryEntry:
     return ToolRegistryEntry(
         spec=ToolSpec.model_validate({
             "name": name,
-            "description": "Create one user skill after explicit approval",
+            "description": "Create one user skill after explicit approval. Include the complete text resources: up to 4 MiB per file, 8 MiB for the complete skill, and 512 files including SKILL.md. Do not omit resources because of the ordinary 64 KiB tool argument limit; this tool accepts the complete skill tree.",
             "sideEffect": "eidos_state",
             "approvalRequired": True,
             "timeoutSeconds": 5,
@@ -871,7 +872,7 @@ def _skill_create_entry(adapter: object) -> ToolRegistryEntry:
         provenance=ToolProvenance.model_validate({
             "kind": "builtin",
             "sourceId": "eidos.skill-creator",
-            "sourceVersion": "1",
+            "sourceVersion": "2",
             "contentHash": hashlib.sha256(encoded).hexdigest(),
         }),
         adapter=adapter,  # type: ignore[arg-type]
@@ -937,14 +938,6 @@ def _skill_error(tool_name: str, code: str, summary: str) -> dict[str, object]:
         "sideEffectsMayExist": False,
         "reconciliationRequired": False,
     }
-
-
-def _skill_document(name: str, description: str, instructions: str) -> bytes:
-    title = name.replace("-", " ").title()
-    return (
-        f"---\nname: {name}\ndescription: {description}\n---\n\n"
-        f"# {title}\n\n{instructions}"
-    ).encode("utf-8")
 
 
 def _created_tree_diff(name: str, files: dict[str, bytes]) -> str:
@@ -1399,7 +1392,7 @@ def _looks_binary_resource(path: Path, data: bytes) -> bool:
 
 def _scan(content: str) -> str:
     try:
-        return default_scanner().scan_text(content).text
+        return default_scanner().scan_text(content, max_bytes=MAX_SKILL_FILE_BYTES).text
     except SensitiveScanError:
         raise SkillReadError("skill_sensitive_content") from None
 

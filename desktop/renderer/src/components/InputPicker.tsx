@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, Fragment } from "react";
-import type { RefObject } from "react";
+import type { RefObject, SVGProps } from "react";
 import { createPortal } from "react-dom";
 import type { InputPrepareRequest } from "../../../shared/input-context.js";
 import { useInputContext } from "./InputContext.js";
@@ -581,7 +581,7 @@ function renderItemIcon(candidate: Candidate) {
     case "agent":
       return <AgentIcon />;
     case "skill":
-      return <SparklesIcon />;
+      return <SkillIcon />;
     case "mcp":
       return <ServerIcon />;
     case "plugin":
@@ -675,14 +675,38 @@ export function FolderIcon() {
   );
 }
 
-export function SparklesIcon() {
+export function SkillIcon({
+  width = 14,
+  height = 14,
+  className,
+  ...props
+}: {
+  width?: number | string | undefined;
+  height?: number | string | undefined;
+  className?: string | undefined;
+} & SVGProps<SVGSVGElement> = {}) {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M8 2c.3 2.2 1.8 3.7 4 4-2.2.3-3.7 1.8-4 4-.3-2.2-1.8-3.7-4-4 2.2-.3 3.7-1.8 4-4Z" fill="currentColor" fillOpacity=".2" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-      <path d="M12.5 10.5c.2 1 .8 1.6 1.8 1.8-1 .2-1.6.8-1.8 1.8-.2-1-.8-1.6-1.8-1.8 1-.2 1.6-.8 1.8-1.8Z" fill="currentColor" stroke="currentColor" strokeWidth="1" />
+    <svg
+      viewBox="0 0 24 24"
+      width={width}
+      height={height}
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M12 5v16" />
+      <path d="m16 12 2 2 4-4" />
+      <path d="M22 6V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2h4.001A2 2 0 0 0 22 17v-1.344" />
     </svg>
   );
 }
+
+export const SparklesIcon = SkillIcon;
 
 export function ServerIcon() {
   return (

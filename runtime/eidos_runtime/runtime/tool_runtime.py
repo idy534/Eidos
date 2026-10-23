@@ -22,7 +22,7 @@ from eidos_runtime.extensions.skill_access import (
     SkillAccess,
 )
 from eidos_runtime.extensions.skills import SkillCreation
-from eidos_runtime.file_limits import MAX_PATCH_BYTES
+from eidos_runtime.file_limits import MAX_PATCH_BYTES, MAX_SKILL_FILE_BYTES
 from eidos_runtime.model.client import (
     CustomToolPayload,
     FunctionToolPayload,
@@ -184,7 +184,7 @@ def _scan_tool_payload(
     if isinstance(call.payload, FunctionToolPayload):
         scanned = scanner.scan_json(
             call.payload.arguments,
-            max_bytes=512 * 1024,
+            max_bytes=MAX_SKILL_FILE_BYTES if call.name == "skill_create" else 512 * 1024,
         )
         if not isinstance(scanned, dict) or scanned != call.payload.arguments:
             raise SensitiveScanError("sensitive tool arguments")

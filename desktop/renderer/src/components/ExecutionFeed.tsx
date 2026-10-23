@@ -29,7 +29,7 @@ import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { Tooltip } from "./Tooltip.js";
-import { SparklesIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
+import { SkillIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
 import { ContextCompactionRow } from "./ContextCompactionRow.js";
@@ -1442,7 +1442,7 @@ function SkillReadToolItem({
     return (
       <div className="tool-item tool-item--read-done" title={summaryText}>
         <span className="tool-icon" aria-hidden="true">
-          <SparklesIcon />
+          <SkillIcon />
         </span>
         <span>{summaryText}</span>
       </div>
@@ -1470,7 +1470,7 @@ function SkillReadToolItem({
     <>
       <div className="tool-item tool-item--read-done" title={titleText}>
         <span className="tool-icon" aria-hidden="true">
-          <SparklesIcon />
+          <SkillIcon />
         </span>
         <span>
           {actionPrefix}
@@ -2462,7 +2462,7 @@ function toolIcon(name: string): ReactNode {
   if (["spawn_agent", "wait_agents", "list_agents", "stop_agent", "send_message", "followup_task"].includes(name)) {
     return <SubagentToolIcon />;
   }
-  if (name.startsWith("skill_")) return <SparklesIcon />;
+  if (name.startsWith("skill_")) return <SkillIcon />;
   if (name.startsWith("mcp") || name.includes("__")) return <McpIcon />;
   return <DefaultToolIcon />;
 }

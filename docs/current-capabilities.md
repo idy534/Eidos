@@ -59,7 +59,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Execution Feed 可以展示用户消息、模型文本、ToolCall、Tool Result、Approval、终态和恢复后的历史。
 - 聊天正文使用独立的 `.eidos-chat-prose` 样式。用户消息、过程文字和最终回答优先使用系统字体；正文保持 14px，代码块保持 12.5px，标题和行内代码也保留原字号。正文行高为 23px，相邻段落间距为 14px，列表缩进为 24px，列表项间距为 4px。标题和加粗文字使用 600 字重，代码保留等宽字体与原始空白。现有颜色、背景、消息宽度和气泡结构保持不变；文件预览、计划面板、技能详情和其他 UI 不启用这组样式。侧栏中的项目名称（`.workspace-name`）、Session 名称（`.session-title`）与悬停详情标题（`.sidebar-hover-card__title`）统一使用正文字体（`--font-prose`），字号、行高与字重等其他样式保持不变。
 - Composer 可以选择已配置 Model，并显示当前选中 Model 最新 ContextSnapshot 对应的持久化 Context Usage。Runtime 直接查询关联 Plan 的预算和 ModelAttempt usage，不加载快照正文。该 Snapshot 有正数 Provider `input_tokens` 时显示 Provider 值，否则显示该 Plan 的 `projected_input_tokens` 估算值。快照正文撤销或清理后，这些统计仍可查询。
-- Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。新的 Run 在产生自己的 ContextSnapshot 前显示无数据状态，刷新返回无数据时会清空旧读数。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
+- Desktop 支持上下文使用率的 Provider 来源和 estimated 来源展示。同一 Session、同一模型的新 Run 在产生自己的有效统计前，圆环和详情保留上一轮读数；等待期间的无数据响应或读取失败不会清空读数。新 Run 提供有效统计后，界面恢复正常刷新，无数据响应会清空读数。切换 Session、模型或移除 Run 时，界面清空旧读数。Context compaction 完成后，Desktop 会重新读取当前 Context Usage。
 - 用户可以点击上下文圆环查看上下文用量总量与分项构成，并可手动安排压缩。圆环与详情共用当前投影，分项合计与总量相等，窗口分母来自 Run 配置。系统在压缩后发布新投影，百分比允许反映超出设置上限的实际用量。切换模型或 Run 后，迟到统计不能覆盖当前选择。
 - 用户可以手动安排上下文压缩。系统会在下一次安全采样前处理；当前任务已结束时，系统会在下次发送后处理。系统保留原始历史。在线摘要会请求当前模型提供结构化、带来源引句的说明，并保留确定性关键事实和失败回退。
 - 处理过程按压缩开始的时间插入静态记录。压缩时显示“上下文正在压缩”，完成后在原位置显示“上下文已自动压缩”或“上下文已压缩”。跳过、失败、取消与中断使用各自文案。记录没有展开箭头或详情区。会话重新打开和加载更早历史时，系统从持久事件恢复这些记录。
@@ -245,6 +245,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - `tool_search` 可以从当前 Tool Snapshot 中发现延迟 Tool。
 - 模型调用当前目录中存在但尚未激活的延迟 Tool 时，Runtime 返回 `tool_not_activated`，提示使用工具完整名称搜索激活，并在收到搜索结果后的下一 Step 重试。该调用不会执行工具、申请审批、创建 Durable Intent 或建立结果未知状态，也不会消耗协议修复次数或单独终止 Run。未知、禁用和未授权工具继续按原有检查拒绝。重复调用仍受现有 LoopGuard 限制。
 - `skill_create` 和 `skill_install` 使用受控的 Eidos-state Tool 路径，并经过现有 Approval/Tool contract。
+- `skill_create` 使用独立的参数预算，不再受普通工具的 64 KiB JSON 参数上限限制。创建、目录加载和文本资源读取共用单文件 4 MiB、整棵 Skill 8 MiB、最多 512 个文件的存储边界；512 个文件包含自动生成的 `SKILL.md`。Runtime 将 YAML、标题和正文一起计入 `SKILL.md` 大小，将文件路径、metadata 和 JSON 转义计入独立参数预算。工具可以一次提交完整文本资源，无需为了旧的 64 KiB 上限省略文件。`skill_read` 与 `skill_read_resource` 每页仍最多返回 24,000 UTF-8 bytes，offset 可以覆盖整个 4 MiB 文件。审批、Durable Intent、取消、路径保护和 Run 固定目录快照保持原有语义。
 - ToolCallRuntime 和 ToolExecutionController 会按工具类型执行输入校验、准备、Intent、执行、验证、敏感扫描、结果投影和事务提交。普通读取和 Shell 聚合输出不因可识别敏感内容阻断；展示层只做 best-effort 脱敏。
 - Runtime 可以在共同的工具结果提交边界保存已取得的文字和二进制内容。`view_image` 已使用该边界保存读取时的 PNG/JPEG；后续请求与重启恢复从保存的内容组装，源文件删除或替换不会触发重新读取或源文件 Hash 比对。内容快照没有新增 Hash 字段。公共 ToolResult 与 UI 契约保持不变，模型内容引用只进入内部持久投影。
 - 确定的 Tool Error 会持久化为 ToolResult，并回到模型循环。敏感或超大的结果在 projection 重建为错误时，会保留显式的 `reconciliationRequired=false`，不会把它改成 unknown。Runtime 不会自动重放有副作用的 Tool。未知结果不会阻止成功终态。

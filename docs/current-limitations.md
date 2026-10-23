@@ -285,7 +285,7 @@
 - 处理过程展示已加载历史页中的压缩时间点。单页最多返回 500 条记录，并继续受 Session 响应字节预算限制；事件元数据读取最多 2,000 行。旧事件缺少触发来源时，界面使用“上下文已压缩”，不推断自动或手动。过程记录表示摘要提交状态，不证明压后达到了某个 Token 目标。旧的 `soft_target` 记录继续可读，新自动摘要使用 `window_pressure` 来源。
 - 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
 - MemoryStore 已经提供独立 `memories.sqlite` 和 content-addressed Markdown 存储，但当前 ContextCompactor、用户长期记忆和跨 Session 检索尚未接入这个 Store。
-- Context Usage 展示当前 Run 最新已构建投影的大小。系统优先使用这个投影对应请求的 Provider 输入量；系统不会使用累计 Tokens。压缩后，Engine 会发布新投影估算，下一请求返回后再使用其 Provider 实测值。分项是按当前总量分配的估算，不是 Provider 提供的精确分项。系统在重建投影失败时显示暂无统计。系统没有为尚未构建的新输入预先生成读数。旧 Plan 没有分项时，系统不会补造各项数值。
+- Context Usage 展示当前 Run 最新已构建投影的大小。系统优先使用这个投影对应请求的 Provider 输入量；系统不会使用累计 Tokens。压缩后，Engine 会发布新投影估算，下一请求返回后再使用其 Provider 实测值。分项是按当前总量分配的估算，不是 Provider 提供的精确分项。系统在重建投影失败时显示暂无统计，但同一 Session、同一模型的新 Run 在首次取得有效统计前会保留上一轮读数。系统没有为尚未构建的新输入预先生成读数。旧 Plan 没有分项时，系统不会补造各项数值。
 - Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
 
 ### Extension 与 MCP
@@ -353,6 +353,7 @@
 - 外部文件写入的不确定结果需要对外部目标另行核实。当前 Workspace 刷新不覆盖外部文件，因此不能自动清除此类 Reconciliation；Runtime 不自动重放或回滚。
 
 - 普通 Skill 的授权不能覆盖整个数据目录或包含 `.system` 的 Skill 容器。新文件的最近已存在父目录如果包含系统 Skill，工具会拒绝该宽泛授权；新建 Skill 可以使用已有的 `skill_create` 审批流程。
+- `skill_create` 可以提交超过 64 KiB 的完整文本资源，但仍保留现有存储资源边界：单文件 4 MiB、完整 Skill 8 MiB、最多 512 个文件（包含生成的 `SKILL.md`）。工具暂不接受二进制文件内容，也不提供分块续写或覆盖已有 Skill 的接口。名称、描述、相对路径、重复路径、系统 Skill 保护和审批规则继续生效。工具容量放宽不能修复模型生成的无效或未完成 JSON。新建 Skill 仍在后续 Run 的目录快照中生效；当前 Run 不会静默刷新目录。普通文件读取工具的容量和模型预览预算没有随本次修改扩大。
 - 系统 Skill 的永久写入保护需要保留在执行环境中。因此任意 Shell 的无沙盒提权在存在永久写入保护时不可用；审批过的受控文件 helper 仍可对允许的具体目标进行无沙盒写入。
 
 ## 本轮产物实现的边界
