@@ -377,7 +377,7 @@ export function McpSettings({
           </div>
           <h2 className="mcp-empty-title">没有 MCP Server 声明</h2>
           <p className="mcp-empty-desc">
-            你可以添加本地 STDIO MCP，也可以导入包含 MCP 声明的 Plugin，或直接选用常用预设快速起步。
+            你可以添加本地 STDIO MCP。插件自带的服务请在插件详情中管理。
           </p>
           <Button
             variant="primary"

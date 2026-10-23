@@ -1,0 +1,6 @@
+{
+  "validReviews": [{"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","trusted":false,"executableCount":1,"definitions":[{"key":"hooks/hooks.json:Stop:0:0","event":"Stop","handlerType":"command","command":"printf '{}'","timeoutSeconds":30}]}],
+  "invalidReviews": [{"trusted":true},{"contentHash":"example","trusted":"yes"},{"contentHash":"example","definitions":[{"key":"bad","event":"RunStart"}]}],
+  "validCompatibility": [{"format":"codex","declaredVersion":"1.0.0","issues":[]}],
+  "invalidCompatibility": [{"format":"unknown"},{"format":"codex","extra":true}]
+}

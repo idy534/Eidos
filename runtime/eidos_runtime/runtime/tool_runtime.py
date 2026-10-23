@@ -71,6 +71,7 @@ from eidos_runtime.runtime.tool_execution import (
     VerifiedToolExecutionResult,
 )
 from eidos_runtime.runtime.tool_fingerprints import tool_payload_fingerprint_value
+from eidos_runtime.runtime.hooks import HookService
 from eidos_runtime.runtime.permission_requests import PermissionRequests, network_permission_result
 from eidos_runtime.runtime.permission_policy import PermissionPolicyEvaluator, PermissionDisposition
 from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile, NetworkPermissions
@@ -236,6 +237,7 @@ class _HandlerDependencies:
     skill_access: SkillAccess | None = None
     runtime_dependencies: RuntimeDependencyCoordinator | None = None
     permissions: PermissionRequests | None = None
+    hooks: HookService | None = None
 
 
 class _BoundShellOrchestrationRuntime(ShellOrchestrationRuntime):
@@ -1329,6 +1331,8 @@ class ShellToolHandler:
                     str(item["id"]), session_id, json.dumps(terminal, ensure_ascii=False),
                     json.dumps(projection.ui_result, ensure_ascii=False),
                     workspace_changed=changed, diff_hash=diff_hash,
+                    post_hook_event=(self.dependencies.hooks.pending_post_tool(call, str(item["id"]), terminal)
+                        if self.dependencies.hooks is not None else None),
                 )
                 self.dependencies.events.publish(mutation, item=mutation.value)
                 return terminal
@@ -1629,6 +1633,7 @@ class ToolCallRuntime:
         runtime_dependencies: RuntimeDependencyCoordinator | None = None,
         concurrency: ToolConcurrencyGate | None = None,
         collaboration: CollaborationApplication | None = None,
+        hooks: HookService | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -1652,6 +1657,7 @@ class ToolCallRuntime:
             approval=approval,
             resource_registry=resource_registry,
             concurrency=self.concurrency,
+            hooks=hooks,
         )
         self.permissions = PermissionRequests(store, approval, base_permissions)
         dependencies = _HandlerDependencies(
@@ -1674,6 +1680,7 @@ class ToolCallRuntime:
             skill_access=self.skill_access,
             runtime_dependencies=runtime_dependencies,
             permissions=self.permissions,
+            hooks=hooks,
         )
         self.read_runtime = ReadOnlyToolHandler(dependencies)
         self.workspace_runtime = FileChangeToolHandler(dependencies)

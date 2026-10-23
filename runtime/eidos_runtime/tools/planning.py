@@ -124,8 +124,8 @@ class PlanningToolRuntime(AdapterToolRuntime):
 def planning_entries(*, include_plan: bool = True) -> tuple[ToolRegistryEntry, ...]:
     entries = []
     for name, description, input_model, output_model in (
-        ('request_user_input', 'Request user input for one to three short questions and wait for the response. Ask only when missing information affects the task; do not ask again for authorization already given.', RequestUserInput, InputResultData),
-        ('write_plan', 'Save a Markdown plan outside the project. Include the goal, findings, clarified decisions, implementation steps and verification. For a new plan, omit planId and expectedRevision; Eidos generates the ID. When revising, supply the exact planId and current revision returned by write_plan as expectedRevision. Never invent an ID. Set readyForReview to submit the complete plan and end this turn. This tool is only available in Plan mode.', WritePlan, PlanResultData),
+        ('request_user_input', 'Request user input for one to three short questions and wait for the response. Ask only when missing information affects the task.', RequestUserInput, InputResultData),
+        ('write_plan', 'Save a Markdown plan outside the project. Include the goal, findings, clarified decisions, implementation steps and verification. For a new plan, omit planId and expectedRevision; Eidos generates the ID. When revising, supply the exact planId and current revision returned by write_plan as expectedRevision. Never invent an ID. Set readyForReview to submit the complete plan and end this turn.', WritePlan, PlanResultData),
     ):
         if name == 'write_plan' and not include_plan:
             continue

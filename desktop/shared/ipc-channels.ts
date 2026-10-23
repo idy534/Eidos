@@ -143,6 +143,7 @@ export const IPC = {
   PLUGIN_LIST: "plugin:list",
   PLUGIN_IMPORT: "plugin:import",
   PLUGIN_SET_ENABLED: "plugin:set-enabled",
+  PLUGIN_SET_HOOK_TRUST: "plugin:set-hook-trust",
   PLUGIN_REMOVE: "plugin:remove",
 
   // Skill

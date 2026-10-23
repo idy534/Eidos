@@ -1,4 +1,5 @@
 import type { CustomModelSettings } from "./custom-models.js";
+import type { PluginCompatibility, PluginHookReview } from "./hooks.js";
 import type { ContextCompactionActivity } from "./context.generated.js";
 import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
 import type { ModelId } from "./constants.js";
@@ -610,6 +611,8 @@ export interface PluginRecord {
   status: "installed" | "removed";
   installedAt: number;
   updatedAt: number;
+  compatibility?: PluginCompatibility;
+  hookReview?: PluginHookReview;
 }
 
 export interface PluginListResult {

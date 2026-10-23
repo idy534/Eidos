@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
+from eidos_runtime.domain.hooks import HookOutput, HookPendingEvent
+from eidos_runtime.persistence.hooks import HookRepository
 from eidos_runtime.model.context_projection import model_result_json
 
 import hashlib
@@ -10,7 +12,7 @@ import sqlite3
 from typing import Callable, Literal
 import uuid
 
-from pydantic import Field
+from pydantic import Field, JsonValue, TypeAdapter
 from eidos_runtime.model.replay import ModelResponseReplay
 
 from eidos_runtime.domain.approval_policy import ApprovalReview
@@ -268,6 +270,23 @@ class ExecutionRepository(Repository):
             or max_bytes > 16 * 1024
         ):
             raise ToolOutputReadError("invalid_output_range")
+        if tool_call_id.startswith("hook:"):
+            if item_id is not None or stream == "context":
+                raise ToolOutputReadError("tool_output_not_available")
+            with self.lock:
+                row = self._connection().execute(
+                    "SELECT h.output_json,h.result_json FROM hook_invocations h "
+                    "JOIN runs source ON source.id=h.run_id JOIN runs current ON current.id=? "
+                    "WHERE h.id=? AND source.session_id=current.session_id",
+                    (run_id, tool_call_id.removeprefix("hook:")),
+                ).fetchone()
+            if row is None or row["output_json"] is None:
+                raise ToolOutputReadError("tool_output_not_available")
+            output = HookOutput.model_validate_json(row["output_json"])
+            content = row["result_json"] or "{}" if stream == "result" else getattr(output, stream)
+            return _output_page(tool_call_id, stream, content, offset_bytes, max_bytes, from_end,
+                raw_truncated=output.raw_truncated, raw_omitted_bytes=output.raw_omitted_bytes,
+                output_complete=not output.raw_truncated)
         if stream == "context":
             with self.lock:
                 row = self._connection().execute(
@@ -1646,6 +1665,7 @@ class ExecutionRepository(Repository):
         diff_hash: str | None = None,
         duration_ms: int | None = None,
         model_content: ToolContentSnapshot | None = None,
+        post_hook_event: HookPendingEvent | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         if item_status not in {"completed", "failed", "declined", "canceled"}:
             raise ValueError("invalid item status")
@@ -1734,6 +1754,12 @@ class ExecutionRepository(Repository):
                 result = json.loads(result_json)
             except json.JSONDecodeError:
                 result = {}
+            if post_hook_event is not None:
+                fields = {**post_hook_event.fields,
+                    "tool_response": TypeAdapter(JsonValue).validate_json(result_json)}
+                if result.get("code") == "memory_snapshot_revoked":
+                    fields["tool_input"] = {}
+                HookRepository.record_pending(connection, fact["run_id"], post_hook_event.model_copy(update={"fields": fields}))
             reconciliation_required = _result_reconciliation_required(
                 result, tool_name=fact["tool_name"]
             )
@@ -1806,6 +1832,7 @@ class ExecutionRepository(Repository):
     def complete_shell_session_committed(
         self, item_id: str, session_id: str, result_json: str, ui_result_json: str,
         *, workspace_changed: bool = False, diff_hash: str | None = None,
+        post_hook_event: HookPendingEvent | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         """Finish the command without rewriting the model's earlier observation."""
         result = json.loads(result_json)
@@ -1827,6 +1854,8 @@ class ExecutionRepository(Repository):
                 return CommittedMutation(self.read_item(item_id), ())
             if previous.get("sessionId") != session_id or previous.get("executionStatus") != "running":
                 raise InvalidRunStateError("shell session is not active")
+            if post_hook_event is not None:
+                HookRepository.record_pending(connection, fact["run_id"], post_hook_event)
             uncertain = _result_reconciliation_required(result, tool_name="run_shell")
             status = "completed" if result.get("outcome") == "success" else "failed"
             connection.execute(
@@ -1870,6 +1899,7 @@ class ExecutionRepository(Repository):
         diff_hash: str | None = None,
         duration_ms: int | None = None,
         model_content: ToolContentSnapshot | None = None,
+        post_hook_event: HookPendingEvent | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         with self.lock:
             row = self._connection().execute(
@@ -1891,6 +1921,7 @@ class ExecutionRepository(Repository):
                 diff_hash=diff_hash,
                 duration_ms=duration_ms,
                 model_content=model_content,
+                post_hook_event=post_hook_event,
             )
 
     def begin_approval(

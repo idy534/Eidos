@@ -344,8 +344,7 @@ export function Tooltip({
   }
 
   // Preserve child's original ref
-  const existingRef = (children as unknown as { ref?: Ref<HTMLElement> }).ref ??
-    (children.props as { ref?: Ref<HTMLElement> }).ref;
+  const existingRef = (children.props as { ref?: Ref<HTMLElement> }).ref;
   const mergedRef = mergeRefs(triggerRef, existingRef);
 
   const childProps = children.props as Record<string, unknown>;

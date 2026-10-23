@@ -5,6 +5,7 @@ import type {
   EidosRuntimeAPI,
   ModelListResult,
   ModelPresetsResult,
+  McpServerRecord,
   RuntimeStatus,
   SkillDetail,
   SkillMetadata,
@@ -91,18 +92,41 @@ describe("Skill settings", () => {
         skill({
           qualifiedId: "system:review", name: "System Review", sourceKind: "system",
         }),
+        skill({ qualifiedId: "demo:review", name: "Plugin Review", sourceKind: "plugin", pluginId: "demo" }),
       ],
     })} />);
 
     await user.click(screen.getByRole("tab", { name: /技能/ }));
+    expect(screen.getByRole("tab", { name: /技能/ })).toHaveTextContent("技能2");
     expect(screen.getByRole("button", { name: /Writer.*已启用/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /System Review/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Plugin Review/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "系统" }));
     expect(screen.getByRole("button", { name: /System Review.*已启用/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Plugin Review/ })).not.toBeInTheDocument();
     await user.type(screen.getByRole("searchbox", { name: "搜索技能" }), "missing");
     expect(screen.queryByRole("button", { name: /System Review/ })).not.toBeInTheDocument();
     expect(screen.getByText("没有匹配的技能")).toBeInTheDocument();
+  });
+
+  it("keeps plugin MCP services and their error badges out of standalone MCP settings", async () => {
+    const user = userEvent.setup();
+    setRuntime(vi.fn());
+    const manual: McpServerRecord = {
+      schemaVersion: 1, pluginId: "manual", pluginVersion: "manual", pluginHash: "a".repeat(64),
+      serverId: "local-manual", executable: "python3", argv: [], envNames: [], permissionProfile: "workspace_read",
+      startupTimeoutSeconds: 5, toolTimeoutSeconds: 10, declaredEnabled: true, consented: false, available: false, updatedAt: 1,
+    };
+    render(<SettingsPage {...props({ mcpServers: [manual, {
+      ...manual, pluginId: "demo", serverId: "plugin-server", errorCode: "STARTUP_FAILED",
+    }] })} />);
+    const tab = screen.getByRole("tab", { name: /MCP Servers/ });
+    expect(tab).toHaveTextContent("MCP Servers1");
+    expect(tab.querySelector(".settings-nav-badge--danger")).toBeNull();
+    await user.click(tab);
+    expect(screen.getByRole("button", { name: "查看 local-manual 工具" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看 plugin-server 工具" })).not.toBeInTheDocument();
   });
 
   it("loads detail, toggles the skill, and exposes Finder and Markdown actions", async () => {

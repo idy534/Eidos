@@ -402,6 +402,8 @@ const api: EidosRuntimeAPI = {
   setPluginEnabled: (pluginId: string, enabled: boolean): Promise<PluginRecord> =>
     ipcRenderer.invoke(IPC.PLUGIN_SET_ENABLED, pluginId, enabled),
   removePlugin: (pluginId: string): Promise<PluginRecord> => ipcRenderer.invoke(IPC.PLUGIN_REMOVE, pluginId),
+  setPluginHookTrust: (pluginId: string, contentHash: string, trusted: boolean): Promise<PluginRecord> =>
+    ipcRenderer.invoke(IPC.PLUGIN_SET_HOOK_TRUST, pluginId, contentHash, trusted),
 
   // Skills
   listSkills: (): Promise<SkillListResult> => ipcRenderer.invoke(IPC.SKILL_LIST),

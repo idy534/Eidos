@@ -9,6 +9,7 @@ import selectors
 import signal
 import stat
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -472,19 +473,29 @@ def run_shell_process(
     started: float,
     resource_registry: ResourceRegistry | None,
     owner_id: str,
+    stdin_bytes: bytes | None = None,
+    on_started: Callable[[], None] | None = None,
 ) -> dict[str, object]:
+    # A bounded input file avoids pipe-write deadlocks when a Hook does not read stdin.
+    input_file = tempfile.TemporaryFile() if stdin_bytes is not None else None
     try:
+        if input_file is not None:
+            input_file.write(stdin_bytes)
+            input_file.seek(0)
         process = subprocess.Popen(
             launch.argv,
             cwd=launch.cwd,
             env=launch.environment,
-            stdin=subprocess.DEVNULL,
+            stdin=input_file if input_file is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
     except OSError as error:
         raise ShellProcessStartError from error
+    finally:
+        if input_file is not None:
+            input_file.close()
     selector = selectors.DefaultSelector()
     assert process.stdout is not None and process.stderr is not None
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
@@ -506,19 +517,18 @@ def run_shell_process(
     termination = "exit"
     termination_started_at: float | None = None
     process_group = process.pid
-    resource = (
-        resource_registry.register(
-            RuntimeResourceKind.SHELL_PROCESS,
-            owner_id=owner_id,
-            cancel=lambda: _terminate_group(process_group),
-            is_quiescent=lambda: not _process_group_exists(process_group),
-        )
-        if resource_registry is not None
-        else None
-    )
-    if resource is not None:
-        resource.start()
+    resource = None
     try:
+        if on_started is not None:
+            on_started()
+        if resource_registry is not None:
+            resource = resource_registry.register(
+                RuntimeResourceKind.SHELL_PROCESS,
+                owner_id=owner_id,
+                cancel=lambda: _terminate_group(process_group),
+                is_quiescent=lambda: not _process_group_exists(process_group),
+            )
+            resource.start()
         while selector.get_map() or process.poll() is None:
             if cancel.is_set():
                 if termination == "exit":

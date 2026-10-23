@@ -14,7 +14,8 @@ from typing import Literal, Mapping, Protocol, TypeVar
 import uuid
 from threading import Event
 
-from pydantic import JsonValue, ValidationError
+from pydantic import Field, JsonValue, ValidationError
+from eidos_runtime.domain.hooks import PluginCompatibility, PluginHookReview
 
 from eidos_runtime.application.errors import (
     ApplicationError,
@@ -103,6 +104,8 @@ class PluginRecord(EidosFrozenStrictModel):
     status: Literal["installed", "removed"]
     installed_at: int
     updated_at: int
+    compatibility: PluginCompatibility | None = Field(default=None, exclude_if=lambda value: value is None)
+    hook_review: PluginHookReview | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @classmethod
     def from_wire(cls, value: object) -> "PluginRecord":
@@ -333,9 +336,26 @@ class ExtensionApplication:
             plugin = PluginRecord.from_wire(plugins.set_enabled(plugin_id, enabled))
         except ResourceNotFoundError as error:
             raise ApplicationError("RESOURCE_NOT_FOUND") from error
+        except PluginImportError as error:
+            raise ApplicationError("PLUGIN_UNAVAILABLE") from error
         return self._record_extension_operation(
             operation_id, "plugin/setEnabled", request, plugin
         )
+
+    def set_plugin_hook_trust(
+        self, *, plugin_id: str, content_hash: str, trusted: bool, operation_id: str | None = None,
+    ) -> PluginRecord:
+        request = {"pluginId": plugin_id, "contentHash": content_hash, "trusted": trusted}
+        replay = self._extension_replay(operation_id, "plugin/setHookTrust", request, PluginRecord)
+        if replay is not None:
+            return replay
+        try:
+            plugin = PluginRecord.from_wire(self._plugins_or_error().set_hook_trust(plugin_id, content_hash, trusted))
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND") from error
+        except PluginImportError as error:
+            raise ApplicationError("PLUGIN_UNAVAILABLE") from error
+        return self._record_extension_operation(operation_id, "plugin/setHookTrust", request, plugin)
 
     def remove_plugin(
         self, *, plugin_id: str, operation_id: str | None = None

@@ -59,6 +59,7 @@ const messages: Record<string, string> = {
   SKILL_SNAPSHOT_INVALID: "任务使用的技能已变化或无法读取",
   INTERNAL_ERROR: "Eidos 内部错误导致任务失败",
   RUNTIME_INTERRUPTED: "任务执行已中断",
+  HOOK_REQUESTED_STOP: "已信任的 Hook 已停止本次任务",
 };
 
 const toolNames: Record<string, string> = {

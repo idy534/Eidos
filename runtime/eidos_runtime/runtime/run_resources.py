@@ -34,6 +34,8 @@ from eidos_runtime.runtime.runtime_dependencies import (
     RuntimeDependencyCatalogError,
     RuntimeDependencyCoordinator,
 )
+if TYPE_CHECKING:
+    from eidos_runtime.runtime.hooks import HookService
 from eidos_runtime.runtime.shell_process_manager import ShellProcessManager
 from eidos_runtime.tools.registry import ToolRegistry, ToolRegistryEntry
 from eidos_runtime.tools.request_permissions import request_permissions_entry
@@ -109,6 +111,7 @@ class RunResources:
         ] = ()
         self._external_entries: tuple[ToolRegistryEntry, ...] = ()
         self._closed = False
+        self.hooks: HookService | None = None
 
     def __enter__(self) -> "RunResources":
         try:

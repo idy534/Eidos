@@ -329,6 +329,7 @@ export interface EidosRuntimeAPI {
   listPlugins(): Promise<PluginListResult>;
   importPlugin(): Promise<PluginRecord | null>;
   setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginRecord>;
+  setPluginHookTrust(pluginId: string, contentHash: string, trusted: boolean): Promise<PluginRecord>;
   removePlugin(pluginId: string): Promise<PluginRecord>;
 
   listSkills(): Promise<SkillListResult>;

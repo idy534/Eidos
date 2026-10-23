@@ -595,6 +595,14 @@ pnpm test:electron-smoke
 
 两个官方 SDK 已锁定在 pyproject.toml 和 uv.lock。飞书 SDK 约束 websockets<16，当前锁定为 15.0.1。修改这些依赖时，开发者还需运行 Ruff、Deptry、pip-audit、macOS Runtime Bundle 构建与 bundled-runtime-smoke。Bundle smoke 会导入两个 SDK、飞书帧解析模块和原生 AES 扩展。Model Gateway 当前锁定 pydantic-ai-slim 2.57.0 和其要求的 OpenAI SDK 3.26.0。2026-10-17 的主 Python、隔离工具 Python 与 Runtime Node 依赖审计均通过；原 2.43.0 的五条漏洞已不再报告。审计结果会随漏洞数据库变化，开发者仍需实际运行审计并分别报告各项结果。
 
+## Plugin Hook 定向验证
+
+Plugin Hook 的当前范围见 `docs/current-hooks.md`。开发者修改 Hook 模型后，需要运行 `node scripts/generate-hook-contracts.mjs`。Runtime 定向入口是 `UV_CACHE_DIR=/private/tmp/eidos-uv-cache uv run --locked pytest runtime/tests/test_codex_hooks.py runtime/tests/test_plugin_protocol.py runtime/tests/test_extension_storage.py runtime/tests/test_storage_schema.py`。其中 Hook 文件包含真实 macOS Seatbelt 验证。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-hooks.test.js`，并使用 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/PluginSettings.behavior.test.tsx` 验证信任交互。preload 或 Shell 边界变化还需要 Electron smoke 和原生 Seatbelt 验证。这些命令不等于 Full Suite。
+
+`pnpm exec electron scripts/test-plugin-hooks.cjs` 使用临时 user-data 和本地生产组件，验证四种窗口宽度、焦点、取消和信任后启用顺序。它不读取真实会话，也不运行插件命令。`EIDOS_HOOK_SCREENSHOT_DIR` 可以指定截图输出目录。
+
+`pnpm exec electron scripts/test-plugin-resources.cjs` 使用隔离 user-data 和插件资源 fixture，验证 320、768、1024、1440px 下的资源详情布局、独立列表数量、技能开关、嵌套详情、Hook 审阅和焦点返回。`EIDOS_PLUGIN_SCREENSHOT_DIR` 可以保存截图。该检查不读取真实插件或凭据，也不启动 MCP、Hook 或模型。Renderer 定向行为入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/PluginSettings.behavior.test.tsx desktop/renderer/src/components/settings/SkillSettings.behavior.test.tsx desktop/renderer/src/components/SettingsPage.behavior.test.tsx`。
+
 ## 自定义模型提供商定向验证
 
 开发者可以运行以下入口。测试使用模拟传输，不读取用户凭据，不调用真实 Provider，也不运行 Full Suite。

@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 from eidos_runtime.domain.input_reference import InputReference
+from eidos_runtime.domain.hooks import HookBinding, PluginCompatibility, PluginHookReview
 
 
 class ClosedModel(BaseModel):
@@ -134,6 +135,8 @@ class PluginRecordDto(ClosedModel):
     status: Literal["installed", "removed"]
     installed_at: StrictInt = Field(alias="installedAt")
     updated_at: StrictInt = Field(alias="updatedAt")
+    compatibility: "PluginCompatibility | None" = Field(default=None, exclude_if=lambda value: value is None)
+    hook_review: "PluginHookReview | None" = Field(default=None, alias="hookReview", exclude_if=lambda value: value is None)
 
 
 class RunPluginSnapshotDto(ClosedModel):
@@ -146,6 +149,7 @@ class RunExtensionSnapshotDto(ClosedModel):
     schema_version: Literal[1] = Field(alias="schemaVersion")
     extension_contract_version: Literal[1] = Field(alias="extensionContractVersion")
     plugins: list[RunPluginSnapshotDto]
+    hooks: list["HookBinding"] = Field(default_factory=list, exclude=True)
     skill_catalog_hash: StrictStr = Field(alias="skillCatalogHash")
     mcp_config_hash: StrictStr = Field(alias="mcpConfigHash")
     excluded_skill_ids: list[StrictStr] = Field(default_factory=list, alias="excludedSkillIds")

@@ -29,7 +29,7 @@ import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { AutomationToolCard } from "./automations/AutomationToolCard.js";
 import { Tooltip } from "./Tooltip.js";
-import { SkillIcon, AgentIcon as SubagentToolIcon } from "./InputPicker.js";
+import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon } from "./InputPicker.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
 import { ContextCompactionRow } from "./ContextCompactionRow.js";
@@ -2403,17 +2403,6 @@ function ImageIcon() {
       <rect x="2" y="2" width="12" height="12" rx="2" />
       <circle cx="5.5" cy="5.5" r="1.25" />
       <path d="m14 11-3.2-3.2a1.4 1.4 0 0 0-1.8 0L3 13.8" />
-    </svg>
-  );
-}
-
-function MemoryIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8 3.2a2.2 2.2 0 0 0-2.2-1.2 2.2 2.2 0 0 0-2 1.5 2.5 2.5 0 0 0-.8 3.5 2.5 2.5 0 0 0 1.2 4.2A2.2 2.2 0 0 0 8 12.8" />
-      <path d="M8 3.2a2.2 2.2 0 0 1 2.2-1.2 2.2 2.2 0 0 1 2 1.5 2.5 2.5 0 0 1 .8 3.5 2.5 2.5 0 0 1-1.2 4.2A2.2 2.2 0 0 1 8 12.8" />
-      <path d="M8 3.2v9.6" />
-      <path d="M5.5 7.5H8M8 9.5h2.5" />
     </svg>
   );
 }

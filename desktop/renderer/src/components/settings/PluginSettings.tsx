@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { PluginRecord } from "../../contracts";
+import { useRef, useState } from "react";
+import type { McpServerRecord, PluginRecord, SkillMetadata } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { Button } from "../Button.js";
 import { DropdownMenu } from "../DropdownMenu.js";
@@ -11,26 +11,47 @@ import { ConfirmDialog } from "../ConfirmDialog.js";
 import { EmptyState } from "../EmptyState.js";
 import { StatusBadge } from "../StatusBadge.js";
 import { AlertBanner } from "../AlertBanner.js";
+import { PluginDetailDialog } from "./PluginDetailDialog.js";
+import { compatibilityIssue } from "./plugin-compatibility.js";
 
 interface PluginSettingsProps {
   plugins: PluginRecord[];
+  skills?: SkillMetadata[] | undefined;
+  mcpServers?: McpServerRecord[] | undefined;
+  storageReady?: boolean | undefined;
+  resourceError?: string | undefined;
+  onToggleSkill?: ((qualifiedId: string, enabled: boolean) => Promise<void>) | undefined;
+  onToggleMcp?: ((pluginId: string, serverId: string, enabled: boolean) => Promise<void>) | undefined;
   pendingAction: SettingsPendingAction;
   onImportPlugin: () => Promise<void>;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
+  onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
   onRemovePlugin: (pluginId: string) => Promise<void>;
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
 }
 
 export function PluginSettings({
   plugins,
+  skills = [],
+  mcpServers = [],
+  storageReady = true,
+  resourceError,
+  onToggleSkill,
+  onToggleMcp,
   pendingAction,
   onImportPlugin,
   onTogglePlugin,
+  onTrustPluginHooks,
   onRemovePlugin,
   onShowToast,
 }: PluginSettingsProps) {
   const [pluginToRemove, setPluginToRemove] = useState<PluginRecord | null>(null);
   const [localError, setLocalError] = useState<string>();
+  const [review, setReview] = useState<{ plugin: PluginRecord; enable: boolean } | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [selectedId, setSelectedId] = useState<string>();
+  const importRef = useRef<HTMLButtonElement>(null);
+  const selected = plugins.find((plugin) => plugin.id === selectedId);
 
   const isImporting = pendingAction?.type === "import_plugin";
   const enabledCount = plugins.filter((p) => p.enabled).length;
@@ -48,6 +69,10 @@ export function PluginSettings({
 
   async function handleToggle(plugin: PluginRecord, nextState: boolean) {
     setLocalError(undefined);
+    if (nextState && plugin.hookReview && (plugin.hookReview.executableCount ?? 0) > 0 && !plugin.hookReview.trusted) {
+      setReview({ plugin, enable: true });
+      return;
+    }
     try {
       await onTogglePlugin(plugin.id, nextState);
       onShowToast(
@@ -57,6 +82,32 @@ export function PluginSettings({
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "更新 Plugin 状态失败";
       setLocalError(msg);
+    }
+  }
+
+  async function trustHooks() {
+    if (!review || !onTrustPluginHooks || !review.plugin.hookReview) return;
+    setReviewBusy(true);
+    setLocalError(undefined);
+    try {
+      await onTrustPluginHooks(review.plugin.id, review.plugin.hookReview.contentHash, true);
+      if (review.enable) await onTogglePlugin(review.plugin.id, true);
+      setReview(null);
+      onShowToast("Hook 已信任，将在后续任务中自动运行。", "success");
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : "保存 Hook 信任失败");
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
+  async function revokeHooks(plugin: PluginRecord) {
+    if (!onTrustPluginHooks) return;
+    try {
+      await onTrustPluginHooks(plugin.id, plugin.contentHash, false);
+      onShowToast("Hook 信任已撤销，后续调用将跳过。", "info");
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : "撤销 Hook 信任失败");
     }
   }
 
@@ -74,16 +125,18 @@ export function PluginSettings({
   }
 
   return (
-    <div className="settings-panel">
+    <div className="settings-panel plugin-settings">
+      <div className="plugin-settings-content" inert={Boolean(selected || review || pluginToRemove)}>
       <div className="settings-panel-header">
         <div className="header-title-with-stats">
           <div>
             <h1>Plugins 扩展</h1>
             <p className="settings-panel-subtitle">
-              导入并管理本地配置文件包。只读取配置，不自动执行第三方安装脚本。
+              导入本地 Eidos 或 Codex 插件。Hook 脚本经过审阅和信任后，才会自动运行。
             </p>
           </div>
           <Button
+            ref={importRef}
             variant="primary"
             size="medium"
             disabled={isImporting}
@@ -106,7 +159,7 @@ export function PluginSettings({
         {plugins.length === 0 ? (
           <EmptyState
             title="尚未导入任何 Plugin"
-            description="导入 Plugin 后，相关的 Skills 能力和 MCP Servers 将显示在设置列表中。"
+            description="导入 Plugin 后，您可以点击插件名称，查看和管理它的资源。"
             action={
               <Button
                 variant="secondary"
@@ -135,8 +188,8 @@ export function PluginSettings({
                 disabled={isRowPending}
                 title={
                   <div className="plugin-row-header">
-                    <span className="plugin-name">{plugin.name}</span>
-                    <span className="plugin-version">v{plugin.version}</span>
+                    <button type="button" className="plugin-name plugin-name-button" aria-label={`查看 ${plugin.name} 的资源`} disabled={isRowPending} onClick={() => setSelectedId(plugin.id)}>{plugin.name}</button>
+                    <span className="plugin-version">{plugin.compatibility && !plugin.compatibility.declaredVersion ? "未声明版本" : `v${plugin.version}`}</span>
                     {plugin.enabled ? (
                       <StatusBadge tone="success" dot>已启用</StatusBadge>
                     ) : (
@@ -144,7 +197,14 @@ export function PluginSettings({
                     )}
                   </div>
                 }
-                description={plugin.description || "未提供描述"}
+                description={<>
+                  <span>{plugin.description || "未提供描述"}</span>
+                  {plugin.hookReview && (plugin.hookReview.definitions?.length ?? 0) > 0 && <div className="plugin-hook-status">
+                    Hook：{plugin.hookReview.trusted ? "已信任" : "等待审阅"} · {(plugin.hookReview.definitions?.length ?? 0)} 项
+                    {plugin.hookReview.latest && <span> · 最近执行：{(plugin.hookReview.latest.status ?? "completed") === "completed" ? "已完成" : "未完成"}{plugin.hookReview.latest.errorCode ? `（${plugin.hookReview.latest.errorCode}）` : ""}</span>}
+                  </div>}
+                  {Boolean(plugin.compatibility?.issues?.length) && <div className="plugin-hook-status">此插件包含当前版本暂不支持的能力，请查看兼容信息。</div>}
+                </>}
                 meta={
                   <div className="plugin-meta-info">
                     <code>{plugin.id}</code>
@@ -154,6 +214,7 @@ export function PluginSettings({
                 }
                 action={
                   <div className="plugin-actions-group">
+                    {plugin.hookReview && (plugin.hookReview.definitions?.length ?? 0) > 0 && <Button variant="secondary" size="small" disabled={isRowPending} onClick={() => setReview({ plugin, enable: false })}>审阅 Hook</Button>}
                     <Toggle
                       checked={plugin.enabled}
                       disabled={isRowPending}
@@ -164,6 +225,7 @@ export function PluginSettings({
                       trigger="⋯"
                       label={`${plugin.name} 选项`}
                       items={[
+                        ...(plugin.hookReview?.trusted ? [{ key: "revoke-hooks", label: "撤销 Hook 信任", disabled: isRowPending, onClick: () => void revokeHooks(plugin) }] : []),
                         {
                           key: "remove",
                           label: "移除 Plugin",
@@ -181,6 +243,43 @@ export function PluginSettings({
           })
         )}
       </SettingSection>
+      </div>
+
+      <PluginDetailDialog
+        plugin={selected}
+        skills={skills}
+        servers={mcpServers}
+        pendingAction={pendingAction}
+        storageReady={storageReady}
+        resourceError={resourceError}
+        obscured={Boolean(review)}
+        onToggleSkill={onToggleSkill}
+        onToggleMcp={onToggleMcp}
+        onReviewHooks={() => { if (selected) setReview({ plugin: selected, enable: false }); }}
+        onShowToast={onShowToast}
+        onClose={() => setSelectedId(undefined)}
+        getFallbackFocus={() => importRef.current}
+      />
+
+      <ConfirmDialog
+        open={Boolean(review)} title={`审阅 ${review?.plugin.name ?? ""} 的 Hook`}
+        description={<div className="plugin-hook-review">
+          <p>您信任后，插件会在匹配的任务阶段自动执行以下命令。</p>
+          <p>脚本使用当前任务的工作区和网络权限。脚本还可以读取本插件的安装目录，并写入本插件的私有数据目录。完全访问任务使用当前 macOS 用户的权限。</p>
+          <p>安装目录：<code>{review?.plugin.hookReview?.installedRoot}</code><br />可写数据目录：<code>{review?.plugin.hookReview?.dataDirectory}</code></p>
+          {review?.plugin.hookReview?.definitions?.map((hook) => <div key={hook.key}>
+            <strong>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""}</strong>
+            <pre className="plugin-hook-command">{hook.command || `处理器：${hook.handlerType}`}</pre>
+          </div>)}
+          {Boolean(review?.plugin.compatibility?.issues?.length) && <div><p>以下能力暂不支持：</p><ul>{review?.plugin.compatibility?.issues?.map((issue) => <li key={issue}>{compatibilityIssue(issue)}</li>)}</ul></div>}
+          {review?.plugin.hookReview?.latest && <p>最近结果：{review.plugin.hookReview.latest.systemMessage || review.plugin.hookReview.latest.message || review.plugin.hookReview.latest.errorCode || "脚本已完成。"}</p>}
+          {localError && <AlertBanner tone="error">{localError}</AlertBanner>}
+        </div>}
+        confirmLabel={review?.plugin.hookReview?.trusted || !(review?.plugin.hookReview?.executableCount) ? "关闭" : "信任此版本的 Hook"}
+        cancelLabel="取消" isDestructive={Boolean(review && !review.plugin.hookReview?.trusted && review.plugin.hookReview?.executableCount)} busy={reviewBusy}
+        onConfirm={() => review?.plugin.hookReview?.trusted || !(review?.plugin.hookReview?.executableCount) ? setReview(null) : void trustHooks()}
+        onCancel={() => { if (!reviewBusy) setReview(null); }}
+      />
 
       <ConfirmDialog
         open={Boolean(pluginToRemove)}

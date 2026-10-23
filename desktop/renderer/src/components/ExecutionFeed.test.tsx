@@ -1703,6 +1703,9 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
   // Verify memory tools are rendered as static rows (tool-item--read-done) without details tags
   const memoryStaticRows = (html.match(/class="tool-item tool-item--read-done"/g) ?? []).length;
   assert.equal(memoryStaticRows, 8);
+
+  // MemoryIcon Lucide original brain path check
+  assert.match(html, /M12 18V5/);
 });
 
 test("renders declare_outputs with custom isometric artifact icon", () => {

@@ -2,6 +2,27 @@
    SETTINGS PAGE - macOS Desktop System Settings Redesign
    ========================================================================== */
 
+.plugin-hook-status { margin-top: 0.25rem; color: var(--text-secondary); font-size: 0.8125rem; }
+.plugin-hook-review { min-width: 0; overflow-wrap: anywhere; }
+.plugin-hook-review code { overflow-wrap: anywhere; }
+.plugin-settings .header-title-with-stats > div { min-width: 0; }
+@media (max-width: 480px) {
+  .plugin-settings .header-title-with-stats,
+  .plugin-settings .setting-row-main { flex-direction: column; align-items: stretch; }
+  .plugin-settings .setting-row-action { align-self: flex-end; }
+}
+.plugin-hook-command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
+
 .settings-page-wrapper {
   display: flex;
   flex-direction: column;

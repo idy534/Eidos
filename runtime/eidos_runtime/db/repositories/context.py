@@ -1,4 +1,5 @@
 from __future__ import annotations
+from eidos_runtime.persistence.hooks import HookRepository
 
 from eidos_runtime.domain.input_reference import InputReference
 
@@ -395,6 +396,11 @@ class ContextRepository(Repository):
                 if tool and tool["model_result_json"] is not None
                 else None
             )
+            if tool:
+                feedback = HookRepository(self.database).tool_feedback(str(row["run_id"]), str(tool["provider_call_id"]))
+                if feedback is not None:
+                    model_result_json = json.dumps({"hookFeedback": feedback,
+                        "notice": "The tool already ran. Its original result is preserved in execution history."}, ensure_ascii=False)
             response_row = response_rows.get(row["id"])
             response_id = response_row["response_id"] if response_row is not None else None
             replay = None

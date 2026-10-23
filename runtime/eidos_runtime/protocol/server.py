@@ -1389,6 +1389,15 @@ class RuntimeServer:
                 ),
             ),
             (
+                "plugin/setHookTrust",
+                method_dtos.PluginSetHookTrustRequestDto,
+                method_dtos.PluginSetHookTrustResponseDto,
+                lambda _id, request: self._applications_or_error().extensions.set_plugin_hook_trust(
+                    plugin_id=request.plugin_id, content_hash=request.content_hash,
+                    trusted=request.trusted, operation_id=request.operation_id,
+                ),
+            ),
+            (
                 "skill/list",
                 method_dtos.SkillListRequestDto,
                 method_dtos.SkillListResponseDto,
@@ -1532,6 +1541,7 @@ class RuntimeServer:
             "model/delete",
             "plugin/import",
             "plugin/setEnabled",
+            "plugin/setHookTrust",
             "plugin/remove",
             "mcp/setEnabled",
             "mcp/tools",

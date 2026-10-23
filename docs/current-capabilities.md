@@ -311,6 +311,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Settings 的 MCP 名称按钮可以打开单列工具详情弹窗。弹窗展示工具名称、描述、输入参数、必填项和原始 Schema，并支持按名称或描述搜索。Runtime 每页固定返回 10 条，页面滚动接近底部时自动追加下一页。弹窗没有“完成”按钮，用户可以通过右上角关闭、Esc 或背景关闭，并回到原名称按钮。标题下方读取 MCP 初始化响应的 `serverInfo.description`；服务缺失或提供空白描述时，页面显示实际启动命令，不把 `instructions` 当作描述。
 - PluginCatalog 支持本地 Plugin v1 的导入、启用、禁用和移除。
 - Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
+- 设置页按所属插件管理资源。用户点击插件名称后，可以查看该插件的 Skills、MCP Servers、Hooks 和兼容信息。插件 Skill 可以在插件详情中打开正文和调整启用状态；界面不提供单独卸载插件 Skill 的入口。插件 MCP 可以在详情中查看工具，并经过独立的命令与权限审阅后授权启用，或撤销启用。Hook 继续使用内容版本绑定的信任流程。
+- 独立技能页只列出个人和系统技能。独立 MCP 页只列出手动配置的服务。侧栏数量与各自的列表一致。设置页的分类不会过滤 Runtime Catalog 或聊天引用选择器，模型继续按原快照、激活和授权规则使用插件资源。
 - Skill 采用三层边界：Catalog 负责 Discovery 和 immutable Catalog Snapshot；Activation 负责 Selection、`SkillAccess` 和 Run-scoped activation；Resource 负责按需读取 `SKILL.md`、`references/`、`scripts/`、`assets/`，再进入现有 Tools 和 Sandbox。Skill 内容、产品依赖和 `runtime.json` 彼此分离。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。
 - Selection 当前支持 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。选中后 Runtime 才完整读取 `SKILL.md`。Skill 使用 progressive disclosure：`references/`、`scripts/` 和 `assets/` 只按说明通过相对路径读取，不能把完整 Skill tree 注入 Context。
 - `agents/eidos.yaml` 是可选 metadata。Runtime 使用统一 YAML parser 读取 interface、asset、dependency、policy 和有界 `runtimeDependencies` metadata。Runtime 使用严格的 `RuntimeRequirements` discriminated union 保存 Python package、Node package 和 executable declaration。缺失 declaration 保持旧行为。无效 declaration 会保留固定 error code，并保留旧的 interface、MCP dependency 和 policy metadata。无效的整个可选 YAML 会保留 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活，但不影响显式选择和 `skill_read`。Skill 不管理 pip、npm、系统命令或其他运行时依赖。
@@ -473,9 +475,9 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ### 技能设置页面（生产实现，待测试验收）
 
 - 设置页铺满当前应用窗口。项目侧栏、侧栏折叠按钮和浮动导航在设置期间隐藏；侧栏快捷键不会展开侧栏。用户退出设置后，侧栏恢复此前状态。设置分类导航继续保留。设置页顶部标题栏高度（2.75rem）与标题字体规格（0.85rem / 600）与 Session 标题栏保持对齐。
-- 技能页面提供搜索、个人/系统分类和双列列表，窄窗口改为单列。列表使用首字母图标、名称、简短说明和技能自身启用勾选，不展示 ID、只读、来源或版本。
+- 技能页面提供搜索、个人/系统分类和双列列表，窄窗口改为单列。页面不展示插件 Skill，插件 Skill 由插件详情管理。列表使用首字母图标、名称、简短说明和技能自身启用勾选，不展示 ID、只读、来源或版本。
 - 技能详情展示描述、状态与可滚动 Markdown 正文。左上角开关控制技能自身状态；右上角菜单提供“在 Finder 中显示”和“复制 Markdown”。复制内容包含原始 frontmatter。所属插件未启用时，详情会说明该限制，保存技能开关不会自动启用插件。
-- 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理只等待实际固定该 Skill Catalog 条目的非终态 Run。快照缺少条目列表时按旧快照和排除记录保守处理，不因无关 Run 阻断清理。插件技能的卸载保留插件包，确认文案会说明这一点。
+- 个人技能支持二次确认卸载；系统技能只有启用/禁用能力。独立技能文件清理只等待实际固定该 Skill Catalog 条目的非终态 Run。快照缺少条目列表时按旧快照和排除记录保守处理，不因无关 Run 阻断清理。插件 Skill 在插件内启用或禁用，插件移除继续保留历史来源记录；底层原有 Skill 状态和卸载协议保持兼容。
 - 技能状态保存在 SQLite，后续 Turn 使用新状态，已开始的 Turn 保留原快照。
 
 ## 权限模式
@@ -566,3 +568,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 ## 容量恢复与未知结果（2026-10-19）
 
 系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。
+
+## 本地插件与同步 Hooks（2026-10-23）
+
+用户可以导入 Eidos、Codex 兼容清单和 Portable Agent Plugin 本地目录。Desktop 提供内容版本审阅、信任和撤销。Runtime 支持 UserPromptSubmit、PreToolUse、PostToolUse、Stop 和 SubagentStop 的同步 command 处理器。参数改写继续走原参数校验、权限和审批，后置反馈保留原始执行结果，未知 Hook 不会自动重放。SQLite v36 保存调用和输出，并复用原工具输出分页。其他事件、异步/MCP/prompt/agent 处理器和 Codex App 接入仍未实现。详细规则见 [current-hooks.md](current-hooks.md)。

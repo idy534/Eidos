@@ -1,4 +1,5 @@
 import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
+import { isPluginHookReview, isPluginCompatibility } from "../shared/hooks.js";
 import { isWebSearchResponse, type WebSearchReadRequest, type WebSearchSaveRequest, type WebSearchResponse } from "../shared/web-search.js";
 import { isSearchResponse, isFileFindResponse, type SearchRequest, type SearchResponse, type ReadAroundRequest, type FileFindRequest } from "../shared/search.js";
 import { isCustomModelSettings, isCustomProviderResult } from "../shared/custom-models.js";
@@ -177,6 +178,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "EXTENSIONS_UNAVAILABLE",
   "PLUGIN_IMPORT_REJECTED",
   "PLUGIN_IMPORT_FAILED",
+  "PLUGIN_UNAVAILABLE",
   "PLUGIN_VERSION_CONFLICT",
   "PLUGIN_ID_CONFLICT",
   "SKILL_CATALOG_UNAVAILABLE",
@@ -1108,6 +1110,10 @@ export class RuntimeClient {
     return this.validatedRequest(
       "plugin/setEnabled", { pluginId, enabled, operationId }, isPluginRecord,
     );
+  }
+
+  setPluginHookTrust(pluginId: string, contentHash: string, trusted: boolean, operationId = randomUUID()): Promise<PluginRecord> {
+    return this.validatedRequest("plugin/setHookTrust", { pluginId, contentHash, trusted, operationId }, isPluginRecord);
   }
 
   removePlugin(pluginId: string, operationId = randomUUID()): Promise<PluginRecord> {
@@ -2463,8 +2469,11 @@ function isPluginRecord(value: unknown): value is PluginRecord {
     && hasOnlyKeys(value, [
       "schemaVersion", "id", "name", "version", "description", "contentHash",
       "enabled", "status", "installedAt", "updatedAt",
+      "compatibility", "hookReview",
     ])
     && value.schemaVersion === 1
+    && (value.compatibility === undefined || isPluginCompatibility(value.compatibility))
+    && (value.hookReview === undefined || isPluginHookReview(value.hookReview))
     && ["id", "name", "version", "description", "contentHash"].every(
       (key) => typeof value[key] === "string",
     )

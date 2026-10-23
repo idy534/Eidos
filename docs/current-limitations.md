@@ -144,7 +144,7 @@
 
 旧版完整 ContextSnapshot 仍可读取，但新共享块格式只用于新快照。当前版本不会自动重写历史 Blob，所以升级后不会立刻释放既有快照占用的空间。
 
-- Runtime Loop 目前只有内部、非权威的生命周期观察点。它们不持久化为业务 Event，也不提供用户可配置或可阻断的 Hook；诊断观察者失败不会改变 Run 结果。
+- 内部 `LoopLifecycle` 仍是非权威诊断观察点。用户 Hook 已通过独立服务接入五个常用事件，并提供内容版本信任与持久化。完整 Codex 插件兼容、其他生命周期事件、async/MCP/prompt/agent 处理器和 transcript 导出尚未实现。详细边界见 [current-hooks.md](current-hooks.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
@@ -190,7 +190,7 @@
 
 ### Run 并发与资源模型
 
-- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。这个历史结果不代表后续改动已通过完整回归。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩现已接入；PTY、用户 Hooks 和流式工具调度仍属后续工作。
+- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。这个历史结果不代表后续改动已通过完整回归。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩与首批同步用户 Hooks 现已接入；PTY、剩余 Hook 事件和流式工具调度仍属后续工作。
 
 - 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。

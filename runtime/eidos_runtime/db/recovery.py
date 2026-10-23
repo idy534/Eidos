@@ -76,6 +76,22 @@ def _recover_completed_shell_cleanup(connection: sqlite3.Connection, now: int) -
 def recover_runtime_facts(connection: sqlite3.Connection) -> None:
     """Recover abandoned persisted facts without consulting in-memory phases."""
     now = _now_ms()
+    # Recovery runs after both stages of legacy schema migration have finished.
+    # An abandoned Hook may already have changed files or external state.
+    hook_runs = connection.execute(
+        "SELECT DISTINCT h.run_id,r.session_id FROM hook_invocations h "
+        "JOIN runs r ON r.id=h.run_id WHERE h.status IN ('intent','running')"
+    ).fetchall()
+    connection.execute(
+        "UPDATE hook_invocations SET status='unknown',completed_at=?,"
+        "result_json=coalesce(result_json,?) WHERE status IN ('intent','running')",
+        (now, json.dumps({"status": "unknown", "errorCode": "hook_outcome_unknown"})),
+    )
+    for row in hook_runs:
+        event = append_event(connection, EventType.RUN_UPDATED, now,
+            {"reason": "hook_outcome_unknown"}, run_id=row["run_id"], session_id=row["session_id"])
+        connection.execute("UPDATE hook_invocations SET completion_event_id=? "
+            "WHERE run_id=? AND status='unknown' AND completion_event_id IS NULL", (event["eventId"], row["run_id"]))
     _recover_completed_shell_cleanup(connection, now)
     from eidos_runtime.persistence.automation_recovery import recover_automation_results
     recover_automation_results(connection, now)

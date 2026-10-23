@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.application.shell_environment import ShellEnvironmentApplication
 from eidos_runtime.db.database import WorkspaceIdentity
-from eidos_runtime.db.schema import V34_SCHEMA_SQL
+from eidos_runtime.db.schema import SCHEMA_VERSION, V34_SCHEMA_SQL
 from eidos_runtime.db.shell_environment_migration import migrate_shell_environment
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.shell_environment import ShellEnvironmentPolicy
@@ -264,7 +264,7 @@ def test_existing_database_upgrade_preserves_settings(tmp_path):
     store.initialize()
     try:
         assert store.health_state == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 35
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert (
             store.connection.execute(
                 "SELECT managed_worktree_limit FROM runtime_settings"

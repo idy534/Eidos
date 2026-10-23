@@ -535,6 +535,12 @@ class PluginRemoveRequestDto(_OperationRequest):
     plugin_id: StrictStr = Field(alias="pluginId", min_length=1)
 
 
+class PluginSetHookTrustRequestDto(_OperationRequest):
+    plugin_id: StrictStr = Field(alias="pluginId", min_length=1, max_length=64)
+    content_hash: StrictStr = Field(alias="contentHash", pattern=r"^[0-9a-f]{64}$")
+    trusted: bool
+
+
 class SkillListRequestDto(MethodRequestDto):
     pass
 
@@ -1154,6 +1160,10 @@ class PluginImportResponseDto(_PluginResponseDto):
 
 
 class PluginSetEnabledResponseDto(_PluginResponseDto):
+    pass
+
+
+class PluginSetHookTrustResponseDto(_PluginResponseDto):
     pass
 
 

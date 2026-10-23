@@ -1511,6 +1511,7 @@ export function AppShell({ runtime }: AppShellProps) {
             onModelsChanged={() => modelActions.load()}
             onImportPlugin={() => extensionActions.importPlugin()}
             onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
+            onTrustPluginHooks={(id, hash, trusted) => extensionActions.setPluginHookTrust(id, hash, trusted)}
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
             onToggleSkill={(id, enabled) => extensionActions.setSkillEnabled(id, enabled)}
             onRemoveSkill={(id) => extensionActions.removeSkill(id)}

@@ -170,6 +170,7 @@ def read_tool_output_entry(
             "from a contextCleared marker to page the original saved JSON result "
             "of any completed tool call, including fork history. Use stream='context' and a saved message itemId as callId to page the original user or assistant text. "
             "Reading saved output does not execute the operation again."
+            " Hook feedback can include a hook:<id> callId; use it with stdout, stderr or result to read the saved Hook output."
         ),
         "sideEffect": "none",
         "approvalRequired": False,

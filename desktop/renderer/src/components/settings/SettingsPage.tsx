@@ -42,6 +42,7 @@ interface SettingsPageProps {
   onModelsChanged: () => Promise<void>;
   onImportPlugin: () => Promise<void>;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
+  onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
   onRemovePlugin: (pluginId: string) => Promise<void>;
   onToggleSkill: (qualifiedId: string, enabled: boolean) => Promise<void>;
   onRemoveSkill: (qualifiedId: string) => Promise<SkillRemoval>;
@@ -69,6 +70,7 @@ export function SettingsPage({
   onModelsChanged,
   onImportPlugin,
   onTogglePlugin,
+  onTrustPluginHooks,
   onRemovePlugin,
   onToggleSkill,
   onRemoveSkill,
@@ -103,21 +105,23 @@ export function SettingsPage({
   }
 
   const storageReady = runtime.state === "ready" && runtime.storageHealth.state === "ready";
+  const standaloneSkills = skills.filter((skill) => skill.sourceKind !== "plugin");
+  const standaloneServers = mcpServers.filter((server) => server.pluginId === "manual");
 
   // Navigation badge counts & warnings
-  const mcpHasError = mcpServers.some((s) => Boolean(s.errorCode));
+  const mcpHasError = standaloneServers.some((s) => Boolean(s.errorCode));
   const categories: SettingsCategoryItem[] = [
     { id: "model", label: "模型" },
     { id: "web_search", label: "网页搜索" },
     { id: "channels", label: "助理" },
     { id: "memory", label: "记忆" },
     { id: "plugins", label: "Plugins", count: plugins.length },
-    { id: "skills", label: "技能", count: skills.length },
+    { id: "skills", label: "技能", count: standaloneSkills.length },
     { id: "agents", label: "智能体" },
     {
       id: "mcp",
       label: "MCP Servers",
-      count: mcpServers.length,
+      count: standaloneServers.length,
       badgeTone: mcpHasError ? "danger" : undefined,
     },
     { id: "worktrees", label: "Worktrees" },
@@ -178,17 +182,24 @@ export function SettingsPage({
             {activeCategory === "plugins" && (
               <PluginSettings
                 plugins={plugins}
+                skills={skills}
+                mcpServers={mcpServers}
+                storageReady={storageReady}
+                resourceError={extensionError}
                 pendingAction={pendingAction}
                 onImportPlugin={onImportPlugin}
                 onTogglePlugin={onTogglePlugin}
+                onTrustPluginHooks={onTrustPluginHooks}
                 onRemovePlugin={onRemovePlugin}
+                onToggleSkill={onToggleSkill}
+                onToggleMcp={onToggleMcp}
                 onShowToast={showToast}
               />
             )}
 
             {activeCategory === "skills" && (
               <SkillSettings
-                skills={skills}
+                skills={standaloneSkills}
                 pendingAction={pendingAction}
                 storageReady={storageReady}
                 onToggleSkill={onToggleSkill}
@@ -201,7 +212,7 @@ export function SettingsPage({
 
             {activeCategory === "mcp" && (
               <McpSettings
-                servers={mcpServers}
+                servers={standaloneServers}
                 pendingAction={pendingAction}
                 onToggleMcp={onToggleMcp}
                 onCreateMcp={onCreateMcp}

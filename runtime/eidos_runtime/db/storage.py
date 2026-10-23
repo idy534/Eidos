@@ -4,6 +4,7 @@ from eidos_runtime.domain.agents import AgentCatalogSnapshot
 from eidos_runtime.domain.context_management import ContextDetails
 
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
+from eidos_runtime.domain.hooks import HookPendingEvent
 
 from eidos_runtime.domain.run_termination import RunTermination
 
@@ -1239,10 +1240,12 @@ class SessionStore:
     def complete_shell_session_committed(
         self, item_id: str, session_id: str, result_json: str, ui_result_json: str,
         *, workspace_changed: bool = False, diff_hash: str | None = None,
+        post_hook_event: HookPendingEvent | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).complete_shell_session_committed(
             item_id, session_id, result_json, ui_result_json,
             workspace_changed=workspace_changed, diff_hash=diff_hash,
+            post_hook_event=post_hook_event,
         )
 
     def complete_tool_item_once_committed(
@@ -1259,6 +1262,7 @@ class SessionStore:
         diff_hash: str | None = None,
         duration_ms: int | None = None,
         model_content: ToolContentSnapshot | None = None,
+        post_hook_event: HookPendingEvent | None = None,
     ) -> CommittedMutation[dict[str, object]]:
         return self._repository(self._execution).complete_tool_item_once_committed(
             item_id,
@@ -1272,6 +1276,7 @@ class SessionStore:
             diff_hash=diff_hash,
             duration_ms=duration_ms,
             model_content=model_content,
+            post_hook_event=post_hook_event,
         )
 
     def begin_approval(

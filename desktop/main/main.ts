@@ -1507,6 +1507,12 @@ ipcMain.handle(IPC.PLUGIN_REMOVE, (_event, pluginId: unknown) => {
   if (typeof pluginId !== "string") throw new Error("Plugin 参数无效。");
   return clientOrThrow().removePlugin(pluginId);
 });
+ipcMain.handle(IPC.PLUGIN_SET_HOOK_TRUST, (_event, pluginId: unknown, contentHash: unknown, trusted: unknown) => {
+  if (typeof pluginId !== "string" || typeof contentHash !== "string" || !/^[0-9a-f]{64}$/.test(contentHash) || typeof trusted !== "boolean") {
+    throw new Error("Hook 信任参数无效。");
+  }
+  return clientOrThrow().setPluginHookTrust(pluginId, contentHash, trusted);
+});
 
 ipcMain.handle(IPC.SKILL_LIST, () => clientOrThrow().listSkills());
 function skillId(value: unknown): string {

@@ -23,9 +23,10 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
   const [selectedId, setSelectedId] = useState<string>();
   const [togglingId, setTogglingId] = useState<string>();
   const searchRef = useRef<HTMLInputElement>(null);
-  const selected = skills.find((skill) => skill.qualifiedId === selectedId);
+  const standalone = skills.filter((skill) => skill.sourceKind !== "plugin");
+  const selected = standalone.find((skill) => skill.qualifiedId === selectedId);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visible = skills.filter((skill) => (
+  const visible = standalone.filter((skill) => (
     (category === "system" ? skill.sourceKind === "system" : skill.sourceKind !== "system")
     && `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(normalizedQuery)
   )).sort((a, b) => a.name.localeCompare(b.name));
@@ -53,7 +54,7 @@ export function SkillSettings({ skills, ...actions }: SkillSettingsProps) {
       <div inert={Boolean(selected)}>
         <div className="settings-panel-header">
           <h1>技能</h1>
-          <p className="settings-panel-subtitle">通过任务专用技能扩展 Eidos</p>
+          <p className="settings-panel-subtitle">管理个人和系统技能。插件自带的技能请在插件详情中管理。</p>
         </div>
         <SearchInput
           className="skill-search"

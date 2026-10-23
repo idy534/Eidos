@@ -13,8 +13,18 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
-def downgrade_shell_environment_schema():
+def downgrade_hooks_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS hook_pending_events")
+        connection.execute("DROP TABLE IF EXISTS hook_invocations")
+        connection.execute("DROP TABLE IF EXISTS plugin_hook_trust")
+    return downgrade
+
+
+@pytest.fixture
+def downgrade_shell_environment_schema(downgrade_hooks_schema):
+    def downgrade(connection: sqlite3.Connection) -> None:
+        downgrade_hooks_schema(connection)
         connection.execute("DROP TABLE IF EXISTS shell_environment_settings")
     return downgrade
 
@@ -134,6 +144,7 @@ def downgrade_session_fork_schema(downgrade_automation_schema):
 # boundaries are explicitly promoted to Integration, Platform, and/or Slow.
 INTEGRATION_FILES = frozenset(
     {
+        "test_codex_hooks.py",
         "test_agent_roles_migration.py",
         "test_agent_result_delivery.py",
         "test_application_boundary.py",

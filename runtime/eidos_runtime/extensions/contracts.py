@@ -6,12 +6,12 @@ from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import Field, StrictInt, StrictStr, field_validator, model_validator
+from semantic_version import Version
 
 from eidos_runtime.protocol.schemas import ClosedModel
 
 
 _ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 _ENV = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 
 
@@ -125,7 +125,9 @@ class PluginManifestV1(ClosedModel):
     @field_validator("version")
     @classmethod
     def validate_version(cls, value: str) -> str:
-        if not _VERSION.fullmatch(value):
+        try:
+            Version(value)
+        except ValueError:
             raise ValueError("invalid_plugin_version")
         return value
 

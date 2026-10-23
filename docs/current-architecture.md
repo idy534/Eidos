@@ -171,7 +171,7 @@ RuntimeEngine 下的主要职责是：
 - `LoopGuard` 处理语义状态收敛；
 - `RunFinalizer` 生成有界、无 Tool 的最终回答。
 
-`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。它不是用户可配置 Hook，也不允许观察者阻断工具；可阻断的 Hook 仍需独立设计和验证。
+`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。用户配置的 Hook 由独立 `HookService` 执行。该服务复用原 Shell 沙盒和资源所有权，并在 SQLite v36 中保存信任、调用和待触发 Post 事件。当前入口与兼容范围见 [current-hooks.md](current-hooks.md)。
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 

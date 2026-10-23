@@ -49,6 +49,10 @@ from eidos_runtime.runtime.contracts import (
 from eidos_runtime.runtime.decision import LoopDecisionEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
+from eidos_runtime.runtime.hooks import HookService
+from eidos_runtime.domain.hooks import HookStopRequested
+from eidos_runtime.tools.registry import ToolConcurrencyPolicy
+from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.runtime.loop_guard import (
     LoopGuard,
     context_fact_frontier_hash,
@@ -290,6 +294,17 @@ class RuntimeEngine:
                 runtime_dependency_catalog=self.runtime_dependency_catalog,
                 collaboration=self.collaboration,
             ) as resources:
+                if extension_snapshot.get("hooks"):
+                    resources.hooks = HookService(self.store, run_id, resources=self.resources,
+                        sensitive=self.sensitive, events=self.events, async_kernel=self.async_kernel,
+                        runtime_dependencies=resources.runtime_dependencies,
+                        launch_window=lambda signal: self.tool_concurrency_gate.acquire(
+                            ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1), signal))
+                    if not CollaborationRepository(self.store.database).child_for_run(run_id):
+                        prompt_hook = resources.hooks.dispatch("UserPromptSubmit", "prompt", cancel,
+                            fields={"prompt": str(run.get("userInput") or "")})
+                        if prompt_hook.deny or prompt_hook.stop:
+                            raise HookStopRequested
                 recovery_level = 0
                 self.context_recovery_level = 0
                 while True:
@@ -312,6 +327,8 @@ class RuntimeEngine:
         except (PlanningSuspended, AgentSuspended):
             self.events.deliver_pending()
             return
+        except HookStopRequested:
+            self._fail(run_id, "HOOK_REQUESTED_STOP", termination=RunTermination(stage="runtime", reason="hook_requested_stop"))
         except RunResourceError as error:
             self._fail(run_id, str(error))
         except (RuntimeCancelled, SamplingCancelled):
@@ -424,6 +441,7 @@ class RuntimeEngine:
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
                 collaboration=self.collaboration,
+                hooks=resources.hooks,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None
@@ -442,10 +460,17 @@ class RuntimeEngine:
 
         while True:
             self._check_cancel(run.run_id, cancel)
+            if resources.hooks is not None:
+                resources.hooks.flush(cancel)
             self._pause_effective_time(run.run_id)
             # A recovered request still uses its original input. Leave steering
             # unread until that request finishes and the next normal Step begins.
             injected = () if self.store.has_recovered_model_retry(run.run_id) else self.store.consume_pending_input_facts(run.run_id)
+            if resources.hooks is not None and not CollaborationRepository(self.store.database).child_for_run(run.run_id):
+                for item_id, content in injected:
+                    submitted = resources.hooks.dispatch("UserPromptSubmit", "prompt:" + item_id, cancel, fields={"prompt": content})
+                    if submitted.deny or submitted.stop:
+                        raise HookStopRequested
             resources.refresh(tuple(content for _item_id, content in injected))
             dispatcher = resources.dispatcher
             if dispatcher is None:
@@ -480,6 +505,8 @@ class RuntimeEngine:
             )
             agent_baseline = self.collaboration.repository.state(run.run_id) if self.collaboration else None
             def build_current_context() -> ContextBuild:
+                if resources.hooks is not None:
+                    resources.hooks.projected_frontier = resources.hooks.repository.frontier(run.run_id)
                 return context_builder.build(
                     run.run_id, tool_definitions=tool_definitions,
                     retained_context=resources.retained_context,
@@ -664,6 +691,7 @@ class RuntimeEngine:
                 runtime_dependencies=resources.runtime_dependencies,
                 shell_process_manager=resources.shell_process_manager,
                 collaboration=self.collaboration,
+                hooks=resources.hooks,
                 workspace_refresh=(
                     resources.tool_executor.refresh_workspace_index
                     if resources.tool_executor is not None else None
@@ -1042,7 +1070,17 @@ class RuntimeEngine:
                     resources.shell_process_manager.cleanup(close=False)
                     self.store.complete_current_step(run.run_id, "completed")
                     assistant = self.store.create_assistant_item(run.run_id, step.step_index)
-                    self.store.append_item_content(str(assistant["id"]), f"计划已保存：{ready.title}。请审阅计划，确认或修改后再执行。")
+                    plan_message = f"计划已保存：{ready.title}。请审阅计划，确认或修改后再执行。"
+                    self.store.append_item_content(str(assistant["id"]), plan_message)
+                    if resources.hooks is not None:
+                        checked = resources.hooks.before_completion(str(assistant["id"]), plan_message, cancel)
+                        if checked.stop:
+                            raise HookStopRequested
+                        if checked.continuation:
+                            mutation = self.store.complete_assistant_item_committed(str(assistant["id"]))
+                            self.events.publish(mutation, item=mutation.value)
+                            run = run.model_copy(update={"model_context": ()})
+                            continue
                     try:
                         mutation = self.store.complete_assistant_and_run_committed(
                             str(assistant["id"]), run.run_id,
@@ -1194,10 +1232,20 @@ class RuntimeEngine:
                 )
                 return SampleBoundaryAction.REBUILD_CONTEXT
             assert sampled.assistant_item is not None
+            resources.shell_process_manager.cleanup(close=False)
+            if resources.hooks is not None:
+                checked = resources.hooks.before_completion(str(sampled.assistant_item["id"]),
+                    str(sampled.assistant_item.get("content", "")), cancel)
+                if checked.stop:
+                    raise HookStopRequested
+                if checked.continuation:
+                    mutation = self.store.complete_assistant_item_committed(str(sampled.assistant_item["id"]))
+                    self.events.publish(mutation, item=mutation.value)
+                    self.store.complete_current_step(run_id, "completed", reason="hook_continuation")
+                    return SampleBoundaryAction.REBUILD_CONTEXT
             # Completion can still be deferred by input or child state in the
             # final transaction. Settle processes but keep the owner reusable;
             # RunResources closes admission when this Worker actually exits.
-            resources.shell_process_manager.cleanup(close=False)
             self.store.complete_current_step(run_id, "completed")
             try:
                 mutation = self.store.complete_assistant_and_run_committed(

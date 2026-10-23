@@ -17,6 +17,9 @@ from eidos_runtime.extensions.contracts import (
     PluginManifestV1,
     validate_env_values,
 )
+from eidos_runtime.extensions.plugin_package import PluginPackage, read_package
+from eidos_runtime.domain.hooks import HookBinding, PluginCompatibility, PluginHookReview
+from eidos_runtime.persistence.hooks import HookRepository
 from eidos_runtime.workspace.projectless import ProjectlessDirectoryAllocator
 from eidos_runtime.workspace.reader import capture_workspace_identity
 
@@ -24,7 +27,6 @@ from eidos_runtime.workspace.reader import capture_workspace_identity
 MAX_PLUGIN_FILES = 512
 MAX_PLUGIN_FILE_BYTES = 1024 * 1024
 MAX_PLUGIN_TOTAL_BYTES = 8 * 1024 * 1024
-MANIFEST_NAME = "plugin.json"
 MANUAL_MCP_PLUGIN_ID = "manual"
 
 
@@ -43,13 +45,12 @@ class PluginCatalog:
     def import_directory(self, source: Path) -> dict[str, object]:
         try:
             files = _read_source(source)
-            manifest_bytes = files[MANIFEST_NAME]
-            manifest_value = json.loads(
-                manifest_bytes.decode("utf-8"), object_pairs_hook=_unique_object
-            )
-            manifest = PluginManifestV1.model_validate(manifest_value)
+            package = read_package(files)
+            manifest = package.manifest
             _validate_declared_files(manifest, files)
-        except (KeyError, UnicodeDecodeError, json.JSONDecodeError, ValidationError):
+        except PluginImportError:
+            raise
+        except (KeyError, UnicodeDecodeError, ValueError, RecursionError):
             raise PluginImportError("plugin_manifest_invalid") from None
         if manifest.id == MANUAL_MCP_PLUGIN_ID:
             raise PluginImportError("plugin_id_conflict")
@@ -67,7 +68,7 @@ class PluginCatalog:
                 and existing["contentHash"] == content_hash
                 and existing["status"] == "installed"
             ):
-                return existing
+                return self._describe(existing, package)
             if existing["version"] == manifest.version:
                 raise PluginImportError("plugin_version_conflict")
             raise PluginImportError("plugin_id_conflict")
@@ -98,15 +99,45 @@ class PluginCatalog:
             _remove_tree(temporary, self.root)
             _remove_tree(destination, self.root)
             raise
-        return record
+        return self._describe(record, package)
 
     def list_plugins(
         self, *, include_removed: bool = False
     ) -> list[dict[str, object]]:
-        return self.store.list_plugin_records(include_removed=include_removed)
+        return [self._describe(record) if record["status"] == "installed" else record
+                for record in self.store.list_plugin_records(include_removed=include_removed)]
 
     def set_enabled(self, plugin_id: str, enabled: bool) -> dict[str, object]:
-        return self.store.set_plugin_enabled(plugin_id, enabled)
+        if enabled:
+            self.package(plugin_id)
+        return self._describe(self.store.set_plugin_enabled(plugin_id, enabled))
+
+    def set_hook_trust(self, plugin_id: str, content_hash: str, trusted: bool) -> dict[str, object]:
+        if trusted:
+            self.package(plugin_id, expected_hash=content_hash)
+        HookRepository(self.store.database).set_trust(plugin_id, content_hash, trusted)
+        record = self.store.plugin_record(plugin_id)
+        assert record is not None
+        return self._describe(record)
+
+    def _describe(self, record: dict[str, object], package: PluginPackage | None = None) -> dict[str, object]:
+        try:
+            package = package or self.package(str(record["id"]))
+        except PluginImportError:
+            # Damaged packages can still be disabled, revoked and removed.
+            return {**record, "compatibility": PluginCompatibility(issues=("plugin_content_unavailable",)).to_wire_dict(),
+                "hookReview": PluginHookReview(content_hash=str(record["contentHash"]),
+                    latest=HookRepository(self.store.database).latest(str(record["id"]))).to_wire_dict()}
+        if package.compatibility.format == "eidos" and not package.hooks:
+            return record
+        repository = HookRepository(self.store.database)
+        return {**record, "compatibility": package.compatibility.to_wire_dict(),
+                "hookReview": PluginHookReview(content_hash=str(record["contentHash"]),
+                    trusted=repository.trusted(str(record["id"]), str(record["contentHash"])),
+                    definitions=package.hooks, executable_count=sum(hook.supported for hook in package.hooks),
+                    installed_root=str(self.installed_root(str(record["id"]))),
+                    data_directory=str(self.root / str(record["id"]) / "hook-data"),
+                    latest=repository.latest(str(record["id"]))).to_wire_dict()}
 
     def remove(self, plugin_id: str) -> dict[str, object]:
         current = self.store.plugin_record(plugin_id)
@@ -172,13 +203,22 @@ class PluginCatalog:
             str(value["pluginId"]).encode("utf-8"),
             str(value["id"]).encode("utf-8"),
         ))
-        return {
+        snapshot = {
             "schemaVersion": 1,
             "extensionContractVersion": 1,
             "plugins": plugins,
             "skillCatalogHash": _json_hash(skills),
             "mcpConfigHash": _json_hash(servers),
         }
+        hooks = []
+        repository = HookRepository(self.store.database)
+        for record in self.list_plugins():
+            if record["enabled"] and repository.trusted(str(record["id"]), str(record["contentHash"])):
+                hooks.extend(HookBinding(plugin_id=str(record["id"]), plugin_hash=str(record["contentHash"]), definition=hook).to_wire_dict()
+                             for hook in self.package(str(record["id"])).hooks if hook.supported)
+        if hooks:
+            snapshot["hooks"] = hooks
+        return snapshot
 
     def list_mcp_servers(self) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
@@ -426,14 +466,18 @@ class PluginCatalog:
         return self._path_from_record(record)
 
     def manifest(self, plugin_id: str) -> PluginManifestV1:
-        root = self.installed_root(plugin_id)
+        return self.package(plugin_id).manifest
+
+    def package(self, plugin_id: str, *, expected_hash: str | None = None) -> PluginPackage:
+        record = self.store.plugin_record(plugin_id)
+        if record is None:
+            raise ResourceNotFoundError("plugin not found")
         try:
-            value = json.loads(
-                _read_installed_text(root / MANIFEST_NAME),
-                object_pairs_hook=_unique_object,
-            )
-            return PluginManifestV1.model_validate(value)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError):
+            files = _read_source(self._path_from_record(record))
+            if _content_hash(files) != (expected_hash or record["contentHash"]):
+                raise ValueError("plugin content changed")
+            return read_package(files)
+        except (OSError, UnicodeDecodeError, ValueError, RecursionError):
             raise PluginImportError("plugin_unavailable") from None
 
     def _path_from_record(self, record: dict[str, object]) -> Path:
@@ -469,7 +513,12 @@ def _read_source(source: Path) -> dict[str, bytes]:
                 if not stat.S_ISDIR(entry.st_mode):
                     raise PluginImportError("plugin_source_invalid")
                 continue
-            if not stat.S_ISREG(entry.st_mode) or entry.st_size > MAX_PLUGIN_FILE_BYTES:
+            if not stat.S_ISREG(entry.st_mode) or entry.st_nlink != 1:
+                raise PluginImportError("plugin_source_invalid")
+            # Finder metadata is not package content, including after installation.
+            if name == ".DS_Store":
+                continue
+            if entry.st_size > MAX_PLUGIN_FILE_BYTES:
                 raise PluginImportError("plugin_source_invalid")
             relative = candidate.relative_to(root).as_posix()
             flags = os.O_RDONLY
@@ -481,6 +530,7 @@ def _read_source(source: Path) -> dict[str, bytes]:
                     opened = os.fstat(descriptor)
                     if (
                         not stat.S_ISREG(opened.st_mode)
+                        or opened.st_nlink != 1
                         or opened.st_uid != os.getuid()
                         or (opened.st_dev, opened.st_ino) != (entry.st_dev, entry.st_ino)
                     ):
@@ -514,15 +564,6 @@ def _validate_declared_files(
                 raise PluginImportError("plugin_manifest_invalid")
 
 
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise PluginImportError("plugin_manifest_invalid")
-        result[key] = value
-    return result
-
-
 def _content_hash(files: dict[str, bytes]) -> str:
     digest = hashlib.sha256()
     for relative in sorted(files, key=lambda value: value.encode("utf-8")):
@@ -532,32 +573,6 @@ def _content_hash(files: dict[str, bytes]) -> str:
         digest.update(len(files[relative]).to_bytes(8, "big"))
         digest.update(files[relative])
     return digest.hexdigest()
-
-
-def _read_installed_text(path: Path) -> str:
-    try:
-        metadata = path.lstat()
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or stat.S_ISLNK(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or metadata.st_size > MAX_PLUGIN_FILE_BYTES
-        ):
-            raise OSError("unsafe installed file")
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
-        try:
-            opened = os.fstat(descriptor)
-            if (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino):
-                raise OSError("installed file changed")
-            data = os.read(descriptor, MAX_PLUGIN_FILE_BYTES + 1)
-        finally:
-            os.close(descriptor)
-    except OSError:
-        raise PluginImportError("plugin_unavailable") from None
-    if len(data) > MAX_PLUGIN_FILE_BYTES:
-        raise PluginImportError("plugin_unavailable")
-    return data.decode("utf-8")
 
 
 def _json_hash(value: object) -> str:
@@ -604,7 +619,9 @@ def _install_files(destination: Path, files: dict[str, bytes]) -> None:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
-        descriptor = os.open(target, flags, 0o600)
+        # Package scripts must stay directly executable after the safe copy.
+        # A shebang is part of the content reviewed by Hook trust.
+        descriptor = os.open(target, flags, 0o700 if data.startswith(b"#!") else 0o600)
         try:
             offset = 0
             while offset < len(data):

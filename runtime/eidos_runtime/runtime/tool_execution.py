@@ -20,6 +20,9 @@ from eidos_runtime.db.invariants import RuntimeInvariantError
 from eidos_runtime.domain.approval_policy import ApprovalReview
 from eidos_runtime.domain.tool_content import ToolContentSnapshot
 from eidos_runtime.model.client import FunctionToolPayload, ModelToolCall
+from eidos_runtime.model.client import CustomToolPayload
+from eidos_runtime.domain.hooks import HookStopRequested
+from eidos_runtime.runtime.hooks import HookService, compatible_tool_input, rewritten_arguments
 from eidos_runtime.runtime.approval import (
     ApprovalCoordinator,
     ApprovalOutcome,
@@ -273,6 +276,7 @@ class ToolExecutionController:
         monotonic=time.monotonic,
         resource_registry: ResourceRegistry | None = None,
         concurrency: ToolConcurrencyGate | None = None,
+        hooks: HookService | None = None,
     ) -> None:
         self.store = store
         self.dispatcher = dispatcher
@@ -283,6 +287,7 @@ class ToolExecutionController:
         self.monotonic = monotonic
         self.resources = resource_registry or ResourceRegistry()
         self.concurrency = concurrency or ToolConcurrencyGate()
+        self.hooks = hooks
         self._execution_state = threading.local()
 
     @property
@@ -477,6 +482,21 @@ class ToolExecutionController:
         deadline: float | None,
     ) -> HandlerOutcome:
         tool_call = item.get("toolCall")
+        rejection = None
+        if self.hooks is not None and call.name != "write_stdin" and self.dispatcher.validate_execution(call, plan):
+            arguments = {"patch": call.payload.input} if isinstance(call.payload, CustomToolPayload) else call.arguments
+            name, aliases, compatible = compatible_tool_input(call.name, arguments)
+            checked = self.hooks.dispatch("PreToolUse", "pre:" + str(item["id"]), cancel,
+                names=aliases, fields={"tool_name": name, "tool_use_id": call.provider_call_id, "tool_input": compatible})
+            if checked.stop:
+                raise HookStopRequested
+            if checked.deny:
+                rejection = "\n".join(checked.feedback) or "A configured Hook denied this tool call."
+            elif checked.updated_input is not None:
+                updated = rewritten_arguments(call.name, checked.updated_input)
+                payload = CustomToolPayload(input=str(updated["patch"])) if isinstance(call.payload, CustomToolPayload) else FunctionToolPayload(arguments=updated)
+                call = ModelToolCall(call.provider_call_id, call.name, payload, raw_payload=call.raw_payload or call.payload)
+                plan = self.dispatcher.plan(call, plan.binding)
         call_id = call.provider_call_id
         if isinstance(tool_call, dict) and isinstance(tool_call.get("id"), str):
             call_id = tool_call["id"]
@@ -488,6 +508,7 @@ class ToolExecutionController:
                 plan=plan,
                 cancel=cancel,
                 deadline=deadline,
+                hook_rejection=rejection,
             )
             finish_tool_call(span, outcome)
             return outcome
@@ -501,6 +522,7 @@ class ToolExecutionController:
         plan: ToolDispatchPlan,
         cancel: threading.Event,
         deadline: float | None,
+        hook_rejection: str | None = None,
     ) -> HandlerOutcome:
         started = self.monotonic()
         effective_deadline = min(
@@ -536,6 +558,8 @@ class ToolExecutionController:
                 outcome = self._interrupted(
                     call, plan, reason, uncertain=False
                 )
+            elif hook_rejection is not None:
+                outcome = HandlerOutcome(tool_result(call.name, "rejected", "hook_denied", hook_rejection), "declined", "completed")
             elif plan.activation_required:
                 outcome = HandlerOutcome(
                     tool_error(
@@ -902,6 +926,10 @@ class ToolExecutionController:
                     ) from error
             self._execution_state.phase = ToolExecutionPhase.COMMITTING
             duration_ms = max(0, int((self.monotonic() - started) * 1000))
+            post_hook_event = None
+            if self.hooks is not None and call.name != "write_stdin" and hook_rejection is None and self.dispatcher.validate_execution(call, plan):
+                if call.name != "run_shell" or outcome.result.get("data", {}).get("executionStatus") != "running":
+                    post_hook_event = self.hooks.pending_post_tool(call, str(item["id"]), outcome.result)
             mutation = self.store.complete_tool_item_once_committed(
                 str(item["id"]),
                 json.dumps(
@@ -929,6 +957,7 @@ class ToolExecutionController:
                 diff_hash=outcome.diff_hash,
                 duration_ms=duration_ms,
                 model_content=(outcome.model_content if outcome.result.get("outcome") == "success" else None),
+                post_hook_event=post_hook_event,
             )
             self.events.publish(
                 mutation,
@@ -950,6 +979,8 @@ class ToolExecutionController:
             )
             if raise_after_commit:
                 raise RuntimeCancelled
+            if self.hooks is not None and post_hook_event is not None:
+                self.hooks.flush(cancel)
             return replace(outcome, item=mutation.value)
         except ToolInfrastructureError:
             try:

@@ -105,6 +105,32 @@ class PluginCatalogTests(unittest.TestCase):
         )
         self.assertFalse(any(path.name.startswith(".import-") for path in installed.parent.iterdir()))
 
+    def test_finder_metadata_is_ignored_on_import_and_runtime_validation(self) -> None:
+        for relative in (".DS_Store", "skills/review/.DS_Store"):
+            (self.source / relative).write_bytes(b"Finder metadata")
+        first = self.catalog.import_directory(self.source)
+        for relative in (".DS_Store", "skills/review/.DS_Store"):
+            (self.source / relative).unlink()
+        self.assertEqual(self.catalog.import_directory(self.source), first)
+        self.assertFalse(any(self.catalog.installed_root("demo").rglob(".DS_Store")))
+
+        installed = self.catalog.installed_root("demo")
+        for relative in (".DS_Store", "skills/review/.DS_Store"):
+            (installed / relative).write_bytes(b"New Finder metadata")
+        self.catalog.set_enabled("demo", True)
+        snapshot = self.catalog.extension_snapshot()
+        self.assertEqual(snapshot["plugins"][0]["contentHash"], first["contentHash"])
+        self.assertEqual(self.catalog.list_mcp_servers(), [])
+
+        (installed / "skills/review/SKILL.md").write_text("changed", encoding="utf-8")
+        with self.assertRaisesRegex(PluginImportError, "plugin_unavailable"):
+            self.catalog.extension_snapshot()
+
+    def test_finder_metadata_symlinks_are_still_rejected(self) -> None:
+        (self.source / ".DS_Store").symlink_to(self.source / "plugin.json")
+        with self.assertRaisesRegex(PluginImportError, "plugin_source_invalid"):
+            self.catalog.import_directory(self.source)
+
     def test_same_id_and_version_with_different_content_conflicts(self) -> None:
         self.catalog.import_directory(self.source)
         (self.source / "skills" / "review" / "SKILL.md").write_text(
