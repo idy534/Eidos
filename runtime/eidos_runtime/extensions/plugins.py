@@ -12,12 +12,15 @@ from collections.abc import Mapping
 from pydantic import ValidationError
 
 from eidos_runtime.db.storage import ResourceNotFoundError, SessionStore
+from eidos_runtime.db.repositories.extensions import ExtensionRepository
 from eidos_runtime.extensions.contracts import (
     McpServerConfigV1,
     PluginManifestV1,
     validate_env_values,
 )
 from eidos_runtime.extensions.plugin_package import PluginPackage, read_package
+from eidos_runtime.extensions.skill_manifest import parse_skill_manifest
+from eidos_runtime.models.plugin_installation import PluginInstallation, PluginRevision
 from eidos_runtime.domain.hooks import HookBinding, PluginCompatibility, PluginHookReview
 from eidos_runtime.persistence.hooks import HookRepository
 from eidos_runtime.workspace.projectless import ProjectlessDirectoryAllocator
@@ -41,6 +44,8 @@ class PluginCatalog:
         self.store = store
         self.root = store.data_directory / "extensions" / "plugins"
         _private_directory(self.root)
+        from eidos_runtime.application.mcp_connections import McpConnections
+        self.connections = McpConnections(self)
 
     def import_directory(self, source: Path) -> dict[str, object]:
         try:
@@ -54,38 +59,41 @@ class PluginCatalog:
             raise PluginImportError("plugin_manifest_invalid") from None
         if manifest.id == MANUAL_MCP_PLUGIN_ID:
             raise PluginImportError("plugin_id_conflict")
-        manual_server_ids = {
-            str(record["serverId"])
-            for record in self.store.list_manual_mcp_servers()
-        }
-        if any(server.id in manual_server_ids for server in manifest.mcp_servers):
-            raise PluginImportError("mcp_server_id_conflict")
+        self._assert_mcp_ids(manifest.id, tuple(server.id for server in manifest.mcp_servers))
         content_hash = _content_hash(files)
+        versions = ExtensionRepository(self.store.database)
+        known = versions.plugin_version(manifest.id, version=manifest.version)
+        if known is not None and known.content_hash != content_hash:
+            raise PluginImportError("plugin_version_conflict")
         existing = self.store.plugin_record(manifest.id)
         if existing is not None:
-            if existing["version"] != manifest.version:
-                raise PluginImportError("plugin_id_conflict")
-            if existing["contentHash"] != content_hash:
+            if existing["version"] == manifest.version and existing["contentHash"] != content_hash:
                 raise PluginImportError("plugin_version_conflict")
-            if existing["status"] == "installed":
+            if existing["version"] == manifest.version and existing["status"] == "installed":
                 return self._describe(existing, package)
-            if self.store.plugin_referenced_by_nonterminal_run(
+            if existing["status"] == "removed" and existing["version"] == manifest.version and self.store.plugin_referenced_by_nonterminal_run(
                 manifest.id, content_hash
             ):
                 raise PluginImportError("plugin_version_conflict")
 
+        try:
+            for skill in manifest.skills:
+                parse_skill_manifest(files[f"{skill.root}/SKILL.md"].decode("utf-8"),
+                                     PurePosixPath(skill.root).name)
+        except (UnicodeDecodeError, ValueError):
+            raise PluginImportError("plugin_manifest_invalid") from None
+
         destination = self._installed_path(manifest.id, manifest.version)
-        if os.path.lexists(destination):
+        reuse = os.path.lexists(destination)
+        if reuse and (known is None or _content_hash(_read_source(destination)) != content_hash):
             raise PluginImportError("plugin_version_conflict")
         _private_directory(destination.parent)
         temporary = destination.parent / f".import-{uuid.uuid4().hex}"
         published = False
         try:
-            _install_files(temporary, files)
-            os.replace(temporary, destination)
-            published = True
-            _fsync_directory(destination.parent)
-            record = self.store.insert_plugin_record({
+            if not reuse:
+                _install_files(temporary, files)
+            values = {
                 "id": manifest.id,
                 "name": manifest.name,
                 "version": manifest.version,
@@ -97,13 +105,43 @@ class PluginCatalog:
                     sort_keys=True,
                 ),
                 "contentHash": content_hash,
-            })
+            }
+            with self.store.lock:
+                self._assert_mcp_ids(manifest.id, tuple(server.id for server in manifest.mcp_servers))
+                current = self.store.plugin_record(manifest.id)
+                if current != existing:
+                    raise PluginImportError("plugin_version_conflict")
+                if not reuse:
+                    if os.path.lexists(destination):
+                        raise PluginImportError("plugin_version_conflict")
+                    os.replace(temporary, destination)
+                    published = True
+                    _fsync_directory(destination.parent)
+                if existing is not None and existing["version"] != manifest.version:
+                    versions.replace_plugin_version(
+                        PluginInstallation.model_validate(values),
+                        PluginRevision(plugin_id=manifest.id, version=str(existing["version"]),
+                                       content_hash=str(existing["contentHash"]), status=existing["status"]),
+                    )
+                    record = self.store.plugin_record(manifest.id)
+                    assert record is not None
+                else:
+                    record = self.store.insert_plugin_record(values)
         except Exception:
             _remove_tree(temporary, self.root)
             if published:
                 _remove_tree(destination, self.root)
             raise
+        if existing is not None and existing["version"] != manifest.version:
+            self.connections.revoke_plugin(manifest.id)
         return self._describe(record, package)
+
+    def _assert_mcp_ids(self, plugin_id: str, server_ids: tuple[str, ...]) -> None:
+        # Legacy tool names contain the server ID, so it must remain unique.
+        occupied = {str(record["serverId"]) for record in self.store.list_manual_mcp_servers()}
+        occupied.update(ExtensionRepository(self.store.database).plugin_server_ids(excluding=plugin_id))
+        if any(server_id in occupied for server_id in server_ids):
+            raise PluginImportError("mcp_server_id_conflict")
 
     def list_plugins(
         self, *, include_removed: bool = False
@@ -132,10 +170,11 @@ class PluginCatalog:
             return {**record, "compatibility": PluginCompatibility(issues=("plugin_content_unavailable",)).to_wire_dict(),
                 "hookReview": PluginHookReview(content_hash=str(record["contentHash"]),
                     latest=HookRepository(self.store.database).latest(str(record["id"]))).to_wire_dict()}
+        presentation = {"presentation": package.presentation.to_wire_dict()} if package.presentation else {}
         if package.compatibility.format == "eidos" and not package.hooks:
-            return record
+            return {**record, **presentation}
         repository = HookRepository(self.store.database)
-        return {**record, "compatibility": package.compatibility.to_wire_dict(),
+        return {**record, **presentation, "compatibility": package.compatibility.to_wire_dict(),
                 "hookReview": PluginHookReview(content_hash=str(record["contentHash"]),
                     trusted=repository.trusted(str(record["id"]), str(record["contentHash"])),
                     definitions=package.hooks, executable_count=sum(hook.supported for hook in package.hooks),
@@ -150,6 +189,7 @@ class PluginCatalog:
         if current["status"] == "removed":
             return current
         removed = self.store.remove_plugin_record(plugin_id)
+        self.connections.revoke_plugin(plugin_id)
         if not self.store.plugin_referenced_by_nonterminal_run(
             plugin_id, str(current["contentHash"])
         ):
@@ -179,6 +219,8 @@ class PluginCatalog:
                 "consented": self.store.mcp_server_state(
                     str(record["id"]), server.id
                 )["consented"],
+                **({"connectionRevision": self.connections.revision(str(record["id"]), server.id)}
+                   if server.transport == "streamable-http" else {}),
             } for server in manifest.mcp_servers)
         for record in self.store.list_manual_mcp_servers():
             state = self.store.mcp_server_state(
@@ -253,6 +295,10 @@ class PluginCatalog:
                 }
                 if projection["errorCode"] is None:
                     projection.pop("errorCode")
+                if config.transport == "streamable-http":
+                    connection = self.connections.read(str(record["id"]), config.id)
+                    projection["remote"] = {"url": config.url, "authType": connection.auth_type}
+                    projection["available"] = bool(projection["available"] and connection.status == "connected")
                 result.append(projection)
         for record in self.store.list_manual_mcp_servers():
             state = self.store.mcp_server_state(
@@ -356,7 +402,9 @@ class PluginCatalog:
             "toolTimeoutSeconds": config.tool_timeout_seconds,
         }
         record["contentHash"] = _json_hash(record)
-        self.store.insert_manual_mcp_server(record)
+        with self.store.lock:
+            self._assert_mcp_ids(MANUAL_MCP_PLUGIN_ID, (config.id,))
+            self.store.insert_manual_mcp_server(record)
         created = next(
             server for server in self.list_mcp_servers()
             if server["pluginId"] == MANUAL_MCP_PLUGIN_ID
@@ -456,14 +504,25 @@ class PluginCatalog:
         return {"config": config, "cwd": canonical_cwd, "env": env_values}
 
     def cleanup_removed(self) -> None:
-        for record in self.list_plugins(include_removed=True):
-            if record["status"] != "removed" or self.store.plugin_referenced_by_nonterminal_run(
-                str(record["id"]), str(record["contentHash"])
+        for version in ExtensionRepository(self.store.database).plugin_versions():
+            record = self.store.plugin_record(version.plugin_id)
+            if record is None or (record["status"] == "installed" and record["version"] == version.version):
+                continue
+            if self.store.plugin_referenced_by_nonterminal_run(
+                version.plugin_id, version.content_hash
             ):
                 continue
-            _remove_tree(self._path_from_record(record), self.root)
+            _remove_tree(self._installed_path(version.plugin_id, version.version), self.root)
 
-    def installed_root(self, plugin_id: str) -> Path:
+    def installed_root(self, plugin_id: str, *, version: str | None = None,
+                       expected_hash: str | None = None) -> Path:
+        if version is not None or expected_hash is not None:
+            pinned = ExtensionRepository(self.store.database).plugin_version(
+                plugin_id, version=version, content_hash=expected_hash,
+            )
+            if pinned is None or (expected_hash is not None and pinned.content_hash != expected_hash):
+                raise PluginImportError("plugin_unavailable")
+            return self._installed_path(plugin_id, pinned.version)
         record = self.store.plugin_record(plugin_id)
         if record is None:
             raise ResourceNotFoundError("plugin not found")
@@ -477,7 +536,7 @@ class PluginCatalog:
         if record is None:
             raise ResourceNotFoundError("plugin not found")
         try:
-            files = _read_source(self._path_from_record(record))
+            files = _read_source(self.installed_root(plugin_id, expected_hash=expected_hash))
             if _content_hash(files) != (expected_hash or record["contentHash"]):
                 raise ValueError("plugin content changed")
             return read_package(files)
@@ -560,9 +619,17 @@ def _validate_declared_files(
         if f"{skill.root}/SKILL.md" not in files:
             raise PluginImportError("plugin_manifest_invalid")
     for server in manifest.mcp_servers:
-        executable = PurePosixPath(server.executable)
-        if len(executable.parts) > 1 and not executable.is_absolute():
-            if server.executable not in files:
+        declared = server.executable
+        package_relative = False
+        for prefix in ("${PLUGIN_ROOT}/", "${CLAUDE_PLUGIN_ROOT}/"):
+            if declared.startswith(prefix):
+                declared = declared.removeprefix(prefix)
+                package_relative = True
+        if declared == "${RUNTIME_PYTHON}":
+            continue
+        executable = PurePosixPath(declared)
+        if (package_relative or "/" in declared) and not executable.is_absolute():
+            if executable.as_posix() not in files:
                 raise PluginImportError("plugin_manifest_invalid")
 
 

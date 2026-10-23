@@ -20,6 +20,7 @@ architecture-overview.html
 - [当前架构](current-architecture.md)：说明进程、边界、职责和真实调用链。
 - [Runtime Git Worktree Kernel](architecture/git-worktree.md)：说明 Project、Worktree、恢复和 Sandbox 边界。
 - [当前能力](current-capabilities.md)：说明当前 main 已经能做什么。
+- [当前插件](current-plugins.md)：说明插件格式、版本更新、MCP 接入和后续内置插件的边界。
 - [当前渠道接入](current-channels.md)：说明钉钉、飞书和企业微信配置、收发消息、权限、会话与恢复。
 - [当前本地定时任务](current-automations.md)：说明时间规则、执行目标、审批、工具、持久化和验证边界。
 - [当前限制](current-limitations.md)：说明当前 main 还没有形成哪些完整闭环。

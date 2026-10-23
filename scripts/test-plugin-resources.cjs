@@ -59,9 +59,31 @@ app.whenReady().then(async () => {
       await wait("!document.querySelector('[role=alertdialog]') && document.activeElement?.textContent==='审阅 Hook'");
       await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
       await wait("!document.querySelector('.plugin-resource-dialog') && document.activeElement?.classList.contains('plugin-name-button')");
+      await wait("Array.from(document.querySelectorAll('button')).some(button => button.textContent==='安装')");
+      await run("Array.from(document.querySelectorAll('button')).find(button => button.textContent==='安装').click()");
+      await wait("document.querySelector('[aria-label=\"查看 GitHub 的资源\"]')");
+      await run("document.querySelector('[aria-label=\"查看 GitHub 的资源\"]').click()");
+      await wait("document.querySelector('#mcp-token-github')");
+      await settle();
+      await run("document.querySelectorAll('.app-toast-close').forEach(button => button.click())");
+      await wait("!document.querySelector('.app-toast-close')");
+      const remoteLayout = await run(`(() => { const body=document.querySelector('.plugin-resource-body'); const input=document.querySelector('#mcp-token-github'); return { overflow:body.scrollWidth-body.clientWidth, type:input.type, text:body.textContent }; })()`);
+      assert.equal(remoteLayout.type, "password");
+      assert.ok(remoteLayout.overflow <= 1 && remoteLayout.text.includes("当前版本尚未配置 GitHub 浏览器登录"));
+      if (process.env.EIDOS_PLUGIN_SCREENSHOT_DIR) {
+        await writeFile(path.join(process.env.EIDOS_PLUGIN_SCREENSHOT_DIR, `github-connect-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      await run("document.querySelector('#mcp-token-github').focus()");
+      await win.webContents.insertText("fixture-token");
+      await run("Array.from(document.querySelectorAll('.mcp-connection-panel button')).find(button => button.textContent==='使用令牌连接').click()");
+      await wait("document.querySelector('.mcp-connection-panel').textContent.includes('账号已连接 · octocat')");
+      await run("Array.from(document.querySelectorAll('.mcp-connection-panel button')).find(button => button.textContent==='断开账号连接').click()");
+      await wait("document.querySelector('#mcp-token-github')?.value===''");
+      await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      await wait("!document.querySelector('.plugin-resource-dialog')");
     }
     assert.deepEqual(errors, []);
-    console.log("Plugin resources passed 320/768/1024/1440 layout, counts, nested detail, skill toggle, focus and keyboard checks.");
+    console.log("Plugin resources passed 320/768/1024/1440 layout, nested dialogs, keyboard, GitHub install, PAT connection and disconnect checks.");
   } catch (error) { console.error(error); code = 1; }
   finally {
     clearTimeout(deadline);

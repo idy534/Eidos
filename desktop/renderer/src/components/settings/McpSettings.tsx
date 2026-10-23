@@ -499,7 +499,7 @@ export function McpSettings({
 
                 const category = getCategoryInfo(server.serverId, server.executable);
                 const CategoryIcon = category.icon;
-                const fullCommand = [server.executable, ...server.argv].join(" ");
+                const fullCommand = server.remote?.url || [server.executable, ...server.argv].join(" ");
 
                 // Status logic
                 let statusTone: "success" | "warning" | "danger" | "neutral" = "neutral";

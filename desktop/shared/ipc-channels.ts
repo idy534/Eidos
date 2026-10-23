@@ -141,6 +141,7 @@ export const IPC = {
 
   // Plugin
   PLUGIN_LIST: "plugin:list",
+  PLUGIN_BUILTIN: "plugin:builtin",
   PLUGIN_IMPORT: "plugin:import",
   PLUGIN_SET_ENABLED: "plugin:set-enabled",
   PLUGIN_SET_HOOK_TRUST: "plugin:set-hook-trust",
@@ -155,6 +156,8 @@ export const IPC = {
   // MCP
   MCP_LIST: "mcp:list",
   MCP_TOOLS: "mcp:tools",
+  MCP_CONNECTION: "mcp:connection",
+  MCP_LOGIN_OPEN: "mcp:login-open",
   MCP_SET_ENABLED: "mcp:set-enabled",
   MCP_CREATE: "mcp:create",
   MCP_UPDATE: "mcp:update",

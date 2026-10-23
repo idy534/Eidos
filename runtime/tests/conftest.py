@@ -15,6 +15,8 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 @pytest.fixture
 def downgrade_hooks_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS mcp_connections")
+        connection.execute("DROP TABLE IF EXISTS plugin_versions")
         connection.execute("DROP TABLE IF EXISTS hook_pending_events")
         connection.execute("DROP TABLE IF EXISTS hook_invocations")
         connection.execute("DROP TABLE IF EXISTS plugin_hook_trust")
@@ -169,7 +171,9 @@ INTEGRATION_FILES = frozenset(
         "test_git_worktree_kernel.py",
         "test_managed_run_admission.py",
         "test_mcp.py",
+        "test_mcp_auth.py",
         "test_mcp_sandbox.py",
+        "test_remote_mcp.py",
         "test_model_persistence.py",
         "test_model_reasoning_replay.py",
         "test_phase2_runtime.py",
@@ -194,6 +198,7 @@ INTEGRATION_FILES = frozenset(
         "test_project_lifecycle.py",
         "test_projectless_workspaces.py",
         "test_plugins.py",
+        "test_plugin_upgrades.py",
         "test_repository_application_persistence.py",
         "test_repository_persistence.py",
         "test_repository_watcher.py",

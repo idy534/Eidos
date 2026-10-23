@@ -630,7 +630,7 @@ Runtime 使用 typed Git observations，并在 observation failure、timeout 或
 
 ## 14. Extension Runtime
 
-PluginCatalog 只接收受控的本地 Plugin v1 包。Runtime 校验 manifest、文件数量、单文件和总大小、content hash，并把安装内容写入私有 extensions 目录。Plugin 可以声明 Skill 和 MCP Server。Settings 也可以创建本地 stdio MCP Server。手动 MCP 保存在独立的 `manual_mcp_servers` 表中，不伪装成 Plugin。Plugin 和手动 MCP 会在统一 MCP Catalog 中投影。Plugin 的启用状态、版本、hash 和引用关系进入 SQLite。
+PluginCatalog 接收受控的本地 Eidos v1、Portable Agent Plugins 和 Codex 兼容包。Runtime 校验 manifest、Skill 元数据、文件数量、单文件和总大小、content hash，并把内容写入私有 extensions 目录。Plugin 可以声明 Skill、已支持的 command Hook、本地 stdio 和远程 Streamable HTTP MCP Server。`plugin_versions` 在 SQLite v37 保存已知版本身份；显式更新在同一事务切换当前版本、停用插件、清除 Hook 信任与 MCP 授权，并写入 Event/Outbox。旧 Run 的 Skill 按冻结版本和内容身份定位文件，退役版本在活动引用结束后由现有清理入口删除。手动 MCP 继续保存在独立的 `manual_mcp_servers` 表中，并与包内 MCP 共用 SDK、Tool Registry 和执行链。展示 metadata 采用 Python 生成的类型及 Schema。详细兼容与连接边界见 [current-plugins.md](current-plugins.md)。
 
 Plugin 的安装根目录是 `extensions/plugins/<pluginId>/<version>/`。内容 Hash 仅作为内部内容身份参与 SQLite、快照、信任和完整性核验，不再作为目录层级。Runtime 不兼容旧的 Hash 子目录布局。旧安装需要清理后重新导入，历史快照不迁移。目录发布失败不会清理其他已存在的版本目录。
 
@@ -654,11 +654,13 @@ Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md`
 
 Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 在受控读取成功时捕获 PNG/JPEG 内容，并通过共同的工具结果提交边界保存。Provider Adapter 只把已保存的内容编码为 multimodal `BinaryContent`，不重读源路径，也不比较源文件 Hash。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
 
-Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skill 的 `type: mcp` 声明，并与本 Run extension snapshot 中已配置且 available 的 Plugin 或手动 MCP server 比较。Runtime 保存 installed、missing 或 unsupported 的结构化诊断。Runtime 也会把未满足项作为低权限 user context warning 提供给后续 Step。这个检查不会安装、启用或启动新的 MCP server。Plugin 和手动 MCP 都由独立的 MCP 配置、consent、官方 Python MCP SDK stdio client、Tool Registry、Approval 和 Sandbox 链路管理。Runtime 不负责 pip、npm、系统包或 MCP server 的自动安装。
+Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skill 的 `type: mcp` 声明，并与本 Run extension snapshot 中已配置且 available 的 Plugin 或手动 MCP server 比较。Runtime 保存 installed、missing 或 unsupported 的结构化诊断。Runtime 也会把未满足项作为低权限 user context warning 提供给后续 Step。这个检查不会安装、启用或启动新的 MCP server。Plugin 和手动 MCP 都由独立的 MCP 配置、consent、官方 Python MCP SDK transport、Tool Registry、Approval 和 Sandbox 链路管理。Runtime 不负责 pip、npm、系统包或 MCP server 的自动安装。
 
 `SkillCatalog` 管理 bundled system skills、用户和 Plugin Skill。Turn 开始时，Catalog Snapshot 和 SelectedSkillSet 固化 qualified ID、source、version、source kind、content hash、canonical `file:` locator 和 implicit policy。`SkillAccess` 只从该可信 snapshot locator 激活 canonical root。模型不能通过传入任意 absolute path 扩大 Shell 权限。显式选择、成功的 `skill_read` 和已知 `scripts/` Shell invocation 都会沿 RunResources → ToolCallRuntime → Shell → Seatbelt 使用同一份 Run-scoped activation state。
 
-MCP 当前使用官方 Python MCP SDK 的 stdio client。用户可以在 Settings 创建、编辑和卸载手动 MCP，配置启动命令、参数、工作目录、环境变量和环境变量透传名。手动配置保存或编辑后默认未授权，启用时复用现有 MCP review、Approval 和 Sandbox 流程。编辑时留空的环境变量值会保留原值。环境变量值只保存在受保护的 JSON Blob 中，不进入 MCP 列表、事件或日志。MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。Server Tool 会进入统一 Tool Registry，保留 MCP provenance，继续按 external Tool 保留 Durable Intent、Sandbox、timeout、结果校验和 reconciliation；只有需要审批的工具进入 Approval。MCP 进程使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。
+MCP 使用官方 Python MCP SDK 的 stdio 和 Streamable HTTP transport。手动编辑器配置本地进程，远程服务由插件包声明。`McpConnections` 用例维护独立的账号生命周期，SQLite v38 保存连接状态和凭据引用，受保护文件保存令牌。标准 OAuth 的发现、注册和 PKCE 交给 MCP SDK，令牌请求和刷新交给 Authlib。Runtime 启动恢复中断登录，Run/Hook 的目录视图不执行恢复。多个视图在同一 AnyIO 内核上共用账号版本的短期刷新锁，工具执行不持有该锁。临时回环 HTTP 只接收 OAuth 授权码，本地控制面仍为 stdio JSON-RPC。
+
+MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。两种 transport 共用统一 Tool Registry、MCP provenance、Approval、Durable Intent、timeout、结果校验和未知结果记录。远程请求前核对配置、账号版本、启用状态和 consent，凭据不进入运行快照或模型上下文。本地进程继续使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。远程服务只连接明确配置的地址，不获得本地文件能力。内置 GitHub 通过受管包安装入口进入同一链路。安装、账号连接和工具调用权限分别管理，详见 [current-plugins.md](current-plugins.md)。
 
 每个 MCP Connection 在 macOS 的 canonical `/private/tmp` 下使用标准库创建私有短目录 `eidos-mcp-<随机值>/`，不再在 `~/.eidos/extensions/mcp-runtime/<uuid>/` 下分配运行目录。默认 HOME、TMPDIR 和启动器 PID 文件位于该连接目录内，服务显式配置和环境透传仍然优先。长数据目录、长主进程 TMPDIR 和服务工作目录不参与连接临时路径拼接。目录初始权限为 `0700`。启动前、进程组终止前和清理前核对目录类型及 device、inode、owner。连接关闭仍先等待进程组、Service 和 callback 停止，再删除自建目录。目录被替换时不跟随替代路径；Runtime 保留原有关闭失败和未知结果语义。
 

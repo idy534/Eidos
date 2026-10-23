@@ -9,6 +9,7 @@ from pydantic import Field, StrictInt, StrictStr, field_validator, model_validat
 from semantic_version import Version
 
 from eidos_runtime.protocol.schemas import ClosedModel
+from eidos_runtime.models.mcp_connections import RemoteMcpAuth, remote_url
 
 
 _ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -61,9 +62,14 @@ class SkillDeclarationV1(ClosedModel):
 
 class McpServerConfigV1(ClosedModel):
     id: StrictStr
-    executable: StrictStr = Field(min_length=1, max_length=1024)
+    executable: StrictStr = Field(default="", max_length=1024)
+    transport: Literal["stdio", "streamable-http"] = Field(default="stdio", exclude_if=lambda value: value == "stdio")
+    url: StrictStr | None = Field(default=None, exclude_if=lambda value: value is None)
+    auth: RemoteMcpAuth | None = Field(default=None, exclude_if=lambda value: value is None)
     argv: list[StrictStr] = Field(default_factory=list, max_length=64)
     env_names: list[StrictStr] = Field(default_factory=list, alias="envNames", max_length=64)
+    env_bindings: dict[StrictStr, StrictStr] = Field(default_factory=dict, alias="envBindings",
+                                                  max_length=64, exclude_if=lambda value: not value)
     permission_profile: Literal["connector", "workspace_read"] = Field(
         alias="permissionProfile"
     )
@@ -74,6 +80,22 @@ class McpServerConfigV1(ClosedModel):
         default=60, alias="toolTimeoutSeconds", ge=1, le=600
     )
     enabled: bool = False
+
+    @model_validator(mode="after")
+    def validate_transport(self) -> "McpServerConfigV1":
+        if self.transport == "stdio":
+            if not self.executable or self.url is not None or self.auth is not None:
+                raise ValueError("mcp_transport_invalid")
+        else:
+            if not self.url or self.executable or self.argv or self.env_names or self.env_bindings:
+                raise ValueError("mcp_transport_invalid")
+            remote_url(self.url)
+            if self.auth and self.auth.type == "github-device":
+                from urllib.parse import urlsplit
+                parsed = urlsplit(self.url)
+                if parsed.scheme != "https" or parsed.netloc != "api.githubcopilot.com" or not parsed.path.startswith("/mcp/"):
+                    raise ValueError("mcp_github_origin_invalid")
+        return self
 
     @field_validator("id")
     @classmethod
@@ -101,6 +123,13 @@ class McpServerConfigV1(ClosedModel):
     def validate_env_names(cls, values: list[str]) -> list[str]:
         if len(set(values)) != len(values) or any(not _ENV.fullmatch(value) for value in values):
             raise ValueError("invalid_env_names")
+        return values
+
+    @field_validator("env_bindings")
+    @classmethod
+    def validate_env_bindings(cls, values: dict[str, str]) -> dict[str, str]:
+        if any(not _ENV.fullmatch(key) or not _ENV.fullmatch(value) for key, value in values.items()):
+            raise ValueError("invalid_env_bindings")
         return values
 
 

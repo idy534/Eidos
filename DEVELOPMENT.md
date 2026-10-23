@@ -77,6 +77,29 @@ Runtime 启动日志包含 `Runtime startup phase=... duration_ms=... outcome=..
 
 ## 4. Test
 
+### 内置 GitHub 与远程插件
+
+设置 → Plugins → 内置插件 → GitHub → 安装，会通过普通受管包入口安装 GitHub。用户再打开 GitHub 的资源详情连接账号。PAT 只在密码输入框中填写，不能写入包或提交到仓库。应用不需要用户安装 Docker、Node、GitHub CLI 或本地 GitHub MCP 二进制。
+
+浏览器 Device Flow 需要发行方先注册自己的 GitHub OAuth App / GitHub App，并在 GitHub 启用 Device Flow。公开 Client ID 可以放入 `runtime/eidos_runtime/resources/plugins/github/mcp.json` 的 `extensions.com.eidos.auth.clientId`，并按包内容变化更新插件版本。开发环境也可以使用 `EIDOS_GITHUB_CLIENT_ID=<public-client-id> pnpm start`。Client Secret 不参与 Device Flow，也不能打进包。仓库当前没有填入真实 Client ID；未配置时，界面提供 PAT 连接和 GitHub 令牌设置入口，不显示可用的浏览器登录按钮。
+
+远程 MCP 使用官方 SDK。标准 OAuth 的发现、注册、PKCE 和回调校验交给 SDK；Device Flow 的令牌请求和 OAuth 刷新使用 `authlib==1.9.1`。Eidos 保留取消、授权、快照、凭据文件、并发刷新和 SQLite 条件更新语义。新增依赖已进入主 Runtime 锁文件。v37→v38 只新增连接表，秘密仍在独立的 `0700`/`0600` 文件中。旧 Runtime 不能打开 v38 数据。
+
+对应的定向验证：
+
+```bash
+uv run --locked pytest runtime/tests/test_remote_mcp.py runtime/tests/test_mcp_auth.py runtime/tests/test_mcp.py runtime/tests/test_mcp_details.py runtime/tests/test_mcp_sandbox.py
+node scripts/generate-mcp-connections-contracts.mjs
+pnpm build:main
+node --test dist/main/runtime-client-connections.test.js
+pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/McpConnectionPanel.behavior.test.tsx desktop/renderer/src/components/settings/PluginSettings.behavior.test.tsx
+pnpm exec electron scripts/test-plugin-resources.cjs
+```
+
+开发者可以在构建独立 Runtime 后设置 `EIDOS_CONNECTION_TEST_BUNDLE=1`，用同一个 Main 定向测试验证包内 Python、SDK、Authlib、内置资源和重启连接。上述模拟服务测试不代表真实 GitHub 账号、组织审批、SSO 或浏览器注册已经验收。Full Suite、DMG 和发布签名验收仍分别执行。
+
+插件更新与兼容解析的定向入口是 `uv run --locked pytest runtime/tests/test_plugin_upgrades.py runtime/tests/test_plugin_packages.py runtime/tests/test_plugins.py runtime/tests/test_plugin_protocol.py runtime/tests/test_extension_storage.py`。数据库变更还需覆盖 `test_storage_schema.py` 和 `test_persistence_layout.py`。展示契约变更后运行 `node scripts/generate-plugin-contracts.mjs`。`pnpm build:main` 后，`node --test dist/main/runtime-client-hooks.test.js dist/main/runtime-client-mcp-details.test.js` 验证 Main/Runtime；插件页使用 `PluginSettings.behavior.test.tsx` 和 `electron scripts/test-plugin-resources.cjs` 验证。插件版本身份从 schema v37 开始保存，远程连接从 v38 开始保存。两者沿用已有升级与备份流程，不改变启动命令。这些入口不属于 Full Suite。
+
 定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py`。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx`。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置。
 
 Runtime 随现有启动运行受管调度服务，并随 Supervisor 关闭，无需系统 cron、launchd 或额外守护进程。v27→v28 升级新增任务、触发和来源表。croniter 与 tzdata 已进入 pyproject.toml 和 uv.lock，打包沿用现有流程。

@@ -16,6 +16,7 @@ from threading import Event
 
 from pydantic import Field, JsonValue, ValidationError
 from eidos_runtime.domain.hooks import PluginCompatibility, PluginHookReview
+from eidos_runtime.domain.plugins import PluginPresentation
 
 from eidos_runtime.application.errors import (
     ApplicationError,
@@ -34,6 +35,9 @@ from eidos_runtime.extensions.skill_management import SkillManagement
 from eidos_runtime.models.skill_settings import ManagedSkill, SkillDetail, SkillRemoval
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
+from eidos_runtime.models.mcp_connections import RemoteMcpInfo
+from eidos_runtime.models.mcp_connections import BuiltinPluginRequest, BuiltinPluginsResponse, McpConnectionRequest, McpConnectionState
+from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 
 
 class McpDetailsPort(Protocol):
@@ -106,6 +110,7 @@ class PluginRecord(EidosFrozenStrictModel):
     updated_at: int
     compatibility: PluginCompatibility | None = Field(default=None, exclude_if=lambda value: value is None)
     hook_review: PluginHookReview | None = Field(default=None, exclude_if=lambda value: value is None)
+    presentation: PluginPresentation | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @classmethod
     def from_wire(cls, value: object) -> "PluginRecord":
@@ -151,6 +156,7 @@ class McpServerRecord(EidosFrozenStrictModel):
     plugin_hash: str
     server_id: str
     executable: str
+    remote: RemoteMcpInfo | None = Field(default=None, exclude_if=lambda value: value is None)
     cwd: str | None = None
     argv: tuple[str, ...]
     env_names: tuple[str, ...]
@@ -289,6 +295,16 @@ class ExtensionApplication:
                 for plugin in self._plugins_or_error().list_plugins()
             )
         )
+
+    def builtin_plugins(self, request: BuiltinPluginRequest) -> BuiltinPluginsResponse:
+        from eidos_runtime.application.builtin_plugins import builtin_plugins
+        try:
+            return builtin_plugins(self._plugins_or_error(), request)
+        except PluginImportError as error:
+            raise ApplicationError("PLUGIN_UNAVAILABLE") from error
+
+    def mcp_connection(self, request: McpConnectionRequest, kernel: RuntimeAsyncKernel) -> McpConnectionState:
+        return self._plugins_or_error().connections.execute(request, kernel)
 
     def prepare_plugin_import(
         self,

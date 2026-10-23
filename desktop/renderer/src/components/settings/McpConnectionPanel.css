@@ -1,0 +1,8 @@
+.mcp-connection-panel { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.mcp-connection-heading, .mcp-connection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3, 12px); }
+.mcp-connection-panel p, .mcp-connection-heading span { margin: 0; font-size: var(--font-size-sm, 13px); color: var(--text-secondary); }
+.mcp-connection-panel form { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2, 8px); }
+.mcp-connection-panel input { box-sizing: border-box; width: 100%; min-width: 0; padding: 0.5rem; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); border-radius: var(--radius-sm); }
+.mcp-connection-panel summary { cursor: pointer; font-size: var(--font-size-sm, 13px); }
+.mcp-connection-panel details[open] form { margin-top: var(--space-3, 12px); }
+.mcp-device-code { align-self: flex-start; padding: 0.5rem 0.75rem; font-size: 1.25rem; letter-spacing: 0.12em; background: var(--surface-muted); border-radius: var(--radius-sm); }

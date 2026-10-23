@@ -10,6 +10,9 @@ from pydantic import JsonValue
 from eidos_runtime.domain.hooks import HookDefinition, PluginCompatibility
 from eidos_runtime.extensions.codex_hooks import parse_hooks
 from eidos_runtime.extensions.contracts import PluginManifestV1
+from eidos_runtime.domain.plugins import PluginPresentation
+from eidos_runtime.extensions.plugin_mcp import read_mcp_servers
+from eidos_runtime.extensions.plugin_presentation import read_presentation
 from eidos_runtime.models import EidosFrozenModel
 
 
@@ -17,6 +20,7 @@ class PluginPackage(EidosFrozenModel):
     manifest: PluginManifestV1
     hooks: tuple[HookDefinition, ...] = ()
     compatibility: PluginCompatibility = PluginCompatibility()
+    presentation: PluginPresentation | None = None
 
 
 def _json(files: Mapping[str, bytes], path: str) -> dict[str, JsonValue]:
@@ -50,8 +54,11 @@ def read_package(files: Mapping[str, bytes]) -> PluginPackage:
     if root is not None and "schemaVersion" in root:
         native = dict(root)
         hook_value = native.pop("hooks", None)
+        for field in ("interface", "author", "homepage", "license", "onboardingSkill"):
+            native.pop(field, None)
         manifest = PluginManifestV1.model_validate(native)
         settings = root
+        identity = root
         source_format = "eidos"
         version = manifest.version
     else:
@@ -80,14 +87,17 @@ def read_package(files: Mapping[str, bytes]) -> PluginPackage:
             prefix = _path(location).rstrip("/")
             skills.extend({"root": path.removesuffix("/SKILL.md")} for path in sorted(files)
                           if path.startswith(prefix + "/") and path.endswith("/SKILL.md"))
+        servers, mcp_issues = read_mcp_servers(files, settings, portable=root is not None)
+        issues.extend(mcp_issues)
+        interface = settings.get("interface", {})
+        if not isinstance(interface, dict):
+            raise ValueError("plugin_interface_invalid")
         manifest = PluginManifestV1.model_validate({
-            "schemaVersion": 1, "id": identity.get("name"), "name": identity.get("name"),
-            "version": version or "0.0.0", "description": identity.get("description", ""),
-            "skills": skills, "mcpServers": [],
+            "schemaVersion": 1, "id": identity.get("name"), "name": interface.get("displayName") or identity.get("name"),
+            "version": version or "0.0.0", "description": interface.get("shortDescription") or identity.get("description", ""),
+            "skills": skills, "mcpServers": [server.model_dump(by_alias=True) for server in servers],
         })
         hook_value = settings.get("hooks")
-        if any(path in files for path in ("mcp.json", ".mcp.json")) or settings.get("mcpServers"):
-            issues.append("bundled_mcp_requires_separate_configuration")
         if settings.get("apps") or ".app.json" in files:
             issues.append("codex_apps_not_supported")
     hooks: list[HookDefinition] = []
@@ -109,6 +119,8 @@ def read_package(files: Mapping[str, bytes]) -> PluginPackage:
     if len({hook.key for hook in hooks}) != len(hooks):
         raise ValueError("hook_source_repeated")
     issues.extend(f"hook_not_supported:{hook.key}" for hook in hooks if not hook.supported)
-    return PluginPackage(manifest=manifest, hooks=tuple(hooks), compatibility=PluginCompatibility(
+    presentation = read_presentation(identity, settings, files, manifest.id,
+                                     tuple(skill.root for skill in manifest.skills))
+    return PluginPackage(manifest=manifest, hooks=tuple(hooks), presentation=presentation, compatibility=PluginCompatibility(
         format=source_format, declared_version=version, issues=tuple(issues),
     ))

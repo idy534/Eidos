@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "github": {
+      "type": "streamable-http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "extensions": {
+        "com.eidos": {"auth": {"type": "github-device", "scopes": ["repo", "read:org", "offline_access"]}}
+      }
+    }
+  }
+}

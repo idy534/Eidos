@@ -83,6 +83,9 @@ import type { SidebarPinsResponse, SidebarSetPinnedRequest } from "./sidebar.js"
 import type { QueuedRunChangeResponse, QueuedRunDeleteRequest, QueuedRunSteerRequest, QueuedRunUpdateRequest, QueuedRunListRequest, QueuedRunListResponse } from "./queued-runs.js";
 
 export interface EidosRuntimeAPI {
+  builtinPlugins(request: import("./mcp-connections.js").BuiltinPluginRequest): Promise<import("./mcp-connections.js").BuiltinPluginsResponse>;
+  mcpConnection(request: import("./mcp-connections.js").McpConnectionRequest): Promise<import("./mcp-connections.js").McpConnectionState>;
+  openMcpLogin(request: import("./mcp-connections.js").McpConnectionRequest): Promise<void>;
   readWorkspaceFileForFind(request: import("./search.js").FileFindRequest): Promise<WorkspaceFilePreview>;
   searchSessions(request: import("./search.js").SearchRequest): Promise<import("./search.js").SearchResponse>;
   readSessionAround(request: import("./search.js").ReadAroundRequest): Promise<SessionSnapshot>;

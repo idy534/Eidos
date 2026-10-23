@@ -291,9 +291,9 @@
 ### Extension 与 MCP
 
 - MCP 设置页只对已启用、已授权的服务执行工具目录发现。首次查询会启动受现有 Seatbelt 控制的短连接，使用官方 SDK 初始化并取得有界目录，随后关闭连接；该入口不会调用工具。页面按 10 条分页读取 Runtime 的展示缓存。缓存最多 8 个目录，每个目录最多 512 KiB，有效期为 5 分钟，不写 SQLite，也不作为 Run 工具或授权的事实来源。Runtime 重启、缓存淘汰、配置变化或到期后，旧游标会失效，页面提示重新加载。目录描述最多展示 4096 个字符；不受支持的工具 Schema 仍可查看，但会标为不可用。设置页连接启动期限最多为 15 秒，关闭弹窗会忽略迟到结果。
-- Plugin 当前只支持本地受管 Plugin v1。当前没有远程 Plugin marketplace、OAuth 安装或任意运行时动态 import 用户 Plugin 的能力。
+- Plugin 支持三种本地包、显式更新、旧版本保留、远程 Streamable HTTP 和独立账号连接。应用随附 GitHub 插件，用户需要主动安装和授权。GitHub 浏览器登录仍需发行方注册应用、启用 Device Flow 并配置公开 Client ID；当前仓库未填入真实标识，PAT 入口可用。Figma 未内置。当前没有远程 marketplace、Git/npm 下载器、Codex App 连接映射或动态 import 用户 Plugin。服务 ID 仍须全局唯一。详见 [current-plugins.md](current-plugins.md)。
 - Skill Catalog 当前只投影 `SKILL.md` frontmatter 中的顶层 `name` 和 `description`。`agents/eidos.yaml` 的 `runtimeDependencies` 使用严格 typed parser。其他字段可以保留在原始 Skill 内容中，但不会进入 Catalog、协议或权限判断。
-- MCP 当前只支持 stdio Tools。Settings 支持创建、编辑和卸载本地手动 MCP。新建或编辑后的 Server 默认未授权，需要通过审阅入口重新授权。当前没有连接测试入口，也没有 Streamable HTTP、远程 MCP transport、OAuth、Resources、Prompts、Sampling 或 Tasks。
+- Settings 的手动 MCP 编辑器仍只支持本地 stdio。远程地址和认证方式由插件声明；用户可以通过账号面板连接。通用 OAuth 只接受公开客户端注册，或 SDK 的 DCR/CIMD，不提供机密 Client Secret 录入。远程响应上限为 2 MiB，要求不压缩传输。MCP 的 Resources、Prompts、Sampling、Tasks 和 MCP Apps 尚未提供产品入口；非文本工具内容仍遵循现有不支持规则。
 - MCP ready connection 是长生命周期 Service，但 startup、Tool call、Tool list、cancel 和 shutdown 都有各自的有界等待。已经开始的 Tool List Changed bookkeeping callback 可能在关闭时需要等待完成。
 
 ### Observability / OpenTelemetry

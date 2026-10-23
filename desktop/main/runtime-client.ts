@@ -1,5 +1,6 @@
 import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
 import { isPluginHookReview, isPluginCompatibility } from "../shared/hooks.js";
+import { isPluginPresentation } from "../shared/plugins.js";
 import { isWebSearchResponse, type WebSearchReadRequest, type WebSearchSaveRequest, type WebSearchResponse } from "../shared/web-search.js";
 import { isSearchResponse, isFileFindResponse, type SearchRequest, type SearchResponse, type ReadAroundRequest, type FileFindRequest } from "../shared/search.js";
 import { isCustomModelSettings, isCustomProviderResult } from "../shared/custom-models.js";
@@ -28,6 +29,7 @@ import readline from "node:readline";
 
 
 import { isMcpToolsResponse, type McpToolsRequest, type McpToolsResponse } from "../shared/mcp-details.js";
+import { isBuiltinPluginsResponse, isMcpConnectionState, isRemoteMcpInfo, type BuiltinPluginRequest, type BuiltinPluginsResponse, type McpConnectionRequest, type McpConnectionState } from "../shared/mcp-connections.js";
 
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const RUNTIME_BUSINESS_CODES = new Set([
@@ -189,6 +191,11 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "MCP_SERVER_ID_CONFLICT",
   "MCP_CWD_INVALID",
   "MCP_CONFIG_INVALID",
+  "MCP_REMOTE_REQUIRED",
+  "MCP_NOT_AUTHORIZED",
+  "MCP_TOKEN_REQUIRED",
+  "MCP_AUTH_INVALID",
+  "GITHUB_CLIENT_ID_REQUIRED",
 ]);
 
 import type {
@@ -1094,6 +1101,14 @@ export class RuntimeClient {
         && value.deletedModelId === id
       ),
     ).then(() => undefined);
+  }
+
+  builtinPlugins(request: BuiltinPluginRequest): Promise<BuiltinPluginsResponse> {
+    return this.validatedRequest("plugin/builtin", { ...request }, isBuiltinPluginsResponse);
+  }
+
+  mcpConnection(request: McpConnectionRequest): Promise<McpConnectionState> {
+    return this.validatedRequest("mcp/connection", { ...request }, isMcpConnectionState);
   }
 
   listPlugins(): Promise<{ plugins: PluginRecord[] }> {
@@ -2469,11 +2484,12 @@ function isPluginRecord(value: unknown): value is PluginRecord {
     && hasOnlyKeys(value, [
       "schemaVersion", "id", "name", "version", "description", "contentHash",
       "enabled", "status", "installedAt", "updatedAt",
-      "compatibility", "hookReview",
+      "compatibility", "hookReview", "presentation",
     ])
     && value.schemaVersion === 1
     && (value.compatibility === undefined || isPluginCompatibility(value.compatibility))
     && (value.hookReview === undefined || isPluginHookReview(value.hookReview))
+    && (value.presentation === undefined || isPluginPresentation(value.presentation))
     && ["id", "name", "version", "description", "contentHash"].every(
       (key) => typeof value[key] === "string",
     )
@@ -2532,8 +2548,10 @@ function isMcpServerRecord(value: unknown): value is McpServerRecord {
       "executable", "cwd", "argv", "envNames", "permissionProfile",
       "startupTimeoutSeconds", "toolTimeoutSeconds", "declaredEnabled",
       "consented", "available", "errorCode", "updatedAt",
+      "remote",
     ])
     && value.schemaVersion === 1
+    && (value.remote === undefined || isRemoteMcpInfo(value.remote))
     && ["pluginId", "pluginVersion", "pluginHash", "serverId", "executable"].every(
       (key) => typeof value[key] === "string",
     )

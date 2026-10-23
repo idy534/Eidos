@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import AsyncExitStack
 import hashlib
 import json
 import logging
@@ -17,11 +18,14 @@ import time
 from typing import Callable, cast
 
 import anyio
+import httpx2
 from mcp import ClientSession as SdkClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp import types as mcp_types
 
 from eidos_runtime.extensions.contracts import McpServerConfigV1
+from eidos_runtime.extensions.plugin_mcp import resolve_package_mcp
 from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog, PluginImportError
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
 from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
@@ -46,6 +50,7 @@ from eidos_runtime.sandbox.seatbelt import (
     python_runtime_policy_arguments,
     runtime_python_executable,
 )
+from eidos_runtime.sandbox.host_shell import sanitize_shell_environment
 
 
 MAX_LIST_PAGES = 32
@@ -59,6 +64,7 @@ LAUNCHER = Path(__file__).with_name("mcp_launcher.py")
 # The SDK includes the polluted stdout line in parser exception logs. Eidos maps
 # that condition to a closed code and never logs the untrusted protocol bytes.
 logging.getLogger("mcp.client.stdio").setLevel(logging.CRITICAL)
+logging.getLogger("mcp.client.auth").setLevel(logging.CRITICAL)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -103,10 +109,14 @@ class McpConnection:
         async_kernel: RuntimeAsyncKernel,
         sandbox: bool = True,
         resource_registry: ResourceRegistry | None = None,
+        remote_client: Callable[[], httpx2.AsyncClient] | None = None,
+        remote_check: Callable[[], None] | None = None,
     ) -> None:
         self.plugin_root = plugin_root
         self.workspace_root = workspace_root
         self.config = config
+        self.remote_client = remote_client
+        self.remote_check = remote_check
         self.env_values = dict(env_values or {})
         self.on_list_changed = on_list_changed
         self.async_kernel = async_kernel
@@ -168,6 +178,11 @@ class McpConnection:
         arguments: dict[str, object],
         cancel: threading.Event,
     ) -> dict[str, object]:
+        if self.remote_check is not None:
+            try:
+                self.remote_check()
+            except Exception:
+                return _unavailable()
         service = self._service
         if (
             self.error_code is not None
@@ -362,23 +377,28 @@ class McpConnection:
                 self.config.startup_timeout_seconds
             ) as startup_scope:
                 startup_deadline = startup_scope.deadline
-                parameters = await anyio.to_thread.run_sync(self._prepare_parameters)
-                with open(os.devnull, "w", encoding="utf-8") as error_log:
-                    async with stdio_client(parameters, errlog=error_log) as streams:
-                        async with ClientSession(
-                            streams[0], streams[1], message_handler=message_handler
-                        ) as session:
-                            initialized = await session.initialize()
-                            self.description = initialized.server_info.description
-                            tools = await _discover_tools(session)
-                            self._session = session
-                            self._session_lock = anyio.Lock()
-                            self._close_event = anyio.Event()
-                            self.tools = tools
-                            task_status.started(tools)
-                            startup_ready = True
-                            startup_scope.deadline = math.inf
-                            await self._close_event.wait()
+                async with AsyncExitStack() as stack:
+                    if self.config.transport == "streamable-http":
+                        if self.remote_client is None:
+                            raise McpUnavailable("mcp_login_required")
+                        client = await stack.enter_async_context(self.remote_client())
+                        streams = await stack.enter_async_context(streamable_http_client(str(self.config.url), http_client=client))
+                    else:
+                        parameters = await anyio.to_thread.run_sync(self._prepare_parameters)
+                        error_log = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
+                        streams = await stack.enter_async_context(stdio_client(parameters, errlog=error_log))
+                    session = await stack.enter_async_context(ClientSession(streams[0], streams[1], message_handler=message_handler))
+                    initialized = await session.initialize()
+                    self.description = initialized.server_info.description
+                    tools = await _discover_tools(session)
+                    self._session = session
+                    self._session_lock = anyio.Lock()
+                    self._close_event = anyio.Event()
+                    self.tools = tools
+                    task_status.started(tools)
+                    startup_ready = True
+                    startup_scope.deadline = math.inf
+                    await self._close_event.wait()
 
         try:
             async with anyio.create_task_group() as watchdog_group:
@@ -484,12 +504,15 @@ class McpConnection:
             self._verify_runtime_directory()
         except OSError:
             raise McpUnavailable("mcp_temporary_directory_unavailable") from None
-        executable = self.config.executable
+        config = resolve_package_mcp(self.config, str(self.plugin_root), str(runtime_python_executable()))
+        executable = config.executable
+        if executable in {"python", "python3"}:
+            executable = str(runtime_python_executable())
         if "/" in executable and not Path(executable).is_absolute():
             executable = str(self.plugin_root / executable)
         if Path(executable).resolve() == runtime_python_executable():
             executable = str(runtime_python_executable())
-        arguments = list(self.config.argv)
+        arguments = list(config.argv)
         environment = {
             "HOME": str(self.runtime_root / "home"),
             "TMPDIR": str(self.runtime_root / "tmp"),
@@ -499,11 +522,19 @@ class McpConnection:
         }
         Path(environment["HOME"]).mkdir(mode=0o700)
         Path(environment["TMPDIR"]).mkdir(mode=0o700)
+        inherited = sanitize_shell_environment(os.environ)
         for name in self.config.env_names:
-            value = os.environ.get(name)
+            value = inherited.get(name)
             if value is not None:
                 environment[name] = value
-        environment.update(self.env_values)
+        for target, source in self.config.env_bindings.items():
+            value = {"PLUGIN_ROOT": str(self.plugin_root), "CLAUDE_PLUGIN_ROOT": str(self.plugin_root),
+                     "RUNTIME_PYTHON": str(runtime_python_executable())}.get(source, inherited.get(source))
+            if value is None:
+                raise McpUnavailable("mcp_environment_missing")
+            environment[target] = value
+        environment.update(sanitize_shell_environment(self.env_values))
+        environment = sanitize_shell_environment(environment)
         if self.sandbox:
             if sys.platform != "darwin" or not Path(SANDBOX_EXECUTABLE).is_file():
                 raise McpUnavailable("mcp_sandbox_unavailable")
@@ -671,6 +702,8 @@ class McpManager:
                     ),
                     sandbox=self.sandbox,
                     resource_registry=self.resources,
+                    remote_client=(lambda config=config, plugin_id=plugin_id: self.plugins.connections.http_client(plugin_id, config)) if config.transport == "streamable-http" else None,
+                    remote_check=self.plugins.connections.checker(plugin_id, config.id) if config.transport == "streamable-http" else None,
                 )
                 tools = connection.start()
             except McpUnavailable as error:

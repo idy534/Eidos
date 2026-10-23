@@ -1,0 +1,5 @@
+{
+  "connect": {"pluginId": "example", "serverId": "example", "action": "connect", "method": "browser", "operationId": "example-attempt"},
+  "connected": {"pluginId": "example", "serverId": "example", "status": "connected", "authType": "oauth", "browserAvailable": true, "accountLabel": "example-user", "updatedAt": 1000},
+  "builtins": {"plugins": [{"id": "eidos-github", "name": "GitHub", "version": "1.0.0", "description": "GitHub", "installed": false, "updateAvailable": false}]}
+}

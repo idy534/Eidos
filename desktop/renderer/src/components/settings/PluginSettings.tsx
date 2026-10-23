@@ -13,6 +13,7 @@ import { StatusBadge } from "../StatusBadge.js";
 import { AlertBanner } from "../AlertBanner.js";
 import { PluginDetailDialog } from "./PluginDetailDialog.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
+import { BuiltinPlugins } from "./BuiltinPlugins.js";
 
 interface PluginSettingsProps {
   plugins: PluginRecord[];
@@ -24,6 +25,8 @@ interface PluginSettingsProps {
   onToggleMcp?: ((pluginId: string, serverId: string, enabled: boolean) => Promise<void>) | undefined;
   pendingAction: SettingsPendingAction;
   onImportPlugin: () => Promise<PluginRecord | null>;
+  onInstallBuiltinPlugin?: ((pluginId: string) => Promise<void>) | undefined;
+  onExtensionsChanged?: (() => Promise<void>) | undefined;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
   onRemovePlugin: (pluginId: string) => Promise<void>;
@@ -40,6 +43,8 @@ export function PluginSettings({
   onToggleMcp,
   pendingAction,
   onImportPlugin,
+  onInstallBuiltinPlugin,
+  onExtensionsChanged,
   onTogglePlugin,
   onTrustPluginHooks,
   onRemovePlugin,
@@ -60,7 +65,11 @@ export function PluginSettings({
     setLocalError(undefined);
     try {
       const imported = await onImportPlugin();
-      if (imported) onShowToast("Plugin 导入成功", "success");
+      if (imported) {
+        const previous = plugins.find(plugin => plugin.id === imported.id);
+        const updated = previous && previous.version !== imported.version;
+        onShowToast(updated ? `Plugin 已更新至 v${imported.version}，请重新启用并审阅授权。` : "Plugin 导入成功", "success");
+      }
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "导入 Plugin 失败";
       onShowToast(msg, "error");
@@ -135,7 +144,7 @@ export function PluginSettings({
           <div>
             <h1>Plugins 扩展</h1>
             <p className="settings-panel-subtitle">
-              导入本地 Eidos 或 Codex 插件。Hook 脚本经过审阅和信任后，才会自动运行。
+              导入本地 Eidos 或 Codex 插件，也可以导入新版本完成更新。Hook 和 MCP 服务分别审阅授权。
             </p>
           </div>
           <Button
@@ -156,6 +165,8 @@ export function PluginSettings({
         <div className="stat-badge stat-badge--active">已启用 {enabledCount} 项</div>
       </div>
 
+      {onInstallBuiltinPlugin && <BuiltinPlugins onInstall={onInstallBuiltinPlugin} onShowToast={onShowToast}
+        catalogRevision={plugins.map(plugin => `${plugin.id}:${plugin.version}:${plugin.contentHash}`).join("|")} />}
       <SettingSection title="已安装的 Plugins">
         {plugins.length === 0 ? (
           <EmptyState
@@ -189,6 +200,7 @@ export function PluginSettings({
                 disabled={isRowPending}
                 title={
                   <div className="plugin-row-header">
+                    {plugin.presentation?.icon && <img className="plugin-icon" src={plugin.presentation.icon} alt="" />}
                     <button type="button" className="plugin-name plugin-name-button" aria-label={`查看 ${plugin.name} 的资源`} disabled={isRowPending} onClick={() => setSelectedId(plugin.id)}>{plugin.name}</button>
                     <span className="plugin-version">{plugin.compatibility && !plugin.compatibility.declaredVersion ? "未声明版本" : `v${plugin.version}`}</span>
                     {plugin.enabled ? (
@@ -208,9 +220,11 @@ export function PluginSettings({
                 </>}
                 meta={
                   <div className="plugin-meta-info">
-                    <code>{plugin.id}</code>
-                    <span className="meta-divider">•</span>
-                    <code>{plugin.contentHash.slice(0, 10)}</code>
+                    <span>{plugin.presentation?.developerName || plugin.id}</span>
+                    <span className="meta-divider">·</span>
+                    <span>{skills.filter(skill => skill.pluginId === plugin.id).length} 个技能</span>
+                    <span className="meta-divider">·</span>
+                    <span>{mcpServers.filter(server => server.pluginId === plugin.id).length} 个 MCP 服务</span>
                   </div>
                 }
                 action={
@@ -256,6 +270,7 @@ export function PluginSettings({
         obscured={Boolean(review)}
         onToggleSkill={onToggleSkill}
         onToggleMcp={onToggleMcp}
+        onExtensionsChanged={onExtensionsChanged}
         onReviewHooks={() => { if (selected) setReview({ plugin: selected, enable: false }); }}
         onShowToast={onShowToast}
         onClose={() => setSelectedId(undefined)}

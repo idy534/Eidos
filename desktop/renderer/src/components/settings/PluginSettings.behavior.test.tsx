@@ -88,6 +88,27 @@ describe("Plugin Hook review", () => {
 });
 
 describe("Plugin resources", () => {
+  it("shows publisher and packaged setup instructions without enabling capabilities", async () => {
+    const readSkillDetail = vi.fn().mockResolvedValue({ qualifiedId: ownSkill.qualifiedId, content: "Setup guide", body: "Setup guide", directory: "/plugins/demo/skills/review" });
+    Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readSkillDetail } });
+    const props = setup({ ...plugin, presentation: { developerName: "Example Team", license: "MIT", onboardingSkillId: ownSkill.qualifiedId } }, { skills: [ownSkill] });
+    const user = userEvent.setup();
+    expect(screen.getByText("Example Team")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看 Demo 的资源" }));
+    expect(screen.getByText("Example Team · MIT")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看设置说明" }));
+    expect(await screen.findByText("Setup guide")).toBeInTheDocument();
+    expect(props.onTogglePlugin).not.toHaveBeenCalled();
+    expect(props.onTrustPluginHooks).not.toHaveBeenCalled();
+  });
+
+  it("identifies a version update and reminds the user to review authorization", async () => {
+    const props = setup(plugin, { onImportPlugin: vi.fn().mockResolvedValue({ ...plugin, version: "2.0.0" }) });
+    await userEvent.setup().click(screen.getByRole("button", { name: "导入本地 Plugin" }));
+    await waitFor(() => expect(props.onShowToast).toHaveBeenCalledWith("Plugin 已更新至 v2.0.0，请重新启用并审阅授权。", "success"));
+    expect(props.onTogglePlugin).not.toHaveBeenCalled();
+  });
+
   it("shows only the selected plugin resources and keeps skill controls inside the plugin", async () => {
     const readSkillDetail = vi.fn().mockResolvedValue({ qualifiedId: ownSkill.qualifiedId, content: "Review instructions", body: "Review instructions", directory: "/plugins/demo/skills/review" });
     Object.defineProperty(window, "eidosRuntime", { configurable: true, value: { readSkillDetail } });

@@ -10,6 +10,7 @@ import { SkillDetailDialog } from "./SkillDetailDialog.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
 import type { SettingsPendingAction } from "./settings-types.js";
 import "./PluginDetailDialog.css";
+import { McpConnectionPanel } from "./McpConnectionPanel.js";
 
 interface PluginDetailDialogProps {
   plugin: PluginRecord | undefined;
@@ -21,6 +22,7 @@ interface PluginDetailDialogProps {
   obscured: boolean;
   onToggleSkill?: ((id: string, enabled: boolean) => Promise<void>) | undefined;
   onToggleMcp?: ((pluginId: string, serverId: string, enabled: boolean) => Promise<void>) | undefined;
+  onExtensionsChanged?: (() => Promise<void>) | undefined;
   onReviewHooks: () => void;
   onShowToast: (message: string, type: "success" | "info" | "error") => void;
   onClose: () => void;
@@ -28,7 +30,7 @@ interface PluginDetailDialogProps {
 }
 
 export function PluginDetailDialog({ plugin, skills, servers, pendingAction, storageReady,
-  resourceError, obscured, onToggleSkill, onToggleMcp, onReviewHooks, onShowToast, onClose, getFallbackFocus,
+  resourceError, obscured, onToggleSkill, onToggleMcp, onExtensionsChanged, onReviewHooks, onShowToast, onClose, getFallbackFocus,
 }: PluginDetailDialogProps) {
   const [skillId, setSkillId] = useState<string>();
   const [serverId, setServerId] = useState<string>();
@@ -48,7 +50,7 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
 
   useEffect(() => {
     setSkillId(undefined); setServerId(undefined); setReviewId(undefined); setError(undefined);
-  }, [plugin?.id]);
+  }, [plugin?.id, plugin?.contentHash]);
 
   useEffect(() => {
     if (!plugin || nested) return;
@@ -59,7 +61,8 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
         if (!busy) onClose();
       }
       if (event.key !== "Tab") return;
-      const targets = dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), summary, [tabindex='0']");
+      const targets = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), summary, [tabindex='0']") ?? []).filter(element =>
+        (element.checkVisibility?.({ visibilityProperty: true }) ?? true) && (!element.closest("details:not([open])") || element.tagName === "SUMMARY"));
       const first = targets?.[0];
       const last = targets?.[targets.length - 1];
       if (event.shiftKey && document.activeElement === first) {
@@ -95,6 +98,12 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
         </header>
         <div className="plugin-resource-body" tabIndex={0} aria-label="插件资源">
           <p>{plugin.description || "插件未提供说明。"}</p>
+          {(plugin.presentation?.developerName || plugin.presentation?.license) && <p className="plugin-resource-empty">
+            {[plugin.presentation.developerName, plugin.presentation.license].filter(Boolean).join(" · ")}
+          </p>}
+          {plugin.presentation?.websiteUrl && <p className="plugin-resource-empty">{plugin.presentation.websiteUrl}</p>}
+          {plugin.presentation?.onboardingSkillId && pluginSkills.some(skill => skill.qualifiedId === plugin.presentation?.onboardingSkillId) &&
+            <Button variant="secondary" size="small" onClick={() => setSkillId(plugin.presentation?.onboardingSkillId ?? undefined)}>查看设置说明</Button>}
           {!plugin.enabled && <p role="status">插件已停用。启用插件后，已开启并获得授权的资源才会生效。</p>}
           {resourceError && <AlertBanner tone="error">{resourceError}</AlertBanner>}
           {error && !reviewing && <AlertBanner tone="error">{error}</AlertBanner>}
@@ -112,10 +121,12 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
               <button type="button" className="plugin-resource-link plugin-resource-server" aria-label={`查看 ${server.serverId} 的工具`} onClick={() => setServerId(server.serverId)}>
                 <strong>{server.serverId}</strong><span className="plugin-resource-description">{server.errorCode || (!server.declaredEnabled ? "插件未开放此服务" : server.available ? "可用" : server.consented ? "已授权，暂不可用" : "等待授权")}</span>
               </button>
-              <Button variant="secondary" size="small" disabled={busy || !storageReady || !onToggleMcp || (!server.consented && (!plugin.enabled || !server.declaredEnabled))}
+              {!server.remote && <Button variant="secondary" size="small" disabled={busy || !storageReady || !onToggleMcp || (!server.consented && (!plugin.enabled || !server.declaredEnabled))}
                 onClick={() => { setError(undefined); if (server.consented) void changeMcp(server, false); else setReviewId(server.serverId); }}>{server.consented ? "停用" : "启用"}</Button>
+              }
             </div>)}
-            {!pluginServers.length && !resourceError && <p className="plugin-resource-empty">插件没有已接入的 MCP 服务。</p>}
+            {pluginServers.filter(server => server.remote).map(server => <McpConnectionPanel key={server.serverId} server={server} enabled={plugin.enabled && storageReady} onChanged={onExtensionsChanged} />)}
+            {!pluginServers.length && !resourceError && <p className="plugin-resource-empty">插件没有已接入的 MCP 服务。其他声明可在兼容信息中查看。</p>}
           </section>
           <section className="plugin-resource-section" aria-label="插件 Hook">
             <div className="plugin-resource-section-heading"><h3>Hooks <span>{hooks.length}</span></h3>{hooks.length > 0 && <Button variant="secondary" size="small" disabled={busy} onClick={onReviewHooks}>审阅 Hook</Button>}</div>

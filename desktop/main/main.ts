@@ -21,6 +21,7 @@ import * as nodePty from "node-pty";
 
 import { RuntimeClient } from "./runtime-client.js";
 import { isMcpToolsRequest } from "../shared/mcp-details.js";
+import { isBuiltinPluginRequest, isMcpConnectionRequest } from "../shared/mcp-connections.js";
 import { isAutomationRequest, isAutomationHistoryRequest, isAutomationRunNowRequest } from "../shared/automation.js";
 import { resolveRuntimePaths } from "./runtime-paths.js";
 import "./response-runtime-client.js";
@@ -1489,6 +1490,27 @@ ipcMain.handle(IPC.MODEL_DELETE, (_event, id: unknown) => {
   return clientOrThrow().deleteModel(id);
 });
 ipcMain.handle(IPC.PLUGIN_LIST, () => clientOrThrow().listPlugins());
+ipcMain.handle(IPC.PLUGIN_BUILTIN, (_event, request: unknown) => {
+  if (!isBuiltinPluginRequest(request)) throw new Error("INVALID_PARAMS");
+  return clientOrThrow().builtinPlugins(request);
+});
+ipcMain.handle(IPC.MCP_CONNECTION, (_event, request: unknown) => {
+  if (!isMcpConnectionRequest(request)) throw new Error("INVALID_PARAMS");
+  return clientOrThrow().mcpConnection(request);
+});
+ipcMain.handle(IPC.MCP_LOGIN_OPEN, async (event, request: unknown) => {
+  previewOwner(event);
+  if (!isMcpConnectionRequest(request) || (request.action && request.action !== "read")) throw new Error("INVALID_PARAMS");
+  const state = await clientOrThrow().mcpConnection(request);
+  if (request.method === "token" && state.authType === "github-device") {
+    await electronShell.openExternal("https://github.com/settings/personal-access-tokens");
+    return;
+  }
+  if (state.status !== "connecting" || !state.authorizationUrl) throw new Error("登录已结束，请重新连接。");
+  const url = new URL(state.authorizationUrl);
+  if (url.protocol !== "https:" || url.username || url.password) throw new Error("登录地址无效。");
+  await electronShell.openExternal(url.toString());
+});
 ipcMain.handle(IPC.PLUGIN_IMPORT, async () => {
   const result = await dialog.showOpenDialog({
     title: "导入本地 Eidos Plugin",

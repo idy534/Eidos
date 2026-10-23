@@ -11,8 +11,9 @@ from uuid import UUID, uuid4
 class SecretFiles:
     """Bounded owner-only files, outside SQLite and protocol responses."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, *, max_bytes: int = 1024) -> None:
         self.directory = directory
+        self.max_bytes = max_bytes
 
     def _directory(self) -> None:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -66,8 +67,8 @@ class SecretFiles:
                     or info.st_mode & 0o077
                 ):
                     raise ValueError
-                raw = stream.read(1025)
-            if not raw or len(raw) > 1024:
+                raw = stream.read(self.max_bytes + 1)
+            if not raw or len(raw) > self.max_bytes:
                 raise ValueError
             return raw.decode()
         except (OSError, ValueError, UnicodeError) as error:

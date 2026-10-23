@@ -3,6 +3,8 @@ from __future__ import annotations
 from eidos_runtime.db.web_search_migration import WEB_SEARCH_SCHEMA_SQL
 from eidos_runtime.db.shell_environment_migration import SHELL_ENVIRONMENT_SCHEMA_SQL
 from eidos_runtime.db.hooks_migration import HOOKS_SCHEMA_SQL
+from eidos_runtime.db.plugin_versions_migration import PLUGIN_VERSIONS_SCHEMA_SQL
+from eidos_runtime.db.mcp_connections_migration import MCP_CONNECTIONS_SCHEMA_SQL
 
 from eidos_runtime.db.search_migration import SEARCH_SCHEMA_SQL
 from eidos_runtime.db.channel_migration import CHANNEL_SCHEMA_SQL
@@ -19,7 +21,9 @@ from eidos_runtime.db.automation_migration import AUTOMATION_SCHEMA_SQL
 from eidos_runtime.memory.schema import MEMORY_SCHEMA_SQL, MEMORY_USE_SCHEMA_SQL, MEMORY_HISTORY_SCHEMA_SQL
 
 
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 38
+V37_SCHEMA_VERSION = 37
+V36_SCHEMA_VERSION = 36
 V35_SCHEMA_VERSION = 35
 V34_SCHEMA_VERSION = 34
 V33_SCHEMA_VERSION = 33
@@ -51,7 +55,7 @@ V8_SCHEMA_VERSION = 8
 V7_SCHEMA_VERSION = 7
 V6_SCHEMA_VERSION = 6
 V5_SCHEMA_VERSION = 5
-PREVIOUS_SCHEMA_VERSION = V35_SCHEMA_VERSION
+PREVIOUS_SCHEMA_VERSION = V37_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 1
 
 TOOL_CALL_PAYLOAD_KIND_COLUMN = (
@@ -1554,7 +1558,9 @@ V32_SCHEMA_SQL = V31_SCHEMA_SQL + CONTEXT_QUERY_INDEX_SQL
 V33_SCHEMA_SQL = V32_SCHEMA_SQL + SEARCH_SCHEMA_SQL
 V34_SCHEMA_SQL = V33_SCHEMA_SQL + WEB_SEARCH_SCHEMA_SQL
 V35_SCHEMA_SQL = V34_SCHEMA_SQL + SHELL_ENVIRONMENT_SCHEMA_SQL
-SCHEMA_SQL = V35_SCHEMA_SQL + HOOKS_SCHEMA_SQL
+V36_SCHEMA_SQL = V35_SCHEMA_SQL + HOOKS_SCHEMA_SQL
+V37_SCHEMA_SQL = V36_SCHEMA_SQL + PLUGIN_VERSIONS_SCHEMA_SQL
+SCHEMA_SQL = V37_SCHEMA_SQL + MCP_CONNECTIONS_SCHEMA_SQL
 
 # Test/upgrade fixture for schema v5. Schema v5 still kept the rebuildable
 # repository index in the state database.

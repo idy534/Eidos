@@ -57,6 +57,10 @@ class ExtensionStorageTests(unittest.TestCase):
             fixture["plugin"],
         )
         self.assertEqual(
+            PluginRecordDto.model_validate(fixture["pluginWithPresentation"]).to_json_value(),
+            fixture["pluginWithPresentation"],
+        )
+        self.assertEqual(
             SkillMetadataDto.model_validate(fixture["skill"]).to_json_value(),
             fixture["skill"],
         )

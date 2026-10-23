@@ -8,6 +8,7 @@ import "../src/components/settings/SettingsPage.css";
 const plugin: PluginRecord = {
   schemaVersion: 1, id: "checks", name: "代码质量检查", version: "1.0.0", description: "此插件包含代码审查 Skill、工具服务和任务完成检查。",
   contentHash: "a".repeat(64), enabled: true, status: "installed", installedAt: 1, updatedAt: 1,
+  presentation: { developerName: "Eidos Plugins", license: "Apache-2.0", onboardingSkillId: "checks:review" },
   compatibility: { format: "codex", declaredVersion: "1.0.0", issues: ["codex_apps_not_supported"] },
   hookReview: { contentHash: "a".repeat(64), trusted: false, executableCount: 1,
     installedRoot: "/plugins/checks", dataDirectory: "/plugins/checks/hook-data",
@@ -23,16 +24,35 @@ const mcp: McpServerRecord = {
   executable: "python3", argv: ["tools.py"], envNames: [], permissionProfile: "workspace_read", startupTimeoutSeconds: 5,
   toolTimeoutSeconds: 10, declaredEnabled: true, consented: false, available: false, updatedAt: 1,
 };
+const github: PluginRecord = { schemaVersion: 1, id: "eidos-github", name: "GitHub", version: "1.0.0",
+  description: "连接 GitHub，读取仓库、Issue 和 Pull Request，并在授权后执行操作。", contentHash: "c".repeat(64), enabled: true,
+  status: "installed", installedAt: 1, updatedAt: 1, presentation: { developerName: "Eidos" } };
+const remote: McpServerRecord = { ...mcp, pluginId: github.id, pluginHash: github.contentHash, serverId: "github", executable: "", argv: [],
+  permissionProfile: "connector", remote: { url: "https://api.githubcopilot.com/mcp/", authType: "github-device" } };
+let builtinInstalled = false;
+let connected = false;
 Object.assign(window, { eidosRuntime: {
   readSkillDetail: async () => ({ qualifiedId: initialSkill.qualifiedId, content: "# 审查清单\n逐项检查当前代码。", body: "# 审查清单\n逐项检查当前代码。", directory: "/plugins/checks/skills/review" }),
   readMcpTools: async () => ({ state: "not_authorized", tools: [] }),
+  builtinPlugins: async () => ({ plugins: [{ id: github.id, name: "GitHub", description: github.description, version: "1.0.0", installed: builtinInstalled }] }),
+  mcpConnection: async (request: { action?: string }) => {
+    if (request.action === "connect") connected = true;
+    if (request.action === "disconnect") connected = false;
+    return { pluginId: github.id, serverId: "github", status: connected ? "connected" : "disconnected",
+      accountLabel: connected ? "octocat" : null, authType: "github-device", browserAvailable: false, updatedAt: 1 };
+  },
+  openMcpLogin: async () => {},
 } as unknown as EidosRuntimeAPI });
 
 function Fixture() {
   const [skill, setSkill] = useState(initialSkill);
+  const [installed, setInstalled] = useState(false);
+  const [, refresh] = useState(0);
   return <SettingsPage initialCategory="plugins"
     runtime={{ state: "ready", protocolVersion: 1, runtimeVersion: "0.5.4", runShell: true, modelConfigured: true, storageHealth: { state: "ready" } }}
-    plugins={[plugin]} skills={[skill]} mcpServers={[mcp]} pendingAction={undefined}
+    plugins={[plugin, ...(installed ? [github] : [])]} skills={[skill]} mcpServers={[mcp, ...(installed ? [{ ...remote, consented: connected, available: connected }] : [])]} pendingAction={undefined}
+    onInstallBuiltinPlugin={async () => { builtinInstalled = true; setInstalled(true); }}
+    onExtensionsChanged={async () => refresh(value => value + 1)}
     onClose={() => {}} onModelsChanged={async () => {}} onImportPlugin={async () => {}} onTogglePlugin={async () => {}}
     onTrustPluginHooks={async () => {}} onRemovePlugin={async () => {}}
     onToggleSkill={async (_id, enabled) => setSkill(value => ({ ...value, enabled }))}

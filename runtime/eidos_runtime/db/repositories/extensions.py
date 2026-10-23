@@ -8,6 +8,8 @@ from eidos_runtime.db.events import append_event, event_from_row
 from eidos_runtime.db.mappers import _load_json_object, _plugin_from_row
 from eidos_runtime.runtime.state_machine import EventType
 from eidos_runtime.models.skill_settings import SkillState
+from eidos_runtime.domain.plugins import PluginVersion
+from eidos_runtime.models.plugin_installation import PluginInstallation, PluginRevision
 
 class ExtensionRepository(Repository):
     def skill_states(self) -> tuple[SkillState, ...]:
@@ -152,6 +154,10 @@ class ExtensionRepository(Repository):
             if inserted.rowcount != 1:
                 raise StorageError("plugin record changed before import")
             connection.execute(
+                "INSERT OR IGNORE INTO plugin_versions VALUES (?, ?, ?)",
+                (record["id"], record["version"], record["contentHash"]),
+            )
+            connection.execute(
                 "DELETE FROM plugin_hook_trust WHERE plugin_id = ?", (record["id"],)
             )
             connection.execute(
@@ -169,6 +175,60 @@ class ExtensionRepository(Repository):
         result = self.plugin_record(str(record["id"]))
         assert result is not None
         return result
+
+    def plugin_version(self, plugin_id: str, *, version: str | None = None,
+                       content_hash: str | None = None) -> PluginVersion | None:
+        with self.lock:
+            row = self._connection().execute(
+                "SELECT * FROM plugin_versions WHERE plugin_id=? AND "
+                + ("version=?" if version is not None else "content_hash=?"),
+                (plugin_id, version if version is not None else content_hash),
+            ).fetchone()
+        return PluginVersion(plugin_id=row["plugin_id"], version=row["version"],
+                             content_hash=row["content_hash"]) if row else None
+
+    def plugin_versions(self) -> tuple[PluginVersion, ...]:
+        with self.lock:
+            rows = self._connection().execute("SELECT * FROM plugin_versions").fetchall()
+        return tuple(PluginVersion(plugin_id=row["plugin_id"], version=row["version"],
+                                   content_hash=row["content_hash"]) for row in rows)
+
+    def plugin_server_ids(self, *, excluding: str) -> tuple[str, ...]:
+        with self.lock:
+            rows = self._connection().execute(
+                """SELECT json_extract(s.value,'$.id') FROM plugins p,
+                json_each(p.manifest_json,'$.mcpServers') s
+                WHERE p.status='installed' AND p.id<>?""", (excluding,),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def replace_plugin_version(self, record: PluginInstallation,
+                               previous: PluginRevision) -> None:
+        """Switch the current version atomically, invalidating version-bound consent."""
+        now = _now_ms()
+        with self.lock, self._connection() as connection:
+            old = connection.execute(
+                "SELECT content_hash FROM plugin_versions WHERE plugin_id=? AND version=?",
+                (record.id, record.version),
+            ).fetchone()
+            if old is not None and old["content_hash"] != record.content_hash:
+                raise StorageError("plugin version content changed")
+            updated = connection.execute(
+                """UPDATE plugins SET name=?,version=?,description=?,manifest_json=?,content_hash=?,
+                enabled=0,status='installed',updated_at=? WHERE id=? AND version=? AND content_hash=? AND status=?""",
+                (record.name, record.version, record.description, record.manifest_json,
+                 record.content_hash, now, record.id, previous.version,
+                 previous.content_hash, previous.status),
+            )
+            if updated.rowcount != 1:
+                raise StorageError("plugin record changed before update")
+            connection.execute("INSERT OR IGNORE INTO plugin_versions VALUES (?,?,?)",
+                               (record.id, record.version, record.content_hash))
+            connection.execute("DELETE FROM plugin_hook_trust WHERE plugin_id=?", (record.id,))
+            connection.execute("DELETE FROM mcp_server_states WHERE plugin_id=?", (record.id,))
+            row = connection.execute("SELECT * FROM plugins WHERE id=?", (record.id,)).fetchone()
+            result = _plugin_from_row(row)
+            append_event(connection, EventType.PLUGIN_IMPORTED, now, {"plugin": result})
 
     def set_plugin_enabled(
         self, plugin_id: str, enabled: bool

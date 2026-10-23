@@ -136,7 +136,7 @@ class HookService:
                 raise RuntimeCancelled
             launch_scope.enter_context(self.launch_window(cancel))
             self.catalog.package(binding.plugin_id, expected_hash=binding.plugin_hash)
-            root = self.catalog.installed_root(binding.plugin_id)
+            root = self.catalog.installed_root(binding.plugin_id, expected_hash=binding.plugin_hash)
             data = self.catalog.root / binding.plugin_id / "hook-data"
             _private_directory(data)
             base = self.base.model_copy(update={"active_skill_roots": (*self.base.active_skill_roots, str(root))})

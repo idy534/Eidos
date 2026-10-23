@@ -535,7 +535,8 @@ class SkillCatalog:
             plugin_id = str(plugin["id"])
             manifest = self._manifest_for_snapshot(plugin)
             for declaration in manifest.skills:
-                root = self.plugins.installed_root(plugin_id) / declaration.root
+                root = self.plugins.installed_root(plugin_id, version=str(plugin["version"]),
+                                                   expected_hash=str(plugin["contentHash"])) / declaration.root
                 sources.append(_source(
                     f"{plugin_id}:", root, plugin_id,
                     str(plugin["version"]), str(plugin["contentHash"]),
@@ -564,14 +565,8 @@ class SkillCatalog:
         return ordered
 
     def _manifest_for_snapshot(self, plugin: dict[str, object]):
-        record = self.plugins.store.plugin_record(str(plugin["id"]))
-        if record is None or (
-            record["version"] != plugin["version"]
-            or record["contentHash"] != plugin["contentHash"]
-        ):
-            raise SkillReadError("skill_unavailable")
         try:
-            return self.plugins.manifest(str(plugin["id"]))
+            return self.plugins.package(str(plugin["id"]), expected_hash=str(plugin["contentHash"])).manifest
         except PluginImportError:
             raise SkillReadError("skill_unavailable") from None
 

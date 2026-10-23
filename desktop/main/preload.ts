@@ -398,6 +398,9 @@ const api: EidosRuntimeAPI = {
 
   // Plugins
   listPlugins: (): Promise<PluginListResult> => ipcRenderer.invoke(IPC.PLUGIN_LIST),
+  builtinPlugins: (request) => ipcRenderer.invoke(IPC.PLUGIN_BUILTIN, request),
+  mcpConnection: (request) => ipcRenderer.invoke(IPC.MCP_CONNECTION, request),
+  openMcpLogin: (request) => ipcRenderer.invoke(IPC.MCP_LOGIN_OPEN, request),
   importPlugin: (): Promise<PluginRecord | null> => ipcRenderer.invoke(IPC.PLUGIN_IMPORT),
   setPluginEnabled: (pluginId: string, enabled: boolean): Promise<PluginRecord> =>
     ipcRenderer.invoke(IPC.PLUGIN_SET_ENABLED, pluginId, enabled),

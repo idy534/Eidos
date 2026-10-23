@@ -111,7 +111,7 @@ export function McpDetailDialog({
                 </StatusBadge>
               </div>
               <p className="mcp-detail-command">
-                <code>$ {[server.executable, ...server.argv].join(" ")}</code>
+                <code>{server.remote?.url || `$ ${[server.executable, ...server.argv].join(" ")}`}</code>
               </p>
               {description ? <p className="mcp-detail-description">{description}</p> : null}
             </div>

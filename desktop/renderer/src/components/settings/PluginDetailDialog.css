@@ -1,4 +1,5 @@
 .plugin-settings-content { display: contents; }
+.plugin-icon { width: 1.5rem; height: 1.5rem; object-fit: contain; flex: none; }
 .plugin-name-button {
   border: 0;
   padding: 0.25rem 0;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from eidos_runtime.domain.channels import ChannelOrigin
+from eidos_runtime.models.mcp_connections import RemoteMcpInfo
 from eidos_runtime.domain.automation import AutomationOrigin
 
 from eidos_runtime.domain.session_fork import SessionForkSource, SessionForkOrigin
@@ -21,6 +22,7 @@ from pydantic import (
 
 from eidos_runtime.domain.input_reference import InputReference
 from eidos_runtime.domain.hooks import HookBinding, PluginCompatibility, PluginHookReview
+from eidos_runtime.domain.plugins import PluginPresentation
 
 
 class ClosedModel(BaseModel):
@@ -137,6 +139,7 @@ class PluginRecordDto(ClosedModel):
     updated_at: StrictInt = Field(alias="updatedAt")
     compatibility: "PluginCompatibility | None" = Field(default=None, exclude_if=lambda value: value is None)
     hook_review: "PluginHookReview | None" = Field(default=None, alias="hookReview", exclude_if=lambda value: value is None)
+    presentation: PluginPresentation | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RunPluginSnapshotDto(ClosedModel):
@@ -239,6 +242,7 @@ class McpServerRecordDto(ClosedModel):
     plugin_hash: StrictStr = Field(alias="pluginHash")
     server_id: StrictStr = Field(alias="serverId")
     executable: StrictStr
+    remote: RemoteMcpInfo | None = Field(default=None, exclude_if=lambda value: value is None)
     cwd: StrictStr | None = None
     argv: list[StrictStr]
     env_names: list[StrictStr] = Field(alias="envNames")

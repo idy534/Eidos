@@ -39,6 +39,7 @@ dependencies = [
     "lark-channel-sdk==1.4.0",
     "wecom-aibot-python-sdk==1.0.2",
     "websockets==15.0.1",
+    "authlib==1.9.1",
 ]
 
 [dependency-groups]

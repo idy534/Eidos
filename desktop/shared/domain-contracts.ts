@@ -1,5 +1,6 @@
 import type { CustomModelSettings } from "./custom-models.js";
 import type { PluginCompatibility, PluginHookReview } from "./hooks.js";
+import type { PluginPresentation } from "./plugins.js";
 import type { ContextCompactionActivity } from "./context.generated.js";
 import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
 import type { ModelId } from "./constants.js";
@@ -613,6 +614,7 @@ export interface PluginRecord {
   updatedAt: number;
   compatibility?: PluginCompatibility;
   hookReview?: PluginHookReview;
+  presentation?: PluginPresentation;
 }
 
 export interface PluginListResult {
@@ -652,6 +654,7 @@ export interface SkillListResult {
 }
 
 export interface McpServerRecord {
+  remote?: import("./mcp-connections.js").RemoteMcpInfo;
   schemaVersion: 1;
   pluginId: string;
   pluginVersion: string;

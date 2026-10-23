@@ -18,7 +18,7 @@
 
 本次目录调整不兼容旧的 `<pluginId>/<version>/<contentHash>/` 布局。旧安装需要移除并重新导入，不提供旧目录回退或旧快照路径迁移。正在被任务引用的资源仍遵循原有延后清理规则。安装使用同级临时目录发布，遇到已有版本目录时拒绝覆盖；发布失败不会删除其他安装，记录提交失败只清理本次新建的目录。
 
-卸载会保留插件的历史记录。用户重新导入相同 ID、版本和内容的插件时，Runtime 可以恢复这条记录，插件默认未启用。Runtime 在同一事务中清除旧的 Hook 信任和 MCP 授权，并记录导入事件。用户需要重新启用和授权。仍被非终态 Run 引用的已卸载插件不能重装。不同版本、同版本不同内容和已有安装目录仍按原规则报告冲突，私有数据和历史调用记录继续保留。
+卸载会保留插件的历史记录。用户重新导入相同 ID、版本和内容时，Runtime 可以恢复记录，插件默认未启用。Runtime 在同一事务中清除旧 Hook 信任和 MCP 授权，并记录导入事件。仍被非终态 Run 引用的同版本已卸载包不能重装。v37 还支持显式导入另一个版本，保留活动 Run 的旧文件，并清除旧授权；同版本不同内容继续冲突。版本更新和清理规则见 [current-plugins.md](current-plugins.md)。
 
 Runtime 在导入和读取已安装包时忽略各层目录中的普通 `.DS_Store` 文件。这些文件不进入安装内容和内容 Hash。Runtime 仍然检查符号链接、文件所有者和多硬链接，也继续核验其他文件的内容变化。
 
@@ -80,11 +80,11 @@ SQLite schema v36 增加三张表：
 
 Desktop 继续通过 preload typed IPC、Main 和 stdio JSON-RPC 调用 Runtime。新增方法是 `plugin/setHookTrust`。共享 Hook 类型与验证 Schema 由 Python 模型生成。命令定义留在私有 Run 扩展快照，普通 Desktop Run 投影不发送这些定义。设置页展示兼容信息、信任状态和最近一次结果。`systemMessage` 当前显示在设置页的最近结果中，聊天 Feed 尚未单独展示这类警告。
 
-升级前应沿用现有备份流程。旧版 Runtime 不支持 v36，回滚代码时需要恢复兼容的升级前数据备份。Runtime 不自动删除 Hook 表来降级。移除插件沿用现有版本目录清理规则，私有数据目录继续保留。
+Hook 表从 schema v36 引入，插件版本记录从 v37 引入。升级前应沿用现有备份流程。旧 Runtime 不能打开较新的 Schema，回滚代码时需要恢复兼容的升级前备份。Runtime 不自动删除表来降级。移除插件沿用版本目录清理规则，私有数据目录继续保留。
 
 ## 本阶段发布范围
 
-当前实现提供本地包、常用同步 command Hooks 和 Skills 兼容入口。它不代表 Codex 插件的完整兼容。Codex App/OAuth、插件捆绑 MCP 的自动接入、MCP Hook 处理器、异步处理器、其余生命周期事件和 transcript 导出仍未实现。外部清单的展示与连接元数据也没有完整映射。Eidos 原有 MCP 配置及授权流程继续可用。
+当前实现提供本地包、常用同步 command Hooks、Skills 和包内本地 stdio MCP。展示信息和本包设置说明已映射，但它不代表 Codex 插件完整兼容。Codex App/OAuth、远程 MCP、MCP Hook 处理器、异步处理器、其余生命周期事件和 transcript 导出仍未实现。Eidos 原有 MCP 配置及授权流程继续可用。
 
 参考来源是 [Codex Hooks](https://learn.chatgpt.com/docs/hooks) 和 [Plugin 构建文档](https://developers.openai.com/plugins/build/plugins)。实现事实以本仓库当前代码与定向测试为准。
 

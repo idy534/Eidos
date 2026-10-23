@@ -145,6 +145,9 @@ required_resources=(
   "eidos_runtime/resources/bin/ripgrep/manifest.json"
   "eidos_runtime/resources/bin/ripgrep/darwin-arm64/rg"
   "eidos_runtime/resources/skills/.system"
+  "eidos_runtime/resources/plugins/github/plugin.json"
+  "eidos_runtime/resources/plugins/github/mcp.json"
+  "eidos_runtime/resources/plugins/github/skills/github/SKILL.md"
 )
 for relative_path in "${required_resources[@]}"; do
   if [[ ! -e "$APP_ROOT/$relative_path" ]]; then

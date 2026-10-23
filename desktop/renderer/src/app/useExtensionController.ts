@@ -22,6 +22,7 @@ export interface ExtensionControllerState {
 export interface ExtensionControllerActions {
   load: () => Promise<void>;
   importPlugin: () => Promise<PluginRecord | null>;
+  installBuiltinPlugin: (pluginId: string) => Promise<void>;
   setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<void>;
   setPluginHookTrust: (pluginId: string, contentHash: string, trusted: boolean) => Promise<void>;
   removePlugin: (pluginId: string) => Promise<void>;
@@ -84,6 +85,11 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
     } finally {
       setPendingAction(undefined);
     }
+  }, []);
+
+  const installBuiltinPlugin = useCallback(async (pluginId: string): Promise<void> => {
+    await window.eidosRuntime.builtinPlugins({ action: "install", pluginId });
+    await fetchAndApplySnapshot();
   }, []);
 
   const setPluginEnabled = useCallback(async (pluginId: string, enabled: boolean): Promise<void> => {
@@ -234,6 +240,7 @@ export function useExtensionController(): [ExtensionControllerState, ExtensionCo
   const actions: ExtensionControllerActions = {
     load,
     importPlugin,
+    installBuiltinPlugin,
     setPluginEnabled,
     setPluginHookTrust,
     removePlugin,

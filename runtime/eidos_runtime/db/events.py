@@ -36,6 +36,13 @@ class SidebarPinsChangedPayload(ClosedModel):
     pass
 
 
+class McpConnectionChangedPayload(ClosedModel):
+    plugin_id: str = Field(alias="pluginId")
+    server_id: str = Field(alias="serverId")
+    status: Literal["disconnected", "connecting", "connected", "expired", "error"]
+    updated_at: int = Field(alias="updatedAt")
+
+
 class AutomationChangedPayload(ClosedModel):
     id: str
 
@@ -204,6 +211,7 @@ EVENT_PAYLOADS: dict[EventType, type[ClosedModel]] = {
     EventType.SKILL_STATE_CHANGED: SkillStateChangedPayload,
     EventType.SIDEBAR_PINS_CHANGED: SidebarPinsChangedPayload,
     EventType.MCP_SERVER_STATE_CHANGED: McpServerEventPayload,
+    EventType.MCP_CONNECTION_CHANGED: McpConnectionChangedPayload,
     EventType.MCP_TOOL_LIST_CHANGED: McpToolListChangedPayload,
     EventType.CONTEXT_COMPACTED: ContextCompactedPayload,
     EventType.INPUT_QUEUED: InputEventPayload,

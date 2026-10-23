@@ -14,6 +14,7 @@ from typing import Any, BinaryIO, TextIO
 from pydantic import BaseModel, ValidationError
 from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
 from eidos_runtime.extensions.mcp_details import McpDetails
+from eidos_runtime.models.mcp_connections import BuiltinPluginRequest, BuiltinPluginsResponse, McpConnectionRequest, McpConnectionState
 
 from eidos_runtime import __version__
 from eidos_runtime.application.channels import ChannelApplication
@@ -1569,6 +1570,16 @@ class RuntimeServer:
             allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
         ))
         registry.register(MethodRegistration(
+            name="plugin/builtin", request_type=BuiltinPluginRequest, response_type=BuiltinPluginsResponse,
+            handler=lambda _id, request: self._applications_or_error().extensions.builtin_plugins(request),
+            allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
+        ))
+        registry.register(MethodRegistration(
+            name="mcp/connection", request_type=McpConnectionRequest, response_type=McpConnectionState,
+            handler=lambda _id, request: self._applications_or_error().extensions.mcp_connection(request, self._required_async_kernel()),
+            allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
+        ))
+        registry.register(MethodRegistration(
             name="model/discoverCustom", request_type=CustomProviderRequest,
             response_type=CustomProviderResult, handler=_CustomProviderAdapter(self),
             allowed_when_draining=False, allowed_during_reconfiguration=False,
@@ -1945,6 +1956,7 @@ class RuntimeServer:
                 with startup_phase("skills"):
                     deploy_system_skills(self.store.data_directory)
                     self.plugins = PluginCatalog(self.store)
+                    self.plugins.connections.recover()
                     SkillManagement(SkillCatalog(self.plugins)).cleanup()
                 with startup_phase("model_config"):
                     self.model_config.initialize()
@@ -2054,6 +2066,8 @@ class RuntimeServer:
             self.shutting_down = True
             return
         try:
+            if self.plugins is not None:
+                self.plugins.connections.close()
             self.supervisor.shutdown()
             self.repository_runtime.shutdown_all()
             self._close_workspace_explorer()
@@ -2123,6 +2137,8 @@ class RuntimeServer:
             self.supervisor.lifecycle = RuntimeLifecycle.CLOSED
             return
         try:
+            if self.plugins is not None:
+                self.plugins.connections.close()
             self.supervisor.shutdown()
             self.repository_runtime.shutdown_all()
             self._close_workspace_explorer()

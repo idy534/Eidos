@@ -118,6 +118,7 @@ class McpDetails:
             plugin_root=root, workspace_root=root, config=config, env_values=env,
             on_list_changed=lambda: None, async_kernel=self._kernel(),
             sandbox=self._sandbox, resource_registry=self._resources,
+            remote_client=(lambda: plugins.connections.http_client(plugin_id, config)) if config.transport == "streamable-http" else None,
         )
         try:
             raw_tools = connection.start()

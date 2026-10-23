@@ -309,10 +309,10 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Plugin / Skill / MCP
 
 - Settings 的 MCP 名称按钮可以打开单列工具详情弹窗。弹窗展示工具名称、描述、输入参数、必填项和原始 Schema，并支持按名称或描述搜索。Runtime 每页固定返回 10 条，页面滚动接近底部时自动追加下一页。弹窗没有“完成”按钮，用户可以通过右上角关闭、Esc 或背景关闭，并回到原名称按钮。标题下方读取 MCP 初始化响应的 `serverInfo.description`；服务缺失或提供空白描述时，页面显示实际启动命令，不把 `instructions` 当作描述。
-- PluginCatalog 支持本地 Plugin v1 的导入、启用、禁用和移除。
+- PluginCatalog 支持本地 Eidos v1、Portable Agent Plugins 和 Codex 兼容包的导入、更新、启用、禁用和移除。v37 保存版本身份；旧 Run 继续读取冻结版本的文件。v38 保存远程连接状态和受保护凭据引用。插件可以声明 stdio 或 Streamable HTTP MCP，设置页支持 PAT、标准 OAuth 和 GitHub Device Flow 的连接、取消、断开和失效状态。应用随附可安装的 GitHub 插件和 Skill；浏览器登录需要发行方提供注册过的 Client ID，当前未配置时使用 PAT。更新默认停用并撤销旧账号、Hook 信任和 MCP 授权。详见 [current-plugins.md](current-plugins.md)。
 - Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
 - Plugin 安装目录使用 `~/.eidos/extensions/plugins/<pluginId>/<version>/`，不附加 Hash 目录。完整 Hash 继续用于内容核验、运行快照和 Hook 信任。本次调整不兼容旧目录，需要清理旧安装后重新导入。
-- Plugin 卸载后允许重新导入相同 ID、版本和内容。Runtime 恢复历史安装记录，保持未启用，并清除旧的 Hook 信任和 MCP 授权。Runtime 保留私有数据和历史调用；非终态 Run 仍引用该插件时，Runtime 拒绝重装。不同版本、同版本不同内容和已有版本目录继续受原冲突规则限制。
+- Plugin 卸载后允许重新导入相同 ID、版本和内容。Runtime 恢复历史安装记录，保持未启用，并清除旧 Hook 信任和 MCP 授权。非终态 Run 仍引用该版本时，Runtime 拒绝同版本重装。不同版本可以显式导入切换，活动旧版本继续保留。同版本不同内容和未知来源的已占用目录继续冲突。私有数据和历史调用继续保留。
 - 设置页按所属插件管理资源。用户点击插件名称后，可以查看该插件的 Skills、MCP Servers、Hooks 和兼容信息。插件 Skill 可以在插件详情中打开正文和调整启用状态；界面不提供单独卸载插件 Skill 的入口。插件 MCP 可以在详情中查看工具，并经过独立的命令与权限审阅后授权启用，或撤销启用。Hook 继续使用内容版本绑定的信任流程。
 - 独立技能页只列出个人和系统技能。独立 MCP 页只列出手动配置的服务。侧栏数量与各自的列表一致。设置页的分类不会过滤 Runtime Catalog 或聊天引用选择器，模型继续按原快照、激活和授权规则使用插件资源。
 - Skill 采用三层边界：Catalog 负责 Discovery 和 immutable Catalog Snapshot；Activation 负责 Selection、`SkillAccess` 和 Run-scoped activation；Resource 负责按需读取 `SKILL.md`、`references/`、`scripts/`、`assets/`，再进入现有 Tools 和 Sandbox。Skill 内容、产品依赖和 `runtime.json` 彼此分离。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。
@@ -322,9 +322,9 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Skill binary asset 在安装时按 bytes 保留。系统 Skill 私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并回放读取时保存的 multimodal binary content。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
 - `skill_read` 和 `skill_read_resource` 接受 UTF-8 字节 `offset` 与 `maxBytes`，默认及上限为 24,000 bytes。结果返回 `startByte`、`endByte`、`totalBytes` 和可选 `nextOffset`；模型按 nextOffset 续读。工具保留完整资源的 contentHash，并拒绝字符中间的 offset。分页还为 JSON 转义预留空间，避免分页正文再次被通用投影截断。模型结果投影单独允许这两个工具的正文达到 24,000 bytes，其他字符串仍使用原来的 16 KiB 上限，结果总预算仍为 48 KiB。
 - Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。Runtime dependency catalog 还会固定 `runtime.json` 的 manifest hash、Bundle snapshot hash 和 requirement hash。每个已声明 Skill dependency 的 binding 使用 `dependencyBindingId` 标识。Runtime 为识别到的 Skill 脚本选择对应声明的 binding，模型无需获取 ID。Runtime 在准备和启动前校验依赖；缺失或无效依赖会阻止启动，普通项目命令保留原环境。
-- RunResources 会收集 active Skill 的 MCP dependency，并与本 Run extension snapshot 中 available 的 Plugin 或手动 MCP server 比较，生成 installed、missing 或 unsupported 诊断。未满足项会进入低权限 user context warning。Runtime 不会静默安装、启用或启动 MCP server。Plugin 和手动 MCP 都使用独立的 server consent、官方 Python MCP SDK stdio client、Tool discovery、Tool call、Approval 和 Sandbox 链路。
+- RunResources 会收集 active Skill 的 MCP dependency，并与本 Run extension snapshot 中 available 的 Plugin 或手动 MCP server 比较，生成 installed、missing 或 unsupported 诊断。未满足项会进入低权限 user context warning。Runtime 不会静默安装、启用或启动 MCP server。Plugin 和手动 MCP 都使用独立的 server consent、官方 Python MCP SDK transport、Tool discovery、Tool call、Approval 和 Sandbox 链路。
 - `SkillCatalog` 为每个 filesystem Skill 固化 canonical `file:` locator、source kind、content hash 和 implicit policy。`SkillAccess` 只从该 snapshot 激活 root。显式选择、成功的 `skill_read` 和已知 Skill script invocation 共用 Run-scoped activation state，并通过 ToolCallRuntime 进入 Shell 和 Seatbelt。模型只能把 Catalog 给出的 canonical absolute root 用于已激活 Skill 的只读文件 Tool；任意 absolute path 不能扩大读写或 Shell 权限。Skill consumer 应使用 Catalog 给出的 canonical absolute root 作为脚本路径，使用 Workspace-relative 或 Workspace 内 canonical absolute cwd，并从 active binding 集合选择对应 Skill 的 binding。它不能使用顶层默认 binding。
-- MCP 当前支持 stdio Tools。Settings 可以创建、编辑和卸载手动 MCP，并配置名称、启动命令、参数、环境变量、环境变量透传名、工作目录和 `connector`/`workspace_read` permission profile。保存或编辑后的 Server 默认未授权，用户需要通过现有审阅入口重新启用。环境变量值不会出现在 MCP 列表、事件或日志中，编辑时留空会保留已保存的环境变量值。Server consent、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed bookkeeping 已接入。
+- MCP 支持 stdio 和插件声明的 Streamable HTTP Tools。Settings 的手动 MCP 编辑器仍只配置本地进程。保存或编辑后的本地 Server 默认未授权，需要重新审阅。远程账号连接会验证初始化和工具目录；后台工具请求不触发浏览器登录。两种 transport 共用 Server consent、Tool discovery、Tool call、timeout、结果 schema 和 Tool List Changed。令牌不进入服务列表、事件或日志。
 - 已经审阅启用的 MCP Server，其工具明确声明 `readOnlyHint=true` 时免逐次审批。缺失或非只读声明仍走原审批流程。系统信任该服务的声明，不根据名称、非破坏性或幂等声明猜测只读。进程权限、外部 Tool 的 Durable Intent、提交窗口、结果校验和未知结果记录继续保留。
 - Skill 安装下载可以复用已有的当前 Run 网络权限，最终安装仍需审批。Shell 申请默认已允许的普通宿主文件读取时直接返回已有权限，受保护读取和其他扩权仍按原规则处理。审批 UI、记忆逻辑和 Run Grant 的作用域不变。
 - MCP Connection 由唯一 RuntimeAsyncKernel 持有，不为每个连接创建专用 Event Loop。
@@ -333,7 +333,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v33。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v38。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。

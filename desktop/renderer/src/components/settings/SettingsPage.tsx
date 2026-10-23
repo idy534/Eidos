@@ -41,6 +41,8 @@ interface SettingsPageProps {
   onClose: () => void;
   onModelsChanged: () => Promise<void>;
   onImportPlugin: () => Promise<PluginRecord | null>;
+  onInstallBuiltinPlugin?: ((pluginId: string) => Promise<void>) | undefined;
+  onExtensionsChanged?: (() => Promise<void>) | undefined;
   onTogglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
   onTrustPluginHooks?: ((pluginId: string, contentHash: string, trusted: boolean) => Promise<void>) | undefined;
   onRemovePlugin: (pluginId: string) => Promise<void>;
@@ -69,6 +71,8 @@ export function SettingsPage({
   onClose,
   onModelsChanged,
   onImportPlugin,
+  onInstallBuiltinPlugin,
+  onExtensionsChanged,
   onTogglePlugin,
   onTrustPluginHooks,
   onRemovePlugin,
@@ -191,6 +195,8 @@ export function SettingsPage({
                 resourceError={extensionError}
                 pendingAction={pendingAction}
                 onImportPlugin={onImportPlugin}
+                onInstallBuiltinPlugin={onInstallBuiltinPlugin}
+                onExtensionsChanged={onExtensionsChanged}
                 onTogglePlugin={onTogglePlugin}
                 onTrustPluginHooks={onTrustPluginHooks}
                 onRemovePlugin={onRemovePlugin}

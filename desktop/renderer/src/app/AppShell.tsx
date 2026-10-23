@@ -1511,6 +1511,8 @@ export function AppShell({ runtime }: AppShellProps) {
             onClose={() => setSettingsOpen(false)}
             onModelsChanged={() => modelActions.load()}
             onImportPlugin={() => extensionActions.importPlugin()}
+            onInstallBuiltinPlugin={(pluginId) => extensionActions.installBuiltinPlugin(pluginId)}
+            onExtensionsChanged={() => extensionActions.load()}
             onTogglePlugin={(id, enabled) => extensionActions.setPluginEnabled(id, enabled)}
             onTrustPluginHooks={(id, hash, trusted) => extensionActions.setPluginHookTrust(id, hash, trusted)}
             onRemovePlugin={(id) => extensionActions.removePlugin(id)}
