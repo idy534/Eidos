@@ -47,7 +47,6 @@ export function AgentDefinitionDialog({ preview, onClose }: { preview: InputPrev
             </div>
           </div>
         </div>
-        <p className="skill-detail-description">本次引用保存的智能体定义。父任务通过现有协作工具调用它。</p>
         <div className="skill-detail-body">
           <pre ref={bodyRef} tabIndex={0} className="agent-definition-content" aria-label="智能体配置和指令">{preview.text}</pre>
         </div>
