@@ -3,7 +3,6 @@ import type { McpConnectionRequest, McpConnectionState } from "../../../../share
 import type { McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { FieldError } from "../FieldError.js";
-import "./McpConnectionPanel.css";
 
 const states = { disconnected: "尚未连接账号", connecting: "等待授权", connected: "账号已连接", expired: "授权已失效", error: "连接失败" };
 const errors: Record<string, string> = {

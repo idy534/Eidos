@@ -8,6 +8,8 @@ Runtime 接受 Eidos v1、Portable Agent Plugins 和 `.codex-plugin/plugin.json`
 
 插件可以同时提供 Skill、已支持的 command Hook、本地 stdio MCP 和远程 Streamable HTTP MCP。导入不启动服务，也不执行脚本。用户需要启用插件，并分别确认 MCP 授权和 Hook 信任。远程服务需要用户主动连接账号或连接无认证服务。Hook 的现有事件、权限和恢复规则见 [current-hooks.md](current-hooks.md)。
 
+Runtime 创建新的扩展快照时会核验插件包内容身份。内容身份不匹配或包不可读时，Runtime 会从新快照中省略该插件，并继续加载其他可用扩展。旧快照仍按已固定的版本和内容身份读取，已被修改的包内容不会被使用。
+
 外部 MCP 配置支持以下形状：
 
 ```json

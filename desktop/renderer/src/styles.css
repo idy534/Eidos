@@ -38,6 +38,7 @@
 @import "./components/settings/SkillSettings.css";
 @import "./components/settings/AgentSettings.css";
 @import "./components/settings/McpSettings.css";
+@import "./components/settings/McpConnectionPanel.css";
 @import "./components/settings/McpDetailDialog.css";
 @import "./components/settings/PluginDetailDialog.css";
 @import "./components/settings/WorktreeSettings.css";

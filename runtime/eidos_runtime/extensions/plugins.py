@@ -203,7 +203,12 @@ class PluginCatalog:
         for record in self.list_plugins():
             if not include_disabled and not record["enabled"]:
                 continue
-            manifest = self.manifest(str(record["id"]))
+            try:
+                manifest = self.manifest(str(record["id"]))
+            except PluginImportError:
+                # A broken package must not prevent healthy extensions from
+                # entering the next Run snapshot. Its contents stay unavailable.
+                continue
             plugins.append({
                 "id": record["id"],
                 "version": record["version"],
@@ -260,8 +265,12 @@ class PluginCatalog:
         repository = HookRepository(self.store.database)
         for record in self.list_plugins():
             if record["enabled"] and repository.trusted(str(record["id"]), str(record["contentHash"])):
+                try:
+                    definitions = self.package(str(record["id"])).hooks
+                except PluginImportError:
+                    continue
                 hooks.extend(HookBinding(plugin_id=str(record["id"]), plugin_hash=str(record["contentHash"]), definition=hook).to_wire_dict()
-                             for hook in self.package(str(record["id"])).hooks if hook.supported)
+                             for hook in definitions if hook.supported)
         if hooks:
             snapshot["hooks"] = hooks
         return snapshot

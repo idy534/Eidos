@@ -8,7 +8,6 @@ import { StatusBadge } from "../StatusBadge.js";
 import { McpToolRow } from "./McpToolRow.js";
 import { McpSchemaDialog } from "./McpSchemaDialog.js";
 import { useMcpTools } from "./useMcpTools.js";
-import "./McpDetailDialog.css";
 
 export function McpDetailDialog({
   server,

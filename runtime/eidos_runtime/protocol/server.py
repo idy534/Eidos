@@ -1571,12 +1571,20 @@ class RuntimeServer:
         ))
         registry.register(MethodRegistration(
             name="plugin/builtin", request_type=BuiltinPluginRequest, response_type=BuiltinPluginsResponse,
-            handler=lambda _id, request: self._applications_or_error().extensions.builtin_plugins(request),
+            handler=_ApplicationMethodAdapter(
+                lambda _id, request: self._applications_or_error().extensions.builtin_plugins(request),
+                BuiltinPluginsResponse,
+            ),
             allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
         ))
         registry.register(MethodRegistration(
             name="mcp/connection", request_type=McpConnectionRequest, response_type=McpConnectionState,
-            handler=lambda _id, request: self._applications_or_error().extensions.mcp_connection(request, self._required_async_kernel()),
+            handler=_ApplicationMethodAdapter(
+                lambda _id, request: self._applications_or_error().extensions.mcp_connection(
+                    request, self._required_async_kernel()
+                ),
+                McpConnectionState,
+            ),
             allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
         ))
         registry.register(MethodRegistration(

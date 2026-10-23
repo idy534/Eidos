@@ -477,6 +477,11 @@ def test_existing_v29_database_upgrades_without_losing_sessions(tmp_path):
         DROP TABLE IF EXISTS run_web_search_snapshots;
         DROP TABLE IF EXISTS web_search_settings;
         DROP TABLE IF EXISTS shell_environment_settings;
+        DROP TABLE hook_pending_events;
+        DROP TABLE hook_invocations;
+        DROP TABLE plugin_hook_trust;
+        DROP TABLE mcp_connections;
+        DROP TABLE plugin_versions;
         PRAGMA user_version=29;
     """)
     store.close()
