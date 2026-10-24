@@ -32,6 +32,10 @@ class EventProjector:
                 }),)
         if event_type == "run.queue_changed" and isinstance(payload, dict):
             return (self._notification("run/queueChanged", payload),)
+        if event_type == "memory.changed" and isinstance(payload, dict):
+            from eidos_runtime.memory.contracts import MemoryChangedNotice
+            notice = MemoryChangedNotice(scope_id=payload["scopeId"], generation=payload["generation"])
+            return (self._notification("memory/changed", notice.to_wire_dict()),)
         if event_type in {"channel.changed", "web_search.settings_changed", "shell_environment.settings_changed"}:
             return ()
         if event_type == "automation.changed" and isinstance(payload, dict) and isinstance(payload.get("id"), str):

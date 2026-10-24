@@ -1,0 +1,21 @@
+{
+  "memoryContractVersion": 2,
+  "valid": [
+    {"method":"memory/list","request":{"scope":"allowed","query":"测试","cursor":0},"response":{"scopes":[{"id":"global","kind":"global","mode":"auto","privacyEpoch":0,"generation":1}],"documents":[],"temporary":false,"nextCursor":null}},
+    {"method":"memory/read","request":{"scope":"global","path":"feedback_testing.md","revision":1,"offset":0,"limit":1024},"response":{"scopeId":"global","path":"feedback_testing.md","revision":1,"currentRevision":1,"revisions":[1],"document":null,"content":"完整正文","offset":0,"nextOffset":null,"epochs":{}}},
+    {"method":"memory/edit","request":{"operationId":"save","path":"feedback_testing.md","expectedRevision":0,"summary":"测试约定","content":"用户只在要求时运行全量测试。"},"response":{"operationId":"save","documentId":"note","path":"feedback_testing.md","revision":1,"code":"memory_saved"}},
+    {"method":"memory/policy","request":{"scope":"current","sessionId":"session","mode":"read"},"response":{"scopes":[],"documents":[],"temporary":false}},
+    {"method":"memory/temporary","request":{"sessionId":"session","temporary":true},"response":{"scopes":[],"documents":[],"temporary":true}},
+    {"method":"memory/export","request":{"scope":"global","cursor":16},"response":{"files":[{"path":"note.md","content":"完整正文"}],"generation":1,"nextCursor":null}},
+    {"method":"data/backup","request":{"destination":"/tmp/backup.zip"},"response":{"saved":true,"encrypted":false}}
+  ],
+  "invalidRequests": [
+    {"method":"memory/list","request":{"projectId":"other-project"}},
+    {"method":"memory/edit","request":{"operationId":"save","path":"note.md","expectedRevision":-1,"summary":"摘要","content":"正文"}},
+    {"method":"memory/edit","request":{"operationId":"save","path":"note.md","expectedRevision":9007199254740992,"summary":"摘要","content":"正文"}},
+    {"method":"memory/policy","request":{"mode":"candidate"}},
+    {"method":"memory/temporary","request":{"sessionId":"session","temporary":"yes"}}
+  ],
+  "validNotices":[{"scopeId":"scope","generation":1}],
+  "invalidNotices":[{"scopeId":"scope","generation":-1},{"scopeId":"scope","generation":1,"content":"private"}]
+}

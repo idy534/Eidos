@@ -372,12 +372,12 @@ class ContextBuilder:
                     data = payload.get("data", {})
                     epochs = data.get("epochs", {})
                     with self.store.database.lock:
-                        valid = self.store.database.memory.valid_epochs(self.store.database.connection(), epochs)
+                        valid = bool(epochs) and self.store.database.memory.valid_epochs(self.store.database.connection(), epochs)
                     if valid:
                         projected["memoryEpochs"] = epochs
                     else:
                         revoked_memory_calls.add(str(projected.get("callId", "")))
-                        projected["result"] = '{"outcome":"error","code":"memory_snapshot_revoked","summary":"Historical memory payload revoked."}'
+                        projected["result"] = json.dumps({**payload, "data": {}}, ensure_ascii=False) if payload.get("outcome") == "error" else '{"outcome":"error","code":"memory_snapshot_revoked","summary":"Historical memory payload revoked."}'
                 except (ValueError, AttributeError, TypeError):
                     revoked_memory_calls.add(str(projected.get("callId", "")))
                     projected["result"] = '{"outcome":"error","code":"memory_payload_invalid","summary":"Historical memory payload unavailable."}'

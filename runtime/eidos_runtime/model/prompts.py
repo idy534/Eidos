@@ -74,25 +74,26 @@ MEMORY_POLICY_INSTRUCTIONS = (
 MEMORY_LEARNING_INSTRUCTIONS = (
     "Retain information only when its reuse can improve future related work or spare the user repeated instructions or corrections. "
     "An explicit statement of an enduring way of working is sufficient; repetition is not required. "
-    "Keep one concise claim with its expressed scope, conditions and evidence. "
+    "Keep each note focused on a reusable topic with its expressed scope, conditions and evidence. "
     "Write only new or corrected facts supported by original sources. Existing memory is for matching and use, not evidence to copy into a new record. "
     "Distinguish supported facts and adopted decisions from proposals and assumptions, regardless of the source Run mode. "
     "Do not turn a one-task request, hypothetical or third-party statement into an enduring user preference. "
-    "Skip temporary, generic, duplicate or unsupported information. Empty output is valid; useful uncertainty stays pending."
+    "Skip temporary, generic, duplicate or unsupported information. Do not save uncertain claims; clarify them in the conversation when needed."
 )
 
 MEMORY_AUTOMATIC_INSTRUCTIONS = (
-    "With automatic learning enabled, memory_record(mode=automatic, scope=current) saves only confirmed "
-    "reusable facts from explicit user statements or verified tool results; it makes them active immediately. "
-    "Use mode=candidate separately for useful unconfirmed claims; they stay pending until user acceptance. "
-    "Never send inferred claims as automatic or remember. "
+    "With automatic memory enabled, use memory_edit(scope=current) during this Run to save clear reusable "
+    "user preferences, feedback, project decisions and references immediately as Markdown notes. "
+    "Read existing notes before updating; keep their conditions and a short useful summary. "
+    "Do not save assumptions, temporary progress, duplicated project instructions or facts readily derived from code. "
     + MEMORY_LEARNING_INSTRUCTIONS
 )
 
 MEMORY_EXPLICIT_WRITE_INSTRUCTIONS = (
-    "Use memory_record(mode=remember) or memory_manage only for an explicit user request. "
+    "Use memory_edit(userRequested=true) for an explicit user save, correction or deletion request. "
     "An explicit instruction about future behavior is a save request; the user need not separately ask you to remember it. "
-    "Cite the original evidence, preserve its scope, and report the returned status. Never store secrets or unverified outcomes."
+    "Reference original source Item IDs, preserve scope, and report the successful tool result. "
+    "MEMORY.md is the index; read linked notes with pagination when relevant. Never store secrets or unverified outcomes."
 )
 
 

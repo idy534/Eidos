@@ -144,11 +144,13 @@ export const MarkdownContent = memo(function MarkdownContent({
   content,
   className,
   documentPath,
+  onNoteLink,
   isStreaming = false,
 }: {
   content: string;
   className?: string;
   documentPath?: string;
+  onNoteLink?: ((path: string) => void) | undefined;
   isStreaming?: boolean;
 }) {
   const remarkPlugins = useMemo(() => REMARK_PLUGINS, []);
@@ -161,7 +163,15 @@ export const MarkdownContent = memo(function MarkdownContent({
   );
 
   const components = useMemo<ComponentProps<typeof Markdown>["components"]>(() => ({
-    a: ({ children, href }) => <ArtifactLink {...(href ? { href } : {})} {...(documentPath ? { documentPath } : {})}>{children}</ArtifactLink>,
+    a: ({ children, href }) => {
+      if (onNoteLink && href && !/[:?#\\]/.test(href) && !href.startsWith("/") && href.endsWith(".md")) {
+        let path: string;
+        try { path = decodeURIComponent(href); } catch { return <span>{children}</span>; }
+        if (path.split("/").some((part) => !part || part === "." || part === "..")) return <span>{children}</span>;
+        return <a href={href} onClick={(event) => { event.preventDefault(); onNoteLink(path); }}>{children}</a>;
+      }
+      return <ArtifactLink {...(href ? { href } : {})} {...(documentPath ? { documentPath } : {})}>{children}</ArtifactLink>;
+    },
     img: ({ alt, src }) => <MarkdownImage alt={alt} src={src} {...(documentPath ? { documentPath } : {})} />,
     pre: ({ children, node }) => documentPath
       ? <div data-source-line={node?.position?.start.line} data-source-end-line={node?.position?.end.line}>{children}</div>
@@ -177,7 +187,7 @@ export const MarkdownContent = memo(function MarkdownContent({
       }
       return <code className={className}>{children}</code>;
     },
-  }), [documentPath, isStreaming]);
+  }), [documentPath, isStreaming, onNoteLink]);
 
   return (
     <div className={className ? `markdown-body ${className}` : "markdown-body"}>

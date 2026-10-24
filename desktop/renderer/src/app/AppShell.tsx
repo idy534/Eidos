@@ -1435,6 +1435,7 @@ export function AppShell({ runtime }: AppShellProps) {
         onSelect={(session) => { setAutomationsOpen(false); void handleSelectSession(session); }}
         onRename={(session) => void beginRename(session)}
         onDelete={(session) => requestDeleteSession(session)}
+        onMemoryError={(message) => showToast(message, "error")}
         onDeleteProject={(project) => requestDeleteProject(project)}
         onShowInFinder={(project) => {
           void window.eidosRuntime.showItemInFolder(project.workspaceRoot).catch(() => undefined);

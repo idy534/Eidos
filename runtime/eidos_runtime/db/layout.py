@@ -59,7 +59,6 @@ from eidos_runtime.db.schema import (
 )
 from eidos_runtime.db.thread_history import ThreadHistoryStore
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
-from eidos_runtime.db.memories import MemoryStore
 from eidos_runtime.db.json_blobs import (
     JsonBlobReference,
     JsonBlobStore,
@@ -75,12 +74,10 @@ LEGACY_STATE_DATABASE_NAME = "eidos.db"
 REPOSITORY_DATABASE_NAME = "repository.sqlite"
 THREAD_HISTORY_DATABASE_NAME = "thread_history.sqlite"
 LOGS_DATABASE_NAME = "logs.sqlite"
-MEMORIES_DATABASE_NAME = "memories.sqlite"
 STATE_COMPACTION_MARKER_NAME = "state-compaction.pending"
 
 _AUXILIARY_SCHEMA_VERSION = 1
 LOGS_SCHEMA_VERSION = 2
-_MEMORIES_SCHEMA_VERSION = 2
 _REPOSITORY_TABLES = (
     "repository_snapshots",
     "repository_files",
@@ -159,45 +156,7 @@ LOGS_V1_CHAIN_TO_V2_MIGRATION_SQL = """
 SELECT 1;
 """
 
-MEMORIES_SCHEMA_SQL = """
-CREATE TABLE memory_records (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    relative_path TEXT NOT NULL,
-    content_sha256 TEXT NOT NULL,
-    metadata_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
 
-CREATE INDEX memory_records_kind_time
-ON memory_records(kind, updated_at DESC);
-
-CREATE INDEX memory_records_content
-ON memory_records(content_sha256);
-"""
-
-MEMORIES_V1_TO_V2_SQL = """
-CREATE TABLE memory_records_v2 (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    relative_path TEXT NOT NULL,
-    content_sha256 TEXT NOT NULL,
-    metadata_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-INSERT INTO memory_records_v2 SELECT * FROM memory_records;
-DROP TABLE memory_records;
-ALTER TABLE memory_records_v2 RENAME TO memory_records;
-
-CREATE INDEX memory_records_kind_time
-ON memory_records(kind, updated_at DESC);
-
-CREATE INDEX memory_records_content
-ON memory_records(content_sha256);
-"""
 
 T = TypeVar("T")
 
@@ -523,16 +482,8 @@ class PersistenceLayout:
             schema_sql=THREAD_HISTORY_SCHEMA_SQL,
         )
         self.logs = LogsDatabase(data_directory)
-        self.memories = AuxiliaryDatabase(
-            data_directory,
-            name=MEMORIES_DATABASE_NAME,
-            schema_sql=MEMORIES_SCHEMA_SQL,
-            schema_version=_MEMORIES_SCHEMA_VERSION,
-            migrations={1: MEMORIES_V1_TO_V2_SQL},
-        )
         self.thread_history_store: ThreadHistoryStore | None = None
         self.runtime_logs: RuntimeLogStore | None = None
-        self.memory_store: MemoryStore | None = None
 
     def initialize(self, state: StateDatabase) -> None:
         with startup_phase("storage.repository_extraction"):
@@ -549,7 +500,6 @@ class PersistenceLayout:
                 self.repository,
                 self.thread_history,
                 self.logs,
-                self.memories,
             ):
                 with startup_phase(f"storage.{database.name}"):
                     database.initialize()
@@ -560,15 +510,11 @@ class PersistenceLayout:
             self.runtime_logs = RuntimeLogStore(
                 self.data_directory, self.logs
             )
-            self.memory_store = MemoryStore(
-                self.data_directory, self.memories
-            )
             with startup_phase("storage.history_projection"):
                 self.thread_history_store.catch_up(state)
         except Exception:
             self.thread_history_store = None
             self.runtime_logs = None
-            self.memory_store = None
             for database in reversed(initialized):
                 database.close()
             raise
@@ -576,9 +522,7 @@ class PersistenceLayout:
     def close(self) -> None:
         self.thread_history_store = None
         self.runtime_logs = None
-        self.memory_store = None
         for database in (
-            self.memories,
             self.logs,
             self.thread_history,
             self.repository,
@@ -786,6 +730,8 @@ def _migrate_state_schema(state: StateDatabase) -> None:
         V35_SCHEMA_VERSION,
         V36_SCHEMA_VERSION,
         37,
+        38,
+        39,
     }:
         raise StorageError("schema_revision_unsupported")
     try:
@@ -895,6 +841,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == 38:
                 from eidos_runtime.db.hook_lifecycle_migration import migrate_hook_lifecycle
                 migrate_hook_lifecycle(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 39:
+                from eidos_runtime.memory.document_schema import reset_document_memory
+                reset_document_memory(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()
@@ -1106,7 +1055,6 @@ __all__ = [
     "LOGS_DATABASE_NAME",
     "LOGS_SCHEMA_VERSION",
     "LogsDatabase",
-    "MEMORIES_DATABASE_NAME",
     "PersistenceLayout",
     "REPOSITORY_DATABASE_NAME",
     "RepositoryDatabase",
@@ -1121,16 +1069,15 @@ def collect_unreferenced_blobs(
     state: StateDatabase, blobs: JsonBlobStore, *, cancel: threading.Event | None = None,
 ) -> int:
     with state.lock, blobs.lock:
-        references = _blob_references(state)
+        references = iter_blob_references(state.connection())
         try:
             return blobs.garbage_collect(references, cancel=cancel)
         finally:
             references.close()
 
 
-def _blob_references(state: StateDatabase) -> Iterator[str]:
+def iter_blob_references(connection: sqlite3.Connection) -> Iterator[str]:
     """Stream references while the collector owns both state and Blob locks."""
-    connection = state.connection()
     tables = _table_names(connection)
     queries = [
         f"SELECT snapshot_json FROM {table}"

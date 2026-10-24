@@ -236,6 +236,31 @@ class JsonBlobStore:
         with self.lock:
             return self._garbage_collect(retained_references, cancel=cancel)
 
+    def verify_references(self, references: Iterable[str], *, byte_limit: int) -> None:
+        """Verify an offline restore, including leaf blobs and nested blocks."""
+        with self.lock:
+            seen: set[str] = set()
+            used = 0
+            for stored in references:
+                reference = JsonBlobReference.from_json(stored)
+                pending = [reference] if reference else []
+                while pending:
+                    value = pending.pop()
+                    if value.relative_path in seen:
+                        continue
+                    seen.add(value.relative_path)
+                    used += value.uncompressed_bytes
+                    if used > byte_limit or len(seen) > 100000:
+                        raise JsonBlobCorruptionError("restore blob limit exceeded")
+                    self._read(value)
+                    for child_json, kind in self._request_children(value):
+                        child = JsonBlobReference.from_json(child_json)
+                        if child is None or child.kind != kind:
+                            raise JsonBlobCorruptionError(
+                                "context block reference is invalid"
+                            )
+                        pending.append(child)
+
     def _garbage_collect(
         self, retained_references: Iterable[str], *, cancel: threading.Event | None = None,
     ) -> int:

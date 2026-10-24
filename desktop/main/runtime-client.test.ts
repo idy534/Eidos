@@ -249,6 +249,46 @@ test("spawns the Python runtime and completes initialize then shutdown", async (
   }
 });
 
+test("document memory crosses stdio with metadata notices, version conflicts and restart persistence", async () => {
+  const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-document-memory-"));
+  let client: RuntimeClient | undefined;
+  const notices: RuntimeNotification[] = [];
+  let changed!: (value: RuntimeNotification) => void;
+  const firstChange = new Promise<RuntimeNotification>((resolve) => { changed = resolve; });
+  const options = { pythonExecutable, runtimeRoot: path.join(projectRoot, "runtime"), dataDirectory,
+    onNotification: (notice: RuntimeNotification) => {
+      if (notice.method === "memory/changed") { notices.push(notice); changed(notice); }
+    } };
+  try {
+    client = new RuntimeClient(options);
+    await client.initialize();
+    const request = { operationId: randomUUID(), scope: "global" as const, path: "feedback_testing.md",
+      summary: "测试约定", content: "用户只在明确要求时运行全量测试。", expectedRevision: 0 };
+    const saved = await client.memory("memory/edit", request);
+    assert.equal(saved.code, "memory_saved");
+    const notice = await withTimeout(firstChange, 5_000);
+    assert.deepEqual(Object.keys(notice.params).sort(), ["generation", "scopeId"]);
+    const index = await client.memory("memory/read", { scope: "global", path: "MEMORY.md" });
+    assert.match(index.content, /feedback_testing.md/);
+    await assert.rejects(client.memory("memory/edit", { ...request, operationId: randomUUID(), content: "stale update" }),
+      (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "MEMORY_REVISION_CONFLICT");
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+    client = new RuntimeClient(options);
+    await client.initialize();
+    const body = await client.memory("memory/read", { scope: "global", path: request.path, offset: 0, limit: 16384 });
+    assert.equal(body.content, request.content);
+    assert.equal(body.revision, 1);
+    assert.ok(notices.length >= 1);
+    await client.shutdown();
+    assert.equal(await client.waitForExit(), 0);
+  } finally {
+    client?.terminate();
+    await client?.waitForExit().catch(() => undefined);
+    await rm(dataDirectory, { recursive: true, force: true });
+  }
+});
+
 test("accepts saved model API keys and legacy responses without API keys or reasoning metadata", async () => {
   const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "eidos-volcengine-model-runtime-"));
   const packageRoot = path.join(runtimeRoot, "eidos_runtime");

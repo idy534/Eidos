@@ -335,7 +335,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - 当前 state schema 是 v39。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
-- `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
+- `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。记忆正文使用私有 Markdown 文件，作用域、版本与撤销状态由 `state.sqlite` 管理；旧 `memories.sqlite` 在 v40 升级后删除。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
 - 每个 SQLite 数据库都使用私有目录、WAL、busy timeout 和完整性检查。`state.sqlite` 继续使用单实例锁和 health-only 失败状态。跨库数据只作为 projection、artifact 或可重建缓存，不建立第二个业务状态权威。
 
@@ -566,7 +566,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ## 记忆
 
-支持全局/Project 记忆、来源证据、不可变版本、无向量检索、常驻摘要与四个模型工具、独立使用/生成控制、临时会话、当前 Run 即时自动保存、无二次模型审核的前台保存与更正、事实来源解析、版本更正与去重，以及两阶段有限历史整理和预算恢复。Desktop 提供候选确认、来源跳转、纠正、固定、归档、遗忘、显式历史学习、任务重试、索引重建、导出和完整 ZIP 备份。详见 [current-memory.md](current-memory.md)。
+Eidos 使用全局/项目范围的 `MEMORY.md` 索引和主题 Markdown 笔记。模型在当前 Run 中通过 `memory_read`、`memory_search`、`memory_edit` 即时读取和保存，正文支持分页与版本 CAS。系统保留来源校验、撤销、临时对话和用户控制版本保护。记忆页只保留范围、模式、笔记编辑、来源/版本及整个范围的 Markdown 导出，完整备份移至运行时的本地数据区。v40 按用户要求清除旧记忆，不转换旧内容；后台模型整理、候选确认、历史回填和预算任务已移除。详见 [current-memory.md](current-memory.md)。
 
 审批支持高危人工确认。manual 与 auto_review 遇到受保护数据、Runtime、系统 Skill、非专用 Git 路径扩权或显式取消沙盒保护时，展示 danger 样式和具体范围，由用户决定。批准后系统执行对应操作；相邻路径、身份和版本核验继续生效。full_access 不请求或记录逐项审批，模型使用默认工具参数直接执行。
 

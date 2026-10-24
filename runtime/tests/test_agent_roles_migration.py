@@ -109,8 +109,9 @@ def test_database_startup_upgrades_v20_and_keeps_existing_agent_roles(tmp_path) 
         store.close()
 
 
-def test_offline_v20_backup_restores_with_role_migration(tmp_path) -> None:
-    from eidos_runtime.memory.backup import restore
+def test_offline_v20_backup_is_rejected_by_the_new_data_format(tmp_path) -> None:
+    from eidos_runtime.db.backup import restore
+    from eidos_runtime.memory.repository import MemoryRejected
 
     database = tmp_path / "legacy.sqlite"
     connection = _legacy_database(str(database))
@@ -123,8 +124,6 @@ def test_offline_v20_backup_restores_with_role_migration(tmp_path) -> None:
             "privacyEpochs": {}, "memoryRefs": [],
         }))
     destination = tmp_path / "restored"
-    restore(archive_path, destination)
-    with sqlite3.connect(destination / "state.sqlite") as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 21
-        assert connection.execute("SELECT role FROM agent_delegations ORDER BY role").fetchall() == [("explorer",), ("worker",)]
-        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    with pytest.raises(MemoryRejected, match="format_unsupported"):
+        restore(archive_path, destination)
+    assert not destination.exists()

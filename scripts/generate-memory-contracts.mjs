@@ -10,7 +10,9 @@ import json
 from pydantic import create_model
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.application.memory import MEMORY_METHODS
+from eidos_runtime.memory.contracts import MemoryChangedNotice
 models = {model.__name__: (model, ...) for _, request, response in MEMORY_METHODS for model in (request, response)}
+models["MemoryChangedNotice"] = (MemoryChangedNotice, ...)
 contract = create_model("MemoryContract", __base__=EidosFrozenStrictModel, **models)
 print(json.dumps({"schema": contract.model_json_schema(by_alias=True), "methods": {method: [request.__name__, response.__name__] for method, request, response in MEMORY_METHODS}}))
 `], {cwd: root, env: {...process.env, PYTHONPATH: path.join(root, "runtime")}, encoding: "utf8", maxBuffer: 1024 * 1024}));

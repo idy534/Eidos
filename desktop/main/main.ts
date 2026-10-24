@@ -6,6 +6,7 @@ import type { CustomProviderRequest } from "../shared/custom-models.js";
 import { isChannelSaveRequest, isChannelReadRequest } from "../shared/channels.js";
 import { isSessionForkRequest } from "../shared/session-fork.js";
 import { isMemoryMethod, isMemoryRequest } from "../shared/memory.js";
+import { exportMemoryNotes } from "./memory-export.js";
 import { isAnswerInputRequest, isPlanEditRequest, isRunPlanningOptions } from "../shared/planning.js";
 import { isSearchRequest, isReadAroundRequest, isFileFindRequest } from "../shared/search.js";
 import { isSidebarSetPinnedRequest } from "../shared/sidebar.js";
@@ -1324,17 +1325,26 @@ ipcMain.handle(IPC.AGENT_STOP, (event, parentRunId: unknown, agentId: unknown) =
   inputOwner(event);
   return clientOrThrow().stopAgent(inputKey(parentRunId), inputKey(agentId));
 });
-ipcMain.handle(IPC.MEMORY_BACKUP, async (event) => {
+ipcMain.handle(IPC.DATA_BACKUP, async (event) => {
   inputOwner(event);
   const owner = BrowserWindow.fromWebContents(event.sender);
   if (!owner) throw new Error("无法打开备份保存窗口。");
-  const result = await dialog.showSaveDialog(owner, {title: "备份记忆和对话（明文）", defaultPath: "eidos-memory-backup.zip", filters: [{name: "ZIP", extensions: ["zip"]}]});
-  if (!result.canceled && result.filePath) await clientOrThrow().memory("memory/backup", {destination: result.filePath});
+  const result = await dialog.showSaveDialog(owner, {title: "备份本地数据（明文）", defaultPath: "eidos-data-backup.zip", filters: [{name: "ZIP", extensions: ["zip"]}]});
+  if (!result.canceled && result.filePath) await clientOrThrow().memory("data/backup", {destination: result.filePath});
 });
 ipcMain.handle(IPC.MEMORY_REQUEST, (event, method: unknown, request: unknown) => {
   inputOwner(event);
-  if (!isMemoryMethod(method) || method === "memory/backup" || !isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
+  if (!isMemoryMethod(method) || method === "data/backup" || !isMemoryRequest(method, request)) throw new Error("记忆请求无效。");
   return clientOrThrow().memory(method, request);
+});
+ipcMain.handle(IPC.MEMORY_EXPORT, async (event, scope: unknown, sessionId: unknown) => {
+  inputOwner(event);
+  if (scope !== "current" && scope !== "global") throw new Error("记忆范围无效。");
+  const selectedSession = sessionId == null ? null : inputKey(sessionId);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner) throw new Error("无法打开保存窗口。");
+  const saved = await dialog.showSaveDialog(owner, { title: "导出记忆", defaultPath: "eidos-memories.md", filters: [{ name: "Markdown", extensions: ["md"] }] });
+  if (!saved.canceled && saved.filePath) await exportMemoryNotes(saved.filePath, { scope, sessionId: selectedSession }, (request) => clientOrThrow().memory("memory/export", request));
 });
 ipcMain.handle(IPC.PLANNING_READ, (event, sessionId: unknown) => {
   inputOwner(event);

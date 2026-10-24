@@ -706,6 +706,7 @@ export interface ExtensionSnapshot {
 }
 
 export type RuntimeNotification =
+  | { method: "memory/changed"; params: import("./memory.generated.js").MemoryChangedNotice }
   | { method: "context/compactionUpdated"; params: { sessionId: string; activity: ContextCompactionActivity } }
   | { method: "automation/changed"; params: { id: string } }
   | { method: "sidebar/pinsChanged"; params: { eventId: number } }

@@ -117,10 +117,9 @@ EXPECTED_TABLES = {
     "agent_message_receipts",
     "run_skill_leases",
     "projectless_workspace_creations",
-    "memory_scopes", "memory_sources", "memory_source_items", "memory_entries",
+    "memory_scopes", "memory_sources", "memory_source_items", "memory_documents",
     "memory_revisions", "memory_evidence", "memory_actions", "memory_suppressions",
-    "memory_jobs", "memory_model_attempts", "memory_generations", "memory_snapshot_refs",
-    "memory_usage", "memory_tool_budget", "memory_tool_reads",
+    "memory_indexes", "memory_snapshot_refs", "memory_tool_reads", "memory_metadata",
 }
 
 EXPECTED_COLUMNS = {
@@ -472,7 +471,7 @@ class StorageSchemaTests(unittest.TestCase):
         }
         self.assertEqual(tables, EXPECTED_TABLES)
         self.assertEqual(
-            indexes - {"memory_source_items_session", "memory_entries_scope", "memory_evidence_source", "memory_jobs_queue", "memory_model_attempts_time"},
+            indexes - {"memory_source_items_session", "memory_document_path", "memory_evidence_source"},
             {
                 "hook_invocations_plugin", "hook_invocations_run",
                 "channel_inbound_status", "channel_deliveries_pending",
@@ -562,8 +561,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 39)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 38)
+        self.assertEqual(SCHEMA_VERSION, 40)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 39)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

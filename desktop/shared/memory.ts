@@ -19,3 +19,7 @@ export function isMemoryRequest<K extends keyof MemoryMethods>(method: K, value:
 export function isMemoryResponse<K extends keyof MemoryMethods>(method: K, value: unknown): value is MemoryMethods[K]["response"] {
   return validators.get(memoryMethodModels[method][1])?.(value) === true;
 }
+
+export function isMemoryChangedNotice(value: unknown): value is import("./memory.generated.js").MemoryChangedNotice {
+  return validators.get("MemoryChangedNotice")?.(value) === true;
+}

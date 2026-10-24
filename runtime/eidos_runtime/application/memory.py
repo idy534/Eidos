@@ -1,65 +1,65 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.memory import contracts as dto
-from eidos_runtime.memory.jobs import MemoryJobs
 from eidos_runtime.memory.repository import MemoryRejected
 
 
 class MemoryApplication:
-    def __init__(self, store: SessionStore, jobs: MemoryJobs | None) -> None:
+    def __init__(
+        self, store: SessionStore, on_change: Callable[[], None] | None = None
+    ) -> None:
         self.service = store.database.memory
-        self.jobs = jobs
+        self.on_change = on_change
 
-    def backup(self, request: dto.MemoryBackupRequest) -> dto.MemoryBackupResult:
-        from eidos_runtime.memory.backup import backup
+    def backup(self, request: dto.DataBackupRequest) -> dto.DataBackupResult:
+        from eidos_runtime.db.backup import backup
 
         backup(self.service, Path(request.destination))
-        return dto.MemoryBackupResult()
+        return dto.DataBackupResult()
 
     def dispatch(self, method: str, request: object) -> object:
         handlers = {
-            "memory/list": self.service.read,
-            "memory/get": self.service.get,
-            "memory/settingsUpdate": self.service.settings,
+            "memory/list": self.service.list,
+            "memory/read": self.service.read,
+            "memory/edit": self.service.edit,
+            "memory/policy": self.service.policy,
             "memory/temporary": self.service.set_temporary,
-            "memory/remember": self.service.record,
-            "memory/manage": self.service.manage,
             "memory/export": self.service.export,
-            "memory/backup": self.backup,
-            "memory/rebuild": self.service.rebuild,
+            "data/backup": self.backup,
         }
-        if self.jobs is not None:
-            handlers.update(
-                {
-                    "memory/backfill": self.jobs.backfill,
-                    "memory/jobsRetry": self.jobs.retry,
-                }
-            )
         try:
             handler = handlers.get(method)
             if handler is None:
-                raise MemoryRejected("memory_service_unavailable")
-            return handler(request)
+                raise MemoryRejected("memory_method_unavailable")
+            result = handler(request)
+            if self.on_change is not None and method in {
+                "memory/edit",
+                "memory/policy",
+                "memory/temporary",
+            }:
+                self.on_change()
+            return result
         except MemoryRejected as error:
             raise ApplicationError(str(error).upper()) from None
         except (OSError, ValueError):
-            raise ApplicationError("MEMORY_IO_FAILED") from None
+            raise ApplicationError(
+                "DATA_BACKUP_IO_FAILED"
+                if method == "data/backup"
+                else "MEMORY_IO_FAILED"
+            ) from None
 
 
 MEMORY_METHODS = (
-    ("memory/list", dto.MemoryReadRequest, dto.MemoryState),
-    ("memory/get", dto.MemoryGetRequest, dto.MemoryGetResult),
-    ("memory/settingsUpdate", dto.MemorySettingsRequest, dto.MemoryState),
+    ("memory/list", dto.MemoryListRequest, dto.MemoryState),
+    ("memory/read", dto.MemoryReadRequest, dto.MemoryReadResult),
+    ("memory/edit", dto.MemoryEditRequest, dto.MemoryActionResult),
+    ("memory/policy", dto.MemoryPolicyRequest, dto.MemoryState),
     ("memory/temporary", dto.MemoryTemporaryRequest, dto.MemoryState),
-    ("memory/remember", dto.MemoryWriteRequest, dto.MemoryActionResult),
-    ("memory/manage", dto.MemoryManageRequest, dto.MemoryActionResult),
     ("memory/export", dto.MemoryExportRequest, dto.MemoryExport),
-    ("memory/backup", dto.MemoryBackupRequest, dto.MemoryBackupResult),
-    ("memory/rebuild", dto.MemoryRebuildRequest, dto.MemoryState),
-    ("memory/backfill", dto.MemoryBackfillRequest, dto.MemoryState),
-    ("memory/jobsRetry", dto.MemoryJobRequest, dto.MemoryState),
+    ("data/backup", dto.DataBackupRequest, dto.DataBackupResult),
 )

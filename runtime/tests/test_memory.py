@@ -1,32 +1,30 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 import sqlite3
 import threading
-import uuid
+from pathlib import Path
 
 import pytest
 
-from eidos_runtime.context.builder import ContextBuilder
-from eidos_runtime.db.schema import SCHEMA_VERSION, V16_SCHEMA_SQL
+from eidos_runtime.db.schema import SCHEMA_VERSION
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.memory.contracts import (
-    MemoryGetRequest,
-    MemoryManageRequest,
+    MemoryEditRequest,
+    MemoryExportRequest,
+    MemoryListRequest,
+    MemoryPolicyRequest,
     MemoryReadRequest,
-    MemorySettings,
-    MemorySettingsRequest,
     MemoryTemporaryRequest,
-    MemoryWriteRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected
-
+from eidos_runtime.memory.repository import GLOBAL_SCOPE_ID
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def store(tmp_path: Path):
+def store(tmp_path):
     (tmp_path / "workspace").mkdir()
     value = SessionStore(tmp_path / "data")
     value.initialize()
@@ -35,475 +33,490 @@ def store(tmp_path: Path):
     value.close()
 
 
-def remember(store, content="默认使用中文回答", **kwargs):
-    return store.database.memory.record(
-        MemoryWriteRequest(operation_id=str(uuid.uuid4()), content=content, **kwargs)
+def note(**changes):
+    return MemoryEditRequest.model_validate(
+        {
+            "operation_id": "save",
+            "scope": "global",
+            "path": "feedback_testing.md",
+            "summary": "只在明确要求时运行全量测试。",
+            "content": "用户只在明确要求时运行全量测试。",
+            **changes,
+        }
     )
 
 
-def test_explicit_memory_is_searchable_in_chinese_without_embeddings(store):
-    result = remember(store, aliases=["中文", "Chinese"])
+def test_shared_document_memory_protocol_fixture():
+    from pydantic import ValidationError
+    from eidos_runtime.application.memory import MEMORY_METHODS
+    from eidos_runtime.memory.contracts import MemoryChangedNotice
+
+    fixture = json.loads(
+        (Path(__file__).parents[2] / "protocol/fixtures/memory-v2.json").read_text()
+    )
+    models = {
+        method: (request, response) for method, request, response in MEMORY_METHODS
+    }
+    for value in fixture["valid"]:
+        models[value["method"]][0].model_validate(value["request"])
+        models[value["method"]][1].model_validate(value["response"])
+    for value in fixture["invalidRequests"]:
+        with pytest.raises(ValidationError):
+            models[value["method"]][0].model_validate(value["request"])
+    for value in fixture["validNotices"]:
+        MemoryChangedNotice.model_validate(value)
+    for value in fixture["invalidNotices"]:
+        with pytest.raises(ValidationError):
+            MemoryChangedNotice.model_validate(value)
+
+
+def test_index_publication_chinese_search_and_no_query_injection(store):
     service = store.database.memory
-    assert result.status == "applied"
-    for query in ["中文", "中文回答", "Chinese", '" OR * NEAR(']:
-        state = service.read(MemoryReadRequest(query=query))
+    saved = service.edit(note())
+    assert (
+        "[feedback_testing.md]"
+        in service.read(MemoryReadRequest(scope="global")).content
+    )
+    for query in ("全量", "全量测试", '" OR * NEAR('):
+        state = service.list(MemoryListRequest(query=query))
         if query != '" OR * NEAR(':
-            assert state.entries[0].id == result.entry_id
+            assert state.documents[0].id == saved.document_id
     assert (
-        service.get(MemoryGetRequest(entry_id=result.entry_id)).entry.content
-        == "默认使用中文回答"
+        service.read(MemoryReadRequest(scope="global", path=note().path)).content
+        == note().content
     )
 
 
-def test_action_replay_and_revision_conflict(store):
+def test_replay_cas_and_history(store):
     service = store.database.memory
-    request = MemoryWriteRequest(operation_id="once", content="concise")
-    first = service.record(request)
-    assert service.record(request) == first
+    first = service.edit(note())
+    assert service.edit(note()) == first
     with pytest.raises(MemoryRejected, match="operation_conflict"):
-        service.record(request.model_copy(update={"content": "different"}))
-    correction = MemoryManageRequest(
-        operation_id="correct",
-        entry_id=first.entry_id,
-        expected_revision=1,
-        action="correct",
-        content="detailed",
+        service.edit(note(content="changed"))
+    revised = note(
+        operation_id="correct", expected_revision=1, content="现在使用新流程。"
     )
-    assert service.manage(correction).revision == 2
-    assert service.manage(correction).revision == 2
+    assert service.edit(revised).revision == 2
     with pytest.raises(MemoryRejected, match="revision_conflict"):
-        service.manage(correction.model_copy(update={"operation_id": "late"}))
-    assert service.read(MemoryReadRequest(query="concise")).entries == []
+        service.edit(revised.model_copy(update={"operation_id": "late"}))
     assert (
-        service.get(MemoryGetRequest(entry_id=first.entry_id, revision=1)).entry.status
-        == "superseded"
+        service.read(
+            MemoryReadRequest(scope="global", path=note().path, revision=1)
+        ).content
+        == note().content
     )
 
 
-def test_project_ids_are_authorization_boundaries(store, tmp_path):
-    first = store.create_session(str(tmp_path / "workspace"))
-    (tmp_path / "other").mkdir()
-    second = store.create_session(str(tmp_path / "other"))
-    result = remember(store, "project A database", session_id=first["id"])
-    assert (
-        store.database.memory.read(MemoryReadRequest(session_id=second["id"])).entries
-        == []
-    )
-    with pytest.raises(MemoryRejected, match="entry_not_found"):
-        store.database.memory.get(
-            MemoryGetRequest(session_id=second["id"], entry_id=result.entry_id)
-        )
-
-
-def test_candidate_respects_current_scope_and_generation_window(store, tmp_path):
-    session = store.create_session(str(tmp_path / "workspace"))
-    _run, old_source = store.create_run(session["id"], "I prefer Chinese")
+def test_long_note_can_be_read_to_its_end_without_a_run_call_quota(store):
     service = store.database.memory
-    service.settings(MemorySettingsRequest(
-        session_id=session["id"], scope="current",
-        settings=MemorySettings(generate_enabled=True),
-    ))
-    request = MemoryWriteRequest(
-        session_id=session["id"], operation_id="old-candidate",
-        content="Prefer Chinese", source_item_ids=[old_source["id"]],
-    )
-    with pytest.raises(MemoryRejected, match="memory_generation_source_outside_window"):
-        service.record(request, candidate=True)
-    store.fail_run(_run["id"], "fixture_finished")
-    _new_run, new_source = store.create_run(session["id"], "I prefer short answers")
-    with pytest.raises(MemoryRejected, match="memory_source_conflict"):
-        service.record(request.model_copy(update={
-            "operation_id": "stale-quote", "source_item_ids": [new_source["id"]],
-        }), candidate=True, source_revisions={new_source["id"]: 0})
-    with pytest.raises(MemoryRejected, match="memory_candidate_scope_invalid"):
-        service.record(request.model_copy(update={
-            "operation_id": "global-candidate", "scope": "global",
-            "source_item_ids": [new_source["id"]],
-        }), candidate=True)
-    assert service.read(MemoryReadRequest(session_id=session["id"])).entries == []
-
-
-def test_forget_removes_all_revisions_and_blocks_late_admitted_request(store):
-    service = store.database.memory
-    saved = remember(store)
-    state = service.read(MemoryReadRequest())
-    epochs = {s.id: s.privacy_epoch for s in state.scopes}
-    with pytest.raises(MemoryRejected, match="snapshot_revoked"):
-        with service.admit(epochs, threading.Event()) as cancel:
-            service.manage(
-                MemoryManageRequest(
-                    operation_id="forget",
-                    entry_id=saved.entry_id,
-                    expected_revision=1,
-                    action="forget",
-                )
+    body = "测试正文。" * 3000 + "最后的条件必须可读。"
+    service.edit(note(content=body))
+    content, offset, revision = "", 0, None
+    while True:
+        page = service.read(
+            MemoryReadRequest(
+                scope="global",
+                path=note().path,
+                offset=offset,
+                limit=1024,
+                revision=revision,
             )
-            assert cancel.is_set()
-    assert not service.read(MemoryReadRequest(include_history=True)).entries
-    with pytest.raises(MemoryRejected, match="entry_unavailable"):
-        service.get(MemoryGetRequest(entry_id=saved.entry_id))
-    assert not list((store.data_directory / "memory").rglob("*.md")) or all(
-        "中文回答" not in p.read_text()
-        for p in (store.data_directory / "memory").rglob("*.md")
-    )
+        )
+        content += page.content
+        revision = page.revision
+        if page.next_offset is None:
+            break
+        offset = page.next_offset
+    assert content == body
+    for number in range(8):
+        service.track_tool("run", str(number), {}, {}, retrieval=True)
 
 
-def test_deleting_chat_revokes_evidence_but_keeps_independent_ui_memory(
+def test_project_scopes_are_isolated(store, tmp_path):
+    first = store.create_session(str(tmp_path / "workspace"))
+    other = tmp_path / "other"
+    other.mkdir()
+    second = store.create_session(str(other))
+    service = store.database.memory
+    service.edit(note(scope="current", session_id=first["id"]))
+    assert service.list(
+        MemoryListRequest(session_id=first["id"], scope="current")
+    ).documents
+    assert not service.list(
+        MemoryListRequest(session_id=second["id"], scope="current")
+    ).documents
+    with pytest.raises(MemoryRejected, match="not_found"):
+        service.read(MemoryReadRequest(session_id=second["id"], path=note().path))
+
+
+def test_context_budget_keeps_project_index_first_and_exposes_more_note_routes(
     store, tmp_path
 ):
     session = store.create_session(str(tmp_path / "workspace"))
-    run, item = store.create_run(session["id"], "I prefer Chinese")
-    linked = remember(
-        store,
-        "I prefer Chinese",
-        session_id=session["id"],
-        source_item_ids=[item["id"]],
-    )
-    own = remember(store, "independent", session_id=session["id"])
-    store.fail_run(run["id"], "fixture_finished")
-    store.delete_session(session["id"])
-    assert (
-        store.connection.execute(
-            "SELECT status FROM memory_entries WHERE id=?", (linked.entry_id,)
-        ).fetchone()[0]
-        == "quarantined"
-    )
-    assert (
-        store.connection.execute(
-            "SELECT status FROM memory_entries WHERE id=?", (own.entry_id,)
-        ).fetchone()[0]
-        == "active"
-    )
-
-
-def test_forgotten_source_item_cannot_relearn(store, tmp_path):
-    session = store.create_session(str(tmp_path / "workspace"))
-    _run, item = store.create_run(session["id"], "中文回答")
-    saved = remember(
-        store, "中文回答", session_id=session["id"], source_item_ids=[item["id"]]
-    )
-    store.database.memory.manage(
-        MemoryManageRequest(
+    service = store.database.memory
+    for index in range(3):
+        service.edit(
+            note(
+                operation_id=f"global-{index}",
+                path=f"global-{index}.md",
+                summary="全局使用条件" * 30,
+            )
+        )
+    service.edit(
+        note(
             session_id=session["id"],
+            scope="current",
+            operation_id="project",
+            path="project.md",
+            summary="当前项目的工作约定",
+        )
+    )
+    projection = service.project(session["id"], 8000, run_id="run")
+    assert projection.rendered_payload.lstrip().startswith("project/MEMORY.md")
+    assert "project.md" in projection.rendered_payload
+    assert "memory_search" in projection.rendered_payload
+    assert projection.token_estimate <= 400
+
+
+def test_cancel_before_publication_leaves_no_fact(store):
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(MemoryRejected, match="memory_canceled"):
+        store.database.memory.edit(note(), cancel=cancel)
+    assert not store.database.memory.list(MemoryListRequest()).documents
+    assert not store.connection.execute("SELECT 1 FROM memory_revisions").fetchone()
+
+
+def test_source_revocation_and_user_owned_correction(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    run, _ = store.create_run(session["id"], "以后只运行相关测试")
+    source = store.connection.execute(
+        "SELECT id FROM items WHERE run_id=? AND kind='user_message'", (run["id"],)
+    ).fetchone()[0]
+    service = store.database.memory
+    request = note(session_id=session["id"], scope="current", source_item_ids=[source])
+    service.edit(request, automatic=True)
+    # An explicit same-content edit protects the user's version from later learning.
+    service.edit(
+        request.model_copy(update={"operation_id": "confirm", "expected_revision": 1})
+    )
+    with pytest.raises(MemoryRejected, match="user_edit_protected"):
+        service.edit(
+            request.model_copy(
+                update={"operation_id": "replace", "expected_revision": 2}
+            ),
+            automatic=True,
+        )
+    with store.database.transaction() as connection:
+        connection.execute(
+            "UPDATE items SET content='修改原消息' WHERE id=?", (source,)
+        )
+    assert (
+        service.read(
+            MemoryReadRequest(session_id=session["id"], path=request.path)
+        ).content
+        == request.content
+    )
+
+
+def test_deleted_automatic_note_cannot_be_relearned_from_its_old_source(
+    store, tmp_path
+):
+    session = store.create_session(str(tmp_path / "workspace"))
+    run, _ = store.create_run(session["id"], "以后只运行相关测试")
+    source = store.connection.execute(
+        "SELECT id FROM items WHERE run_id=? AND kind='user_message'", (run["id"],)
+    ).fetchone()[0]
+    service = store.database.memory
+    request = note(session_id=session["id"], scope="current", source_item_ids=[source])
+    service.edit(request, automatic=True)
+    service.edit(
+        note(
+            session_id=session["id"],
+            scope="current",
             operation_id="forget",
-            entry_id=saved.entry_id,
             expected_revision=1,
-            action="forget",
+            action="delete",
+            content=None,
         )
     )
     with pytest.raises(MemoryRejected, match="evidence_invalid"):
-        remember(
-            store, "中文回答", session_id=session["id"], source_item_ids=[item["id"]]
+        service.edit(
+            request.model_copy(update={"operation_id": "learn-again"}), automatic=True
         )
 
 
-def test_temporary_and_use_switch_do_not_delete_independent_memories(store, tmp_path):
-    session = store.create_session(str(tmp_path / "workspace"))
-    saved = remember(store, session_id=session["id"])
+def test_mode_change_during_preparation_rejects_publication(store, monkeypatch):
     service = store.database.memory
+    prepare = service.repository.files.prepare
+    changed = False
+
+    def change_mode(*arguments):
+        nonlocal changed
+        if not changed:
+            changed = True
+            service.policy(MemoryPolicyRequest(scope="global", mode="read"))
+        return prepare(*arguments)
+
+    monkeypatch.setattr(service.repository.files, "prepare", change_mode)
+    with pytest.raises(MemoryRejected, match="revision_conflict"):
+        service.edit(note())
+    assert not service.list(MemoryListRequest()).documents
+
+
+def test_reset_failure_rolls_back_schema_and_version(tmp_path, monkeypatch):
+    from eidos_runtime.db.schema import V39_SCHEMA_SQL
+    from eidos_runtime.memory import document_schema
+
+    with sqlite3.connect(tmp_path / "state.sqlite") as connection:
+        connection.executescript(V39_SCHEMA_SQL + "PRAGMA user_version=39;")
+        connection.execute(
+            "INSERT INTO memory_scopes(id,kind,settings_json) VALUES(?,'global','{}')",
+            (GLOBAL_SCOPE_ID,),
+        )
+        connection.commit()
+        monkeypatch.setattr(
+            document_schema,
+            "RESET_DOCUMENT_MEMORY_SQL",
+            document_schema.RESET_DOCUMENT_MEMORY_SQL
+            + "\nSELECT nonexistent_column FROM memory_scopes;",
+        )
+        with pytest.raises(sqlite3.OperationalError):
+            document_schema.reset_document_memory(connection)
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 39
+        assert (
+            connection.execute(
+                "SELECT settings_json FROM memory_scopes WHERE id=?", (GLOBAL_SCOPE_ID,)
+            ).fetchone()[0]
+            == "{}"
+        )
+        assert not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='memory_documents'"
+        ).fetchone()
+
+
+def test_source_changes_while_preparing_files_are_rejected(
+    store, tmp_path, monkeypatch
+):
+    session = store.create_session(str(tmp_path / "workspace"))
+    run, _ = store.create_run(session["id"], "以后只运行相关测试")
+    source = store.connection.execute(
+        "SELECT id FROM items WHERE run_id=? AND kind='user_message'", (run["id"],)
+    ).fetchone()[0]
+    service = store.database.memory
+    request = note(session_id=session["id"], scope="current", source_item_ids=[source])
+    revisions = service.validate_edit(request, automatic=True)
+    prepare = service.repository.files.prepare
+
+    def edit_source(*args):
+        with store.database.transaction() as connection:
+            connection.execute(
+                "UPDATE items SET content='changed' WHERE id=?", (source,)
+            )
+        return prepare(*args)
+
+    monkeypatch.setattr(service.repository.files, "prepare", edit_source)
+    with pytest.raises(MemoryRejected, match="source_changed"):
+        service.edit(request, automatic=True, source_revisions=revisions)
+    assert not service.list(MemoryListRequest()).documents
+
+
+def test_forget_revokes_requests_and_removes_bodies(store):
+    service = store.database.memory
+    service.edit(note())
+    scope = service.list(MemoryListRequest()).scopes[0]
+    with pytest.raises(MemoryRejected, match="snapshot_revoked"):
+        with service.admit({scope.id: scope.privacy_epoch}, threading.Event()) as guard:
+            service.edit(
+                note(
+                    operation_id="delete",
+                    action="delete",
+                    content=None,
+                    expected_revision=1,
+                )
+            )
+            assert guard.is_set()
+    assert not service.list(MemoryListRequest()).documents
+    assert (
+        store.connection.execute("SELECT file_ref FROM memory_revisions").fetchone()[0]
+        is None
+    )
+
+
+def test_mode_and_temporary_controls(store, tmp_path):
+    session = store.create_session(str(tmp_path / "workspace"))
+    service = store.database.memory
+    service.policy(
+        MemoryPolicyRequest(session_id=session["id"], scope="current", mode="read")
+    )
+    assert not service.access(session["id"]).generate_enabled
     service.set_temporary(
         MemoryTemporaryRequest(session_id=session["id"], temporary=True)
     )
-    assert (
-        service.read(MemoryReadRequest(session_id=session["id"]), for_use=True).entries
-        == []
-    )
-    with pytest.raises(MemoryRejected, match="temporary_session"):
-        remember(store, "new", session_id=session["id"])
-    service.set_temporary(
-        MemoryTemporaryRequest(session_id=session["id"], temporary=False)
-    )
-    assert service.get(
-        MemoryGetRequest(session_id=session["id"], entry_id=saved.entry_id)
-    ).entry.content
-    service.settings(
-        MemorySettingsRequest(
-            session_id=session["id"],
-            scope="current",
-            settings=MemorySettings(use_enabled=False),
-        )
-    )
-    assert (
-        service.read(MemoryReadRequest(session_id=session["id"]), for_use=True).entries
-        == []
-    )
+    assert not service.access(session["id"]).read_enabled
+    with pytest.raises(MemoryRejected, match="temporary"):
+        service.edit(note(session_id=session["id"]))
 
 
-def test_memory_migration_preserves_existing_v16_data(tmp_path):
-    directory = tmp_path / "data"
-    directory.mkdir(mode=0o700)
-    connection = sqlite3.connect(directory / "state.sqlite")
-    connection.executescript(V16_SCHEMA_SQL + "\nPRAGMA user_version=16;")
-    connection.close()
-    (directory / "state.sqlite").chmod(0o600)
-    store = SessionStore(directory)
-    store.initialize()
-    try:
-        assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        remember(store)
-    finally:
-        store.close()
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../outside.md",
+        "/outside.md",
+        "a/../b.md",
+        "a//b.md",
+        "a\\b.md",
+        ".private.md",
+        "note.txt",
+        "MEMORY.md",
+    ],
+)
+def test_document_path_validation(path):
+    with pytest.raises(ValueError):
+        note(path=path)
 
 
-def test_memory_migration_preserves_existing_v17_data(tmp_path):
-    from eidos_runtime.db.schema import V17_SCHEMA_SQL
-
-    directory = tmp_path / "data-v17"
-    directory.mkdir(mode=0o700)
-    connection = sqlite3.connect(directory / "state.sqlite")
-    connection.executescript(V17_SCHEMA_SQL + "\nPRAGMA user_version=17;")
-    connection.close()
-    (directory / "state.sqlite").chmod(0o600)
-    store = SessionStore(directory)
-    store.initialize()
-    try:
-        assert store.health()["state"] == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        remember(store)
-    finally:
-        store.close()
-
-
-def test_missing_or_symlinked_body_fails_closed(store, tmp_path):
-    saved = remember(store)
+def test_tampered_body_fails_closed(store):
+    service = store.database.memory
+    service.edit(note())
     reference = store.connection.execute(
-        "SELECT file_ref FROM memory_revisions WHERE entry_id=?", (saved.entry_id,)
+        "SELECT file_ref FROM memory_revisions"
     ).fetchone()[0]
-    body = store.data_directory / "memory" / reference
-    body.unlink()
-    outside = tmp_path / "outside"
-    outside.write_text("replacement")
-    body.symlink_to(outside)
+    (service.repository.files.root / reference).write_text("篡改后的正文")
     with pytest.raises(MemoryRejected, match="body_unavailable"):
-        store.database.memory.get(MemoryGetRequest(entry_id=saved.entry_id))
-    assert store.database.memory.read(MemoryReadRequest()).entries == []
+        service.read(MemoryReadRequest(scope="global", path=note().path))
+    assert not service.list(MemoryListRequest()).documents
 
 
-def test_projection_budget_and_memory_are_user_data(store, tmp_path):
-    session = store.create_session(str(tmp_path / "workspace"))
-    for n in range(10):
-        remember(store, "中文偏好" + str(n), session_id=session["id"])
-    projection = store.database.memory.project(session["id"], 10000, run_id="fixture")
-    assert projection.entries and projection.token_estimate <= 300
-    run, _ = store.create_run(session["id"], "Recall my preference")
-    built = ContextBuilder(store).build(run["id"])
-    evidence = next(item for item in built.model_context if item.get("sectionId") == "memory-evidence")
-    assert evidence["type"] == "user"
-    assert "中文偏好" in evidence["content"]
-    assert "中文偏好" not in built.instructions.system_text
-
-
-def test_modified_evidence_invalidates_memory_even_with_same_item_count(
-    store, tmp_path
-):
-    session = store.create_session(str(tmp_path / "workspace"))
-    _run, item = store.create_run(session["id"], "first")
-    saved = remember(
-        store, "first", session_id=session["id"], source_item_ids=[item["id"]]
+def test_export_pages_cover_the_whole_scope(store):
+    service = store.database.memory
+    for index in range(19):
+        service.edit(note(operation_id=str(index), path=f"note-{index:02}.md"))
+    first = service.export(MemoryExportRequest(scope="global"))
+    second = service.export(
+        MemoryExportRequest(scope="global", cursor=first.next_cursor)
     )
-    with store.database.transaction() as connection:
-        connection.execute(
-            "UPDATE items SET content=? WHERE id=?", ("corrected", item["id"])
-        )
-    with pytest.raises(MemoryRejected, match="entry_unavailable"):
-        store.database.memory.get(
-            MemoryGetRequest(session_id=session["id"], entry_id=saved.entry_id)
-        )
+    assert (
+        first.generation == second.generation
+        and len(first.files) + len(second.files) == 20
+    )
+    assert second.next_cursor is None
 
 
-def test_search_export_preserves_full_body_and_exact_historical_revision(store):
-    service = store.database.memory
-    body = 'SQLite ' + 'detail ' * 160 + 'IMPORTANT TAIL'
-    saved = remember(store, body)
-    assert len(service.read(MemoryReadRequest(query='SQLite')).entries[0].content) == 512
-    exported = service.export(MemoryReadRequest(query='SQLite'))
-    assert body in exported.markdown
-    service.manage(MemoryManageRequest(operation_id='export-correction', entry_id=saved.entry_id,
-                                      expected_revision=1, action='correct', content='Use PostgreSQL instead'))
-    historical = service.export(MemoryReadRequest(query='SQLite', include_history=True))
-    assert body in historical.markdown
-    assert 'revision: 1; status: superseded' in historical.markdown
-    assert 'PostgreSQL' not in historical.markdown
-
-
-def test_session_use_revocation_is_isolated_and_persists_after_reopen(store, tmp_path):
-    service = store.database.memory
-    first = store.create_session(str(tmp_path / "workspace"))
-    second = store.create_session(str(tmp_path / "workspace"))
-    remember(store, session_id=first["id"])
-    first_epochs = service.project(first["id"], 100000, run_id="first").epochs
-    second_epochs = service.project(second["id"], 100000, run_id="second").epochs
-    with pytest.raises(MemoryRejected, match="snapshot_revoked"):
-        with service.admit(first_epochs, threading.Event()) as first_cancel, service.admit(second_epochs, threading.Event()) as second_cancel:
-            service.set_temporary(MemoryTemporaryRequest(session_id=first["id"], temporary=True))
-            assert first_cancel.is_set()
-            assert not second_cancel.is_set()
-    service.set_temporary(MemoryTemporaryRequest(session_id=first["id"], temporary=False))
-    directory = store.data_directory
+def test_restart_keeps_new_notes(store):
+    root = store.data_directory
+    store.database.memory.edit(note())
     store.close()
-    reopened = SessionStore(directory)
+    reopened = SessionStore(root)
     reopened.initialize()
     try:
-        assert not reopened.database.memory.valid_epochs(reopened.connection, first_epochs)
-        assert reopened.database.memory.valid_epochs(reopened.connection, second_epochs)
+        assert (
+            reopened.connection.execute("PRAGMA user_version").fetchone()[0]
+            == SCHEMA_VERSION
+        )
+        assert (
+            reopened.database.memory.read(
+                MemoryReadRequest(scope="global", path=note().path)
+            ).content
+            == note().content
+        )
     finally:
         reopened.close()
 
 
-def test_memory_use_migration_from_v18_preserves_entries_and_rolls_back(tmp_path):
-    from eidos_runtime.db.schema import V18_SCHEMA_SQL
-    from eidos_runtime.memory.schema import migrate_memory_use
+def test_v39_upgrade_discards_legacy_memory_and_preserves_chat(tmp_path):
+    from eidos_runtime.memory.schema import (
+        MEMORY_SCHEMA_SQL,
+        MEMORY_USE_SCHEMA_SQL,
+        MEMORY_HISTORY_SCHEMA_SQL,
+    )
 
-    connection = sqlite3.connect(":memory:")
-    connection.executescript(V18_SCHEMA_SQL + "\nPRAGMA user_version=18;")
-    connection.execute("INSERT INTO memory_sources(session_id,temporary) VALUES('existing',1)")
-    connection.execute("INSERT INTO memory_scopes(id,kind,settings_json) VALUES('scope','global','{}')")
-    connection.execute("INSERT INTO memory_entries(id,scope_id,kind,status,current_revision,created_at,updated_at) VALUES('entry','scope','preference','active',1,1,1)")
-    connection.execute("INSERT INTO memory_tool_reads(item_id,run_id,epochs_json,output_bytes) VALUES('tool','run','{}',20)")
-    connection.commit()
-    # Force a failure after DDL. No partial column/trigger may survive.
-    connection.execute("ALTER TABLE memory_tool_reads RENAME TO missing_tool_reads")
-    connection.commit()
-    with pytest.raises(sqlite3.OperationalError):
-        migrate_memory_use(connection)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
-    assert "use_epoch" not in {r[1] for r in connection.execute("PRAGMA table_info(memory_sources)")}
-    connection.execute("ALTER TABLE missing_tool_reads RENAME TO memory_tool_reads")
-    connection.commit()
-    migrate_memory_use(connection)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
-    assert connection.execute("SELECT temporary,use_epoch FROM memory_sources").fetchone() == (1, 0)
-    assert connection.execute("SELECT status FROM memory_entries WHERE id='entry'").fetchone()[0] == "active"
-    assert connection.execute("SELECT privacy_epoch FROM memory_scopes WHERE id='scope'").fetchone()[0] == 1
-    assert "session:legacy" in connection.execute("SELECT epochs_json FROM memory_tool_reads").fetchone()[0]
-    connection.close()
-
-
-def test_search_keeps_relevance_order_across_pages(store):
-    for index in range(5):
-        remember(store, f"SQLite miscellaneous {index}", title=f"miscellaneous {index}")
-    best = remember(store, "SQLite is our database", title="SQLite")
-    service = store.database.memory
-    service.manage(MemoryManageRequest(operation_id="pin-best", entry_id=best.entry_id, expected_revision=1, action="pin"))
-    first = service.read(MemoryReadRequest(query="SQLite", limit=5))
-    assert first.entries[0].id == best.entry_id
-    assert first.truncated and first.next_cursor is not None
-    second = service.read(MemoryReadRequest(query="SQLite", limit=5, cursor=first.next_cursor))
-    assert len(second.entries) == 1
-    assert len({e.id for e in first.entries + second.entries}) == 6
-    assert not second.truncated and second.next_cursor is None
-
-
-def test_fts_candidates_rank_before_limit_and_continue_without_duplicates(store):
-    for index in range(505):
-        remember(store, f"SQLite database choice {index}", title="other")
-    best = remember(store, "SQLite", title="SQLite")
-    service = store.database.memory
-    service.manage(MemoryManageRequest(operation_id="pin-newest", entry_id=best.entry_id, expected_revision=1, action="pin"))
-    page = service.read(MemoryReadRequest(query="SQLite", limit=100))
-    assert page.entries[0].id == best.entry_id
-    identifiers = [e.id for e in page.entries]
-    while page.next_cursor is not None:
-        page = service.read(MemoryReadRequest(query="SQLite", limit=100, cursor=page.next_cursor))
-        identifiers.extend(e.id for e in page.entries)
-    assert len(identifiers) == len(set(identifiers)) == 506
-
-
-def test_short_word_search_continues_past_empty_scan_page(store):
-    for index in range(500):
-        remember(store, f"无关条目 {index}", title="无关")
-    best = remember(store, "请保持简洁", title="偏好")
-    service = store.database.memory
-    page = service.read(MemoryReadRequest(query="简洁", limit=5))
-    assert page.entries == [] and page.truncated and page.next_cursor is not None
-    page = service.read(MemoryReadRequest(query="简洁", limit=5, cursor=page.next_cursor))
-    assert [entry.id for entry in page.entries] == [best.entry_id]
-    assert not page.truncated
-
-
-def test_source_cleanup_scrubs_action_copy_after_body_removal(store, tmp_path):
-    session = store.create_session(str(tmp_path / "workspace"))
-    run, item = store.create_run(session["id"], "private preference from a source")
-    saved = remember(store, "private preference from a source", session_id=session["id"], source_item_ids=[item["id"]])
-    store.fail_run(run["id"], "fixture_finished")
-    store.delete_session(session["id"])
-    service = store.database.memory
-    service.cleanup()
-    row = store.connection.execute("SELECT request_json,result_json,operation_id FROM memory_actions WHERE entry_id=?", (saved.entry_id,)).fetchone()
-    assert row["request_json"] == "[privacy-revoked]"
-    assert saved.entry_id in row["result_json"] and row["operation_id"]
-    assert store.connection.execute("SELECT file_ref FROM memory_revisions WHERE entry_id=?", (saved.entry_id,)).fetchone()[0] is None
-    # A previously removed body must not hide a lingering legacy action copy.
-    store.connection.execute("UPDATE memory_actions SET request_json='legacy private preference' WHERE entry_id=?", (saved.entry_id,))
-    store.connection.commit()
-    service.cleanup()
-    assert store.connection.execute("SELECT request_json FROM memory_actions WHERE entry_id=?", (saved.entry_id,)).fetchone()[0] == "[privacy-revoked]"
-
-
-def test_source_cleanup_preserves_independent_correction_and_its_action(store, tmp_path):
-    session = store.create_session(str(tmp_path / "workspace"))
-    run, item = store.create_run(session["id"], "old linked preference")
-    saved = remember(store, "old linked preference", session_id=session["id"], source_item_ids=[item["id"]])
-    service = store.database.memory
-    service.manage(MemoryManageRequest(session_id=session["id"], operation_id="own-correction", entry_id=saved.entry_id, expected_revision=1, action="correct", content="independent corrected preference"))
-    store.fail_run(run["id"], "fixture_finished")
-    store.delete_session(session["id"])
-    service.cleanup()
-    actions = dict(store.connection.execute("SELECT operation_id,request_json FROM memory_actions WHERE entry_id=?", (saved.entry_id,)))
-    assert "independent corrected preference" in actions.pop("own-correction")
-    assert set(actions.values()) == {"[privacy-revoked]"}
-    consumer = store.create_session(str(tmp_path / "workspace"))
-    assert service.get(MemoryGetRequest(session_id=consumer["id"], entry_id=saved.entry_id)).entry.content == "independent corrected preference"
-
-
-def test_premerge_v18_database_upgrades_with_gate_refinements(tmp_path):
-    from eidos_runtime.db.schema import V16_SCHEMA_SQL
-    from eidos_runtime.memory.schema import MEMORY_SCHEMA_SQL, MEMORY_USE_SCHEMA_SQL
-    from eidos_runtime.db.database import Database
-
-    db_path = tmp_path / "state.sqlite"
-    connection = sqlite3.connect(db_path)
-    connection.executescript(V16_SCHEMA_SQL)
-    connection.executescript(MEMORY_SCHEMA_SQL)
-    connection.executescript(MEMORY_USE_SCHEMA_SQL)
-    connection.execute("PRAGMA user_version = 18")
-    connection.commit()
-    connection.close()
-    import os
-    os.chmod(db_path, 0o600)
-
-    db = Database(tmp_path)
-    db.initialize()
-    assert db.health_state == "ready"
-    conn = db.connection()
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-    assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_message_receipts'").fetchone() is not None
-    assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_skill_leases'").fetchone() is not None
-    db.close()
-
-
-def test_history_migration_preserves_memory_and_rolls_back_atomically():
-    from eidos_runtime.db.schema import V19_SCHEMA_SQL
-    from eidos_runtime.memory.schema import migrate_memory_history
-
-    connection = sqlite3.connect(":memory:")
-    connection.executescript(V19_SCHEMA_SQL + "\nPRAGMA user_version=19;")
-    connection.execute("INSERT INTO memory_sources(session_id,backfill_enabled) VALUES('existing',1)")
-    connection.execute("INSERT INTO memory_scopes(id,kind,settings_json) VALUES('scope','global','{}')")
-    connection.execute("INSERT INTO memory_entries(id,scope_id,kind,status,current_revision,created_at,updated_at) VALUES('entry','scope','preference','active',1,1,1)")
-    connection.commit()
-    connection.execute("ALTER TABLE memory_model_attempts RENAME TO missing_attempts")
-    connection.commit()
-    with pytest.raises(sqlite3.OperationalError):
-        migrate_memory_history(connection)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
-    assert "backfill_until" not in {r[1] for r in connection.execute("PRAGMA table_info(memory_sources)")}
-    assert connection.execute("SELECT backfill_enabled FROM memory_sources").fetchone()[0] == 1
-    connection.execute("ALTER TABLE missing_attempts RENAME TO memory_model_attempts")
-    connection.commit()
-    migrate_memory_history(connection)
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 20
-    assert connection.execute("SELECT backfill_enabled,backfill_until FROM memory_sources").fetchone() == (0, 0)
-    assert connection.execute("SELECT status FROM memory_entries").fetchone()[0] == "active"
-    connection.close()
+    root = tmp_path / "data"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(root)
+    store.initialize()
+    session = store.create_session(str(workspace))
+    run, _ = store.create_run(session["id"], "保留这段真实聊天")
+    store.close()
+    with sqlite3.connect(root / "state.sqlite") as connection:
+        for (name,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'memory_%' OR name LIKE '%_memory%' OR name LIKE '%_origin_memory')"
+        ).fetchall():
+            connection.execute(f'DROP TRIGGER "{name}"')
+        for (name,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'memory_%' AND name NOT LIKE 'memory_fts_%'"
+        ).fetchall():
+            connection.execute(f'DROP TABLE "{name}"')
+        connection.execute("DROP TABLE memory_fts_word")
+        old = MEMORY_SCHEMA_SQL.replace(
+            "ALTER TABLE context_snapshots ADD COLUMN memory_revoked INTEGER NOT NULL DEFAULT 0;",
+            "",
+        )
+        connection.executescript(
+            old + MEMORY_USE_SCHEMA_SQL + MEMORY_HISTORY_SCHEMA_SQL
+        )
+        connection.execute(
+            "INSERT INTO memory_scopes(id,kind,settings_json) VALUES(?,'global',?)",
+            (
+                GLOBAL_SCOPE_ID,
+                json.dumps({"useEnabled": True, "generateEnabled": False}),
+            ),
+        )
+        connection.execute(
+            "ALTER TABLE step_resolution_snapshots DROP COLUMN memory_revoked"
+        )
+        connection.execute(
+            "INSERT INTO hook_invocations(id,run_id,plugin_id,plugin_hash,hook_key,event,event_key,status,input_json,output_json,created_at) VALUES('old-memory-hook',?,'plugin','hash','key','PostToolUse','post:item','completed',?,? ,1)",
+            (
+                run["id"],
+                json.dumps(
+                    {"tool_name": "memory_record", "tool_input": {"content": "旧记忆"}}
+                ),
+                '{"stdout":"旧记忆"}',
+            ),
+        )
+        connection.execute(
+            "INSERT INTO hook_pending_events VALUES(?,'post:item',?)",
+            (run["id"], '{"tool_name":"memory_record"}'),
+        )
+        connection.execute("PRAGMA user_version=39")
+    (root / "memory").mkdir()
+    (root / "memory" / "old.md").write_text("旧记忆")
+    (root / "memories").mkdir()
+    (root / "memories" / "old.md").write_text("更旧的记忆")
+    (root / "memories.sqlite").write_text("不应打开的旧辅助库")
+    (root / "hook-transcripts").mkdir()
+    (root / "hook-transcripts" / "cached.jsonl").write_text("旧记忆工具载荷")
+    upgraded = SessionStore(root)
+    upgraded.initialize()
+    try:
+        assert upgraded.health()["state"] == "ready"
+        assert upgraded.database.memory.list(MemoryListRequest()).documents == []
+        assert (
+            upgraded.database.memory.list(MemoryListRequest()).scopes[0].mode == "read"
+        )
+        assert (
+            not (root / "memory" / "old.md").exists()
+            and not (root / "memories").exists()
+        )
+        assert not (root / "memories.sqlite").exists()
+        assert not (root / "hook-transcripts").exists()
+        assert upgraded.connection.execute(
+            "SELECT input_json,output_json FROM hook_invocations WHERE id='old-memory-hook'"
+        ).fetchone()[:] == ("{}", None)
+        assert not upgraded.connection.execute(
+            "SELECT 1 FROM hook_pending_events"
+        ).fetchone()
+        assert (
+            upgraded.connection.execute(
+                "SELECT content FROM items WHERE run_id=? AND kind='user_message'",
+                (run["id"],),
+            ).fetchone()[0]
+            == "保留这段真实聊天"
+        )
+        assert not upgraded.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='memory_jobs'"
+        ).fetchone()
+    finally:
+        upgraded.close()

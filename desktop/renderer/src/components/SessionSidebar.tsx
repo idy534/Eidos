@@ -68,6 +68,7 @@ interface Props {
   onOpenSettings: () => void;
   onOpenAutomations?: () => void;
   onOpenAutomation?: (id: string) => void;
+  onMemoryError?: (message: string) => void;
   navigationSlot?: React.ReactNode;
 }
 
@@ -94,7 +95,7 @@ export function SessionSidebar({
   pins = [], pinningDisabled = false, pendingPinTargets, onSetPinned,
   runtimePresentation, isSelectingSessionId, gitStatusBySessionId = new Map(),
   onCreate, onCreateInProject, onSelect, onRename, onDelete, onDeleteProject, onShowInFinder, onOpenSettings,
-  navigationSlot, onOpenAutomations, onOpenAutomation, onSearch,
+  navigationSlot, onOpenAutomations, onOpenAutomation, onSearch, onMemoryError,
 }: Props) {
   const visibleSessions = sessions.filter(
     (session) => session.taskStatus !== "new" || Boolean(session.title?.trim()) || Boolean(session.forkedFrom),
@@ -104,6 +105,19 @@ export function SessionSidebar({
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(loadCollapsedProjects);
   const prevSelectedIdRef = useRef<string | undefined>(selectedId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | undefined>(undefined);
+  const [temporaryMemory, setTemporaryMemory] = useState<boolean | undefined>();
+  const memoryErrorRef = useRef(onMemoryError);
+  memoryErrorRef.current = onMemoryError;
+  const memorySessionId = contextMenu?.kind === "session" ? contextMenu.session.id : undefined;
+  useEffect(() => {
+    setTemporaryMemory(undefined);
+    if (!memorySessionId || memorySessionId.startsWith("draft-")) return;
+    let active = true;
+    void window.eidosRuntime.memory("memory/list", { sessionId: memorySessionId, scope: "current", limit: 1 })
+      .then((value) => { if (active) setTemporaryMemory(value.temporary); })
+      .catch(() => { if (active) memoryErrorRef.current?.("无法读取此任务的记忆状态。"); });
+    return () => { active = false; };
+  }, [memorySessionId]);
   const [activeTooltip, setActiveTooltip] = useState<SidebarTooltipState | null>(null);
   const enterTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -682,6 +696,17 @@ export function SessionSidebar({
               onClick: () => {
                 setContextMenu(undefined);
                 onDelete(contextMenu.session);
+              },
+            },
+            {
+              key: "temporary-memory",
+              label: temporaryMemory === undefined ? "正在读取记忆状态…" : temporaryMemory ? "恢复此任务的记忆" : "设为临时对话（不使用记忆）",
+              disabled: temporaryMemory === undefined,
+              onClick: () => {
+                const sessionId = contextMenu.session.id;
+                setContextMenu(undefined);
+                void window.eidosRuntime.memory("memory/temporary", { sessionId, temporary: !temporaryMemory })
+                  .catch(() => onMemoryError?.("临时对话设置未能保存，请重试。"));
               },
             },
           ]}

@@ -2035,8 +2035,7 @@ function isMemoryTool(name: string): boolean {
   return [
     "memory_search",
     "memory_read",
-    "memory_record",
-    "memory_manage",
+    "memory_edit",
   ].includes(name);
 }
 
@@ -2300,8 +2299,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
     view_image: imageFileName ? `查看图像 · ${imageFileName}` : "查看图像",
     memory_search: memoryQuery ? `搜索记忆 "${memoryQuery}"` : "搜索记忆",
     memory_read: "读取记忆",
-    memory_record: "修订记忆",
-    memory_manage: "优化记忆",
+    memory_edit: args.action === "delete" ? "删除记忆" : "保存记忆",
     read_tool_output: "查看工具输出",
     skill_read: skillName ? `${skillName}技能 SKILL.md` : "技能 SKILL.md",
     skill_read_resource: skillName ? `${skillName}整个技能包` : "整个技能包",
@@ -2350,8 +2348,7 @@ function toolSummary(toolCall: ToolCall, status: Item["status"], agents?: AgentS
       ? (memoryQuery ? `正在搜索记忆 "${memoryQuery}"` : "正在搜索记忆")
       : (memoryQuery ? `已搜索记忆 "${memoryQuery}"` : "已搜索记忆"),
     memory_read: running ? "正在读取记忆" : "已读取记忆",
-    memory_record: running ? "正在修订记忆" : "已修订记忆",
-    memory_manage: running ? "正在优化记忆" : "已优化记忆",
+    memory_edit: args.action === "delete" ? (running ? "正在删除记忆" : "已删除记忆") : (running ? "正在保存记忆" : "已保存记忆"),
     spawn_agent: running
       ? (subagentName ? `正在创建智能体 · ${subagentName}` : "正在创建智能体")
       : (subagentName ? `创建智能体 · ${subagentName}` : "创建智能体"),

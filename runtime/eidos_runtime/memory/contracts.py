@@ -1,127 +1,155 @@
 from __future__ import annotations
 
-from typing import Literal
+from pathlib import PurePosixPath
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel, JsonSafeInt
 
-
-MemoryKind = Literal["preference", "decision", "continuity", "experience", "event"]
-MemoryStatus = Literal[
-    "candidate", "active", "superseded", "archived", "quarantined", "forgotten"
-]
-EvidenceClass = Literal[
-    "explicit_user", "observed_verified", "repeated_user", "inferred"
-]
+MemoryMode = Literal["off", "read", "auto"]
+MemoryKind = Literal["user", "feedback", "project", "reference"]
+NonnegativeInt = Annotated[JsonSafeInt, Field(ge=0)]
+PositiveRevision = Annotated[JsonSafeInt, Field(ge=1)]
 ScopeSelection = Literal["current", "global", "allowed"]
-JobState = Literal[
-    "queued",
-    "running",
-    "succeeded",
-    "retry_wait",
-    "paused_budget",
-    "blocked_model",
-    "superseded",
-    "canceled",
-    "failed",
-]
+MAX_CONTENT_CHARS = 65_536
 
 
-class MemorySettings(EidosFrozenStrictModel):
-    use_enabled: bool = True
-    generate_enabled: bool = False
-    daily_call_limit: int = Field(default=20, ge=0, le=1000)
-    daily_token_limit: int = Field(default=100000, ge=0, le=10000000)
-    debounce_seconds: int = Field(default=300, ge=0, le=3600)
+def validate_path(value: str) -> str:
+    path = PurePosixPath(value)
+    if (
+        not value
+        or len(value) > 200
+        or path.is_absolute()
+        or str(path) != value
+        or "\\" in value
+        or not value.endswith(".md")
+        or any(part.startswith(".") for part in path.parts)
+        or any(ord(char) < 32 for char in value)
+    ):
+        raise ValueError("memory_path_invalid")
+    return value
 
 
 class MemoryScope(EidosFrozenStrictModel):
     id: str
     kind: Literal["global", "project"]
     project_id: str | None = None
-    settings: MemorySettings
-    privacy_epoch: JsonSafeInt
-    generation: JsonSafeInt
+    mode: MemoryMode
+    privacy_epoch: NonnegativeInt
+    generation: NonnegativeInt
 
 
 class MemoryEvidence(EidosFrozenStrictModel):
     item_id: str
     session_id: str
     run_id: str
-    item_revision: JsonSafeInt = Field(ge=1)
-    source_revision: JsonSafeInt = Field(ge=1)
-    evidence_class: EvidenceClass
+    item_revision: PositiveRevision
+    source_revision: PositiveRevision
+    evidence_class: Literal["explicit_user", "observed_verified"]
 
 
-class MemoryEntry(EidosFrozenStrictModel):
+class MemoryDocument(EidosFrozenStrictModel):
     id: str
     scope_id: str
-    revision: JsonSafeInt = Field(ge=1)
-    kind: MemoryKind
-    status: MemoryStatus
+    path: str
+    revision: PositiveRevision
     title: str
-    content: str
-    aliases: list[str]
-    evidence_class: EvidenceClass
-    evidence: list[MemoryEvidence]
-    pinned: bool
+    summary: str
+    kind: MemoryKind
     user_owned: bool
-    valid_from: JsonSafeInt | None = None
-    valid_to: JsonSafeInt | None = None
     created_at: JsonSafeInt
     updated_at: JsonSafeInt
-    last_used_at: JsonSafeInt | None = None
-    use_count: JsonSafeInt = 0
+    evidence: list[MemoryEvidence] = Field(default_factory=list)
 
 
-class MemoryJob(EidosFrozenStrictModel):
-    id: str
-    scope_id: str
-    session_id: str
-    source_revision: int
-    kind: Literal["extract", "consolidate"]
-    state: JobState
-    model_id: str
-    attempts: int
-    not_before: JsonSafeInt
-    error_code: str | None = None
-    tokens: JsonSafeInt
-    estimated_usage: bool
-
-
-class MemoryReadRequest(EidosFrozenStrictModel):
+class MemoryListRequest(EidosFrozenStrictModel):
     session_id: str | None = None
     scope: ScopeSelection = "allowed"
     query: str = Field(default="", max_length=512)
     limit: int = Field(default=50, ge=1, le=100)
     cursor: int = Field(default=0, ge=0)
-    include_history: bool = False
-    valid_at: JsonSafeInt | None = None
-
-
-class MemoryRebuildRequest(EidosFrozenStrictModel):
-    session_id: str | None = None
-
-
-class MemoryExportRequest(MemoryReadRequest):
-    pass
 
 
 class MemoryState(EidosFrozenStrictModel):
     scopes: list[MemoryScope]
-    entries: list[MemoryEntry]
-    jobs: list[MemoryJob]
+    documents: list[MemoryDocument]
     temporary: bool
-    truncated: bool = False
     next_cursor: int | None = None
-    trigram_available: bool
+    search_limited: bool = False
 
 
-class MemorySettingsRequest(EidosFrozenStrictModel):
+class MemoryReadRequest(EidosFrozenStrictModel):
+    session_id: str | None = None
+    scope: Literal["current", "global"] = "current"
+    path: str = Field(default="MEMORY.md", max_length=200)
+    revision: NonnegativeInt | None = None
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=8192, ge=1, le=16384)
+
+    @model_validator(mode="after")
+    def valid_path(self) -> Self:
+        validate_path(self.path)
+        return self
+
+
+class MemoryReadResult(EidosFrozenStrictModel):
+    path: str
+    scope_id: str
+    revision: NonnegativeInt
+    current_revision: NonnegativeInt
+    revisions: list[int] = Field(default_factory=list)
+    document: MemoryDocument | None = None
+    content: str
+    offset: int
+    next_offset: int | None = None
+    epochs: dict[str, int] = Field(default_factory=dict)
+
+
+class MemoryEdit(EidosFrozenStrictModel):
+    scope: Literal["current", "global"] = "current"
+    path: str = Field(min_length=1, max_length=200)
+    action: Literal["write", "delete"] = "write"
+    expected_revision: NonnegativeInt = 0
+    title: str = Field(default="", max_length=160)
+    summary: str = Field(default="", max_length=240)
+    kind: MemoryKind = "feedback"
+    content: str | None = Field(default=None, max_length=MAX_CONTENT_CHARS)
+    source_item_ids: list[str] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def valid_edit(self) -> Self:
+        validate_path(self.path)
+        if self.path == "MEMORY.md":
+            raise ValueError("memory_index_generated")
+        if self.action == "write" and (
+            not self.content or not self.content.strip() or not self.summary.strip()
+        ):
+            raise ValueError("memory_content_required")
+        if self.action == "delete" and (
+            self.content is not None or self.expected_revision == 0
+        ):
+            raise ValueError("memory_delete_revision_required")
+        return self
+
+
+class MemoryEditRequest(MemoryEdit):
+    session_id: str | None = None
+    operation_id: str = Field(min_length=1, max_length=256)
+
+
+class MemoryActionResult(EidosFrozenStrictModel):
+    operation_id: str
+    document_id: str
+    path: str
+    revision: JsonSafeInt
+    code: Literal["memory_saved", "memory_unchanged", "memory_deleted"]
+
+
+class MemoryPolicyRequest(EidosFrozenStrictModel):
     session_id: str | None = None
     scope: Literal["current", "global"] = "global"
-    settings: MemorySettings
+    mode: MemoryMode
 
 
 class MemoryTemporaryRequest(EidosFrozenStrictModel):
@@ -129,156 +157,21 @@ class MemoryTemporaryRequest(EidosFrozenStrictModel):
     temporary: bool
 
 
-class MemoryRecord(EidosFrozenStrictModel):
-    content: str = Field(min_length=1, max_length=8192)
-    title: str = Field(default="", max_length=160)
-    kind: MemoryKind = "preference"
-    scope: Literal["current", "global"] = Field(default="current",
-        description="Use current for automatic or candidate writes. Global is allowed for those modes only when currentScope is global; otherwise it requires an explicit remember request and authorization.")
-    aliases: list[str] = Field(default_factory=list, max_length=12)
-    source_item_ids: list[str] = Field(default_factory=list, max_length=16)
-    valid_from: JsonSafeInt | None = None
-    valid_to: JsonSafeInt | None = None
-
-    @model_validator(mode="after")
-    def validate_content(self) -> MemoryRecord:
-        if not self.content.strip() or any(
-            not v.strip() or len(v) > 80 for v in self.aliases
-        ):
-            raise ValueError("memory_content_invalid")
-        if (
-            self.valid_from is not None
-            and self.valid_to is not None
-            and self.valid_to <= self.valid_from
-        ):
-            raise ValueError("memory_time_invalid")
-        return self
-
-
-class MemoryRecordRequest(MemoryRecord):
-    mode: Literal["candidate", "remember", "automatic"] = Field(
-        default="remember",
-        description="automatic saves confirmed facts as active; candidate submits a separate pending proposal. Both require the current scope generation setting. remember follows an explicit user save request.",
-    )
-    evidence_class: EvidenceClass = Field(
-        default="explicit_user",
-        description="explicit_user for a clear user statement; observed_verified for successful ordinary tool evidence; inferred requires mode=candidate and stays pending.",
-    )
-    target_entry_id: str | None = Field(default=None, min_length=1, max_length=256,
-        description="Existing entry to revise after an explicit factual correction; omit for a new claim.")
-    expected_revision: JsonSafeInt | None = Field(default=None, ge=1,
-        description="Current revision of targetEntryId. Supply both fields together.")
-
-    @model_validator(mode="after")
-    def validate_target(self) -> MemoryRecordRequest:
-        if (self.target_entry_id is None) != (self.expected_revision is None):
-            raise ValueError("memory_proposal_target_required")
-        if self.target_entry_id is not None and (self.mode == "candidate" or self.evidence_class == "inferred"):
-            raise ValueError("memory_candidate_target_invalid")
-        return self
-
-
-class MemoryWriteRequest(MemoryRecordRequest):
+class MemoryExportRequest(EidosFrozenStrictModel):
     session_id: str | None = None
-    operation_id: str = Field(min_length=1, max_length=256)
+    scope: Literal["current", "global"] = "current"
+    cursor: int = Field(default=0, ge=0)
 
 
-class MemoryManage(EidosFrozenStrictModel):
-    action: Literal["correct", "forget", "pin", "unpin", "accept", "archive"]
-    entry_id: str = Field(min_length=1, max_length=256)
-    expected_revision: JsonSafeInt = Field(ge=1)
-    content: str | None = Field(default=None, min_length=1, max_length=8192)
-
-    @model_validator(mode="after")
-    def validate_action(self) -> MemoryManage:
-        if (self.action == "correct") != (self.content is not None):
-            raise ValueError("memory_correction_content_required")
-        if self.content is not None and not self.content.strip():
-            raise ValueError("memory_content_invalid")
-        return self
-
-
-class MemoryManageRequest(MemoryManage):
-    session_id: str | None = None
-    operation_id: str = Field(min_length=1, max_length=256)
-
-
-class MemoryActionResult(EidosFrozenStrictModel):
-    operation_id: str
-    status: Literal["applied", "pending", "rejected"]
-    entry_id: str | None = None
-    revision: int | None = None
-    code: str
-
-
-class MemoryGetRequest(EidosFrozenStrictModel):
-    session_id: str | None = None
-    entry_id: str
-    revision: int | None = Field(default=None, ge=1)
-
-
-class MemoryGetResult(EidosFrozenStrictModel):
-    entry: MemoryEntry
-
-
-class MemoryJobRequest(EidosFrozenStrictModel):
-    session_id: str | None = None
-    job_id: str
-
-
-class MemoryBackfillRequest(EidosFrozenStrictModel):
-    session_id: str
-    operation_id: str
+class MemoryExportFile(EidosFrozenStrictModel):
+    path: str
+    content: str
 
 
 class MemoryExport(EidosFrozenStrictModel):
-    markdown: str
-    privacy_epochs: dict[str, int]
-    encrypted: Literal[False] = False
-
-
-class MemoryBackupRequest(EidosFrozenStrictModel):
-    destination: str = Field(min_length=1, max_length=4096)
-
-
-class MemoryBackupResult(EidosFrozenStrictModel):
-    saved: Literal[True] = True
-    encrypted: Literal[False] = False
-
-
-class MemoryCandidate(MemoryRecord):
-    evidence_class: EvidenceClass = "inferred"
-    source_quotes: dict[str, str] = Field(default_factory=dict, max_length=16)
-    requires_confirmation: bool = Field(default=True,
-        description="False only for supported facts or explicitly adopted decisions, with their actual scope preserved. Proposals and useful uncertainty stay true, regardless of source Run mode.")
-
-
-class MemoryExtraction(EidosFrozenStrictModel):
-    candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=16)
-    summary: str = Field(default="", max_length=2048)
-
-
-class MemoryProposal(EidosFrozenStrictModel):
-    action: Literal["create", "corroborate", "revise", "supersede", "archive", "noop"]
-    candidate_index: int = Field(ge=0, le=15)
-    target_entry_id: str | None = None
-    expected_revision: int | None = Field(default=None, ge=1)
-    content: str | None = Field(default=None, min_length=1, max_length=8192)
-    grounded: bool = Field(default=False, description="Every part of the final content is supported by the selected original sources, not by related memory text.")
-    atomic: bool = Field(default=False, description="The final content is one independently maintainable fact. Do not mix an existing fact with a new one.")
-
-    @model_validator(mode="after")
-    def validate_target(self) -> MemoryProposal:
-        if self.action in {"create", "noop"}:
-            if self.target_entry_id is not None or self.expected_revision is not None:
-                raise ValueError("memory_proposal_unexpected_target")
-        elif self.target_entry_id is None or self.expected_revision is None:
-            raise ValueError("memory_proposal_target_required")
-        return self
-
-
-class MemoryConsolidation(EidosFrozenStrictModel):
-    changes: list[MemoryProposal] = Field(default_factory=list, max_length=16)
+    files: list[MemoryExportFile]
+    generation: JsonSafeInt
+    next_cursor: int | None = None
 
 
 class MemoryProjectionRef(EidosFrozenStrictModel):
@@ -292,3 +185,17 @@ class MemoryProjection(EidosFrozenStrictModel):
     entries: list[MemoryProjectionRef]
     rendered_payload: str
     token_estimate: int
+
+
+class MemoryChangedNotice(EidosFrozenStrictModel):
+    scope_id: str
+    generation: NonnegativeInt
+
+
+class DataBackupRequest(EidosFrozenStrictModel):
+    destination: str = Field(min_length=1, max_length=4096)
+
+
+class DataBackupResult(EidosFrozenStrictModel):
+    saved: Literal[True] = True
+    encrypted: Literal[False] = False

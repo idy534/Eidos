@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 import json
 import logging
@@ -16,7 +15,6 @@ from eidos_runtime.db.layout import (
     LEGACY_STATE_DATABASE_NAME,
     LOGS_DATABASE_NAME,
     LOGS_SCHEMA_SQL,
-    MEMORIES_DATABASE_NAME,
     REPOSITORY_DATABASE_NAME,
     STATE_DATABASE_NAME,
     THREAD_HISTORY_DATABASE_NAME,
@@ -175,7 +173,7 @@ def test_fresh_store_creates_vertical_database_layout(tmp_path: Path) -> None:
         assert (data / REPOSITORY_DATABASE_NAME).is_file()
         assert (data / THREAD_HISTORY_DATABASE_NAME).is_file()
         assert (data / LOGS_DATABASE_NAME).is_file()
-        assert (data / MEMORIES_DATABASE_NAME).is_file()
+        assert not (data / "memories.sqlite").exists()
         assert not (data / LEGACY_STATE_DATABASE_NAME).exists()
     finally:
         store.close()
@@ -687,147 +685,10 @@ def test_runtime_logs_reject_index_path_that_escapes_log_root(
         database.close()
 
 
-def test_memories_store_metadata_in_sqlite_and_content_on_disk(
-    tmp_path: Path,
-) -> None:
-    data = tmp_path / "data"
-    store = SessionStore(data)
-    store.initialize()
-    try:
-        memory = store.memory_store().put(
-            memory_id="memory-1",
-            kind="run-summary",
-            content="# Confirmed facts\n\nRepository storage is derived.\n",
-            metadata={"runId": "run-1"},
-        )
-        assert store.memory_store().read("memory-1") == memory
-        assert memory.content.startswith("# Confirmed facts")
-    finally:
-        store.close()
-
-    metadata = sqlite3.connect(data / MEMORIES_DATABASE_NAME)
-    metadata.row_factory = sqlite3.Row
-    try:
-        row = metadata.execute(
-            "SELECT * FROM memory_records WHERE id = 'memory-1'"
-        ).fetchone()
-        assert row is not None
-        assert row["kind"] == "run-summary"
-        assert row["content_sha256"] == memory.content_sha256
-        path = data / "memories" / row["relative_path"]
-        assert path.read_text(encoding="utf-8") == memory.content
-    finally:
-        metadata.close()
 
 
-def test_memory_updates_collect_content_after_last_reference_moves(
-    tmp_path: Path,
-) -> None:
-    data = tmp_path / "data"
-    store = SessionStore(data)
-    store.initialize()
-    try:
-        memories = store.memory_store()
-        first = memories.put(
-            memory_id="memory-1",
-            kind="run-summary",
-            content="shared content",
-            metadata={},
-        )
-        memories.put(
-            memory_id="memory-2",
-            kind="run-summary",
-            content="shared content",
-            metadata={},
-        )
-        first_path = (
-            data
-            / "memories"
-            / "content"
-            / first.content_sha256[:2]
-            / f"{first.content_sha256}.md"
-        )
-        assert first_path.is_file()
-
-        memories.put(
-            memory_id="memory-1",
-            kind="run-summary",
-            content="replacement one",
-            metadata={},
-        )
-        assert first_path.is_file()
-        memories.put(
-            memory_id="memory-2",
-            kind="run-summary",
-            content="replacement two",
-            metadata={},
-        )
-        assert not first_path.exists()
-    finally:
-        store.close()
 
 
-def test_memories_v1_migrates_to_shared_content_schema(
-    tmp_path: Path,
-) -> None:
-    data = tmp_path / "data"
-    state = Database(data)
-    state.initialize()
-    state.close()
-    content = "legacy memory"
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    relative_path = f"content/{digest[:2]}/{digest}.md"
-    content_path = data / "memories" / relative_path
-    content_path.parent.mkdir(mode=0o700, parents=True)
-    (data / "memories").chmod(0o700)
-    (data / "memories" / "content").chmod(0o700)
-    content_path.parent.chmod(0o700)
-    content_path.write_text(content, encoding="utf-8")
-    content_path.chmod(0o600)
-    memory_database = data / MEMORIES_DATABASE_NAME
-    connection = sqlite3.connect(memory_database)
-    connection.executescript(
-        """
-        CREATE TABLE memory_records (
-            id TEXT PRIMARY KEY,
-            kind TEXT NOT NULL,
-            relative_path TEXT NOT NULL UNIQUE,
-            content_sha256 TEXT NOT NULL,
-            metadata_json TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
-        );
-        CREATE INDEX memory_records_kind_time
-        ON memory_records(kind, updated_at DESC);
-        PRAGMA user_version = 1;
-        """
-    )
-    connection.execute(
-        "INSERT INTO memory_records VALUES (?, ?, ?, ?, '{}', 1, 1)",
-        ("legacy", "run-summary", relative_path, digest),
-    )
-    connection.commit()
-    connection.close()
-    memory_database.chmod(0o600)
-
-    store = SessionStore(data)
-    store.initialize()
-    try:
-        assert store.health_state == "ready"
-        assert store.memory_store().read("legacy").content == content
-        duplicate = store.memory_store().put(
-            memory_id="duplicate",
-            kind="run-summary",
-            content=content,
-            metadata={},
-        )
-        assert duplicate.content_sha256 == digest
-        assert store._persistence_layout is not None
-        assert store._persistence_layout.memories.connection().execute(
-            "PRAGMA user_version"
-        ).fetchone()[0] == 2
-    finally:
-        store.close()
 
 
 def test_session_delete_removes_history_and_unreferenced_snapshot_blobs(

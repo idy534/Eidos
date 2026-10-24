@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from eidos_runtime.db.storage import SessionStore
-from eidos_runtime.memory.contracts import MemoryReadRequest, MemorySettings, MemorySettingsRequest
+from eidos_runtime.memory.contracts import MemoryListRequest, MemoryReadRequest, MemoryPolicyRequest
 from eidos_runtime.model.config import ModelConfigStore
 from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.model.gateway_types import RetryPolicy
@@ -90,15 +90,15 @@ def run_case(store, session, name, text, work_mode, expected):
     finally:
         timer.cancel()
         timer.join()
-    entries = store.database.memory.read(MemoryReadRequest(session_id=session['id'])).entries
+    entries = store.database.memory.list(MemoryListRequest(session_id=session['id'])).documents
     snapshot = store.read_session_snapshot(session['id'])
     record = {'case': name, 'run_status': store.read_run(run['id'])['status'], 'run_error': run_error, 'expected_active': expected,
-        'entries': [{'kind': e.kind, 'status': e.status, 'content': e.content, 'revision': e.revision} for e in entries],
+        'entries': [{'kind': e.kind, 'path': e.path, 'summary': e.summary, 'content': store.database.memory.read(MemoryReadRequest(session_id=session['id'], path=e.path, scope='global' if e.scope_id == store.database.memory.list(MemoryListRequest(session_id=session['id'])).scopes[0].id else 'current', limit=16384)).content, 'revision': e.revision} for e in entries],
         'answers': [i.get('content', '')[:600] for i in snapshot['items'] if i['runId'] == run['id'] and i['kind'] == 'assistant_message'],
         'tool_results': [json.loads(i['toolCall']['resultJson']).get('code') for i in snapshot['items']
             if i['runId'] == run['id'] and i['kind'] == 'tool_call']}
     if expected is not None:
-        record['selection_matches'] = (record['run_status'] == 'succeeded' and any(e.status == 'active' for e in entries) == expected)
+        record['selection_matches'] = (record['run_status'] == 'succeeded' and bool(entries) == expected)
     results.append(record)
     print(json.dumps(record, ensure_ascii=False), flush=True)
 
@@ -121,7 +121,7 @@ try:
                     session = store.typed_runtime_repository().create_session(str(workspace), projectless=True).value.model_dump(by_alias=True)
                 else:
                     session = store.create_session(str(root / 'workspace'))
-                store.database.memory.settings(MemorySettingsRequest(session_id=session['id'], scope='current', settings=MemorySettings(generate_enabled=not args.disable_automatic_learning)))
+                store.database.memory.policy(MemoryPolicyRequest(session_id=session['id'], scope='current', mode='read' if args.disable_automatic_learning else 'auto'))
                 run_case(store, session, name, text, work_mode, expected)
                 if name == 'self_identity':
                     run_case(store, session, 'new_preference_preserves_old_identity', '我希望今后所有回答都用中文。请简单回应。', 'execute', True)

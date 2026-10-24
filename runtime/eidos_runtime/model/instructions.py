@@ -221,11 +221,11 @@ class InstructionResolver:
         )
         if read_enabled:
             memory_content.append(MEMORY_POLICY_INSTRUCTIONS)
-        if available & {"memory_record", "memory_manage"} and (memory_access is None or memory_access.writable):
+        if "memory_edit" in available and (memory_access is None or memory_access.writable):
             if memory_access is not None and memory_access.generate_enabled:
                 memory_content.append(MEMORY_AUTOMATIC_INSTRUCTIONS)
             else:
-                memory_content.append("Automatic and candidate writes are disabled; explicit user saves remain available.")
+                memory_content.append("Automatic writes are disabled. Explicit user saves remain available through memory_edit(userRequested=true).")
             memory_content.append(MEMORY_EXPLICIT_WRITE_INSTRUCTIONS)
         if memory_access is not None:
             state = json.dumps({

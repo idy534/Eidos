@@ -20,6 +20,27 @@ class MemoryFiles:
         self.root = data_directory / "memory"
         _prepare_private_directory(self.root)
 
+    @staticmethod
+    def reference_parts(reference: str) -> tuple[str, ...]:
+        parts = PurePosixPath(reference).parts
+        if (
+            len(parts) != 4
+            or parts[0] != "scopes"
+            or parts[2] != "revisions"
+            or "/".join(parts) != reference
+            or not parts[-1].endswith(".md")
+        ):
+            raise ValueError("memory_path_invalid")
+        try:
+            if (
+                str(uuid.UUID(parts[1])) != parts[1]
+                or str(uuid.UUID(parts[3][:-3])) + ".md" != parts[3]
+            ):
+                raise ValueError("memory_path_invalid")
+        except (ValueError, AttributeError):
+            raise ValueError("memory_path_invalid") from None
+        return parts
+
     def _directory(self, parts: tuple[str, ...], *, create: bool = False) -> int:
         fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -72,9 +93,7 @@ class MemoryFiles:
             os.close(directory)
 
     def read(self, reference: str) -> str:
-        parts = PurePosixPath(reference).parts
-        if len(parts) != 4 or parts[0] != "scopes" or parts[2] != "revisions":
-            raise ValueError("memory_path_invalid")
+        parts = self.reference_parts(reference)
         directory = self._directory(parts[:-1])
         try:
             fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
@@ -98,9 +117,7 @@ class MemoryFiles:
             os.close(directory)
 
     def signature(self, reference: str) -> tuple[int, int]:
-        parts = PurePosixPath(reference).parts
-        if len(parts) != 4 or parts[0] != "scopes" or parts[2] != "revisions":
-            raise ValueError("memory_path_invalid")
+        parts = self.reference_parts(reference)
         directory = self._directory(parts[:-1])
         try:
             fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
@@ -159,9 +176,7 @@ class MemoryFiles:
         return removed
 
     def remove(self, reference: str) -> None:
-        parts = PurePosixPath(reference).parts
-        if len(parts) != 4 or parts[0] != "scopes" or parts[2] != "revisions":
-            raise ValueError("memory_path_invalid")
+        parts = self.reference_parts(reference)
         directory = self._directory(parts[:-1])
         try:
             try:

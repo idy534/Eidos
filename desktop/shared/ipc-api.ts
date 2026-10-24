@@ -101,7 +101,8 @@ export interface EidosRuntimeAPI {
   automation(request: AutomationExecuteRequest): Promise<AutomationResponse>;
   automationHistory(request: AutomationHistoryRequest): Promise<AutomationResponse>;
   automationRunNow(request: AutomationRunNowRequest): Promise<AutomationResponse>;
-  backupMemory(): Promise<void>;
+  backupData(): Promise<void>;
+  exportMemoryNotes(scope: "current" | "global", sessionId?: string): Promise<void>;
   memory<K extends keyof MemoryMethods>(method: K, request: MemoryMethods[K]["request"]): Promise<MemoryMethods[K]["response"]>;
 
   // Runtime

@@ -1615,7 +1615,7 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
         modelStepIndex: 1,
         batchOrder: 4,
         providerCallId: "p-mem-5",
-        toolName: "memory_record",
+        toolName: "memory_edit",
         status: "running",
         startedAt: 1000,
         argumentsJson: JSON.stringify({ content: "用户偏好" }),
@@ -1632,7 +1632,7 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
         modelStepIndex: 1,
         batchOrder: 5,
         providerCallId: "p-mem-6",
-        toolName: "memory_record",
+        toolName: "memory_edit",
         status: "completed",
         startedAt: 1000,
         completedAt: 1100,
@@ -1650,10 +1650,10 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
         modelStepIndex: 1,
         batchOrder: 6,
         providerCallId: "p-mem-7",
-        toolName: "memory_manage",
+        toolName: "memory_edit",
         status: "running",
         startedAt: 1000,
-        argumentsJson: JSON.stringify({ action: "optimize" }),
+        argumentsJson: JSON.stringify({ action: "delete", path: "feedback_testing.md" }),
       },
     }),
     item({
@@ -1667,11 +1667,11 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
         modelStepIndex: 1,
         batchOrder: 7,
         providerCallId: "p-mem-8",
-        toolName: "memory_manage",
+        toolName: "memory_edit",
         status: "completed",
         startedAt: 1000,
         completedAt: 1100,
-        argumentsJson: JSON.stringify({ action: "optimize" }),
+        argumentsJson: JSON.stringify({ action: "delete", path: "feedback_testing.md" }),
       },
     }),
   ];
@@ -1692,13 +1692,13 @@ test("renders memory tools as static rows with unified icon and accurate copy", 
   assert.match(html, />正在读取记忆</);
   assert.match(html, />已读取记忆</);
 
-  // memory_record
-  assert.match(html, />正在修订记忆</);
-  assert.match(html, />已修订记忆</);
+  // memory_edit write
+  assert.match(html, />正在保存记忆</);
+  assert.match(html, />已保存记忆</);
 
-  // memory_manage
-  assert.match(html, />正在优化记忆</);
-  assert.match(html, />已优化记忆</);
+  // memory_edit delete
+  assert.match(html, />正在删除记忆</);
+  assert.match(html, />已删除记忆</);
 
   // Verify memory tools are rendered as static rows (tool-item--read-done) without details tags
   const memoryStaticRows = (html.match(/class="tool-item tool-item--read-done"/g) ?? []).length;

@@ -54,7 +54,6 @@ from eidos_runtime.db.errors import (
     WorkspaceBoundaryError,
 )
 from eidos_runtime.db.layout import AuxiliaryDatabase, PersistenceLayout
-from eidos_runtime.db.memories import MemoryStore
 from eidos_runtime.db.runtime_logs import RuntimeJsonlLogHandler
 from eidos_runtime.db.recovery import recover_runtime_facts
 from eidos_runtime.sandbox.permissions import AdditionalPermissionProfile
@@ -215,14 +214,6 @@ class SessionStore:
         ):
             raise StorageError("storage is not initialized")
         return RuntimeJsonlLogHandler(self._persistence_layout.runtime_logs)
-
-    def memory_store(self) -> MemoryStore:
-        if (
-            self._persistence_layout is None
-            or self._persistence_layout.memory_store is None
-        ):
-            raise StorageError("storage is not initialized")
-        return self._persistence_layout.memory_store
 
     @property
     def connection(self) -> sqlite3.Connection | None:

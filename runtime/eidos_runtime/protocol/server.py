@@ -107,7 +107,7 @@ from eidos_runtime.model.pydantic_ai_client import (
     ModelClientLease,
 )
 from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
-from eidos_runtime.memory.jobs import MemoryJobs
+from eidos_runtime.db.maintenance import StorageMaintenance
 from eidos_runtime.telemetry.tracing import startup_phase
 from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
@@ -768,7 +768,7 @@ class RuntimeServer:
         self.model_config = ModelConfigStore(data_directory)
         self.model = model
         self.model_gateway: ModelGateway | None = None
-        self.memory_jobs: MemoryJobs | None = None
+        self.storage_maintenance: StorageMaintenance | None = None
         self.channel_service: ChannelService | None = None
         self.automation_scheduler: AutomationScheduler | None = None
         self._frozen_model_configs: dict[str, ModelConfig] = {}
@@ -1221,7 +1221,7 @@ class RuntimeServer:
                 ),
             ),
             *((method, request, response,
-               lambda _id, payload, method=method: MemoryApplication(self.store, self.memory_jobs).dispatch(method, payload))
+               lambda _id, payload, method=method: MemoryApplication(self.store, self.supervisor.events.deliver_pending).dispatch(method, payload))
               for method, request, response in MEMORY_METHODS),
             ("agent/catalog", AgentCatalogRequest, AgentCatalogResponse,
              lambda _id, _request: AgentCatalog(self.store.database.data_directory, self.model_config).list()),
@@ -1551,7 +1551,7 @@ class RuntimeServer:
             "mcp/update",
             "mcp/remove",
         }
-        draining_blocked.update(method for method, _request, _response in MEMORY_METHODS if method not in {"memory/list", "memory/get", "memory/export"})
+        draining_blocked.update(method for method, _request, _response in MEMORY_METHODS if method not in {"memory/list", "memory/read", "memory/export"})
         reconfiguration_blocked = {"webSearch/save", "channel/save", "run/start", "schedule/execute", "schedule/runNow"}
         for name, request_type, response_type, handler in handlers:
             registry.register(
@@ -2009,16 +2009,16 @@ class RuntimeServer:
                     self.supervisor.events.deliver_pending)
                 self.supervisor.start_automation_service(self.automation_scheduler.run)
                 self.store.database.memory.on_cleanup = self.store.collect_unreferenced_blobs
-                self.memory_jobs = MemoryJobs(
-                    self.store.database.memory, self.model_config, self.model_gateway,
+                self.storage_maintenance = StorageMaintenance(
+                    self.store.database.memory,
                     lambda: (
                         not self.initialized
                         or self.supervisor.has_active_workers()
                         or self.supervisor.control_state is not RuntimeControlState.RUNNING
                     ),
-                    idle_maintenance=self._idle_maintenance,
+                    self._idle_maintenance,
                 )
-                self.supervisor.start_managed_task("memory", self.memory_jobs.run, persistent=True)
+                self.supervisor.start_managed_task("storage-maintenance", self.storage_maintenance.run, persistent=True)
         except (
             StorageError,
             ModelConfigError,

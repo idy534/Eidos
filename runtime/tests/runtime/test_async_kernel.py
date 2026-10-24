@@ -533,7 +533,7 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             self.assertEqual(kinds.count(RuntimeResourceKind.ASYNC_KERNEL), 1)
             self.assertEqual(kinds.count(RuntimeResourceKind.MANAGED_TASK), 1)
             self.assertTrue(set(kinds) <= {RuntimeResourceKind.ASYNC_KERNEL, RuntimeResourceKind.MANAGED_TASK, RuntimeResourceKind.ASYNC_TASK})
-            self.assertIsNotNone(server.memory_jobs)
+            self.assertIsNotNone(server.storage_maintenance)
 
             server.close()
 
@@ -564,7 +564,7 @@ class RuntimeAsyncKernelTests(unittest.TestCase):
             self.assertEqual(kinds.count(RuntimeResourceKind.ASYNC_KERNEL), 1)
             self.assertEqual(kinds.count(RuntimeResourceKind.MANAGED_TASK), 1)
             self.assertTrue(set(kinds) <= {RuntimeResourceKind.ASYNC_KERNEL, RuntimeResourceKind.MANAGED_TASK, RuntimeResourceKind.ASYNC_TASK})
-            self.assertIsNotNone(server.memory_jobs)
+            self.assertIsNotNone(server.storage_maintenance)
             server.close()
 
     def test_failed_runtime_initialization_closes_the_started_kernel(self) -> None:

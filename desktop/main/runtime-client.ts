@@ -9,7 +9,7 @@ import type { CustomProviderRequest, CustomProviderResult } from "../shared/cust
 import { isChannelResponse, isChannelOrigin, type ChannelResponse, type ChannelSaveRequest, type ChannelReadRequest } from "../shared/channels.js";
 import { isSessionForkResponse, isInheritedHistoryEntry, isSessionForkSource } from "../shared/session-fork.js";
 import type { SessionForkRequest } from "../shared/session-fork.generated.js";
-import { isMemoryRequest, isMemoryResponse, type MemoryMethods } from "../shared/memory.js";
+import { isMemoryRequest, isMemoryResponse, isMemoryChangedNotice, type MemoryMethods } from "../shared/memory.js";
 import { isAgentCatalog, isCollaborationState } from "../shared/collaboration.js";
 import { isRunTermination } from "../shared/run-termination.js";
 import type { AgentCatalogResponse, CollaborationState } from "../shared/collaboration.generated.js";
@@ -374,7 +374,7 @@ export class RuntimeRequestError extends Error {
   readonly businessCode: string | undefined;
 
   constructor(error: RpcError) {
-    const businessCode = (RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "") || /^MEMORY_[A-Z_]{1,80}$/.test(error.data?.code ?? ""))
+    const businessCode = (RUNTIME_BUSINESS_CODES.has(error.data?.code ?? "") || /^(?:MEMORY_|DATA_BACKUP_)[A-Z_]{1,80}$/.test(error.data?.code ?? ""))
       ? error.data?.code
       : "INTERNAL_ERROR";
     super(`EIDOS_RUNTIME_ERROR:${businessCode}`);
@@ -1463,6 +1463,9 @@ function isNotification(value: unknown): value is RuntimeNotification {
     return false;
   }
   const params = value.params;
+  if (value.method === "memory/changed") {
+    return isMemoryChangedNotice(params);
+  }
   if (value.method === "automation/changed") {
     return typeof value.params.id === "string";
   }

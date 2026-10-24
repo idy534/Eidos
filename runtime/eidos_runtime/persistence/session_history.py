@@ -174,6 +174,9 @@ class SessionHistoryRepository(Repository):
         return self._record(row) if row is not None else None
 
     def _record(self, row: sqlite3.Row) -> HistoryRecord:
+        return self._redact_memory(self._stored_record(row))
+
+    def _stored_record(self, row: sqlite3.Row) -> HistoryRecord:
         try:
             return HistoryRecord.model_validate_json(
                 self.database.json_blobs.read_json(
@@ -183,6 +186,99 @@ class SessionHistoryRepository(Repository):
             )
         except ValidationError:
             raise StorageError("session_history_record_invalid") from None
+
+    def _redact_memory(self, record: HistoryRecord) -> HistoryRecord:
+        tool = record.item.tool_call
+        if tool is None or not tool.tool_name.startswith("memory_"):
+            return record
+        connection = self._connection()
+        tracked = connection.execute(
+            "SELECT epochs_json,revoked FROM memory_tool_reads WHERE item_id=?",
+            (record.origin.item_id,),
+        ).fetchone()
+        from eidos_runtime.memory.service import MemoryService
+        from eidos_runtime.runtime.errors import tool_error
+
+        if (
+            tracked
+            and not tracked["revoked"]
+            and MemoryService.valid_epochs(
+                connection, json.loads(tracked["epochs_json"])
+            )
+        ):
+            return record
+        redacted = json.dumps(
+            tool_error(
+                tool.tool_name,
+                "memory_snapshot_revoked",
+                "Historical memory payload revoked.",
+            )
+        )
+        return record.model_copy(
+            update={
+                "item": record.item.model_copy(
+                    update={
+                        "content": None,
+                        "tool_call": tool.model_copy(
+                            update={
+                                "arguments_json": "{}",
+                                "result_json": redacted,
+                                "approval_feedback": None,
+                                "change_diff": None,
+                                "change_diff_bytes": None,
+                                "change_diff_hash": None,
+                                "result_bytes": None,
+                                "result_hash": None,
+                            }
+                        ),
+                    }
+                ),
+                "model_result_json": redacted,
+                "response_replay_json": None,
+            }
+        )
+
+    def scrub_revoked_memory(self) -> bool:
+        """Bounded storage cleanup; normal reads already redact synchronously."""
+        changed = False
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                "SELECT value FROM memory_metadata WHERE key='history_cleanup_cursor'"
+            ).fetchone()
+            if cursor is None or int(cursor[0]) < 0:
+                return False
+            rows = connection.execute(
+                "SELECT rowid AS cleanup_id,* FROM session_history_entries WHERE rowid>? ORDER BY rowid LIMIT 100",
+                (int(cursor[0]),),
+            ).fetchall()
+            used, position = 0, int(cursor[0])
+            for row in rows:
+                if used >= 1024 * 1024:
+                    break
+                used += row["byte_size"]
+                position = row["cleanup_id"]
+                original = self._stored_record(row)
+                record = self._redact_memory(original)
+                if record == original:
+                    continue
+                encoded = record.model_dump_json(by_alias=True)
+                stored = self.database.json_blobs.put_json(
+                    "session-history-record", encoded
+                )
+                connection.execute(
+                    "UPDATE session_history_entries SET record_json=?,byte_size=? WHERE session_id=? AND item_id=?",
+                    (stored, len(encoded.encode()), row["session_id"], row["item_id"]),
+                )
+                connection.execute(
+                    "UPDATE session_history_resources SET blob_ref=? WHERE session_id=? AND blob_ref=?",
+                    (stored, row["session_id"], row["record_json"]),
+                )
+                changed = True
+            connection.execute(
+                "UPDATE memory_metadata SET value=? WHERE key='history_cleanup_cursor'",
+                (str(position) if rows else "-1",),
+            )
+        return changed
 
     def anchor(self, session_id: str, item_id: str) -> HistoryRecord:
         with self.lock:
@@ -280,7 +376,7 @@ class SessionHistoryRepository(Repository):
             ).fetchone()
             is not None
         )
-        return HistoryRecord(
+        record = HistoryRecord(
             item=ItemDto.model_validate(_item_from_row(row, tool)),
             run=RunDto.model_validate(
                 _run_from_row(run_row, include_user_input=False)
@@ -298,6 +394,7 @@ class SessionHistoryRepository(Repository):
             and row["status"] in {"completed", "failed", "declined"}
             and not (row["kind"] == "assistant_message" and row["incomplete"]),
         )
+        return self._redact_memory(record)
 
     def _prefix(
         self, session_id: str, anchor: HistoryRecord

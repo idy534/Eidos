@@ -486,7 +486,7 @@ def test_shared_custom_agent_fixture_matches_python_contracts():
 
 
 def test_agent_definitions_and_frozen_catalog_survive_backup_restore(setup, tmp_path):
-    from eidos_runtime.memory.backup import backup, restore
+    from eidos_runtime.db.backup import backup, restore
 
     store, session, root, catalog = setup
     path = write_definition(root)

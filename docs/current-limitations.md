@@ -284,7 +284,7 @@
 - 手动压缩由当前 Run 或下一 Run 在安全边界执行。系统不会在任务空闲时另建后台模型请求。原任务中断后，用户可以重新安排压缩。系统在压缩后发布新的 ContextPlan，并通过既有 Event/Outbox 刷新当前统计。
 - 处理过程展示已加载历史页中的压缩时间点。单页最多返回 500 条记录，并继续受 Session 响应字节预算限制；事件元数据读取最多 2,000 行。旧事件缺少触发来源时，界面使用“上下文已压缩”，不推断自动或手动。过程记录表示摘要提交状态，不证明压后达到了某个 Token 目标。旧的 `soft_target` 记录继续可读，新自动摘要使用 `window_pressure` 来源。
 - 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
-- MemoryStore 已经提供独立 `memories.sqlite` 和 content-addressed Markdown 存储，但当前 ContextCompactor、用户长期记忆和跨 Session 检索尚未接入这个 Store。
+- 旧 MemoryStore 已在 v40 移除。当前长期记忆使用 `state.sqlite` 与主题 Markdown，ContextBuilder 注入短索引，具体边界见本文的“记忆”一节。
 - Context Usage 展示当前 Run 最新已构建投影的大小。系统优先使用这个投影对应请求的 Provider 输入量；系统不会使用累计 Tokens。压缩后，Engine 会发布新投影估算，下一请求返回后再使用其 Provider 实测值。分项是按当前总量分配的估算，不是 Provider 提供的精确分项。系统在重建投影失败时显示暂无统计，但同一 Session、同一模型的新 Run 在首次取得有效统计前会保留上一轮读数。系统没有为尚未构建的新输入预先生成读数。旧 Plan 没有分项时，系统不会补造各项数值。
 - Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
 
@@ -444,12 +444,13 @@ Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用�
 
 ## 记忆
 
-- 前台模型负责记忆改写的准确性、单条内容组织和语义匹配。Runtime 核对来源、权限和提交版本，前台保存与纠正不再调用第二个模型审核；这些检查不能证明模型改写完全符合原文。
-- 无向量检索使用 FTS5、可选 trigram 和有界模糊匹配，短词/历史扫描可能 truncated；不保证任意语义改写召回。真实 Provider 知识质量、长期冲突协调和 Codex 对比尚需评测。
-- 使用记录区分 served/read，尚不自动识别自由文本 cited/applied。空闲设置页不定期读取，也未接收记忆变更通知；其他会话的新记忆在手动刷新、重新打开页面或窗口恢复时显示。未结束的历史整理任务继续按状态安排读取。
-- 遗忘不删除原始聊天，不追回已发送内容、外部导出或旧备份。ZIP/Markdown 未加密，旧备份可恢复后续遗忘资料；恢复默认停止自动学习，需要用户重新确认。
-- 正文大小/mtime 校验不防主动保留元数据篡改。孤立文件按小时回收、保留一小时宽限，单次最多扫描十万项。
-- 离线恢复仅导入新目录，Workspace 和 Provider 配置另行处理；macOS 原生沙盒、sidecar 和安装包仍需支持平台验收。
+- 前台模型负责笔记改写是否忠实、主题组织与语义匹配。Runtime 核对真实来源、权限、取消和提交版本。这些检查不能证明模型改写完全准确。
+- FTS5、可选 trigram、短词 LIKE 与 RapidFuzz 使用有界候选集。每个候选源上限是 500 条；搜索不保证任意语义改写召回。文件列表支持分页访问全部有效笔记。真实 Provider 的长期知识质量仍需评测。
+- 页面接收元数据变更通知，并在窗口恢复时刷新。系统没有后台模型整理、候选确认、历史回填和预算任务。
+- v40 直接清除旧记忆内容，不提供旧内容转换、旧工具接口或旧备份恢复。聊天和其他业务数据保留。
+- 遗忘不会删除原始聊天，也不能追回已经发送的资料、用户导出或旧备份。ZIP/Markdown 未加密。恢复的模式是 read，旧备份仍可能恢复备份之后被遗忘的资料。
+- 正文大小/mtime 校验不能识别主动保留元数据的篡改。孤立文件按小时回收，保留一小时宽限。冻结分叉中的记忆工具载荷同步拒绝使用，物理副本由有界存储清理分批擦除。系统不承诺磁盘块的安全擦除。
+- 离线恢复仅导入新的目录。Workspace 和模型配置需要另行恢复。真实桌面交互和真实 Provider 质量不能由 mock 或脚本模型代替。
 
 ## Projectless 工作空间 Alpha 更新
 

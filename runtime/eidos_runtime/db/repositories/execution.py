@@ -715,7 +715,7 @@ class ExecutionRepository(Repository):
                 FROM steps
                 JOIN step_resolution_snapshots
                   ON step_resolution_snapshots.id = steps.resolution_snapshot_id
-                WHERE steps.run_id = ?
+                WHERE steps.run_id = ? AND step_resolution_snapshots.memory_revoked=0
                 ORDER BY steps.creation_seq
                 """,
                 (run_id,),

@@ -16,7 +16,8 @@ from eidos_runtime.db.layout import _migrate_state_schema
 from eidos_runtime.db.schema import SCHEMA_VERSION, V30_SCHEMA_SQL, V31_SCHEMA_SQL
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.model.client import ModelResponse, ScriptedModel
-from eidos_runtime.memory.backup import restore
+from eidos_runtime.db.backup import restore
+from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.runtime.engine import RuntimeEngine
 
 
@@ -93,7 +94,7 @@ def test_failed_index_upgrade_rolls_back_and_can_retry(tmp_path: Path, monkeypat
         owner.close()
 
 
-def test_v31_backup_restores_and_upgrades_on_startup(tmp_path: Path):
+def test_old_memory_backup_is_rejected_without_partial_restore(tmp_path: Path):
     path = tmp_path / "legacy.sqlite"
     with sqlite3.connect(path) as connection:
         connection.executescript(V31_SCHEMA_SQL + "\nPRAGMA user_version=31;")
@@ -105,15 +106,9 @@ def test_v31_backup_restores_and_upgrades_on_startup(tmp_path: Path):
             "privacyEpochs": {}, "memoryRefs": [],
         }))
     destination = tmp_path / "restored"
-    restore(archive_path, destination)
-    store = SessionStore(destination)
-    store.initialize()
-    try:
-        assert store.health_state == "ready"
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        assert store.connection.execute("SELECT 1 FROM sqlite_master WHERE name='steps_run_ordinal'").fetchone()
-    finally:
-        store.close()
+    with pytest.raises(MemoryRejected, match="format_unsupported"):
+        restore(archive_path, destination)
+    assert not destination.exists()
 
 
 @pytest.fixture
