@@ -200,6 +200,7 @@ class Database:
                     37,
                     38,
                     39,
+                    40,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -467,6 +468,12 @@ class Database:
                 from eidos_runtime.memory.document_schema import reset_document_memory
                 try:
                     reset_document_memory(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 40:
+                from eidos_runtime.memory.revocation_migration import migrate_memory_source_revocation
+                try:
+                    migrate_memory_source_revocation(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

@@ -476,15 +476,21 @@ class RuntimeEngine:
             value = json.loads(tool["argumentsJson"])
             call = ModelToolCall(tool["providerCallId"], tool["toolName"],
                 CustomToolPayload(input=value["input"]) if tool["payloadKind"] == "custom" else value)
-            resolution = self.store.read_step_resolution_snapshots(run.run_id)[-1]
-            expected = json.loads(resolution.tool_snapshot_json)["specHashes"].get(call.name)
+            # Recovery only needs the frozen tool contract and Run permissions.
+            # The request snapshot can already have been revoked and collected.
+            tool_snapshot = self.store.read_step_tool_snapshot(
+                run.run_id, int(tool["modelStepIndex"])
+            )
+            expected = tool_snapshot["specHashes"].get(call.name)
             plan = resources.dispatcher.plan_pending_approval(call, expected or "missing")
             if plan.descriptor is None:
                 raise InvalidRunStateError("pending approval tool contract changed")
             tools = ToolCallRuntime(
                 self.store, resources.dispatcher, approval, self.events, self.sensitive,
                 self.state_machine, shell_available=self.shell_available,
-                base_permissions=BasePermissionProfile.model_validate_json(resolution.permission_profile_json),
+                base_permissions=BasePermissionProfile.model_validate_json(
+                    run.resolution_snapshot.permission_profile_json
+                ),
                 async_kernel=self.async_kernel, resource_registry=self.resources,
                 concurrency=self.tool_concurrency_gate,
                 skill_access=resources.skill_access, runtime_dependencies=resources.runtime_dependencies,

@@ -401,7 +401,7 @@ Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦�
 契约修改后运行 `node scripts/generate-memory-contracts.mjs` 并提交三份 `desktop/shared/memory*.generated.ts`。两端共享 `protocol/fixtures/memory-v2.json`。开发过程使用定向验证，不默认运行 Full Suite：
 
 ```bash
-uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_runtime.py runtime/tests/test_data_backup.py runtime/tests/test_storage_maintenance.py runtime/tests/test_session_conversation_fork.py
+uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_runtime.py runtime/tests/test_memory_revocation_migration.py runtime/tests/test_data_backup.py runtime/tests/test_storage_maintenance.py runtime/tests/test_session_conversation_fork.py
 pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/MemorySettings.behavior.test.tsx desktop/renderer/src/components/SessionSidebar.behavior.test.tsx
 pnpm build:main
 node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js
@@ -426,7 +426,7 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-learning.py --
 
 开发者可以使用重复的 `--case` 选择样本。`--disable-automatic-learning` 选择 read 模式，检查明确保存。报告中的状态检查只能证明保存路径，人工还应核对笔记内容、范围、适用条件与实际使用。真实模型结果不能由脚本模型测试代替。
 
-离线恢复只接受 `eidos-data-backup-v2` 和 schema v40。目标目录必须不存在，不能与运行数据合并：
+离线恢复接受 `eidos-data-backup-v2` 和 schema v40/v41。恢复会把 v40 升级为 v41。目标目录必须不存在，不能与运行数据合并：
 
 ```bash
 uv run --locked python -m eidos_runtime.db.backup /absolute/path/backup.zip /absolute/path/new-eidos-data

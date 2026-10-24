@@ -219,6 +219,52 @@ def test_source_revocation_and_user_owned_correction(store, tmp_path):
     )
 
 
+@pytest.mark.parametrize("change", ["edit", "delete", "temporary", "rewrite", "rewind"])
+def test_historical_automatic_version_revokes_other_sessions_after_user_edit(
+    store, tmp_path, change
+):
+    from eidos_runtime.memory.lifecycle import invalidate_source
+
+    session = store.create_session(str(tmp_path / "workspace"))
+    reader = store.create_session(str(tmp_path / "workspace"))
+    run, _ = store.create_run(session["id"], "旧规则来源")
+    source = store.get_user_item(run["id"])["id"]
+    service = store.database.memory
+    request = note(
+        session_id=session["id"], scope="current", source_item_ids=[source]
+    )
+    service.edit(request, automatic=True)
+    service.edit(request.model_copy(update={
+        "operation_id": "user-edit", "expected_revision": 1,
+        "summary": "用户独立修改后的规则", "content": "用户独立修改后的规则",
+    }))
+    historical = service.read(MemoryReadRequest(
+        session_id=reader["id"], path=request.path, revision=1,
+    ), for_use=True)
+    service.track_tool("reader-run", "historical-read", historical.epochs, {}, retrieval=True)
+    with pytest.raises(MemoryRejected, match="memory_snapshot_revoked"):
+        with service.admit(historical.epochs, threading.Event()) as cancel:
+            with store.database.transaction() as connection:
+                if change == "edit":
+                    connection.execute("UPDATE items SET content='来源已更正' WHERE id=?", (source,))
+                elif change == "delete":
+                    connection.execute("DELETE FROM items WHERE id=?", (source,))
+                else:
+                    invalidate_source(connection, session["id"], reason=change,
+                        run_id=run["id"] if change != "temporary" else None,
+                        after_ordinal=-1 if change == "rewind" else None)
+            assert cancel.is_set()
+    service.cleanup()
+    assert store.connection.execute(
+        "SELECT revoked FROM memory_tool_reads WHERE item_id='historical-read'"
+    ).fetchone()[0] == 1
+    with pytest.raises(MemoryRejected):
+        service.read(MemoryReadRequest(session_id=reader["id"], path=request.path, revision=1))
+    assert service.read(MemoryReadRequest(
+        session_id=reader["id"], path=request.path,
+    )).content == "用户独立修改后的规则"
+
+
 def test_deleted_automatic_note_cannot_be_relearned_from_its_old_source(
     store, tmp_path
 ):

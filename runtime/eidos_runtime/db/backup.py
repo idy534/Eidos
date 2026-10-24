@@ -17,7 +17,7 @@ from pydantic import Field, ValidationError
 from eidos_runtime.application.agent_catalog import AgentCatalog
 from eidos_runtime.db.layout import collect_unreferenced_blobs, iter_blob_references
 from eidos_runtime.db.json_blobs import JsonBlobStore
-from eidos_runtime.db.schema import SCHEMA_VERSION
+from eidos_runtime.db.schema import SCHEMA_VERSION, V40_SCHEMA_VERSION
 from eidos_runtime.memory.publication import MemoryFiles
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.memory.service import MemoryService
@@ -167,7 +167,7 @@ def restore(archive_path: Path, destination: Path) -> None:
                 manifest = _Manifest.model_validate_json(archive.read("manifest.json"))
             except ValidationError:
                 raise MemoryRejected("data_restore_format_unsupported") from None
-            if manifest.schema_version != SCHEMA_VERSION:
+            if manifest.schema_version not in {V40_SCHEMA_VERSION, SCHEMA_VERSION}:
                 raise MemoryRejected("data_restore_format_unsupported")
             for item in entries:
                 relative = PurePosixPath(item.filename)
@@ -186,7 +186,7 @@ def restore(archive_path: Path, destination: Path) -> None:
         with sqlite3.connect(staged / "state.sqlite") as connection:
             if (
                 connection.execute("PRAGMA user_version").fetchone()[0]
-                != SCHEMA_VERSION
+                != manifest.schema_version
                 or connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok"
             ):
                 raise MemoryRejected("data_restore_database_invalid")
@@ -211,6 +211,11 @@ def restore(archive_path: Path, destination: Path) -> None:
                     "UPDATE memory_revisions SET file_size=?,file_mtime_ns=? WHERE file_ref=?",
                     (metadata.st_size, metadata.st_mtime_ns, reference),
                 )
+            if manifest.schema_version == V40_SCHEMA_VERSION:
+                from eidos_runtime.memory.revocation_migration import migrate_memory_source_revocation
+
+                connection.commit()
+                migrate_memory_source_revocation(connection)
             connection.execute(
                 "UPDATE memory_scopes SET mode='read',privacy_epoch=privacy_epoch+1"
             )

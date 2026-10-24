@@ -345,3 +345,126 @@ def test_late_model_answer_is_discarded_when_its_memory_is_revoked(setup):
     assert not any(item.get("content") == "不应发布的迟到答案" for item in items)
     assert any(item.get("content") == "使用新上下文完成任务。" for item in items)
     assert store.read_run(run["id"])["status"] == "succeeded"
+
+
+def test_late_answer_from_a_historical_automatic_version_is_discarded(setup):
+    store, session = setup
+    service = store.database.memory
+    source_run, _ = store.create_run(session["id"], "旧规则来源")
+    source = store.get_user_item(source_run["id"])["id"]
+    request = MemoryEditRequest(
+        session_id=session["id"], operation_id="automatic", path="feedback.md",
+        summary="旧规则", content="旧规则", source_item_ids=[source],
+    )
+    service.edit(request, automatic=True)
+    service.edit(request.model_copy(update={
+        "operation_id": "user-edit", "expected_revision": 1,
+        "summary": "用户独立的新规则", "content": "用户独立的新规则",
+    }))
+    RuntimeEngine(store, ScriptedModel([ModelResponse(text="来源处理完成")]), lambda _: None).run(
+        source_run["id"], threading.Event()
+    )
+    run, _ = store.create_run(session["id"], "检查历史规则")
+
+    class LateHistoricalModel(ScriptedModel):
+        calls = 0
+
+        def complete(self, context, cancel, on_text_delta, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                with store.database.transaction() as connection:
+                    connection.execute("UPDATE items SET content='来源已更正' WHERE id=?", (source,))
+                service.cleanup()
+                # Simulate a Provider that ignores cancellation and returns late.
+                return super().complete(context, threading.Event(), on_text_delta, **kwargs)
+            return super().complete(context, cancel, on_text_delta, **kwargs)
+
+    model = LateHistoricalModel([
+        ModelResponse(tool_calls=(ModelToolCall("historical", "memory_read", {
+            "path": request.path, "revision": 1,
+        }),)),
+        ModelResponse(text="不应发布的历史版本答案"),
+        ModelResponse(text="使用合法的新上下文完成任务"),
+    ])
+    RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
+    items = store.read_session_snapshot(session["id"])["items"]
+    assert not any(item.get("content") == "不应发布的历史版本答案" for item in items)
+    assert any(item.get("content") == "使用合法的新上下文完成任务" for item in items)
+    assert "旧规则" not in str(model.contexts[-1])
+    assert store.read_run(run["id"])["status"] == "succeeded"
+
+
+@pytest.mark.parametrize("revocation", ["off", "forget"])
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+def test_pending_approval_recovers_after_memory_revocation_and_restart(
+    setup, revocation, decision, monkeypatch
+):
+    from eidos_runtime.runtime.approval import ApprovalDecision
+
+    class Crash(BaseException):
+        pass
+
+    store, session = setup
+    service = store.database.memory
+    service.edit(MemoryEditRequest(
+        session_id=session["id"], operation_id="seed", path="seed.md",
+        summary="必须撤销的旧规则", content="旧规则正文",
+    ))
+    run, _ = store.create_run(session["id"], "请记住以后都用中文", approval_mode="manual")
+    model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("save", "memory_edit", {
+        "path": "language.md", "summary": "语言偏好", "content": "用户希望使用中文",
+        "userRequested": True,
+    }),))])
+
+    def crash(_request, _cancel):
+        raise Crash()
+
+    with pytest.raises(Crash):
+        RuntimeEngine(store, model, lambda _: None, request_approval=crash).run(
+            run["id"], threading.Event()
+        )
+    original_permissions = store.read_run_resolution_snapshot(run["id"]).permission_profile_json
+    original_tool = store.read_step_tool_snapshot(run["id"], 1)
+    if revocation == "off":
+        service.policy(MemoryPolicyRequest(session_id=session["id"], scope="current", mode="off"))
+    else:
+        service.edit(MemoryEditRequest(
+            session_id=session["id"], operation_id="forget", path="seed.md",
+            action="delete", expected_revision=1,
+        ))
+    assert store.read_step_resolution_snapshots(run["id"]) == ()
+    store.collect_unreferenced_blobs()
+    data = store.data_directory
+    store.close()
+    reopened = SessionStore(data)
+    reopened.initialize()
+    try:
+        assert reopened.health()["state"] == "ready"
+        assert reopened.read_run(run["id"])["status"] == "waiting_approval"
+        assert reopened.read_run_resolution_snapshot(run["id"]).permission_profile_json == original_permissions
+        assert reopened.read_step_tool_snapshot(run["id"], 1) == original_tool
+        confirmations = []
+
+        def confirm(request, _cancel):
+            confirmations.append(request)
+            return ApprovalDecision(decision)
+
+        def no_revoked_snapshot(_run_id):
+            pytest.fail("Approval recovery must not read revoked model context")
+
+        monkeypatch.setattr(reopened, "read_step_resolution_snapshots", no_revoked_snapshot)
+        resumed_model = ScriptedModel([ModelResponse(text="恢复后完成任务")])
+        RuntimeEngine(reopened, resumed_model, lambda _: None, request_approval=confirm).run(
+            run["id"], threading.Event()
+        )
+        assert len(confirmations) == 1
+        assert reopened.read_run(run["id"])["status"] == "succeeded"
+        assert "必须撤销的旧规则" not in str(resumed_model.contexts)
+        assert reopened.connection.execute("SELECT status FROM approvals").fetchone()[0] == (
+            "approved" if decision == "approve" else "rejected"
+        )
+        assert reopened.connection.execute(
+            "SELECT count(*) FROM memory_documents WHERE path='language.md' AND status='active'"
+        ).fetchone()[0] == int(decision == "approve")
+    finally:
+        reopened.close()

@@ -36,8 +36,11 @@ def invalidate_source(
         parameters,
     )
     connection.execute(
-        "UPDATE memory_scopes SET privacy_epoch=privacy_epoch+1,generation=generation+1 WHERE id IN (SELECT scope_id FROM memory_documents WHERE user_owned=0 AND id IN ("
-        + documents
+        "UPDATE memory_scopes SET privacy_epoch=privacy_epoch+1,generation=generation+1 WHERE id IN ("
+        "SELECT DISTINCT d.scope_id FROM memory_documents d JOIN memory_revisions r ON r.document_id=d.id "
+        "JOIN memory_evidence e ON e.document_id=r.document_id AND e.revision=r.revision "
+        "WHERE r.user_owned=0 AND e.item_id IN (SELECT item_id FROM memory_source_items WHERE "
+        + condition
         + "))",
         parameters,
     )

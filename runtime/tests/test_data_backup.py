@@ -18,7 +18,8 @@ from eidos_runtime.memory.repository import MemoryRejected
 pytestmark = pytest.mark.integration
 
 
-def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_path):
+@pytest.mark.parametrize("schema_version", [40, SCHEMA_VERSION])
+def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_path, schema_version):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     store = SessionStore(tmp_path / "data")
@@ -38,12 +39,26 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_pa
     archive = tmp_path / "backup.zip"
     backup(service, archive)
     store.close()
+    if schema_version == 40:
+        with zipfile.ZipFile(archive) as source:
+            entries = {name: source.read(name) for name in source.namelist()}
+        state = tmp_path / "v40.sqlite"
+        state.write_bytes(entries["state.sqlite"])
+        with sqlite3.connect(state) as connection:
+            connection.execute("PRAGMA user_version=40")
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        entries["state.sqlite"] = state.read_bytes()
+        manifest = json.loads(entries["manifest.json"])
+        manifest["schemaVersion"] = 40
+        entries["manifest.json"] = json.dumps(manifest).encode()
+        write_archive(archive, list(entries.items()))
     destination = tmp_path / "restored"
     restore(archive, destination)
     restored = SessionStore(destination)
     restored.initialize()
     try:
         assert restored.health()["state"] == "ready"
+        assert restored.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert restored.read_run(run["id"])["sessionId"] == session["id"]
         assert (
             restored.database.memory.read(
