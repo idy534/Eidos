@@ -105,9 +105,9 @@ class EventProjector:
         if (
             event_type == "run.updated"
             and run is not None
-            and run.get("status") in {
+            and (run.get("status") in {
                 "queued", "running", "waiting_approval", "waiting_input", "waiting_agents", "finalizing",
-            }
+            } or isinstance(payload, dict) and str(payload.get("reason", "")).startswith("hook_"))
         ):
             return (*compaction_notifications, self._notification("run/updated", {
                 "sessionId": run["sessionId"], "run": run,

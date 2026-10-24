@@ -1,5 +1,5 @@
 import type { CustomModelSettings } from "./custom-models.js";
-import type { PluginCompatibility, PluginHookReview } from "./hooks.js";
+import type { HookActivity, PluginCompatibility, PluginHookReview } from "./hooks.js";
 import type { PluginPresentation } from "./plugins.js";
 import type { ContextCompactionActivity } from "./context.generated.js";
 import type { SessionForkSource, InheritedHistoryEntry } from "./session-fork.generated.js";
@@ -272,6 +272,7 @@ export interface TerminalExitEvent {
 export type ApprovalMode = "manual" | "auto_review" | "full_access";
 
 export interface Run {
+  hookActivity?: HookActivity[];
   channelOrigin?: import("./channels.generated.js").ChannelOrigin;
   automationOrigin?: import("./automation.generated.js").AutomationOrigin;
   inherited?: boolean;

@@ -21,7 +21,7 @@ from pydantic import (
 )
 
 from eidos_runtime.domain.input_reference import InputReference
-from eidos_runtime.domain.hooks import HookBinding, PluginCompatibility, PluginHookReview
+from eidos_runtime.domain.hooks import HookActivity, HookBinding, PluginCompatibility, PluginHookReview
 from eidos_runtime.domain.plugins import PluginPresentation
 
 
@@ -259,6 +259,7 @@ class McpServerRecordDto(ClosedModel):
 
 
 class RunDto(ClosedModel):
+    hook_activity: list[HookActivity] = Field(default_factory=list, alias="hookActivity", max_length=8, exclude_if=lambda value: not value)
     channel_origin: ChannelOrigin | None = Field(default=None, alias="channelOrigin")
     automation_origin: AutomationOrigin | None = Field(default=None, alias="automationOrigin")
     work_mode: Literal["execute", "plan"] = Field(default="execute", alias="workMode")

@@ -51,6 +51,7 @@ from eidos_runtime.runtime.state_machine import (  # noqa: E402
 
 
 EXPECTED_TABLES = {
+    "hook_sources",
     "mcp_connections",
     "plugin_versions",
     "plugin_hook_trust", "hook_invocations", "hook_pending_events",
@@ -561,8 +562,8 @@ class StorageSchemaTests(unittest.TestCase):
             connection.execute("PRAGMA user_version").fetchone()[0],
             SCHEMA_VERSION,
         )
-        self.assertEqual(SCHEMA_VERSION, 38)
-        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 37)
+        self.assertEqual(SCHEMA_VERSION, 39)
+        self.assertEqual(PREVIOUS_SCHEMA_VERSION, 38)
         self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

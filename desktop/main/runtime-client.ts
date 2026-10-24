@@ -1,5 +1,6 @@
 import { isShellEnvironmentResponse, type ShellEnvironmentReadRequest, type ShellEnvironmentRefreshRequest, type ShellEnvironmentSaveRequest, type ShellEnvironmentResponse } from "../shared/shell-environment.js";
-import { isPluginHookReview, isPluginCompatibility } from "../shared/hooks.js";
+import { isHookActivity, isHookActivityPage, isHookSourceList, isPluginHookReview, isPluginCompatibility } from "../shared/hooks.js";
+import type { HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList } from "../shared/hooks.js";
 import { isPluginPresentation } from "../shared/plugins.js";
 import { isWebSearchResponse, type WebSearchReadRequest, type WebSearchSaveRequest, type WebSearchResponse } from "../shared/web-search.js";
 import { isSearchResponse, isFileFindResponse, type SearchRequest, type SearchResponse, type ReadAroundRequest, type FileFindRequest } from "../shared/search.js";
@@ -181,6 +182,7 @@ const RUNTIME_BUSINESS_CODES = new Set([
   "PLUGIN_IMPORT_REJECTED",
   "PLUGIN_IMPORT_FAILED",
   "PLUGIN_UNAVAILABLE",
+  "HOOK_CONFIGURATION_CHANGED",
   "PLUGIN_VERSION_CONFLICT",
   "PLUGIN_ID_CONFLICT",
   "SKILL_CATALOG_UNAVAILABLE",
@@ -1113,6 +1115,14 @@ export class RuntimeClient {
 
   listPlugins(): Promise<{ plugins: PluginRecord[] }> {
     return this.validatedRequest("plugin/list", {}, isPluginListResult);
+  }
+
+  hookConfiguration(request: HookConfigurationRequest): Promise<HookSourceList> {
+    return this.validatedRequest("hook/configuration", { ...request }, isHookSourceList);
+  }
+
+  readHookHistory(request: HookHistoryRequest): Promise<HookActivityPage> {
+    return this.validatedRequest("hook/history", { ...request }, isHookActivityPage);
   }
 
   importPlugin(sourcePath: string, operationId = randomUUID()): Promise<PluginRecord> {
@@ -2185,6 +2195,7 @@ function isRun(value: unknown): value is Run {
       "activatedTools",
       "automationOrigin",
       "channelOrigin",
+      "hookActivity",
     ])
   ) {
     return false;
@@ -2208,6 +2219,7 @@ function isRun(value: unknown): value is Run {
     && (value.approvalMode === undefined || ["manual", "auto_review", "full_access"].includes(String(value.approvalMode)))
     && (value.channelOrigin === undefined || isChannelOrigin(value.channelOrigin))
     && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
+    && (value.hookActivity === undefined || Array.isArray(value.hookActivity) && value.hookActivity.length <= 8 && value.hookActivity.every(item => isHookActivity(item)))
     && isModelId(value.modelId)
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (

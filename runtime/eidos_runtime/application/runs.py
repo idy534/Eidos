@@ -77,6 +77,9 @@ ResultT = TypeVar("ResultT", bound=MethodResultDto)
 class RunStorePort(Protocol):
     """The public compatibility authority required for Run start/cancel."""
 
+    database: Database
+    data_directory: Path | None
+
     def read_session(self, session_id: str) -> dict[str, object] | None: ...
 
     def session_model_id(self, session_id: str) -> str | None: ...
@@ -360,6 +363,12 @@ class RunApplication:
             except (ValueError, OSError) as error:
                 raise ApplicationError("INVALID_STATE", str(error)) from error
         extension_snapshot = environment.extension_snapshot()
+        from eidos_runtime.extensions.hook_sources import HookSourceCatalog
+        configured_hooks = HookSourceCatalog(store).bindings(store.workspace_for_session(request.session_id).path)
+        if configured_hooks:
+            extension_snapshot = dict(extension_snapshot or {})
+            extension_snapshot["hooks"] = [*extension_snapshot.get("hooks", []),
+                *(binding.to_wire_dict() for binding in configured_hooks)]
         operation_request: dict[str, object] = {
             **({"regenerateSourceRunId": regenerate_source_run_id} if regenerate_source_run_id is not None else {}),
             "sessionId": request.session_id,

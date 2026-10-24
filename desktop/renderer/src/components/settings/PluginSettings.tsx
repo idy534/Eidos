@@ -12,10 +12,12 @@ import { EmptyState } from "../EmptyState.js";
 import { StatusBadge } from "../StatusBadge.js";
 import { AlertBanner } from "../AlertBanner.js";
 import { PluginDetailDialog } from "./PluginDetailDialog.js";
+import { HookSourceSettings } from "./HookSourceSettings.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
 import { BuiltinPlugins } from "./BuiltinPlugins.js";
 
 interface PluginSettingsProps {
+  sessionId?: string | undefined;
   plugins: PluginRecord[];
   skills?: SkillMetadata[] | undefined;
   mcpServers?: McpServerRecord[] | undefined;
@@ -34,6 +36,7 @@ interface PluginSettingsProps {
 }
 
 export function PluginSettings({
+  sessionId,
   plugins,
   skills = [],
   mcpServers = [],
@@ -167,6 +170,7 @@ export function PluginSettings({
 
       {onInstallBuiltinPlugin && <BuiltinPlugins onInstall={onInstallBuiltinPlugin} onShowToast={onShowToast}
         catalogRevision={plugins.map(plugin => `${plugin.id}:${plugin.version}:${plugin.contentHash}`).join("|")} />}
+      {storageReady && <HookSourceSettings sessionId={sessionId} />}
       <SettingSection title="已安装的 Plugins">
         {plugins.length === 0 ? (
           <EmptyState
@@ -285,7 +289,7 @@ export function PluginSettings({
           <p>安装目录：<code>{review?.plugin.hookReview?.installedRoot}</code><br />可写数据目录：<code>{review?.plugin.hookReview?.dataDirectory}</code></p>
           {review?.plugin.hookReview?.definitions?.map((hook) => <div key={hook.key}>
             <strong>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""}</strong>
-            <pre className="plugin-hook-command">{hook.command || `处理器：${hook.handlerType}`}</pre>
+            <pre className="plugin-hook-command">{hook.handlerType === "mcp_tool" ? JSON.stringify({ server: hook.mcpServer, tool: hook.mcpTool, input: hook.mcpInput }, null, 2) : hook.command || `处理器：${hook.handlerType}`}</pre>
           </div>)}
           {Boolean(review?.plugin.compatibility?.issues?.length) && <div><p>以下能力暂不支持：</p><ul>{review?.plugin.compatibility?.issues?.map((issue) => <li key={issue}>{compatibilityIssue(issue)}</li>)}</ul></div>}
           {review?.plugin.hookReview?.latest && <p>最近结果：{review.plugin.hookReview.latest.systemMessage || review.plugin.hookReview.latest.message || review.plugin.hookReview.latest.errorCode || "脚本已完成。"}</p>}

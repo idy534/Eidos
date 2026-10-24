@@ -1,4 +1,5 @@
 import type { ShellEnvironmentReadRequest, ShellEnvironmentRefreshRequest, ShellEnvironmentSaveRequest, ShellEnvironmentResponse } from "./shell-environment.js";
+import type { HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList } from "./hooks.js";
 import type { WebSearchReadRequest, WebSearchSaveRequest, WebSearchResponse, WebSearchOfficialPageRequest } from "./web-search.js";
 import type { CustomProviderRequest, CustomProviderResult } from "./custom-models.js";
 import type { ChannelResponse, ChannelSaveRequest, ChannelReadRequest } from "./channels.js";
@@ -329,6 +330,8 @@ export interface EidosRuntimeAPI {
   respondApproval(id: string, decision: "approve" | "reject", feedback?: string): Promise<boolean>;
 
   // Extensions
+  hookConfiguration(request: HookConfigurationRequest): Promise<HookSourceList>;
+  readHookHistory(request: HookHistoryRequest): Promise<HookActivityPage>;
   listPlugins(): Promise<PluginListResult>;
   importPlugin(): Promise<PluginRecord | null>;
   setPluginEnabled(pluginId: string, enabled: boolean): Promise<PluginRecord>;

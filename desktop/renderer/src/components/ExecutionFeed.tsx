@@ -33,6 +33,7 @@ import { SkillIcon, AgentIcon as SubagentToolIcon, MemoryIcon } from "./InputPic
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 import { useFeedScroll } from "./useFeedScroll.js";
 import { ContextCompactionRow } from "./ContextCompactionRow.js";
+import { HookActivityRows } from "./HookActivityRows.js";
 import type { ContextCompactionActivity } from "../../../shared/context.generated.js";
 export { isFeedAtBottom } from "./useFeedScroll.js";
 
@@ -236,6 +237,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
                   />
                 ))}
                 <RunNotice run={run} />
+                <HookActivityRows run={run} />
               </Fragment>
             );
           })}

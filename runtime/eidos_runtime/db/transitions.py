@@ -206,6 +206,17 @@ def resolve_approval_and_transition(
         expected_source = "manual"
     if fact["approval_mode"] == "auto_review" and review is not None and review.source == "manual" and review.allows_manual_fallback:
         expected_source = "manual"
+    if review is not None and review.source == "hook" and not human_confirmation and fact["approval_mode"] != "full_access":
+        from eidos_runtime.domain.hooks import HookResult
+        fingerprint = json.loads(fact["request_json"]).get("permissionBlockFingerprint")
+        results = tuple(HookResult.model_validate_json(row["result_json"]) for row in connection.execute(
+            "SELECT result_json FROM hook_invocations WHERE run_id=? AND event='PermissionRequest' AND event_key=? AND background=0 AND result_json IS NOT NULL",
+            (fact["run_id"], "permission:" + item_id + ":" + str(fingerprint)),
+        ))
+        if (decision == "approve" and review.reason_code == "hook_permission_allowed"
+                and any(result.status == "completed" and result.permission_decision == "allow" for result in results)
+                and not any(result.permission_decision == "deny" or result.action == "deny" for result in results)):
+            expected_source = "hook"
     if (review.source if review is not None else None) != expected_source:
         raise InvalidRunStateError("approval source does not match run policy")
     if review is not None and review.decision != decision:

@@ -1,0 +1,7 @@
+.hook-source-paths { white-space: pre-line; overflow-wrap: anywhere; }
+.hook-source-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.hook-history-dialog .plugin-resource-body { padding-top: 1rem; }
+.hook-history-dialog summary { padding: 0.5rem 0; }
+.hook-history-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.hook-feed-activity { display: grid; gap: 0.5rem; margin: 0.5rem 0; color: var(--text-secondary); font-size: 0.8125rem; }
+.hook-feed-activity > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }

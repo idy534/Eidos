@@ -485,7 +485,12 @@ class RunRepository(Repository):
             raise ResourceNotFoundError("run not found")
         from eidos_runtime.persistence.automations import AutomationRepository
         from eidos_runtime.persistence.channels import ChannelRepository
-        return _run_from_row(row, channel_origin=ChannelRepository(self.database).origin(run_id), automation_origin=AutomationRepository(self.database).origin(run_id))
+        result = _run_from_row(row, channel_origin=ChannelRepository(self.database).origin(run_id), automation_origin=AutomationRepository(self.database).origin(run_id))
+        from eidos_runtime.persistence.hooks import HookRepository
+        activity = HookRepository(self.database).activities(run_id=run_id, limit=8, previews=False).items
+        if activity:
+            result["hookActivity"] = [item.to_wire_dict() for item in activity]
+        return result
 
     def read_run_extension_snapshot(self, run_id: str) -> dict[str, object]:
         """Internal immutable snapshot, including restart-only Skill metadata."""

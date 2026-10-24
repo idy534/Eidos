@@ -31,7 +31,17 @@ const remote: McpServerRecord = { ...mcp, pluginId: github.id, pluginHash: githu
   permissionProfile: "connector", remote: { url: "https://api.githubcopilot.com/mcp/", authType: "github-device" } };
 let builtinInstalled = false;
 let connected = false;
+let hookTrusted = false;
 Object.assign(window, { eidosRuntime: {
+  hookConfiguration: async (request: { action?: string; trusted?: boolean }) => {
+    if (request.action === "trust") hookTrusted = request.trusted ?? false;
+    return { sources: [{ id: "user:fixture", scope: "user", paths: ["/Users/example/Library/Application Support/Eidos/hooks.json"], contentHash: "d".repeat(64),
+      enabled: true, trusted: hookTrusted, definitions: [{ key: "start", event: "SessionStart", handlerType: "command",
+        command: '"$RUNTIME_PYTHON" "$PLUGIN_ROOT/check_workspace_conventions_before_session_start.py"' }] }] };
+  },
+  readHookHistory: async (request: { cursor?: number }) => ({ items: [{ id: request.cursor ? "older" : "latest", runId: "run", sessionId: "session", sourceId: "checks",
+    event: request.cursor ? "Stop" : "SessionStart", handlerType: "command", status: "completed", createdAt: 1,
+    result: { status: "completed", systemMessage: "检查提醒：请阅读结果。" }, stdoutPreview: "long-output-".repeat(300), previewTruncated: true }], nextCursor: request.cursor ? null : 9 }),
   readSkillDetail: async () => ({ qualifiedId: initialSkill.qualifiedId, content: "# 审查清单\n逐项检查当前代码。", body: "# 审查清单\n逐项检查当前代码。", directory: "/plugins/checks/skills/review" }),
   readMcpTools: async () => ({ state: "not_authorized", tools: [] }),
   builtinPlugins: async () => ({ plugins: [{ id: github.id, name: "GitHub", description: github.description, version: "1.0.0", installed: builtinInstalled }] }),

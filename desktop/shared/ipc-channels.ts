@@ -140,6 +140,8 @@ export const IPC = {
   MODEL_DELETE: "model:delete",
 
   // Plugin
+  HOOK_CONFIGURATION: "hook:configuration",
+  HOOK_HISTORY: "hook:history",
   PLUGIN_LIST: "plugin:list",
   PLUGIN_BUILTIN: "plugin:builtin",
   PLUGIN_IMPORT: "plugin:import",

@@ -1,4 +1,5 @@
 import { isShellEnvironmentReadRequest, isShellEnvironmentRefreshRequest, isShellEnvironmentSaveRequest } from "../shared/shell-environment.js";
+import { isHookConfigurationRequest, isHookHistoryRequest } from "../shared/hooks.js";
 import { webSearchOfficialUrl } from "./web-search-links.js";
 import { isWebSearchReadRequest, isWebSearchSaveRequest } from "../shared/web-search.js";
 import type { CustomProviderRequest } from "../shared/custom-models.js";
@@ -1488,6 +1489,14 @@ ipcMain.handle(IPC.MODEL_UPDATE, (_event, input: unknown) => {
 ipcMain.handle(IPC.MODEL_DELETE, (_event, id: unknown) => {
   if (typeof id !== "string") throw new Error("模型参数无效。");
   return clientOrThrow().deleteModel(id);
+});
+ipcMain.handle(IPC.HOOK_CONFIGURATION, (_event, request: unknown) => {
+  if (!isHookConfigurationRequest(request)) throw new Error("Hook 配置参数无效。");
+  return clientOrThrow().hookConfiguration(request);
+});
+ipcMain.handle(IPC.HOOK_HISTORY, (_event, request: unknown) => {
+  if (!isHookHistoryRequest(request)) throw new Error("Hook 历史参数无效。");
+  return clientOrThrow().readHookHistory(request);
 });
 ipcMain.handle(IPC.PLUGIN_LIST, () => clientOrThrow().listPlugins());
 ipcMain.handle(IPC.PLUGIN_BUILTIN, (_event, request: unknown) => {

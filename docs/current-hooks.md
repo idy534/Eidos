@@ -1,6 +1,6 @@
 # Plugin Hooks 与 Codex 兼容范围
 
-本文记录当前第一阶段实现。实现入口是 `extensions/plugin_package.py`、`extensions/codex_hooks.py`、`runtime/hooks.py` 和 `persistence/hooks.py`。内部 `LoopLifecycle` 继续只提供诊断观察点。
+本文记录当前源码。实现入口包括 `extensions/codex_hooks.py`、`extensions/hook_sources.py`、`runtime/hooks.py`、`runtime/hook_lifecycle.py` 和 `persistence/hooks.py`。内部 `LoopLifecycle` 继续只提供诊断观察点。SQLite 继续保存业务事实。
 
 ## 安装与信任
 
@@ -34,25 +34,44 @@ Run 开始时，Runtime 把已启用、已信任且本版支持的 Hook 定义�
 
 | Codex 事件 | Eidos 触发点 | 可用结果 |
 | --- | --- | --- |
+| `SessionStart` | 根 Session 在当前 Runtime 首次执行 Run，或压缩成功后 | `source` 使用 startup、resume、fork、compact。Runtime 可以附加上下文或处理明确停止。 |
+| `SessionEnd` | 已执行过 Run 的根 Session 被删除，或 Runtime 正常关闭 | `reason` 使用 other。Runtime 同步执行清理，结果不能阻止关闭。 |
 | `UserPromptSubmit` | 父 Run 的初始输入及后续消费的引导输入，采样前 | Runtime 可以附加上下文，或按明确拒绝结果停止本次 Run。 |
 | `PreToolUse` | 参数首次有效后，Prepare、审批和副作用之前 | Hook 可以拒绝工具或返回改写参数。Runtime 重新校验改写后的参数、权限和审批。 |
+| `PermissionRequest` | Eidos 将要请求审批，且没有待处理审批时 | Hook 可以决定普通请求的 allow/deny。高危人工确认继续保留。 |
 | `PostToolUse` | 工具结果提交后；长 Shell 在逻辑退出后 | Hook 可以附加上下文或替换模型看到的结果。原始执行结果继续保留。 |
+| `PreCompact` | Runtime 实际开始压缩前 | Runtime 使用 manual 或 auto 匹配；明确停止可以终止当前 Run。 |
+| `PostCompact` | 压缩成功提交后 | Runtime 使用 manual 或 auto 匹配；结果可以附加上下文或明确停止。 |
+| `SubagentStart` | 子 Run 开始执行时 | Runtime 按 Agent 类型匹配，并把上下文交给子 Agent。`continue: false` 不阻止启动。 |
 | `Stop` | 父 Run 正常完成前，包括提交待审阅计划的出口 | `decision: block` 要求模型在同一个 Run 继续。`continue: false` 明确停止。 |
 | `SubagentStop` | 子 Run 正常完成前 | Runtime 使用子 Agent 类型匹配，并执行与 Stop 相同的继续语义。 |
+| `Interrupt` | 用户取消正在执行的根 Run，资源关闭前 | Runtime 尝试执行清理。结果不能撤销取消或启动新 Run。 |
 
 `write_stdin` 不产生新的 Pre/Post Hook。它属于原 Shell 的后续观察。长 Shell 的 reader 只提交最终结果和待触发记录。Run Worker 在安全边界执行 PostToolUse。它不会在 Shell reader 内运行用户脚本。最终 Shell 输出的反馈也作用于同一 Shell 的 `write_stdin` 模型投影。
 
-Runtime 识别 `SessionStart`、`SessionEnd`、`PermissionRequest`、`PreCompact`、`PostCompact`、`SubagentStart` 和 `Interrupt`，但本阶段不触发它们。Runtime 在插件兼容信息中列出这些定义。Runtime 同样列出不执行的 `async`、`mcp_tool`、`prompt` 和 `agent` 处理器。
+Eidos 没有 Codex 的聊天关闭、归档和闲置卸载流程，也没有独立的 clear 启动来源。切换聊天不会触发 SessionEnd。异常退出无法保证执行清理。子 Agent 不触发 SessionEnd 和 Interrupt。Runtime 继续解析并跳过 `prompt` 和 `agent` 处理器；Codex 当前同样保留这些类型。
+
+## 个人与项目配置
+
+Runtime 同时发现 `<data>/hooks.json`、`<data>/config.toml`、`<workspace>/.eidos/hooks.json` 和 `<workspace>/.eidos/config.toml`。默认 `<data>` 是 `~/.eidos`。Runtime 合并同一层的两个文件，并合并个人、项目和插件的定义。TOML 只读取 `[hooks]` 部分。Runtime 不读取 `.codex` 下的个人或项目配置。
+
+Plugins 页展示个人与当前项目的配置来源。用户可以审阅定义、信任当前内容、调整来源开关、撤销信任和查看执行记录。配置默认未信任。Runtime 把同一来源的信任绑定到两个文件的完整内容。文件变化会使原信任失效，用户需要刷新并重新审阅。新定义只在后续 Run 生效。无效配置、符号链接、非普通文件、所有者错误或单文件超过 64 KiB 时，Runtime 跳过该来源并显示错误。
+
+JSON 沿用插件的 `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"..."}]}]}}` 结构。等价 TOML 使用 `[[hooks.SessionStart]]` 和 `[[hooks.SessionStart.hooks]]`。个人脚本的 `PLUGIN_ROOT` 是 `<data>/hooks/`，项目脚本的 `PLUGIN_ROOT` 是 `<workspace>/.eidos/`。脚本的私有可写目录位于 `<data>/hook-data/`。信任不会开放整个 Eidos 数据目录。
 
 ## 输入与输出
 
-命令从 stdin 读取有界 JSON。公共字段包含 `session_id`、`turn_id`、`cwd`、`hook_event_name`、`model`、`permission_mode` 和 `transcript_path`。Eidos 当前没有导出 Codex transcript 文件，所以路径字段为 `null`。子 Run 使用父 Session 的 `session_id`，并增加 `agent_id`、`agent_type` 和 `agent_transcript_path`。其中 `agent_id` 对应子 Session ID。
+命令从 stdin 读取有界 JSON。公共字段包含 `session_id`、`turn_id`、`cwd`、`hook_event_name`、`model`、`permission_mode` 和 `transcript_path`。子 Run 使用父 Session 的 `session_id`，并增加 `agent_id`、`agent_type` 和 `agent_transcript_path`。其中 `agent_id` 对应子 Session ID。
 
-工具事件增加 `tool_name`、`tool_use_id` 和 `tool_input`。Post 还包含 Eidos 的实际 `tool_response`。Runtime 把 `run_shell` 映射为 `Bash`。Runtime 为 `apply_patch` 提供 `apply_patch`、`Edit` 和 `Write` 匹配名，并把补丁映射到 `tool_input.command`。其他工具保留 Eidos 名称。Hook 仍需理解 Eidos 的工具参数和结果结构。
+Runtime 从 SQLite 生成 `<data>/hook-transcripts/<sessionId>/transcript.jsonl`，并向脚本开放只读权限。投影使用 `response_item` 消息结构，包含当前 Session 最近的消息和工具记录。投影最多保留 1,024 条记录和 8 MiB，每个正文字段最多 32 KiB。Runtime 会脱敏，并在元信息中标明截断。投影不包含分叉继承历史，也不保证完整复刻 Codex transcript。写入失败时，路径为 `null`。投影不参与恢复，也不替代 SQLite。
+
+工具事件增加 `tool_name`、`tool_use_id` 和 `tool_input`。Post 还包含 Eidos 的实际 `tool_response`。Runtime 把 `run_shell` 映射为 `Bash`。Runtime 为 `apply_patch` 提供 `apply_patch`、`Edit` 和 `Write` 匹配名，并把补丁映射到 `tool_input.command`。Runtime 为 `spawn_agent` 增加 `Agent` 匹配名。其他工具保留 Eidos 名称。Hook 仍需理解 Eidos 的工具参数和结果结构。
 
 Runtime 注入 `PLUGIN_ROOT`、`PLUGIN_DATA`、`CLAUDE_PLUGIN_ROOT` 和 `CLAUDE_PLUGIN_DATA`。Runtime 复用当前打包依赖绑定，并提供 `RUNTIME_PYTHON`。包声明的其他命令依赖不会自动下载或安装。
 
 脚本可以输出空内容或 JSON。Runtime 支持 `decision`、`reason`、`continue`、`stopReason`、`systemMessage`，以及 `hookSpecificOutput` 中的 `hookEventName`、`additionalContext`、`permissionDecision`、`permissionDecisionReason` 和 `updatedInput`。PreToolUse 的 `permissionDecision: allow` 只允许进入 Eidos 原执行链。它不批准扩权。`updatedInput` 必须配合 `allow`，且必须通过工具参数校验。
+
+PermissionRequest 使用 `hookSpecificOutput.decision.behavior: "allow" | "deny"` 和可选的 `message`。任意 deny 优先于 allow。普通 allow 会保存来源为 `hook` 的审批记录，再继续原有 Durable Intent 和核验。Hook 不能替代 `requiresHumanConfirmation` 的高危人工确认。Runtime 不用新 Hook 决定已存在的待处理审批，也不覆盖已保存的拒绝。SessionStart 和 SubagentStart 的普通 stdout 可以进入上下文；Pre/PostCompact 的普通 stdout 不进入上下文。
 
 UserPromptSubmit、Stop 和 SubagentStop 与 Codex 当前行为一致，接受但不实现 `suppressOutput`。Pre/Post 工具事件返回这个字段会记录为不支持的输出。
 
@@ -60,9 +79,19 @@ UserPromptSubmit、Stop 和 SubagentStop 与 Codex 当前行为一致，接受�
 
 Runtime 使用现有 AnyIO 内核并行执行同一事件的匹配命令，每次分发最多占用 8 个受所有者管理的阻塞执行名额。没有异步内核时，Runtime 顺序执行。输出按配置顺序汇总。多个有效改写以最后完成的改写为准，任意拒绝优先于改写。这个限制不构成跨 Session 或跨 Run 配额。
 
-每个包最多包含 128 个定义，定义总量最多 64 KiB。命令默认超时为 600 秒，计时不包含包核验和环境准备。单次输入最多 1 MiB，Shell 捕获的 stdout/stderr 总量最多 256 KiB。Runtime 会保留脱敏后的捕获输出。`additionalContextLimit` 当前使用字符估算，本地软限额约为该值的 4 倍字符；值 0 仍受 65,536 字符的硬限额约束。
+每个包或配置来源最多包含 128 个定义，单份解析定义最多 64 KiB。命令默认超时为 600 秒，计时不包含包核验和环境准备。SessionEnd 和 Interrupt 默认 1 秒，单个处理器最多 3 秒，整次清理分发最多 3 秒。单次输入最多 1 MiB，Shell 捕获的 stdout/stderr 总量最多 256 KiB。Runtime 会保留脱敏后的捕获输出。`additionalContextLimit` 当前使用字符估算，本地软限额约为该值的 4 倍字符；值 0 仍受 65,536 字符的硬限额约束。
 
 长上下文使用有界预览，并携带 `hook:<id>` 读取标识。模型可以通过 `read_tool_output(callId="hook:<id>", stream="stdout" | "stderr" | "result")` 分页读取。读取遵循当前 Session 边界，不重新执行脚本。Shell 硬限额丢弃的原始字节无法恢复。后置反馈是模型展示规则，它不回滚副作用，也不充当数据防泄漏隔离层。
+
+## 后台命令与 MCP 处理器
+
+`command` 可以设置 `async: true`。Runtime 在提交 Intent 后排队，不等待命令完成。每个 Session 最多同时运行 8 个后台 Hook，排队与运行中的记录合计最多 256 个。超出容量会保存 Hook 错误。这个限制不作用于其他 Session 的 Run。SessionEnd 总是同步执行。
+
+后台结果只提供信息。Runtime 忽略后台结果的拒绝、停止、参数改写和审批决定。结果在当前或后续 Run 的安全采样边界读取一次。超出本次上下文预算的记录继续等待后续读取；被截短的记录带有分页读取标识。后台完成不会自行恢复或新建 Run，也不会让 Stop 再次继续。根 Session 结束会取消自己和子 Session 的后台进程，等待资源关闭，丢弃未送入上下文的结果，并清理临时 transcript。重启后的未完成后台任务记为 unknown，Runtime 不重放它们。
+
+`mcp_tool` 使用 `server`、`tool` 和可选的 `input`。Runtime 只查询当前 Run 已经连接且仍有授权的服务。Hook 不启动新服务、不登录、不重连。`input` 支持 `${field}` 和 `${nested.field}`；整个值是占位符时，Runtime 保留原 JSON 类型。缺失字段、未连接服务和无效参数会成为 Hook 错误。
+
+MCP Hook 复用现有工具校验、审批、Durable Intent、调用、核验和未知结果记录。只读提示继续遵循 MCP 原有审批规则。普通外部调用仍可能请求审批。Runtime 优先解析 `structuredContent`，否则解析文本内容。MCP Hook 不递归触发 PermissionRequest 或 Pre/PostToolUse。Runtime 不执行后台 MCP Hook，也不在 SessionEnd 调用 MCP。
 
 ## 权限、状态与恢复
 
@@ -78,24 +107,28 @@ SQLite schema v36 增加三张表：
 
 调用的幂等键包含 Run、Plugin、Hook 定义和事件位置。Runtime 先提交 Intent，再启动进程，最后提交结果和 Event/Outbox。完成游标使用提交事件顺序，避免并行调用完成乱序时漏掉反馈。重启会把未完成 Intent/运行记录标为 unknown。Runtime 不重放这些调用，也不要求用户核验，不限制后续工具或正常完成。迟到结果不能覆盖已恢复的 unknown 记录。尚未开始的 Post 事件可继续分发，已经开始过的定义会按幂等记录跳过。
 
-Desktop 继续通过 preload typed IPC、Main 和 stdio JSON-RPC 调用 Runtime。新增方法是 `plugin/setHookTrust`。共享 Hook 类型与验证 Schema 由 Python 模型生成。命令定义留在私有 Run 扩展快照，普通 Desktop Run 投影不发送这些定义。设置页展示兼容信息、信任状态和最近一次结果。`systemMessage` 当前显示在设置页的最近结果中，聊天 Feed 尚未单独展示这类警告。
+SQLite schema v39 增加 `hook_sources`，保存个人、项目配置与内容信任。`hook_invocations` 增加绑定定义、后台标记、上下文接收 Run 和丢弃时间。现有迁移链保留旧记录，并覆盖迁移失败的事务回滚。
+
+Desktop 继续通过 preload typed IPC、Main 和 stdio JSON-RPC 调用 Runtime。Hook 使用 `plugin/setHookTrust`、`hook/configuration` 和 `hook/history`。共享 Hook 类型与验证 Schema 由 Python 模型生成。命令定义留在私有 Run 扩展快照，普通 Desktop Run 投影不发送这些定义。
+
+插件详情和配置来源提供分页执行记录。每页最多 20 条，每路输出预览最多 4,096 字符。聊天 Feed 显示当前 Run 最近 8 条活动的状态与 `systemMessage`。后台任务在 Run 结束后完成时，Runtime 可以更新诊断信息，但不会改变 Run 的终态。
 
 Hook 表从 schema v36 引入，插件版本记录从 v37 引入。升级前应沿用现有备份流程。旧 Runtime 不能打开较新的 Schema，回滚代码时需要恢复兼容的升级前备份。Runtime 不自动删除表来降级。移除插件沿用版本目录清理规则，私有数据目录继续保留。
 
-## 本阶段发布范围
+## 兼容范围
 
-当前实现提供本地包、常用同步 command Hooks、Skills 和包内本地 stdio MCP。展示信息和本包设置说明已映射，但它不代表 Codex 插件完整兼容。Codex App/OAuth、远程 MCP、MCP Hook 处理器、异步处理器、其余生命周期事件和 transcript 导出仍未实现。Eidos 原有 MCP 配置及授权流程继续可用。
+插件系统已经提供本地包、Skills、本地 stdio MCP、远程 Streamable HTTP MCP 和通用 OAuth。MCP Hook 沿用同一连接和授权边界。远程连接与账号授权的当前范围见 [current-plugins.md](current-plugins.md)。Codex App 连接映射仍未实现，Eidos 不复用 Codex 的账号连接。
+
+Eidos 不实现 PreToolUse 的 `ask`、旧 `approve`、`updatedMCPToolOutput`，也不实现 PermissionRequest 的 `updatedInput`、`updatedPermissions` 或 `interrupt`。Runtime 不把 Codex 官方暂未实现的输出扩展成新的权限规则。插件命令所需的其他依赖不会自动安装。
 
 参考来源是 [Codex Hooks](https://learn.chatgpt.com/docs/hooks) 和 [Plugin 构建文档](https://developers.openai.com/plugins/build/plugins)。实现事实以本仓库当前代码与定向测试为准。
 
-## 本次验证记录（2026-10-23）
+## 本次验证记录（2026-10-24）
 
-- 卸载后重装修复运行了现有插件、扩展存储、插件协议和 Hooks 定向测试，59 项通过。额外的临时目录检查通过 7 组场景，覆盖实际示例包的重装与存储重启、默认停用和授权清理、活动引用、目录占用、事务失败回滚和原有冲突规则。本次修复只修改生产代码和文档，没有修改测试文件，也没有运行 Full Suite 或当前窗口的导入验收。
-- 最后的 Hook 定向文件通过 38 项。它覆盖 Shell 别名规范化、短超时计时和超时副作用的 unknown 记录。
-- Runtime 主链路定向组通过 136 项，范围包含 Hooks、插件、协议、存储迁移、Shell 环境、工具执行、Run 完成和输出分页。
-- 补充定向组通过 81 项，范围包含 Hooks、原生 Shell、原插件行为和记忆撤销投影。两组存在重叠，不能相加作为唯一测试数量。
-- Main 的 Hook 真实跨进程测试通过 2 项，共享 IPC 测试通过 3 项。Renderer 状态和完成提示通过 31 项，设置与 Tooltip 行为通过 27 项。Desktop 结构合约通过 4 项。
-- 原生 Seatbelt 验证通过 15 项。独立 Hook 测试还覆盖真实沙盒私有目录、改写后高危审批、取消、进程清理、重启 unknown、幂等、并行结果乱序、长 Shell 单次 Post、子 Agent 和计划审阅出口。
-- Electron Hook 弹窗检查覆盖 320、768、1024、1440 四种宽度、焦点循环、Escape、版本绑定和先信任后启用顺序。截图检查在动画结束后进行。
-- `pnpm build`、Electron smoke、Ruff、Deptry 和 `git diff --check` 通过。本次没有运行 Full Suite、macOS Bundle/DMG 或第三方插件认证。
-- 本次没有新增依赖，也没有修改依赖锁。主 Runtime 的 `pip-audit` 报告现有锁定版本的 37 项已知漏洞，涉及 certifi、opentelemetry-api 和 Pillow。隔离工具 Python 的审计通过。Runtime Node 审计报告 3 项漏洞，其中 low、high、critical 各 1 项。审计失败仍是发布前未通过的检查，本次没有把这些无关依赖升级混入 Hook 改动。
+- Hook 主链路定向组通过 77 项。测试覆盖 12 个事件、MCP SDK 子进程与 Streamable HTTP fixture、普通审批与高危人工确认、后台并发和队列、取消、子会话资源清理、预算与分页、重启 unknown、不重放、配置审阅、协议和迁移回滚。
+- 存储 Schema 与多库存储组通过 45 项。旧版迁移与 v38 → v39 升级均有覆盖。审批、应用、资源关闭组通过 78 项，MCP 与协议组通过 61 项。各组存在重叠，不相加作为唯一测试总数。
+- Renderer 设置、Hook 历史和 Feed 定向组通过 78 项。Main 的 Hook、IPC 和 Runtime shutdown 组通过 12 项。Desktop 结构合约通过。
+- 独立 Electron 页面通过 320、768、1024、1440px 下的 Hook 历史分页、配置审阅、嵌套弹窗、键盘和焦点检查。测试使用临时 user-data 与 fixture，并保存截图检查。Electron smoke 和 15 项原生 Seatbelt 检查通过。
+- 构建、Ruff、Deptry 和 diff 空白检查通过。本次没有新增依赖，也没有修改依赖锁。
+- 主 Runtime 的 pip-audit 报告原锁定版本的 39 项已知漏洞，涉及 certifi、opentelemetry-api 和 Pillow。隔离工具 Python 的审计通过。主 Runtime 审计仍未通过，本次没有混入无关依赖升级。
+- 本次没有运行 Full Suite、macOS Bundle/DMG 或真实第三方账号与插件认证。远程 MCP 和登录验证使用测试服务，不代表真实 GitHub 账号验收。

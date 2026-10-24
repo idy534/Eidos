@@ -14,6 +14,8 @@ from pathlib import Path
 import threading
 import time
 
+from pydantic import JsonValue, TypeAdapter
+
 from eidos_runtime.domain.capacity import CapacityExceeded
 from typing import TYPE_CHECKING, Callable, Protocol
 
@@ -50,7 +52,8 @@ from eidos_runtime.runtime.decision import LoopDecisionEngine
 from eidos_runtime.runtime.events import RuntimeEvents
 from eidos_runtime.runtime.finalizer import RunFinalizer
 from eidos_runtime.runtime.hooks import HookService
-from eidos_runtime.domain.hooks import HookStopRequested
+from eidos_runtime.runtime.hook_lifecycle import HookLifecycle
+from eidos_runtime.domain.hooks import HookBinding, HookStopRequested
 from eidos_runtime.tools.registry import ToolConcurrencyPolicy
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.runtime.loop_guard import (
@@ -146,6 +149,7 @@ class RuntimeEngine:
         runtime_dependency_catalog: RuntimeDependencyCatalog | None = None,
         collaboration: CollaborationApplication | None = None,
         lifecycle_observer: Callable[[LoopLifecycleEvent], None] | None = None,
+        hook_lifecycle: HookLifecycle | None = None,
     ) -> None:
         self.collaboration = collaboration
         self.store = store
@@ -165,6 +169,7 @@ class RuntimeEngine:
         self.runtime_dependency_catalog = runtime_dependency_catalog
         self.tool_concurrency_gate = ToolConcurrencyGate()
         self.lifecycle = LoopLifecycle(lifecycle_observer)
+        self.hook_lifecycle = hook_lifecycle or HookLifecycle(store, self.resources, self.events, self.sensitive, async_kernel)
 
     def run(self, run_id: str, cancel: threading.Event) -> None:
         run = self.store.read_run(run_id)
@@ -298,19 +303,24 @@ class RuntimeEngine:
                     resources.hooks = HookService(self.store, run_id, resources=self.resources,
                         sensitive=self.sensitive, events=self.events, async_kernel=self.async_kernel,
                         runtime_dependencies=resources.runtime_dependencies,
+                        background_submit=self.hook_lifecycle.submit,
                         launch_window=lambda signal: self.tool_concurrency_gate.acquire(
                             ToolConcurrencyPolicy(mode="exclusive", max_concurrency=1), signal))
-                    if not CollaborationRepository(self.store.database).child_for_run(run_id):
-                        prompt_hook = resources.hooks.dispatch("UserPromptSubmit", "prompt", cancel,
-                            fields={"prompt": str(run.get("userInput") or "")})
-                        if prompt_hook.deny or prompt_hook.stop:
-                            raise HookStopRequested
                 recovery_level = 0
                 self.context_recovery_level = 0
                 while True:
                     try:
                         self._drive(run_context, resources, cancel, repository_context)
                         break
+                    except (RuntimeCancelled, SamplingCancelled):
+                        if resources.hooks is not None and not CollaborationRepository(self.store.database).child_for_run(run_id):
+                            from eidos_runtime.runtime.tool_execution import _DeadlineCancellation
+                            try:
+                                resources.hooks.dispatch("Interrupt", "interrupt",
+                                    _DeadlineCancellation(threading.Event(), time.monotonic() + 3, time.monotonic))
+                            except RuntimeCancelled:
+                                pass
+                        raise
                     except CapacityExceeded as error:
                         self.store.complete_current_step(run_id, "failed", reason="request_capacity")
                         recovery_level += 1
@@ -332,6 +342,14 @@ class RuntimeEngine:
         except RunResourceError as error:
             self._fail(run_id, str(error))
         except (RuntimeCancelled, SamplingCancelled):
+            if extension_snapshot.get("hooks") and not CollaborationRepository(self.store.database).child_for_run(run_id):
+                from eidos_runtime.runtime.tool_execution import _DeadlineCancellation
+                try:
+                    HookService(self.store, run_id, resources=self.resources, sensitive=self.sensitive,
+                        events=self.events, async_kernel=self.async_kernel).dispatch("Interrupt", "interrupt",
+                            _DeadlineCancellation(threading.Event(), time.monotonic() + 3, time.monotonic))
+                except RuntimeCancelled:
+                    pass
             if self.terminalize_cancel:
                 self._cancel(run_id)
             else:
@@ -407,7 +425,38 @@ class RuntimeEngine:
             self._check_cancel,
             requeue=False,
             reviewer=self.model,
+            hook_policy=resources.hooks.permission_request if resources.hooks else None,
         )
+
+        if resources.hooks is not None:
+            def execute_hook_mcp(binding: HookBinding, invocation_id: str,
+                                 arguments: dict[str, JsonValue], signal: threading.Event) -> dict[str, JsonValue]:
+                from eidos_runtime.model.client import ModelToolCall
+                from eidos_runtime.runtime.hook_mcp import HookMcpUnavailable
+                if resources.mcp is None or resources.dispatcher is None:
+                    raise HookMcpUnavailable
+                name = resources.mcp.hook_tool_name(binding.definition.mcp_server, binding.definition.mcp_tool)
+                if name is None:
+                    raise HookMcpUnavailable
+                dispatcher = resources.dispatcher
+                call = ModelToolCall("hook:" + invocation_id, name, dict(arguments))
+                plan = dispatcher.plan(call)
+                mutation = self.store.create_tool_item_committed(run.run_id,
+                    int(self.store.read_run(run.run_id)["modelStepCount"]), 0,
+                    call.provider_call_id, name, json.dumps(arguments, ensure_ascii=False),
+                    provenance=dispatcher.provenance(name))
+                self.events.publish(mutation, item=mutation.value)
+                tools = ToolCallRuntime(self.store, dispatcher, approval, self.events, self.sensitive, self.state_machine,
+                    shell_available=self.shell_available, base_permissions=resources.hooks.base,
+                    async_kernel=self.async_kernel, resource_registry=self.resources, concurrency=self.tool_concurrency_gate)
+                result = tools.controller.execute(run_id=run.run_id, item=mutation.value, call=call, plan=plan,
+                    cancel=signal, deadline=time.monotonic() + binding.definition.timeout_seconds).result
+                return TypeAdapter(dict[str, JsonValue]).validate_python(result)
+
+            resources.hooks.mcp_execute = execute_hook_mcp
+        source = self.hook_lifecycle.enter_run(run.run_id)
+        if resources.hooks is not None:
+            resources.hooks.start(source, self.hook_lifecycle.key, cancel)
 
         agent_wait = self.collaboration.repository.wait_record(run.run_id) if self.collaboration else None
         if agent_wait is not None and agent_wait.item_id is not None:
@@ -537,13 +586,31 @@ class RuntimeEngine:
                 return current.budget.projected_input_tokens
 
             def compact_context(phase: str, trigger: str, *, keep_recent_items: int = 0, request_id: str | None = None):
-                return compactor.compact(
+                hook_trigger = "manual" if trigger == "manual" else "auto"
+                hook_key = "compact:" + (request_id or str(built.facts.compaction_count))
+                if resources.hooks is not None:
+                    before = resources.hooks.dispatch("PreCompact", hook_key + ":pre", cancel,
+                        names=(hook_trigger,), fields={"trigger": hook_trigger})
+                    if before.stop:
+                        raise HookStopRequested
+                compacted = compactor.compact(
                     run.run_id, phase, trigger=trigger, cancel=cancel,
                     keep_recent_items=keep_recent_items, request_id=request_id,
                     recent_token_budget=min(16_384, max(1_024, built.budget.usable_input_budget // 8)) if keep_recent_items else None,
                     before_tokens=built.budget.projected_input_tokens,
                     measure=measure_current_projection,
                 )
+                if resources.hooks is not None and compacted is not None:
+                    after = resources.hooks.dispatch("PostCompact", hook_key + ":post", cancel,
+                        names=(hook_trigger,), fields={"trigger": hook_trigger})
+                    if after.stop:
+                        raise HookStopRequested
+                    if not CollaborationRepository(self.store.database).child_for_run(run.run_id):
+                        restarted = resources.hooks.dispatch("SessionStart", hook_key + ":start", cancel,
+                            names=("compact",), fields={"source": "compact"})
+                        if restarted.stop:
+                            raise HookStopRequested
+                return compacted
 
             manual = context_management.pending(run.run_id)
             if manual is not None and not built.facts.pending_approval_ids:

@@ -43,6 +43,8 @@ from eidos_runtime.runtime.resource_registry import (
     RuntimeResourceKind,
 )
 from eidos_runtime.runtime.fault_injection import hit_fault
+from eidos_runtime.runtime.hook_lifecycle import HookLifecycle
+from eidos_runtime.sandbox.sensitive import default_scanner
 from eidos_runtime.runtime.long_task import RestartVerifier, ResumeVerifier
 from eidos_runtime.runtime.runtime_dependencies import RuntimeDependencyCatalog
 from eidos_runtime.domain.long_task import (
@@ -157,6 +159,7 @@ class RunSupervisor:
         self.lifecycle = RuntimeLifecycle.RUNNING
         self.control_state = RuntimeControlState.RUNNING
         self.events = RuntimeEvents(notify, store=store)
+        self.hooks = HookLifecycle(store, self.resources, self.events, sensitive() or default_scanner())
         self._async_kernel: RuntimeAsyncKernel | None = None
         self._async_kernel_frozen = False
         self.repository_runtime = repository_runtime
@@ -192,6 +195,7 @@ class RunSupervisor:
             if self._async_kernel is not None and self._async_kernel is not kernel:
                 raise RuntimeError("runtime async kernel is already bound")
             self._async_kernel = kernel
+            self.hooks.kernel = kernel
 
     @property
     def async_kernel(self) -> RuntimeAsyncKernel | None:
@@ -625,6 +629,10 @@ class RunSupervisor:
             channel.wait(self.shutdown_timeout)
         if automation is not None:
             automation.wait(self.shutdown_timeout)
+        try:
+            self.hooks.close()
+        except (RuntimeError, ExceptionGroup) as error:
+            raise RuntimeShutdownTimeout("RUNTIME_SHUTDOWN_TIMEOUT") from error
         registered = tuple(
             resource
             for resource in self.resources.active_resources()
@@ -982,6 +990,7 @@ class RunSupervisor:
                 engine_kwargs["runtime_dependency_catalog"] = (
                     self._runtime_dependency_catalog
                 )
+                engine_kwargs["hook_lifecycle"] = self.hooks
             engine = self.engine_factory(
                 self.store,
                 lease.client,

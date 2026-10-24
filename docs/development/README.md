@@ -252,7 +252,9 @@ pnpm test:electron-smoke
 
 ### Plugin Hooks
 
-Plugin Hook 的当前范围见 `docs/current-hooks.md`。开发者修改 Hook 模型后，需要运行 `node scripts/generate-hook-contracts.mjs`。Runtime 定向入口是 `UV_CACHE_DIR=/private/tmp/eidos-uv-cache uv run --locked pytest runtime/tests/test_codex_hooks.py runtime/tests/test_plugin_protocol.py runtime/tests/test_extension_storage.py runtime/tests/test_storage_schema.py`。其中 Hook 文件包含真实 macOS Seatbelt 验证。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-hooks.test.js`，并使用 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/PluginSettings.behavior.test.tsx` 验证信任交互。preload 或 Shell 边界变化还需要 Electron smoke 和原生 Seatbelt 验证。这些命令不等于 Full Suite。
+Hook 的当前范围见 `docs/current-hooks.md`。开发者修改 Hook 模型后，需要运行 `node scripts/generate-hook-contracts.mjs`。Runtime 定向入口是 `UV_CACHE_DIR=/private/tmp/eidos-uv-cache uv run --locked pytest runtime/tests/test_codex_hooks.py runtime/tests/test_hook_lifecycle.py runtime/tests/test_hook_background.py runtime/tests/test_hook_mcp.py runtime/tests/test_hook_protocol.py runtime/tests/test_plugin_protocol.py runtime/tests/test_extension_storage.py runtime/tests/test_storage_schema.py`。这些文件覆盖生命周期、后台队列、真实 MCP SDK 子进程、审批、输出、恢复和 v38 → v39 迁移，并包含真实 macOS Seatbelt 验证。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-hooks.test.js`，并使用 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/settings/HookSettings.behavior.test.tsx desktop/renderer/src/components/settings/PluginSettings.behavior.test.tsx` 验证信任与历史交互。preload 或 Shell 边界变化还需要 Electron smoke 和原生 Seatbelt 验证。这些命令不等于 Full Suite。
+
+个人配置位于当前 `<data>/hooks.json` 与 `config.toml`，项目配置位于 `<workspace>/.eidos/` 下的同名文件。开发者需要在 Plugins 页刷新并审阅变更内容。当前迁移增加配置来源与后台接收元信息，不改变启动命令。SQLite 仍是事实来源，`hook-transcripts/` 只是有界投影。SessionEnd 对应根会话删除和 Runtime 正常关闭；切换聊天不关闭会话。
 
 `pnpm exec electron scripts/test-plugin-hooks.cjs` 使用临时 user-data 和本地生产组件，验证四种窗口宽度、焦点、取消和信任后启用顺序。它不读取真实会话，也不运行插件命令。`EIDOS_HOOK_SCREENSHOT_DIR` 可以指定截图输出目录。
 

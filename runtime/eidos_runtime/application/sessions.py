@@ -549,6 +549,7 @@ class SessionApplication:
         lifecycle: SessionLifecycleCoordinator | None = None,
         retention: WorktreeRetentionPort | None = None,
         repository_runtime: RepositoryWorkspaceRuntimePort | None = None,
+        before_delete: Callable[[str], None] | None = None,
     ) -> None:
         self._store = store
         self._repository: TypedSessionRepositoryPort = (
@@ -563,6 +564,7 @@ class SessionApplication:
         )
         self._retention = retention
         self._repository_runtime = repository_runtime
+        self._before_delete = before_delete
         self._lifecycle = lifecycle or SessionLifecycleCoordinator()
         self._logger = logging.getLogger(__name__)
 
@@ -2723,6 +2725,8 @@ class SessionApplication:
                     if projection is None:
                         raise ResourceNotFoundError("session not found")
                     self._repository.assert_session_deletable(request.session_id)
+                    if self._before_delete is not None:
+                        self._before_delete(request.session_id)
                     worktree_projection = projection.worktree
                     if worktree_projection is None and projection.session.associated_worktree_id:
                         if manager is None:

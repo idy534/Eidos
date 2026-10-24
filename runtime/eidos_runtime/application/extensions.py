@@ -15,7 +15,10 @@ import uuid
 from threading import Event
 
 from pydantic import Field, JsonValue, ValidationError
-from eidos_runtime.domain.hooks import PluginCompatibility, PluginHookReview
+from eidos_runtime.domain.hooks import (
+    HookActivityPage, HookConfigurationRequest, HookHistoryRequest,
+    HookSourceList, PluginCompatibility, PluginHookReview,
+)
 from eidos_runtime.domain.plugins import PluginPresentation
 
 from eidos_runtime.application.errors import (
@@ -271,6 +274,27 @@ PluginImportResult = DeferredPluginImport | PluginImportCompleted
 
 class ExtensionApplication:
     """Coordinates durable Plugin, Skill and MCP configuration use cases."""
+
+    def hook_configuration(self, request: HookConfigurationRequest) -> HookSourceList:
+        from eidos_runtime.extensions.hook_sources import HookSourceCatalog, verify_source_paths
+        catalog = HookSourceCatalog(self._plugins_or_error().store)
+        try:
+            if request.action == "read":
+                workspace = catalog.store.workspace_for_session(request.session_id).path if request.session_id else None
+                return HookSourceList(sources=catalog.discover(workspace))
+            source = catalog.repository.source(request.source_id)
+            if request.trusted is True or request.enabled is True:
+                verify_source_paths(source.paths, request.content_hash)
+            changed = catalog.repository.set_source_state(source.id, request.content_hash,
+                trusted=request.trusted, enabled=request.enabled)
+            return HookSourceList(sources=(changed,))
+        except (ResourceNotFoundError, OSError, ValueError) as error:
+            raise ApplicationError("HOOK_CONFIGURATION_CHANGED", "Hook 配置已改变或无法读取，请刷新后重新审阅。") from error
+
+    def hook_history(self, request: HookHistoryRequest) -> HookActivityPage:
+        from eidos_runtime.persistence.hooks import HookRepository
+        return HookRepository(self._plugins_or_error().store.database).activities(
+            source_id=request.source_id, session_id=request.session_id, run_id=request.run_id, before=request.cursor)
 
     def __init__(
         self,

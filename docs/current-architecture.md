@@ -175,7 +175,7 @@ RuntimeEngine 下的主要职责是：
 - `LoopGuard` 处理语义状态收敛；
 - `RunFinalizer` 生成有界、无 Tool 的最终回答。
 
-`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。用户配置的 Hook 由独立 `HookService` 执行。该服务复用原 Shell 沙盒和资源所有权，并在 SQLite v36 中保存信任、调用和待触发 Post 事件。当前入口与兼容范围见 [current-hooks.md](current-hooks.md)。
+`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。用户配置的 Hook 由独立 `HookService` 执行。该服务复用原 Shell 沙盒和工具执行链。`HookLifecycle` 在 Supervisor 下管理会话清理与后台资源，每个 Session 最多同时运行 8 个后台 Hook。SQLite v36 保存信任、调用和待触发 Post 事件，v39 保存个人与项目配置、绑定定义和后台接收记录。后台结果不创建 Run，也不改变完成判定。PermissionRequest 的普通 allow 会保存审批来源为 hook 的记录，事务层核对同一工具与审批指纹的已完成 Hook 决定；高危人工确认继续保留。MCP Hook 只使用当前 Run 已连接的服务。当前入口与兼容范围见 [current-hooks.md](current-hooks.md)。
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 

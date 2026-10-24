@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from eidos_runtime.db.storage import SessionStore
 from eidos_runtime.domain.approval_policy import ApprovalReview
+from eidos_runtime.domain.hooks import HookOutcome
 from eidos_runtime.model.client import ModelClient
 from eidos_runtime.runtime.approval_review import review_approval
 from eidos_runtime.protocol.schemas import ApprovalDecisionDto
@@ -92,6 +93,7 @@ class ApprovalCoordinator:
         *,
         requeue: bool,
         reviewer: ModelClient | None = None,
+        hook_policy: Callable[[dict[str, object], threading.Event, str], HookOutcome] | None = None,
     ) -> None:
         self.store = store
         self.transport = ApprovalAdapter(request)
@@ -104,6 +106,7 @@ class ApprovalCoordinator:
         self.requeue = requeue
         self.reviewer = reviewer
         self.last_review: ApprovalReview | None = None
+        self.hook_policy = hook_policy
 
     def request(
         self,
@@ -152,6 +155,14 @@ class ApprovalCoordinator:
                 item=item,
             )
         pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
+        if pending is None and self.hook_policy is not None:
+            hook = self.hook_policy(item, cancel, fingerprint)
+            if hook.permission_decision == "deny" or hook.deny:
+                return ApprovalOutcome(decision="reject", feedback="\n".join(hook.feedback) or "A configured Hook denied this approval.", item=item)
+            if hook.permission_decision == "allow" and not human_confirmation:
+                self.check_cancel(run_id, cancel)
+                self.last_review = ApprovalReview(source="hook", decision="approve",
+                    reason_code="hook_permission_allowed", rationale="用户信任的 Hook 允许本次普通请求。")
         if pending is not None:
             if pending.item_id != str(item["id"]) or json.loads(pending.request_json).get(
                 "permissionBlockFingerprint"
@@ -192,7 +203,7 @@ class ApprovalCoordinator:
                     self.last_review = ApprovalReview(source="manual", decision=result.decision,
                         reason_code="dangerous_permission_confirmed", risk="high",
                         rationale="用户已决定本次高危操作。")
-            elif mode == "auto_review":
+            elif mode == "auto_review" and self.last_review is None:
                 if pending is not None:
                     self.last_review = ApprovalReview(source="model", decision="reject",
                         reason_code="auto_review_interrupted", rationale="自动审批在 Runtime 重启前未完成；原操作未获批准。")

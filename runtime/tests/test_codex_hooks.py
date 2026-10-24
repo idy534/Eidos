@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from eidos_runtime.db.hooks_migration import migrate_hooks
 from eidos_runtime.db.schema import V35_SCHEMA_SQL
-from eidos_runtime.domain.hooks import HookBinding, HookDefinition, HookResult, PluginCompatibility, PluginHookReview
+from eidos_runtime.domain.hooks import HookBinding, HookDefinition, HookResult, PluginCompatibility, PluginHookReview, HookActivityPage, HookSourceList, HookConfigurationRequest, HookHistoryRequest
 from eidos_runtime.domain.collaboration import SpawnAgent
 from eidos_runtime.extensions.codex_hooks import matches, parse_hooks, parse_output
 from eidos_runtime.extensions.plugin_package import read_package
@@ -75,7 +75,7 @@ def test_portable_overlay_replaces_compatibility_manifest_and_default_hooks() ->
 
 
 def test_legacy_codex_paths_and_unsupported_features_are_reported() -> None:
-    files = _package({"SessionStart": _command()}, "")
+    files = _package({"SessionStart": [{"hooks": [{"type": "prompt", "prompt": "Review context"}]}]}, "")
     del files["plugin.json"]
     files[".codex-plugin/plugin.json"] = b'{"name":"hook-demo","hooks":"./hooks/hooks.json"}'
     package = read_package(files)
@@ -195,7 +195,9 @@ def test_revocation_blocks_new_invocation_from_frozen_snapshot(tmp_path: Path) -
 
 def test_shared_fixtures_validate_strict_python_contracts() -> None:
     fixtures = json.loads((Path(__file__).parents[2] / "protocol/fixtures/hooks-v1.json").read_text())
-    for name, model in (("Reviews", PluginHookReview), ("Compatibility", PluginCompatibility)):
+    for name, model in (("Reviews", PluginHookReview), ("Compatibility", PluginCompatibility),
+                        ("ActivityPages", HookActivityPage), ("SourceLists", HookSourceList),
+                        ("ConfigurationRequests", HookConfigurationRequest), ("HistoryRequests", HookHistoryRequest)):
         for value in fixtures["valid" + name]:
             model.model_validate(value)
         for value in fixtures["invalid" + name]:

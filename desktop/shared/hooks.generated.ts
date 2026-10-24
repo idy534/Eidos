@@ -23,6 +23,9 @@ export type Timeoutseconds = number;
 export type Background = boolean;
 export type Statusmessage = string | null;
 export type Additionalcontextlimit = number;
+export type Mcpserver = string | null;
+export type Mcptool = string | null;
+export type JsonValue = unknown;
 export type Definitions = HookDefinition[];
 export type Executablecount = number;
 export type Installedroot = string;
@@ -34,7 +37,6 @@ export type Additionalcontext = string;
 export type Updatedinput = {
   [k: string]: JsonValue;
 } | null;
-export type JsonValue = unknown;
 export type Errorcode = string | null;
 export type Systemmessage = string;
 export type Exitcode = number | null;
@@ -43,13 +45,76 @@ export type Workspacechanged = boolean;
 export type Workspacechanges = string[];
 export type Outputcallid = string | null;
 export type Contexttruncated = boolean;
+export type Permissiondecision = ("allow" | "deny") | null;
 export type Format = "eidos" | "codex" | "portable";
 export type Declaredversion = string | null;
 export type Issues = string[];
+export type Id = string;
+export type Runid = string;
+export type Sessionid = string;
+export type Sourceid = string;
+export type Event1 =
+  | "SessionStart"
+  | "SessionEnd"
+  | "UserPromptSubmit"
+  | "PreToolUse"
+  | "PermissionRequest"
+  | "PostToolUse"
+  | "PreCompact"
+  | "PostCompact"
+  | "SubagentStart"
+  | "SubagentStop"
+  | "Stop"
+  | "Interrupt";
+export type Handlertype1 = "command" | "mcp_tool" | "prompt" | "agent";
+export type Background1 = boolean;
+export type Status1 = "intent" | "running" | "completed" | "failed" | "unknown" | "skipped";
+export type Statusmessage1 = string;
+export type Createdat = number;
+export type Completedat = number | null;
+export type Stdoutpreview = string;
+export type Stderrpreview = string;
+export type Previewtruncated = boolean;
+/**
+ * @maxItems 20
+ */
+export type Items = HookActivity[];
+export type Nextcursor = number | null;
+export type Id1 = string;
+export type Scope = "user" | "project";
+/**
+ * @minItems 1
+ * @maxItems 2
+ */
+export type Paths = [string, ...string[]];
+export type Contenthash1 = string;
+/**
+ * @maxItems 128
+ */
+export type Definitions1 = HookDefinition[];
+export type Trusted1 = boolean;
+export type Enabled = boolean;
+export type Errorcode1 = string | null;
+/**
+ * @maxItems 2
+ */
+export type Sources = HookSourceReview[];
+export type HookConfigurationRequest = {
+  [k: string]: unknown;
+};
+export type Sourceid1 = string | null;
+export type Sessionid1 = string | null;
+export type Runid1 = string | null;
+export type Cursor = number | null;
 
 export interface HookContract {
   review: PluginHookReview;
   compatibility: PluginCompatibility;
+  activity: HookActivity;
+  activityPage: HookActivityPage;
+  sources: HookSourceList;
+  configurationRequest: HookConfigurationRequest;
+  historyRequest: HookHistoryRequest;
 }
 export interface PluginHookReview {
   contentHash: Contenthash;
@@ -70,6 +135,12 @@ export interface HookDefinition {
   background?: Background;
   statusMessage?: Statusmessage;
   additionalContextLimit?: Additionalcontextlimit;
+  mcpServer?: Mcpserver;
+  mcpTool?: Mcptool;
+  mcpInput?: Mcpinput;
+}
+export interface Mcpinput {
+  [k: string]: JsonValue;
 }
 export interface HookResult {
   status?: Status;
@@ -85,9 +156,50 @@ export interface HookResult {
   workspaceChanges?: Workspacechanges;
   outputCallId?: Outputcallid;
   contextTruncated?: Contexttruncated;
+  permissionDecision?: Permissiondecision;
 }
 export interface PluginCompatibility {
   format?: Format;
   declaredVersion?: Declaredversion;
   issues?: Issues;
+}
+export interface HookActivity {
+  id: Id;
+  runId: Runid;
+  sessionId: Sessionid;
+  sourceId: Sourceid;
+  event: Event1;
+  handlerType: Handlertype1;
+  background?: Background1;
+  status: Status1;
+  statusMessage?: Statusmessage1;
+  createdAt: Createdat;
+  completedAt?: Completedat;
+  result?: HookResult | null;
+  stdoutPreview?: Stdoutpreview;
+  stderrPreview?: Stderrpreview;
+  previewTruncated?: Previewtruncated;
+}
+export interface HookActivityPage {
+  items?: Items;
+  nextCursor?: Nextcursor;
+}
+export interface HookSourceList {
+  sources?: Sources;
+}
+export interface HookSourceReview {
+  id: Id1;
+  scope: Scope;
+  paths: Paths;
+  contentHash: Contenthash1;
+  definitions?: Definitions1;
+  trusted?: Trusted1;
+  enabled?: Enabled;
+  errorCode?: Errorcode1;
+}
+export interface HookHistoryRequest {
+  sourceId?: Sourceid1;
+  sessionId?: Sessionid1;
+  runId?: Runid1;
+  cursor?: Cursor;
 }

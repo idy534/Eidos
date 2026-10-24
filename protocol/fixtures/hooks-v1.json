@@ -1,6 +1,193 @@
 {
-  "validReviews": [{"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","trusted":false,"executableCount":1,"definitions":[{"key":"hooks/hooks.json:Stop:0:0","event":"Stop","handlerType":"command","command":"printf '{}'","timeoutSeconds":30}]}],
-  "invalidReviews": [{"trusted":true},{"contentHash":"example","trusted":"yes"},{"contentHash":"example","definitions":[{"key":"bad","event":"RunStart"}]}],
-  "validCompatibility": [{"format":"codex","declaredVersion":"1.0.0","issues":[]}],
-  "invalidCompatibility": [{"format":"unknown"},{"format":"codex","extra":true}]
+  "validReviews": [
+    {
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "trusted": false,
+      "executableCount": 1,
+      "definitions": [
+        {
+          "key": "hooks/hooks.json:Stop:0:0",
+          "event": "Stop",
+          "handlerType": "command",
+          "command": "printf '{}'",
+          "timeoutSeconds": 30
+        }
+      ]
+    }
+  ],
+  "invalidReviews": [
+    {
+      "trusted": true
+    },
+    {
+      "contentHash": "example",
+      "trusted": "yes"
+    },
+    {
+      "contentHash": "example",
+      "definitions": [
+        {
+          "key": "bad",
+          "event": "RunStart"
+        }
+      ]
+    }
+  ],
+  "validCompatibility": [
+    {
+      "format": "codex",
+      "declaredVersion": "1.0.0",
+      "issues": []
+    }
+  ],
+  "invalidCompatibility": [
+    {
+      "format": "unknown"
+    },
+    {
+      "format": "codex",
+      "extra": true
+    }
+  ],
+  "validActivityPages": [
+    {},
+    {
+      "items": [
+        {
+          "id": "hook-1",
+          "runId": "run-1",
+          "sessionId": "session-1",
+          "sourceId": "demo",
+          "event": "SessionStart",
+          "handlerType": "mcp_tool",
+          "status": "running",
+          "createdAt": 1,
+          "statusMessage": "Checking"
+        }
+      ],
+      "nextCursor": 1
+    }
+  ],
+  "invalidActivityPages": [
+    {
+      "items": [
+        {
+          "event": "NotAnEvent"
+        }
+      ]
+    },
+    {
+      "items": [],
+      "nextCursor": 0
+    },
+    {
+      "items": [],
+      "accessToken": "invalid"
+    }
+  ],
+  "validSourceLists": [
+    {},
+    {
+      "sources": [
+        {
+          "id": "user:example",
+          "scope": "user",
+          "paths": [
+            "/data/hooks.json"
+          ],
+          "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "definitions": []
+        }
+      ]
+    }
+  ],
+  "invalidSourceLists": [
+    {
+      "sources": [
+        {
+          "id": "user:example",
+          "scope": "remote",
+          "paths": [],
+          "contentHash": "invalid"
+        }
+      ]
+    },
+    {
+      "sources": [],
+      "secret": "invalid"
+    }
+  ],
+  "validConfigurationRequests": [
+    {},
+    {
+      "action": "read",
+      "sessionId": "session-1"
+    },
+    {
+      "action": "trust",
+      "sourceId": "user:example",
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "trusted": true
+    },
+    {
+      "action": "enable",
+      "sourceId": "project:example",
+      "contentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "enabled": false
+    }
+  ],
+  "invalidConfigurationRequests": [
+    {
+      "action": "read",
+      "trusted": true
+    },
+    {
+      "action": "trust",
+      "sourceId": "user:example",
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "action": "trust",
+      "sourceId": "user:example",
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "trusted": true,
+      "enabled": true
+    },
+    {
+      "action": "enable",
+      "sourceId": "project:example",
+      "contentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "enabled": "yes"
+    },
+    {
+      "action": "read",
+      "extra": true
+    }
+  ],
+  "validHistoryRequests": [
+    {},
+    {
+      "sourceId": "demo",
+      "sessionId": "s",
+      "runId": "r",
+      "cursor": 3
+    }
+  ],
+  "invalidHistoryRequests": [
+    {
+      "cursor": 0
+    },
+    {
+      "cursor": 1.5
+    },
+    {
+      "cursor": true
+    },
+    {
+      "sessionId": ""
+    },
+    {
+      "secret": true
+    }
+  ]
 }

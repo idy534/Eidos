@@ -47,6 +47,21 @@ app.whenReady().then(async () => {
       assert.equal(await run("document.activeElement.getAttribute('aria-label')"), "关闭插件详情");
       await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true}))");
       assert.equal(await run("document.activeElement.tagName"), "SUMMARY");
+      await run("const history=Array.from(document.querySelectorAll('.plugin-resource-dialog button')).find(button=>button.textContent==='执行记录'); history.focus(); history.click()");
+      await wait("document.querySelector('.hook-history-dialog details') && document.activeElement?.getAttribute('aria-label')==='关闭 Hook 执行记录'");
+      await run("document.querySelector('.hook-history-dialog summary').click()");
+      await settle();
+      const historyLayout = await run(`(() => { const dialog=document.querySelector('.hook-history-dialog'); const bounds=dialog.getBoundingClientRect(); const body=dialog.querySelector('.plugin-resource-body'); return { left:bounds.left, right:bounds.right, width:innerWidth, overflow:body.scrollWidth-body.clientWidth, warning:body.textContent.includes('检查提醒') }; })()`);
+      assert.ok(historyLayout.left >= -1 && historyLayout.right <= historyLayout.width + 1 && historyLayout.overflow <= 1 && historyLayout.warning, JSON.stringify(historyLayout));
+      if (process.env.EIDOS_PLUGIN_SCREENSHOT_DIR) {
+        await writeFile(path.join(process.env.EIDOS_PLUGIN_SCREENSHOT_DIR, `hook-history-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      await run("document.querySelector('.hook-history-dialog .skill-detail-close-btn').focus(); window.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true}))");
+      assert.equal(await run("document.activeElement.textContent"), "加载更早记录");
+      await run("document.activeElement.click()");
+      await wait("document.querySelectorAll('.hook-history-dialog details').length===2");
+      await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+      await wait("!document.querySelector('.hook-history-dialog') && document.activeElement?.textContent==='执行记录'");
       await run("const skill=document.querySelector('button.plugin-resource-item'); skill.focus(); skill.click()");
       await wait("document.querySelector('.skill-detail-dialog') && document.activeElement?.getAttribute('aria-label')==='关闭技能详情'");
       await run("document.querySelector('.skill-detail-dialog [role=switch]').click()");
@@ -81,9 +96,16 @@ app.whenReady().then(async () => {
       await wait("document.querySelector('#mcp-token-github')?.value===''");
       await run("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
       await wait("!document.querySelector('.plugin-resource-dialog')");
+      await run("const sourceReview=document.querySelector('.hook-source-actions button'); sourceReview.focus(); sourceReview.click()");
+      await wait("document.querySelector('[role=alertdialog]') && document.activeElement?.textContent==='取消'");
+      await settle();
+      const sourceLayout = await run(`(() => { const dialog=document.querySelector('[role=alertdialog]'); const bounds=dialog.getBoundingClientRect(); const body=dialog.querySelector('.modal-body'); return { left:bounds.left, right:bounds.right, width:innerWidth, overflow:body.scrollWidth-body.clientWidth }; })()`);
+      assert.ok(sourceLayout.left >= -1 && sourceLayout.right <= sourceLayout.width + 1 && sourceLayout.overflow <= 1, JSON.stringify(sourceLayout));
+      await run("Array.from(document.querySelectorAll('[role=alertdialog] button')).find(button=>button.textContent==='信任此配置').click()");
+      await wait("!document.querySelector('[role=alertdialog]') && document.querySelector('.hook-source-actions').textContent.includes('撤销信任')");
     }
     assert.deepEqual(errors, []);
-    console.log("Plugin resources passed 320/768/1024/1440 layout, nested dialogs, keyboard, GitHub install, PAT connection and disconnect checks.");
+    console.log("Plugin resources passed 320/768/1024/1440 layout, Hook history paging, local configuration review, nested dialogs, keyboard, GitHub install, PAT connection and disconnect checks.");
   } catch (error) { console.error(error); code = 1; }
   finally {
     clearTimeout(deadline);

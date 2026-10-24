@@ -11,6 +11,7 @@ import { compatibilityIssue } from "./plugin-compatibility.js";
 import type { SettingsPendingAction } from "./settings-types.js";
 import "./PluginDetailDialog.css";
 import { McpConnectionPanel } from "./McpConnectionPanel.js";
+import { HookHistoryDialog } from "./HookHistoryDialog.js";
 
 interface PluginDetailDialogProps {
   plugin: PluginRecord | undefined;
@@ -37,6 +38,7 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
   const [reviewId, setReviewId] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [hookHistory, setHookHistory] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const pluginSkills = skills.filter(skill => skill.sourceKind === "plugin" && skill.pluginId === plugin?.id);
@@ -44,12 +46,12 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
   const selectedSkill = pluginSkills.find(skill => skill.qualifiedId === skillId);
   const selectedServer = pluginServers.find(server => server.serverId === serverId) ?? null;
   const reviewing = pluginServers.find(server => server.serverId === reviewId);
-  const nested = Boolean(selectedSkill || selectedServer || reviewing || obscured);
+  const nested = Boolean(selectedSkill || selectedServer || reviewing || obscured || hookHistory);
   const busy = saving || Boolean(pendingAction);
   useDialogFocusLifecycle({ open: Boolean(plugin), initialFocusRef: closeRef, getFallbackFocus });
 
   useEffect(() => {
-    setSkillId(undefined); setServerId(undefined); setReviewId(undefined); setError(undefined);
+    setSkillId(undefined); setServerId(undefined); setReviewId(undefined); setError(undefined); setHookHistory(false);
   }, [plugin?.id, plugin?.contentHash]);
 
   useEffect(() => {
@@ -131,7 +133,8 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
           <section className="plugin-resource-section" aria-label="插件 Hook">
             <div className="plugin-resource-section-heading"><h3>Hooks <span>{hooks.length}</span></h3>{hooks.length > 0 && <Button variant="secondary" size="small" disabled={busy} onClick={onReviewHooks}>审阅 Hook</Button>}</div>
             {hooks.length > 0 && <p>{plugin.hookReview?.trusted ? "此版本的 Hook 已信任。" : "Hook 需要用户审阅并信任后才会执行。"}</p>}
-            {hooks.map(hook => <details className="plugin-resource-hook" key={hook.key}><summary>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""} · {hook.handlerType}{hook.background ? " · 异步" : ""}</summary><pre className="plugin-hook-command">{hook.command || `处理器：${hook.handlerType}`}</pre></details>)}
+            {hooks.length > 0 && <Button variant="secondary" size="small" onClick={() => setHookHistory(true)}>执行记录</Button>}
+            {hooks.map(hook => <details className="plugin-resource-hook" key={hook.key}><summary>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""} · {hook.handlerType}{hook.background ? " · 后台" : ""}</summary><pre className="plugin-hook-command">{hook.handlerType === "mcp_tool" ? JSON.stringify({ server: hook.mcpServer, tool: hook.mcpTool, input: hook.mcpInput }, null, 2) : hook.command || `处理器：${hook.handlerType}`}</pre></details>)}
             {!hooks.length && !resourceError && <p className="plugin-resource-empty">插件未提供 Hook。</p>}
           </section>
           {issues.length > 0 && <section className="plugin-resource-section" aria-label="插件兼容信息"><h3>兼容信息</h3><ul>{issues.map(issue => <li key={issue}>{compatibilityIssue(issue)}</li>)}</ul></section>}
@@ -140,6 +143,7 @@ export function PluginDetailDialog({ plugin, skills, servers, pendingAction, sto
     </div>
     <SkillDetailDialog skill={selectedSkill} pendingAction={pendingAction} storageReady={storageReady} onToggleSkill={onToggleSkill} onShowToast={(message, type = "info") => onShowToast(message, type)} onClose={() => setSkillId(undefined)} getFallbackFocus={() => closeRef.current} />
     <McpDetailDialog server={selectedServer} onClose={() => setServerId(undefined)} />
+    <HookHistoryDialog open={hookHistory} sourceId={plugin.id} onClose={() => setHookHistory(false)} />
     <ConfirmDialog open={Boolean(reviewing)} title="启用 MCP 服务" isDestructive busy={busy} error={error} confirmLabel="授权并启用"
       description={reviewing && <><p>请检查 {reviewing.serverId} 的启动命令和权限。</p><pre className="plugin-hook-command">{[reviewing.executable, ...reviewing.argv].join(" ")}</pre><p>权限：{reviewing.permissionProfile}</p><p>环境变量：{reviewing.envNames.join(", ") || "无"}</p>{reviewing.cwd && <p>工作目录：{reviewing.cwd}</p>}<p>启动超时：{reviewing.startupTimeoutSeconds} 秒；工具超时：{reviewing.toolTimeoutSeconds} 秒。</p></>}
       onConfirm={() => { if (reviewing) void changeMcp(reviewing, true); }} onCancel={() => { if (!busy) setReviewId(undefined); }} />

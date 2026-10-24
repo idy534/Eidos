@@ -892,6 +892,9 @@ def _migrate_state_schema(state: StateDatabase) -> None:
             if connection.execute("PRAGMA user_version").fetchone()[0] == 37:
                 from eidos_runtime.db.mcp_connections_migration import migrate_mcp_connections
                 migrate_mcp_connections(connection)
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 38:
+                from eidos_runtime.db.hook_lifecycle_migration import migrate_hook_lifecycle
+                migrate_hook_lifecycle(connection)
     except sqlite3.Error as error:
         try:
             state.connection().rollback()

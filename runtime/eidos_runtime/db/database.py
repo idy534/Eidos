@@ -198,6 +198,7 @@ class Database:
                     V35_SCHEMA_VERSION,
                     V36_SCHEMA_VERSION,
                     37,
+                    38,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -453,6 +454,12 @@ class Database:
                 from eidos_runtime.db.mcp_connections_migration import migrate_mcp_connections
                 try:
                     migrate_mcp_connections(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 38:
+                from eidos_runtime.db.hook_lifecycle_migration import migrate_hook_lifecycle
+                try:
+                    migrate_hook_lifecycle(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

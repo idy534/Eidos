@@ -28,7 +28,7 @@ from eidos_runtime.extensions.contracts import McpServerConfigV1
 from eidos_runtime.extensions.plugin_mcp import resolve_package_mcp
 from eidos_runtime.extensions.plugins import MANUAL_MCP_PLUGIN_ID, PluginCatalog, PluginImportError
 from eidos_runtime.db.errors import ResourceNotFoundError, StorageError
-from eidos_runtime.tools.registry import ToolProvenance, ToolRegistryEntry, ToolSpec
+from eidos_runtime.tools.registry import ExternalToolRuntime, ToolProvenance, ToolRegistryEntry, ToolSpec
 from eidos_runtime.tools.contracts import McpResultData, result_model
 from eidos_runtime.tools.json_schema import (
     BoundedJsonSchema,
@@ -718,6 +718,18 @@ class McpManager:
         self._entries = tuple(entries)
         return self._entries
 
+    def hook_tool_name(self, server_id: str, tool_name: str) -> str | None:
+        """Find an authorized, already connected tool without starting a service."""
+        if not any(server["serverId"] == server_id and server["available"] for server in self.plugins.list_mcp_servers()):
+            return None
+        for entry in self._entries:
+            runtime = entry.runtime
+            adapter = runtime.implementation if isinstance(runtime, ExternalToolRuntime) else None
+            if (isinstance(adapter, McpToolAdapter) and adapter.connection.config.id == server_id
+                    and adapter.remote_name == tool_name and not adapter.connection.closed.is_set()):
+                return entry.spec.name
+        return None
+
     def refresh_if_changed(self) -> tuple[ToolRegistryEntry, ...] | None:
         if not self._dirty.is_set():
             return None
@@ -934,6 +946,8 @@ def _tool_entry(
 def _normalize_mcp_schema(schema: dict[str, object]) -> dict[str, object]:
     """Close implicit MCP object schemas before Eidos validates them."""
     normalized = dict(schema)
+    # The SDK generates title annotations. They do not constrain tool arguments.
+    normalized.pop("title", None)
     if normalized.get("type") == "object" and "additionalProperties" not in normalized:
         normalized["additionalProperties"] = False
     properties = normalized.get("properties")

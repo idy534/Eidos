@@ -11,7 +11,7 @@ FULL_ACCESS_WARNING_VERSION = "full-access-v1"
 
 
 class ApprovalReview(EidosFrozenStrictModel):
-    source: Literal["model", "mode", "manual"]
+    source: Literal["model", "mode", "manual", "hook"]
     decision: Literal["approve", "reject"]
     reason_code: str = Field(min_length=1, max_length=100)
     rationale: str = Field(min_length=1, max_length=1500)

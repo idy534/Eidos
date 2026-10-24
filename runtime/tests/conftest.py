@@ -15,6 +15,7 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 @pytest.fixture
 def downgrade_hooks_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE IF EXISTS hook_sources")
         connection.execute("DROP TABLE IF EXISTS mcp_connections")
         connection.execute("DROP TABLE IF EXISTS plugin_versions")
         connection.execute("DROP TABLE IF EXISTS hook_pending_events")
@@ -147,6 +148,10 @@ def downgrade_session_fork_schema(downgrade_automation_schema):
 INTEGRATION_FILES = frozenset(
     {
         "test_codex_hooks.py",
+        "test_hook_lifecycle.py",
+        "test_hook_background.py",
+        "test_hook_mcp.py",
+        "test_hook_protocol.py",
         "test_agent_roles_migration.py",
         "test_agent_result_delivery.py",
         "test_application_boundary.py",

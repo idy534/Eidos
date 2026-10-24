@@ -45,6 +45,12 @@ class _SpecificOutput(_ExternalModel):
     permissionDecision: Literal["allow", "deny", "ask"] | None = None
     permissionDecisionReason: str = Field(default="", max_length=8192)
     updatedInput: dict[str, JsonValue] | None = None
+    decision: "_PermissionDecision | None" = None
+
+
+class _PermissionDecision(_ExternalModel):
+    behavior: Literal["allow", "deny"]
+    message: str = Field(default="", max_length=8192)
 
 
 class _Output(_ExternalModel):
@@ -74,12 +80,16 @@ def parse_hooks(value: object, source: str) -> tuple[HookDefinition, ...]:
             for index, handler in enumerate(group.hooks):
                 if handler.type == "command" and not handler.command:
                     raise ValueError("hook_command_missing")
+                if handler.type == "mcp_tool" and not (handler.server and handler.tool):
+                    raise ValueError("hook_mcp_tool_missing")
                 definitions.append(HookDefinition(
                     key=f"{source}:{event}:{group_index}:{index}", event=event,
                     matcher=group.matcher, handler_type=handler.type, command=handler.command,
-                    timeout_seconds=handler.timeout or (1 if event in {"Interrupt", "SessionEnd"} else 600),
-                    background=handler.asynchronous, status_message=handler.statusMessage,
+                    timeout_seconds=min(handler.timeout or 1, 3) if event in {"Interrupt", "SessionEnd"} else handler.timeout or 600,
+                    background=handler.asynchronous and event != "SessionEnd", status_message=handler.statusMessage,
                     additional_context_limit=handler.additionalContextLimit,
+                    mcp_server=handler.server, mcp_tool=handler.tool,
+                    mcp_input=handler.input or {},
                 ))
     if len(definitions) > 128:
         raise ValueError("hook_capacity_exceeded")
@@ -106,6 +116,8 @@ def parse_output(event: HookEvent, stdout: str, stderr: str, exit_code: int | No
         message = stderr.strip()[:8192]
         if not message:
             return HookResult(status="failed", error_code="hook_reason_missing", exit_code=exit_code)
+        if event in {"Interrupt", "SessionEnd"}:
+            return HookResult(status="failed", error_code="hook_command_failed", message=message, exit_code=exit_code)
         action = "deny" if event in {"PreToolUse", "UserPromptSubmit"} else "continue" if event in {"Stop", "SubagentStop"} else "feedback"
         return HookResult(action=action, message=message, context_truncated=len(stderr.strip()) > 8192, exit_code=exit_code)
     if exit_code != 0:
@@ -115,9 +127,9 @@ def parse_output(event: HookEvent, stdout: str, stderr: str, exit_code: int | No
     try:
         value = json.loads(stdout)
     except (ValueError, RecursionError):
-        if event == "UserPromptSubmit":
+        if event in {"UserPromptSubmit", "SessionStart", "SubagentStart"}:
             return HookResult(additional_context=stdout[:65536], context_truncated=len(stdout) > 65536, exit_code=0)
-        if event in {"PreToolUse", "PostToolUse"}:
+        if event in {"PreToolUse", "PostToolUse", "PermissionRequest", "PreCompact", "PostCompact"}:
             return HookResult(exit_code=0)
         return HookResult(status="failed", error_code="hook_output_invalid", exit_code=0)
     try:
@@ -135,6 +147,18 @@ def parse_output(event: HookEvent, stdout: str, stderr: str, exit_code: int | No
         return HookResult(status="failed", error_code="hook_output_unsupported", **base)
     if "suppressOutput" in output.model_fields_set and event in {"PreToolUse", "PostToolUse", "PermissionRequest"}:
         return HookResult(status="failed", error_code="hook_output_unsupported", **base)
+    if event == "PermissionRequest":
+        if (specific.updatedInput is not None or specific.permissionDecision is not None
+                or {"continue_", "stopReason"} & output.model_fields_set):
+            return HookResult(status="failed", error_code="hook_output_unsupported", **base)
+        decision = specific.decision
+        return HookResult(permission_decision=decision.behavior if decision else None,
+            action="deny" if decision and decision.behavior == "deny" else "pass",
+            message=decision.message if decision else "", **base)
+    if specific.decision is not None:
+        return HookResult(status="failed", error_code="hook_output_unsupported", **base)
+    if event in {"SessionEnd", "Interrupt"}:
+        return HookResult(**base)
     if event == "PreToolUse":
         if {"continue_", "stopReason"} & output.model_fields_set or specific.permissionDecision == "ask":
             return HookResult(status="failed", error_code="hook_output_unsupported", **base)
@@ -146,6 +170,8 @@ def parse_output(event: HookEvent, stdout: str, stderr: str, exit_code: int | No
         return HookResult(updated_input=specific.updatedInput, additional_context=context, **base)
     if specific.updatedInput is not None or specific.permissionDecision is not None:
         return HookResult(status="failed", error_code="hook_output_unsupported", **base)
+    if event == "SubagentStart":
+        return HookResult(additional_context=context, **base)
     if output.continue_ is False:
         return HookResult(action="feedback" if event == "PostToolUse" else "stop", message=message, additional_context=context, **base)
     if output.decision == "block":

@@ -397,6 +397,8 @@ const api: EidosRuntimeAPI = {
   deleteModel: (id: ModelId): Promise<void> => ipcRenderer.invoke(IPC.MODEL_DELETE, id),
 
   // Plugins
+  hookConfiguration: (request) => ipcRenderer.invoke(IPC.HOOK_CONFIGURATION, request),
+  readHookHistory: (request) => ipcRenderer.invoke(IPC.HOOK_HISTORY, request),
   listPlugins: (): Promise<PluginListResult> => ipcRenderer.invoke(IPC.PLUGIN_LIST),
   builtinPlugins: (request) => ipcRenderer.invoke(IPC.PLUGIN_BUILTIN, request),
   mcpConnection: (request) => ipcRenderer.invoke(IPC.MCP_CONNECTION, request),

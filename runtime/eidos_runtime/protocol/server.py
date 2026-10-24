@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 from eidos_runtime.models.mcp_details import McpToolsRequest, McpToolsResponse
 from eidos_runtime.extensions.mcp_details import McpDetails
 from eidos_runtime.models.mcp_connections import BuiltinPluginRequest, BuiltinPluginsResponse, McpConnectionRequest, McpConnectionState
+from eidos_runtime.domain.hooks import HookActivityPage, HookConfigurationRequest, HookHistoryRequest, HookSourceList
 
 from eidos_runtime import __version__
 from eidos_runtime.application.channels import ChannelApplication
@@ -1565,6 +1566,16 @@ class RuntimeServer:
                 )
             )
         registry.register(MethodRegistration(
+            name="hook/configuration", request_type=HookConfigurationRequest, response_type=HookSourceList,
+            handler=_ApplicationMethodAdapter(lambda _id, request: self._applications_or_error().extensions.hook_configuration(request), HookSourceList),
+            allowed_when_draining=False, allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
+        ))
+        registry.register(MethodRegistration(
+            name="hook/history", request_type=HookHistoryRequest, response_type=HookActivityPage,
+            handler=_ApplicationMethodAdapter(lambda _id, request: self._applications_or_error().extensions.hook_history(request), HookActivityPage),
+            allowed_when_draining=True, allowed_during_reconfiguration=True, error_mapper=_application_error_mapping,
+        ))
+        registry.register(MethodRegistration(
             name="mcp/tools", request_type=McpToolsRequest, response_type=McpToolsResponse,
             handler=_McpToolsAdapter(self), allowed_when_draining=False,
             allowed_during_reconfiguration=False, error_mapper=_application_error_mapping,
@@ -1851,6 +1862,7 @@ class RuntimeServer:
             lifecycle=session_lifecycle,
             retention=self.worktree_retention,
             repository_runtime=self.repository_runtime,
+            before_delete=self.supervisor.hooks.end_session,
         )
         return _RuntimeApplications(
             search=SearchApplication(SearchRepository(self.store.database), SessionRepository(self.store.database)),

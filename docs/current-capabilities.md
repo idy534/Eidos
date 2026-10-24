@@ -333,7 +333,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v38。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v39。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。`memories.sqlite` 索引 content-addressed Markdown。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
@@ -574,6 +574,6 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。
 
-## 本地插件与同步 Hooks（2026-10-23）
+## 本地插件与 Hooks（2026-10-24）
 
-用户可以导入 Eidos、Codex 兼容清单和 Portable Agent Plugin 本地目录。Desktop 提供内容版本审阅、信任和撤销。Runtime 支持 UserPromptSubmit、PreToolUse、PostToolUse、Stop 和 SubagentStop 的同步 command 处理器。参数改写继续走原参数校验、权限和审批，后置反馈保留原始执行结果，未知 Hook 不会自动重放。SQLite v36 保存调用和输出，并复用原工具输出分页。其他事件、异步/MCP/prompt/agent 处理器和 Codex App 接入仍未实现。详细规则见 [current-hooks.md](current-hooks.md)。
+用户可以导入 Eidos、Codex 兼容清单和 Portable Agent Plugin 本地目录。Desktop 提供内容版本审阅、信任和撤销。Runtime 已接入 Codex 的 12 个 Hook 事件，并支持同步命令、后台命令和已连接服务的 MCP 处理器。Runtime 也支持个人、项目的 hooks.json 与 config.toml；内容变化后需要重新审阅。参数改写继续经过校验、权限和审批。PermissionRequest 可以决定普通请求，高危人工确认继续保留。后台结果只提供信息，不会重新启动已结束的 Run。SQLite v39 保存配置来源和后台接收记录，旧调用与输出继续保留。聊天显示状态和警告，插件详情提供历史分页。Runtime 提供有界 transcript 投影，但不保证完整复刻 Codex 文件格式。prompt/agent、Codex App 账号映射，以及官方仍保留的输出字段继续不执行。详细规则见 [current-hooks.md](current-hooks.md)。

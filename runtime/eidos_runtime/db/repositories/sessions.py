@@ -1034,6 +1034,12 @@ class SessionRepository(Repository):
             for row in run_rows
             if row["id"] not in known_run_ids
         }
+        from eidos_runtime.persistence.hooks import HookRepository
+        hook_repository = HookRepository(self.database)
+        for run in (*selected_runs, *remaining_runs.values()):
+            activity = hook_repository.activities(run_id=str(run["id"]), limit=8, previews=False).items
+            if activity:
+                run["hookActivity"] = [entry.to_wire_dict() for entry in activity]
         run_order = {row["id"]: row["creation_seq"] for row in run_rows}
         tools_by_item = {row["item_id"]: row for row in tool_rows}
         has_more = len(item_rows) > item_limit

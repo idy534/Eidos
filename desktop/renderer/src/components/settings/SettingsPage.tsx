@@ -188,6 +188,7 @@ export function SettingsPage({
 
             {activeCategory === "plugins" && (
               <PluginSettings
+                sessionId={sessionId}
                 plugins={plugins}
                 skills={skills}
                 mcpServers={mcpServers}
