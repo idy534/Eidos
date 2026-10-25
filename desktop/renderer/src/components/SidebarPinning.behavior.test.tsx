@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Project, Session } from "../contracts.js";
+import type { EidosRuntimeAPI, Project, Session } from "../contracts.js";
 import type { SidebarTarget } from "../../../shared/sidebar.js";
 import { SessionSidebar } from "./SessionSidebar.js";
 
@@ -25,7 +25,12 @@ function props(pins: SidebarTarget[] = []) {
   };
 }
 
-beforeEach(() => { localStorage.clear(); });
+beforeEach(() => {
+  localStorage.clear();
+  window.eidosRuntime = {
+    memory: vi.fn(async () => ({ scopes: [], documents: [], temporary: false })),
+  } as unknown as EidosRuntimeAPI;
+});
 afterEach(() => { vi.useRealTimers(); });
 
 describe("mixed sidebar pinning", () => {

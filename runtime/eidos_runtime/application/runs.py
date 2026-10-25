@@ -30,6 +30,7 @@ from eidos_runtime.db.errors import (
     OperationConflictError,
     OperationInProgressError,
     ResourceNotFoundError,
+    StorageError,
     WorkspaceBoundaryError,
     WorkspaceIdentityChangedError,
 )
@@ -363,8 +364,22 @@ class RunApplication:
             except (ValueError, OSError) as error:
                 raise ApplicationError("INVALID_STATE", str(error)) from error
         extension_snapshot = environment.extension_snapshot()
+        try:
+            workspace = self._admit_session_workspace(
+                request.session_id, touch_last_used=False
+            )
+            if workspace is None:
+                workspace = store.workspace_for_session(request.session_id)
+        except ResourceNotFoundError as error:
+            raise ApplicationError("RESOURCE_NOT_FOUND", str(error)) from error
+        except WorktreeError as error:
+            raise ApplicationError(
+                _run_worktree_error_code(error), str(error)
+            ) from error
+        except StorageError as error:
+            raise ApplicationError("INVALID_STATE", str(error)) from error
         from eidos_runtime.extensions.hook_sources import HookSourceCatalog
-        configured_hooks = HookSourceCatalog(store).bindings(store.workspace_for_session(request.session_id).path)
+        configured_hooks = HookSourceCatalog(store).bindings(workspace.path)
         if configured_hooks:
             extension_snapshot = dict(extension_snapshot or {})
             extension_snapshot["hooks"] = [*extension_snapshot.get("hooks", []),
@@ -554,7 +569,7 @@ class RunApplication:
         )
 
     def _admit_session_workspace(
-        self, session_id: str
+        self, session_id: str, *, touch_last_used: bool = True
     ) -> WorkspaceIdentity | None:
         manager = self._worktree_manager
         if manager is None:
@@ -571,7 +586,7 @@ class RunApplication:
             return None
         identity = manager.execution_identity(projection.worktree.worktree_id)
         touch = getattr(manager, "touch_last_used", None)
-        if touch is not None:
+        if touch_last_used and touch is not None:
             touch(projection.worktree.worktree_id)
         return identity
 

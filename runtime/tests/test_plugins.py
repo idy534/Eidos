@@ -189,7 +189,8 @@ class PluginCatalogTests(unittest.TestCase):
 
         (installed / "skills/review/SKILL.md").write_text("changed", encoding="utf-8")
         with self.assertRaisesRegex(PluginImportError, "plugin_unavailable"):
-            self.catalog.extension_snapshot()
+            self.catalog.package("demo")
+        self.assertEqual(self.catalog.extension_snapshot()["plugins"], [])
 
     def test_finder_metadata_symlinks_are_still_rejected(self) -> None:
         (self.source / ".DS_Store").symlink_to(self.source / "plugin.json")

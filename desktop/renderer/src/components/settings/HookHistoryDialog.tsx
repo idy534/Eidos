@@ -4,8 +4,6 @@ import { userFacingError } from "../../session-state.js";
 import { AlertBanner } from "../AlertBanner.js";
 import { Button } from "../Button.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
-import "./PluginDetailDialog.css";
-import "./HookSettings.css";
 
 const labels = { intent: "等待执行", running: "执行中", completed: "已完成", failed: "失败", unknown: "结果未知", skipped: "已跳过" };
 

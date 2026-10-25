@@ -13,6 +13,59 @@ def isolated_projectless_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.fixture
+def downgrade_document_memory_schema():
+    """Restore the v39 memory shape expected by the v40 migration."""
+    def downgrade(connection: sqlite3.Connection) -> None:
+        for trigger in (
+            "memory_source_insert",
+            "memory_source_change",
+            "memory_source_delete",
+            "memory_scope_revoke",
+            "memory_session_use_revoke",
+            "memory_scope_changed",
+        ):
+            connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+        for table in (
+            "memory_evidence",
+            "memory_revisions",
+            "memory_indexes",
+            "memory_documents",
+            "memory_metadata",
+        ):
+            connection.execute(f"DROP TABLE IF EXISTS {table}")
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(step_resolution_snapshots)"
+            )
+        }
+        if "memory_revoked" in columns:
+            connection.execute(
+                "ALTER TABLE step_resolution_snapshots DROP COLUMN memory_revoked"
+            )
+        scope_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(memory_scopes)")
+        }
+        if "settings_json" not in scope_columns:
+            connection.execute(
+                "ALTER TABLE memory_scopes ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'"
+            )
+            connection.execute(
+                """
+                UPDATE memory_scopes
+                SET settings_json = CASE mode
+                    WHEN 'auto' THEN '{"useEnabled":true,"generateEnabled":true}'
+                    WHEN 'read' THEN '{"useEnabled":true,"generateEnabled":false}'
+                    ELSE '{"useEnabled":false,"generateEnabled":false}'
+                END
+                """
+            )
+
+    return downgrade
+
+
+@pytest.fixture
 def downgrade_hooks_schema():
     def downgrade(connection: sqlite3.Connection) -> None:
         connection.execute("DROP TABLE IF EXISTS hook_sources")

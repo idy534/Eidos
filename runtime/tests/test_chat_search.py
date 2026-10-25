@@ -197,10 +197,13 @@ def test_frozen_history_search_and_anchor_survive_source_deletion(store, tmp_pat
     assert anchor in {entry.item.id for entry in around.inherited_history}
 
 
-def test_real_v32_upgrade_backfills_existing_messages(store, tmp_path, downgrade_search_schema):
+def test_real_v32_upgrade_backfills_existing_messages(
+    store, tmp_path, downgrade_search_schema, downgrade_document_memory_schema
+):
     value = session(store, tmp_path)
     store.create_run(value["id"], "backfill needle")
     with store.database.transaction() as connection:
+        downgrade_document_memory_schema(connection)
         downgrade_search_schema(connection)
         connection.execute("PRAGMA user_version=32")
     data = store.database.data_directory

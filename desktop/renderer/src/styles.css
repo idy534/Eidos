@@ -41,6 +41,7 @@
 @import "./components/settings/McpConnectionPanel.css";
 @import "./components/settings/McpDetailDialog.css";
 @import "./components/settings/PluginDetailDialog.css";
+@import "./components/settings/HookSettings.css";
 @import "./components/settings/WorktreeSettings.css";
 @import "./components/settings/ShellEnvironmentSettings.css";
 @import "./components/planning.css";

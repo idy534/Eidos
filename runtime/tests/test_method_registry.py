@@ -16,7 +16,7 @@ from eidos_runtime.protocol.registry import (
     MethodValidationError,
 )
 from eidos_runtime.domain.collaboration import CollaborationState
-from eidos_runtime.memory.contracts import MemoryState, MemoryActionResult
+from eidos_runtime.memory.contracts import MemoryState
 from eidos_runtime.protocol.schemas import ClosedModel
 from eidos_runtime.protocol import methods as method_dtos
 from eidos_runtime.protocol.input_context import DraftResponse
@@ -217,7 +217,6 @@ def test_production_method_registrations_do_not_use_generic_object_models(
         DraftResponse,
         PlanResponse,
         MemoryState,
-        MemoryActionResult,
         SidebarPinsResponse,
         QueuedRunChangeResponse,
         AutomationResponse,

@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SessionSidebar } from "./SessionSidebar.js";
 import { ContextMenu } from "./DropdownMenu.js";
-import type { Session } from "../contracts.js";
+import type { EidosRuntimeAPI, Session } from "../contracts.js";
 
 const mockSessions: Session[] = [
   { id: "session-1", title: "Session One", workspaceRoot: "/ws/project1", createdAt: 1000, updatedAt: 1000 },
@@ -14,6 +14,9 @@ const innerHeightDescriptor = Object.getOwnPropertyDescriptor(window, "innerHeig
 describe("SessionSidebar ContextMenu DOM interaction behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.eidosRuntime = {
+      memory: vi.fn(async () => ({ scopes: [], documents: [], temporary: false })),
+    } as unknown as EidosRuntimeAPI;
   });
   afterEach(() => {
     vi.restoreAllMocks();

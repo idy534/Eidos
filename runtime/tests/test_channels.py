@@ -439,13 +439,16 @@ def test_migration_failure_rolls_back_partial_tables_and_version():
     assert not connection.in_transaction
 
 
-def test_existing_v29_database_upgrades_without_losing_sessions(tmp_path):
+def test_existing_v29_database_upgrades_without_losing_sessions(
+    tmp_path, downgrade_document_memory_schema
+):
     directory = tmp_path / "data"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     store = SessionStore(directory)
     store.initialize()
     session_id = store.create_session(str(workspace))["id"]
+    downgrade_document_memory_schema(store.connection)
     store.connection.executescript("""
         DROP INDEX model_request_retry_index;
         ALTER TABLE model_attempts DROP COLUMN request_group_id;

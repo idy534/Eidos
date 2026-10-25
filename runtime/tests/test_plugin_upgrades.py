@@ -177,11 +177,14 @@ def test_version_migration_backfills_current_packages_and_rolls_back_on_failure(
     broken.close()
 
 
-def test_real_v36_state_database_reopens_with_version_history(catalog, tmp_path):
+def test_real_v36_state_database_reopens_with_version_history(
+    catalog, tmp_path, downgrade_document_memory_schema
+):
     imported = catalog.import_directory(package(tmp_path, "1.0.0"))
     data = catalog.store.data_directory
     catalog.store.close()
     connection = sqlite3.connect(data / STATE_DATABASE_NAME)
+    downgrade_document_memory_schema(connection)
     connection.executescript("DROP TABLE mcp_connections; DROP TABLE plugin_versions; PRAGMA user_version=36;")
     connection.close()
     catalog.store = SessionStore(data)

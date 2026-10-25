@@ -8,7 +8,6 @@ import { SettingRow } from "../SettingRow.js";
 import { SettingSection } from "../SettingSection.js";
 import { Toggle } from "../Toggle.js";
 import { HookHistoryDialog } from "./HookHistoryDialog.js";
-import "./HookSettings.css";
 
 export function HookSourceSettings({ sessionId }: { sessionId?: string | undefined }) {
   const [sources, setSources] = useState<HookSourceReview[]>([]);

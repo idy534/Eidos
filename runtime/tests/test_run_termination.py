@@ -143,12 +143,13 @@ def test_tool_input_kind_failure_is_returned_and_model_can_continue(store):
 
 
 def test_v23_upgrade_preserves_state_and_adds_no_invented_causes(
-    store, downgrade_session_fork_schema,
+    store, downgrade_session_fork_schema, downgrade_document_memory_schema,
 ):
     value, session, data = store
     run, _ = value.create_run(session["id"], "keep this run")
     value.close()
     connection = sqlite3.connect(data / DATABASE_NAME)
+    downgrade_document_memory_schema(connection)
     downgrade_session_fork_schema(connection)
     connection.execute("DROP TABLE sidebar_pins")
     connection.execute("DROP INDEX sidebar_pins_event_revision")
