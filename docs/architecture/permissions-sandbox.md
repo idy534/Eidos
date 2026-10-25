@@ -21,7 +21,7 @@ Eidos 分开处理 Run 权限模式、操作授权和实际沙盒。模型提出
 
 `manual` 使用已有授权直接执行允许操作，并为需要扩权的操作请求用户决定。`auto_review` 可以让审查模型处理普通审批；高危请求仍要求用户确认。两种模式默认保留 Seatbelt 和路径保护。
 
-`full_access` 只能来自 Desktop 确认，或用户已通过 Desktop 确认并保存的完全访问定时计划。该模式关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批，不创建逐项 Approval 或 Grant。该模式不能承诺 `.git`、Eidos 数据、Runtime 和系统 Skill 永久受到路径保护。
+`full_access` 只能来自 Desktop 用户确认。普通 Run 使用本次确认；定时任务和渠道 Run 可以继承用户在 Desktop 确认并保存的配置。该模式关闭 Seatbelt，使用当前 macOS 用户的文件和网络权限，并跳过逐操作审批，不创建逐项 Approval 或 Grant。该模式不能承诺 `.git`、Eidos 数据、Runtime 和系统 Skill 永久受到路径保护。
 
 三种模式都保留参数校验、Durable Intent、身份与版本核验、取消、结果校验和未知结果记录。用户选择完全访问不会使模型报告成为执行证据。
 

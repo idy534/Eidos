@@ -8,9 +8,9 @@
 
 ## 专题概要
 
-网页搜索使用 `typed IPC → webSearch/read、webSearch/save → WebSearchApplication → WebSearchRepository / SecretFiles`。Schema v34 保存配置和 Run 搜索快照。RunResources 按用户明确选择的默认服务发布内置 `web_search`。搜索经过现有 Controller 的审批和 Durable Intent，再由 RuntimeAsyncKernel 托管官方 HTTPS 请求。网络等待不持有 Run 的提交窗口，搜索不增加 Shell 网络 Grant，也不自动切换服务。具体字段、迁移和结果边界见[当前网页搜索](features/web-search.md)。
+网页搜索使用 `typed IPC → webSearch/read、webSearch/save → WebSearchApplication → WebSearchRepository / SecretFiles`。Schema v34 保存配置和 Run 搜索快照。RunResources 按用户明确选择的默认服务发布内置 `web_search`。用户配置提供该服务的调用授权，搜索不再逐次审批。搜索经过现有 Controller 的参数校验和 Durable Intent，再由 RuntimeAsyncKernel 托管官方 HTTPS 请求。网络等待不持有 Run 的提交窗口，搜索不增加 Shell 网络 Grant，也不自动切换服务。具体字段、迁移和结果边界见[当前网页搜索](features/web-search.md)。
 
-钉钉渠道使用 `Stream SDK → ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复 → HTTPS OpenAPI`。配置沿用 typed IPC 和 stdio JSON-RPC。渠道服务由现有 AnyIO Kernel 与 Supervisor 管理，准备使用现有 managed task。Schema v30 保存渠道配置、映射、来源和投递事实。具体边界见 [当前渠道接入](features/channels.md)。
+渠道支持钉钉、飞书和企业微信。各平台 SDK 将文字消息交给 `ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复`。钉钉和飞书通过 HTTPS API 回复，企业微信通过原长连接发送并等待回执。Desktop 通过“设置 → 助理”、typed IPC 和 stdio JSON-RPC 管理配置。渠道服务与准备任务由现有 AnyIO Kernel 和 Supervisor 管理。Schema v30 引入渠道表；三平台配置复用这些表，当前主库版本是 v41。具体边界见 [当前渠道接入](features/channels.md)。
 
 本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](features/automations.md)。
 
@@ -157,7 +157,7 @@ Terminal 不经过 Python Runtime，也不是 Agent Shell Tool。Renderer 只通
 
 ## 5. Run Orchestration
 
-RunSupervisor 负责按 Session 维护持久 FIFO、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 独立持有 `ToolConcurrencyGate` 和 `ShellProcessManager`。不同 Session 的 Run 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。一个 Run 的长 Shell 仍会阻止这个 Run 启动新的副作用，但 `write_stdin` 可以继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
+RunSupervisor 负责按 Session 维护持久 FIFO、Run Worker、Approval 等待、取消、暂停、恢复和关闭收敛。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 独立持有 `ToolConcurrencyGate` 和 `ShellProcessManager`。不同 Session 的 Run 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不持续占有副作用门，其他普通副作用与协作调用可以继续。`write_stdin` 继续管理原 Shell，提交与启动窗口仍在该 Run 内互斥。等待 Approval 不会占用其他 Run 的执行资源。
 
 RunSupervisor 把同步 Durable Runtime Core 与进程级 `RuntimeAsyncKernel` 连接起来。RuntimeAsyncKernel 持有一个 AnyIO Blocking Portal。Model 异步 I/O、MCP Connection、Managed Task 和安全只读并行批次通过这个 Kernel 执行。Run Worker 仍是当前 Run 的同步控制边界。
 
@@ -187,7 +187,7 @@ RuntimeEngine 下的主要职责是：
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
-Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。Sampling 收到的 provisional text 在完整响应通过校验前不会持久化。可重试的 transport failure 即使已经收到 provisional text，也会复用同一个 frozen ContextSnapshot 创建新的 Model Attempt。已收到的文本或 ToolCall 不会自动重放。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。
+Chat Completions Adapter 根据结构化响应事实把有 ToolCall 的响应归类为 `commentary`，并保留模型文本、可选 MessagePhase 和 Provider `finish_reason`。Chat Completions 没有原生的 Assistant phase，所以没有 phase 的响应使用 `unknown` 或 `None` 表示。RuntimeEngine 不读取 MessagePhase 或 `finish_reason=stop` 作为完成门控。每次 normalized sampling response 都得到 `needs_follow_up`：ToolCall 或待消费的当前 Turn 输入需要继续采样，assistant-only response 可以结束当前 Turn。可返回给模型的 Tool Result 和 Tool Error 都会进入 Context，再触发下一次 Sampling。Sampling 经扫描释放的 provisional text 会持久化为 `in_progress` Assistant Item。完整响应及工具批次通过校验后，Runtime 才确认该 Item。失败草稿保存为 failed/incomplete，后续模型上下文排除这些草稿。可重试的 transport failure 即使已经收到 provisional text，也会复用同一个 frozen ContextSnapshot 创建新的 Model Attempt。已收到的文本或 ToolCall 不会自动重放。normalization 的 `protocol_error` 和 `length` 都进入同一条已有的有界 protocol repair，连续错误合计最多触发一次。`content_filter`、cancel 和 authentication failure 不进入该 repair，直接终止当前模型流程。
 
 `SamplingRuntime.accept_validated_response` 是模型尝试完成与有效文本提交的单一入口。它只接受通过工具批次校验的 `ready` 或有文本的 `no_tools` 响应。工具批次随后按模型声明的顺序记录与执行；只读批次可以并行执行，但结果仍按原顺序汇总。失败的模型输出不会通过该入口进入下一次模型请求。
 
@@ -482,7 +482,7 @@ RepositoryMap 的 manifest 读取使用 Inventory 中的 device、inode、size�
 
 v1 mapless generation 仍然不能恢复为 active Snapshot。Persistence 会单独读取 Inventory 和 Index 的 generation watermark。首次 v2 build 会从 watermark 的下一代开始。Runtime 不会把 legacy row 当成 authoritative generation，也不会直接修改 builder 的私有 counter。
 
-`RuntimeEngine.run()` 会在 Repository Generation ready 后，在 `ActiveRepositoryState` 的同一个锁内捕获 Snapshot、dirty paths 和 invalidation epoch。Runtime 使用这个 immutable capture 构造一次有界 `RepositoryRetrievalQuery`。Query 只使用当前用户目标、Inventory/Index 中可以确认的 path 和 symbol、已有 read/search Tool Result、capture 中的 dirty path 和最近 committed change。Runtime 对该 Run 只执行一次 Retrieval，并固定同一个 `RunRepositoryContext`。capture 后的 Watcher event 只会让 active Workspace 变脏，并由下一 Run reconciliation 观察。
+`RuntimeEngine.run()` 不等待 Repository Generation 就绪。Runtime 在 `ActiveRepositoryState` 的同一个锁内捕获当时可用的 Snapshot、dirty paths 和 invalidation epoch。只有完整 Snapshot 带有 Index 时，Runtime 才执行下面的 Retrieval。Runtime 使用这个 immutable capture 构造一次有界 `RepositoryRetrievalQuery`。Query 只使用当前用户目标、Inventory/Index 中可以确认的 path 和 symbol、已有 read/search Tool Result、capture 中的 dirty path 和最近 committed change。Runtime 对该 Run 只执行一次 Retrieval，并固定同一个 `RunRepositoryContext`。capture 后的 Watcher event 只会让 active Workspace 变脏，并由下一 Run reconciliation 观察。
 
 `RetrievalSnapshot` 是 immutable content-addressed artifact。SQLite 只保存一份 Retrieval JSON。`run_repository_retrievals` 保存 Run 对 artifact 的使用关系。ContextPlan 继续保存 attempt lineage，但 artifact identity 不承担 Run ownership。两个 Run 可以共享同一个 Retrieval Snapshot ID，并分别解析自己的 evidence lineage。
 
@@ -494,9 +494,9 @@ Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 
 
 `ThreadHistoryStore` 在读取主库和历史库时，分别持有对应连接所有者的数据库锁，锁覆盖查询执行和结果读取。投影文件锁只负责串行处理历史 JSONL，不能替代数据库锁。系统在释放数据库锁后执行 JSONL 写入、校验、截断和 fsync，避免文件 IO 长时间占用主库。队列查询继续使用已有主库锁，系统不增加跨 Run 执行门或全局并发配额。历史投影保留原有事件顺序、提交偏移、启动恢复和已删除会话清理。
 
-Runtime 启动仍执行主库及历史、日志、旧记忆辅助库完整性检查、Schema 迁移、历史投影和业务恢复。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表；Runtime 仍验证已有 Blob 引用，并保留逐记录提交和中断后重试。
+Runtime 启动仍执行主库及历史、日志辅助库完整性检查、Schema 迁移、历史投影和业务恢复。v40 已移除旧记忆辅助库；启动清理标记负责删除旧文件，当前记忆元数据归主库管理。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表；Runtime 仍验证已有 Blob 引用，并保留逐记录提交和中断后重试。
 
-启动不再执行 Blob 全量 GC。Runtime 复用现有受管 Memory 后台任务：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 从 SQLite 流式读取引用，持有原有 State/Blob 锁，在删除前完整解析 Context 清单并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和隐私撤销仍执行原有即时清理。
+启动不再执行 Blob 全量 GC。Runtime 通过 Supervisor 管理的 `StorageMaintenance` 执行存储清理：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 从 SQLite 流式读取引用，持有原有 State/Blob 锁，在删除前完整解析 Context 清单并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和隐私撤销仍执行原有即时清理。
 
 Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶段、依赖校验、Worktree 恢复与保留、Skill、模型配置、异步内核、重启核验、Handoff、Seatbelt 和待投递事件的 `phase`、`duration_ms` 与完成状态。计时不写业务 Event，也不修改协议或 SQLite Schema；初始化前的记录写 stderr，日志存储接入后的记录同时写本地 JSONL。
 
@@ -662,7 +662,7 @@ Skill 使用 progressive disclosure。Catalog 只提供发现信息。`SKILL.md`
 
 `agents/eidos.yaml` 是可选的 Skill metadata 文件。Runtime 使用统一 YAML loader 读取其中的 interface、asset、tool dependency、policy 和 `runtimeDependencies` metadata。`runtimeDependencies` 使用严格的 `RuntimeRequirements` discriminated union。它只接受有界的 Python package、Node package 和 executable 声明。文件有大小、owner、regular-file、路径和字段边界。无效的可选 runtime declaration 会保留固定 error code，不会清除旧的 interface、MCP dependency 或 policy metadata。无效的整个可选 YAML 会保留现有 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活该 Skill，但不会阻止显式选择或 `skill_read` 激活。`dependencies.tools` 不会安装 Python、pip、npm、系统命令或其他运行时依赖，也不会改变 Eidos 的 Permission、Approval 或 Sandbox。
 
-`run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 默认只读，并额外允许脚本所需的 executable mapping。用户对普通 Skill 的具体写入授权可以成为这个只读规则的例外，系统 Skill 永久禁写。带 runtime declaration 的 Skill 脚本由 Runtime 根据已验证的脚本归属自动选择依赖 binding。识别器支持直接使用 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE` 调用 canonical absolute Skill 脚本；它不会解释任意 Shell 包装表达式，也不会根据已激活 Skill 列表替普通项目命令选择环境。无效或非 ready 声明不能按无依赖处理。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
+`run_shell` 会经过 `SkillAccess` 对受信任 Catalog entry 做隐式脚本识别。只有支持的 runner 调用已知 Skill root 下的相对 `scripts/` 文件时，Runtime 才记录 implicit activation，并把该 Skill root 加入本次 Shell 的权限物化。Workspace root 保持读写；active Skill root 默认只读，并额外允许脚本所需的 executable mapping。用户对普通 Skill 的具体写入授权可以成为这个只读规则的例外。系统 Skill 默认拒写，用户可对具体变更作高危人工批准；full_access 沿用用户确认的模式例外。带 runtime declaration 的 Skill 脚本由 Runtime 根据已验证的脚本归属自动选择依赖 binding。识别器支持直接使用 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE` 调用 canonical absolute Skill 脚本；它不会解释任意 Shell 包装表达式，也不会根据已激活 Skill 列表替普通项目命令选择环境。无效或非 ready 声明不能按无依赖处理。隐式识别只提供 activation 证据，不会授权任意 Workspace 外路径。
 
 Skill binary assets 会在安装和目录读取中按 bytes 保留。`skill_read_resource` 只返回有界 UTF-8 文本，因此 DOCX、PPTX、PDF、XLSX、PNG 等 binary resource 不会被当作文本注入 Context。支持图像输入的 Model 才会注册 `view_image`。`view_image` 在受控读取成功时捕获 PNG/JPEG 内容，并通过共同的工具结果提交边界保存。Provider Adapter 只把已保存的内容编码为 multimodal `BinaryContent`，不重读源路径，也不比较源文件 Hash。其他 binary asset 仍由已有 Tool 或 Skill 脚本按其自身格式处理。
 
@@ -781,9 +781,9 @@ Seatbelt 编译器为数据目录内的当前 Workspace 保留祖先路径的 me
 
 `secure_workspace_move` 向受控 helper 传递已核验的 Workspace 目录 fd。helper 核对目录身份，并从该 fd 向下使用 `O_NOFOLLOW` 访问目标。它不再从 `/` 逐级打开 `.eidos` 等受保护祖先。当前 Projectless Workspace 的普通文件沿原有 Workspace Permission 执行，不逐次审批；其他会话和数据文件仍受数据目录 deny 保护。helper 的新建提交按 errno 区分目标已存在与其他失败，诊断只记录固定阶段和数字 errno。
 
-Base/Effective Permission 的 `approvalWriteRoots` 标记用户 Skill 存储目录。字段默认空，旧权限快照仍可读取；新 Run 的产品权限工厂填入数据目录的 `skills`。Skill 激活只提供读权限，普通 Skill 的写入必须来自明确的附加授权。Runtime、PermissionPolicyEvaluator 和 Seatbelt 使用同一授权范围；精确文件授权不会开放同目录其他文件。Seatbelt 只允许获批目标祖先的 metadata 检查，不开放祖先目录内容。`skills/.system` 作为独立 protected write path 永久禁写，即使它被选作 Workspace 也不能修改。
+Base/Effective Permission 的 `approvalWriteRoots` 标记用户 Skill 存储目录。字段默认空，旧权限快照仍可读取；新 Run 的产品权限工厂填入数据目录的 `skills`。Skill 激活只提供读权限，普通 Skill 的写入必须来自明确的附加授权。Runtime、PermissionPolicyEvaluator 和 Seatbelt 使用同一授权范围；精确文件授权不会开放同目录其他文件。Seatbelt 只允许获批目标祖先的 metadata 检查，不开放祖先目录内容。`skills/.system` 作为独立 protected write path 默认拒写，即使它被选作 Workspace 也需要高危人工批准具体变更；full_access 沿用已确认模式。
 
-Runtime 不启动会丢失永久写入保护的裸 Shell 无沙盒执行。受控文件 helper 可在明确审批后不使用 Seatbelt，但 Runtime 会继续核验每个目标的保护范围、身份和版本。权限等待后的重物化、Durable Intent、最终内容验证和 Reconciliation 规则保持不变。Skill 文件修改不重写当前 Turn 的 Catalog Snapshot；后续 Turn 重新发现修改后的内容。
+裸 Shell 的无沙盒执行需要高危人工确认，并重新物化相应路径与网络权限。审批提示必须说明命令及其子进程会失去沙盒保护。受控文件 helper 可在明确审批后不使用 Seatbelt，但 Runtime 会继续核验每个目标的保护范围、身份和版本。权限等待后的重物化、Durable Intent、最终内容验证和 Reconciliation 规则保持不变。Skill 文件修改不重写当前 Turn 的 Catalog Snapshot；后续 Turn 重新发现修改后的内容。
 
 ### 产物预览与反馈
 
@@ -813,13 +813,13 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 以前产物预览修订有自动验证记录。2026-09-13 的产物声明修订已经补充并通过对应的 Runtime、协议、Main 和 Renderer 测试。具体限制和未完成的人工验收见 `docs/current/limitations.md` 的“本轮产物实现的边界”。
 
-### 回答流式输出（代码修订，待测试）
+### 回答流式输出
 
 普通采样和 RunFinalizer 复用 `ModelRunner → StreamingSensitiveScanner → AssistantStreamWriter → SQLite Event/Outbox → item/delta → Main → typed IPC → Renderer`。Writer 立即刷新扫描器释放的安全文本块，并把大文本拆成有界片段。Writer 保留未闭合的尖括号尾部，并阻止已识别的 Provider 控制标记；完整响应校验仍由原有 Runtime 链路负责。正常完成复用当前 Item，不再把整个回答重复写入。校验失败或断流会结束当前草稿；取消和重启沿用已有 Item 终态与恢复规则。Context Repository 排除 in-progress 和 incomplete Assistant Item。
 
 新 delta 的 `offset` 在追加内容的同一 SQLite 事务内计算，单位为 UTF-16 code unit，与 JavaScript 字符串长度一致。该字段只扩展 Event payload 和 Notification，不增加 DB 列或第二套状态。Renderer 对已有 Item 的 started 重投不再覆盖本地内容，并拒绝重复或有缺口的 offset。Run 结束时的持久快照刷新负责最终内容校正。旧 Event 不带 offset，继续兼容读取。旧 Desktop 的严格通知校验不接受新增字段，所以 Desktop 与 Runtime 必须一起更新。
 
-本次不新增模型调用、传输连接、依赖或工具参数流式能力。现有按行敏感扫描仍限制无换行文本的显示时机。用户要求先完成代码修订，确认后再编写测试并集中验证，因此当前没有测试、lint、构建或真实 Provider 验证结果。
+该路径不增加模型调用、传输连接或工具参数流式能力。现有按行敏感扫描仍限制无换行文本的显示时机。`test_model_retry_recovery.py` 已包含可见草稿持久化、断流后新旧 Item 分离和迟到 Writer 拒绝用例；本轮文档核对没有执行这些测试，也不补造真实 Provider 验收结果。
 
 ### Skill 设置管理
 
@@ -950,8 +950,8 @@ v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，�
 ### Loop 门控精简（PR #102）
 
 - Runtime 保留 Durable Intent 和未知结果，但不要求用户核验，不阻止后续操作或 Run 完成，也不自动重放未知操作。
-- 内置文件变更对已持久化、来源可信且范围明确的 Workspace 不确定 Intent 按真实准备路径判定冲突，覆盖多文件、移动目标与父子路径；提交窗口内再次检查。未知范围或外部文件 Intent 继续保守阻止变更；其他路径可以继续，不新增跨 Run 锁。
-- `send_message`、`stop_agent` 和忙碌子任务的续派消息不因已有不确定副作用被统一阻断；三个角色均有执行工具，新子任务均受屏障约束。`spawn_agent` 和空闲子任务的 `followup_task` 在创建事务中检查屏障，避免角色名或状态竞态绕过限制。权限申请仍遵守现有审批，不清除旧 Intent。
+- 当前文件变更不因旧未知 Intent 被阻断。Runtime 继续检查真实准备路径、文件身份、版本和结果，不新增跨 Run 锁，也不自动合并冲突。
+- `send_message`、`stop_agent`、`spawn_agent` 和 `followup_task` 不因旧未知结果被统一阻断。新建和续派仍检查父子归属、权限、状态与数量。权限申请遵守现有审批，旧 Intent 继续作为历史事实保留。
 - 所有控制工具可以同批顺序执行。混合批次、Plan 提问和子任务等待有活动 Shell 时保留 Worker 与原资源所有者。只有无剩余批次且没有活动 Shell 的控制等待才释放 Worker；不强制模型改变调用顺序。
 - 取消、最终退出、进程组清理、权限/所有权、文件身份/Base Hash、Durable Intent、结果契约以及最终提交事务检查保留。没有全局 Run/Worker 上限或跨 Run Workspace 门控；单父 Run 的 8 个执行中子任务上限保持不变。
 - 最终提交前的进程清理不提前关闭 Shell 管理器的接入能力；若事务因迟到输入或子任务状态而推迟完成，后续步骤仍能启动命令。真正退出 Worker 时才永久关闭管理器。带活动资源的子任务等待记录进入、超时、完成和取消日志，不记录任务正文。

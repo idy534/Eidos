@@ -21,7 +21,7 @@ Eidos stores Runtime data locally. Requests go to the Provider configured by the
 - **Durable Agent Runtime**: The Runtime stores Runs, Steps, tool results, and events. It handles cancellation, approval waits, and restart recovery.
 - **Models and context**: Configure model Providers. The Runtime freezes model and extension snapshots for each Run, and provides context usage and compaction.
 - **Tool permissions**: Agents can use file tools and a controlled Shell. Approval and macOS Seatbelt restrict high-risk operations.
-- **Extensions and automation**: The Runtime supports Skills, Plugins, stdio MCP, local scheduled tasks, and a DingTalk message channel.
+- **Extensions and automation**: The Runtime supports Skills, Plugins, stdio and remote Streamable HTTP MCP, user Hooks, local scheduled tasks, and DingTalk, Feishu, and WeCom message channels. Remote MCP includes account connections and OAuth; current feature guides describe the limits of live service validation.
 
 See [current capabilities](docs/current/capabilities.md) and [current limitations](docs/current/limitations.md) for details.
 
@@ -75,9 +75,9 @@ Maintainers can run `pnpm package:mac` on Apple Silicon macOS to create a local 
 This roadmap describes current direction. It does not promise delivery dates.
 
 1. Establish evaluation baselines with real software tasks and improve long-context handling and interruption recovery.
-2. Complete Agent Shell PTY support, user Hooks, streaming tool scheduling, subagent isolation and result delivery, and browser-based visual verification.
+2. Complete Agent Shell PTY support, streaming tool scheduling, subagent isolation and result delivery, and browser-based visual verification. See [current Hooks](docs/current/features/hooks.md) for existing events and handler limits.
 3. Complete the macOS arm64 signing, notarization, and release workflow. Improve checks for upgrades, backup and restore, and diagnostics.
-4. After the core workflow is stable, evaluate remote MCP and OAuth, a Plugin Marketplace, a CLI, and support for other platforms.
+4. Continue validating remote MCP and OAuth with real services. After the core workflow is stable, evaluate a Plugin Marketplace, a CLI, and support for other platforms.
 
 ## Documentation
 

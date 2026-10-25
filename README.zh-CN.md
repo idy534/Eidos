@@ -21,7 +21,7 @@ Eidos 将 Runtime 数据保存在本机。使用远程模型服务时，请求�
 - **持久化 Agent Runtime**：Runtime 保存 Run、Step、工具结果和事件。Runtime 可以处理取消、审批等待和重启恢复。
 - **模型与上下文**：配置模型 Provider。Runtime 固定每个 Run 的模型和扩展快照，并提供上下文用量与压缩。
 - **工具权限**：Agent 可以调用文件工具和受控 Shell。Runtime 使用 Approval 与 macOS Seatbelt 限制高风险操作。
-- **扩展与自动化**：Runtime 支持 Skill、Plugin、stdio MCP、本地定时任务和钉钉消息渠道。
+- **扩展与自动化**：Runtime 支持 Skill、Plugin、stdio 与远程 Streamable HTTP MCP、用户 Hooks、本地定时任务，以及钉钉、飞书和企业微信消息渠道。远程 MCP 提供独立账号连接与 OAuth；真实服务的验收范围见当前功能说明。
 
 详细能力和当前限制见[当前能力](docs/current/capabilities.md)与[当前限制](docs/current/limitations.md)。
 
@@ -75,9 +75,9 @@ pnpm start
 路线描述当前方向，不代表交付日期承诺。
 
 1. 用真实软件任务建立评测基线，并继续提升长上下文处理与中断恢复的可靠性。
-2. 完善 Agent Shell PTY、用户 Hooks、流式工具调度、子 Agent 隔离和结果交付，以及浏览器视觉验证。
+2. 完善 Agent Shell PTY、流式工具调度、子 Agent 隔离和结果交付，以及浏览器视觉验证。已有 Hooks 的事件和处理器边界见[当前 Hooks](docs/current/features/hooks.md)。
 3. 打通 macOS arm64 的签名、公证和发布流程，并完善升级、备份恢复和诊断流程的验收。
-4. 核心工作流稳定后，再评估远程 MCP 与 OAuth、Plugin Marketplace、CLI 和其他平台支持。
+4. 继续验证远程 MCP 与 OAuth 的真实服务兼容性。核心工作流稳定后，再评估 Plugin Marketplace、CLI 和其他平台支持。
 
 ## 文档
 

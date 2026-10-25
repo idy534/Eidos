@@ -42,7 +42,7 @@ ToolCallRuntime 只并行执行连续且满足 `parallel_safe` 的只读片段�
 
 图源：[Mermaid](diagrams/11-shell.mmd)。`yield_time_ms` 控制一次等待，进程的真实 timeout 独立生效。一次等待返回“仍在运行”时，Shell 资源仍属于该 Run。
 
-Shell 使用明确 cwd、有界输出、进程组和有效权限。ShellProcessManager 管理进程、PTY、输出尾部和退出信息。`write_stdin` 继续操作已经登记的进程。`read_tool_output` 可以读取保存的输出；它不会重启命令。
+Shell 使用明确 cwd、有界输出、进程组和有效权限。ShellProcessManager 管理管道 stdin/stdout/stderr、输出尾部和退出信息。Agent Shell 当前没有 PTY；Desktop Terminal 的 PTY 由 Main 单独管理。`write_stdin` 继续操作已经登记的进程。`read_tool_output` 可以读取保存的输出；它不会重启命令。
 
 Shell 的 process nonzero exit 是进程结果。它不等同于工具基础设施失败。输出截断、输出尚未结束、进程仍在运行和最终退出也分别记录。
 

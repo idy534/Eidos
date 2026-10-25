@@ -48,7 +48,7 @@
 ## 本地定时任务（2026-10-15）
 
 - Eidos 完全退出或电脑休眠时，任务不会执行。当前版本不检测漏跑，不补跑，也没有云端执行或额外守护进程。固定间隔只允许 10 分钟、30 分钟和 1 小时。当前实现见 [当前本地定时任务](features/automations.md)。
-- 任务默认使用 auto_review，仍可能等待人工审批。用户在页面手动创建或编辑计划时可以选择 full_access；用户必须在危险弹窗中确认，授权适用于该计划今后的每次执行。模型工具不能开启完全访问，也不能改用已保存的完全访问授权来修改任务或重新启用任务。系统不复制旧 Run Grant。原执行及其重新生成存在未核验副作用时，所属计划会暂停。同计划仍有执行时，系统跳过新时刻；原 Session 忙碌时，系统也跳过本次执行。
+- 任务默认使用 auto_review，仍可能等待人工审批。用户在页面手动创建或编辑计划时可以选择 full_access；用户必须在危险弹窗中确认，授权适用于该计划今后的每次执行。模型工具不能开启完全访问，也不能改用已保存的完全访问授权来修改任务或重新启用任务。系统不复制旧 Run Grant。原执行及其重新生成的未知副作用保留为历史事实，不会因此暂停所属计划。同计划仍有执行时，系统跳过新时刻；原 Session 忙碌时，系统也跳过本次执行。
 - Schema v28 新增计划、触发和来源三张表。Desktop 与 Runtime 需要一起升级。旧版本不能读取 v28；回退时需要恢复升级前的数据库备份。删除计划不会删除会话、Workspace 或历史。
 - Runtime 定向测试通过 106 项。Renderer 定向行为测试通过 53 项，模型默认值纯测试通过 6 项，Main 与真实 Runtime 的跨进程及共享 Fixture 测试通过 2 项。隔离的真实 Electron 页面验证了创建、默认审批、会话省略、键盘和四种窗口宽度。Desktop 构建、原生启动退出 smoke、macOS arm64 Runtime Bundle 与其 smoke、Ruff、Deptry 和两份 Python 依赖审计通过。Renderer 仍有大于 500 kB 的 Chunk 提示。本次没有运行 Full Suite、DMG 打包或真实 Provider 的长期无人值守验收。
 
@@ -64,12 +64,12 @@
 
 ## 回答级聊天分叉（2026-10-14）
 
-- 分叉创建后立即作为正常 Session 出现在侧栏。名称沿用来源名称，名称末尾的分叉图标在悬停和键盘焦点时显示。首次对话不覆盖该名称。v26→v27 会修复旧的未命名分叉；来源已删除且名称未保存时，旧分叉使用“新会话”。
+- 分叉创建后立即作为正常 Session 出现在侧栏。名称沿用来源名称，名称末尾常驻显示分叉图标。首次对话不覆盖该名称。v26→v27 会修复旧的未命名分叉；来源已删除且名称未保存时，旧分叉使用“新会话”。
 - 本次即时显示和命名修正通过 Runtime 定向测试 48 项、侧栏行为测试 24 项和 Main/Runtime 测试 1 项。真实 Electron 已验证无 Run 分叉的显示、图标悬停与移开行为。构建、契约检查、Ruff、Deptry、依赖审计和原生启动/退出 smoke 均通过。本次没有执行 Full Suite。
 - 分叉的悬停气泡显示直接来源会话的当前名称，并支持点击跳转。来源不在当前 Session 列表中时，气泡显示“来源会话不可用”。该显示不保存新的标题快照，也不修改分叉历史。
 - 本次图标和来源气泡修改通过 89 项 Renderer 定向行为测试、45 项 ExecutionFeed 静态测试和 Renderer 构建。测试覆盖普通侧栏与置顶分叉、嵌套来源、来源重命名、来源缺失、禁用导航和键盘焦点。真实 Electron 的隔离页面已验证新图标悬停、气泡停留和来源名称点击跳转；该结果不代表真实产品数据的人工验收。本次没有执行 Full Suite、Runtime/Main 套件、Seatbelt、启动/退出 smoke 或打包验证。
 
-- 分叉入口只接受已结束 Run 的完整最终回答。Runtime 拒绝进行中、未完成的回答和子 Agent Session。源 Session 存在待确认副作用时，Runtime 拒绝创建分叉。
+- 分叉入口只接受已结束 Run 的完整最终回答。Runtime 拒绝进行中、未完成的回答和子 Agent Session。源 Session 的旧未知结果不阻止创建分叉；文件与执行环境仍需通过当前身份和版本检查。
 - 单次分叉最多保留 20,000 条历史记录。记录与独立引用资源的未压缩内容合计最多为 128 MiB。Runtime 超限时返回 `SESSION_FORK_HISTORY_LIMIT`，不会发布部分 Session。
 - 分叉保留完整聊天前缀，但模型上下文继续受既有预算约束。模型可以读取预算内的近期历史，或使用新 Session 自己生成的压缩摘要。Runtime 不复制截止点之后的旧摘要。
 - 共享目录分叉使用当前文件。独立 Worktree 保存分叉时的 HEAD、staged、unstaged 和 untracked 状态。该功能不恢复历史回答时的文件状态，也不复制 ignored 文件。Managed Session 只允许独立 Worktree 分叉。
@@ -181,7 +181,7 @@
 - 旧图片工具结果只保留路径等元数据，缺失的历史图片正文无法补回。当前回放会明确说明缺失，不重读当前文件。新工具内容快照保存已取得的文字或二进制内容，不保存全部生成文件。单个工具内容原始字节总量最多 10 MiB；工具内容与用户图片引用共用 16 MiB 编码内容预算，超出时优先保留最近的工具内容，并保留省略说明。音频等二进制内容可以使用同一内部保存边界，但当前 MCP 内容支持和模型音频能力没有扩展。不支持的媒体只提供说明。
 - Provider 请求拒绝诊断只记录固定原因和有界 request ID。未知错误继续显示通用拒绝原因；日志不保留原始错误正文。原始失败 Run 的缺失正文不会因本次代码修改而补齐。
 - Chat Completions 没有原生的 Assistant `phase` 字段。Adapter 只根据 ToolCall 做 `commentary` 分类，并保留 Provider 的 `finish_reason`。`MessagePhase` 可以是 `commentary`、`final_answer`、`unknown` 或 `None`，但它不控制 Agent Loop。Agent Loop 使用 normalized response 的 `needs_follow_up` 决定继续采样还是完成当前 Turn。
-- 回答流式输出的代码修订尚未编写或执行测试。敏感扫描仍按完整行释放文本，无换行的长段落会等到响应结束。尚未闭合的尖括号文本会等待闭合或完整响应校验，以避免跨片段的 Provider 控制标记进入 Feed。当前实现不是逐 token 输出。
+- 当前测试已包含可见流式草稿、断流恢复和迟到 Writer 的用例；本轮文档核对没有执行这些测试。敏感扫描仍按完整行释放文本，无换行的长段落会等到响应结束。尚未闭合的尖括号文本会等待闭合或完整响应校验，以避免跨片段的 Provider 控制标记进入 Feed。当前实现不是逐 token 输出。
 - Assistant 文本在完整响应校验前可以作为 `in_progress` Item 显示。Runtime 只有在校验成功后才确认它；失败草稿不会进入后续模型上下文。Runtime 不会额外调用模型来提前判断最终回答。如果响应随后包含 ToolCall，现有 Feed 会把前面的文本归入过程区。
 - Runtime 已移除响应结束后的额外模型完成审查。旧 profile 的 `completion_check_version=1` 不会重新启用它。Chat Completions 缺少原生结束信号时，Runtime 使用正常采样与 Tool follow-up 语义；Runtime 不用另一模型判断任务目标是否完成。
 - 已发布文本会参与 transport retry 的安全判断。normalization 的 `protocol_error` 和 `length` 仍走现有有界 protocol repair；失败草稿先结束，新的 Attempt 使用新 Item。`content_filter`、cancel 和 authentication failure 不进入该 repair。旧 Event 缺少 offset 时不能获得新的偏移去重保证。增量缺口会等待现有 Run 结束快照刷新来修复。
@@ -190,7 +190,7 @@
 
 ### Run 并发与资源模型
 
-- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。这个历史结果不代表后续改动已通过完整回归。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩与首批同步用户 Hooks 现已接入；PTY、剩余 Hook 事件和流式工具调度仍属后续工作。
+- 执行门控整改的 Linux 定向验证与当时的完整回归结果记录在 PR #103。PR #103 所用快照中的 Runtime Full 和 Desktop Main 测试失败可在原始 main 上复现。2026-10-14 的 `pnpm test` 通过：Runtime 2,475 项、Desktop 合约 4 项、Renderer state 171 项、Main 88 项和 Renderer behavior 599 项；2 项 `large_repository` 按配置排除。这个历史结果不代表后续改动已通过完整回归。正常完成检查覆盖运行时控制事实，不自动判定测试覆盖率、交付物质量或用户目标是否全部满足。模型辅助压缩与首批同步用户 Hooks 现已接入；Agent Shell PTY 和流式工具调度仍属后续工作。当前 Hooks 已接入 12 个事件、同步与后台命令、MCP 处理器，具体边界见[当前 Hooks](features/hooks.md)。
 
 - 普通 Run 没有并发上限。Runtime 按 Session 分别维护持久 FIFO，同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run；不同 Session 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - 当前每个活动 Run 使用一个 Worker Thread。模型异步 I/O、MCP、Managed Task 和安全只读批次由唯一 RuntimeAsyncKernel 管理。当前没有把整个 RuntimeEngine/RunSupervisor 改成原生 async 的实现。
@@ -200,7 +200,7 @@
 
 ### Workspace 与工具
 
-- 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件。写入工具支持普通 Workspace 写入和经审批的外部普通文件写入；普通 Skill 需要明确写入授权，`skills/.system` 始终禁写。已有文件使用受控原地写入，新文件使用排他提交；工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
+- 内置只读文件工具可以处理当前 Workspace 和 active Skill root 内受支持的普通 UTF-8 文件。写入工具支持普通 Workspace 写入和经审批的外部普通文件写入；普通 Skill 需要明确写入授权，`skills/.system` 默认拒写，用户可通过高危人工审批批准具体变更；full_access 沿用已确认的模式例外。已有文件使用受控原地写入，新文件使用排他提交；工具不处理 hardlink、symlink、特殊文件、特殊 mode 或文件 flags。
 - 普通 Workspace 读取、列目录和文本搜索不按敏感文件名或可识别敏感内容拒绝。`.git`、`.agents` 和 `.eidos` 默认发现时隐藏，但显式只读路径仍可列举、搜索和读取；这三个目录默认受到写入保护。获批的 `run_shell.gitWriteAccess` 可以写当前 repository 的 Git metadata；普通文件工具或其他受保护路径变更需要高危人工确认。Workspace 外的 Eidos data 和配置的保密路径默认拒绝，用户可以批准明确范围。
 - `apply_patch` 统一使用 Codex Patch：支持 Custom 和 Grammar 的相应 profile 直接提交原文；Function profile 提交 `{ "patch": "..." }`。旧的 `{ "changes": [...] }` 不再接受。两条路径的 Patch 原文预算统一为 8 MiB，Function 外层 JSON 另留转义空间。`apply_patch` 不再按内容模式或敏感文件名拒绝 Patch。单文件读取、准备和提交校验上限统一为 16 MiB；一次 Patch 的准备内容预算为 64 MiB，Diff 和结果各有 64 MiB 上限。预算约束 Runtime 资源，工具说明不规定文件拆分、补丁大小偏好或分批时机。JSON 类型、Patch 语法、当前文件匹配和最终写入验证是不同阶段；单个阶段通过不代表编辑成功。离线回归验证契约和安全行为，不能代表真实 Provider/模型的成功率；模型成功率需要另行使用相同任务集测量。
 - Custom Tool 的 input delta 在 Responses adapter 内部重组。Desktop 在完整参数通过解析并完成 Prepare 后显示持久补丁更新；它不展示尚未校验的逐 token 补丁。Prepare 完成不代表文件提交成功。
@@ -243,7 +243,7 @@
 - Runtime 会检测并清理 background child，但 Agent Shell 不能管理持久后台进程。
 - ShellEnvironmentSnapshot 不恢复 aliases、functions 或其他 shell state。
 - Skill 依赖自动绑定只适用于现有识别器能识别的直接脚本调用，包括 `$RUNTIME_PYTHON` 和 `$RUNTIME_NODE`。Runtime 不会从任意 Shell 包装、变量脚本路径或已激活 Skill 列表推断普通命令的依赖，也不会自动安装缺失包。
-- Shell cwd 必须解析到 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。Workspace 外的 absolute cwd 会返回 Tool Error。
+- manual 与 auto_review 要求 Shell cwd 位于 Workspace 内。调用方可以使用 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径。full_access 允许 Workspace 外的 absolute cwd，但准备和启动仍核验目录身份。
 - Agent Shell 的 raw stdout/stderr 仍有 256 KiB 上限。它不提供无限输出流。
 - Agent Shell 会对 stdout 和 stderr 做 UTF-8 增量解码。Desktop Execution Feed 在运行中和终态保留两条流的展示脱敏片段顺序，并把 ANSI/OSC 控制序列按纯文本处理；聚合结果仍保留原始 stdout/stderr。旧 Item 缺少或为空的 `content` 时，Feed 使用结果中的 stdout/stderr 回退，并在结果存在时展示 `attemptCount`、`sandboxed` 和 `escalated` 事实。
 - 模型收到的 `run_shell` 输出每条 stdout/stderr 流最多 16 KiB，整个结果 JSON 最多 48 KiB。模型投影保留每条流的首尾，并用独立的 `modelProjectionTruncated`、`modelProjectionOmittedBytes` 和 `modelProjectionContinuation` 说明模型省略的 stdout/stderr UTF-8 字节。原始 `truncated` 和 `omittedBytes` 仍表示 Shell 原始输出限制，已丢失的原始字节不能恢复。
@@ -253,9 +253,9 @@
 ### Repository Intelligence
 
 - Inventory、Repository generations、Tree-sitter Index、symbols/imports/references/chunks、Repository Map、SQLite FTS5、Retrieval Snapshot、ContextPlan 和 ContextSnapshot 已经有 typed infrastructure、persistence 和 focused tests。
-- Repository Generation readiness 已经进入 Runtime。Workspace 激活只 fast restore 和启动 watcher。`RuntimeEngine.run()` 会在第一个 Model Step 前执行一次 `ensure_ready()`。首次 build、cold-start reconciliation 和 watcher-invalidated 的下一个 Run 会执行 bounded Inventory scan。Clean Run 和同 Run 后续 Model Step 不会重复 scan。
+- Workspace 激活启动已有 watcher 所有者，Run 通过 `available_for_run()` 捕获当时可用的 Snapshot，不等待首次索引。watcher 或显式 `ensure_ready()` 执行有界 Inventory scan 与构建；缺少完整 Snapshot 时，Run 使用普通文件和搜索工具。当前 Run 不会被后续 watcher 事件原地替换 Snapshot。
 - v1 数据库中的旧 generation 没有 persisted RepositoryMap。v6 拆库迁移会把它们标为 incomplete，不会用当前文件系统回填旧 Map。Runtime 只读取它们的 generation watermark。首次新 build 会生成更高的 complete generation。
-- Cold start 仍然不能只凭旧 Inventory 证明仓库 clean，所以第一个 Run 会 reconcile。当前实现使用一次 bounded full Inventory scan。它没有 partial directory index、filesystem journal、Base Index + Worktree Overlay 或增量 Map 算法。
+- Cold start 不能只凭旧 Inventory 证明仓库 clean。已有 watcher 或显式刷新负责有界完整扫描，模型首个 Step 不同步等待该扫描。当前系统没有 partial directory index、filesystem journal、Base Index + Worktree Overlay 或增量 Map 算法。
 - Repository build 是增强能力。Canceled、incomplete、manifest verification failure 或 Git state change 不会替换旧 active generation。没有旧 complete generation 时，Snapshot 仍可为空，Agent 继续依赖 Workspace tools。
 - 当前默认 online Run 已经自动执行一次 grounded Repository Retrieval，并通过 ContextBuilder 注入 Repository overview 和 evidence。每个 ModelAttempt 也会绑定精确 ContextSnapshot。
 - 模型请求前缀仍有两条中途可变的来源。其一，resolved instructions 的 `runtime-permissions` 层渲染了 `Available tools` 清单和 rejected approval 计数，Run 中途连接 MCP 或出现被拒审批会改写这一层。其二，`user_context_layers` 中的 `selected-skill:*` 位于历史之前，Run 中途激活 Skill 会在全部历史之前插入新消息。两者都会让该 Step 的指令哈希变化并使后续历史无法命中缓存。
@@ -267,7 +267,7 @@
 
 - Runtime 可以持久化 Long Task 控制、pause/resume/cancel、restart verification 结果和 reconciliation 状态。启动时，没有未完成 Tool 执行或不确定副作用的 active Run，且同时没有 cancel request、没有 reconciliation barrier、没有未决有副作用 Durable Intent 和没有 running ToolAttempt 时，才可以重新排队。更广泛的 Restart Verification 尚未覆盖完整的 Git diff、credential、MCP、Seatbelt、pending Approval、unfinished ToolCall、Durable Intent 和 Checkpoint 兼容性集合。
 - Checkpoint create/list 和 rewind/fork lineage 已持久化并暴露 typed RPC。Managed 和 Local Git Checkpoint 会保存 HEAD、staged、unstaged 和 untracked Git 状态。Managed Fork 会恢复独立 Worktree 的完整 checkpoint Git 状态。Managed 和 Local Rewind 会恢复原 checkout 的完整 checkpoint Git 状态。Local Rewind 只允许用户显式调用。Rewind 尚未重建完整逻辑 Context。Fork 仍不会复制全部非 Git immutable snapshots。Ignored 文件不进入 Checkpoint artifact。
-- Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前仍不提供 Permanent Worktree、Pinned Chat、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
+- Worktree Session create、Session delete、managed Checkpoint Fork、managed Checkpoint Rewind、Create Branch Here、retention cleanup 和 Restore 使用 durable lifecycle intent。Session Handoff 使用 durable operation、strict HandoffPlan 和 startup recovery。Create Branch Here 使用 attach 时冻结的 `expected_head`，不使用创建时的 `base_commit` 判断当前 branch HEAD。Runtime 仍会拒绝 dirty Worktree delete，并保留无法证明安全的目录和 legacy attached branch。Retention 只处理 managed Worktree，不处理 adopted Worktree、Permanent Worktree 或按 bytes 的 disk quota。User Branch handoff 给 Local 后只释放 Eidos Worktree metadata，不删除 Git ref；Session delete 仍会保留这个普通用户 branch。Local Session delete 不删除用户 workspace。当前已提供 Project / Session 置顶。系统仍不提供 Permanent Worktree、Archive Chat、multi-Session shared Worktree、dependency cache Snapshot 或 Pull Request UI。
 - Linked Worktree 的 Git metadata read 和获批后的精确 write 已在真实 macOS Seatbelt 中验证。默认 write、原始 repository working-tree access 和不匹配的 Worktree recovery 仍会被拒绝。Desktop dirty indicator 只使用 `project/gitContext` 和当前 Session status，不做所有 Thread 的持续轮询。Non-Git Local Workspace Checkpoint 仍不保存或恢复 filesystem state。
 - 子 Agent 第一阶段复用现有 Agent Loop、审批和扩展工具。每个父 Run 最多有 16 个子 Session，同时最多运行 8 个子 Run；名额只在该父 Run 内计数，不影响其他父 Run。独立 Worktree 交付与合并、跨 Worktree Repository Intelligence 共享尚未实现。完整回归与真实 macOS 验证结果见当前 PR。
 - Runtime 不恢复已消失的 Model request、Process 或 ToolCall。重启时，系统记录实际中断与未知结果，并禁止自动重放不确定操作。旧未知结果不再成为后续 Run、工具、正常完成或取消的核验门。
@@ -275,7 +275,7 @@
 ### Compaction 与 Context
 
 - 自动摘要阈值为当前 Run 冻结模型窗口的 85%，系统使用 Provider 实测值及新内容估算后的预计输入进行判断。系统不再按固定 64K 或新增历史数量触发摘要。界面百分比经过取整，显示 85.0% 不代表未取整值已经达到阈值。请求输出预留、安全余量、内部投影限制或 Provider 超限仍可能更早触发保护性压缩。手动压缩不受 85% 限制。Runtime 保留用户消息、Skill 正文和近期证据，因此压缩不保证固定压后比例。候选摘要未通过验证时，Runtime 保留原投影；同一上下文状态不会重复尝试尚未超出输入预算的自动摘要。旧工具正文清理是独立步骤，不产生摘要压缩记录。
-- 在线历史投影仍有 8 MiB / 2,000 条资源保护；768 KiB / 200 条只限制摘要候选批次。超出资源预算不再让 Run 直接失败。系统无法通过摘要恢复时会暂停，不会静默删除必需事实。损坏的回放和真实存储错误继续按错误事实处理。
+- 在线历史投影仍有 8 MiB / 2,000 条资源保护；768 KiB / 200 条只限制摘要候选批次。超出资源预算不再让 Run 直接失败。系统无法通过摘要恢复时会使用更小的历史证据视图继续可取消恢复，不创建容量暂停；原始事实继续保留。损坏的回放和真实存储错误继续按错误事实处理。
 
 - 在线 ContextCompactor 在规则候选之上请求结构化模型说明。模型只使用有界来源，因此它可能没有看到全部历史正文。关键事实继续由规则与持久事实提供。Schema、引句与来源校验不能证明所有语义完整，系统仍需要真实任务评测。
 - 离线 cl100k 计数是参考估算，不是所有自定义模型的真实 tokenizer。消息协议、图片和 Provider 私有开销仍有估算误差。词表缺失或损坏时，Runtime 使用保守字节上界，不隐式联网。真实端点的误差分布和长期任务质量仍需单独评测。
@@ -286,13 +286,13 @@
 - 候选摘要必须通过 `state.sqlite` 事实验证，才能原子写入 verified record 和权威摘要。Tool provenance 从 summary 的 source Item IDs 对应到真实 ToolCall IDs，并支持 pre-turn 跨 Run 历史。当前 deterministic compactor 不吸收 Event 内容或 Retrieval evidence 正文，所以不会虚假附加这些 provenance。验证失败时，Runtime 保留上一份 verified summary。原始 Item 和 Tool 事实不会被删除。Thread history JSONL 当前是 Event projection，不是独立的全量 Conversation authority。
 - 旧 MemoryStore 已在 v40 移除。当前长期记忆使用 `state.sqlite` 与主题 Markdown，ContextBuilder 注入短索引，具体边界见本文的“记忆”一节。
 - Context Usage 展示当前 Run 最新已构建投影的大小。系统优先使用这个投影对应请求的 Provider 输入量；系统不会使用累计 Tokens。压缩后，Engine 会发布新投影估算，下一请求返回后再使用其 Provider 实测值。分项是按当前总量分配的估算，不是 Provider 提供的精确分项。系统在重建投影失败时显示暂无统计，但同一 Session、同一模型的新 Run 在首次取得有效统计前会保留上一轮读数。系统没有为尚未构建的新输入预先生成读数。旧 Plan 没有分项时，系统不会补造各项数值。
-- Provider 明确 `context_exceeded` 后，如果没有新的可压缩历史或 Context projection 没有进展，Runtime 会以 `context_still_over_budget` 停止。
+- Provider 明确 `context_exceeded` 后，如果压缩没有进展，Runtime 会转入更小的容量恢复投影。该流程不重放原操作，也不能保证任何任务都能在当前窗口内完成。连接、限流和超时仍受有限模型重试预算约束；预算耗尽会记录失败，详见[模型重试边界](../architecture/model-gateway.md#当前限制与源码入口)。
 
 ### Extension 与 MCP
 
 - MCP 设置页只对已启用、已授权的服务执行工具目录发现。首次查询会启动受现有 Seatbelt 控制的短连接，使用官方 SDK 初始化并取得有界目录，随后关闭连接；该入口不会调用工具。页面按 10 条分页读取 Runtime 的展示缓存。缓存最多 8 个目录，每个目录最多 512 KiB，有效期为 5 分钟，不写 SQLite，也不作为 Run 工具或授权的事实来源。Runtime 重启、缓存淘汰、配置变化或到期后，旧游标会失效，页面提示重新加载。目录描述最多展示 4096 个字符；不受支持的工具 Schema 仍可查看，但会标为不可用。设置页连接启动期限最多为 15 秒，关闭弹窗会忽略迟到结果。
 - Plugin 支持三种本地包、显式更新、旧版本保留、远程 Streamable HTTP 和独立账号连接。应用随附 GitHub 插件，用户需要主动安装和授权。GitHub 浏览器登录仍需发行方注册应用、启用 Device Flow 并配置公开 Client ID；当前仓库未填入真实标识，PAT 入口可用。Figma 未内置。当前没有远程 marketplace、Git/npm 下载器、Codex App 连接映射或动态 import 用户 Plugin。服务 ID 仍须全局唯一。详见 [docs/current/features/plugins.md](features/plugins.md)。
-- Skill Catalog 当前只投影 `SKILL.md` frontmatter 中的顶层 `name` 和 `description`。`agents/eidos.yaml` 的 `runtimeDependencies` 使用严格 typed parser。其他字段可以保留在原始 Skill 内容中，但不会进入 Catalog、协议或权限判断。
+- Skill Catalog 使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`。可选的 `agents/eidos.yaml` 还提供界面、资产、MCP 依赖、隐式激活策略和严格校验的 `runtimeDependencies`；这些声明不能自行授予权限或安装依赖。其他 frontmatter 字段不改变执行权限。
 - Settings 的手动 MCP 编辑器仍只支持本地 stdio。远程地址和认证方式由插件声明；用户可以通过账号面板连接。通用 OAuth 只接受公开客户端注册，或 SDK 的 DCR/CIMD，不提供机密 Client Secret 录入。远程响应上限为 2 MiB，要求不压缩传输。MCP 的 Resources、Prompts、Sampling、Tasks 和 MCP Apps 尚未提供产品入口；非文本工具内容仍遵循现有不支持规则。
 - MCP ready connection 是长生命周期 Service，但 startup、Tool call、Tool list、cancel 和 shutdown 都有各自的有界等待。已经开始的 Tool List Changed bookkeeping callback 可能在关闭时需要等待完成。
 
@@ -354,7 +354,7 @@
 
 - 普通 Skill 的授权不能覆盖整个数据目录或包含 `.system` 的 Skill 容器。新文件的最近已存在父目录如果包含系统 Skill，工具会拒绝该宽泛授权；新建 Skill 可以使用已有的 `skill_create` 审批流程。
 - `skill_create` 可以提交超过 64 KiB 的完整文本资源，但仍保留现有存储资源边界：单文件 4 MiB、完整 Skill 8 MiB、最多 512 个文件（包含生成的 `SKILL.md`）。工具暂不接受二进制文件内容，也不提供分块续写或覆盖已有 Skill 的接口。名称、描述、相对路径、重复路径、系统 Skill 保护和审批规则继续生效。工具容量放宽不能修复模型生成的无效或未完成 JSON。新建 Skill 仍在后续 Run 的目录快照中生效；当前 Run 不会静默刷新目录。普通文件读取工具的容量和模型预览预算没有随本次修改扩大。
-- 系统 Skill 的永久写入保护需要保留在执行环境中。因此任意 Shell 的无沙盒提权在存在永久写入保护时不可用；审批过的受控文件 helper 仍可对允许的具体目标进行无沙盒写入。
+- 系统 Skill 在 manual 与 auto_review 中默认受到写入保护。受保护路径变更和裸 Shell 无沙盒执行需要高危人工批准；Runtime 在批准后重新物化权限。受控文件 helper 仍逐目标核验，full_access 沿用用户确认的模式例外。
 
 ## 本轮产物实现的边界
 
@@ -420,9 +420,9 @@ Plan 没有另建只读权限系统。模型通过模式指令遵守“先规划
 
 ## 子 Agent 的阶段边界
 
-本阶段交付父任务管理的单层委派，只支持 `default`、`explorer`、`worker`。三个角色继承父 Run 的普通工具、审批模式、权限和已启用扩展；角色指令表达通用任务、代码调查、实现与验证的分工。`explorer` 能执行 Shell，也能在已有权限允许时修改文件，因此它不提供强制只读保证。子任务共享当前工作目录。多个执行者可能修改同一文件，父任务需要分配不相交的修改范围并复核结果。子任务读取的是实时文件，不是固定提交或文件系统快照。
+当前实现提供父任务管理的单层委派。系统内置 `default`、`explorer`、`worker`，也支持固定 TOML 目录与 Run 快照中的自定义 Agent。三个角色继承父 Run 的普通工具、审批模式、权限和已启用扩展；角色指令表达通用任务、代码调查、实现与验证的分工。`explorer` 能执行 Shell，也能在已有权限允许时修改文件，因此它不提供强制只读保证。子任务共享当前工作目录。多个执行者可能修改同一文件，父任务需要分配不相交的修改范围并复核结果。子任务读取的是实时文件，不是固定提交或文件系统快照。
 
-本阶段没有自定义角色、自动分配独立 Worktree、补丁交付与合并、多层委派、不同子任务选择不同模型、整组费用预算或自动重试中断任务。父任务沿用已有 Loop Guard；子 Session 数量上限不是费用上限。消息不打断正在执行的模型调用；消息在下一次上下文构建时生效。`followup_task` 复用子 Session 的已有上下文。已结束的父 Run 不能继续管理新委派，新用户回合需要创建新的委派关系。
+自定义 Agent 可以选择已有模型与思考设置。系统仍没有自动分配独立 Worktree、补丁交付与合并、多层委派、整组费用预算或自动重试中断任务。父任务沿用已有 Loop Guard；子 Session 数量上限不是费用上限。消息不打断正在执行的模型调用；消息在下一次上下文构建时生效。`followup_task` 复用子 Session 的已有上下文。已结束的父 Run 不能继续管理新委派，新用户回合需要创建新的委派关系。
 
 Agent 消息正文最多 64 KiB UTF-8，模型每次优先提供最早 32 条未读消息，并按正文预算裁剪。Runtime 只在完整正文进入成功模型请求后保存投递回执，已读消息不重复注入；长消息的截断预览带有原始消息 ID，可通过 read_agent_message 读取。主模型默认只看结果、状态和明确消息，过程工具与中间回答留在子会话。结果正文按 8,192 个估算 token、64 KiB 单项预算和动态总预算生成预览，父任务可通过 read_agent_result 读取完整结果，分页严格限制在当前父 Run 拥有的子会话内。Desktop 的状态摘要仍采用短预览，完整会话记录可以分页查看。环境信息展示最近一组委派，当前没有跨组历史浏览器。真实 Provider 下的长结果交付和 Electron 手动验收仍需单独验证。
 
@@ -430,13 +430,13 @@ Runtime 重启后的完整协作恢复、Outbox 重投、真实模型端到端�
 
 ### 门控精简后的边界（PR #102）
 
-Shell/外部操作的未知影响无法仅靠目录扫描证明恢复；旧 Intent 缺少可信目标时也不能按路径放行。文件冲突范围放行不提供自动合并。同 Run 的多个 Shell、不同 Run 的并发写入都需要任务分工。运行进程仍属于原 Run：等待子任务和 Plan 提问可以保持托管，最终退出会清理，不提供跨 Run 后台服务生命周期。控制调用允许混合批次，原 Worker 顺序等待后继续；取消或崩溃仍不重放不确定操作。
+Shell 和外部操作的未知影响无法仅靠目录扫描证明恢复。未知结果只保留为历史事实，不再按 Intent 范围阻断后续工具。当前文件身份与版本核验仍生效，系统不提供自动合并。同 Run 的多个 Shell、不同 Run 的并发写入都需要任务分工。运行进程仍属于原 Run：等待子任务和 Plan 提问可以保持托管，最终退出会清理，不提供跨 Run 后台服务生命周期。控制调用允许混合批次，原 Worker 顺序等待后继续；取消或崩溃仍不重放不确定操作。
 
 ### 整体门控整改后的边界
 
 首次 Repository 索引在已有 Workspace 所有者中构建，当前 Run 捕获不到 Snapshot 时依赖文件和搜索工具。索引仍然是有界的、按 generation 验证的能力，不承诺首次模型调用已经具备完整 Repository Map。
 
-审批或澄清期间可编辑草稿，提交仍受 Run 状态、模型配置和工作区可用性约束。自动审批无法作出可信决定时可由用户接管，明确风险拒绝不能由模型自行绕过。新用户授权会重新计算拒绝指纹，不代表自动批准。
+审批和澄清期间，专用交互替换普通 Composer。系统保留 Session 草稿，并在等待结束后恢复显示；提交仍受模型配置和工作区可用性约束。自动审批无法作出可信决定时可由用户接管，明确风险拒绝不能由模型自行绕过。新用户授权会重新计算拒绝指纹，不代表自动批准。
 
 Git stage、commit、fetch 和 push 可与活动 Run 并存，Git 自身锁和已有操作幂等检查继续生效。工作树可能在操作期间变化，因此操作者仍需核对实际提交内容；切换分支、创建分支、merge、rebase 和 pull 保留工作树生命周期互斥。
 

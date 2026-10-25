@@ -6,6 +6,8 @@
 
 读者从 [当前实现说明](current/README.md) 查看整体架构、能力、限制与执行规则，再按需进入 [当前功能说明](current/features/README.md)。
 
+读者可以在 [2026-10-25 文档与源码核对记录](evaluations/documentation-source-audit-2026-10-25.md) 查看本轮发现的差异、修正和仍存的实现差距。
+
 读者从 [架构专题](architecture/README.md) 查看 Harness 的组成、机制与源码入口，也可以直接打开 [进程架构图](architecture/overview.html) 或 [Harness 离线图集](architecture/harness-atlas.html)。
 
 ## 按用途查找

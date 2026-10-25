@@ -192,9 +192,9 @@ Session Delete 会先通过既有 `session/delete` durable operation 清理 Snap
 
 ## Schema and lifecycle states
 
-当前 SQLite schema baseline 是 v1，对应 Eidos 0.3。基线直接创建 filesystem Project、Worktree、Session binding、execution mode、branch ownership、Session Handoff、Worktree Settings、Snapshot metadata 和 retention/restore lifecycle fields。旧 revision 不会自动升级，版本不匹配时 Runtime 会保持数据库不变并进入 `health_only`。
+当前主库 `state.sqlite` 的 schema 是 v41。Runtime 会对受支持的旧版本执行迁移；未知版本和未来版本会进入 `health_only`。Worktree、Session binding、branch ownership、Handoff、Snapshot 和 retention/restore 使用同一主库与迁移链。维护者可以在 [schema.py](../../runtime/eidos_runtime/db/schema.py) 和 [database.py](../../runtime/eidos_runtime/db/database.py) 核对版本与迁移入口。
 
-`worktree_lifecycle_operations` 当前包含 `session/create`、`session/delete`、`checkpoint/fork`、`worktree/attach-branch`、`worktree/retention-cleanup` 和 `worktree/restore`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`snapshot_saved`、`state_materialized`、`worktree_rebound`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
+`worktree_lifecycle_operations` 当前包含 `session/create`、`session/delete`、`checkpoint/fork`、`checkpoint/rewind`、`worktree/attach-branch`、`worktree/retention-cleanup` 和 `worktree/restore`。它使用有限状态：`prepared`、`worktree_created`、`session_created`、`run_created`、`checkpoint_action_created`、`branch_attached`、`snapshot_saved`、`state_materialized`、`worktree_rebound`、`worktree_deleted`、`completed` 和 `cleanup_required`。它不是通用 workflow engine，也不保存 arbitrary payload executor。
 
 ## Startup recovery
 
@@ -225,7 +225,7 @@ Observation failure、timeout 或 bounded diff truncation 不会更新 Worktree 
 
 ## Sandbox
 
-Managed Worktree 的 writable root 是 `Worktree.worktree_root`。Seatbelt 对 verified `git_dir` 和 Project 的 verified `git_common_dir` 只开放 read-only metadata access。原始 repository working tree 不属于该 Thread 的 execution workspace。
+Managed Worktree 的 writable root 是 `Worktree.worktree_root`。manual 与 auto_review 默认只读访问已核验的 `git_dir` 和 `git_common_dir`。用户可以通过 `gitWriteAccess=request` 的审批开放当前仓库的精确 metadata 写入；受保护路径与裸 Shell 无沙盒执行仍需要高危人工确认。full_access 沿用用户确认的模式例外。原始 repository working tree 不属于该 Thread 的 execution workspace。
 
 Local Workspace 的 writable root 是 `Project.workspace_root`。Local profile 不构造假的 `.git`、`git_dir` 或 `git_common_dir`。Local Run 仍使用相同的 Workspace identity、path boundary、special-file checks、approval 和 sandbox validation。
 
@@ -233,4 +233,6 @@ Local Workspace 的 writable root 是 `Project.workspace_root`。Local profile �
 
 Session projection 提供 `projectId`、`workspaceRoot`、`gitAvailable` 和 `executionMode`。Desktop 创建 Thread 时显示 Local / Worktree 选择。Git Project 的 Worktree 选择器使用 Runtime `project/gitContext` 提供的 current branch、HEAD、local branches、dirty 和 changed file count。Worktree 起始 ref 等于当前 branch 且 source dirty 时，Desktop 默认勾选 `Include current changes`；Runtime 仍要求 request 显式传入 `includeLocalChanges`。Local Session 隐藏 Starting Branch；Worktree Session 显示 Starting Branch。Worktree Sidebar 在 detached 状态显示 `Detached @ <short-head>` 和 `Create Branch`，并保留 dirty status、HEAD diff 和 baseline diff UI。
 
-当前仍未实现：Permanent Worktree、Pinned Chat、Archive Chat、Parallel Agent、Git staging/commit/push UI、branch merge/rebase/force delete、Pull Request UI、完整未提交 patch 的 checkpoint rewind/fork，以及 cross-worktree Repository Intelligence sharing。
+当前已实现 Project / Session 置顶、单层子 Agent 委派，以及 Review 中的 Stage、Unstage、Discard、Commit、Fetch、Pull、Push、Merge 和 Rebase。Managed 和 Local Git Checkpoint 保存 HEAD、staged、unstaged 与 untracked 状态；Managed Fork 恢复独立 Worktree，Local Fork 共享当前目录，Rewind 恢复原 checkout。Ignored 文件不进入 Checkpoint artifact。
+
+当前仍未实现 Permanent Worktree、Archive Chat、分支强制删除、Pull Request UI 和跨 Worktree 的 Repository Intelligence 共享。子 Agent 不自动分配独立 Worktree。Rewind 尚未重建完整逻辑 Context，Non-Git Workspace 不支持文件系统回退。详细边界见[当前能力](../current/capabilities.md#runtime-git-worktree-kernel)与[当前限制](../current/limitations.md#recovery-与-checkpoint)。

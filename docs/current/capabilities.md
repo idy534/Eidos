@@ -2,7 +2,7 @@
 
 用户可以在“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch，并手动勾选默认服务。两家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
 
-Eidos 已增加钉钉应用机器人接入。用户可以在设置的“渠道”页配置应用凭证、模型、项目和审批模式。Runtime 默认接收单聊文字消息，群聊需要 @ 机器人，系统不设置用户和群白名单。渠道支持经 Desktop 二次确认并保存的完全访问模式，后续消息使用已保存的授权。Runtime 使用普通 Session / Run 执行，并向原会话回复。真实单聊和有效群 @ 已验证，完全访问的渠道到 Run 执行由定向集成测试覆盖；长期重连仍待验收。配置和边界见 [当前渠道接入](features/channels.md)。
+Eidos 支持钉钉、飞书和企业微信文字消息。用户可以在“设置 → 助理”为各平台配置凭证、模型、项目和审批模式。各渠道按平台的群机器人提及规则接收消息，不设置额外用户和群白名单。渠道支持经 Desktop 确认并保存的完全访问模式。Runtime 使用普通 Session / Run 执行，并向原会话回复。现有记录包含钉钉真实收发验证；飞书、企业微信与长期重连仍需真实平台验收。配置和验证边界见 [当前渠道接入](features/channels.md)。
 
 本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](features/automations.md)。
 
@@ -16,7 +16,7 @@ Runtime 使用 `session/fork`、必填 `operationId` 和不可变历史清单完
 
 Session 正文最上方已移除“加载更早的记录”按钮。当存在更早记录分页时，向上滚动到靠近顶部会流式自动获取下一页历史，无需手动点击，并在追加更早历史时保持视口阅读位置。来源按钮会打开原 Session，并加载包含原回答的页面。界面保留当前消息与状态，不让迟到的历史页覆盖其他 Session。
 
-分叉创建时，Runtime 会保存原 Session 的名称。新 Session 会立即出现在侧栏，并保留该名称。首次对话不会触发新的自动命名。侧栏在名称末尾放置分叉图标；图标只在悬停或键盘焦点时显示。旧版未命名分叉会在 v26 → v27 升级时补齐名称，已有名称保持不变。
+分叉创建时，Runtime 会保存原 Session 的名称。新 Session 会立即出现在侧栏，并保留该名称。首次对话不会触发新的自动命名。侧栏在名称末尾常驻显示分叉图标。旧版未命名分叉会在 v26 → v27 升级时补齐名称，已有名称保持不变。
 
 侧栏、回答操作栏和分叉弹窗共用同一个分叉图标。分叉名称的悬停气泡会显示“来源会话”和直接来源 Session 的当前名称。用户可以点击这个名称打开来源 Session。嵌套分叉显示直接父会话；来源不在当前列表中时，气泡显示“来源会话不可用”，不提供跳转按钮。
 
@@ -86,7 +86,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Git 观察、标题生成和其他 Managed Task 共用的入口已把执行与清理统一放到 AnyIO worker。该修订移除了任务清理在事件循环上等待 Supervisor 锁的路径，保留资源登记、协作取消和异常传播。该修订尚未通过回归测试，不能据此宣称 Runtime 无响应问题已完成验收。
 - Run 按 Session 分别使用持久 FIFO。同一 Session 同时只运行一个 Run，因此一个 Session 可以排队多个 Run。不同 Session 的 Run 可以并行，且不区分 Workspace、Local checkout 或 Managed Worktree。普通 Run 没有并发上限。每个 Run 有独立的 `ToolConcurrencyGate` 和 `ShellProcessManager`，所以不同 Session 可以在同一个 Workspace 并行执行 Shell 和其他普通副作用。同一 Run 的长 Shell 不再占有执行门控，其他文件变更、命令和协作调用可以继续；`write_stdin` 继续管理原 Shell。等待 Approval 不会占用其他 Run 的执行资源。
 - Run 状态、Item、Step、ToolCall、Approval 和终态写入 SQLite，并通过 Event/Outbox 投影到 Desktop。
-- 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消会停止执行。未清除的 reconciliation barrier 会使 Run 返回 `interrupted`，并保留副作用事实；Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。
+- 取消会传播到 Model、Tool、Shell、Approval 和 Async Task。取消会停止执行，并将可取消的 Run 置为 `canceled`；历史未知结果继续保留，不改变该取消状态。Worker 已退出时，取消 RPC 正常返回。`sideEffectsMayExist` 只是历史证据。已取消 Run 不会被迟到模型结果改成成功。
 - Model Step Count、Segment Step Count 和 effective time 可以作为持久 telemetry 读取。
 - 健康 Run 不受固定 model-step、Run duration 或 fixed repeated-call counter 限制。Segment rollover 不会把 Run 变成终态。
 
@@ -278,13 +278,12 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Shell effective environment 使用真实 `HOME`、snapshot 的 Host `PATH`、真实 `TMPDIR`、`USER`、`LOGNAME`、`LANG` 和 `LC_*`。Bundled `rg` 目录只追加在 `PATH` 末尾并去重。Provider 会在启动 login shell 前移除继承的 `EIDOS_*` 和 packaged Runtime Python control environment。用户 profile 随后声明的普通开发环境仍会进入 snapshot。Runtime 不会强制设置 `LC_ALL`。
 - `run_shell` 不从 `models.json` 注入 API Key，也不强制禁用用户 Git 配置。`HardenedGitRunner` 仍使用独立的 Git 执行路径。
 - 数据目录内的当前 Workspace 支持 Shell 创建子目录和读写普通文件。Seatbelt 只为其祖先补充 metadata / 存在性检查；其他会话、数据文件和父目录内容继续受保护。
-- 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、Workspace 的 `.git`、`.agents`、`.eidos` 和 linked metadata 只读。Eidos data 和 credential 仍由 permanent deny 保护。data 内 projectless 或 Worktree workspace 可读写。active Skill root 默认可读和执行；普通 Skill 的具体写入范围可经审批开放，系统 Skill 永久禁写。Workspace `.env` 和其他敏感命名文件可读；命令和审批信息展示使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network denied。
+- 默认 Seatbelt 允许全盘 read、普通 executable 和 dylib mapping。Workspace、snapshot `TMPDIR` 和 canonical `/tmp` 可写。真实 `HOME` 的其他位置、Workspace 的 `.git`、`.agents`、`.eidos` 和 linked metadata 只读。Eidos 数据与凭据默认受路径保护，高危人工批准可开放具体范围。data 内 projectless 或 Worktree workspace 可读写。active Skill root 默认可读和执行；普通 Skill 的具体写入范围可经审批开放。系统 Skill 默认拒写，具体变更需要高危人工批准；full_access 不保留这些路径限制。Workspace `.env` 和其他敏感命名文件可读；命令和审批信息展示使用 best-effort 凭据脱敏，Shell 聚合 stdout/stderr 保留原始内容。默认 network denied。
 - `run_shell` 的默认 Workspace Seatbelt attempt 不需要 Approval。模型可以用高层 `networkAccess=request` 表达命令的联网需求，也可以用 `gitWriteAccess=request` 请求当前已验证 repository 的 Git metadata 写入。两个 intent 可以组合，所以 `git push` 可以用一次审批同时获得 Git metadata 写入和 network。Runtime 使用现有 GitBackend 重新解析并核验 `git_dir` 与 `git_common_dir`，模型不能提交路径。获批后的命令仍在 macOS Seatbelt 中运行；`.agents`、`.eidos`、Runtime、系统 Skill 和其他 repository 的 Git metadata 继续拒写。旧的 `sandboxPermissions` 和 `additionalPermissions` 输入继续兼容。其他 additional write 需要 Approval。显式裸 Shell unsandboxed 请求需要高危人工确认；用户可以允许本次命令使用系统直接权限。受控文件 helper 的无沙盒写入仍可单独审批，但它必须逐目标检查写入权限。
 - Runtime permission 投影会分别说明默认 Shell 网络状态和网络是否可通过 Approval 请求。创建项目、安装依赖和下载源码等任务不要求用户先明确说“联网”。默认 network denied 不再被投影成网络能力不存在。
-- Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。Workspace 外的 absolute cwd 返回普通 Tool Error。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
+- Shell launch boundary 验证 Workspace identity 和 cwd。`run_shell.cwd` 接受 Workspace-relative 路径或 Workspace 内的 canonical absolute 路径，并在执行前归一化。manual 与 auto_review 拒绝 Workspace 外的 absolute cwd；full_access 允许该路径，但仍核验目录身份。post-execution observation 记录 Workspace diff、退出状态和 reconciliation 需要性。
 - Tool Result 明确返回 `reconciliationRequired = false` 时，普通非零退出不会仅因为 `code = shell_exit_nonzero` 建立 barrier。此时 Item 状态是 `failed`，ToolCall 状态是 `completed`。结果仍会保留退出码、终止原因和可能副作用证据。系统仍如实记录真正未知的执行结果。
 - 默认 sandboxed attempt 出现明确的 network denial 时，Runtime 会保留首次 attempt 和 denial 证据，但不会把它升级成 unsandboxed retry。Runtime 也不会自动重放可能已经产生 Workspace 副作用的命令。
-- Runtime 保留 Durable Intent 和未知结果，但不要求用户核验，不阻止后续操作或 Run 完成，也不自动重放未知操作。
 - Runtime 保留 Durable Intent 和未知结果，但不要求用户核验，不阻止后续操作或 Run 完成，也不自动重放未知操作。
 - Workspace manifest observation 不完整时可以产生 `unknown` observation。已知成功退出不会仅因为观察不完整而被改成不确定副作用。
 
@@ -318,7 +317,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Skill 采用三层边界：Catalog 负责 Discovery 和 immutable Catalog Snapshot；Activation 负责 Selection、`SkillAccess` 和 Run-scoped activation；Resource 负责按需读取 `SKILL.md`、`references/`、`scripts/`、`assets/`，再进入现有 Tools 和 Sandbox。Skill 内容、产品依赖和 `runtime.json` 彼此分离。Discovery 读取 bundled system、用户和 Plugin Skill。Catalog 只使用 `SKILL.md` frontmatter 的顶层 `name` 和 `description`，并保留 source、version、source hash 和 content hash。`license`、`compatibility`、`metadata`、`allowed-tools` 等其他字段不会改变 Tool、Permission 或 Sandbox。
 - Selection 当前支持 qualified `@source:name` 和唯一的 `@name`/`$name` 引用。选中后 Runtime 才完整读取 `SKILL.md`。Skill 使用 progressive disclosure：`references/`、`scripts/` 和 `assets/` 只按说明通过相对路径读取，不能把完整 Skill tree 注入 Context。
 - `agents/eidos.yaml` 是可选 metadata。Runtime 使用统一 YAML parser 读取 interface、asset、dependency、policy 和有界 `runtimeDependencies` metadata。Runtime 使用严格的 `RuntimeRequirements` discriminated union 保存 Python package、Node package 和 executable declaration。缺失 declaration 保持旧行为。无效 declaration 会保留固定 error code，并保留旧的 interface、MCP dependency 和 policy metadata。无效的整个可选 YAML 会保留 display fallback，并报告固定 metadata error。`allow_implicit_invocation = false` 会禁止 Shell 识别自动激活，但不影响显式选择和 `skill_read`。Skill 不管理 pip、npm、系统命令或其他运行时依赖。
-- Skill 脚本复用已有 `run_shell`。受信任的 Catalog Skill 下的相对 `scripts/` 调用可以产生 implicit activation，并把 active Skill root 放入权限快照。Workspace root 是读写；active Skill root 默认只读并允许 executable mapping。普通 Skill 的获批写权限只覆盖审批展示的具体文件或目录，系统 Skill 不接受写入授权。插件脚本的系统依赖不进入 Skill 目录。
+- Skill 脚本复用已有 `run_shell`。受信任的 Catalog Skill 下的相对 `scripts/` 调用可以产生 implicit activation，并把 active Skill root 放入权限快照。Workspace root 是读写；active Skill root 默认只读并允许 executable mapping。普通 Skill 的获批写权限只覆盖审批展示的具体文件或目录。系统 Skill 默认拒写，用户可对具体变更作高危人工批准；full_access 沿用已确认模式。插件脚本的系统依赖不进入 Skill 目录。
 - Skill binary asset 在安装时按 bytes 保留。系统 Skill 私有目录读取会忽略 Finder 生成的 `.DS_Store` 文件。`skill_read_resource` 只返回有界 UTF-8 文本。支持图像输入的 Model 才能使用 `view_image`，它可以从 Workspace root 或 active Skill root 读取受信任 PNG/JPEG，并回放读取时保存的 multimodal binary content。DOCX、PPTX、PDF、XLSX 等其他 binary asset 不会被当作文本读取。
 - `skill_read` 和 `skill_read_resource` 接受 UTF-8 字节 `offset` 与 `maxBytes`，默认及上限为 24,000 bytes。结果返回 `startByte`、`endByte`、`totalBytes` 和可选 `nextOffset`；模型按 nextOffset 续读。工具保留完整资源的 contentHash，并拒绝字符中间的 offset。分页还为 JSON 转义预留空间，避免分页正文再次被通用投影截断。模型结果投影单独允许这两个工具的正文达到 24,000 bytes，其他字符串仍使用原来的 16 KiB 上限，结果总预算仍为 48 KiB。
 - Skill provenance、Plugin hash、Skill content hash 和 activation snapshot 进入 Run/Step 边界。Runtime dependency catalog 还会固定 `runtime.json` 的 manifest hash、Bundle snapshot hash 和 requirement hash。每个已声明 Skill dependency 的 binding 使用 `dependencyBindingId` 标识。Runtime 为识别到的 Skill 脚本选择对应声明的 binding，模型无需获取 ID。Runtime 在准备和启动前校验依赖；缺失或无效依赖会阻止启动，普通项目命令保留原环境。
@@ -333,7 +332,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v39。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v41。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。记忆正文使用私有 Markdown 文件，作用域、版本与撤销状态由 `state.sqlite` 管理；旧 `memories.sqlite` 在 v40 升级后删除。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
@@ -474,7 +473,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 - Session 与 Dock 标题栏统一为 2.75rem 高度。左侧导航通过列宽和位移折叠；右侧工作区通过宽度和位移推入推出，全宽切换沿用相同过渡。右侧工作区无打开标签页时展示副标题和带双行功能说明的行动卡片列表（窄栏单列，展开或宽容器下切换为双列网格）。右侧关闭后在 280ms 过渡结束时卸载内容；快速重新打开会取消卸载。拖动分隔条时关闭过渡，减少动态效果设置下直接切换。
 
-### 技能设置页面（生产实现，待测试验收）
+### 技能设置页面
 
 - 设置页铺满当前应用窗口。项目侧栏、侧栏折叠按钮和浮动导航在设置期间隐藏；侧栏快捷键不会展开侧栏。用户退出设置后，侧栏恢复此前状态。设置分类导航继续保留。设置页顶部标题栏高度（2.75rem）与标题字体规格（0.85rem / 600）与 Session 标题栏保持对齐。
 - 技能页面提供搜索、个人/系统分类和双列列表，窄窗口改为单列。页面不展示插件 Skill，插件 Skill 由插件详情管理。列表使用首字母图标、名称、简短说明和技能自身启用勾选，不展示 ID、只读、来源或版本。
@@ -490,7 +489,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Runtime 保存模式、审批来源、判断和审查元数据。旧 Run 和旧快照继续按请求审批模式解释。数据库新增 v12 → v13 迁移。
 - 权限模式已覆盖组件单元与交互行为测试（包含 ApprovalModeSelector 行为、ApprovalComposer 状态胶囊、Composer 交互以及 Runtime 协议测试）。
 
-## 输入入口与引用（生产代码已接入，待测试）
+## 输入入口与引用
 
 用户可以通过输入框左下角 `+` 选择文件、文件夹、Skill、MCP、Plugin 和历史对话。选择器提供分类、搜索、可用状态和扩展设置入口。`@` 打开统一引用选择，`$` 选择 Skill，`/` 提供 model、skills、mcp、plugins、status 快捷入口。选择器支持方向键、Enter、Escape，并避开中文输入法的组词确认。
 
@@ -543,7 +542,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ### Loop 校验与协作放行（PR #102）
 
-- 移除“先只读核验”的模型硬要求，Runtime 自动尝试恢复可核验的 Workspace 副作用；明确文件范围只阻止冲突路径，未知范围继续保守处理。
+- Runtime 不要求“先只读核验”，旧未知结果也不建立后续执行屏障。新操作仍检查当前权限、身份和版本；系统保留历史事实，不自动重放或合并。
 - 所有控制工具允许与其他工具同批顺序执行；有剩余批次时原 Worker 保持等待，避免剩余调用丢失或重放。消息、停止子任务和忙碌子任务的续派消息不受已有不确定副作用屏障阻断；未知结果不再阻止创建任何已授权角色的新子 Run。
 
 ### 执行门控整体整改
