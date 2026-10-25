@@ -1,0 +1,23 @@
+[
+  {"id":"01-harness","title":"Harness 组成总览","page":"harness-overview.md","description":"本图按任务执行需要的能力组织 Eidos。箭头表示主要调用或数据流；SQLite 保存业务事实。"},
+  {"id":"02-task-loop","title":"Durable Agent Loop","page":"runtime-loop.md","description":"本图展示任务接纳、模型采样、工具执行、持久等待与完成之间的循环。"},
+  {"id":"03-context-build","title":"上下文构建与请求快照","page":"context-compaction.md","description":"本图展示持久资料如何成为有来源、有预算、可复查的模型请求。"},
+  {"id":"04-compaction","title":"压缩算法与失败处理","page":"context-compaction.md","description":"本图展示早期压缩、超预算恢复、规则摘要、模型补充、独立验证和重新测量。"},
+  {"id":"05-continuity","title":"连续压缩的证据保留","page":"context-compaction.md","description":"系统在下一轮压缩时重新读取原始证据，并保留已经接受的连续记录。"},
+  {"id":"06-memory","title":"记忆读取与发布","page":"memory.md","description":"短索引进入上下文，主题正文按需读取。发布事务控制当前有效版本。"},
+  {"id":"07-memory-revocation","title":"记忆撤销与迟到结果","page":"memory.md","description":"来源和权限变化会撤销旧快照，取消在途请求，并拒绝失效结果。"},
+  {"id":"08-model-routing","title":"多提供商模型路由","page":"model-gateway.md","description":"模型配置固定到 Run 快照后，Gateway 按 wire_api 选择当前适配器。"},
+  {"id":"09-model-retry","title":"模型断流、重试与重启","page":"model-gateway.md","description":"普通采样共享请求组与恢复预算。完整响应校验通过后，Runtime 才执行工具。"},
+  {"id":"10-tool-pipeline","title":"工具执行与副作用记录","page":"tool-runtime.md","description":"工具沿校验、准备、权限、Intent、执行、核验和事务提交链路运行。"},
+  {"id":"11-shell","title":"Shell 进程与输出生命周期","page":"tool-runtime.md","description":"工具等待、进程存活和输出存储有独立生命周期，进程组受到统一管理。"},
+  {"id":"12-permissions","title":"权限模式与 Sandbox","page":"permissions-sandbox.md","description":"完全访问和高危人工审批有明确入口。所有模式继续保留执行与结果核验。"},
+  {"id":"13-recovery","title":"重启恢复、取消与关闭","page":"persistence-recovery.md","description":"恢复依据持久中断位置处理模型、审批和未知副作用。关闭等待受管资源静止。"},
+  {"id":"14-outbox","title":"状态提交与事件投递","page":"persistence-recovery.md","description":"业务状态、Event 和 Outbox 在同一事务中提交，投递失败可以按记录恢复。"},
+  {"id":"15-retrieval","title":"代码理解与检索","page":"workspace-retrieval.md","description":"Inventory、AST、FTS5 和模糊候选共同形成有界检索，文件安全核验保持独立。"},
+  {"id":"16-workspace","title":"Workspace 与版本恢复","page":"workspace-retrieval.md","description":"Session 绑定 Local、Managed Worktree 或 Projectless Workspace，并复用 Checkpoint 与 Fork。"},
+  {"id":"17-extensions","title":"Skill、Plugin 与 MCP","page":"extensions-hooks.md","description":"扩展先经过安装、版本与授权检查，再进入固定快照和既有工具执行链。"},
+  {"id":"18-hooks","title":"Hook 信任与生命周期","page":"extensions-hooks.md","description":"Hook 按事件运行，复用受控命令或已连接 MCP，并持久记录调用和后台结果。"},
+  {"id":"19-collaboration","title":"Plan 与子 Agent 协作","page":"collaboration-planning.md","description":"父 Run 持有任务依赖，Supervisor 按父任务调度子 Run，消息和结果可以回读。"},
+  {"id":"20-entrypoints","title":"定时任务与渠道入口","page":"automation-channels.md","description":"两类入口持久记录来源后创建普通 Run，并继续使用同一权限与恢复链。"},
+  {"id":"21-quality","title":"诊断、评测与发布证据","page":"observability-delivery.md","description":"本图给出文档核查和发布验收的阅读顺序。它不表示各项验证已经通过。"}
+]

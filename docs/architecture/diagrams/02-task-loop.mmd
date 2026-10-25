@@ -1,0 +1,17 @@
+flowchart TB
+  input[用户输入或持久触发记录] --> queue[事务创建 Run 与队列记录]
+  queue --> supervisor[RunSupervisor<br/>同 Session FIFO；跨 Session 并行]
+  supervisor --> resolve[固定规则、模型、扩展与工具契约]
+  resolve --> context[从持久事实构建 ContextPlan]
+  context --> sample[SamplingRuntime<br/>ContextSnapshot 与 ModelAttempt]
+  sample --> complete{响应完整且契约有效？}
+  complete -->|否| recover[错误分类、纠错或有限重试]
+  recover --> context
+  complete -->|是| decision[LoopDecisionEngine]
+  decision -->|工具| tool[ToolCallRuntime 执行批次]
+  tool --> commit[事务提交结果与 Event / Outbox]
+  commit --> context
+  decision -->|完成| finish[事务提交 Assistant 与 Run 终态]
+  decision -->|等待| wait[持久审批、输入或子任务等待]
+  wait -->|收到合法结果| context
+  supervisor -.取消与资源回收.-> finish

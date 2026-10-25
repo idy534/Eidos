@@ -6,10 +6,10 @@
 
 当前行为请阅读：
 
-- [当前架构](../../current-architecture.md)
-- [当前能力](../../current-capabilities.md)
-- [当前限制](../../current-limitations.md)
-- [宏观架构图](../../architecture-overview.html)
+- [当前架构](../../current/architecture.md)
+- [当前能力](../../current/capabilities.md)
+- [当前限制](../../current/limitations.md)
+- [宏观架构图](../../architecture/overview.html)
 
 历史 PRD 和 TDD 使用各自目录中的 README 作为索引。历史 Decision 保留原文，不再作为 Current 设计约束。
 

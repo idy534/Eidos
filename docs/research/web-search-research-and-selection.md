@@ -33,7 +33,7 @@
 - [`runtime/tool_execution.py`](../../runtime/eidos_runtime/runtime/tool_execution.py) 会校验工具结果，并提交 canonical、model 和 UI 三种结果。因此，搜索服务的结果保存条件会直接影响 Eidos 的历史回放。
 - [`pyproject.toml`](../../pyproject.toml) 已经包含 `httpx2`、AnyIO、Tenacity、Pydantic 和官方 MCP SDK。搜索接入不需要再引入 Agent 框架。
 
-相关说明见 [`current-architecture.md`](../current-architecture.md) 的 Tool Execution 部分和 [`current-capabilities.md`](../current-capabilities.md) 的 Tools 部分。本文以源码作为当前实现的依据。
+相关说明见 [`docs/current/architecture.md`](../current/architecture.md) 的 Tool Execution 部分和 [`docs/current/capabilities.md`](../current/capabilities.md) 的 Tools 部分。本文以源码作为当前实现的依据。
 
 ### 2.2 本次筛选标准
 

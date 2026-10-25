@@ -22,7 +22,7 @@
 
 网页搜索第一版接入 DeepSeek Search 和 LangSearch。用户需要自行取得 Key，并在设置页手动勾选默认服务。保存只验证格式和本地文件，不验证远端账号、余额、额度或实时可用性。系统没有自动切换、通用网页抓取或独立 `web_fetch`。现有 Run 使用冻结配置，修改设置不会中途换服务。
 
-本轮使用模拟服务、临时 SQLite 和真实 Main/Runtime 通道进行定向验证。隔离 Electron 页面覆盖 320、768、1024、1440px。真实账户 Key、正式应用人工验收、Full Suite 和打包验证尚未执行。Python 生产依赖审计发现已锁定的 certifi、Pillow 合计 9 项已知漏洞，审计没有通过。本次没有修改依赖和锁文件。实现细节见[当前网页搜索](current-web-search.md)。
+本轮使用模拟服务、临时 SQLite 和真实 Main/Runtime 通道进行定向验证。隔离 Electron 页面覆盖 320、768、1024、1440px。真实账户 Key、正式应用人工验收、Full Suite 和打包验证尚未执行。Python 生产依赖审计发现已锁定的 certifi、Pillow 合计 9 项已知漏洞，审计没有通过。本次没有修改依赖和锁文件。实现细节见[当前网页搜索](features/web-search.md)。
 
 ## 聊天搜索与文件查找（2026-10-20）
 
@@ -43,11 +43,11 @@
 - 定向行为测试通过 55 项，ExecutionFeed 静态测试通过 45 项。隔离的真实 Electron 页面在 320、768、1024、1440 四种宽度下通过展开、持续输出、历史阅读、延迟图片和结束折叠检查，最终底部距离均为 0.5px。原生向上滚轮移动 180px 后，后续内容更新造成的视口偏移均为 0。既有 Composer 原生布局验证在 1100px、420px 下通过，单行输入、全选删除和等高编辑的历史滚动偏移仍为 0。
 - Renderer 类型检查、构建和 git diff --check 通过。构建仍有 Chunk 超过 500 kB 的提示。本次没有运行 Full Suite、Runtime/Main 测试、Seatbelt、启动退出 smoke、打包或真实 Provider 长期输出验收。测试页面使用模拟数据，不代表正在运行的真实 Session 已加载新版本。该改动不新增依赖、协议字段或数据库迁移。
 
-钉钉渠道首版只接入一个企业内部应用，支持文字输入和 Markdown 回复。真实单聊与有效群 @ 已验证，长时间重连仍待验收。渠道完全访问需要在 Desktop 二次确认并保存，授权覆盖此后收到的消息；本轮没有在真实机器人上开启该模式。普通模式的审批和所有模式的表单输入仍需本机操作。系统不保证补收离线消息，不自动重发结果未知的回复。官方 Stream SDK 锁定预发布版 0.24.4b1。渠道实现时发现的 pydantic-ai-slim 2.43.0 五条漏洞已由 2026-10-17 的依赖升级处理，当前审计结果见文末更新。完整说明见 [方案与实现记录](design/dingtalk-channel-design.md)。
+钉钉渠道首版只接入一个企业内部应用，支持文字输入和 Markdown 回复。真实单聊与有效群 @ 已验证，长时间重连仍待验收。渠道完全访问需要在 Desktop 二次确认并保存，授权覆盖此后收到的消息；本轮没有在真实机器人上开启该模式。普通模式的审批和所有模式的表单输入仍需本机操作。系统不保证补收离线消息，不自动重发结果未知的回复。官方 Stream SDK 锁定预发布版 0.24.4b1。渠道实现时发现的 pydantic-ai-slim 2.43.0 五条漏洞已由 2026-10-17 的依赖升级处理，当前审计结果见文末更新。完整说明见 [方案与实现记录](../design/dingtalk-channel-design.md)。
 
 ## 本地定时任务（2026-10-15）
 
-- Eidos 完全退出或电脑休眠时，任务不会执行。当前版本不检测漏跑，不补跑，也没有云端执行或额外守护进程。固定间隔只允许 10 分钟、30 分钟和 1 小时。当前实现见 [当前本地定时任务](current-automations.md)。
+- Eidos 完全退出或电脑休眠时，任务不会执行。当前版本不检测漏跑，不补跑，也没有云端执行或额外守护进程。固定间隔只允许 10 分钟、30 分钟和 1 小时。当前实现见 [当前本地定时任务](features/automations.md)。
 - 任务默认使用 auto_review，仍可能等待人工审批。用户在页面手动创建或编辑计划时可以选择 full_access；用户必须在危险弹窗中确认，授权适用于该计划今后的每次执行。模型工具不能开启完全访问，也不能改用已保存的完全访问授权来修改任务或重新启用任务。系统不复制旧 Run Grant。原执行及其重新生成存在未核验副作用时，所属计划会暂停。同计划仍有执行时，系统跳过新时刻；原 Session 忙碌时，系统也跳过本次执行。
 - Schema v28 新增计划、触发和来源三张表。Desktop 与 Runtime 需要一起升级。旧版本不能读取 v28；回退时需要恢复升级前的数据库备份。删除计划不会删除会话、Workspace 或历史。
 - Runtime 定向测试通过 106 项。Renderer 定向行为测试通过 53 项，模型默认值纯测试通过 6 项，Main 与真实 Runtime 的跨进程及共享 Fixture 测试通过 2 项。隔离的真实 Electron 页面验证了创建、默认审批、会话省略、键盘和四种窗口宽度。Desktop 构建、原生启动退出 smoke、macOS arm64 Runtime Bundle 与其 smoke、Ruff、Deptry 和两份 Python 依赖审计通过。Renderer 仍有大于 500 kB 的 Chunk 提示。本次没有运行 Full Suite、DMG 打包或真实 Provider 的长期无人值守验收。
@@ -144,7 +144,7 @@
 
 旧版完整 ContextSnapshot 仍可读取，但新共享块格式只用于新快照。当前版本不会自动重写历史 Blob，所以升级后不会立刻释放既有快照占用的空间。
 
-- 内部 `LoopLifecycle` 仍是非权威诊断观察点。用户 Hook 已通过独立服务接入五个常用事件，并提供内容版本信任与持久化。完整 Codex 插件兼容、其他生命周期事件、async/MCP/prompt/agent 处理器和 transcript 导出尚未实现。详细边界见 [current-hooks.md](current-hooks.md)。
+- 内部 `LoopLifecycle` 仍是非权威诊断观察点。用户 Hook 已通过独立服务接入五个常用事件，并提供内容版本信任与持久化。完整 Codex 插件兼容、其他生命周期事件、async/MCP/prompt/agent 处理器和 transcript 导出尚未实现。详细边界见 [docs/current/features/hooks.md](features/hooks.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
@@ -291,7 +291,7 @@
 ### Extension 与 MCP
 
 - MCP 设置页只对已启用、已授权的服务执行工具目录发现。首次查询会启动受现有 Seatbelt 控制的短连接，使用官方 SDK 初始化并取得有界目录，随后关闭连接；该入口不会调用工具。页面按 10 条分页读取 Runtime 的展示缓存。缓存最多 8 个目录，每个目录最多 512 KiB，有效期为 5 分钟，不写 SQLite，也不作为 Run 工具或授权的事实来源。Runtime 重启、缓存淘汰、配置变化或到期后，旧游标会失效，页面提示重新加载。目录描述最多展示 4096 个字符；不受支持的工具 Schema 仍可查看，但会标为不可用。设置页连接启动期限最多为 15 秒，关闭弹窗会忽略迟到结果。
-- Plugin 支持三种本地包、显式更新、旧版本保留、远程 Streamable HTTP 和独立账号连接。应用随附 GitHub 插件，用户需要主动安装和授权。GitHub 浏览器登录仍需发行方注册应用、启用 Device Flow 并配置公开 Client ID；当前仓库未填入真实标识，PAT 入口可用。Figma 未内置。当前没有远程 marketplace、Git/npm 下载器、Codex App 连接映射或动态 import 用户 Plugin。服务 ID 仍须全局唯一。详见 [current-plugins.md](current-plugins.md)。
+- Plugin 支持三种本地包、显式更新、旧版本保留、远程 Streamable HTTP 和独立账号连接。应用随附 GitHub 插件，用户需要主动安装和授权。GitHub 浏览器登录仍需发行方注册应用、启用 Device Flow 并配置公开 Client ID；当前仓库未填入真实标识，PAT 入口可用。Figma 未内置。当前没有远程 marketplace、Git/npm 下载器、Codex App 连接映射或动态 import 用户 Plugin。服务 ID 仍须全局唯一。详见 [docs/current/features/plugins.md](features/plugins.md)。
 - Skill Catalog 当前只投影 `SKILL.md` frontmatter 中的顶层 `name` 和 `description`。`agents/eidos.yaml` 的 `runtimeDependencies` 使用严格 typed parser。其他字段可以保留在原始 Skill 内容中，但不会进入 Catalog、协议或权限判断。
 - Settings 的手动 MCP 编辑器仍只支持本地 stdio。远程地址和认证方式由插件声明；用户可以通过账号面板连接。通用 OAuth 只接受公开客户端注册，或 SDK 的 DCR/CIMD，不提供机密 Client Secret 录入。远程响应上限为 2 MiB，要求不压缩传输。MCP 的 Resources、Prompts、Sampling、Tasks 和 MCP Apps 尚未提供产品入口；非文本工具内容仍遵循现有不支持规则。
 - MCP ready connection 是长生命周期 Service，但 startup、Tool call、Tool list、cancel 和 shutdown 都有各自的有界等待。已经开始的 Tool List Changed bookkeeping callback 可能在关闭时需要等待完成。
@@ -467,7 +467,7 @@ Skill 清理等待实际引用它的非终态 Run；旧快照无法证明引用�
 - 自定义模型选择包含提供商与配置 ID，但全局模型配置仍以 ID 唯一索引。同名模型跨提供商同时保存不由本次扩展解决。
 - 子任务不会自动继承父输入中的文件、图片或 Skill 引用。父模型仍先接收最多 2,000 字符的子任务结果摘要。项目级定义和多层委派尚未实现。
 - 桌面已支持智能体配置管理。保存会按固定字段重新输出 TOML，原文件的注释与排版不保留。名称创建后不能直接改名，用户需要复制为新智能体。格式损坏的文件继续显示具体原因，用户可以在 Finder 中定位并修复。
-- 本地测试和脚本模型不代表真实 Provider 已验证。真实 Electron 的选择、预览和子任务交互仍需人工验收。定向验证结果见 [方案实施记录](design/custom-subagents-design.md#154-验证记录)。
+- 本地测试和脚本模型不代表真实 Provider 已验证。真实 Electron 的选择、预览和子任务交互仍需人工验收。定向验证结果见 [方案实施记录](../design/custom-subagents-design.md#154-验证记录)。
 
 - 2026-10-16 完整验证通过：Runtime 2,552 项通过、2 项按配置跳过；协议检查通过；Renderer 状态测试 173 项通过；Main 测试 92 项通过；Renderer 行为测试 624 项通过。`pnpm build`、契约生成脚本、Ruff 和 Deptry 通过。Python 依赖审计因环境无法解析 `pypi.org` 而未完成，Node 依赖审计没有运行。Full Suite 不包含 `large_repository`；本次没有运行原生 Seatbelt、DMG、真实 Provider 或真实产品窗口验收。
 
@@ -546,7 +546,7 @@ Renderer 定向测试 19 项、Renderer 构建和 Diff 检查通过。真实 Ele
 
 ## 容量恢复与未知结果（2026-10-19）
 
-系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。
+系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](architecture.md#容量恢复与未知结果2026-10-19)。
 
 
 ## 模型有限重试与断流恢复的验证范围（2026-10-20）

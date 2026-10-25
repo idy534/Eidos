@@ -1,0 +1,14 @@
+flowchart TB
+  mode[Desktop 确认的 Run 权限模式] --> full{full_access？}
+  full -->|是| direct[关闭 Seatbelt；跳过逐操作审批]
+  full -->|否| base[Base Permission 与已有 Run Grant]
+  base --> request[核对本次路径、网络与沙盒外请求]
+  request --> danger{需要高危人工确认？}
+  danger -->|是| human[Desktop danger 人工审批]
+  danger -->|否| ordinary[已有授权、manual 或 auto_review 规则]
+  ordinary --> materialize[重新物化 Effective Permission]
+  human -->|同意| materialize
+  human -->|拒绝| denied[返回权限错误或取消结果]
+  materialize --> sandbox[Seatbelt 与受控文件 Helper]
+  direct --> invariant[参数、Intent、身份、版本、取消与结果核验]
+  sandbox --> invariant

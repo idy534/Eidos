@@ -1,0 +1,14 @@
+flowchart TB
+  facts[(SQLite<br/>Item、ToolResult、Summary、权限事实)] --> builder[ContextBuilder]
+  rules[系统指令与规则快照] --> builder
+  refs[冻结输入引用与媒体] --> builder
+  repo[Repository Map 与检索证据] --> builder
+  memory[MemoryService<br/>按预算投影短索引] --> builder
+  skill[Skill 与 Agent Catalog<br/>已选说明、工具定义] --> builder
+  builder --> replay[组合响应、工具结果与 reasoning 回放]
+  replay --> budget[参考 Tokenizer 与 Provider 校准]
+  budget --> clearing[必要时清除旧可回读结果正文]
+  clearing --> plan[不可变 ContextPlan<br/>来源、遗漏、预算、请求身份]
+  plan --> snapshot[绑定 ModelAttempt 的 ContextSnapshot]
+  snapshot --> admit[记忆撤销版本与取消检查]
+  admit --> provider[Model Client 请求]

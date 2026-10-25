@@ -6,7 +6,7 @@
 
 Runtime 接受 Eidos v1、Portable Agent Plugins 和 `.codex-plugin/plugin.json` 三种本地目录。Portable 包以根清单决定身份，以 `skills/` 发现技能，以 `mcp.json` 声明 MCP。`extensions.com.openai` 存在时，它整体替代旧 Codex overlay 的设置。旧 Codex 包可以用 `skills` 和 `mcpServers` 声明目录、内联配置或配置文件；没有显式 MCP 声明时，Runtime 发现 `.mcp.json`。重复 JSON 键、越界路径、链接、特殊文件、过量内容继续拒绝。
 
-插件可以同时提供 Skill、command/MCP Hook、本地 stdio MCP 和远程 Streamable HTTP MCP。导入不启动服务，也不执行脚本。用户需要启用插件，并分别确认 MCP 授权和 Hook 信任。远程服务需要用户主动连接账号或连接无认证服务。MCP Hook 只调用当前 Run 已连接且仍有授权的服务。插件详情提供 Hook 执行历史。Hook 的事件、后台命令、权限和恢复规则见 [current-hooks.md](current-hooks.md)。
+插件可以同时提供 Skill、command/MCP Hook、本地 stdio MCP 和远程 Streamable HTTP MCP。导入不启动服务，也不执行脚本。用户需要启用插件，并分别确认 MCP 授权和 Hook 信任。远程服务需要用户主动连接账号或连接无认证服务。MCP Hook 只调用当前 Run 已连接且仍有授权的服务。插件详情提供 Hook 执行历史。Hook 的事件、后台命令、权限和恢复规则见 [docs/current/features/hooks.md](hooks.md)。
 
 Runtime 创建新的扩展快照时会核验插件包内容身份。内容身份不匹配或包不可读时，Runtime 会从新快照中省略该插件，并继续加载其他可用扩展。旧快照仍按已固定的版本和内容身份读取，已被修改的包内容不会被使用。
 

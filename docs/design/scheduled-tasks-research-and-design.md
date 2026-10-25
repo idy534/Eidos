@@ -2,7 +2,7 @@
 
 > 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
 
-修订日期：2026-10-15。本文保留实现前的方案与调研依据。当前实现、协议和验证边界以 [当前本地定时任务](../current-automations.md)、生产代码与测试为准。
+修订日期：2026-10-15。本文保留实现前的方案与调研依据。当前实现、协议和验证边界以 [当前本地定时任务](../current/features/automations.md)、生产代码与测试为准。
 
 Session 工具的参数、绑定、幂等、权限和失败处理见 [automation 详细设计](automation-tool-design.md)。本文中的 schedule/* 是 Desktop 与 Runtime 的协议接口；模型只使用一个内置工具 automation，通过 mode 处理管理操作。
 

@@ -1,0 +1,13 @@
+flowchart TB
+  settings[用户模型配置 models.json<br/>受保护凭据文件] --> config[ModelConfigStore 与 Model Catalog]
+  config --> snapshot[Run 固定 ModelProfileSnapshot<br/>本地 ID、远端 ID、能力、预算]
+  snapshot --> gateway[ModelGateway 与 Model Lease]
+  gateway --> factory[Pydantic AI Provider Factory<br/>共享 RuntimeAsyncKernel]
+  factory --> route{wire_api}
+  route -->|chat_completions| chat[PydanticAIModelClient<br/>OpenAIChatModel 与 Function Tool]
+  route -->|openai_responses| responses[OpenAIResponsesModelClient<br/>官方 OpenAI SDK 原生适配]
+  chat --> remote[DeepSeek / Kimi / MiniMax<br/>Volcengine / 自定义地址]
+  responses --> remote
+  remote --> normalized[统一响应、用量、错误与回放记录]
+  normalized --> sampling[SamplingRuntime<br/>完整校验后进入 Eidos Loop]
+  discover[设置页主动自定义模型发现] -.仅请求模型列表.-> remote

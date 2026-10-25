@@ -18,7 +18,7 @@
 
 本次目录调整不兼容旧的 `<pluginId>/<version>/<contentHash>/` 布局。旧安装需要移除并重新导入，不提供旧目录回退或旧快照路径迁移。正在被任务引用的资源仍遵循原有延后清理规则。安装使用同级临时目录发布，遇到已有版本目录时拒绝覆盖；发布失败不会删除其他安装，记录提交失败只清理本次新建的目录。
 
-卸载会保留插件的历史记录。用户重新导入相同 ID、版本和内容时，Runtime 可以恢复记录，插件默认未启用。Runtime 在同一事务中清除旧 Hook 信任和 MCP 授权，并记录导入事件。仍被非终态 Run 引用的同版本已卸载包不能重装。v37 还支持显式导入另一个版本，保留活动 Run 的旧文件，并清除旧授权；同版本不同内容继续冲突。版本更新和清理规则见 [current-plugins.md](current-plugins.md)。
+卸载会保留插件的历史记录。用户重新导入相同 ID、版本和内容时，Runtime 可以恢复记录，插件默认未启用。Runtime 在同一事务中清除旧 Hook 信任和 MCP 授权，并记录导入事件。仍被非终态 Run 引用的同版本已卸载包不能重装。v37 还支持显式导入另一个版本，保留活动 Run 的旧文件，并清除旧授权；同版本不同内容继续冲突。版本更新和清理规则见 [docs/current/features/plugins.md](plugins.md)。
 
 Runtime 在导入和读取已安装包时忽略各层目录中的普通 `.DS_Store` 文件。这些文件不进入安装内容和内容 Hash。Runtime 仍然检查符号链接、文件所有者和多硬链接，也继续核验其他文件的内容变化。
 
@@ -117,7 +117,7 @@ Hook 表从 schema v36 引入，插件版本记录从 v37 引入。升级前应�
 
 ## 兼容范围
 
-插件系统已经提供本地包、Skills、本地 stdio MCP、远程 Streamable HTTP MCP 和通用 OAuth。MCP Hook 沿用同一连接和授权边界。远程连接与账号授权的当前范围见 [current-plugins.md](current-plugins.md)。Codex App 连接映射仍未实现，Eidos 不复用 Codex 的账号连接。
+插件系统已经提供本地包、Skills、本地 stdio MCP、远程 Streamable HTTP MCP 和通用 OAuth。MCP Hook 沿用同一连接和授权边界。远程连接与账号授权的当前范围见 [docs/current/features/plugins.md](plugins.md)。Codex App 连接映射仍未实现，Eidos 不复用 Codex 的账号连接。
 
 Eidos 不实现 PreToolUse 的 `ask`、旧 `approve`、`updatedMCPToolOutput`，也不实现 PermissionRequest 的 `updatedInput`、`updatedPermissions` 或 `interrupt`。Runtime 不把 Codex 官方暂未实现的输出扩展成新的权限规则。插件命令所需的其他依赖不会自动安装。
 

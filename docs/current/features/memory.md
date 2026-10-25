@@ -1,5 +1,7 @@
 # 当前记忆系统
 
+读者可以在[记忆架构专题](../../architecture/memory.md)查看读取、发布和撤销的结构图与时序图，并在[Harness 组成总览](../../architecture/harness-overview.md)比较长期记忆、压缩摘要与请求快照的职责。
+
 Eidos 使用 `MEMORY.md` 索引和主题 Markdown 笔记。前台模型在当前 Run 中保存记忆。Run 会等待保存结果。系统没有闲置后生成记忆、后台模型整理、候选确认或历史回填流程。
 
 记忆是带来源的历史资料。当前用户指令和已经核实的现状优先。记忆不授予权限，也不改变审批模式。
@@ -80,7 +82,7 @@ Markdown 导出按页读取整个所选范围。Main 逐页写入临时文件，
 
 恢复接受当前格式和 schema v40/v41，并导入一个不存在的新目录。恢复会检查归档路径、重复成员、符号链接、体积、SQLite 完整性、记忆引用与 Blob 内容；它会修复文件时间元数据，把 v40 升级为 v41，并把记忆模式设为 read。旧格式直接拒绝。恢复不会合并运行中的数据，也不能知道备份之后发生的遗忘。
 
-Python 严格 DTO 是共享契约来源。生成器维护 TypeScript 类型和 JSON Schema，Main 使用 AJV 校验两端白名单。两端共同验证 `protocol/fixtures/memory-v2.json`。运行方法和人工验收见[记忆专题](development/README.md#记忆系统)。真实 Provider 的长期记忆质量和真实桌面交互仍需单独验收，定向脚本模型测试不能代替这些证据。
+Python 严格 DTO 是共享契约来源。生成器维护 TypeScript 类型和 JSON Schema，Main 使用 AJV 校验两端白名单。两端共同验证 `protocol/fixtures/memory-v2.json`。运行方法和人工验收见[记忆专题](../../development/README.md#记忆系统)。真实 Provider 的长期记忆质量和真实桌面交互仍需单独验收，定向脚本模型测试不能代替这些证据。
 
 ## 2026-10-24 验证记录
 

@@ -1,0 +1,12 @@
+flowchart TB
+  timer[AutomationScheduler<br/>仅未来触发；本机运行] --> claim[SQLite 原子认领与计划快照]
+  remote[钉钉、飞书、企业微信] --> adapter[Channel Adapter<br/>连接、消息校验与身份映射]
+  adapter --> inbox[(持久入站去重与 Session 映射)]
+  claim --> admission[普通 Run 接纳<br/>固定模型、权限与执行目标]
+  inbox --> admission
+  admission --> loop[Eidos Loop 与原工具执行链]
+  loop --> result[(持久结果与来源)]
+  result --> ui[Desktop 任务历史与聊天]
+  result --> reply[渠道回复投递与结果记录]
+  reply --> remote
+  authority[本机用户已保存的授权] --> admission

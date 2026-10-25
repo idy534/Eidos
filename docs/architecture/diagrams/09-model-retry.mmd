@@ -1,0 +1,14 @@
+flowchart TB
+  request[固定 ContextSnapshot 与请求组] --> attempt[新的 ModelAttempt 与 Assistant 草稿]
+  attempt --> result{请求结果}
+  result -->|完整响应| validate[校验全部响应与工具批次]
+  validate --> execute[提交有效响应后才执行工具]
+  result -->|临时错误或断流| classify[按结构化错误与 HTTP 状态分类]
+  classify --> budget{剩余次数、期限与安全条件？}
+  budget -->|允许| commit[事务记录失败草稿与重试决定]
+  commit --> wait[Tenacity 退避与 Retry-After<br/>等待可取消]
+  wait --> attempt
+  budget -->|耗尽或不可重试| failure[返回稳定错误与结束原因]
+  restart[Runtime 重启] --> recover[仅恢复允许的纯模型阶段<br/>保留已用次数、期限与下次时间]
+  recover --> request
+  execute -.不因模型重试重放.-> effects[已完成的文件、Shell、MCP 操作]

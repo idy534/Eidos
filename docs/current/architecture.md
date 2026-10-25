@@ -1,16 +1,24 @@
 # Eidos 当前架构
 
-网页搜索使用 `typed IPC → webSearch/read、webSearch/save → WebSearchApplication → WebSearchRepository / SecretFiles`。Schema v34 保存配置和 Run 搜索快照。RunResources 按用户明确选择的默认服务发布内置 `web_search`。搜索经过现有 Controller 的审批和 Durable Intent，再由 RuntimeAsyncKernel 托管官方 HTTPS 请求。网络等待不持有 Run 的提交窗口，搜索不增加 Shell 网络 Grant，也不自动切换服务。具体字段、迁移和结果边界见[当前网页搜索](current-web-search.md)。
+## Harness 架构阅读入口（2026-10-25）
 
-钉钉渠道使用 `Stream SDK → ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复 → HTTPS OpenAPI`。配置沿用 typed IPC 和 stdio JSON-RPC。渠道服务由现有 AnyIO Kernel 与 Supervisor 管理，准备使用现有 managed task。Schema v30 保存渠道配置、映射、来源和投递事实。具体边界见 [当前渠道接入](current-channels.md)。
+维护者可以从 [Harness 组成总览](../architecture/harness-overview.md)阅读十二个组成部分，再看[离线架构图集](../architecture/harness-atlas.html)。各专题补充记忆、上下文压缩算法、多提供商模型、工具、权限、持久化恢复、代码检索、扩展、协作、持续任务入口和交付证据，并列出源码、测试与当前边界。
 
-本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](current-automations.md)。
+本轮专题按源码基线 `58ba5ea9` 核对，属于文档补充。专题中的验证入口不表示本次运行了产品测试。下文保留既有架构说明和按日期记录的实现背景；机制细节应与对应专题及当前源码共同核对。
+
+## 专题概要
+
+网页搜索使用 `typed IPC → webSearch/read、webSearch/save → WebSearchApplication → WebSearchRepository / SecretFiles`。Schema v34 保存配置和 Run 搜索快照。RunResources 按用户明确选择的默认服务发布内置 `web_search`。搜索经过现有 Controller 的审批和 Durable Intent，再由 RuntimeAsyncKernel 托管官方 HTTPS 请求。网络等待不持有 Run 的提交窗口，搜索不增加 Shell 网络 Grant，也不自动切换服务。具体字段、迁移和结果边界见[当前网页搜索](features/web-search.md)。
+
+钉钉渠道使用 `Stream SDK → ChannelApplication → SQLite 接收记录 → SessionApplication / RunApplication → 普通 Run → 持久化回复 → HTTPS OpenAPI`。配置沿用 typed IPC 和 stdio JSON-RPC。渠道服务由现有 AnyIO Kernel 与 Supervisor 管理，准备使用现有 managed task。Schema v30 保存渠道配置、映射、来源和投递事实。具体边界见 [当前渠道接入](features/channels.md)。
+
+本地定时任务采用 `typed IPC → schedule/execute → AutomationApplication → AutomationRepository → SQLite → 普通 Run`。Schema v28 新增计划、触发与执行来源。调度由现有 AnyIO Kernel 和 Supervisor 管理，不增加常驻线程、额外执行器或全局 Run 配额。具体持久化、工具分类、恢复和来源规则见 [当前本地定时任务](features/automations.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
 本文只描述当前代码中的系统结构和职责。生产代码和自动化测试是本文的事实来源。本文不描述历史 Phase，也不描述尚未接入默认 Run 的目标态设计。
 
-[交互式架构图](architecture-overview.html) 按系统总览、一次 Run、权限与恢复、数据与目录、源码索引提供五个视图。总览中的模块按职责分组，模块框不代表独立进程。图中区分 Renderer、Main 与 Python Runtime，并单独标出请求通道和持久事实回传。模块详情与索引记录本次核对的源码入口，HTML 可以离线打开，也支持打印全部视图。
+[交互式架构图](../architecture/overview.html) 按系统总览、一次 Run、权限与恢复、数据与目录、源码索引提供五个视图。总览中的模块按职责分组，模块框不代表独立进程。图中区分 Renderer、Main 与 Python Runtime，并单独标出请求通道和持久事实回传。模块详情与索引记录本次核对的源码入口，HTML 可以离线打开，也支持打印全部视图。
 
 图中的当前实现包含受管 Run Worker 线程与共享 AnyIO 内核，不把异步目标画成全面完成。同 Session 保留 FIFO，不同 Session 可以并行；每个父 Run 最多同时执行 8 个子 Agent。Model Gateway 的普通路径使用 Pydantic AI Model API，Responses 路径使用独立原生适配器。图中也区分 state.sqlite 执行事实、可重建仓库库和受控文件，不把模型凭据与大正文都画进 SQLite。
 
@@ -75,7 +83,7 @@ AppShell 的文件打开回调跟随当前工具打开函数更新。工具打�
 
 WorkspaceExplorer 在侧栏布局中记录实际宽度，并通过 ResizeObserver 跟随侧栏调整。Files 展开时，文件树默认使用展开前的侧栏宽度，并按当前可用空间限制大小。用户在展开布局中调整过的宽度会保留，侧栏布局的文件树高度单独保存。预览区在未选择文件时显示“选择文件以查看预览”；只有当前文件确实处于读取中且没有可显示的预览时，界面才显示“正在读取文件…”。
 
-`ContextBuilder` 根据持久化的 Session 项目绑定判断是否加入 `project-file-references` 指令层。`InstructionResolver` 只在 `has_project` 为真时添加该层，Memory 投影触发提示词重建时保留这个条件。无项目的 Session 不增加文件引用提示词。已有指令快照仍保留原文；新构建的提示词才包含新规则。Finalizer 沿用已有指令，缺少指令时也按 Run 的项目绑定构建默认提示词。本轮不修改协议 DTO、SQLite Schema 或依赖。定向提示词测试覆盖项目绑定、Memory 重建和 Finalizer 回退；验证结果见 `current-limitations.md`。
+`ContextBuilder` 根据持久化的 Session 项目绑定判断是否加入 `project-file-references` 指令层。`InstructionResolver` 只在 `has_project` 为真时添加该层，Memory 投影触发提示词重建时保留这个条件。无项目的 Session 不增加文件引用提示词。已有指令快照仍保留原文；新构建的提示词才包含新规则。Finalizer 沿用已有指令，缺少指令时也按 Run 的项目绑定构建默认提示词。本轮不修改协议 DTO、SQLite Schema 或依赖。定向提示词测试覆盖项目绑定、Memory 重建和 Finalizer 回退；验证结果见 `docs/current/limitations.md`。
 
 Desktop 会让 Conversation 始终保持挂载。Session header 右侧固定显示环境信息入口；用户可以通过工作区开关打开或关闭右侧 Workspace Dock。Dock 使用本地 Renderer 状态管理 Review、Terminal、Files 和 Browser Tab。Review 和 Files 各只有一个工具 Tab，Terminal 和 Browser 可以同时打开多个 Tab。Files Tab 内可以同时预览多个文件。文件 Tab 保留在预览栏中，预览区不显示当前路径、文件大小或手动刷新入口，侧栏布局默认给预览区更多空间。产物卡的图片会直接进入全屏预览，HTML 会直接打开隔离网页面板，PDF 会进入 Files 的内置预览，系统应用打开入口保持可用。Dock 普通展开时环境信息入口仍在 Session header，完全展开时入口显示在 Dock header。Session 对话的回答和提问框共用固定最大宽度并保持居中；回答右边与提问框右边对齐，窗口变宽时不会继续拉伸。Dock 支持 Tab 切换、关闭、关闭最后一个 Tab 时自动折叠工作区、空状态选择工具、全侧栏展开和关闭。Dock 与 Conversation 之间的分隔条可以拖动调整宽度。Files 的文件树与预览区也有独立的可拖动分隔条。Dock 关闭时，Conversation 内容在可用宽度内居中。Session 或 execution binding 变化时，Renderer 会关闭旧 Dock，并用新的 execution key 重新加载 Workspace 数据。
 
@@ -175,7 +183,7 @@ RuntimeEngine 下的主要职责是：
 - `LoopGuard` 处理语义状态收敛；
 - `RunFinalizer` 生成有界、无 Tool 的最终回答。
 
-`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。用户配置的 Hook 由独立 `HookService` 执行。该服务复用原 Shell 沙盒和工具执行链。`HookLifecycle` 在 Supervisor 下管理会话清理与后台资源，每个 Session 最多同时运行 8 个后台 Hook。SQLite v36 保存信任、调用和待触发 Post 事件，v39 保存个人与项目配置、绑定定义和后台接收记录。后台结果不创建 Run，也不改变完成判定。PermissionRequest 的普通 allow 会保存审批来源为 hook 的记录，事务层核对同一工具与审批指纹的已完成 Hook 决定；高危人工确认继续保留。MCP Hook 只使用当前 Run 已连接的服务。当前入口与兼容范围见 [current-hooks.md](current-hooks.md)。
+`LoopLifecycle` 提供内部诊断观察点：模型采样前后、工具批次前后、上下文压缩前，以及进入执行范围的 RuntimeEngine 离开时。Runtime 默认写入结构化 debug 日志，也可接入进程内观察者。事件只携带 Run/Step/Attempt ID、工具数量和固定原因，不携带工具参数或模型文本。观察者失败只写本地日志，不改变 SQLite 事实或权限决定。用户配置的 Hook 由独立 `HookService` 执行。该服务复用原 Shell 沙盒和工具执行链。`HookLifecycle` 在 Supervisor 下管理会话清理与后台资源，每个 Session 最多同时运行 8 个后台 Hook。SQLite v36 保存信任、调用和待触发 Post 事件，v39 保存个人与项目配置、绑定定义和后台接收记录。后台结果不创建 Run，也不改变完成判定。PermissionRequest 的普通 allow 会保存审批来源为 hook 的记录，事务层核对同一工具与审批指纹的已完成 Hook 决定；高危人工确认继续保留。MCP Hook 只使用当前 Run 已连接的服务。当前入口与兼容范围见 [docs/current/features/hooks.md](features/hooks.md)。
 
 Model Step、Segment Step 和 effective time 在当前实现中是 telemetry 和 operational segment 信息。健康 Run 不会因为固定 model-step、Run duration 或固定 repeated-call counter 自动终止。LoopGuard 通过语义 fingerprint 判断是否收敛，不是固定步数限制。Segment 达到 operational quantum 时可以 rollover，但 rollover 不是 Run 终态。
 
@@ -498,7 +506,7 @@ Session 展示快照与执行快照使用不同的读取入口。`session/read` 
 
 `state.sqlite` 是可变业务状态的唯一权威。它保存 Session、Run、Item、ToolCall、Approval、Tool Attempt、Execution Segment、Step、Model Attempt、Durable Intent、Event、Outbox、Async Operation、Extension Snapshot、Context lineage、Compaction 和 Checkpoint。业务状态变化与 Event/Outbox 仍在同一个 `state.sqlite` transaction 中提交。
 
-Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。v40 删除旧 `memories.sqlite` 和 MemoryStore 接口，并清空旧记忆内容。记忆系统以 `state.sqlite` 为业务权威，正文使用 UUID 命名的私有 Markdown 文件，逻辑笔记路径由数据库映射。前台 Run 即时更新主题笔记，`MEMORY.md` 是派生索引；后台只做存储清理。来源、版本、隐私撤销与快照引用见 [current-memory.md](current-memory.md)。
+Runtime 按职责使用多个独立存储。`repository.sqlite` 保存可重建的 Inventory、Index、Symbol、Reference、Chunk 和 FTS5 数据。它只保留每个 Workspace identity 的最新候选与最新完整 generation，并使用 incremental auto-vacuum 回收删除页。`thread_history.sqlite` 只索引按 Session 分段的 append-only Event JSONL。Runtime 先 fsync JSONL，再提交文件 offset；启动时会截断未提交尾部并继续投影。`logs.sqlite` 只索引本地日志 JSONL，当前使用独立 schema v2。Runtime 会把使用 `content_sha256` 的旧 v1 表迁移为 `chain_sha256`，也会接纳已经使用 `chain_sha256` 的 v1 表。日志按 8 MiB 分段，默认总量约 128 MiB，Runtime 优先删除最旧的 sealed segment。v40 删除旧 `memories.sqlite` 和 MemoryStore 接口，并清空旧记忆内容。记忆系统以 `state.sqlite` 为业务权威，正文使用 UUID 命名的私有 Markdown 文件，逻辑笔记路径由数据库映射。前台 Run 即时更新主题笔记，`MEMORY.md` 是派生索引；后台只做存储清理。来源、版本、隐私撤销与快照引用见 [docs/current/features/memory.md](features/memory.md)。
 
 ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。新写入的 ContextSnapshot 使用 `context-snapshot-v2` 清单，StepResolutionSnapshot 使用 `step-resolution-v2` 清单。两者复用同一组 `context-item` 和 `context-tools`。消息块引用已有的 `tool-result-content`，不再内嵌图片或文件内容；输入图片单独按内容哈希共享。Step 清单只保存一次消息引用，读取时 Runtime 重建 `context_payload_json` 与 `final_request_json`，再验证原有快照哈希与请求关系。旧版完整快照和旧消息块仍可读取，SQLite Schema 和公开协议不变。Blob 存储不再施加统一的 32 MiB 容量上限。各输入与工具保留自身预算；Blob 读取按记录中的实际大小分块，并继续核验 owner、mode、路径、压缩数据、JSON 和 checksum。相同内容再次保存时，Runtime 验证并复用已有 Blob，不重复压缩。Blob GC 在删除前递归解析两类清单及消息块的媒体引用；引用损坏或扫描取消时不会根据不完整引用集合执行删除。Session 删除后，Runtime 会删除对应 history，并回收不再引用的 Blob。JSONL、Memory 和 Repository 数据都不能改变 `state.sqlite` 中的业务状态。
 
@@ -634,7 +642,7 @@ Runtime 使用 typed Git observations，并在 observation failure、timeout 或
 
 ## 14. Extension Runtime
 
-PluginCatalog 接收受控的本地 Eidos v1、Portable Agent Plugins 和 Codex 兼容包。Runtime 校验 manifest、Skill 元数据、文件数量、单文件和总大小、content hash，并把内容写入私有 extensions 目录。Plugin 可以声明 Skill、已支持的 command Hook、本地 stdio 和远程 Streamable HTTP MCP Server。`plugin_versions` 在 SQLite v37 保存已知版本身份；显式更新在同一事务切换当前版本、停用插件、清除 Hook 信任与 MCP 授权，并写入 Event/Outbox。旧 Run 的 Skill 按冻结版本和内容身份定位文件，退役版本在活动引用结束后由现有清理入口删除。手动 MCP 继续保存在独立的 `manual_mcp_servers` 表中，并与包内 MCP 共用 SDK、Tool Registry 和执行链。展示 metadata 采用 Python 生成的类型及 Schema。详细兼容与连接边界见 [current-plugins.md](current-plugins.md)。
+PluginCatalog 接收受控的本地 Eidos v1、Portable Agent Plugins 和 Codex 兼容包。Runtime 校验 manifest、Skill 元数据、文件数量、单文件和总大小、content hash，并把内容写入私有 extensions 目录。Plugin 可以声明 Skill、已支持的 command Hook、本地 stdio 和远程 Streamable HTTP MCP Server。`plugin_versions` 在 SQLite v37 保存已知版本身份；显式更新在同一事务切换当前版本、停用插件、清除 Hook 信任与 MCP 授权，并写入 Event/Outbox。旧 Run 的 Skill 按冻结版本和内容身份定位文件，退役版本在活动引用结束后由现有清理入口删除。手动 MCP 继续保存在独立的 `manual_mcp_servers` 表中，并与包内 MCP 共用 SDK、Tool Registry 和执行链。展示 metadata 采用 Python 生成的类型及 Schema。详细兼容与连接边界见 [docs/current/features/plugins.md](features/plugins.md)。
 
 Plugin 的安装根目录是 `extensions/plugins/<pluginId>/<version>/`。内容 Hash 仅作为内部内容身份参与 SQLite、快照、信任和完整性核验，不再作为目录层级。Runtime 不兼容旧的 Hash 子目录布局。旧安装需要清理后重新导入，历史快照不迁移。目录发布失败不会清理其他已存在的版本目录。
 
@@ -664,7 +672,7 @@ Skill MCP dependency 不是 Skill 安装器。RunResources 会收集 active Skil
 
 MCP 使用官方 Python MCP SDK 的 stdio 和 Streamable HTTP transport。手动编辑器配置本地进程，远程服务由插件包声明。`McpConnections` 用例维护独立的账号生命周期，SQLite v38 保存连接状态和凭据引用，受保护文件保存令牌。标准 OAuth 的发现、注册和 PKCE 交给 MCP SDK，令牌请求和刷新交给 Authlib。Runtime 启动恢复中断登录，Run/Hook 的目录视图不执行恢复。多个视图在同一 AnyIO 内核上共用账号版本的短期刷新锁，工具执行不持有该锁。临时回环 HTTP 只接收 OAuth 授权码，本地控制面仍为 stdio JSON-RPC。
 
-MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。两种 transport 共用统一 Tool Registry、MCP provenance、Approval、Durable Intent、timeout、结果校验和未知结果记录。远程请求前核对配置、账号版本、启用状态和 consent，凭据不进入运行快照或模型上下文。本地进程继续使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。远程服务只连接明确配置的地址，不获得本地文件能力。内置 GitHub 通过受管包安装入口进入同一链路。安装、账号连接和工具调用权限分别管理，详见 [current-plugins.md](current-plugins.md)。
+MCP Server 由 RuntimeAsyncKernel 持有长生命周期连接。两种 transport 共用统一 Tool Registry、MCP provenance、Approval、Durable Intent、timeout、结果校验和未知结果记录。远程请求前核对配置、账号版本、启用状态和 consent，凭据不进入运行快照或模型上下文。本地进程继续使用受控环境、进程组和 connector 或 workspace-read Seatbelt policy。远程服务只连接明确配置的地址，不获得本地文件能力。内置 GitHub 通过受管包安装入口进入同一链路。安装、账号连接和工具调用权限分别管理，详见 [docs/current/features/plugins.md](features/plugins.md)。
 
 每个 MCP Connection 在 macOS 的 canonical `/private/tmp` 下使用标准库创建私有短目录 `eidos-mcp-<随机值>/`，不再在 `~/.eidos/extensions/mcp-runtime/<uuid>/` 下分配运行目录。默认 HOME、TMPDIR 和启动器 PID 文件位于该连接目录内，服务显式配置和环境透传仍然优先。长数据目录、长主进程 TMPDIR 和服务工作目录不参与连接临时路径拼接。目录初始权限为 `0700`。启动前、进程组终止前和清理前核对目录类型及 device、inode、owner。连接关闭仍先等待进程组、Service 和 callback 停止，再删除自建目录。目录被替换时不跟随替代路径；Runtime 保留原有关闭失败和未知结果语义。
 
@@ -803,7 +811,7 @@ Adapter 的成功和失败出口都通过现有 `canonical_tool_result` 封装�
 
 本轮没有数据库迁移或第二套 Artifact 表；浏览器地址识别新增直接依赖 `tldts`。
 
-以前产物预览修订有自动验证记录。2026-09-13 的产物声明修订已经补充并通过对应的 Runtime、协议、Main 和 Renderer 测试。具体限制和未完成的人工验收见 `current-limitations.md` 的“本轮产物实现的边界”。
+以前产物预览修订有自动验证记录。2026-09-13 的产物声明修订已经补充并通过对应的 Runtime、协议、Main 和 Renderer 测试。具体限制和未完成的人工验收见 `docs/current/limitations.md` 的“本轮产物实现的边界”。
 
 ### 回答流式输出（代码修订，待测试）
 
@@ -856,7 +864,7 @@ Run 固定模式、基础权限、Sandbox Policy 和确认版本。SQLite v13 �
 
 ## 输入引用与草稿
 
-本节描述输入引用、草稿和 Composer 布局。`pnpm test` 与 `pnpm test:composer-layout` 已通过。子 Agent 历史分页和通知刷新也有定向测试。自动化结果和未完成的人工验收范围见 `docs/current-limitations.md`。
+本节描述输入引用、草稿和 Composer 布局。`pnpm test` 与 `pnpm test:composer-layout` 已通过。子 Agent 历史分页和通知刷新也有定向测试。自动化结果和未完成的人工验收范围见 `docs/current/limitations.md`。
 
 输入链路是 `Composer / WorkspaceExplorer → InputContext → preload typed IPC → Main → input/* RPC → InputContextApplication → InputContextRepository`。Main 提供系统文件选择、剪贴板图片、右键菜单和拖放文件路径转换。Renderer 不直接读取文件。Runtime 读取选中的内容，检查文件身份、大小和敏感内容，并生成带来源、摘要和类型的不可变引用。
 
@@ -915,7 +923,7 @@ Schema v29 增加 `run_agent_catalogs`，它关联父 Run 与现有 Blob 存储�
 
 输入链路沿用 `input/prepare → run/start.references`。新引用类型为 `agent`，Runtime 保存完整定义供预览，并在 Run 接纳时复核版本。父模型只看到目录摘要与本轮选择；历史引用不会自动激活新一轮。编辑重发和重新生成通过已验证的源 Run 复用原定义。目录修改只影响新 Run，已有实例续派不重读 TOML。
 
-Desktop 通过 `agent/catalog`、typed IPC 和现有 `+` 选择类型，子任务面板展示实际类型、提供商与模型。Blob GC 和现有明文备份保留目录快照，备份同时保存用户 TOML，模型凭证继续排除。子 Run 保留父工作模式，Plan 子任务不暴露 `write_plan`。详细规范和后续范围见 [自定义子 Agent 方案](design/custom-subagents-design.md)。
+Desktop 通过 `agent/catalog`、typed IPC 和现有 `+` 选择类型，子任务面板展示实际类型、提供商与模型。Blob GC 和现有明文备份保留目录快照，备份同时保存用户 TOML，模型凭证继续排除。子 Run 保留父工作模式，Plan 子任务不暴露 `write_plan`。详细规范和后续范围见 [自定义子 Agent 方案](../design/custom-subagents-design.md)。
 
 Desktop 的设置页和输入框共用智能体编辑表单。模型与思考强度直接使用公共 `ModelSelector`，所选配置提供实际 `provider_id` 与 `config_id`。配置管理沿用 `Renderer → preload → Main → RuntimeClient → Method Registry → AgentDefinitionsApplication`，增加 `agent/definitionRead`、`agent/definitionSave` 和 `agent/definitionRemove`。`AgentDefinitionFiles` 复用 Catalog 的有界安全读取，负责固定目录、文件身份、原始内容版本与非阻塞目录锁。新文件排他创建；已有文件在版本核验后通过受控 fd 原地写入并 fsync，结果再次读取核验。失败不自动重试；写入或删除后无法确认持久化时，接口返回明确的不确定结果。配置仍以 TOML 为来源，没有新增业务数据库或执行循环。DTO 与 Ajv Schema 从 Python 生成，Main 同时校验请求和响应。凭证仍由已有模型配置管理。
 
@@ -935,7 +943,7 @@ SQLite 新增三张表。`agent_delegations` 保存父 Run、子 Session、当�
 
 Desktop 通过 `agent/read` 和 `agent/stop`、Main 和 preload typed IPC 访问子任务。Python DTO 是新增协议的 Schema 来源，`scripts/generate-collaboration-contracts.mjs` 生成 TypeScript DTO。环境信息显示子 Agent 列表及待审批数量；工作区关闭时，环境信息入口仍会提示待审批数。点击子任务在右侧 WorkspaceDock 展示详情、审批、停止和完整执行记录。主 Session 不嵌入子任务面板。
 
-子 Agent 详情不再提供“加载更早记录”按钮。Renderer 通过现有 `session/read` 自动读取全部历史页，每页请求最多 500 条 Item，并继续使用 Runtime 的响应大小限制。Renderer 合并各页的 Item 和 Run，按 Item ID 去重。`session/read` 保留最近 100 个 Run，并补带当前页 Item 对应的更早 Run；新增 Run 的内容也计入响应大小限制。刷新只响应当前子 Session 的通知，同一详情页的读取按顺序执行，通知在读取期间到来时会触发一次后续刷新。刷新完成前，界面保留已显示的记录。详情关闭或切换后，旧请求不再更新界面。读取失败时，界面提示记录未能全部加载。新增的 AgentPanel 定向测试覆盖多页顺序、旧 Run 信息、通知过滤、通知合并、读取期间补刷新和取消订阅。定向测试结果与未完成人工验收范围见 `docs/current-limitations.md`。
+子 Agent 详情不再提供“加载更早记录”按钮。Renderer 通过现有 `session/read` 自动读取全部历史页，每页请求最多 500 条 Item，并继续使用 Runtime 的响应大小限制。Renderer 合并各页的 Item 和 Run，按 Item ID 去重。`session/read` 保留最近 100 个 Run，并补带当前页 Item 对应的更早 Run；新增 Run 的内容也计入响应大小限制。刷新只响应当前子 Session 的通知，同一详情页的读取按顺序执行，通知在读取期间到来时会触发一次后续刷新。刷新完成前，界面保留已显示的记录。详情关闭或切换后，旧请求不再更新界面。读取失败时，界面提示记录未能全部加载。新增的 AgentPanel 定向测试覆盖多页顺序、旧 Run 信息、通知过滤、通知合并、读取期间补刷新和取消订阅。定向测试结果与未完成人工验收范围见 `docs/current/limitations.md`。
 
 v15→v16 迁移通过 SQLite 表重建增加 `waiting_agents` CHECK 状态，并创建上述三张表。迁移保留原索引，执行外键检查，失败时回滚。v16→v17 增加完成依赖标记、消息回执和实际 Skill 使用租约，采用事务和外键检查，失败回滚。旧版本不能直接打开 v17 数据；回退代码时需要恢复升级前的数据库备份。子编码任务目前共享父目录，独立 Worktree 和变更交付留待后续阶段。并行写入需要父任务协调文件范围并复核 Diff。完整测试结果见当前 PR。
 

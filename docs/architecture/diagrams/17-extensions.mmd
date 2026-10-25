@@ -1,0 +1,15 @@
+flowchart TB
+  package[受控 Plugin 包或手动 MCP 配置] --> validate[校验格式、路径、大小与版本身份]
+  validate --> installed[(SQLite 版本与授权<br/>私有安装文件)]
+  installed --> snapshot[Turn / Run 固定 Extension Snapshot]
+  snapshot --> catalog[Skill Catalog<br/>名称、描述与来源]
+  catalog --> selected[激活后读取 SKILL.md]
+  selected --> resource[按需读取 references / scripts / assets]
+  snapshot --> mcp[官方 MCP SDK<br/>stdio / Streamable HTTP]
+  connection[独立账号连接<br/>OAuth / PAT 与私有凭据] --> mcp
+  mcp --> registry[工具目录与有界 Schema 映射]
+  registry --> controller[现有 Tool Controller<br/>审批、Intent、执行、结果核验]
+  resource --> controller
+  snapshot --> hooks[固定 Hook 绑定与信任]
+  update[显式更新 Plugin] --> revoke[切换版本并清除旧信任与授权]
+  revoke --> installed

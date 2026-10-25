@@ -360,7 +360,7 @@ Runtime 增加 `agent/definitionRead`、`agent/definitionSave` 和 `agent/defini
 
 实现阶段先执行相关 Runtime、协议和 Renderer/Main 定向测试。开发者不因跨层修改自动执行 Full Suite。基础流程见 [开发指南](../../DEVELOPMENT.md)，专题命令见 [自定义子 Agent 验证](../development/README.md#自定义子-agent)，执行门槛遵循相应目录的 `AGENTS.md`。
 
-本次设计文档不宣称上述测试已经通过。生产实现完成后，开发者需要同步 `docs/current-*`，再依据实际验证报告能力与限制。
+本次设计文档不宣称上述测试已经通过。生产实现完成后，开发者需要同步 `docs/current/`，再依据实际验证报告能力与限制。
 
 ## 14. Codex 参考与 Eidos 选择
 

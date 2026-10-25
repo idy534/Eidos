@@ -23,7 +23,7 @@ Eidos stores Runtime data locally. Requests go to the Provider configured by the
 - **Tool permissions**: Agents can use file tools and a controlled Shell. Approval and macOS Seatbelt restrict high-risk operations.
 - **Extensions and automation**: The Runtime supports Skills, Plugins, stdio MCP, local scheduled tasks, and a DingTalk message channel.
 
-See [current capabilities](docs/current-capabilities.md) and [current limitations](docs/current-limitations.md) for details.
+See [current capabilities](docs/current/capabilities.md) and [current limitations](docs/current/limitations.md) for details.
 
 ## Architecture
 
@@ -52,7 +52,7 @@ flowchart TD
 
 The Renderer calls Electron Main through typed IPC exposed by a context-isolated Preload. Main connects to the Python Runtime through JSON-RPC 2.0, JSONL, and stdio. The Runtime owns the Agent Loop, permission decisions, tool execution, and recovery semantics. SQLite is the single source of truth for business state.
 
-Read [current architecture](docs/current-architecture.md) and the [architecture overview](docs/architecture-overview.html) for more details.
+Read [current architecture](docs/current/architecture.md) and the [architecture overview](docs/architecture/overview.html) for more details.
 
 ## Install and run
 
@@ -81,9 +81,9 @@ This roadmap describes current direction. It does not promise delivery dates.
 
 ## Documentation
 
-- [Current architecture](docs/current-architecture.md)
-- [Current capabilities](docs/current-capabilities.md)
-- [Current limitations](docs/current-limitations.md)
+- [Current architecture](docs/current/architecture.md)
+- [Current capabilities](docs/current/capabilities.md)
+- [Current limitations](docs/current/limitations.md)
 - [Development and verification](DEVELOPMENT.md)
 - [Documentation index](docs/README.md)
 

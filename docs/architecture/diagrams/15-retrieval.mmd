@@ -1,0 +1,15 @@
+flowchart TB
+  root[已验证 Workspace Root] --> inventory[Inventory<br/>pathspec 范围与文件身份]
+  inventory --> map[Repository Map<br/>Git 状态、构建和测试命令]
+  inventory --> index[Tree-sitter 符号与关系索引]
+  index --> fts[(SQLite FTS5)]
+  task[任务、路径、Symbol、Diff 与最近读取] --> query[RepositoryTaskQueryBuilder]
+  query --> retrieve[多路有界候选召回]
+  fts --> retrieve
+  index --> retrieve
+  retrieve --> ranking[精确匹配、BM25、RapidFuzz<br/>关系、Diff、近期资料与路径规则]
+  ranking --> budget[按结果数、字节与时间预算选择]
+  map --> context[ContextPlan 与证据引用]
+  budget --> context
+  watch[watchfiles 事件] -.仅使缓存失效.-> inventory
+  context --> tools[需要当前正文时使用受控读取或 bundled ripgrep]

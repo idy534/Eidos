@@ -1,0 +1,15 @@
+flowchart TB
+  access[Root Session 与项目身份<br/>scope、off/read/auto、临时对话] --> index[生成 MEMORY.md 短索引]
+  meta[(SQLite<br/>笔记路径、版本、证据、epoch)] --> index
+  index --> context[ContextBuilder 按预算注入]
+  context --> search[memory_search / memory_read<br/>搜索与固定版本分页]
+  search --> files[不可变私有 Markdown 正文]
+  context --> edit[memory_edit<br/>明确请求或当前范围 auto]
+  sources[真实用户 Item 或成功普通工具结果] --> capture[捕获来源版本并检查资格]
+  edit --> capture
+  capture --> intent[现有权限链与 Durable Intent]
+  intent --> prepare[准备私有版本文件]
+  prepare --> publish[事务复核来源、目标 CAS、epoch 与取消]
+  publish --> meta
+  publish --> event[memory.changed 与 Outbox]
+  prepare -.失败后回收孤立文件.-> maintenance[StorageMaintenance<br/>清理文件与撤销载荷]

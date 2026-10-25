@@ -1,0 +1,15 @@
+flowchart TB
+  project[Project 与 Repository 身份] --> local[Local Session<br/>共享原 checkout]
+  project --> worktree[Managed Worktree Session<br/>受管独立 checkout]
+  projectless[Projectless Session] --> private[独立私有 Workspace]
+  local --> binding[Session Workspace Binding]
+  worktree --> binding
+  private --> binding
+  binding --> tools[工具权限与身份版本核验]
+  binding --> checkpoint[Checkpoint<br/>持久 lineage 与文件恢复资料]
+  checkpoint --> rewind[Rewind<br/>校验前提后恢复指定范围]
+  checkpoint --> fork[Fork<br/>冻结历史并创建新 Session]
+  local --> handoff[Local / Worktree Handoff]
+  handoff --> worktree
+  worktree --> archive[归档、快照与恢复]
+  fork --> binding

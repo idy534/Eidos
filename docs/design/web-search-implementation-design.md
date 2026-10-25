@@ -4,7 +4,7 @@
 
 日期：2026-10-21。状态：第一版代码已接入，定向验证通过。真实账户验证和依赖审计问题仍未完成。
 
-本文承接[服务调研](../research/web-search-research-and-selection.md)。用户选择 DeepSeek Search 和 LangSearch。用户取消 DuckDuckGo。用户明确要求手动勾选默认服务，不需要自动切换。当前实现和限制见[当前网页搜索](../current-web-search.md)。
+本文承接[服务调研](../research/web-search-research-and-selection.md)。用户选择 DeepSeek Search 和 LangSearch。用户取消 DuckDuckGo。用户明确要求手动勾选默认服务，不需要自动切换。当前实现和限制见[当前网页搜索](../current/features/web-search.md)。
 
 ## 1. 最终产品决定
 

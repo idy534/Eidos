@@ -1,0 +1,41 @@
+flowchart TB
+  subgraph entry[任务入口]
+    direction LR
+    desktop[Desktop 与 typed IPC]
+    timer[本地定时任务]
+    channel[渠道消息]
+    desktop ~~~ timer ~~~ channel
+  end
+  admission[Application 与 RunSupervisor<br/>持久接纳、Session FIFO、资源管理]
+  entry --> admission
+  subgraph harness[Eidos Harness]
+    direction TB
+    subgraph request[请求准备]
+      direction LR
+      memory[长期记忆<br/>短索引、主题笔记、撤销]
+      context[上下文构建与压缩<br/>预算、快照、连续证据]
+      model[Model Gateway<br/>固定配置、协议路由、重试]
+      memory --> context --> model
+    end
+    loop[Durable Agent Loop<br/>Run、Step、ModelAttempt]
+    subgraph action[任务执行能力]
+      direction LR
+      tools[Tool Runtime<br/>参数、Intent、执行、核验]
+      agents[Plan 与子 Agent<br/>任务依赖、消息、结果]
+      extensions[Skill、Plugin、MCP、Hook<br/>发现、信任、固定版本]
+      tools ~~~ agents ~~~ extensions
+    end
+    subgraph bounds[工作边界]
+      direction LR
+      permission[权限与 Sandbox<br/>审批、Grant、Seatbelt]
+      workspace[Workspace 与检索<br/>Worktree、索引、Checkpoint]
+      permission ~~~ workspace
+    end
+    request --> loop --> action
+    action -.受边界约束.-> bounds
+  end
+  admission --> harness
+  harness --> db[(SQLite<br/>业务状态、快照、Event、Outbox)]
+  db --> recovery[恢复、取消与关闭<br/>按持久事实重新接纳]
+  db --> delivery[事件投递与 Desktop Feed]
+  db -.诊断证据.-> quality[日志、Trace、评测与发布验证]

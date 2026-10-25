@@ -238,6 +238,7 @@
         <div class="brand"><span class="brand-mark" aria-hidden="true"></span>EIDOS / SOURCE ATLAS</div>
         <h1>Eidos 当前架构</h1>
         <p class="subtitle">Electron Desktop 负责交互。本地 Python Runtime 管理执行、权限与恢复。SQLite 保存运行事实。</p>
+        <p class="subtitle">专题补充：<a href="harness-atlas.html">Harness 组成与 21 张机制图</a> · <a href="harness-overview.md">机制、源码与测试阅读地图</a></p>
         <div class="meta"><span>源码核对：2026-10-24</span><span>基线 HEAD：<code>ffa687a2</code></span><span>本图按职责分组，框不等于独立进程。</span></div>
       </div>
       <button class="print-button" id="print-button" type="button">打印全部视图 / 保存 PDF</button>
@@ -360,7 +361,7 @@
           <p><strong>副作用顺序：</strong>每个 Run 只串行自己的提交 / 启动窗口。活动 Shell 不会持续持有这个门，其他 Run 也不共享这个门。</p>
           <p><strong>Hook 位置：</strong>UserPromptSubmit 位于采样前，PreToolUse 位于准备与审批前，PostToolUse 位于结果提交后。</p>
         </div>
-        <p class="source-caption">源码：<a href="../runtime/eidos_runtime/runtime/engine.py">RuntimeEngine</a> · <a href="../runtime/eidos_runtime/runtime/tool_dispatcher.py">ToolDispatcher</a> · <a href="../runtime/eidos_runtime/runtime/tool_execution.py">ToolExecutionController</a> · <a href="../runtime/eidos_runtime/runtime/hooks.py">HookService</a></p>
+        <p class="source-caption">源码：<a href="../../runtime/eidos_runtime/runtime/engine.py">RuntimeEngine</a> · <a href="../../runtime/eidos_runtime/runtime/tool_dispatcher.py">ToolDispatcher</a> · <a href="../../runtime/eidos_runtime/runtime/tool_execution.py">ToolExecutionController</a> · <a href="../../runtime/eidos_runtime/runtime/hooks.py">HookService</a></p>
       </div>
       <div class="reading-notes">
         <article><h3>Session 组织对话与工作空间</h3><p>一个 Session 可以包含多个 Run。Session 持有 Local 或 Worktree 执行位置；Projectless 会话也有独立工作空间。</p></article>
@@ -395,7 +396,7 @@
           <article><h3>系统保留未知结果，并继续后续工作</h3><p>Runtime 不猜测未知副作用，也不自动重放。未知记录本身不建立后续核验门，不阻止 Run 正常完成。</p></article>
         </div></article>
       </div>
-      <p class="source-caption">源码：<a href="../runtime/eidos_runtime/runtime/permission_policy.py">PermissionPolicyEvaluator</a> · <a href="../runtime/eidos_runtime/runtime/approval.py">ApprovalCoordinator</a> · <a href="../runtime/eidos_runtime/db/recovery.py">recover_runtime_facts</a> · <a href="../runtime/eidos_runtime/runtime/supervisor.py">RunSupervisor</a></p>
+      <p class="source-caption">源码：<a href="../../runtime/eidos_runtime/runtime/permission_policy.py">PermissionPolicyEvaluator</a> · <a href="../../runtime/eidos_runtime/runtime/approval.py">ApprovalCoordinator</a> · <a href="../../runtime/eidos_runtime/db/recovery.py">recover_runtime_facts</a> · <a href="../../runtime/eidos_runtime/runtime/supervisor.py">RunSupervisor</a></p>
     </section>
 
     <section class="view" id="data" aria-labelledby="data-title" hidden>
@@ -411,7 +412,7 @@
           </tbody>
         </table></div>
         <div class="return-path"><b>事务与投递分开</b><span>业务更新 + Event + Outbox 同事务提交</span><span aria-hidden="true">→</span><span>EventDelivery 投影并发送通知</span><span aria-hidden="true">→</span><span>Main 转发给 Renderer</span></div>
-        <p class="source-caption">布局还包含 thread_history.sqlite、logs.sqlite 和兼容用 memories.sqlite。新记忆的业务元数据由 state.sqlite 管理。各文件职责以 <a href="../runtime/eidos_runtime/db/layout.py">db/layout.py</a> 和 <a href="../runtime/eidos_runtime/memory/service.py">MemoryService</a> 为准。</p>
+        <p class="source-caption">布局还包含 thread_history.sqlite、logs.sqlite 和兼容用 memories.sqlite。新记忆的业务元数据由 state.sqlite 管理。各文件职责以 <a href="../../runtime/eidos_runtime/db/layout.py">db/layout.py</a> 和 <a href="../../runtime/eidos_runtime/memory/service.py">MemoryService</a> 为准。</p>
       </div>
       <div class="two-column">
         <article class="panel-card"><h3>Desktop 的代码入口</h3><pre class="tree">desktop/
@@ -458,7 +459,7 @@
       </div>
     </section>
     <noscript><p>你需要启用 JavaScript 才能切换视图与查看模块详情。系统总览仍可直接阅读。</p></noscript>
-    <footer><span>离线单文件 · 内联 CSS 与 JavaScript · 无 CDN、字体下载或网络请求</span><span><a href="current-architecture.md">当前架构文档</a> · <a href="current-limitations.md">当前限制</a> · <a href="README.md">文档入口</a></span></footer>
+    <footer><span>离线单文件 · 内联 CSS 与 JavaScript · 无 CDN、字体下载或网络请求</span><span><a href="../current/architecture.md">当前架构文档</a> · <a href="../current/limitations.md">当前限制</a> · <a href="../README.md">文档入口</a></span></footer>
   </main>
   <script>
     "use strict";
@@ -475,7 +476,7 @@
       { id: "extensions", title: "Extensions / RunResources", role: "插件、技能与 MCP 的运行快照", fact: "RunResources 从固定扩展快照构建 Skill Catalog、SkillAccess、MCP 与工具资源。MCP 使用官方 SDK 的 stdio 和 Streamable HTTP；插件还可以提供已支持的 command Hooks。", input: "已安装插件、启用与授权状态、Run 快照", output: "可用工具、技能正文与脚本、受控 MCP / Hook 调用", note: "插件导入、启用、MCP 授权与 Hook 信任分别管理。安装不等于执行授权。", files: [["runtime/eidos_runtime/runtime/run_resources.py", 125], ["runtime/eidos_runtime/extensions/mcp.py", 381], ["runtime/eidos_runtime/extensions/plugins.py", 1], ["runtime/eidos_runtime/extensions/plugin_package.py", 1]] },
       { id: "kernel", title: "RuntimeAsyncKernel", role: "进程共享的异步 I/O 内核", fact: "Kernel 使用 AnyIO start_blocking_portal，backend 为 asyncio。模型请求、MCP 与受管任务共享这个内核，并通过 ResourceRegistry 管理所有者与关闭。", input: "Run Worker 的同步桥接调用与受管服务", output: "有所有者的异步任务、取消和资源诊断", note: "当前 Run Worker 仍使用 threading.Thread。共享 AnyIO 内核不表示整个执行循环已经改成纯异步。", files: [["runtime/eidos_runtime/runtime/async_kernel.py", 276], ["runtime/eidos_runtime/runtime/supervisor.py", 923], ["runtime/eidos_runtime/runtime/resource_registry.py", 1]] },
       { id: "repo", title: "Repository Intelligence", role: "有界仓库理解与证据检索", fact: "Engine 在非 Projectless 工作空间读取可用仓库代际。快照完整且存在索引时，Engine 构建查询并自动检索，再把概览和证据交给 Context。", input: "Workspace、Git 状态、任务与索引代际", output: "Repository Map、排名后的源码证据", note: "bundled ripgrep、Tree-sitter、FTS5、RapidFuzz 与 watchfiles 提供机制。索引和 watcher 不能替代文件安全核验。", files: [["runtime/eidos_runtime/runtime/engine.py", 172], ["runtime/eidos_runtime/context/repository.py", 1], ["runtime/eidos_runtime/repo_intelligence/retrieval.py", 1], ["runtime/eidos_runtime/db/layout.py", 336]] },
-      { id: "memory", title: "MemoryService / MemoryJobs", role: "有来源与作用域的长期资料", fact: "MemoryService 从 SQLite 读取资格、条目与版本。受管 MemoryJobs 处理已授权的历史整理，正文使用受控文件发布，FTS 与 generation 是派生投影。", input: "授权来源、全局 / 项目设置、真实证据", output: "有来源的长期条目、检索结果与使用快照", note: "记忆不授予权限。临时会话、渠道和定时来源有各自的使用与写入限制。", files: [["runtime/eidos_runtime/memory/service.py", 68], ["runtime/eidos_runtime/memory/jobs.py", 39], ["runtime/eidos_runtime/runtime/run_resources.py", 238]] },
+      { id: "memory", title: "MemoryService", role: "有来源与作用域的长期笔记", fact: "MemoryService 从 SQLite 读取访问资格、笔记版本和来源。前台 Run 保存主题笔记，正文使用受控的不可变 Markdown 文件，MEMORY.md 由有效笔记生成。", input: "授权来源、全局 / 项目设置、用户更正", output: "主题笔记、派生索引与使用快照", note: "记忆不授予权限。临时会话不能使用或写入记忆，Child 只读访问所属范围。", files: [["runtime/eidos_runtime/memory/service.py", 68], ["runtime/eidos_runtime/memory/repository.py", 22], ["runtime/eidos_runtime/memory/publication.py", 12]] },
       { id: "channels", title: "ChannelService", role: "钉钉、飞书与企业微信收发", fact: "ChannelService 使用渠道 Adapter 接收消息。ChannelApplication 处理持久来源与路由，再调用普通 RunApplication.start。回复使用渠道自身的传输链路。", input: "渠道连接配置与外部消息", output: "普通 Run、持久路由与渠道回复", note: "外部消息不会直接调用工具。后续执行仍受该 Run 的固定权限模式约束。", files: [["runtime/eidos_runtime/runtime/channel_service.py", 22], ["runtime/eidos_runtime/application/channels.py", 79], ["runtime/eidos_runtime/application/channels.py", 114]] },
       { id: "automations", title: "AutomationScheduler", role: "Runtime 内的本地定时入口", fact: "Scheduler 在受管 AnyIO 任务中检查未来触发时刻。触发准备完成后，Server 使用普通 RunApplication.start，并保存 automation occurrence 来源。", input: "SQLite 中的计划与未来触发时刻", output: "普通 Run、执行历史与计划事件", note: "Runtime 退出或电脑休眠时不执行。调度器不补跑漏过的时刻；同计划和目标 Session 有独立占用检查。", files: [["runtime/eidos_runtime/runtime/automation_scheduler.py", 33], ["runtime/eidos_runtime/protocol/server.py", 1795], ["runtime/eidos_runtime/persistence/automations.py", 232]] },
       { id: "git", title: "Git / Worktree", role: "执行位置、快照与恢复", fact: "WorktreeManager 与 Session 用例处理受管工作树、位置切换和恢复。Checkpoint 与快照记录保存 Git 状态和关联元数据，生命周期操作使用持久 Intent。", input: "用户操作、项目仓库与当前 Session 位置", output: "Local / Worktree 执行位置、快照与恢复记录", note: "Local Session 可能共享同一真实目录。独立 Worktree 提供文件修改隔离；非 Git 目录没有通用文件系统回滚。", files: [["runtime/eidos_runtime/git/manager.py", 1], ["runtime/eidos_runtime/application/checkpoints.py", 1], ["runtime/eidos_runtime/application/worktree_snapshots.py", 1], ["runtime/eidos_runtime/persistence/session_handoff.py", 1]] },
@@ -489,7 +490,7 @@
     function sourceLink(file) {
       const link = document.createElement("a");
       link.className = "source-link";
-      link.href = "../" + file[0];
+      link.href = "../../" + file[0];
       link.textContent = file[0] + ":" + file[1];
       return link;
     }

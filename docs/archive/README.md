@@ -14,10 +14,10 @@
 
 当前行为请以生产代码和自动化测试为准。当前文档入口如下：
 
-- [当前架构](../current-architecture.md)
-- [当前能力](../current-capabilities.md)
-- [当前限制](../current-limitations.md)
-- [交互式架构图](../architecture-overview.html)
+- [当前架构](../current/architecture.md)
+- [当前能力](../current/capabilities.md)
+- [当前限制](../current/limitations.md)
+- [交互式架构图](../architecture/overview.html)
 
 ## 目录
 

@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant A as Application / Runtime
+  participant D as SQLite
+  participant E as EventDelivery
+  participant M as Main RuntimeClient
+  participant R as Renderer
+  A->>D: BEGIN：业务状态 + Event + Outbox
+  D-->>A: COMMIT
+  E->>D: 读取待投递 Outbox
+  E->>E: EventProjector 投影严格 DTO
+  E->>M: stdio JSON-RPC notification
+  M->>M: 验证 Envelope 与载荷
+  M->>R: typed IPC 通知
+  E->>D: 记录投递结果
+  Note over D,R: 投递失败保留记录；重启可重投
+  R->>M: 刷新或重连后读取持久快照
+  M->>A: JSON-RPC 读取

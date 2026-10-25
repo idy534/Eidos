@@ -2,7 +2,7 @@
 
 > 文档分类：调研与对照。本文保留调研时的事实、建议和缺口，不作为当前实现或最终决策的证明。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
 
-复核日期：2026-10-15。本文保留实现前的源码复核与规则依据。当前实现、协议和验证边界以 [当前本地定时任务](../current-automations.md)、生产代码与测试为准。
+复核日期：2026-10-15。本文保留实现前的源码复核与规则依据。当前实现、协议和验证边界以 [当前本地定时任务](../current/features/automations.md)、生产代码与测试为准。
 
 相关方案：[总方案 V3](../design/scheduled-tasks-research-and-design.md)、[automation 详细设计](../design/automation-tool-design.md)。
 

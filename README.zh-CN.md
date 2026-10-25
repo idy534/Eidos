@@ -23,7 +23,7 @@ Eidos 将 Runtime 数据保存在本机。使用远程模型服务时，请求�
 - **工具权限**：Agent 可以调用文件工具和受控 Shell。Runtime 使用 Approval 与 macOS Seatbelt 限制高风险操作。
 - **扩展与自动化**：Runtime 支持 Skill、Plugin、stdio MCP、本地定时任务和钉钉消息渠道。
 
-详细能力和当前限制见[当前能力](docs/current-capabilities.md)与[当前限制](docs/current-limitations.md)。
+详细能力和当前限制见[当前能力](docs/current/capabilities.md)与[当前限制](docs/current/limitations.md)。
 
 ## 架构
 
@@ -52,7 +52,7 @@ flowchart TD
 
 Renderer 通过 context-isolated Preload 的 typed IPC 调用 Electron Main。Main 使用 JSON-RPC 2.0、JSONL 和 stdio 连接 Python Runtime。Runtime 拥有 Agent Loop、权限决策、工具执行和恢复语义。SQLite 是业务状态的唯一事实来源。
 
-更多架构细节见[当前架构](docs/current-architecture.md)和[架构图](docs/architecture-overview.html)。
+更多架构细节见[当前架构](docs/current/architecture.md)和[架构图](docs/architecture/overview.html)。
 
 ## 安装与运行
 
@@ -81,9 +81,9 @@ pnpm start
 
 ## 文档
 
-- [当前架构](docs/current-architecture.md)
-- [当前能力](docs/current-capabilities.md)
-- [当前限制](docs/current-limitations.md)
+- [当前架构](docs/current/architecture.md)
+- [当前能力](docs/current/capabilities.md)
+- [当前限制](docs/current/limitations.md)
 - [本地开发与验证](DEVELOPMENT.md)
 - [文档导航](docs/README.md)
 

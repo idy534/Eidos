@@ -1,0 +1,19 @@
+flowchart TB
+  build[构建并测量当前请求] --> clear[按条件清除旧工具结果的投影正文]
+  clear --> trigger{压缩入口}
+  trigger -->|85% 且仍能放入窗口| soft[保护最近完整响应组<br/>早期压缩]
+  trigger -->|超预算或投影超限| hard[按 pre_turn / mid_turn 选择历史]
+  trigger -->|用户请求| manual[按持久请求 ID 手动压缩]
+  soft --> baseline[从 SQLite 原始事实生成规则摘要]
+  hard --> baseline
+  manual --> baseline
+  baseline --> assist[可选的一次模型摘要调用<br/>只开放 submit_context_summary]
+  assist -->|输出有效且引句可核对| notes[合并带来源的连续证据]
+  assist -->|超时、无效或能力不支持| fallback[使用规则摘要]
+  notes --> fit[检查摘要与证据预算]
+  fallback --> fit
+  fit --> verify[独立验证来源、控制事实与并发版本]
+  verify -->|有效| persist[事务保存摘要、来源与事件]
+  verify -->|失败或关键资料超限| keep[保留上一份有效摘要和原始记录]
+  persist --> rebuild[重建整个请求并重新测量]
+  keep --> rebuild

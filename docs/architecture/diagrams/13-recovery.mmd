@@ -1,0 +1,13 @@
+flowchart TB
+  boot[Runtime 启动与 Schema 迁移] --> facts[读取 Run、Attempt、Approval、Intent 等事实]
+  facts --> classify{中断位置与持久条件}
+  classify -->|安全纯模型阶段| model[重新排队<br/>保留请求组与重试预算]
+  classify -->|合法待审批或待输入| pending[恢复等待与固定工具契约]
+  classify -->|执行过且结果不确定| unknown[标记未知或中断<br/>不重放原副作用]
+  classify -->|已提交结果| outbox[重投未完成 Outbox]
+  model --> supervisor[RunSupervisor 接纳]
+  pending --> supervisor
+  unknown --> history[保留诊断与真实结果边界]
+  shutdown[取消或关闭请求] --> resources[取消受管请求、Shell、MCP、Hook 与服务]
+  resources --> quiescence[等待 Worker 与 ResourceRegistry 静止]
+  quiescence --> close[静止后关闭存储与进程]

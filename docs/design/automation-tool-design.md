@@ -2,7 +2,7 @@
 
 > 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
 
-修订日期：2026-10-15。本文保留实现前的设计依据，并补充 [本地定时任务方案 V3](scheduled-tasks-research-and-design.md) 和 [源码与缺口复核](../research/scheduled-tasks-gap-review.md)。当前实现、协议和验证边界以 [当前本地定时任务](../current-automations.md)、生产代码与测试为准。
+修订日期：2026-10-15。本文保留实现前的设计依据，并补充 [本地定时任务方案 V3](scheduled-tasks-research-and-design.md) 和 [源码与缺口复核](../research/scheduled-tasks-gap-review.md)。当前实现、协议和验证边界以 [当前本地定时任务](../current/features/automations.md)、生产代码与测试为准。
 
 **模型只使用一个定时任务工具 `automation`。工具通过 mode 处理查看、创建、更新、删除和时间预览。工具默认 deferred，模型通过 tool_search 激活后使用。创建时传 sessionId 表示复用已有 Session；不传表示每次触发新建 Session。**
 
@@ -208,7 +208,7 @@ approvalMode 是计划的独立字段。create 省略时，Runtime 保存 auto_r
 
 每次触发时，Runtime 将计划的 approvalMode 固定到本次 Run。修改计划只影响后续接受的 Run，不改变已经入队或正在执行的 Run，也不改变用户对话的审批选择。view、写入回执和任务卡片均显示实际保存的模式。
 
-auto_review 复用现有替我审批流程：系统只审查原本需要审批的操作；高危请求继续由用户决定，审查失败、超时或无法判断时转为人工处理。待审批继续占用该计划的未完成执行，同计划后续时刻按既有忙碌规则跳过。未来 Run 不继承旧 Grant 或完全访问确认。[当前审批行为](../current-capabilities.md#L432)
+auto_review 复用现有替我审批流程：系统只审查原本需要审批的操作；高危请求继续由用户决定，审查失败、超时或无法判断时转为人工处理。待审批继续占用该计划的未完成执行，同计划后续时刻按既有忙碌规则跳过。未来 Run 不继承旧 Grant 或完全访问确认。[当前审批行为](../current/capabilities.md#L432)
 
 ## 7. update 与 delete
 

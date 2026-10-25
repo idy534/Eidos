@@ -1,0 +1,12 @@
+flowchart TB
+  old[上一轮已接受的连续证据] --> reread[按原始 Item ID 回读]
+  raw[(原始 Item / ToolResult / Blob)] --> reread
+  recent[新一轮可压缩资料] --> preview[有界头尾预览与回读入口]
+  reread --> propose[摘要模型提出类型与精确引句]
+  preview --> propose
+  propose --> ground[ground_note<br/>核对引句与来源类别]
+  ground --> merge[保留旧证据并合并新证据]
+  merge --> verifier[持久化前独立复核]
+  verifier --> accepted[CompactContinuityNote<br/>下一请求独立投影]
+  accepted --> old
+  verifier -->|来源不符或预算不足| reject[拒绝候选；保留旧摘要]

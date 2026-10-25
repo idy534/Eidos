@@ -2,7 +2,7 @@
 
 版本：v0.4（探索草案）
 
-本 TDD 描述目标技术设计和长期约束，不代表当前代码已经实现。当前架构以 [当前架构](../../../current-architecture.md)、代码和测试为准；旧阶段记录已归档到 [`archive/phases/`](../../phases/README.md)。
+本 TDD 描述目标技术设计和长期约束，不代表当前代码已经实现。当前架构以 [当前架构](../../../current/architecture.md)、代码和测试为准；旧阶段记录已归档到 [`archive/phases/`](../../phases/README.md)。
 
 ## 1. 系统全景
 

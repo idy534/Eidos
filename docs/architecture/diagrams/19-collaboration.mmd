@@ -1,0 +1,13 @@
+flowchart TB
+  parent[父 Run 与冻结 Agent Catalog] --> plan[Plan 与任务依赖]
+  plan --> spawn[spawn_agent<br/>自足任务、角色、完成依赖]
+  spawn --> db[(委派记录与 Child Session / Run)]
+  db --> scheduler[Supervisor<br/>每父 Run 最多同时执行 8 个子 Run]
+  scheduler --> child[子 Agent<br/>继承权限与 Workspace；固定模型]
+  child --> tools[普通工具与只读记忆<br/>权限扩展由父任务处理]
+  child --> messages[持久消息、最终回答与分页结果]
+  messages --> parent
+  parent --> wait[wait_agents / 持久等待]
+  wait --> parent
+  parent --> cleanup[父任务取消或完成时处理子任务资源]
+  human[必要的用户输入与审批] --> parent

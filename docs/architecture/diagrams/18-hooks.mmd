@@ -1,0 +1,12 @@
+flowchart TB
+  sources[个人、项目与 Plugin Hook 配置] --> trust[校验绑定、来源与内容信任]
+  trust --> dispatch[HookService<br/>生命周期事件与匹配器]
+  dispatch --> command[command Handler<br/>原 Shell 权限与执行链]
+  dispatch --> mcp[MCP Handler<br/>仅使用 Run 已连接服务]
+  command --> result[有界 JSON 输入输出与持久调用记录]
+  mcp --> result
+  result --> decision[按具体事件消费 context / 决定 / 反馈]
+  decision --> permission[高危请求仍保留人工确认]
+  dispatch --> background[HookLifecycle 管理后台命令]
+  background --> receipt[保存后台接收结果；不创建新 Run]
+  crash[进程中断] --> unknown[未完成调用记为 unknown；不重放]

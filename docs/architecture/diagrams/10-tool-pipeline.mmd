@@ -1,0 +1,14 @@
+flowchart TB
+  call[完整模型响应中的 ToolCall] --> registry[固定 Tool Registry 与参数 Schema]
+  registry --> validate[Validate<br/>参数、范围与工具契约]
+  validate --> prepare[Prepare<br/>读取、Diff、身份与版本前提]
+  prepare --> permission[Resolve Permission<br/>模式、Grant、审批、有效权限]
+  permission --> intent[事务提交 Durable Intent]
+  intent --> execute[Execute<br/>记录真实执行开始]
+  execute --> verify[Verify<br/>核对真实结果与副作用]
+  verify --> commit[事务提交 ToolResult、Event 与 Outbox]
+  commit --> projection[有界模型投影与分页回读]
+  execute -->|已经执行但结果丢失| unknown[持久未知结果；不自动重放]
+  unknown --> projection
+  prepare -->|可信文件 Handler 确认无变化| nochange[内部 execution_skipped<br/>返回 no_changes]
+  nochange --> commit

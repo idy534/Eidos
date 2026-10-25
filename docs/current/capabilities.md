@@ -1,10 +1,10 @@
 # Eidos 当前能力
 
-用户可以在“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch，并手动勾选默认服务。两家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](current-web-search.md)。
+用户可以在“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch，并手动勾选默认服务。两家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
 
-Eidos 已增加钉钉应用机器人接入。用户可以在设置的“渠道”页配置应用凭证、模型、项目和审批模式。Runtime 默认接收单聊文字消息，群聊需要 @ 机器人，系统不设置用户和群白名单。渠道支持经 Desktop 二次确认并保存的完全访问模式，后续消息使用已保存的授权。Runtime 使用普通 Session / Run 执行，并向原会话回复。真实单聊和有效群 @ 已验证，完全访问的渠道到 Run 执行由定向集成测试覆盖；长期重连仍待验收。配置和边界见 [当前渠道接入](current-channels.md)。
+Eidos 已增加钉钉应用机器人接入。用户可以在设置的“渠道”页配置应用凭证、模型、项目和审批模式。Runtime 默认接收单聊文字消息，群聊需要 @ 机器人，系统不设置用户和群白名单。渠道支持经 Desktop 二次确认并保存的完全访问模式，后续消息使用已保存的授权。Runtime 使用普通 Session / Run 执行，并向原会话回复。真实单聊和有效群 @ 已验证，完全访问的渠道到 Run 执行由定向集成测试覆盖；长期重连仍待验收。配置和边界见 [当前渠道接入](features/channels.md)。
 
-本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](current-automations.md)。
+本地定时任务已接入 Runtime、automation 延迟工具与侧栏管理页面。计划默认使用替我审批，支持已有 Session 或每次新 Session。时间限制、持久化、来源、权限和验证边界见 [当前本地定时任务](features/automations.md)。
 
 > 权限模式范围：manual 与 auto_review 默认保留路径和 Seatbelt 保护。原路径硬拒绝及显式沙盒外执行可经高危人工审批开放；auto_review 不能代替用户批准这类请求。full_access 直接执行，不创建逐项授权、Approval 或等待状态。所有模式仍保留参数、身份、版本、取消、Durable Intent、结果校验和未知结果记录。审批不能赋予 macOS 管理员权限，也不能解决 ACL、TCC 和只读卷限制。
 
@@ -32,7 +32,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 
 用户在聊天区按 `⌘F` 查找当前 Session 的全部持久消息。系统按消息加载命中附近的记录，并高亮命中文字。用户可以用 Enter / Shift+Enter、`⌘G` / `⌘⇧G` 和上下按钮切换命中。用户在已打开的文本、代码、Markdown 或 HTML 源码内按 `⌘F` 查找当前文件。文件查找支持区分大小写、全字和正则表达式。Escape 关闭查找并恢复焦点。聊天与文件查找没有可见入口按钮。两个查找条都使用一行悬浮布局，不占正文空间。聊天查找条位于标题栏下方，宽度最多为 25rem；输入框聚焦时不显示蓝色外框。两个查找条的关闭按钮常态使用浅灰色，悬停和按下时使用深灰色，叉号保持浅色。聊天、文件查找和图片全屏预览使用较小的居中图形关闭图标，按钮点击区域保持原大小。
 
-文件查找在普通预览截断时，通过版本绑定的只读接口补读最多 2 MiB。界面会说明仍然截断的文件。单文件最多显示 2,000 处命中；正则计算在可终止的 Worker 中运行。文件名搜索、跨文件内容搜索和其他面板查找尚未实现。详细边界见 [当前限制](current-limitations.md)。
+文件查找在普通预览截断时，通过版本绑定的只读接口补读最多 2 MiB。界面会说明仍然截断的文件。单文件最多显示 2,000 处命中；正则计算在可终止的 Worker 中运行。文件名搜索、跨文件内容搜索和其他面板查找尚未实现。详细边界见 [当前限制](limitations.md)。
 
 ## Desktop
 
@@ -309,7 +309,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 ## Plugin / Skill / MCP
 
 - Settings 的 MCP 名称按钮可以打开单列工具详情弹窗。弹窗展示工具名称、描述、输入参数、必填项和原始 Schema，并支持按名称或描述搜索。Runtime 每页固定返回 10 条，页面滚动接近底部时自动追加下一页。弹窗没有“完成”按钮，用户可以通过右上角关闭、Esc 或背景关闭，并回到原名称按钮。标题下方读取 MCP 初始化响应的 `serverInfo.description`；服务缺失或提供空白描述时，页面显示实际启动命令，不把 `instructions` 当作描述。
-- PluginCatalog 支持本地 Eidos v1、Portable Agent Plugins 和 Codex 兼容包的导入、更新、启用、禁用和移除。v37 保存版本身份；旧 Run 继续读取冻结版本的文件。v38 保存远程连接状态和受保护凭据引用。插件可以声明 stdio 或 Streamable HTTP MCP，设置页支持 PAT、标准 OAuth 和 GitHub Device Flow 的连接、取消、断开和失效状态。应用随附可安装的 GitHub 插件和 Skill；浏览器登录需要发行方提供注册过的 Client ID，当前未配置时使用 PAT。更新默认停用并撤销旧账号、Hook 信任和 MCP 授权。详见 [current-plugins.md](current-plugins.md)。
+- PluginCatalog 支持本地 Eidos v1、Portable Agent Plugins 和 Codex 兼容包的导入、更新、启用、禁用和移除。v37 保存版本身份；旧 Run 继续读取冻结版本的文件。v38 保存远程连接状态和受保护凭据引用。插件可以声明 stdio 或 Streamable HTTP MCP，设置页支持 PAT、标准 OAuth 和 GitHub Device Flow 的连接、取消、断开和失效状态。应用随附可安装的 GitHub 插件和 Skill；浏览器登录需要发行方提供注册过的 Client ID，当前未配置时使用 PAT。更新默认停用并撤销旧账号、Hook 信任和 MCP 授权。详见 [docs/current/features/plugins.md](features/plugins.md)。
 - Plugin manifest 可以声明 Skill 和 MCP Server。安装内容有文件数量、大小、路径、manifest、版本冲突和 content hash 校验。
 - Plugin 安装目录使用 `~/.eidos/extensions/plugins/<pluginId>/<version>/`，不附加 Hash 目录。完整 Hash 继续用于内容核验、运行快照和 Hook 信任。本次调整不兼容旧目录，需要清理旧安装后重新导入。
 - Plugin 卸载后允许重新导入相同 ID、版本和内容。Runtime 恢复历史安装记录，保持未启用，并清除旧 Hook 信任和 MCP 授权。非终态 Run 仍引用该版本时，Runtime 拒绝同版本重装。不同版本可以显式导入切换，活动旧版本继续保留。同版本不同内容和未知来源的已占用目录继续冲突。私有数据和历史调用继续保留。
@@ -456,7 +456,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Session 中连续点击不同文件链接时，Desktop 会复用已有的“文件”工具 Tab，并在其中添加或选中对应的文件预览 Tab。用户先从工具菜单打开“文件”后，文件链接也会复用该面板。用户关闭“文件”后，再次点击链接会重新打开一个面板。
 - Files 展开时，文件列表默认沿用展开前的侧栏宽度，窗口空间不足时会限制列表宽度。用户仍可以拖动分隔条，Desktop 会保留展开布局中调整过的宽度。未选择文件时，预览区显示“选择文件以查看预览”；实际读取文件时，预览区才显示读取提示。
 - 有项目的 Session 会收到独立的文件引用提示词。提示词提供文件、行号、行列号的标准 Markdown 格式和示例，要求模型使用当前 execution root 内已经确认的绝对路径，并用尖括号包住链接目标。无项目的 Session 不加入这段提示词。标准示例为 `[app.ts (line 42)](</workspace/My Project/src/app.ts:42>)`；列号示例为 `[app.ts (line 42, column 5)](</workspace/My Project/src/app.ts:42:5>)`。示例路径只说明格式，模型必须替换为实际路径。
-- Conversation 只把显式 Markdown 绝对路径链接作为文件跳转入口。系统从链接目标提取路径和位置，显示标签不参与寻址。裸文件名、行内代码和相对文件链接保持文字。文件链接复用现有图标和蓝色文字样式，不依赖扩展名白名单，也不按文件名搜索或猜测子目录。系统支持 `:line[:column]`，并兼容显式链接中的 `#Lline[Ccolumn]`；行列号从 1 开始。普通文本和代码预览会滚动到目标行，并选中该行或指定列的字符；同一文件再次点击不同位置时会重新定位。带位置的 HTML 链接会打开源码。渲染后的 Markdown 按源文本位置滚动到对应块，文档内相对链接仍按文档所在目录解析。目标行超出当前预览时，系统会显示提示。Renderer、Runtime 自动化测试和构建已通过；完整结果见 `current-limitations.md`。人工 Desktop 验收尚未执行。
+- Conversation 只把显式 Markdown 绝对路径链接作为文件跳转入口。系统从链接目标提取路径和位置，显示标签不参与寻址。裸文件名、行内代码和相对文件链接保持文字。文件链接复用现有图标和蓝色文字样式，不依赖扩展名白名单，也不按文件名搜索或猜测子目录。系统支持 `:line[:column]`，并兼容显式链接中的 `#Lline[Ccolumn]`；行列号从 1 开始。普通文本和代码预览会滚动到目标行，并选中该行或指定列的字符；同一文件再次点击不同位置时会重新定位。带位置的 HTML 链接会打开源码。渲染后的 Markdown 按源文本位置滚动到对应块，文档内相对链接仍按文档所在目录解析。目标行超出当前预览时，系统会显示提示。Renderer、Runtime 自动化测试和构建已通过；完整结果见 `docs/current/limitations.md`。人工 Desktop 验收尚未执行。
 - Files 支持 PNG、JPEG、WebP、GIF、SVG、PDF 和 HTML，Markdown 支持 Workspace 内的相对图片和文件链接。界面提供加载失败提示和有界预览。预览版本来自文件身份、大小和修改时间，不是内容快照。
 - Desktop 会把预览请求中的 `WORKSPACE_FILE_NOT_FOUND` 转成“暂无预览”，不再让该错误触发 Electron IPC handler 异常日志。其他错误仍按原有路径返回。`view_image` 卡片只对成功调用且位于当前 Workspace 内的路径请求预览；历史文件删除后，卡片不会恢复原文件。
 - PDF 预览使用已打包的 PDF.js 和本地 worker 绘制页面。页面外侧沿用预览区的 `--surface-muted` 底色，不再显示 Chromium 内嵌查看器的黑色外框。加载和失败状态也沿用同一底色，系统「预览」打开入口保留。底部工具栏不显示“PDF 预览”文字；多页文件保留页码，页码和打开按钮始终单行显示。总页数直接读取当前 PDF 文档，滚动条复用统一样式。主 Renderer 不再保留 PDF iframe 样式或 iframe 加载许可。
@@ -539,7 +539,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 - 提供商与模型配置 ID 必须成对填写。Runtime 校验实际提供商和思考档位，错误时不静默使用其他模型。现有模型存储仍以配置 ID 唯一索引。
 - 续派与恢复保留定义和子任务模型快照。备份保存 TOML 与目录快照，模型凭证继续排除。Schema v28→v29 保留历史角色并增加定义、创建请求和目录快照存储。
 - 子 Run 保留父 `work_mode`，Plan 子任务返回调查和草稿，主 Session 负责 `write_plan` 与确认。父模型已支持分页读取完整结果；引用传递仍待补充。
-- 配置规范、完整示例和验证边界见 [自定义子 Agent 方案](design/custom-subagents-design.md)。
+- 配置规范、完整示例和验证边界见 [自定义子 Agent 方案](../design/custom-subagents-design.md)。
 
 ### Loop 校验与协作放行（PR #102）
 
@@ -552,7 +552,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 - stage、commit、fetch、push 不再因当前 Session 有活动 Run 而禁用；切换分支、创建分支、merge、rebase、pull 仍保留工作树生命周期互斥及 Git 原有版本和锁检查。
 - Plan 可以直接说明调查结论或阻塞原因，无需为了结束答复伪造计划。提交可审阅计划仍由 `write_plan` 保存，必要的子任务依赖由 Runtime 等待。
 - Run 正常收尾仍终止其自有进程。清理成功后，Run 和执行段均按完成提交；系统不再因为停止了存活命令而记为中断或失败。命令终止情况和未知结果保留在工具记录中，真实清理失败仍返回错误。启动恢复会按已提交的完整答复修正旧版仅因 `active_shell_stopped` 中断的记录，并保留取消、未完成任务和未知结果事实。
-- 全部保留、调整和移除项见 [执行门控清单](current-execution-gates.md)。
+- 全部保留、调整和移除项见 [执行门控清单](execution-gates.md)。
 
 ### 交互与资源门禁细化（PR #103）
 
@@ -566,14 +566,14 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ## 记忆
 
-Eidos 使用全局/项目范围的 `MEMORY.md` 索引和主题 Markdown 笔记。模型在当前 Run 中通过 `memory_read`、`memory_search`、`memory_edit` 即时读取和保存，正文支持分页与版本 CAS。系统保留来源校验、撤销、临时对话和用户控制版本保护。记忆页只保留范围、模式、笔记编辑、来源/版本及整个范围的 Markdown 导出，完整备份移至运行时的本地数据区。v40 按用户要求清除旧记忆，不转换旧内容；后台模型整理、候选确认、历史回填和预算任务已移除。详见 [current-memory.md](current-memory.md)。
+Eidos 使用全局/项目范围的 `MEMORY.md` 索引和主题 Markdown 笔记。模型在当前 Run 中通过 `memory_read`、`memory_search`、`memory_edit` 即时读取和保存，正文支持分页与版本 CAS。系统保留来源校验、撤销、临时对话和用户控制版本保护。记忆页只保留范围、模式、笔记编辑、来源/版本及整个范围的 Markdown 导出，完整备份移至运行时的本地数据区。v40 按用户要求清除旧记忆，不转换旧内容；后台模型整理、候选确认、历史回填和预算任务已移除。详见 [docs/current/features/memory.md](features/memory.md)。
 
 审批支持高危人工确认。manual 与 auto_review 遇到受保护数据、Runtime、系统 Skill、非专用 Git 路径扩权或显式取消沙盒保护时，展示 danger 样式和具体范围，由用户决定。批准后系统执行对应操作；相邻路径、身份和版本核验继续生效。full_access 不请求或记录逐项审批，模型使用默认工具参数直接执行。
 
 ## 容量恢复与未知结果（2026-10-19）
 
-系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](current-architecture.md#容量恢复与未知结果2026-10-19)。
+系统保留未知执行结果，但不要求用户核验，也不以此阻塞后续工具、子任务、定时任务、分叉、完成或取消。系统不自动重放不确定操作。工具错误和容量限制通过参数反馈、替代路径、短预览、分页和可取消重试恢复，不创建机器容量暂停或要求用户继续。权限、身份、版本和真实结果校验继续生效。模型上下文移除工程校验 Hash；原始结果、内部完整性和 UI 分页校验仍保留。详细规则见[当前架构](architecture.md#容量恢复与未知结果2026-10-19)。
 
 ## 本地插件与 Hooks（2026-10-24）
 
-用户可以导入 Eidos、Codex 兼容清单和 Portable Agent Plugin 本地目录。Desktop 提供内容版本审阅、信任和撤销。Runtime 已接入 Codex 的 12 个 Hook 事件，并支持同步命令、后台命令和已连接服务的 MCP 处理器。Runtime 也支持个人、项目的 hooks.json 与 config.toml；内容变化后需要重新审阅。参数改写继续经过校验、权限和审批。PermissionRequest 可以决定普通请求，高危人工确认继续保留。后台结果只提供信息，不会重新启动已结束的 Run。SQLite v39 保存配置来源和后台接收记录，旧调用与输出继续保留。聊天显示状态和警告，插件详情提供历史分页。Runtime 提供有界 transcript 投影，但不保证完整复刻 Codex 文件格式。prompt/agent、Codex App 账号映射，以及官方仍保留的输出字段继续不执行。详细规则见 [current-hooks.md](current-hooks.md)。
+用户可以导入 Eidos、Codex 兼容清单和 Portable Agent Plugin 本地目录。Desktop 提供内容版本审阅、信任和撤销。Runtime 已接入 Codex 的 12 个 Hook 事件，并支持同步命令、后台命令和已连接服务的 MCP 处理器。Runtime 也支持个人、项目的 hooks.json 与 config.toml；内容变化后需要重新审阅。参数改写继续经过校验、权限和审批。PermissionRequest 可以决定普通请求，高危人工确认继续保留。后台结果只提供信息，不会重新启动已结束的 Run。SQLite v39 保存配置来源和后台接收记录，旧调用与输出继续保留。聊天显示状态和警告，插件详情提供历史分页。Runtime 提供有界 transcript 投影，但不保证完整复刻 Codex 文件格式。prompt/agent、Codex App 账号映射，以及官方仍保留的输出字段继续不执行。详细规则见 [docs/current/features/hooks.md](features/hooks.md)。

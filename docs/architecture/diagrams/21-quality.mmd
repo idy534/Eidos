@@ -1,0 +1,13 @@
+flowchart TB
+  runtime[Run、Step、Attempt、Tool 与资源] --> db[(SQLite、Event、Outbox 与 Blob)]
+  runtime --> logs[本地日志与固定诊断字段]
+  runtime --> lifecycle[LoopLifecycle 观察点]
+  runtime --> trace[可选 OpenTelemetry<br/>默认不启用 exporter]
+  db --> inspect[按 ID 读取事实、配置快照与原始结果]
+  inspect --> tests[对应的单元、契约、集成与原生验证]
+  tests --> real[真实 Provider 与 Desktop 人工验收]
+  real --> evaluation[真实任务与长任务质量评测]
+  evaluation --> distribution[Bundle、安装、升级、签名与发布验证]
+  logs -.故障定位.-> inspect
+  lifecycle -.内部观察.-> logs
+  distribution --> report[分别报告每项证据与未验证边界]

@@ -2,12 +2,12 @@
 ## 1. Scope and authority
 本文件约束 Eidos 仓库中的编码、重构、测试和文档修改。
 更深层目录存在更具体的 `AGENTS.md` 时，以更具体规则为准。
-执行任务前必须阅读本文件、当前任务和相关 `docs/current-*`。
+执行任务前必须阅读本文件、当前任务和相关 `docs/current/`。
 安装、启动、基础环境和常用开发命令统一遵循 `DEVELOPMENT.md`。专题配置、详细验证与人工验收统一遵循 `docs/development/README.md`。
 规则优先级：System Safety > User Rules > 当前任务 > 本文件 > Workspace Rules > Path Rules > Skill Instructions > 当前代码和测试。
 发现冲突时必须指出来源，不得静默选择低优先级规则。
 当前代码和测试是实现事实；历史 Phase、PRD 和 TDD 只提供背景。
-修改已实现行为时必须同步测试和 `docs/current-*`。
+修改已实现行为时必须同步测试和 `docs/current/`。
 ## 2. Product boundary
 Eidos 是可独立安装的 macOS 桌面 Agent Runtime。
 目标能力：多项目、多 Session、多编码线程、独立 Git Worktree、多 Provider、多 Model Profile、代码理解、搜索、修改、测试、完整 Diff、Checkpoint、Rewind、Fork、Sandbox、权限审查、长任务恢复、Skill、Plugin、MCP、有限并行 Agent、日志、诊断、备份、迁移和升级。
@@ -268,7 +268,7 @@ JSON-RPC 2.0 over stdio 是固定控制通道，必须保持有界单行 JSON、
 新方法优先注册到 Method Registry，不得继续扩展大型 `if/elif` 路由。
 协议层只验证输入和映射输出，不执行 Tool 和内部 SQL。
 Python DTO 和 TypeScript DTO 应由单一 Schema 源生成或校验。
-协议变化必须更新 Fixture、Python/TypeScript 测试和 `docs/current-*`。
+协议变化必须更新 Fixture、Python/TypeScript 测试和 `docs/current/`。
 ## 19. JSON Schema and Diff
 Tool 参数标准校验使用 `jsonschema` 和 `referencing`。
 Eidos 只保留 Schema 大小、值大小、深度、节点数、关键字范围、禁用远程 `$ref`、无网络解析和稳定错误码。
@@ -322,7 +322,7 @@ OpenTelemetry 和 Sentry 必须作为后续独立 PR，不得混入核心重构�
 ## 25. Execution workflow
 执行者在编码前、编码后和提交前都不默认运行 Full Suite。用户明确要求完整回归或要求执行某个完整套件命令时，执行者才运行 Full Suite。
 开始编码前：
-1. 读取任务、本文件和相关 `docs/current-*`
+1. 读取任务、本文件和相关 `docs/current/`
 2. 定位当前代码、测试、协议和数据影响
 3. 画出最小调用链
 4. 判断核心自研还是通用基建
@@ -411,7 +411,7 @@ OpenTelemetry 和 Sentry 必须作为后续独立 PR，不得混入核心重构�
 - [ ] Runtime 变化覆盖取消和恢复
 - [ ] Tool 变化覆盖失败和副作用
 - [ ] 日志未包含秘密
-- [ ] `docs/current-*` 已同步
+- [ ] `docs/current/` 已同步
 - [ ] `DEVELOPMENT.md` 启动链路仍正确
 - [ ] 定向测试通过
 - [ ] 完整测试通过或说明阻塞

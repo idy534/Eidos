@@ -1,0 +1,18 @@
+sequenceDiagram
+  participant L as Eidos Loop
+  participant T as Tool Controller
+  participant S as ShellProcessManager
+  participant P as 受控进程组
+  participant D as SQLite 与输出存储
+  L->>T: run_shell(command, cwd, timeout)
+  T->>D: 权限决定与 Durable Intent
+  T->>S: 启动并注册资源
+  S->>P: Popen 与 Seatbelt / 已批准权限
+  S->>D: 记录真实启动与输出
+  S-->>T: 有界等待后的状态与 session ID
+  T-->>L: 已退出结果或仍在运行
+  L->>T: write_stdin 或读取保存输出
+  T->>S: 输入或继续等待
+  P-->>S: 尾部输出与退出状态
+  S->>D: 保存退出与完整性信息
+  Note over S,P: 取消、期限或收尾会清理进程组与 PTY

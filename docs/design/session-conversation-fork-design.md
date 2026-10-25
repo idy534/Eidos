@@ -2,7 +2,7 @@
 
 > 文档分类：设计与实施记录。本文保留记录时的方案、分支状态和验证范围。当前行为请以 [当前说明](../README.md#当前说明)、源码和测试为准。
 
-调研日期：2026-10-13。实现日期：2026-10-14。本文保留调研依据和设计过程。当前实现使用 `session/fork`，分支为 `feat/session-conversation-fork`。当前能力与限制以 `docs/current-*` 和源码为准。
+调研日期：2026-10-13。实现日期：2026-10-14。本文保留调研依据和设计过程。当前实现使用 `session/fork`，分支为 `feat/session-conversation-fork`。当前能力与限制以 `docs/current/` 和源码为准。
 
 **建议：Eidos 增加独立的 `session/fork`。用户可以从一次已经结束的回答创建新 Session。新 Session 默认保留到该回答为止的完整聊天历史，包含该回答。新 Session 等待用户输入下一条消息。**
 
@@ -250,8 +250,8 @@ Context 通过同一历史读取模块获得“继承前缀 + 自有记录”。
 
 实现阶段需要执行相关 Runtime 定向测试、Ruff、Deptry、Python/TypeScript 协议 Fixture 校验，以及相关 Renderer/Main 测试和必要构建。新增 preload 暴露时，执行 Electron smoke。Worktree 生命周期变化时，执行对应原生定向验证。执行者只在用户明确要求时运行 Full Suite。
 
-实现需要同步 `docs/current-architecture.md`、`docs/current-capabilities.md` 和 `docs/current-limitations.md`。实现不需要新增第三方依赖。SQLite、Pydantic、JsonBlobStore 和现有 Git/Worktree 模块承担存储、类型与文件环境机制。Eidos 继续拥有 Session、权限、Reconciliation、事务和恢复规则。
+实现需要同步 `docs/current/architecture.md`、`docs/current/capabilities.md` 和 `docs/current/limitations.md`。实现不需要新增第三方依赖。SQLite、Pydantic、JsonBlobStore 和现有 Git/Worktree 模块承担存储、类型与文件环境机制。Eidos 继续拥有 Session、权限、Reconciliation、事务和恢复规则。
 
 当前实现已经接通回答入口、协议、Application、历史持久化、模型上下文和独立 Worktree。`session_forks` 保存来源元数据；每条 `session_history_entries` 保存带 SHA256 校验的 Blob 引用；`session_history_resources` 独立保留附件、工具结果和私有回放。新 Session 不创建 Run。单次分叉最多保留 20,000 条记录，记录与独立资源的未压缩内容合计最多为 128 MiB。原 Checkpoint Fork 的行为保留。
 
-实现固定分叉时的文件快照。来源在快照完成后的新修改不会使已捕获的目标文件改变。源 Session 存在未确认副作用时，Runtime 拒绝分叉。Worktree 创建后的提交失败保留 durable lifecycle，供同一请求重试。继承记录支持分页、再次分叉、来源删除、附件保留、私有回放和独立压缩。验证记录见 `docs/current-limitations.md`。
+实现固定分叉时的文件快照。来源在快照完成后的新修改不会使已捕获的目标文件改变。源 Session 存在未确认副作用时，Runtime 拒绝分叉。Worktree 创建后的提交失败保留 durable lifecycle，供同一请求重试。继承记录支持分页、再次分叉、来源删除、附件保留、私有回放和独立压缩。验证记录见 `docs/current/limitations.md`。

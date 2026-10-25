@@ -1,0 +1,15 @@
+sequenceDiagram
+  participant U as 用户或来源变更
+  participant D as SQLite 与 MemoryService
+  participant C as ContextSnapshot
+  participant P as 在途模型请求
+  participant M as StorageMaintenance
+  U->>D: 删除、临时化、改模式或修订来源
+  D->>D: 更新撤销版本与关联读取记录
+  D->>C: 使旧记忆快照失效
+  D->>P: 取消使用旧版本的请求
+  P-->>D: 迟到结果
+  D->>D: 准入与发布再次检查，拒绝失效结果
+  D->>M: 分批清理撤销载荷与失效正文
+  C->>D: 后续请求重新读取合法事实
+  Note over D,P: 已发给 Provider 的资料无法追回
