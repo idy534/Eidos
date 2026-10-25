@@ -1,5 +1,11 @@
 # Eidos 当前限制
 
+## CI 依赖与定向测试修复（2026-10-25）
+
+- 主 Python 依赖已更新至修复版本：certifi 2026.10.23、OpenTelemetry 1.45.1、Pillow 13.0.0。`bash scripts/audit-python.sh` 未报告已知漏洞。Node 锁文件将 DOMPurify 更新至 3.4.17；Node 审计还报告 2 项低危和 2 项中危问题，但没有达到当前 high 门槛。
+- Runtime 并行读取测试现在用数据库锁保护共享 SQLite 查询。Shell 和搜索轮询测试现在用事件控制完成时机，减少机器负载对断言的影响。Main 跨进程测试的总超时从 45 秒调至 90 秒，Electron smoke 超时从 20 秒调至 60 秒。
+- 定向 Runtime 测试通过 20 项，Main 跨进程定向测试通过 1 项，Pillow 相关测试通过 17 项。Ruff、Deptry、Python 与 Node 依赖审计、Desktop 构建、Electron smoke、macOS arm64 Runtime Bundle 和 bundled smoke 均通过。本次没有运行本地 Full Suite；推送后由 GitHub Actions 执行完整 CI。
+
 ## 冗余代码清理验证（2026-10-23）
 
 - 本轮只删除未接入生产调用链的代码、闲置组件及专用样式，并收窄 ExecutionFeed 的内部参数。协议、SQLite Schema、权限模式、实际重试和压缩验证保持原样。依赖声明和锁文件没有修改。

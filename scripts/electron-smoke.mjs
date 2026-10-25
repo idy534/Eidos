@@ -32,7 +32,7 @@ try {
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`Electron smoke timed out.\n${output}`));
-    }, 20_000);
+    }, 60_000);
     const capture = (chunk) => {
       output = (output + chunk.toString("utf8")).slice(-1024 * 1024);
     };

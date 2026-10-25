@@ -722,8 +722,11 @@ class RuntimeLoopTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "Wait for the command")
         store = self.store
         session_id = self.session["id"]
+        completion_gate = self.workspace / "allow-command-finish"
 
         class PollingModel(ScriptedModel):
+            poll_count = 0
+
             def complete(model, *args, **kwargs):
                 if model._index:
                     snapshot = store.read_session_snapshot(session_id)
@@ -738,12 +741,15 @@ class RuntimeLoopTests(unittest.TestCase):
                     else:
                         if model._index > 30:
                             raise AssertionError("Managed command never finished")
+                        model.poll_count += 1
+                        if model.poll_count == 3:
+                            completion_gate.touch()
                         response = ModelResponse(tool_calls=(ModelToolCall(f"poll-{model._index}", "write_stdin", {"sessionId": result["data"]["sessionId"], "yieldTimeMs": 250}),))
                     model.responses = (*model.responses, response)
                 return super().complete(*args, **kwargs)
 
         model = PollingModel([ModelResponse(tool_calls=(ModelToolCall(
-            "start-command", "run_shell", {"command": "printf 'ready\\n'; sleep 3; printf 'done\\n'", "yieldTimeMs": 250},
+            "start-command", "run_shell", {"command": "printf 'ready\\n'; i=0; while [ ! -e allow-command-finish ]; do i=$((i + 1)); [ \"$i\" -ge 200 ] && exit 1; sleep 0.05; done; printf 'done\\n'", "yieldTimeMs": 250},
         ),))])
         RuntimeLoop(self.store, model, lambda _message: None, shell_available=True).run(run["id"], threading.Event())
         snapshot = self.store.read_session_snapshot(session_id)
@@ -761,14 +767,16 @@ class RuntimeLoopTests(unittest.TestCase):
         run, _ = self.store.create_run(self.session["id"], "Wait for search")
         store = self.store
         session_id = self.session["id"]
+        search_release = threading.Event()
 
         class SlowSearchDriver:
             def search(driver, request, cancel):
-                deadline = time.monotonic() + 0.8
-                while time.monotonic() < deadline:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and not search_release.wait(0.01):
                     if cancel.is_set():
                         raise AssertionError("Search was canceled during polling")
-                    time.sleep(0.01)
+                if not search_release.is_set():
+                    raise AssertionError("Search polling did not release the fixture")
                 return WorkspaceSearchResult(
                     (WorkspaceSearchMatch("hello.txt", 1, 1, "hello"),),
                     21,
@@ -787,6 +795,8 @@ class RuntimeLoopTests(unittest.TestCase):
             )
 
         class PollingModel(ScriptedModel):
+            poll_count = 0
+
             def complete(model, *args, **kwargs):
                 if model._index:
                     snapshot = store.read_session_snapshot(session_id)
@@ -797,10 +807,13 @@ class RuntimeLoopTests(unittest.TestCase):
                         in {"search_text", "search_text_wait"}
                     ]
                     result = json.loads(tool_items[-1]["toolCall"]["resultJson"])
-                    response = (
-                        ModelResponse(text="Search finished.")
-                        if result["code"] == "ok"
-                        else ModelResponse(
+                    if result["code"] == "ok":
+                        response = ModelResponse(text="Search finished.")
+                    else:
+                        model.poll_count += 1
+                        if model.poll_count == 2:
+                            search_release.set()
+                        response = ModelResponse(
                             tool_calls=(
                                 ModelToolCall(
                                     f"poll-search-{model._index}",
@@ -812,7 +825,6 @@ class RuntimeLoopTests(unittest.TestCase):
                                 ),
                             )
                         )
-                    )
                     model.responses = (*model.responses, response)
                 return super().complete(*args, **kwargs)
 

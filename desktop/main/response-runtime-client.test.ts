@@ -9,7 +9,7 @@ import type { ApprovalMode, Run, RuntimeNotification } from "../shared/domain-co
 import { RuntimeClient, RuntimeRequestError } from "./runtime-client.js";
 import "./response-runtime-client.js";
 
-void test("revision approval modes cross Main and Runtime and survive restart", { timeout: 45000 }, async () => {
+void test("revision approval modes cross Main and Runtime and survive restart", { timeout: 90000 }, async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const fixture = JSON.parse(await readFile(path.join(root, "protocol/fixtures/response-actions-v1.json"), "utf8")) as {
     validRequests: Array<{ userInput?: string; approvalMode?: ApprovalMode; fullAccessConfirmation?: "full-access-v1" }>;

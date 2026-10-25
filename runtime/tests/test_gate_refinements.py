@@ -286,7 +286,8 @@ def test_mixed_batch_parallel_reads_keep_persisted_order_around_plan_write(state
     def read(_handler, _run_id, _item, call, _cancel, _runtime):
         pair = 0 if call.provider_call_id.startswith('before') else 1
         if pair:
-            assert store.connection.execute('SELECT 1 FROM plans WHERE run_id=?', (run['id'],)).fetchone()
+            with store.database.lock:
+                assert store.connection.execute('SELECT 1 FROM plans WHERE run_id=?', (run['id'],)).fetchone()
         observed.append(call.provider_call_id)
         barriers[pair].wait(timeout=3)
         return HandlerOutcome(tool_error('list_files', 'fixture_read', 'Fixture read result'), 'completed')

@@ -3,3 +3,4 @@ allowBuilds:
   node-pty: true
 overrides:
   katex: 0.18.10
+  dompurify: 3.4.17
