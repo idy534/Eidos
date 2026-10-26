@@ -110,7 +110,7 @@ pnpm exec electron scripts/test-plugin-resources.cjs
 
 插件更新与兼容解析的定向入口是 `uv run --locked pytest runtime/tests/test_plugin_upgrades.py runtime/tests/test_plugin_packages.py runtime/tests/test_plugins.py runtime/tests/test_plugin_protocol.py runtime/tests/test_extension_storage.py`。数据库变更还需覆盖 `test_storage_schema.py` 和 `test_persistence_layout.py`。展示契约变更后运行 `node scripts/generate-plugin-contracts.mjs`。`pnpm build:main` 后，`node --test dist/main/runtime-client-hooks.test.js dist/main/runtime-client-mcp-details.test.js` 验证 Main/Runtime；插件页使用 `PluginSettings.behavior.test.tsx` 和 `electron scripts/test-plugin-resources.cjs` 验证。插件版本身份从 schema v37 开始保存，远程连接从 v38 开始保存。两者沿用已有升级与备份流程，不改变启动命令。这些入口不属于 Full Suite。
 
-定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py runtime/tests/test_automation_scheduler.py`。调度测试覆盖五分钟兜底、到期唤醒、计划变更打断等待、扫描期间变更、时钟变化、休眠不补跑、准备中的一次性任务和取消退出。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx`。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置。
+定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py runtime/tests/test_automation_scheduler.py runtime/tests/test_automation_time.py`。调度测试覆盖五分钟兜底、到期唤醒、计划变更打断等待、扫描期间变更、时钟变化、休眠不补跑、准备中的一次性任务和取消退出。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx desktop/renderer/src/components/automations/automation-time.behavior.test.tsx`。时间边界测试覆盖主机时区切换、秒和毫秒保留、夏令时跳过与重复时间、半小时切换和跨午夜展示。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置，EIDOS_AUTOMATION_TIMEZONE_SCREENSHOT 保存窄窗口下的重复时间选项。
 
 Runtime 随现有启动运行受管调度服务，并随 Supervisor 关闭，无需系统 cron、launchd 或额外守护进程。v27→v28 升级新增任务、触发和来源表。croniter 与 tzdata 已进入 pyproject.toml 和 uv.lock，打包沿用现有流程。
 
@@ -598,6 +598,8 @@ Schema v23 是不兼容旧 Projectless Session 的 Alpha 更新。新版 Runtime
 Runtime 不设置跨 Session 的 Run 或驻留 Worker 总量上限，也不使用工作区共享副作用门控。`EIDOS_MAX_ACTIVE_RUNS` 与 `EIDOS_MAX_RUN_WORKERS` 不再作为配置读取。每个父 Run 最多同时执行 8 个子 Agent Run，名额不与其他父 Run 共享；这不是单 Run 内工具线程池大小。同一 Session 仍按 FIFO 顺序执行，父任务仍可主动等待子任务结果。同目录并发修改可能冲突，现有文件版本核验、权限、取消和副作用对账继续生效；需要修改隔离时使用独立 Worktree。
 
 Runtime stdout 只承载 JSON-RPC。Runtime 日志写入启动终端的 stderr，也写入数据目录内的有界 JSONL segment。Renderer 不直接读取 Runtime stdout。
+
+Runtime stderr 使用 UTC 时间，并以毫秒和 `Z` 结尾。开发者比较时区切换前后的日志时，可以直接比较该时间。JSONL 的 `timestamp` 仍是 Unix 毫秒时间戳；旧日志文本和日期目录不做转换。
 
 MCP Connection 使用标准库 `tempfile.mkdtemp()` 在 macOS 的 canonical `/private/tmp` 下创建 `eidos-mcp-<随机值>/`，不再使用数据目录下的长运行路径，也不从主进程继承临时目录根路径。连接的默认 HOME、TMPDIR 和 PID 文件分别位于短目录内的 `home/`、`tmp/` 和 `server.pid`。服务显式配置或透传的环境变量仍然优先。连接在进程组、异步 Service 和 callback 停止后核对目录身份并清理自身目录；系统临时目录和其他连接不受清理影响。
 

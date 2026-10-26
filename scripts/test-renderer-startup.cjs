@@ -56,7 +56,7 @@ app.whenReady().then(async () => {
     clearTimeout(deadline);
     win?.destroy();
     ipcMain.removeHandler("runtime:get-status");
-    await rm(temporaryRoot, { recursive: true, force: true });
+    await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     app.exit(exitCode);
   }
 });

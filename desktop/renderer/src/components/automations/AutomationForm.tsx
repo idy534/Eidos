@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { Automation, AutomationDesktopRequest } from "../../../../shared/automation.js";
 import type { ApprovalMode, ModelOption, ModelReasoningSelection, Project, Session } from "../../contracts.js";
 import type { ToastType } from "../ToastContainer.js";
@@ -6,6 +6,7 @@ import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { userFacingError } from "../../session-state.js";
+import { AutomationTimeError, automationDateInput, formatAutomationTime, initialOneTimeChoice, oneTimeOptions } from "./automation-time.js";
 
 export interface InitialAutomationValues {
   name?: string | undefined;
@@ -30,13 +31,21 @@ interface Props {
 }
 
 export function AutomationForm({ task, initialValues, projects, sessions, models, currentSessionId, currentProjectId, busy, onSave, onCancel, onShowToast }: Props) {
+  const timeErrorId = useId();
   const current = sessions.find((session) => session.id === currentSessionId);
   const [name, setName] = useState(task?.name ?? initialValues?.name ?? "");
   const [prompt, setPrompt] = useState(task?.prompt ?? initialValues?.prompt ?? "");
   const [kind, setKind] = useState<"cron" | "at">(task?.kind ?? initialValues?.kind ?? "cron");
   const [expression, setExpression] = useState(task?.schedule.expression ?? initialValues?.expression ?? "0 9 * * *");
-  const [runAt, setRunAt] = useState(task?.schedule.runAt ? new Date(task.schedule.runAt).toLocaleString("sv-SE").replace(" ", "T").slice(0, 16) : "");
-  const [timezone, setTimezone] = useState(task?.schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [initialTime] = useState(() => {
+    const timezone = task?.schedule.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const instant = task?.schedule.runAt;
+    return { timezone, runAt: instant ? automationDateInput(instant, timezone) : "",
+      choice: instant ? initialOneTimeChoice(instant, timezone) : "" };
+  });
+  const [runAt, setRunAt] = useState(initialTime.runAt);
+  const [timezone, setTimezone] = useState(initialTime.timezone);
+  const [timeChoice, setTimeChoice] = useState(initialTime.choice);
   const [target, setTarget] = useState(task?.target.kind === "existing_session" ? "session" : "new");
   const [sessionId, setSessionId] = useState(task?.target.sessionId ?? currentSessionId ?? "");
   const [projectId, setProjectId] = useState(task ? task.target.projectId ?? "" : currentProjectId ?? current?.project?.id ?? "");
@@ -50,9 +59,21 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
   const [status, setStatus] = useState<"ACTIVE" | "PAUSED">(task?.status ?? "ACTIVE");
   const [preview, setPreview] = useState<string[]>([]);
   const [previewing, setPreviewing] = useState(false);
-  const schedule = () => kind === "cron"
-    ? { expression, timezone }
-    : { runAt: new Date(runAt).toISOString(), timezone };
+  const timeResolution = useMemo(() => {
+    if (kind !== "at" || !runAt) return { options: [], error: "" };
+    try { return { options: oneTimeOptions(runAt, timezone), error: "" }; }
+    catch (error) { return { options: [], error: (error as Error).message }; }
+  }, [kind, runAt, timezone]);
+  const timeChanged = runAt !== initialTime.runAt || timezone !== initialTime.timezone || timeChoice !== initialTime.choice;
+  const schedule = () => {
+    if (kind === "cron") return { expression, timezone };
+    if (task?.kind === "at" && !timeChanged) return { runAt: task.schedule.runAt!, timezone };
+    if (timeResolution.error) throw new AutomationTimeError(timeResolution.error);
+    const option = timeResolution.options.length === 1 ? timeResolution.options[0]
+      : timeResolution.options.find((value) => value.instant === timeChoice);
+    if (!option) throw new AutomationTimeError("请选择有效的执行时间；时间重复时，请选择对应的 UTC 偏移。");
+    return { runAt: option.instant, timezone };
+  };
   const existingTarget = task?.target.sessionId === sessionId;
   const save = (request: AutomationDesktopRequest) => fullAccessConfirmed && approvalMode === "full_access"
     ? onSave(request, "full-access-v1") : onSave(request);
@@ -69,8 +90,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
         const changes: NonNullable<AutomationDesktopRequest["changes"]> = {};
         if (name !== task.name) changes.name = name;
         if (prompt !== task.prompt) changes.prompt = prompt;
-        const originalTime = task.schedule.runAt ? new Date(task.schedule.runAt).toLocaleString("sv-SE").replace(" ", "T").slice(0, 16) : "";
-        if (kind !== task.kind || timezone !== task.schedule.timezone || (kind === "cron" ? expression !== task.schedule.expression : runAt !== originalTime)) {
+        if (kind !== task.kind || timezone !== initialTime.timezone || (kind === "cron" ? expression !== task.schedule.expression : timeChanged)) {
           changes.schedule = schedule(); changes.kind = kind;
         }
         if (modelId !== task.model.modelId || reasoning !== (task.model.reasoningSelection ?? "")) changes.model = selectedModel;
@@ -84,14 +104,14 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
       } else {
         await save({ mode: "create", kind, name, prompt, schedule: schedule(), status, model: selectedModel, approvalMode, ...binding });
       }
-    } catch (error) { onShowToast?.(error instanceof RangeError ? "请选择有效的执行时间。" : userFacingError(error), "error"); }
+    } catch (error) { onShowToast?.(error instanceof AutomationTimeError ? error.message : userFacingError(error), "error"); }
   };
   const showPreview = async () => {
     setPreviewing(true);
     try {
       const result = await window.eidosRuntime.automation({ command: { mode: "preview", kind, schedule: schedule() } });
       setPreview(result.nextRuns ?? []);
-    } catch (error) { onShowToast?.(error instanceof RangeError ? "请选择有效的执行时间。" : userFacingError(error), "error"); }
+    } catch (error) { onShowToast?.(error instanceof AutomationTimeError ? error.message : userFacingError(error), "error"); }
     finally { setPreviewing(false); }
   };
   return <form className="automation-form" onSubmit={(event) => void submit(event)}>
@@ -113,15 +133,27 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
         <h3 className="automation-card-title">执行计划</h3>
         <div className="automation-fields">
           <label>时间类型<select value={kind} onChange={(event) => { setKind(event.target.value as "at" | "cron"); setPreview([]); }}><option value="cron">周期执行</option><option value="at">执行一次</option></select></label>
-          <label>时区<input required value={timezone} onChange={(event) => { setTimezone(event.target.value); setPreview([]); }} /></label>
+          <label>时区<input required value={timezone} onChange={(event) => { setTimezone(event.target.value); setTimeChoice(""); setPreview([]); }} /></label>
         </div>
         {kind === "cron" ? <label>执行规则<select value={["*/10 * * * *", "*/30 * * * *", "0 * * * *", "0 9 * * *", "0 9 * * 1-5"].includes(expression) ? expression : "custom"} onChange={(event) => { setExpression(event.target.value === "custom" ? "0 9 * * 1" : event.target.value); setPreview([]); }}>
           <option value="*/10 * * * *">每 10 分钟</option><option value="*/30 * * * *">每 30 分钟</option><option value="0 * * * *">每 1 小时</option><option value="0 9 * * *">每天 09:00</option><option value="0 9 * * 1-5">周一至周五 09:00</option><option value="custom">自定义日历时间</option>
         </select><input aria-label="Cron 表达式" required value={expression} onChange={(event) => { setExpression(event.target.value); setPreview([]); }} /></label>
-          : <label>执行时间（本机时间）<input type="datetime-local" required value={runAt} onChange={(event) => { setRunAt(event.target.value); setPreview([]); }} /></label>}
+          : <>
+            <label>执行时间（所选时区）<input type="datetime-local" required value={runAt}
+              aria-invalid={Boolean(timeResolution.error)} aria-describedby={timeResolution.error ? timeErrorId : undefined}
+              onChange={(event) => { setRunAt(event.target.value); setTimeChoice(""); setPreview([]); }} /></label>
+            {timeResolution.error && <p id={timeErrorId} role="alert">{timeResolution.error}</p>}
+            {timeResolution.options.length > 1 && <label>这个时间出现两次，请选择执行时刻<select required value={timeChoice}
+              onChange={(event) => { setTimeChoice(event.target.value); setPreview([]); }}>
+              <option value="">请选择执行时刻</option>
+              {timeResolution.options.map((option, index) => <option key={option.instant} value={option.instant}>
+                第 {index + 1} 次（UTC{option.offset}）
+              </option>)}
+            </select></label>}
+          </>}
         <div className="automation-preview-block">
           <Button type="button" size="small" variant="secondary" disabled={previewing || busy} onClick={() => void showPreview()}>预览执行时间</Button>
-          {preview.length > 0 && <ol className="automation-preview">{preview.map((time) => <li key={time}>{new Date(time).toLocaleString(undefined, { timeZone: timezone })}</li>)}</ol>}
+          {preview.length > 0 && <ol className="automation-preview">{preview.map((time) => <li key={time}>{formatAutomationTime(time, timezone)}</li>)}</ol>}
         </div>
       </div>
 

@@ -56,6 +56,7 @@
     "test:packaging": "node --test scripts/ci-scope.test.mjs scripts/clean-renderer-assets.test.mjs scripts/packaging-config.test.mjs scripts/package-macos.test.mjs scripts/macos-sign.test.mjs scripts/runtime-dependency-packaging.test.mjs scripts/test-affected.test.mjs"
   },
   "dependencies": {
+    "@js-temporal/polyfill": "0.5.1",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "ajv": "8.20.0",

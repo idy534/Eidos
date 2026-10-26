@@ -1639,7 +1639,8 @@ function ToolItem({
   const toolResult = parseObject(toolCall.resultJson);
   if (toolCall.toolName === "automation" && toolCall.provenance?.kind === "builtin" && toolCall.provenance.sourceId === "eidos.automation" && toolResult.outcome === "success") {
     const data = toolResult.data && typeof toolResult.data === "object" ? toolResult.data as Record<string, unknown> : {};
-    return <AutomationToolCard response={data.response} mode={parseObject(toolCall.argumentsJson).mode} />;
+    const arguments_ = parseObject(toolCall.argumentsJson);
+    return <AutomationToolCard response={data.response} mode={arguments_.mode} schedule={arguments_.schedule} />;
   }
   if (toolCall.toolName === "request_user_input"
     && (item.status === "in_progress" || (item.status === "completed" && toolResult.outcome === "success"))) {

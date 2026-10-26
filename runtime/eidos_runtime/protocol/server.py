@@ -109,6 +109,7 @@ from eidos_runtime.model.pydantic_ai_client import (
 from eidos_runtime.application.memory import MEMORY_METHODS, MemoryApplication
 from eidos_runtime.db.maintenance import StorageMaintenance
 from eidos_runtime.telemetry.tracing import startup_phase
+from eidos_runtime.telemetry.logging import configure_stderr_logging
 from eidos_runtime.model.gateway import ModelGateway
 from eidos_runtime.domain.long_task import LongTaskProgress
 from eidos_runtime.git.manager import WorktreeManager
@@ -2456,11 +2457,7 @@ def _model_from_environment() -> ModelClient | None:
 
 
 def run() -> int:
-    logging.basicConfig(
-        stream=sys.stderr,
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_stderr_logging()
     server = RuntimeServer(sys.stdout, model=_model_from_environment())
 
     try:

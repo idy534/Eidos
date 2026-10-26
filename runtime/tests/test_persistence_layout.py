@@ -652,12 +652,13 @@ def test_runtime_logs_delete_oldest_sealed_segments_at_total_limit(
         database.close()
 
 
-def test_runtime_logs_survive_restart_after_timezone_change(tmp_path: Path) -> None:
+@pytest.mark.parametrize("zones", [("UTC0", "KST-9"), ("Asia/Shanghai", "Asia/Seoul", "Asia/Shanghai")])
+def test_runtime_logs_survive_restart_after_timezone_change(tmp_path: Path, zones: tuple[str, ...]) -> None:
     original_timezone = os.environ.get("TZ")
     data = tmp_path / "data"
     segment_id = None
     try:
-        for timezone in ("UTC0", "KST-9"):
+        for timezone in zones:
             os.environ["TZ"] = timezone
             time.tzset()
             store = SessionStore(data)
@@ -667,7 +668,7 @@ def test_runtime_logs_survive_restart_after_timezone_change(tmp_path: Path) -> N
                 logs = store._persistence_layout.runtime_logs
                 if segment_id is None:
                     record = logging.LogRecord("timezone-test", logging.INFO, __file__, 1, "saved log", (), None)
-                    record.created = 1792967400  # 2026-10-25 23:50 UTC; next day in KST.
+                    record.created = 1792967400 if zones[0] == "UTC0" else 1793028600  # Cross midnight when the offset changes.
                     logs.append(record)
                     row = logs.database.connection().execute("SELECT * FROM log_segments").fetchone()
                     segment_id = row["id"]
@@ -675,7 +676,8 @@ def test_runtime_logs_survive_restart_after_timezone_change(tmp_path: Path) -> N
                 else:
                     row = logs.database.connection().execute("SELECT * FROM log_segments WHERE id=?", (segment_id,)).fetchone()
                     assert row is not None
-                    assert row["relative_path"].startswith("2026-10-25/")
+                    expected_day = "2026-10-25" if zones[0] == "UTC0" else "2026-10-26"
+                    assert row["relative_path"].startswith(f"{expected_day}/")
                     assert "saved log" in (logs.root / row["relative_path"]).read_text()
             finally:
                 store.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
@@ -14,7 +15,27 @@ TIMEZONE_DATA_VERSION = tzdata.__version__
 
 
 def local_timezone() -> str:
-    candidates = [os.environ.get("TZ", "")]
+    configured = os.environ.get("TZ")
+    if configured is not None:
+        # POSIX permits a colon before an IANA name and an empty TZ means UTC.
+        candidate = configured.removeprefix(":") or "UTC"
+        try:
+            ZoneInfo(candidate)
+            return candidate
+        except (ZoneInfoNotFoundError, ValueError):
+            # Adapt only fixed whole-hour POSIX names. ZoneInfo validates the
+            # resulting offset; seasonal POSIX rules still require an IANA name.
+            fixed = re.fullmatch(r"[A-Za-z]{3,}([+-]?\d{1,2})", candidate)
+            if fixed:
+                offset = int(fixed[1])
+                canonical = "UTC" if offset == 0 else f"Etc/GMT{offset:+d}"
+                try:
+                    ZoneInfo(canonical)
+                    return canonical
+                except ZoneInfoNotFoundError:
+                    pass
+        raise AutomationError("automation_schedule_not_supported", "TZ 环境变量不受支持，请明确指定地区时区，例如 Asia/Shanghai。")
+    candidates: list[str] = []
     resolved = str(Path("/etc/localtime").resolve())
     if "zoneinfo/" in resolved:
         candidates.append(resolved.split("zoneinfo/", 1)[1])

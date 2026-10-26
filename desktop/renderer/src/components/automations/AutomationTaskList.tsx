@@ -21,8 +21,9 @@ function formatScheduleSummary(task: AutomationSummary): string {
   } else if (task.status === "PAUSED") {
     datePart = "已暂停";
   } else if (task.nextRunAt) {
-    const date = new Date(task.nextRunAt);
-    datePart = `${date.getMonth() + 1}月${date.getDate()}日`;
+    datePart = new Date(task.nextRunAt).toLocaleDateString("zh-CN", {
+      timeZone: task.schedule?.timezone || "UTC", month: "numeric", day: "numeric",
+    });
   }
 
   let freqPart = "定时";
@@ -38,7 +39,7 @@ function formatScheduleSummary(task: AutomationSummary): string {
   } else if (task.kind === "at") {
     freqPart = "一次性";
   }
-  return `${datePart} · ${freqPart}`;
+  return `${datePart} · ${freqPart} · ${task.schedule?.timezone || "UTC"}`;
 }
 
 export function AutomationTaskList({ items, searchQuery, selectedId, busy, hasMore, onSelect }: Props) {

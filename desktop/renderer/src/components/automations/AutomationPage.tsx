@@ -6,6 +6,7 @@ import { ToastContainer, type ToastItem, type ToastType } from "../ToastContaine
 import { AutomationForm, type InitialAutomationValues } from "./AutomationForm.js";
 import { AutomationTaskList } from "./AutomationTaskList.js";
 import { userFacingError } from "../../session-state.js";
+import { formatAutomationTime } from "./automation-time.js";
 
 interface Props {
   projects: Project[];
@@ -534,7 +535,8 @@ export function AutomationPage({
                   <h3 className="automation-card-title">配置信息</h3>
                   <dl className="automation-facts">
                     <dt>时间规则</dt>
-                    <dd>{selected.schedule.expression ?? selected.schedule.runAt} · {selected.schedule.timezone}</dd>
+                    <dd>{selected.schedule.runAt ? formatAutomationTime(selected.schedule.runAt, selected.schedule.timezone)
+                      : `${selected.schedule.expression} · ${selected.schedule.timezone}`}</dd>
                     <dt>执行位置</dt>
                     <dd>
                       {selected.target.kind === "existing_session" ? "已有会话" : "每次新建会话"} ·{" "}
@@ -557,7 +559,7 @@ export function AutomationPage({
                         <li key={record.id} className="automation-history-item">
                           <div className="automation-history-meta">
                             <span>
-                              {record.scheduledFor.startsWith("manual:") ? "手动执行" : new Date(record.scheduledFor).toLocaleString()} ·{" "}
+                              {record.scheduledFor.startsWith("manual:") ? "手动执行" : formatAutomationTime(record.scheduledFor, record.snapshot.schedule.timezone)} ·{" "}
                               {(record.reconciliationRequired
                                 ? "操作结果未知"
                                 : record.runStatus

@@ -2,13 +2,45 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 import sys
+import time
 
 import pytest
 
 from eidos_runtime.db.layout import AuxiliaryDatabase, LOGS_DATABASE_NAME, LOGS_SCHEMA_SQL
 from eidos_runtime.db.runtime_logs import RuntimeLogStore
+from eidos_runtime.telemetry.logging import UtcFormatter, configure_stderr_logging
+
+
+def test_stderr_timestamp_is_utc_across_timezone_changes() -> None:
+    original = os.environ.get("TZ")
+    record = logging.LogRecord("test", logging.INFO, __file__, 1, "same instant", (), None)
+    record.created = 1793010000.125
+    record.msecs = 125
+    formatter = UtcFormatter("%(asctime)s %(message)s")
+    try:
+        for zone in ("Asia/Shanghai", "Asia/Seoul", "America/New_York"):
+            os.environ["TZ"] = zone
+            time.tzset()
+            assert formatter.format(record) == "2026-10-26T10:20:00.125Z same instant"
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
+
+def test_stderr_configuration_uses_the_utc_formatter(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(logging, "basicConfig", lambda **options: calls.append(options))
+    configure_stderr_logging()
+    assert calls[0]["level"] == logging.INFO
+    handler = calls[0]["handlers"][0]
+    assert handler.stream is sys.stderr
+    assert isinstance(handler.formatter, UtcFormatter)
 
 
 def _write_record(tmp_path: Path, message: str, error: str | None = None) -> dict:

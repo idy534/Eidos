@@ -5,6 +5,7 @@ import type { RuntimeNotification } from "../../../../shared/domain-contracts.js
 import type { ModelOption, Session } from "../../contracts.js";
 import { AutomationPage } from "./AutomationPage.js";
 import { AutomationForm } from "./AutomationForm.js";
+import { formatAutomationTime } from "./automation-time.js";
 
 const model = { id: "model", name: "本地配置模型", reasoning: { defaultSelection: "high", selections: ["none", "high"] } } as ModelOption;
 const session = { id: "22222222-2222-2222-2222-222222222222", title: "部署检查", projectless: true } as Session;
@@ -27,6 +28,17 @@ beforeEach(() => {
 });
 
 describe("local automation management", () => {
+  it("displays history in the occurrence snapshot timezone after the plan timezone changes", async () => {
+    const scheduledFor = "2026-10-28T00:30:00Z";
+    vi.mocked(window.eidosRuntime.automationHistory).mockResolvedValue({ kind: "history", occurrences: [{
+      id: "occurrence", automationId: task.id, revision: 1, scheduledFor, status: "submitted", createdAt: 1,
+      snapshot: { ...task, schedule: { expression: "30 20 * * *", timezone: "America/New_York" } },
+    }] });
+    render(<AutomationPage projects={[]} sessions={[session]} models={[model]} initialAutomationId={task.id} onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    expect(await screen.findByText((_, element) => element?.tagName === "SPAN"
+      && element.textContent?.startsWith(formatAutomationTime(scheduledFor, "America/New_York")) === true)).toHaveTextContent("2026/10/27");
+  });
+
   it("requires a danger confirmation before saving a new full-access plan", async () => {
     const save = vi.fn(async (_request: unknown, _confirmation?: string) => {});
     render(<AutomationForm projects={[]} sessions={[]} models={[model]} busy={false} onSave={save} />);

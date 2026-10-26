@@ -29,6 +29,7 @@ from eidos_runtime.protocol.server import (
     valid_request_id,
 )
 from eidos_runtime.telemetry.provider import initialize_telemetry
+from eidos_runtime.telemetry.logging import configure_stderr_logging
 from eidos_runtime.telemetry.tracing import record_current_exception, start_span
 
 
@@ -110,11 +111,7 @@ class ResponseActionRuntimeServer(RuntimeServer):
 
 
 def run() -> int:
-    logging.basicConfig(
-        stream=sys.stderr,
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_stderr_logging()
     telemetry = initialize_telemetry()
     server: ResponseActionRuntimeServer | None = None
 

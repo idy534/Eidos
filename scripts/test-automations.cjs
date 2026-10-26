@@ -47,6 +47,26 @@ app.whenReady().then(async () => {
     await evaluate("document.querySelector('[aria-label=搜索任务]').click()"); await settle();
     await evaluate("[...document.querySelectorAll('button')].find(button => button.textContent==='新建任务').click()"); await settle();
     assert.equal(await evaluate("[...document.querySelectorAll('label')].find(label=>label.textContent.startsWith('审批模式')).querySelector('select').value"), "auto_review");
+    const setField = async (label, value, type = "input") => {
+      await evaluate(`(() => {
+        const field=[...document.querySelectorAll('label')].find(label=>label.textContent.startsWith(${JSON.stringify(label)})).querySelector(${JSON.stringify(type)});
+        Object.getOwnPropertyDescriptor(${type === "select" ? "HTMLSelectElement" : "HTMLInputElement"}.prototype,'value').set.call(field,${JSON.stringify(value)});
+        field.dispatchEvent(new Event(${JSON.stringify(type === "select" ? "change" : "input")},{bubbles:true}));
+      })()`); await settle();
+    };
+    await setField("时间类型", "at", "select");
+    await setField("时区", "America/New_York");
+    await setField("执行时间", "2026-03-08T02:30");
+    assert.equal(await evaluate("document.querySelector('.automation-form [role=alert]').textContent.includes('不存在这个时间')"), true);
+    await setField("执行时间", "2026-11-01T01:30");
+    const timeChoice = "[...document.querySelectorAll('label')].find(label=>label.textContent.startsWith('这个时间出现两次')).querySelector('select')";
+    assert.equal(await evaluate(`${timeChoice}.required && ${timeChoice}.value === ''`), true);
+    await evaluate(`${timeChoice}.focus()`);
+    assert.equal(await evaluate(`document.activeElement === ${timeChoice}`), true);
+    // macOS owns the native select popup. Exercise its React change boundary
+    // here; native Enter/Escape navigation is covered by the page checks.
+    await setField("这个时间出现两次", "2026-11-01T06:30:00Z", "select");
+    assert.equal(await evaluate(`${timeChoice}.value`), "2026-11-01T06:30:00Z");
     for (const width of [1440, 1024, 768, 320]) {
       win.setSize(width, 900); await settle();
       await evaluate("document.querySelector('.model-selector__trigger').scrollIntoView({block:'center'})"); await settle();
@@ -68,7 +88,14 @@ app.whenReady().then(async () => {
       const dimensions = await evaluate("({width:document.querySelector('.automation-sidebar-col').clientWidth,scroll:document.querySelector('.automation-sidebar-col').scrollWidth})");
       assert.ok(dimensions.scroll <= dimensions.width + 1, `No horizontal overflow at ${width}px: ${JSON.stringify(dimensions)}`);
       assert.equal(await evaluate("document.querySelectorAll('.automation-task-group').length"), 2);
+      const form = await evaluate("({width:document.querySelector('.automation-form-controls').clientWidth,scroll:document.querySelector('.automation-form-controls').scrollWidth})");
+      assert.ok(form.scroll <= form.width + 1, `Time form overflow at ${width}px: ${JSON.stringify(form)}`);
+      if (width === 320 && process.env.EIDOS_AUTOMATION_TIMEZONE_SCREENSHOT) {
+        await evaluate(`${timeChoice}.scrollIntoView({block:'center'})`); await settle();
+        await writeFile(process.env.EIDOS_AUTOMATION_TIMEZONE_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
+      }
     }
+    await setField("时间类型", "cron", "select");
     win.setSize(1100, 850); await settle();
     await evaluate(`(() => {
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
@@ -138,7 +165,7 @@ app.whenReady().then(async () => {
     await settle();
     assert.equal(await evaluate("document.querySelector('.automation-detail-view h2')?.textContent"), "检查部署");
     assert.deepEqual(errors, []);
-    console.log("Automation UI passed: task groups, search, full-access confirmation/cancel/save/focus, keyboard, 4 viewport sizes and Session source icon/tooltip/detail navigation");
+    console.log("Automation UI passed: DST gap/repeated time choice/focus, task groups, search, full-access confirmation/cancel/save, native keyboard, 4 viewport sizes and Session source navigation");
   } catch (error) { exitCode = 1; console.error(error); }
   finally { clearTimeout(timeout); win?.destroy(); await server?.close(); await rm(temporaryRoot, { recursive: true, force: true }); app.exit(exitCode); }
 });

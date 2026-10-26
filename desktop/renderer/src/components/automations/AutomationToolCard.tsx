@@ -1,7 +1,8 @@
 import { isAutomationResponse } from "../../../../shared/automation.js";
 import { AutomationsIcon } from "../MenuIcons.js";
+import { formatAutomationTime } from "./automation-time.js";
 
-export function AutomationToolCard({ response, mode }: { response: unknown; mode: unknown }) {
+export function AutomationToolCard({ response, mode, schedule }: { response: unknown; mode: unknown; schedule?: unknown }) {
   if (!isAutomationResponse(response)) {
     return (
       <div className="tool-item tool-item--read-done">
@@ -13,6 +14,8 @@ export function AutomationToolCard({ response, mode }: { response: unknown; mode
     );
   }
   const task = response.automation;
+  const timezone = task?.schedule.timezone ?? (schedule && typeof schedule === "object" && "timezone" in schedule
+    && typeof schedule.timezone === "string" ? schedule.timezone : "UTC");
   const modeKey = typeof mode === "string" ? mode : "";
   const effectiveMode = modeKey || (
     response.kind === "preview"
@@ -48,11 +51,11 @@ export function AutomationToolCard({ response, mode }: { response: unknown; mode
               {task.status === "ACTIVE" ? "已启用" : "已暂停"} · {task.approvalMode === "full_access" ? "完全访问" : task.approvalMode === "auto_review" ? "替我审批" : "请求审批"} · {task.target.kind === "existing_session" ? "已有会话" : "每次新建会话"}
             </p>
             <p>
-              {task.schedule.expression ?? task.schedule.runAt} · {task.schedule.timezone}
+              {task.schedule.runAt ? formatAutomationTime(task.schedule.runAt, timezone) : `${task.schedule.expression} · ${timezone}`}
             </p>
           </>
         )}
-        {response.nextRunAt && <p>下次执行：{new Date(response.nextRunAt).toLocaleString()}</p>}
+        {response.nextRunAt && <p>下次执行：{formatAutomationTime(response.nextRunAt, timezone)}</p>}
         {response.kind === "list" && (
           <ul>
             {response.items?.map((item) => (
@@ -65,7 +68,7 @@ export function AutomationToolCard({ response, mode }: { response: unknown; mode
         {response.kind === "preview" && (
           <ul>
             {response.nextRuns?.map((time) => (
-              <li key={time}>{new Date(time).toLocaleString()}</li>
+              <li key={time}>{formatAutomationTime(time, timezone)}</li>
             ))}
           </ul>
         )}

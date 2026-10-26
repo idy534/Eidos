@@ -502,6 +502,8 @@ Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶�
 
 日志路径保留创建时保存的日期目录。Runtime 校验日期格式、两层相对路径和对应的 Segment 文件名，不按当前时区重新计算历史日期。系统时区变化后，旧日志仍能通过启动校验；目录穿越、绝对路径和文件身份检查继续生效。
 
+两个 Runtime 协议入口共用 stderr 日志配置。日志文本使用带毫秒和 `Z` 的 UTC 时间，例如 `2026-10-26T10:20:00.125Z`。系统时区变化不会改变相同事件的文本时间。JSONL 日志继续保存 Unix 毫秒时间戳，历史日志和目录保持原样。
+
 仓库库报告 SQLite 损坏、缺少必要表或外键不一致时，Runtime 停止使用缓存。Runtime 核验私有文件身份后，把原数据库和现存 WAL/SHM 移至同目录的 `.invalid-<id>` 文件，再创建空缓存；用户可以保留这些文件排查问题。既有 Workspace watcher 会丢弃旧 Snapshot，并在下一次空闲回调构建新 generation。未知缓存版本、Busy 或不可信路径不会授权删除文件；它们只使索引不可用。重建失败保留错误日志与不可用状态，模型继续使用普通文件和搜索工具。主库事实、业务 Event、Outbox 和恢复语义保持原样。
 
 Session 展示快照与执行快照使用不同的读取入口。`session/read` 的首屏和历史分页不查询 Step/Rule Resolution 表，也不读取或校验 Step Resolution Blob。响应保留 `stepResolutions: []`，以兼容现有 DTO 和 Main 校验。Runtime 执行与审批恢复仍通过完整快照入口读取数据，并保留原有完整性校验。这项读取路径调整已修订代码，测试与性能验收待执行。
