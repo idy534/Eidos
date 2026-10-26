@@ -30,7 +30,6 @@ export type Sourcerevision = number;
 export type Evidenceclass = "explicit_user" | "observed_verified";
 export type Evidence = MemoryEvidence[];
 export type Documents = MemoryDocument[];
-export type Temporary = boolean;
 export type Nextcursor = number | null;
 export type Searchlimited = boolean;
 export type Sessionid2 = string | null;
@@ -69,9 +68,7 @@ export type Code = "memory_saved" | "memory_unchanged" | "memory_deleted";
 export type Sessionid4 = string | null;
 export type Scope3 = "current" | "global";
 export type Mode1 = "off" | "read" | "auto";
-export type Sessionid5 = string;
-export type Temporary1 = boolean;
-export type Sessionid6 = string | null;
+export type Sessionid5 = string | null;
 export type Scope4 = "current" | "global";
 export type Cursor1 = number;
 export type Path5 = string;
@@ -93,7 +90,6 @@ export interface MemoryContract {
   memoryeditrequest: MemoryEditRequest;
   memoryactionresult: MemoryActionResult;
   memorypolicyrequest: MemoryPolicyRequest;
-  memorytemporaryrequest: MemoryTemporaryRequest;
   memoryexportrequest: MemoryExportRequest;
   memoryexport: MemoryExport;
   databackuprequest: DataBackupRequest;
@@ -110,7 +106,6 @@ export interface MemoryListRequest {
 export interface MemoryState {
   scopes: Scopes;
   documents: Documents;
-  temporary: Temporary;
   nextCursor?: Nextcursor;
   searchLimited?: Searchlimited;
 }
@@ -191,12 +186,8 @@ export interface MemoryPolicyRequest {
   scope?: Scope3;
   mode: Mode1;
 }
-export interface MemoryTemporaryRequest {
-  sessionId: Sessionid5;
-  temporary: Temporary1;
-}
 export interface MemoryExportRequest {
-  sessionId?: Sessionid6;
+  sessionId?: Sessionid5;
   scope?: Scope4;
   cursor?: Cursor1;
 }

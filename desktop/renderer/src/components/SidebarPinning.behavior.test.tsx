@@ -28,7 +28,7 @@ function props(pins: SidebarTarget[] = []) {
 beforeEach(() => {
   localStorage.clear();
   window.eidosRuntime = {
-    memory: vi.fn(async () => ({ scopes: [], documents: [], temporary: false })),
+    memory: vi.fn(async () => ({ scopes: [], documents: [] })),
   } as unknown as EidosRuntimeAPI;
 });
 afterEach(() => { vi.useRealTimers(); });

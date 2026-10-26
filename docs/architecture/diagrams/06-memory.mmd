@@ -1,5 +1,5 @@
 flowchart TB
-  access[Root Session 与项目身份<br/>scope、off/read/auto、临时对话] --> index[生成 MEMORY.md 短索引]
+  access[Root Session 与项目身份<br/>scope、off/read/auto] --> index[生成 MEMORY.md 短索引]
   meta[(SQLite<br/>笔记路径、版本、证据、epoch)] --> index
   index --> context[ContextBuilder 按预算注入]
   context --> search[memory_search / memory_read<br/>搜索与固定版本分页]

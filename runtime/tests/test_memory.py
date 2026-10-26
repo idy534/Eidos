@@ -15,7 +15,6 @@ from eidos_runtime.memory.contracts import (
     MemoryListRequest,
     MemoryPolicyRequest,
     MemoryReadRequest,
-    MemoryTemporaryRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.memory.repository import GLOBAL_SCOPE_ID
@@ -219,7 +218,7 @@ def test_source_revocation_and_user_owned_correction(store, tmp_path):
     )
 
 
-@pytest.mark.parametrize("change", ["edit", "delete", "temporary", "rewrite", "rewind"])
+@pytest.mark.parametrize("change", ["edit", "delete", "rewrite", "rewind"])
 def test_historical_automatic_version_revokes_other_sessions_after_user_edit(
     store, tmp_path, change
 ):
@@ -251,7 +250,7 @@ def test_historical_automatic_version_revokes_other_sessions_after_user_edit(
                     connection.execute("DELETE FROM items WHERE id=?", (source,))
                 else:
                     invalidate_source(connection, session["id"], reason=change,
-                        run_id=run["id"] if change != "temporary" else None,
+                        run_id=run["id"],
                         after_ordinal=-1 if change == "rewind" else None)
             assert cancel.is_set()
     service.cleanup()
@@ -389,19 +388,22 @@ def test_forget_revokes_requests_and_removes_bodies(store):
     )
 
 
-def test_mode_and_temporary_controls(store, tmp_path):
+def test_scope_modes_control_memory_access(store, tmp_path):
     session = store.create_session(str(tmp_path / "workspace"))
     service = store.database.memory
-    service.policy(
-        MemoryPolicyRequest(session_id=session["id"], scope="current", mode="read")
-    )
+    service.policy(MemoryPolicyRequest(session_id=session["id"], scope="current", mode="read"))
+    assert service.access(session["id"]).read_enabled
     assert not service.access(session["id"]).generate_enabled
-    service.set_temporary(
-        MemoryTemporaryRequest(session_id=session["id"], temporary=True)
-    )
+    service.edit(note(session_id=session["id"]))
+    for scope in ("current", "global"):
+        service.policy(MemoryPolicyRequest(session_id=session["id"], scope=scope, mode="off"))
     assert not service.access(session["id"]).read_enabled
-    with pytest.raises(MemoryRejected, match="temporary"):
-        service.edit(note(session_id=session["id"]))
+    with pytest.raises(MemoryRejected, match="read_disabled"):
+        service.read(MemoryReadRequest(session_id=session["id"], scope="global", path=note().path), for_use=True)
+    # Explicit user editing remains available even when model use is disabled.
+    service.edit(note(session_id=session["id"], operation_id="explicit", path="user_note.md"))
+    service.policy(MemoryPolicyRequest(session_id=session["id"], scope="current", mode="auto"))
+    assert service.access(session["id"]).generate_enabled
 
 
 @pytest.mark.parametrize(

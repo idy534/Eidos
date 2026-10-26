@@ -99,22 +99,11 @@ class MemoryRepository:
             generation=row["generation"],
         )
 
-    def temporary(self, connection: sqlite3.Connection, session_id: str | None) -> bool:
-        if not session_id:
-            return False
-        row = connection.execute(
-            "SELECT temporary FROM memory_sources WHERE session_id=?",
-            (self.root_session(connection, session_id),),
-        ).fetchone()
-        return bool(row and row[0])
-
     def assert_writable(
         self, connection: sqlite3.Connection, session_id: str | None
     ) -> None:
         if session_id and self.root_session(connection, session_id) != session_id:
             raise MemoryRejected("memory_root_session_required")
-        if self.temporary(connection, session_id):
-            raise MemoryRejected("memory_temporary_session")
         if (
             session_id
             and connection.execute(
@@ -143,14 +132,13 @@ class MemoryRepository:
         values = []
         for item_id in dict.fromkeys(item_ids):
             row = connection.execute(
-                "SELECT i.*,v.item_revision,v.eligible,s.revision AS source_revision,s.deleted,s.temporary FROM items i JOIN memory_source_items v ON v.item_id=i.id JOIN memory_sources s ON s.session_id=i.session_id WHERE i.id=? AND i.session_id=? AND NOT EXISTS(SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=i.id) AND NOT EXISTS(SELECT 1 FROM run_revisions WHERE source_run_id=i.run_id)",
+                "SELECT i.*,v.item_revision,v.eligible,s.revision AS source_revision,s.deleted FROM items i JOIN memory_source_items v ON v.item_id=i.id JOIN memory_sources s ON s.session_id=i.session_id WHERE i.id=? AND i.session_id=? AND NOT EXISTS(SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=i.id) AND NOT EXISTS(SELECT 1 FROM run_revisions WHERE source_run_id=i.run_id)",
                 (item_id, session_id, scope_id),
             ).fetchone()
             if (
                 row is None
                 or not row["eligible"]
                 or row["deleted"]
-                or row["temporary"]
                 or row["status"] != "completed"
                 or row["incomplete"]
             ):
@@ -221,7 +209,7 @@ class MemoryRepository:
                 raise MemoryRejected("memory_evidence_required")
             for value in evidence:
                 source = connection.execute(
-                    "SELECT v.item_revision,v.eligible,s.temporary,s.deleted FROM memory_source_items v JOIN memory_sources s ON s.session_id=v.session_id WHERE v.item_id=? AND NOT EXISTS(SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=v.item_id)",
+                    "SELECT v.item_revision,v.eligible,s.deleted FROM memory_source_items v JOIN memory_sources s ON s.session_id=v.session_id WHERE v.item_id=? AND NOT EXISTS(SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=v.item_id)",
                     (value.item_id, row["scope_id"]),
                 ).fetchone()
                 if (
@@ -229,7 +217,6 @@ class MemoryRepository:
                     or source[0] != value.item_revision
                     or not source[1]
                     or source[2]
-                    or source[3]
                 ):
                     raise MemoryRejected("memory_evidence_revoked")
         try:

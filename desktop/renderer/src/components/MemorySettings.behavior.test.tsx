@@ -16,7 +16,7 @@ const state: MemoryState = {
   scopes: [
     { id: "global", kind: "global", mode: "auto", privacyEpoch: 0, generation: 1 },
     { id: "project", kind: "project", mode: "read", privacyEpoch: 0, generation: 2 },
-  ], documents: [note], temporary: false,
+  ], documents: [note],
 };
 type Handler = (method: string, request: Record<string, unknown>) => Promise<unknown>;
 

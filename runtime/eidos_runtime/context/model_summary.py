@@ -11,7 +11,7 @@ from pydantic import Field
 from eidos_runtime.context.budget import estimate_model_request_budget
 from eidos_runtime.model.context_projection import generated_summary_view, text_preview
 from eidos_runtime.context.facts import CompactContinuityNote, CompactNoteEvidence, CompactNoteKind, CompactSummary, ContextItemFact
-from eidos_runtime.context.summary_evidence import ground_note, merge_notes, source_text
+from eidos_runtime.context.summary_evidence import ground_note, merge_notes, model_source_text
 from eidos_runtime.model.client import FunctionToolDefinition, ModelClient, ModelUsage
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.runtime.cancellation import DeadlineCancellation
@@ -95,7 +95,7 @@ def assist_summary(
             continue
         if (item.tool_name or "").startswith("memory_"):
             continue
-        body = source_text(item)
+        body = model_source_text(item)
         if item.tool_name == "read_file":
             try:
                 result = json.loads(item.model_result_json or item.result_json or "{}")

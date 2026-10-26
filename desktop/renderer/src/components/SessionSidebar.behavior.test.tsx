@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { EidosRuntimeAPI, Session, SessionGitStatus } from "../contracts.js";
 import { SessionSidebar } from "./SessionSidebar.js";
 
 beforeEach(() => {
-  window.eidosRuntime = { memory: vi.fn(async () => ({ scopes: [], documents: [], temporary: false })) } as unknown as EidosRuntimeAPI;
+  window.eidosRuntime = { memory: vi.fn(async () => ({ scopes: [], documents: [] })) } as unknown as EidosRuntimeAPI;
 });
 
 const managedSession: Session = {
@@ -56,20 +56,17 @@ describe("SessionSidebar Project and managed Thread behavior", () => {
     window.localStorage.clear();
   });
 
-  it("toggles temporary memory from the session menu and keeps the query stable across callback changes", async () => {
-    const props = {
-      sessions: [managedSession], projects: [], disabled: false, readCompletedSessions: new Set<string>(),
-      runtimePresentation: { tone: "success" as const, label: "Ready" },
-      onCreate: vi.fn(), onCreateInProject: vi.fn(), onSelect: vi.fn(), onRename: vi.fn(),
-      onDelete: vi.fn(), onDeleteProject: vi.fn(), onOpenSettings: vi.fn(),
-    };
-    const { rerender } = render(<SessionSidebar {...props} onMemoryError={vi.fn()} />);
+  it("keeps the session menu free of memory controls and memory requests", async () => {
+    render(<SessionSidebar
+      sessions={[managedSession]} projects={[]} disabled={false} readCompletedSessions={new Set()}
+      runtimePresentation={{ tone: "success", label: "Ready" }} onCreate={vi.fn()}
+      onCreateInProject={vi.fn()} onSelect={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()}
+      onDeleteProject={vi.fn()} onOpenSettings={vi.fn()} />);
     fireEvent.contextMenu(screen.getByRole("button", { name: /Managed Thread/ }));
-    const action = await screen.findByRole("menuitem", { name: "设为临时对话（不使用记忆）" });
-    rerender(<SessionSidebar {...props} onMemoryError={vi.fn()} />);
-    expect(vi.mocked(window.eidosRuntime.memory).mock.calls.filter(([method]) => method === "memory/list")).toHaveLength(1);
-    fireEvent.click(action);
-    await waitFor(() => expect(window.eidosRuntime.memory).toHaveBeenCalledWith("memory/temporary", { sessionId: managedSession.id, temporary: true }));
+    expect(screen.getAllByRole("menuitem").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("menuitem", { name: /临时|恢复此任务的记忆|正在读取记忆状态/ })).not.toBeInTheDocument();
+    await act(async () => {});
+    expect(window.eidosRuntime.memory).not.toHaveBeenCalled();
   });
 
   it("shows a newly forked Session immediately with the original title and a fork marker", () => {

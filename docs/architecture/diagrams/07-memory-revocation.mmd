@@ -4,7 +4,7 @@ sequenceDiagram
   participant C as ContextSnapshot
   participant P as 在途模型请求
   participant M as StorageMaintenance
-  U->>D: 删除、临时化、改模式或修订来源
+  U->>D: 删除、改模式或修订来源
   D->>D: 更新撤销版本与关联读取记录
   D->>C: 使旧记忆快照失效
   D->>P: 取消使用旧版本的请求

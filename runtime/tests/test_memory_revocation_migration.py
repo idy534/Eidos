@@ -43,6 +43,7 @@ def v40_memory(tmp_path):
             "AND name IN ('memory_source_change','memory_source_delete')"
         ).fetchall()
     with store.database.transaction() as connection:
+        connection.execute("ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0")
         for name, sql in triggers:
             connection.execute(f"DROP TRIGGER {name}")
             connection.execute(sql)

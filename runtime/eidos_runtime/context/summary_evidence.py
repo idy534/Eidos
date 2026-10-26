@@ -15,6 +15,7 @@ from eidos_runtime.context.facts import (
     ContextItemFact,
 )
 from eidos_runtime.model.context_projection import model_result_json, generated_summary_view
+from eidos_runtime.context.input_references import project_input_mentions
 from eidos_runtime.domain.tool_output import RECOVERABLE_RESULT_TOOLS
 
 
@@ -35,6 +36,12 @@ def source_text(item: ContextItemFact) -> str:
     return json.dumps(metadata, ensure_ascii=False) + "\n" + "\n".join(
         f"{key}:\n{value}" for key, value in text_fields.items()
     )
+
+
+def model_source_text(item: ContextItemFact) -> str:
+    """Keep stored evidence literal while presenting bound user mentions readably."""
+    text = source_text(item)
+    return project_input_mentions(text, item.input_references) if item.kind == "user_message" else text
 
 
 def _result(item: ContextItemFact) -> dict[str, JsonValue]:
@@ -79,7 +86,9 @@ def ground_note(
         item = items.get(reference.item_id)
         if item is None or (item.tool_name or "").startswith("memory_"):
             raise ValueError("summary_source_invalid")
-        if reference.quote not in source_text(item):
+        # Old notes may quote the literal marker. New notes may quote its bound
+        # model view; both must remain derivable from this exact source item.
+        if reference.quote not in source_text(item) and reference.quote not in model_source_text(item):
             raise ValueError("summary_quote_invalid")
         cited.append(item)
         if kind == "decision" and item.kind != "user_message":

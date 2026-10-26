@@ -18,7 +18,9 @@ from eidos_runtime.model.client import ModelClient
 from eidos_runtime.persistence.context_management import ContextManagementRepository
 from eidos_runtime.context.model_summary import AssistedSummary, assist_summary
 from eidos_runtime.context.working_set import recent_item_ids
-from eidos_runtime.context.summary_evidence import continuity_context
+from eidos_runtime.context.summary_evidence import continuity_context, model_source_text
+from eidos_runtime.context.input_references import project_input_mentions
+from eidos_runtime.persistence.input_context import InputContextRepository
 from eidos_runtime.context.policy import CONTINUITY_CONTEXT_MAX_BYTES
 from eidos_runtime.model.context_projection import text_preview
 
@@ -166,9 +168,9 @@ class ContextCompactor:
         )))
         self._source_count = len(source_ids)
         source_facts = repository.load_facts(run_id, required_item_ids=source_ids)
-        users = [item.content or "" for item in eligible if item.kind == "user_message"]
+        users = [model_source_text(item) for item in eligible if item.kind == "user_message"]
         input_references = tuple(
-            f"用户引用：{reference.label}；来源：{reference.source}"
+            f"用户引用：{reference.label}；类型：{reference.kind}；来源：{reference.source}"
             for item in eligible for reference in item.input_references
         )
         assistants = [item.content or "" for item in eligible if item.kind == "assistant_message"]
@@ -220,7 +222,7 @@ class ContextCompactor:
                 tuple(value for value in existing.important_facts if not value.startswith("workspace state:")) if existing else (),
                 (*input_references, *(
                     text_preview(
-                        f"Historical user request item={item.item_id}: {item.content or ''}",
+                        f"Historical user request item={item.item_id}: {model_source_text(item)}",
                         SUMMARY_ENTRY_MAX_BYTES,
                         continuation=f"read_tool_output(callId='{item.item_id}', stream='context') reads the saved original.",
                     )
@@ -263,7 +265,10 @@ class ContextCompactor:
             self._assisted = assist_summary(
                 self.model, proposal, eligible, cancel,
                 prior_items=tuple(item for item in source_facts.items if item.item_id in retained_ids),
-                task_context=str(self.store.read_run(run_id).get("userInput") or ""),
+                task_context=project_input_mentions(
+                    str(self.store.read_run(run_id).get("userInput") or ""),
+                    tuple(snapshot.reference for snapshot in InputContextRepository(self.store.database).for_run(run_id)),
+                ),
             )
             if self._assisted.accepted:
                 # Do not accept source coverage after silently discarding newly

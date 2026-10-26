@@ -25,7 +25,7 @@ test("Python and Main share the document-memory protocol fixture", () => {
 
 test("document memory rejects obsolete methods and invented scope or revision fields", () => {
   assert.equal(isMemoryMethod("memory/list"), true);
-  for (const name of ["memory/backfill", "memory/jobsRetry", "memory/remember", "memory/manage", "memory/toString"]) assert.equal(isMemoryMethod(name), false);
+  for (const name of ["memory/backfill", "memory/jobsRetry", "memory/remember", "memory/manage", "memory/toString", "memory/temporary"]) assert.equal(isMemoryMethod(name), false);
   assert.equal(isMemoryRequest("memory/list", { scope: "allowed" }), true);
   assert.equal(isMemoryRequest("memory/list", { projectId: "another-project" }), false);
   const note = { path: "feedback_testing.md", summary: "只运行相关测试", content: "只运行相关测试。", operationId: "one", expectedRevision: 0 };
@@ -34,8 +34,9 @@ test("document memory rejects obsolete methods and invented scope or revision fi
   assert.equal(isMemoryRequest("memory/edit", { ...note, mode: "candidate" }), false);
   assert.equal(isMemoryRequest("memory/policy", { mode: "auto" }), true);
   assert.equal(isMemoryRequest("memory/policy", { mode: "uncontrolled" }), false);
-  assert.equal(isMemoryResponse("memory/list", { scopes: [], documents: [], temporary: false }), true);
-  assert.equal(isMemoryResponse("memory/list", { scopes: [], documents: [{ id: "unvalidated" }], temporary: false }), false);
+  assert.equal(isMemoryResponse("memory/list", { scopes: [], documents: [] }), true);
+  assert.equal(isMemoryResponse("memory/list", { scopes: [], documents: [], temporary: true }), false);
+  assert.equal(isMemoryResponse("memory/list", { scopes: [], documents: [{ id: "unvalidated" }] }), false);
 });
 
 test("memory change notices carry validated metadata only", () => {

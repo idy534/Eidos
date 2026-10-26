@@ -74,7 +74,6 @@ class MemoryListRequest(EidosFrozenStrictModel):
 class MemoryState(EidosFrozenStrictModel):
     scopes: list[MemoryScope]
     documents: list[MemoryDocument]
-    temporary: bool
     next_cursor: int | None = None
     search_limited: bool = False
 
@@ -150,11 +149,6 @@ class MemoryPolicyRequest(EidosFrozenStrictModel):
     session_id: str | None = None
     scope: Literal["current", "global"] = "global"
     mode: MemoryMode
-
-
-class MemoryTemporaryRequest(EidosFrozenStrictModel):
-    session_id: str
-    temporary: bool
 
 
 class MemoryExportRequest(EidosFrozenStrictModel):

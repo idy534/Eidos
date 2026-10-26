@@ -15,7 +15,7 @@ describe("SessionSidebar ContextMenu DOM interaction behavior", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     window.eidosRuntime = {
-      memory: vi.fn(async () => ({ scopes: [], documents: [], temporary: false })),
+      memory: vi.fn(async () => ({ scopes: [], documents: [] })),
     } as unknown as EidosRuntimeAPI;
   });
   afterEach(() => {

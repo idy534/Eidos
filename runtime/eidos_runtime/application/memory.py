@@ -28,7 +28,6 @@ class MemoryApplication:
             "memory/read": self.service.read,
             "memory/edit": self.service.edit,
             "memory/policy": self.service.policy,
-            "memory/temporary": self.service.set_temporary,
             "memory/export": self.service.export,
             "data/backup": self.backup,
         }
@@ -40,7 +39,6 @@ class MemoryApplication:
             if self.on_change is not None and method in {
                 "memory/edit",
                 "memory/policy",
-                "memory/temporary",
             }:
                 self.on_change()
             return result
@@ -59,7 +57,6 @@ MEMORY_METHODS = (
     ("memory/read", dto.MemoryReadRequest, dto.MemoryReadResult),
     ("memory/edit", dto.MemoryEditRequest, dto.MemoryActionResult),
     ("memory/policy", dto.MemoryPolicyRequest, dto.MemoryState),
-    ("memory/temporary", dto.MemoryTemporaryRequest, dto.MemoryState),
     ("memory/export", dto.MemoryExportRequest, dto.MemoryExport),
     ("data/backup", dto.DataBackupRequest, dto.DataBackupResult),
 )

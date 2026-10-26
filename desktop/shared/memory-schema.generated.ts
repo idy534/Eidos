@@ -721,10 +721,6 @@ export const memorySchema = {
           "title": "Documents",
           "type": "array"
         },
-        "temporary": {
-          "title": "Temporary",
-          "type": "boolean"
-        },
         "nextCursor": {
           "anyOf": [
             {
@@ -745,29 +741,9 @@ export const memorySchema = {
       },
       "required": [
         "scopes",
-        "documents",
-        "temporary"
+        "documents"
       ],
       "title": "MemoryState",
-      "type": "object"
-    },
-    "MemoryTemporaryRequest": {
-      "additionalProperties": false,
-      "properties": {
-        "sessionId": {
-          "title": "Sessionid",
-          "type": "string"
-        },
-        "temporary": {
-          "title": "Temporary",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "sessionId",
-        "temporary"
-      ],
-      "title": "MemoryTemporaryRequest",
       "type": "object"
     }
   },
@@ -794,9 +770,6 @@ export const memorySchema = {
     "memorypolicyrequest": {
       "$ref": "#/$defs/MemoryPolicyRequest"
     },
-    "memorytemporaryrequest": {
-      "$ref": "#/$defs/MemoryTemporaryRequest"
-    },
     "memoryexportrequest": {
       "$ref": "#/$defs/MemoryExportRequest"
     },
@@ -821,7 +794,6 @@ export const memorySchema = {
     "memoryeditrequest",
     "memoryactionresult",
     "memorypolicyrequest",
-    "memorytemporaryrequest",
     "memoryexportrequest",
     "memoryexport",
     "databackuprequest",
@@ -846,10 +818,6 @@ export const memoryMethodModels = {
   ],
   "memory/policy": [
     "MemoryPolicyRequest",
-    "MemoryState"
-  ],
-  "memory/temporary": [
-    "MemoryTemporaryRequest",
     "MemoryState"
   ],
   "memory/export": [

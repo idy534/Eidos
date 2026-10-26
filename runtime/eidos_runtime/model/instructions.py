@@ -232,7 +232,6 @@ class InstructionResolver:
                 "currentScope": memory_access.scopes[-1].kind,
                 "readScopes": memory_access.read_scopes,
                 "automaticLearning": memory_access.generate_enabled,
-                "temporary": memory_access.temporary,
             }, separators=(",", ":"))
             memory_content.append(f"<memory_state>\n{state}\n</memory_state>")
         if memory_content:

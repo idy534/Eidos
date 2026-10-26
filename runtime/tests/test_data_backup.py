@@ -18,7 +18,7 @@ from eidos_runtime.memory.repository import MemoryRejected
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.parametrize("schema_version", [40, SCHEMA_VERSION])
+@pytest.mark.parametrize("schema_version", [40, 41, SCHEMA_VERSION])
 def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_path, schema_version):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -39,17 +39,18 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_pa
     archive = tmp_path / "backup.zip"
     backup(service, archive)
     store.close()
-    if schema_version == 40:
+    if schema_version < SCHEMA_VERSION:
         with zipfile.ZipFile(archive) as source:
             entries = {name: source.read(name) for name in source.namelist()}
-        state = tmp_path / "v40.sqlite"
+        state = tmp_path / "legacy.sqlite"
         state.write_bytes(entries["state.sqlite"])
         with sqlite3.connect(state) as connection:
-            connection.execute("PRAGMA user_version=40")
+            connection.execute("ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0")
+            connection.execute(f"PRAGMA user_version={schema_version}")
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         entries["state.sqlite"] = state.read_bytes()
         manifest = json.loads(entries["manifest.json"])
-        manifest["schemaVersion"] = 40
+        manifest["schemaVersion"] = schema_version
         entries["manifest.json"] = json.dumps(manifest).encode()
         write_archive(archive, list(entries.items()))
     destination = tmp_path / "restored"

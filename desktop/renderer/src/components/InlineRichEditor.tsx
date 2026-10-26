@@ -153,18 +153,19 @@ function createInlineReferenceIconSvg(kind: InputReferenceKind): SVGElement {
   }
   if (kind === "plugin") {
     const svg = createSvgNode("svg", {
-      viewBox: "0 0 16 16",
+      viewBox: "0 0 24 24",
       width: "14",
       height: "14",
       fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "2",
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
       "aria-hidden": "true",
     });
     svg.append(
       createSvgNode("path", {
-        d: "M6 3.5h1.5a1.5 1.5 0 0 1 3 0H12a1 1 0 0 1 1 1v2.5a1.5 1.5 0 0 1 0 3V12a1 1 0 0 1-1 1H9.5a1.5 1.5 0 0 1-3 0H4a1 1 0 0 1-1-1V9.5a1.5 1.5 0 0 1 0-3V4.5a1 1 0 0 1 1-1h2Z",
-        stroke: "currentColor",
-        "stroke-width": "1.3",
-        "stroke-linejoin": "round",
+        d: "M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z",
       }),
     );
     return svg;

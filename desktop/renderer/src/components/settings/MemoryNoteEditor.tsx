@@ -12,7 +12,6 @@ export function MemoryNoteEditor({
   scope,
   path,
   generation,
-  readOnly = false,
   onSaved,
   onSelect,
   onDirty,
@@ -23,7 +22,6 @@ export function MemoryNoteEditor({
   scope: MemoryScopeChoice;
   path: string | null;
   generation: number;
-  readOnly?: boolean | undefined;
   onSaved: (path: string) => void;
   onSelect: (path: string) => void;
   onDirty: (dirty: boolean) => void;
@@ -112,7 +110,7 @@ export function MemoryNoteEditor({
   }, [sessionId, scope, path, generation, revision, reload, onShowToast]);
 
   async function save(action: "write" | "delete") {
-    if (busy || readOnly) return;
+    if (busy) return;
     setBusy(true);
     try {
       await window.eidosRuntime.memory("memory/edit", {
@@ -186,7 +184,7 @@ export function MemoryNoteEditor({
             size="small"
             variant="secondary"
             icon={<EditPencilIcon />}
-            disabled={loading || readOnly}
+            disabled={loading}
             onClick={() => setEditing(true)}
           >
             编辑
@@ -275,7 +273,6 @@ export function MemoryNoteEditor({
               variant="primary"
               disabled={
                 busy ||
-                readOnly ||
                 !draft.content.trim() ||
                 !draft.summary.trim() ||
                 (path === null && !draft.path.endsWith(".md"))
@@ -345,7 +342,6 @@ export function MemoryNoteEditor({
                 <Button
                   variant="danger"
                   size="small"
-                  disabled={readOnly}
                   onClick={() => setDeleting(true)}
                 >
                   删除笔记

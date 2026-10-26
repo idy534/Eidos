@@ -5,7 +5,6 @@ export interface MemoryMethods {
   "memory/read": {request: DTO.MemoryReadRequest; response: DTO.MemoryReadResult};
   "memory/edit": {request: DTO.MemoryEditRequest; response: DTO.MemoryActionResult};
   "memory/policy": {request: DTO.MemoryPolicyRequest; response: DTO.MemoryState};
-  "memory/temporary": {request: DTO.MemoryTemporaryRequest; response: DTO.MemoryState};
   "memory/export": {request: DTO.MemoryExportRequest; response: DTO.MemoryExport};
   "data/backup": {request: DTO.DataBackupRequest; response: DTO.DataBackupResult};
 }

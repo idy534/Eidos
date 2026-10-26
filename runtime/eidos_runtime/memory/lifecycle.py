@@ -57,6 +57,6 @@ def fork_source(
         (target_session_id,),
     )
     connection.execute(
-        "UPDATE memory_sources SET lineage_session_id=?,temporary=COALESCE((SELECT temporary FROM memory_sources WHERE session_id=?),0) WHERE session_id=?",
-        (source_session_id, source_session_id, target_session_id),
+        "UPDATE memory_sources SET lineage_session_id=? WHERE session_id=?",
+        (source_session_id, target_session_id),
     )

@@ -204,7 +204,7 @@ describe("AppShell memory settings Session identity", () => {
         };
         return {
           scopes: [{ id: "global", kind: "global", mode: "auto", privacyEpoch: 0, generation: 0 }],
-          documents: [], temporary: false,
+          documents: [],
         };
       });
       window.eidosRuntime.memory = memory as typeof window.eidosRuntime.memory;

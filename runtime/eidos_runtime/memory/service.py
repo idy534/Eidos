@@ -34,7 +34,6 @@ from eidos_runtime.memory.contracts import (
     MemoryReadResult,
     MemoryScope,
     MemoryState,
-    MemoryTemporaryRequest,
 )
 from eidos_runtime.memory.repository import MemoryRejected, MemoryRepository
 from eidos_runtime.models import EidosFrozenStrictModel
@@ -45,16 +44,11 @@ logger = logging.getLogger("eidos.runtime.memory")
 
 class MemoryAccess(EidosFrozenStrictModel):
     scopes: tuple[MemoryScope, ...] = Field(min_length=1, max_length=2)
-    temporary: bool
     writable: bool
 
     @property
     def read_scopes(self) -> tuple[str, ...]:
-        return (
-            ()
-            if self.temporary
-            else tuple(scope.kind for scope in self.scopes if scope.mode != "off")
-        )
+        return tuple(scope.kind for scope in self.scopes if scope.mode != "off")
 
     @property
     def read_enabled(self) -> bool:
@@ -119,12 +113,9 @@ class MemoryService:
     def access(self, session_id: str) -> MemoryAccess:
         with self.database.transaction() as connection:
             scopes = tuple(self.repository.scopes(connection, session_id))
-            temporary = self.repository.temporary(connection, session_id)
             return MemoryAccess(
                 scopes=scopes,
-                temporary=temporary,
-                writable=not temporary
-                and self.repository.root_session(connection, session_id) == session_id,
+                writable=self.repository.root_session(connection, session_id) == session_id,
             )
 
     def list(self, request: MemoryListRequest, *, for_use: bool = False) -> MemoryState:
@@ -133,11 +124,10 @@ class MemoryService:
             selected = self.repository.scopes(
                 connection, request.session_id, request.scope
             )
-            temporary = self.repository.temporary(connection, request.session_id)
             ids = [
                 scope.id
                 for scope in selected
-                if not for_use or (scope.mode != "off" and not temporary)
+                if not for_use or scope.mode != "off"
             ]
             documents, cursor, limited = self.repository.list(
                 connection, ids, request.query, request.cursor, request.limit
@@ -145,7 +135,6 @@ class MemoryService:
             return MemoryState(
                 scopes=scopes,
                 documents=documents,
-                temporary=temporary,
                 next_cursor=cursor,
                 search_limited=limited,
             )
@@ -200,10 +189,7 @@ class MemoryService:
             scope = self.repository.scopes(
                 connection, request.session_id, request.scope
             )[0]
-            if for_use and (
-                scope.mode == "off"
-                or self.repository.temporary(connection, request.session_id)
-            ):
+            if for_use and scope.mode == "off":
                 raise MemoryRejected("memory_read_disabled")
             document = None
             revisions: list[int] = []
@@ -525,30 +511,6 @@ class MemoryService:
             MemoryListRequest(session_id=request.session_id, scope=request.scope)
         )
 
-    def set_temporary(self, request: MemoryTemporaryRequest) -> MemoryState:
-        from eidos_runtime.memory.lifecycle import invalidate_source
-
-        with self.database.transaction() as connection:
-            if (
-                self.repository.root_session(connection, request.session_id)
-                != request.session_id
-            ):
-                raise MemoryRejected("memory_root_session_required")
-            connection.execute(
-                "INSERT OR IGNORE INTO memory_sources(session_id) VALUES(?)",
-                (request.session_id,),
-            )
-            old = self.repository.temporary(connection, request.session_id)
-            if old != request.temporary:
-                invalidate_source(connection, request.session_id, reason="temporary")
-                connection.execute(
-                    "UPDATE memory_sources SET temporary=? WHERE session_id=?",
-                    (int(request.temporary), request.session_id),
-                )
-                self._cancel_revoked(connection)
-        self.cleanup()
-        return self.list(MemoryListRequest(session_id=request.session_id))
-
     def export(self, request: MemoryExportRequest) -> MemoryExport:
         # Export at most 16 documents per page; callers consume every page.
         state = self.list(
@@ -597,41 +559,40 @@ class MemoryService:
                 if scope.mode != "off"
             ]
             text, refs, generations, epochs = "", [], {}, {}
-            if not self.repository.temporary(connection, session_id):
-                for scope in reversed(scopes):
-                    documents, more = self._index_documents(connection, scope.id)
-                    if not documents:
-                        continue
-                    prefix = f"\n{scope.kind}/MEMORY.md (historical context):\n"
-                    block = self._render_index(documents, more=more)
-                    selected = []
-                    truncated = False
-                    footer = "More notes are available through memory_search and paginated memory_read."
-                    for line in block.splitlines():
-                        if (
-                            estimate_text_tokens(
-                                text + prefix + "\n".join([*selected, line, footer])
-                            )
-                            > budget
-                        ):
-                            truncated = True
-                            break
-                        selected.append(line)
-                    if not selected:
-                        continue
-                    if truncated:
-                        selected.extend(["", footer])
-                    text += prefix + "\n".join(selected) + "\n"
-                    epochs[scope.id], generations[scope.id] = (
-                        scope.privacy_epoch,
-                        scope.generation,
-                    )
-                    refs.extend(
-                        MemoryProjectionRef(
-                            entry_id=document.id, revision=document.revision
+            for scope in reversed(scopes):
+                documents, more = self._index_documents(connection, scope.id)
+                if not documents:
+                    continue
+                prefix = f"\n{scope.kind}/MEMORY.md (historical context):\n"
+                block = self._render_index(documents, more=more)
+                selected = []
+                truncated = False
+                footer = "More notes are available through memory_search and paginated memory_read."
+                for line in block.splitlines():
+                    if (
+                        estimate_text_tokens(
+                            text + prefix + "\n".join([*selected, line, footer])
                         )
-                        for document in documents
+                        > budget
+                    ):
+                        truncated = True
+                        break
+                    selected.append(line)
+                if not selected:
+                    continue
+                if truncated:
+                    selected.extend(["", footer])
+                text += prefix + "\n".join(selected) + "\n"
+                epochs[scope.id], generations[scope.id] = (
+                    scope.privacy_epoch,
+                    scope.generation,
+                )
+                refs.extend(
+                    MemoryProjectionRef(
+                        entry_id=document.id, revision=document.revision
                     )
+                    for document in documents
+                )
             return MemoryProjection(
                 epochs=self.use_epochs(connection, session_id, epochs) if text else {},
                 generations=generations,
@@ -653,11 +614,11 @@ class MemoryService:
             "INSERT OR IGNORE INTO memory_sources(session_id) VALUES(?)", (root,)
         )
         row = connection.execute(
-            "SELECT use_epoch,temporary,deleted FROM memory_sources WHERE session_id=?",
+            "SELECT use_epoch,deleted FROM memory_sources WHERE session_id=?",
             (root,),
         ).fetchone()
-        if row[1] or row[2]:
-            raise MemoryRejected("memory_temporary_session")
+        if row[1]:
+            raise MemoryRejected("memory_source_unavailable")
         return {**epochs, "session:" + root: row[0]}
 
     @staticmethod
@@ -665,7 +626,7 @@ class MemoryService:
         for identifier, epoch in epochs.items():
             if identifier.startswith("session:"):
                 row = connection.execute(
-                    "SELECT use_epoch FROM memory_sources WHERE session_id=? AND temporary=0 AND deleted=0",
+                    "SELECT use_epoch FROM memory_sources WHERE session_id=? AND deleted=0",
                     (identifier.removeprefix("session:"),),
                 ).fetchone()
             else:
@@ -741,7 +702,7 @@ class MemoryService:
         with self.database.transaction() as connection:
             self._cancel_revoked(connection)
             rows = connection.execute(
-                "SELECT r.document_id,r.revision,r.file_ref FROM memory_revisions r JOIN memory_documents d ON d.id=r.document_id WHERE r.file_ref IS NOT NULL AND (d.status<>'active' OR (r.user_owned=0 AND EXISTS(SELECT 1 FROM memory_evidence e LEFT JOIN memory_source_items i ON i.item_id=e.item_id LEFT JOIN memory_sources s ON s.session_id=e.session_id WHERE e.document_id=r.document_id AND e.revision=r.revision AND (i.item_id IS NULL OR i.eligible=0 OR i.item_revision<>e.item_revision OR s.deleted=1 OR s.temporary=1)))) LIMIT 500"
+                "SELECT r.document_id,r.revision,r.file_ref FROM memory_revisions r JOIN memory_documents d ON d.id=r.document_id WHERE r.file_ref IS NOT NULL AND (d.status<>'active' OR (r.user_owned=0 AND EXISTS(SELECT 1 FROM memory_evidence e LEFT JOIN memory_source_items i ON i.item_id=e.item_id LEFT JOIN memory_sources s ON s.session_id=e.session_id WHERE e.document_id=r.document_id AND e.revision=r.revision AND (i.item_id IS NULL OR i.eligible=0 OR i.item_revision<>e.item_revision OR s.deleted=1)))) LIMIT 500"
             ).fetchall()
             for row in rows:
                 self.repository.files.remove(row["file_ref"])

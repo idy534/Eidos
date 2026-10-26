@@ -153,7 +153,7 @@ export function MemorySettings({
                 <select
                   aria-label="记忆模式"
                   value={currentMode}
-                  disabled={!selected || busy || dirty || library.state?.temporary}
+                  disabled={!selected || busy || dirty}
                   onChange={(event) => void changeMode(event.target.value as MemoryMode)}
                 >
                   {Object.entries(modes).map(([value, label]) => (
@@ -164,10 +164,10 @@ export function MemorySettings({
                 </select>
               </div>
               <StatusBadge
-                tone={library.state?.temporary ? "warning" : badgeConfig.tone}
+                tone={badgeConfig.tone}
                 className="memory-mode-badge"
               >
-                {library.state?.temporary ? "临时会话" : badgeConfig.text}
+                {badgeConfig.text}
               </StatusBadge>
             </label>
           </div>
@@ -190,9 +190,7 @@ export function MemorySettings({
             <InfoIcon />
           </span>
           <p className="memory-policy-description">
-            {library.state?.temporary
-              ? "当前是临时对话，模型不会使用或保存记忆。"
-              : descriptions[currentMode]}
+            {descriptions[currentMode]}
           </p>
         </div>
       </section>
@@ -220,7 +218,7 @@ export function MemorySettings({
                 variant="secondary"
                 size="small"
                 icon={<PlusIcon />}
-                disabled={dirty || busy || library.state?.temporary}
+                disabled={dirty || busy}
                 onClick={() => setPath(null)}
               >
                 新建笔记
@@ -328,7 +326,6 @@ export function MemorySettings({
               scope={scope}
               path={path}
               generation={selected.generation}
-              readOnly={library.state?.temporary}
               onDirty={setEditorDirty}
               onSelect={setPath}
               onOpenSource={onOpenSource}
