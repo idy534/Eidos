@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "./Button.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface HandoffDialogProps {
@@ -107,6 +107,11 @@ export function HandoffDialog({
 
   return (
     <div className="modal-backdrop" onClick={busy ? undefined : onCancel} aria-hidden={!open}>
+      {error && (
+        <ToastContainer
+          toasts={[{ id: "handoff-error", message: error, type: "error", duration: 3500 }]}
+        />
+      )}
       <div
         ref={dialogRef}
         className="modal-dialog modal-dialog--wide handoff-dialog"
@@ -287,7 +292,6 @@ export function HandoffDialog({
               </div>
             )}
           </section>
-          <FieldError error={error} />
         </div>
         <div className="modal-footer handoff-modal-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>

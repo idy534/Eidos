@@ -20,7 +20,6 @@ import { SessionSidebar } from "../components/SessionSidebar.js";
 import { AutomationPage } from "../components/automations/AutomationPage.js";
 import { Button } from "../components/Button.js";
 import { DropdownMenu } from "../components/DropdownMenu.js";
-import { FieldError } from "../components/FieldError.js";
 import { EditIcon, TrashIcon } from "../components/MenuIcons.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { ForkConversationDialog } from "../components/ForkConversationDialog.js";
@@ -176,7 +175,6 @@ export function AppShell({ runtime }: AppShellProps) {
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("model");
   const [renamingSessionId, setRenamingSessionId] = useState<string | undefined>(undefined);
   const [titleDraft, setTitleDraft] = useState("");
-  const [renameError, setRenameError] = useState<string | undefined>(undefined);
   const [sessionToDelete, setSessionToDelete] = useState<Session | undefined>(undefined);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined);
@@ -369,6 +367,12 @@ export function AppShell({ runtime }: AppShellProps) {
     }
     previousTopErrorRef.current = topError;
   }, [topError]);
+
+  useEffect(() => {
+    if (responseActionState.error) {
+      showToast(responseActionState.error, "error");
+    }
+  }, [responseActionState.error, showToast]);
 
   const previousWarningRef = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -759,19 +763,17 @@ export function AppShell({ runtime }: AppShellProps) {
       return;
     }
     setTitleDraft(targetSnapshot.session.title ?? "新会话");
-    setRenameError(undefined);
     setRenamingSessionId(session.id);
   }
 
   async function submitRename(): Promise<void> {
     const sid = sessionState.snapshot?.session.id;
     if (!sid || renamingSessionId !== sid || !titleDraft.trim()) return;
-    setRenameError(undefined);
     try {
       await sessionActions.renameSession(sid, titleDraft.trim());
       setRenamingSessionId(undefined);
     } catch (cause) {
-      setRenameError(userFacingError(cause));
+      showToast(userFacingError(cause), "error");
     }
   }
 
@@ -1563,11 +1565,10 @@ export function AppShell({ runtime }: AppShellProps) {
                   <Button
                     variant="ghost"
                     size="small"
-                    onClick={() => { setRenamingSessionId(undefined); setRenameError(undefined); }}
+                    onClick={() => { setRenamingSessionId(undefined); }}
                   >
                     取消
                   </Button>
-                  <FieldError error={renameError} inline />
                 </form>
               ) : (
                 <div className="session-title-group">
@@ -1605,7 +1606,6 @@ export function AppShell({ runtime }: AppShellProps) {
             <div className="workspace-content">
               <div className="workspace-main">
                 <InputDropZone>
-                <FieldError className="response-action-error" error={responseActionState.error} />
                 <SessionCanvas
                   sessionId={currentSnapshot.session.id}
                   welcome={showWelcome}

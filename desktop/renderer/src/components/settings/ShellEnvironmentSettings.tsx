@@ -4,7 +4,7 @@ import { Button } from "../Button.js";
 import { Tooltip } from "../Tooltip.js";
 import { SettingRow } from "../SettingRow.js";
 import { SettingSection } from "../SettingSection.js";
-import { AlertBanner } from "../AlertBanner.js";
+import { ToastContainer } from "../ToastContainer.js";
 
 function Help({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -55,7 +55,11 @@ export function ShellEnvironmentSettings({ onShowToast }: {
       const saved = await window.eidosRuntime.saveShellEnvironment({ expectedRevision: previous.revision, policy: { inherit } });
       if (mounted.current) { setSettings(saved); onShowToast?.("环境继承方式已更新", "success"); }
     } catch {
-      if (mounted.current) { setSettings(previous); setError("继承方式保存失败，请重新读取后再试。"); }
+      if (mounted.current) {
+        setSettings(previous);
+        setError("继承方式保存失败，请重新读取后再试。");
+        onShowToast?.("继承方式保存失败，请重新读取后再试。", "error");
+      }
     } finally {
       busy.current = false;
       if (mounted.current) setWorking(null);
@@ -69,7 +73,10 @@ export function ShellEnvironmentSettings({ onShowToast }: {
       const value = await window.eidosRuntime.refreshShellEnvironment();
       if (mounted.current) { setSettings(value); onShowToast?.("后续命令将重新读取宿主机环境", "info"); }
     } catch {
-      if (mounted.current) setError("环境刷新失败，请重试。");
+      if (mounted.current) {
+        setError("环境刷新失败，请重试。");
+        onShowToast?.("环境刷新失败，请重试。", "error");
+      }
     } finally {
       busy.current = false;
       if (mounted.current) setWorking(null);
@@ -78,7 +85,12 @@ export function ShellEnvironmentSettings({ onShowToast }: {
 
   return (
     <SettingSection title="沙盒环境设置" className="shell-environment-settings">
-      {error && <AlertBanner tone="error">{error}</AlertBanner>}
+      {error && !onShowToast && (
+        <ToastContainer
+          toasts={[{ id: "shell-env-error", message: error, type: "error", duration: 3500 }]}
+          onDismiss={() => setError("")}
+        />
+      )}
       <SettingRow
         title={
           <span className="shell-environment-label">

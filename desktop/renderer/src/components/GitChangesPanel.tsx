@@ -20,6 +20,7 @@ import { Button } from "./Button.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
 import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { FileDiffIcon, HistoryIcon, TaskScopeIcon, GitBranchIcon, SendIcon } from "./MenuIcons.js";
 import { LastTurnChanges, type ItemReviewStats } from "./LastTurnChanges.js";
 import { GitWorkflowControls } from "./GitWorkflowControls.js";
@@ -584,10 +585,15 @@ export function GitChangesPanel(props: GitChangesPanelProps) {
           )}
         </div>
       </header>
-      <FieldError
-        className="git-review-error"
-        error={localError ?? summaryError ?? error}
-      />
+      {(localError || summaryError || error) && (
+        <ToastContainer
+          toasts={[{ id: "git-review-error", message: (localError ?? summaryError ?? error)!, type: "error", duration: 3500 }]}
+          onDismiss={() => {
+            setLocalError(undefined);
+            setSummaryError(undefined);
+          }}
+        />
+      )}
 
       {isItemTab && (
         <LastTurnChanges

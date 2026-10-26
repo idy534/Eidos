@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import logging
+import os
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -650,8 +652,48 @@ def test_runtime_logs_delete_oldest_sealed_segments_at_total_limit(
         database.close()
 
 
+def test_runtime_logs_survive_restart_after_timezone_change(tmp_path: Path) -> None:
+    original_timezone = os.environ.get("TZ")
+    data = tmp_path / "data"
+    segment_id = None
+    try:
+        for timezone in ("UTC0", "KST-9"):
+            os.environ["TZ"] = timezone
+            time.tzset()
+            store = SessionStore(data)
+            store.initialize()
+            try:
+                assert store.health_state == "ready", store.health()
+                logs = store._persistence_layout.runtime_logs
+                if segment_id is None:
+                    record = logging.LogRecord("timezone-test", logging.INFO, __file__, 1, "saved log", (), None)
+                    record.created = 1792967400  # 2026-10-25 23:50 UTC; next day in KST.
+                    logs.append(record)
+                    row = logs.database.connection().execute("SELECT * FROM log_segments").fetchone()
+                    segment_id = row["id"]
+                    logs.seal()
+                else:
+                    row = logs.database.connection().execute("SELECT * FROM log_segments WHERE id=?", (segment_id,)).fetchone()
+                    assert row is not None
+                    assert row["relative_path"].startswith("2026-10-25/")
+                    assert "saved log" in (logs.root / row["relative_path"]).read_text()
+            finally:
+                store.close()
+    finally:
+        if original_timezone is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_timezone
+        time.tzset()
+
+
+@pytest.mark.parametrize("relative_path", [
+    "../../outside.jsonl", "/outside.jsonl", "2026-02-30/{id}.jsonl",
+    "2026-10-25/../{id}.jsonl", "2026-10-25//{id}.jsonl",
+    "2026-10-25/wrong.jsonl",
+])
 def test_runtime_logs_reject_index_path_that_escapes_log_root(
-    tmp_path: Path,
+    tmp_path: Path, relative_path: str,
 ) -> None:
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
@@ -663,6 +705,7 @@ def test_runtime_logs_reject_index_path_that_escapes_log_root(
     )
     database.initialize()
     try:
+        segment_id = "1-123-" + "a" * 32
         with database.transaction() as connection:
             connection.execute(
                 """
@@ -671,11 +714,11 @@ def test_runtime_logs_reject_index_path_that_escapes_log_root(
                     record_count, stored_bytes, chain_sha256, state,
                     created_at, updated_at
                 ) VALUES (
-                    'malicious', '../../outside.jsonl', 1, 1,
+                    ?, ?, 1, 1,
                     1, 12, ?, 'sealed', 1, 1
                 )
                 """,
-                ("0" * 64,),
+                (segment_id, relative_path.format(id=segment_id), "0" * 64),
             )
 
         with pytest.raises(StorageError, match="log_segment_path_invalid"):

@@ -10,7 +10,6 @@ import { Toggle } from "../Toggle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { EmptyState } from "../EmptyState.js";
 import { StatusBadge } from "../StatusBadge.js";
-import { AlertBanner } from "../AlertBanner.js";
 import { PluginDetailDialog } from "./PluginDetailDialog.js";
 import { HookSourceSettings } from "./HookSourceSettings.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
@@ -55,9 +54,9 @@ export function PluginSettings({
   onShowToast,
 }: PluginSettingsProps) {
   const [pluginToRemove, setPluginToRemove] = useState<PluginRecord | null>(null);
-  const [localError, setLocalError] = useState<string>();
   const [review, setReview] = useState<{ plugin: PluginRecord; enable: boolean } | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewError, setReviewError] = useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
   const importRef = useRef<HTMLButtonElement>(null);
   const selected = plugins.find((plugin) => plugin.id === selectedId);
@@ -66,7 +65,6 @@ export function PluginSettings({
   const enabledCount = plugins.filter((p) => p.enabled).length;
 
   async function handleImport() {
-    setLocalError(undefined);
     try {
       const imported = await onImportPlugin();
       if (imported) {
@@ -81,7 +79,6 @@ export function PluginSettings({
   }
 
   async function handleToggle(plugin: PluginRecord, nextState: boolean) {
-    setLocalError(undefined);
     if (nextState && plugin.hookReview && (plugin.hookReview.executableCount ?? 0) > 0 && !plugin.hookReview.trusted) {
       setReview({ plugin, enable: true });
       return;
@@ -101,7 +98,7 @@ export function PluginSettings({
   async function trustHooks() {
     if (!review || !onTrustPluginHooks || !review.plugin.hookReview) return;
     setReviewBusy(true);
-    setLocalError(undefined);
+    setReviewError(undefined);
     try {
       await onTrustPluginHooks(review.plugin.id, review.plugin.hookReview.contentHash, true);
       if (review.enable) await onTogglePlugin(review.plugin.id, true);
@@ -109,7 +106,7 @@ export function PluginSettings({
       onShowToast("Hook 已信任，将在后续任务中自动运行。", "success");
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : "保存 Hook 信任失败";
-      setLocalError(msg);
+      setReviewError(msg);
       onShowToast(msg, "error");
     } finally {
       setReviewBusy(false);
@@ -129,7 +126,6 @@ export function PluginSettings({
 
   async function confirmRemove() {
     if (!pluginToRemove) return;
-    setLocalError(undefined);
     try {
       await onRemovePlugin(pluginToRemove.id);
       onShowToast(`Plugin “${pluginToRemove.name}” 已移除`, "info");
@@ -296,12 +292,12 @@ export function PluginSettings({
           </div>)}
           {Boolean(review?.plugin.compatibility?.issues?.length) && <div><p>以下能力暂不支持：</p><ul>{review?.plugin.compatibility?.issues?.map((issue) => <li key={issue}>{compatibilityIssue(issue)}</li>)}</ul></div>}
           {review?.plugin.hookReview?.latest && <p>最近结果：{review.plugin.hookReview.latest.systemMessage || review.plugin.hookReview.latest.message || review.plugin.hookReview.latest.errorCode || "脚本已完成。"}</p>}
-          {localError && <AlertBanner tone="error">{localError}</AlertBanner>}
         </div>}
         confirmLabel={review?.plugin.hookReview?.trusted || !(review?.plugin.hookReview?.executableCount) ? "关闭" : "信任此版本的 Hook"}
         cancelLabel="取消" isDestructive={Boolean(review && !review.plugin.hookReview?.trusted && review.plugin.hookReview?.executableCount)} busy={reviewBusy}
+        error={reviewError}
         onConfirm={() => review?.plugin.hookReview?.trusted || !(review?.plugin.hookReview?.executableCount) ? setReview(null) : void trustHooks()}
-        onCancel={() => { if (!reviewBusy) setReview(null); }}
+        onCancel={() => { if (!reviewBusy) { setReview(null); setReviewError(undefined); } }}
       />
 
       <ConfirmDialog

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { McpCreateInput, McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
-import { FieldError } from "../FieldError.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { Tooltip } from "../Tooltip.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -177,6 +177,12 @@ export function McpCreateDialog({
   const formError = localError || error;
   return (
     <div className="modal-backdrop" onClick={busy || removeBusy ? undefined : onCancel}>
+      {formError && (
+        <ToastContainer
+          toasts={[{ id: "mcp-create-error", message: formError, type: "error", duration: 3500 }]}
+          onDismiss={() => setLocalError(undefined)}
+        />
+      )}
       <div
         className="modal-dialog modal-dialog--wide mcp-create-dialog"
         role="dialog"
@@ -357,7 +363,6 @@ export function McpCreateDialog({
               <option value="connector">connector：允许联网连接器</option>
             </select>
           </label>
-          <FieldError error={formError} />
         </div>
         <div className="modal-footer mcp-create-footer">
           {server && onRemove ? (

@@ -12,7 +12,7 @@ import type {
 import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { useArtifacts, usePreviewUrl, type WorkspaceFilePosition } from "./ArtifactContext.js";
 import { ContextMenu } from "./DropdownMenu.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { FinderIcon, CopyIcon, ExternalLinkIcon, CloseIcon, CloseOthersIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 import { MarkdownContent } from "./MarkdownContent.js";
@@ -493,7 +493,12 @@ export function WorkspaceExplorer({
       aria-label="Workspace 文件浏览器"
     >
       <aside className="workspace-tree-pane" aria-label="文件树">
-        <FieldError className="workspace-explorer-error" error={error} />
+        {error && (
+          <ToastContainer
+            toasts={[{ id: "workspace-explorer-error", message: error, type: "error", duration: 3500 }]}
+            onDismiss={() => setError(undefined)}
+          />
+        )}
         {rootTruncated && <p className="workspace-tree-note">目录内容已截断</p>}
         {loadingRoot ? (
           <p className="workspace-empty-state" role="status">正在读取…</p>

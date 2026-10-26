@@ -63,6 +63,7 @@ from eidos_runtime.runtime.resolution import (
     create_step_resolution_snapshot,
 )
 from eidos_runtime.runtime.state_machine import (
+    ApprovalStatus,
     EventType,
     RunStatus,
     SegmentStatus,
@@ -2112,6 +2113,42 @@ class ExecutionRepository(Repository):
         return self.resolve_approval_committed(
             item_id, decision, feedback, requeue=requeue
         ).value
+
+    def invalidate_unstarted_approval_committed(
+        self, item_id: str, reason: str
+    ) -> CommittedMutation[dict[str, object]]:
+        """Withdraw a stale prepared action without approving it or ending its Run."""
+        with self.lock, self._connection() as connection:
+            pending = connection.execute(
+                """SELECT a.id,a.run_id,r.session_id FROM approvals a
+                   JOIN runs r ON r.id=a.run_id JOIN tool_calls t ON t.item_id=a.item_id
+                   WHERE a.item_id=? AND a.status='pending' AND r.status='waiting_approval'
+                     AND t.status='running' AND t.approval_status='pending'
+                     AND NOT EXISTS(SELECT 1 FROM durable_intents d WHERE d.tool_call_id=t.id)""",
+                (item_id,),
+            ).fetchone()
+            if pending is None:
+                return CommittedMutation(self.read_item(item_id), ())
+            ensure_transition(ApprovalStatus.PENDING, ApprovalStatus.INVALIDATED)
+            stamp = _now_ms()
+            connection.execute(
+                "UPDATE approvals SET status='invalidated',feedback=?,decided_at=? WHERE id=? AND status='pending'",
+                (reason, stamp, pending["id"]),
+            )
+            connection.execute(
+                "UPDATE tool_calls SET approval_status='canceled',approval_feedback=? WHERE item_id=?",
+                (reason, item_id),
+            )
+            _, run_event = transition_run(
+                connection, pending["run_id"], frozenset({RunStatus.WAITING_APPROVAL}),
+                RunStatus.RUNNING, reason,
+            )
+            event = append_event(
+                connection, EventType.APPROVAL_STATUS_CHANGED, stamp,
+                {"entity_id": pending["id"], "previous": "pending", "current": "invalidated", "reason": reason},
+                session_id=pending["session_id"], run_id=pending["run_id"],
+            )
+        return CommittedMutation(self.read_item(item_id), (run_event, event))
 
     def resolve_approval_committed(
         self,

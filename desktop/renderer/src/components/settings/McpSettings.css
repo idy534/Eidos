@@ -516,6 +516,8 @@
   background: var(--surface-raised);
   border: 1px dashed var(--line);
   border-radius: var(--radius-lg);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .mcp-empty-icon-wrap {
@@ -553,7 +555,8 @@
 /* Presets Section */
 .mcp-presets-container {
   width: 100%;
-  max-width: 48rem;
+  max-width: 100%;
+  box-sizing: border-box;
   margin-top: 1.25rem;
   padding-top: 1.25rem;
   border-top: 1px solid var(--surface-muted);
@@ -571,11 +574,14 @@
 
 .mcp-presets-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+  width: 100%;
 }
 
 .mcp-preset-card {
+  min-width: 0;
+  box-sizing: border-box;
   display: flex;
   align-items: flex-start;
   gap: 0.75rem;
@@ -622,6 +628,9 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mcp-preset-cmd {
@@ -631,12 +640,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .mcp-preset-desc {
   font-size: 11.5px;
   color: var(--text-tertiary);
   margin-top: 0.15rem;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 /* Empty filter results */
@@ -655,15 +667,18 @@
 }
 
 /* Responsive adjustments */
+@media (max-width: 900px) {
+  .mcp-presets-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 820px) {
   .mcp-specs-grid {
     grid-template-columns: repeat(2, 1fr);
   }
   .mcp-spec-tile--wide {
     grid-column: span 2;
-  }
-  .mcp-presets-grid {
-    grid-template-columns: 1fr;
   }
   .mcp-card__main {
     flex-wrap: wrap;

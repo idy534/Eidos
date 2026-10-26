@@ -27,6 +27,7 @@ from eidos_runtime.memory.contracts import (
     MemoryExportFile,
     MemoryExportRequest,
     MemoryListRequest,
+    MemoryKind,
     MemoryPolicyRequest,
     MemoryProjection,
     MemoryProjectionRef,
@@ -42,6 +43,7 @@ from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 
 logger = logging.getLogger("eidos.runtime.memory")
 _EPOCHS = TypeAdapter(dict[str, NonnegativeInt])
+_REVISION = TypeAdapter(NonnegativeInt)
 
 
 class MemoryAccess(EidosFrozenStrictModel):
@@ -141,6 +143,8 @@ class MemoryService:
                 connection, request.session_id, request.scope
             )
             ids = [scope.id for scope in selected if not for_use or scope.mode != "off"]
+            if for_use and not ids:
+                raise MemoryRejected("memory_read_disabled")
             documents, cursor, limited = self.repository.list(
                 connection,
                 ids,
@@ -297,7 +301,7 @@ class MemoryService:
 
     def validate_edit(
         self, request: MemoryEditRequest, *, automatic: bool = False
-    ) -> None:
+    ) -> str:
         try:
             value = request.model_dump(mode="json")
             if default_scanner().scan_json(value) != value:
@@ -305,15 +309,33 @@ class MemoryService:
         except SensitiveScanError:
             raise MemoryRejected("memory_sensitive_content") from None
         with self.database.transaction() as connection:
-            self._state(connection, request, automatic)
+            return self._state(connection, request, automatic)[3]
 
-    def edit_base(self, run_id: str, scope_id: str, path: str) -> tuple[int, str]:
-        """Use a completed read/write from this Run as the edit's CAS base."""
+    def edit_base(
+        self, run_id: str, scope_id: str, path: str, *, item_id: str
+    ) -> tuple[int, MemoryKind]:
+        """Use Run read/write evidence, or a private CAS base for explicit off-mode replacement."""
         with self.database.lock:
             connection = self.database.connection()
             current = self.repository.row(connection, scope_id, path)
+            pending = connection.execute(
+                "SELECT json_extract(request_json,'$.expectedRevision') FROM approvals WHERE run_id=? AND item_id=? AND status='pending'",
+                (run_id, item_id),
+            ).fetchone()
+            if pending is not None:
+                kind = (
+                    self.repository.document(connection, current)[0].kind
+                    if current is not None
+                    else "feedback"
+                )
+                return _REVISION.validate_python(pending[0]), kind
             if current is None:
                 return 0, "feedback"
+            if self.repository.scope(connection, scope_id).mode == "off":
+                # Off mode does not expose the existing body to the model.
+                # Its explicit replacement still captures CAS before approval.
+                document, _ = self.repository.document(connection, current)
+                return document.revision, document.kind
             read = connection.execute(
                 """SELECT COALESCE(json_extract(t.result_json,'$.data.read.revision'),
                                    json_extract(t.result_json,'$.data.action.revision')) AS revision
@@ -409,7 +431,7 @@ class MemoryService:
                     (
                         line.lstrip("# ").strip()[:240]
                         for line in (request.content or "").splitlines()
-                        if line.strip()
+                        if line.lstrip("# ").strip()
                     ),
                     title[:240],
                 )

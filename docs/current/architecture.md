@@ -500,6 +500,8 @@ Runtime 启动仍执行主库及历史、日志辅助库完整性检查、Schema
 
 Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶段、依赖校验、Worktree 恢复与保留、Skill、模型配置、异步内核、重启核验、Handoff、Seatbelt 和待投递事件的 `phase`、`duration_ms` 与完成状态。计时不写业务 Event，也不修改协议或 SQLite Schema；初始化前的记录写 stderr，日志存储接入后的记录同时写本地 JSONL。
 
+日志路径保留创建时保存的日期目录。Runtime 校验日期格式、两层相对路径和对应的 Segment 文件名，不按当前时区重新计算历史日期。系统时区变化后，旧日志仍能通过启动校验；目录穿越、绝对路径和文件身份检查继续生效。
+
 仓库库报告 SQLite 损坏、缺少必要表或外键不一致时，Runtime 停止使用缓存。Runtime 核验私有文件身份后，把原数据库和现存 WAL/SHM 移至同目录的 `.invalid-<id>` 文件，再创建空缓存；用户可以保留这些文件排查问题。既有 Workspace watcher 会丢弃旧 Snapshot，并在下一次空闲回调构建新 generation。未知缓存版本、Busy 或不可信路径不会授权删除文件；它们只使索引不可用。重建失败保留错误日志与不可用状态，模型继续使用普通文件和搜索工具。主库事实、业务 Event、Outbox 和恢复语义保持原样。
 
 Session 展示快照与执行快照使用不同的读取入口。`session/read` 的首屏和历史分页不查询 Step/Rule Resolution 表，也不读取或校验 Step Resolution Blob。响应保留 `stepResolutions: []`，以兼容现有 DTO 和 Main 校验。Runtime 执行与审批恢复仍通过完整快照入口读取数据，并保留原有完整性校验。这项读取路径调整已修订代码，测试与性能验收待执行。
@@ -512,7 +514,7 @@ ContextSnapshot 和 StepResolutionSnapshot 使用 gzip content-addressed Blob。
 
 本地 JSONL 日志保存脱敏后的异常消息和调用位置，包括显式 cause 与未抑制的 context。普通消息最多 16 KiB，异常消息最多 4 KiB，调用栈最多 16 KiB；每个异常最多记录 32 个调用位置，异常链最多记录 8 层。日志不保存局部变量和源码行。日志字段使用现有凭据扫描并补充私钥正文、Authorization 与密钥赋值脱敏；诊断生成失败时只保存固定占位信息。该信息不进入 Session 正文，也不参与业务状态和恢复判断。
 
-当前 `SCHEMA_VERSION` 是 42。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
+当前 `SCHEMA_VERSION` 是 43。v42→v43 保留已有笔记、历史版本、模式和撤销记录，新增归档状态并调整聊天来源触发器。v41→v42 删除会话级临时记忆字段和接口，保留笔记与原来源撤销状态，并让原临时会话按所属范围的模式工作。v40→v41 保留现有笔记，在事务中修复历史自动版本的来源撤销触发器，并补充撤销旧版遗漏的上下文。v39→v40 在事务中重置记忆表，撤销旧记忆上下文，并保留聊天、执行记录及其他配置；文件清理由可重试的启动标记完成。v25→v26 增加 `session_forks`、`session_history_entries`、`session_history_resources` 和 Worktree 生命周期请求校验值。迁移使用事务，旧 Session 没有继承历史。v16→v17 在事务内新增记忆作用域、版本、证据、任务、预算及隐私撤销表和索引。下文先记录 v8 存储拆分的升级链，后续版本的增量变更见对应章节。新主库不创建 Repository 表。Runtime 支持 v1→v2→v3→v4→v5→v6→v7→v8 顺序升级。v5→v6 先把 Repository generation 写入临时数据库，完成完整性检查和 fsync，再原子替换 `repository.sqlite`。Runtime 随后删除主库中的 Repository 表并使用持久 marker 执行 `VACUUM`。v6→v7 新增 `run_dependency_snapshots` 和 `run_dependency_bindings`。v7→v8 为 `tool_calls` 增加受约束的 `payload_kind`，历史正式数据默认为 Function，迁移边界只对旧的 native `apply_patch` envelope 做一次性兼容 backfill。两个表继续使用 `state.sqlite` 作为业务事实来源。中断后，Runtime 可以重新复制或继续压缩。旧 `eidos.db` 会先 checkpoint WAL、检查完整性，再原子改名为 `state.sqlite`。未知 revision、未来 revision、双主库冲突和损坏 Blob 都 fail closed。
 
 Outbox 投递失败不会删除事实。Runtime 重启会从 `state.sqlite`、Outbox、Long Task 和 Resource 状态恢复或记录实际中断与未知结果。其他数据库和文件不参与跨库业务 transaction。
 

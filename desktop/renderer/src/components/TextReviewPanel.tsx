@@ -5,7 +5,7 @@ import { committedFileDiff, projectNetFileDiff } from "../persisted-file-diff.js
 import { userFacingError } from "../session-state.js";
 import { useArtifacts } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { Tooltip } from "./Tooltip.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { WorkspaceFolderIcon } from "./WorkspaceFileIcon.js";
@@ -424,11 +424,17 @@ export function TextReviewPanel({
         </div>
       </header>
 
-      <FieldError
-        className="git-review-error"
-        error={error ? `修改记录尚未完整读取：${error}` : undefined}
-      />
-      <FieldError className="git-review-error" error={openError} />
+      {(openError || error) && (
+        <ToastContainer
+          toasts={[
+            ...(openError ? [{ id: "open-error", message: openError, type: "error" as const, duration: 3500 }] : []),
+            ...(error ? [{ id: "review-error", message: `修改记录尚未完整读取：${error}`, type: "error" as const, duration: 3500 }] : []),
+          ]}
+          onDismiss={(id) => {
+            if (id === "open-error") setOpenError("");
+          }}
+        />
+      )}
 
       <div className="git-review-files">
         {loading && fileSummaries.length === 0 && (

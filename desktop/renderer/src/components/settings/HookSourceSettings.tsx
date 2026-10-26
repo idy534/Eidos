@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { HookConfigurationRequest, HookSourceReview } from "../../../../shared/hooks.js";
 import { userFacingError } from "../../session-state.js";
-import { AlertBanner } from "../AlertBanner.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { SettingRow } from "../SettingRow.js";
@@ -93,9 +93,10 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
           }
         >
           {error && !review && (
-            <div className="hook-error-container">
-              <AlertBanner tone="error">{error}</AlertBanner>
-            </div>
+            <ToastContainer
+              toasts={[{ id: "hook-source-error", message: error, type: "error", duration: 3500 }]}
+              onDismiss={() => setError(undefined)}
+            />
           )}
 
           {loading && !sources.length && (

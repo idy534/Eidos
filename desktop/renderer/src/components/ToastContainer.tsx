@@ -11,15 +11,15 @@ export interface ToastItem {
 
 interface ToastContainerProps {
   toasts: ToastItem[];
-  onDismiss: (id: string) => void;
+  onDismiss?: ((id: string) => void) | undefined;
 }
 
 interface SingleToastProps {
   toast: ToastItem;
-  onDismiss: (id: string) => void;
+  onDismiss?: ((id: string) => void) | undefined;
 }
 
-function SingleToast({ toast, onDismiss }: SingleToastProps) {
+function SingleToast({ toast, onDismiss = () => {} }: SingleToastProps) {
   const duration = toast.duration ?? (toast.type === "error" || toast.type === "warning" ? 5000 : 3500);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remainingRef = useRef<number>(duration);

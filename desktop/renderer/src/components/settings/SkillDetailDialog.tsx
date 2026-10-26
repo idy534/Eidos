@@ -4,7 +4,6 @@ import { userFacingError } from "../../session-state.js";
 import { ArtifactProvider } from "../ArtifactContext.js";
 import { Button } from "../Button.js";
 import { DropdownMenu } from "../DropdownMenu.js";
-import { FieldError } from "../FieldError.js";
 import { FinderIcon, CopyIcon } from "../MenuIcons.js";
 import { MarkdownContent } from "../MarkdownContent.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -200,7 +199,11 @@ export function SkillDetailDialog({
     try {
       await onToggleSkill(targetId, enabled);
       onShowToast(enabled ? "技能已启用，将从下一次任务生效" : "技能已禁用，将从下一次任务生效", "success");
-    } catch (cause) { setError(userFacingError(cause)); }
+    } catch (cause) {
+      const msg = userFacingError(cause);
+      setError(msg);
+      onShowToast(msg, "error");
+    }
   }
 
   async function remove() {
@@ -212,7 +215,11 @@ export function SkillDetailDialog({
       setConfirmRemove(false);
       onClose();
       onShowToast(result.cleanupPending ? "技能已卸载，文件清理已延后" : "技能已卸载", "success");
-    } catch (cause) { setError(userFacingError(cause)); }
+    } catch (cause) {
+      const msg = userFacingError(cause);
+      setError(msg);
+      onShowToast(msg, "error");
+    }
   }
 
   async function moreAction(action: "finder" | "copy") {
@@ -226,7 +233,9 @@ export function SkillDetailDialog({
         onShowToast("Markdown 已复制", "success");
       }
     } catch {
-      setError(action === "finder" ? "无法在 Finder 中显示技能目录，请重新打开详情。" : "Markdown 复制失败，请重试。");
+      const msg = action === "finder" ? "无法在 Finder 中显示技能目录，请重新打开详情。" : "Markdown 复制失败，请重试。";
+      setError(msg);
+      onShowToast(msg, "error");
     }
   }
 
@@ -296,7 +305,6 @@ export function SkillDetailDialog({
           </div>
           <p className="skill-detail-description">{effectiveDescription || "未提供技能说明"}</p>
           {!effectiveAvailable && <p className="skill-availability" role="status">所属插件尚未启用。你可以保存技能开关状态，插件启用后才会生效。</p>}
-          {!confirmRemove && <FieldError error={error} />}
           <div className="skill-detail-body" tabIndex={0} aria-label="技能说明" aria-busy={!currentDetail && !loadError}>
             {currentDetail ? (
               <ArtifactProvider value={undefined}><MarkdownContent content={currentDetail.body} /></ArtifactProvider>

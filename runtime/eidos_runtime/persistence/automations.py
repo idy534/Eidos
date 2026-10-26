@@ -188,7 +188,11 @@ class AutomationRepository(Repository):
     def pause_expired(self, task: Automation) -> None:
         with self.lock, self._connection() as connection:
             current = self.read_in(connection, task.id)
-            if current.revision == task.revision and current.status == "ACTIVE":
+            preparing = connection.execute(
+                "SELECT 1 FROM scheduled_occurrences WHERE task_id=? AND status='preparing' "
+                "AND json_extract(config_json,'$.revision')=? LIMIT 1", (task.id, task.revision),
+            ).fetchone()
+            if current.revision == task.revision and current.status == "ACTIVE" and preparing is None:
                 self.pause_in(connection, current, "执行时间已过去")
 
     def finish(self, occurrence_id: str, reason: str, *, pause: bool = False, skipped: bool = False) -> None:

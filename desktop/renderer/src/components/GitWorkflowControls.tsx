@@ -16,7 +16,7 @@ import { runtimeBusinessCode, userFacingError } from "../session-state.js";
 import { Button } from "./Button.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 import { DropdownMenu } from "./DropdownMenu.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { GitBranchIcon, PlusIcon } from "./MenuIcons.js";
 
 
@@ -491,7 +491,12 @@ export function GitWorkflowControls({
     return (
       <div className="git-workflow-controls git-workflow-controls--dialog-only" aria-label="Git workflow">
         {dialogContent}
-        <FieldError className="git-workflow-error" error={error} />
+        {error && (
+          <ToastContainer
+            toasts={[{ id: "git-workflow-error", message: error, type: "error", duration: 3500 }]}
+            onDismiss={() => setError(undefined)}
+          />
+        )}
       </div>
     );
   }
@@ -532,7 +537,12 @@ export function GitWorkflowControls({
           />
         </div>
         {dialogContent}
-        <FieldError className="git-workflow-error" error={error} />
+        {error && (
+          <ToastContainer
+            toasts={[{ id: "git-workflow-error", message: error, type: "error", duration: 3500 }]}
+            onDismiss={() => setError(undefined)}
+          />
+        )}
       </div>
     );
   }
@@ -594,7 +604,12 @@ export function GitWorkflowControls({
       </button>
       {dialogContent}
 
-      <FieldError className="git-workflow-error" error={error} />
+      {error && (
+        <ToastContainer
+          toasts={[{ id: "git-workflow-error", message: error, type: "error", duration: 3500 }]}
+          onDismiss={() => setError(undefined)}
+        />
+      )}
     </section>
   );
 }

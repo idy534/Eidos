@@ -113,7 +113,13 @@ export function SettingsPage({
     if (extensionError) {
       showToast(extensionError, "error");
     }
-  }, [extensionError]);
+  }, [extensionError, showToast]);
+
+  useEffect(() => {
+    if (modelError) {
+      showToast(modelError, "error");
+    }
+  }, [modelError, showToast]);
 
   const storageReady = runtime.state === "ready" && runtime.storageHealth.state === "ready";
   const standaloneSkills = skills.filter((skill) => skill.sourceKind !== "plugin");

@@ -283,6 +283,25 @@ class ApprovalCoordinator:
             item=pending_item,
         )
 
+    def invalidate_unstarted(
+        self, run_id: str, item: dict[str, object], reason: str, cancel: threading.Event
+    ) -> None:
+        pending = self.store.typed_runtime_repository().read_pending_approval(run_id)
+        if pending is None or pending.item_id != str(item["id"]):
+            return
+        mutation = self.store.typed_runtime_repository().invalidate_unstarted_approval_committed(
+            str(item["id"]), reason
+        )
+        if not mutation.events:
+            return
+        self.events.publish(
+            mutation, run=self.store.read_run(run_id),
+            item=self.store.read_item(str(item["id"])),
+        )
+        self.resume_execution_slot(run_id, cancel)
+        self.resume_effective_time()
+        self.state_machine.track(RuntimeState.TOOL_EXECUTING, reason)
+
     @staticmethod
     def _validated(result: ApprovalResult) -> ApprovalResult:
         try:

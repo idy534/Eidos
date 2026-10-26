@@ -1757,9 +1757,15 @@ class RuntimeServer:
             applications = self._applications_or_error()
             self.store.automations = AutomationApplication(self.store,
                 resolve_model=applications.runs.select_automation_model,
-                publish=self.supervisor.events.deliver_pending, launch=self._launch_automation,
+                publish=self._publish_automation_change, launch=self._launch_automation,
                 scan_text=self._scan_text)
         return self.store.automations
+
+    def _publish_automation_change(self) -> None:
+        # The plan is committed. Transport retries must not keep waking the timer.
+        if self.automation_scheduler is not None:
+            self.automation_scheduler.wake()
+        self.supervisor.events.deliver_pending()
 
     def _automation_history(self, request: AutomationHistoryRequest) -> AutomationResponse:
         repository = self._automation_application().repository
@@ -2047,6 +2053,8 @@ class RuntimeServer:
                 )
 
         self.initialized = True
+        if self.automation_scheduler is not None:
+            self.automation_scheduler.wake()
         self.send(
             response(
                 request_id,

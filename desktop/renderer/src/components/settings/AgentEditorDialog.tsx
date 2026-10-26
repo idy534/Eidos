@@ -4,6 +4,7 @@ import type { AgentDefinition, AgentDefinitionDocument, AgentModelSelection } fr
 import type { ModelOption } from "../../contracts.js";
 import { Button } from "../Button.js";
 import { FieldError } from "../FieldError.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { Tooltip } from "../Tooltip.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -117,6 +118,11 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
   return createPortal(
     <>
       <div className="modal-backdrop agent-editor-backdrop" aria-hidden={expandedMd}>
+        {error && (
+          <ToastContainer
+            toasts={[{ id: "agent-editor-error", message: error, type: "error", duration: 3500 }]}
+          />
+        )}
         <form
           ref={dialogRef}
           noValidate
@@ -392,7 +398,6 @@ export function AgentEditorDialog({ document: original, initialDefinition, refer
               {attempted && <FieldError error={instructionsError} inline />}
             </div>
           </fieldset>
-          <FieldError error={error} />
         </div>
 
         <footer className="modal-footer agent-editor__footer">

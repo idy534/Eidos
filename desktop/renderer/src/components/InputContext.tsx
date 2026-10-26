@@ -5,7 +5,7 @@ import { isInlineReference, isShelfReference, parseInlineSegments } from "../../
 import type { McpServerRecord } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { FileIcon, FolderIcon, AgentIcon, SkillIcon, ServerIcon, PuzzleIcon, ChatHistoryIcon } from "./InputPicker.js";
 import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
 import { McpDetailDialog } from "./settings/McpDetailDialog.js";
@@ -326,7 +326,16 @@ export function InlineReferenceProse({
           );
         })}
       </p>
-      <FieldError className="input-reference-error" error={error} />
+      {error && (
+        <ToastContainer
+          toasts={[{
+            id: "input-reference-list-error",
+            message: error,
+            type: "error",
+            duration: 3500,
+          }]}
+        />
+      )}
       {dialogs}
     </>
   );
@@ -454,7 +463,16 @@ export function InputReferenceCards({
           );
         })}
       </div>
-      <FieldError className="input-reference-error" error={error} />
+      {error && (
+        <ToastContainer
+          toasts={[{
+            id: "input-reference-cards-error",
+            message: error,
+            type: "error",
+            duration: 3500,
+          }]}
+        />
+      )}
       {dialogs}
     </>
   );

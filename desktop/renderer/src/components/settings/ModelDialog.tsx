@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelProviderPreset, ModelPresetsResult } from "../../contracts.js";
 import type { CustomModelSettings } from "../../../../shared/custom-models.js";
 import { Button } from "../Button.js";
-import { FieldError } from "../FieldError.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { Tooltip } from "../Tooltip.js";
 import { ProviderLogo } from "../ProviderLogo.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
@@ -68,6 +68,11 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
   if (!draft || !presets) return null;
   return (
     <div className="modal-backdrop">
+      {error && (
+        <ToastContainer
+          toasts={[{ id: "model-dialog-error", message: error, type: "error", duration: 3500 }]}
+        />
+      )}
       <div ref={dialogRef} className={`modal-dialog model-dialog${draft.custom ? " model-dialog--custom" : ""}`} role="dialog" aria-modal="true" aria-labelledby="model-dialog-title" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header model-dialog-header">
           <div>
@@ -157,7 +162,6 @@ export function ModelDialog({ draft, presets, busy, error, onChange, onCancel, o
             </div>
           </label>
           </>}
-          <FieldError error={error} />
         </div>
         <div className="modal-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>

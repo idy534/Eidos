@@ -11,7 +11,7 @@ import { ApprovalModeSelector } from "./ApprovalModeSelector.js";
 import { Button } from "./Button.js";
 import { ContextIndicator } from "./ContextIndicator.js";
 import type { ContextDetails } from "../../../shared/context-management.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { ModelSelector } from "./ModelSelector.js";
 import { Tooltip } from "./Tooltip.js";
 import { AgentEditorDialog } from "./settings/AgentEditorDialog.js";
@@ -429,9 +429,27 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           {...(onRemoveReference ? { onRemove: onRemoveReference } : {})}
         />
       )}
-      {unsupportedImage && <FieldError error="当前模型不支持图片。请选择支持图片的模型，或移除图片引用。" className="input-reference-error" />}
+      {unsupportedImage && (
+        <ToastContainer
+          toasts={[{
+            id: "composer-unsupported-image",
+            message: "当前模型不支持图片。请选择支持图片的模型，或移除图片引用。",
+            type: "warning",
+            duration: 4000,
+          }]}
+        />
+      )}
       {showBusyHint && <p className="input-reference-hint" role="status">正在准备引用…</p>}
-      <FieldError error={context?.error ?? inlineActivationError} className="input-reference-error" />
+      {(context?.error || inlineActivationError) && (
+        <ToastContainer
+          toasts={[{
+            id: "composer-reference-error",
+            message: (context?.error ?? inlineActivationError)!,
+            type: "error",
+            duration: 3500,
+          }]}
+        />
+      )}
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
         anchor={composerRef}

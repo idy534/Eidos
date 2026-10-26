@@ -4,7 +4,7 @@ import type { QueuedMessage as QueuedMessageData, QueuedRunChange } from "../../
 import { userFacingError } from "../session-state.js";
 import { useQueuedMessages } from "../app/useQueuedMessages.js";
 import { EditIcon, MessageQueueIcon, SteerIcon, TrashIcon } from "./MenuIcons.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { Tooltip } from "./Tooltip.js";
 import { Button } from "./Button.js";
 
@@ -20,24 +20,27 @@ export function QueuedMessages({ sessionId, ready, activeRunId, onChanged, onRef
   const queue = useQueuedMessages(sessionId, ready);
   if (!queue.items.length && !queue.error) return null;
   return (
-    <ol className="queued-messages" aria-label="待发送消息">
-      {queue.items.length > 0 && <li role="presentation" className="queued-message-heading">
-        <span>待发送消息 · {queue.items.length}{queue.nextSequence != null ? "+" : ""}</span>
-        <span>当前任务结束后依次发送</span>
-      </li>}
-      {queue.items.map((message, index) => (
-        <QueuedMessage key={message.runId} message={message} position={index + 1} ready={ready} activeRunId={activeRunId}
-          onChanged={(change) => { queue.project(change); onChanged(change); }}
-          onRefresh={() => { void queue.refresh(); onRefresh(); }} />
-      ))}
-      {queue.nextSequence != null && <li className="queued-message-more"><Button size="small" disabled={queue.loading} onClick={() => void queue.refresh(queue.nextSequence!)}>加载更多</Button></li>}
+    <>
       {queue.error && (
-        <FieldError as="li" className="queued-message-error">
-          <span>{queue.error}</span>
-          <Button size="small" onClick={() => void queue.refresh()}>重试</Button>
-        </FieldError>
+        <ToastContainer
+          toasts={[{ id: "queue-load-error", message: queue.error, type: "error", duration: 3500 }]}
+        />
       )}
-    </ol>
+      {queue.items.length > 0 && (
+        <ol className="queued-messages" aria-label="待发送消息">
+          <li role="presentation" className="queued-message-heading">
+            <span>待发送消息 · {queue.items.length}{queue.nextSequence != null ? "+" : ""}</span>
+            <span>当前任务结束后依次发送</span>
+          </li>
+          {queue.items.map((message, index) => (
+            <QueuedMessage key={message.runId} message={message} position={index + 1} ready={ready} activeRunId={activeRunId}
+              onChanged={(change) => { queue.project(change); onChanged(change); }}
+              onRefresh={() => { void queue.refresh(); onRefresh(); }} />
+          ))}
+          {queue.nextSequence != null && <li className="queued-message-more"><Button size="small" disabled={queue.loading} onClick={() => void queue.refresh(queue.nextSequence!)}>加载更多</Button></li>}
+        </ol>
+      )}
+    </>
   );
 }
 
@@ -137,7 +140,12 @@ function QueuedMessage({ message, position, ready, activeRunId, onChanged, onRef
           </div>
         </form>
       )}
-      <FieldError className="queued-message-error" error={error} />
+      {error && (
+        <ToastContainer
+          toasts={[{ id: `queued-message-error-${message.runId}`, message: error, type: "error", duration: 3500 }]}
+          onDismiss={() => setError(undefined)}
+        />
+      )}
     </li>
   );
 }

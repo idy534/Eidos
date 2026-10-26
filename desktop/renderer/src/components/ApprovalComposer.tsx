@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { ApprovalFileSystemAccess, ApprovalRequest, CommandApprovalRequest, Run } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { ToolTextView } from "./ToolTextView.js";
 
 export interface ApprovalComposerProps {
@@ -93,7 +93,11 @@ export function ApprovalComposer({
         </div>}
         <ApprovalContent approval={approval} />
       </div>
-      <FieldError error={localError} />
+      {localError && (
+        <ToastContainer
+          toasts={[{ id: `approval-error-${approval.id}`, message: localError, type: "error", duration: 3500 }]}
+        />
+      )}
       {approval.reviewFallback && <p className="approval-fallback-note" role="status">{approval.reviewFallback} 可在此手动决定。</p>}
       <div className="approval-actions">
         <div className="approval-actions-hint" aria-hidden="true">

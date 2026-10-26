@@ -153,7 +153,7 @@ export function CheckmarkIcon(props: IconProps) {
  */
 export function ChevronRightIcon(props: IconProps) {
   return (
-    <svg {...defaultIconProps} {...props}>
+    <svg {...defaultIconProps} strokeWidth={1.6} {...props}>
       <path d="m6 3.5 4.5 4.5-4.5 4.5" />
     </svg>
   );

@@ -267,6 +267,13 @@ class TypedRuntimeRepository(Repository):
             )
             return self._typed_approval_mutation(item_id, mutation.events)
 
+    def invalidate_unstarted_approval_committed(
+        self, item_id: str, reason: str
+    ) -> CommittedMutation[Approval]:
+        with self.lock:
+            mutation = self._execution.invalidate_unstarted_approval_committed(item_id, reason)
+            return self._typed_approval_mutation(item_id, mutation.events)
+
     def resolve_approval_committed(
         self,
         item_id: str,

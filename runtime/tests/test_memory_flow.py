@@ -22,6 +22,7 @@ from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.model.client import ModelResponse, ModelToolCall, ScriptedModel
 from eidos_runtime.persistence.collaboration import CollaborationRepository
 from eidos_runtime.runtime.engine import RuntimeEngine
+from eidos_runtime.runtime.approval import ApprovalDecision
 from eidos_runtime.tools.memory import memory_entries
 
 pytestmark = pytest.mark.integration
@@ -388,3 +389,116 @@ def test_flow_migration_failure_rolls_back_column_triggers_and_version(monkeypat
             ).fetchone()[0]
             == before
         )
+
+
+@pytest.mark.parametrize("action", ["write", "delete"])
+@pytest.mark.parametrize("mode,resume_mode", [("read", "read"), ("off", "off"), ("off", "auto")])
+@pytest.mark.parametrize("changed", [False, True])
+def test_approval_recovery_retains_cas_and_archive_semantics(setup, action, mode, resume_mode, changed):
+    store, session = setup
+    seed(store.database.memory, session)
+    store.database.memory.policy(
+        MemoryPolicyRequest(session_id=session["id"], scope="current", mode=mode)
+    )
+    run, _ = store.create_run(
+        session["id"], "明确更正或遗忘笔记", approval_mode="manual"
+    )
+    arguments = {
+        "path": "profile.md",
+        "action": action,
+    }
+    if action == "write":
+        arguments.update(content="用户明确更正后的内容。", summary="更正后的背景")
+
+    class Interrupted(BaseException):
+        pass
+
+    def interrupt(request, _cancel):
+        assert request["kind"] == "file_change"
+        assert request["summary"] and isinstance(request["diff"], str)
+        assert request["expectedRevision"] == 1
+        if mode == "off":
+            assert "用户使用中文。" not in json.dumps(request, ensure_ascii=False)
+        else:
+            assert "-用户使用中文。" in request["diff"]
+        raise Interrupted()
+
+    model = ScriptedModel(
+        ([call("memory_read", path="profile.md")] if mode == "read" else [])
+        + [call("memory_edit", **arguments)]
+    )
+    with pytest.raises(Interrupted):
+        RuntimeEngine(
+            store,
+            model,
+            lambda _: None,
+            request_approval=interrupt,
+        ).run(run["id"], threading.Event())
+    if mode == "off":
+        assert not any("用户使用中文。" in str(context) for context in model.contexts)
+    root = store.data_directory
+    store.close()
+    reopened = SessionStore(root)
+    reopened.initialize()
+    approvals = []
+    try:
+        if resume_mode != mode:
+            reopened.database.memory.policy(
+                MemoryPolicyRequest(session_id=session["id"], scope="current", mode=resume_mode)
+            )
+        if changed:
+            reopened.database.memory.edit(
+                MemoryEditRequest(
+                    session_id=session["id"],
+                    operation_id="parallel-edit",
+                    path="profile.md",
+                    expected_revision=1,
+                    content="另一个窗口修改后的内容。",
+                )
+            )
+
+        def approve(request, _cancel):
+            approvals.append(request)
+            return ApprovalDecision("approve")
+
+        RuntimeEngine(
+            reopened,
+            ScriptedModel([ModelResponse(text="恢复完成")]),
+            lambda _: None,
+            request_approval=approve,
+        ).run(run["id"], threading.Event())
+        assert len(approvals) == (0 if changed else 1)
+        assert reopened.read_run(run["id"])["status"] == "succeeded"
+        code = (
+            "memory_revision_conflict" if changed
+            else "memory_saved" if action == "write"
+            else "memory_archived"
+        )
+        assert results(reopened, run)[-1]["code"] == code
+        assert bool(
+            reopened.database.memory.list(
+                MemoryListRequest(session_id=session["id"])
+            ).documents
+        ) == (action == "write" or changed)
+        assert len(
+            reopened.database.memory.list(
+                MemoryListRequest(session_id=session["id"], include_archived=True)
+            ).documents
+        ) == 1
+        if changed:
+            assert reopened.database.memory.read(
+                MemoryReadRequest(session_id=session["id"], path="profile.md")
+            ).content == "另一个窗口修改后的内容。"
+            approval = reopened.connection.execute(
+                "SELECT status,decision FROM approvals WHERE run_id=?", (run["id"],)
+            ).fetchone()
+            assert tuple(approval) == ("invalidated", None)
+            assert not reopened.connection.execute(
+                "SELECT 1 FROM durable_intents WHERE run_id=?", (run["id"],)
+            ).fetchone()
+            assert reopened.connection.execute(
+                "SELECT 1 FROM events e JOIN event_outbox o ON o.event_id=e.id WHERE e.run_id=? AND e.event_type='approval.status_changed' AND json_extract(e.payload_json,'$.current')='invalidated'",
+                (run["id"],),
+            ).fetchone()
+    finally:
+        reopened.close()

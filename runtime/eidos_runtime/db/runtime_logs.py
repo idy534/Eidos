@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import hashlib
 import json
 import logging
@@ -342,10 +343,19 @@ def _segment_path(root: Path, row: sqlite3.Row) -> Path:
         or any(character not in "0123456789abcdef" for character in parts[2])
     ):
         raise StorageError("log_segment_path_invalid")
-    timestamp = int(row["first_timestamp"])
-    day = time.strftime("%Y-%m-%d", time.localtime(timestamp / 1000))
+    # The saved day belongs to the timezone at creation, which may have changed.
+    relative_path = str(row["relative_path"])
+    path_parts = PurePosixPath(relative_path).parts
+    if len(path_parts) != 2:
+        raise StorageError("log_segment_path_invalid")
+    day = path_parts[0]
+    try:
+        if date.fromisoformat(day).isoformat() != day:
+            raise ValueError("noncanonical date")
+    except ValueError:
+        raise StorageError("log_segment_path_invalid") from None
     expected = f"{day}/{segment_id}.jsonl"
-    if str(row["relative_path"]) != expected:
+    if relative_path != expected:
         raise StorageError("log_segment_path_invalid")
     return root.joinpath(*PurePosixPath(expected).parts)
 

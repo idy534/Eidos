@@ -11,7 +11,7 @@ import {
 import { createPortal } from "react-dom";
 
 
-import { CheckmarkIcon, ChevronRightIcon } from "./MenuIcons.js";
+import { CheckmarkIcon } from "./MenuIcons.js";
 import { Tooltip } from "./Tooltip.js";
 
 function renderPortal(children: ReactNode): ReactNode {
@@ -324,11 +324,7 @@ export function DropdownMenu({
                 >
                   {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
                   <span className="dropdown-menu-item__label">{item.label}</span>
-                  {hasChildren && (
-                    <span className="dropdown-menu-item__chevron" aria-hidden="true">
-                      <ChevronRightIcon />
-                    </span>
-                  )}
+                  {hasChildren && <span className="dropdown-menu-item__chevron" aria-hidden="true" />}
                   {item.checked && (
                     <span className="dropdown-menu-item__check" aria-hidden="true">
                       <CheckmarkIcon />
@@ -747,11 +743,7 @@ export function ContextMenu({
             >
               {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
               <span className="dropdown-menu-item__label">{item.label}</span>
-              {hasChildren && (
-                <span className="dropdown-menu-item__chevron" aria-hidden="true">
-                  <ChevronRightIcon />
-                </span>
-              )}
+              {hasChildren && <span className="dropdown-menu-item__chevron" aria-hidden="true" />}
               {item.checked && (
                 <span className="dropdown-menu-item__check" aria-hidden="true">
                   <CheckmarkIcon />

@@ -6,7 +6,6 @@ import type {
   ModelPresetsResult,
 } from "../../contracts.js";
 import { Button } from "../Button.js";
-import { FieldError } from "../FieldError.js";
 import { getProviderName, ProviderLogo } from "../ProviderLogo.js";
 import {
   DEFAULT_CUSTOM_CONTEXT_WINDOW_TOKENS,
@@ -48,10 +47,10 @@ export function ModelSettings({
     void window.eidosRuntime.listModelPresets().then((result) => {
       if (active) setPresets(result);
     }).catch(() => {
-      if (active) setLocalError("内置模型目录加载失败");
+      if (active) onShowToast("内置模型目录加载失败", "error");
     });
     return () => { active = false; };
-  }, []);
+  }, [onShowToast]);
 
   const openCreate = () => {
     const provider = presets?.providers[0];
@@ -152,7 +151,7 @@ export function ModelSettings({
       setDraft(undefined);
       onShowToast("模型已保存", "success");
     } catch {
-      setLocalError("模型保存失败，请检查配置或 Runtime 日志。");
+      onShowToast("模型保存失败，请检查配置或 Runtime 日志。", "error");
     } finally {
       setBusy(false);
     }
@@ -169,6 +168,7 @@ export function ModelSettings({
       onShowToast("模型已删除", "success");
     } catch {
       setLocalError("模型删除失败，请查看 Runtime 日志。");
+      onShowToast("模型删除失败，请查看 Runtime 日志。", "error");
     } finally {
       setBusy(false);
     }
@@ -245,9 +245,6 @@ export function ModelSettings({
         )}
       </SettingSection>
 
-      {!modelToDelete && !draft && (
-        <FieldError error={localError ?? modelError} />
-      )}
       <ModelDialog
         draft={draft}
         presets={presets}

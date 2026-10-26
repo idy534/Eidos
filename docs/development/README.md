@@ -110,7 +110,7 @@ pnpm exec electron scripts/test-plugin-resources.cjs
 
 插件更新与兼容解析的定向入口是 `uv run --locked pytest runtime/tests/test_plugin_upgrades.py runtime/tests/test_plugin_packages.py runtime/tests/test_plugins.py runtime/tests/test_plugin_protocol.py runtime/tests/test_extension_storage.py`。数据库变更还需覆盖 `test_storage_schema.py` 和 `test_persistence_layout.py`。展示契约变更后运行 `node scripts/generate-plugin-contracts.mjs`。`pnpm build:main` 后，`node --test dist/main/runtime-client-hooks.test.js dist/main/runtime-client-mcp-details.test.js` 验证 Main/Runtime；插件页使用 `PluginSettings.behavior.test.tsx` 和 `electron scripts/test-plugin-resources.cjs` 验证。插件版本身份从 schema v37 开始保存，远程连接从 v38 开始保存。两者沿用已有升级与备份流程，不改变启动命令。这些入口不属于 Full Suite。
 
-定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py`。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx`。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置。
+定时任务的 Runtime 定向入口是 `uv run --locked pytest runtime/tests/test_automations.py runtime/tests/test_automation_scheduler.py`。调度测试覆盖五分钟兜底、到期唤醒、计划变更打断等待、扫描期间变更、时钟变化、休眠不补跑、准备中的一次性任务和取消退出。Desktop 在 `pnpm build:main` 后运行 `node --test dist/main/runtime-client-automations.test.js` 验证真实跨进程链路。页面入口是 `pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/automations/AutomationPage.behavior.test.tsx`。`node_modules/.bin/electron scripts/test-automations.cjs` 使用临时 user-data 和隔离页面验证生产组件、键盘与四种窗口宽度，不读取真实任务。EIDOS_AUTOMATION_SCREENSHOT 可以指定截图位置。
 
 Runtime 随现有启动运行受管调度服务，并随 Supervisor 关闭，无需系统 cron、launchd 或额外守护进程。v27→v28 升级新增任务、触发和来源表。croniter 与 tzdata 已进入 pyproject.toml 和 uv.lock，打包沿用现有流程。
 
@@ -401,10 +401,10 @@ Desktop 验收需要覆盖 `+`、`@`、`$`、`/`、中文输入法、键盘焦�
 契约修改后运行 `node scripts/generate-memory-contracts.mjs` 并提交三份 `desktop/shared/memory*.generated.ts`。两端共享 `protocol/fixtures/memory-v2.json`。开发过程使用定向验证，不默认运行 Full Suite：
 
 ```bash
-uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_runtime.py runtime/tests/test_memory_revocation_migration.py runtime/tests/test_data_backup.py runtime/tests/test_storage_maintenance.py runtime/tests/test_session_conversation_fork.py
+uv run --locked pytest runtime/tests/test_memory.py runtime/tests/test_memory_flow.py runtime/tests/test_memory_runtime.py runtime/tests/test_memory_revocation_migration.py runtime/tests/test_memory_mode_removal.py runtime/tests/test_data_backup.py runtime/tests/test_storage_maintenance.py runtime/tests/test_session_conversation_fork.py
 pnpm exec vitest run --config vitest.renderer.config.ts desktop/renderer/src/components/MemorySettings.behavior.test.tsx desktop/renderer/src/components/SessionSidebar.behavior.test.tsx
 pnpm build:main
-node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js
+node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js dist/main/runtime-client-memory.test.js
 pnpm test:contracts
 ```
 
@@ -414,16 +414,21 @@ pnpm test:contracts
 uv run --locked pytest runtime/tests/test_memory_tool_projection.py runtime/tests/test_memory_runtime.py runtime/tests/test_model_context_projection.py runtime/tests/test_tool_contract.py runtime/tests/test_model_attempt_context_snapshot.py runtime/tests/test_context_compaction_continuity.py
 ```
 
+审批恢复修改后，开发者补充运行 `test_memory_flow.py`、`test_approval_application.py`、`test_approval_modes.py` 和 `test_event_delivery_recovery.py`。记忆测试覆盖只读/关闭模式的版本保留、重启、模式切换、目标冲突后的审批失效与 Run 继续执行；Main 测试通过真实 stdio 检查记忆审批预览。
+
 人工验收使用临时数据目录和已配置模型：
 
 1. 用户打开“设置 → 记忆”。新范围默认 auto。页面显示 `MEMORY.md` 索引，用户可以从索引打开主题笔记，也可以新建和直接编辑。
 2. 用户在当前 Run 中表达长期做法。模型应在当前 Run 保存，工具返回后记忆即可读取。系统不应等待空闲，也不应产生整理模型调用或候选任务。
-3. 用户切换 off/read/auto，检查模型读取、自动保存和明确保存的不同路径。用户检查 Project、Projectless 与 Child 的范围。会话菜单不应显示临时记忆入口，打开菜单也不应读取记忆状态。
+3. 用户切换 off/read/auto，检查模型读取、自动保存和明确保存的不同路径。用户检查 Project 与 Projectless 的范围。子 Agent 不应获得记忆工具或自动索引。会话菜单不应显示临时记忆入口，打开菜单也不应读取记忆状态。
 4. 用户更正、查看来源和历史、删除笔记。旧版本只读。分页读取应覆盖正文尾部。并发修改后保存应报冲突并保留草稿。
 5. 用户在模型请求期间删除笔记或关闭范围记忆。旧响应应丢弃，后续请求应重建。冻结分叉中的旧记忆工具正文也应撤销。
 6. 用户导出整个范围的 Markdown，并在“运行时 → 本地数据”保存完整 ZIP。开发者退出 Runtime 后恢复到新目录，核对正文、聊天、版本和 read 模式。
 7. 开发者使用 v39 的临时数据启动新版。升级应清除旧记忆、旧文件和旧任务，保留聊天。再次启动应保留已经新建的笔记。
 8. 开发者使用 v41 的测试数据升级。新版应移除临时会话字段，保留笔记与模式。原临时会话的新消息可以正常保存，过去已撤销的来源仍不能成为新记忆证据。
+9. 开发者使用 v42 数据升级为 v43。已有笔记与历史应保留，已遗忘与隔离数据不能复活。模型读后自动更正用户笔记时，不应填写内部来源 ID、更新版本或显式保存标志，也不应额外弹出自动记忆审批。
+10. 模型归档笔记后，默认索引应移除它。设置页应显示“已归档”，键盘可以打开笔记，用户可以恢复或确认彻底删除。恢复冲突不能清空正文。新笔记可以不填摘要。
+11. 开发者同时更正不同笔记，两次写入与索引条目都应保留。同一笔记的过期更新仍应报冲突。普通聊天删除或来源更正后，已保存笔记应保留；彻底遗忘和关闭记忆仍应撤销在途请求。
 
 真实模型验收脚本只使用合成对话和临时数据。脚本只读模型配置，API Key 不进入报告。它向前台模型提供记忆工具，并使用 `full_access` 避免人工审批等待。每次最多 36 个模型调用，每个 Run 最多等待 90 秒。该操作会产生实际模型费用，开发者应主动选择执行：
 
@@ -433,7 +438,7 @@ PYTHONPATH=runtime uv run --locked python scripts/evaluate-memory-learning.py --
 
 开发者可以使用重复的 `--case` 选择样本。`--disable-automatic-learning` 选择 read 模式，检查明确保存。报告中的状态检查只能证明保存路径，人工还应核对笔记内容、范围、适用条件与实际使用。真实模型结果不能由脚本模型测试代替。
 
-离线恢复接受 `eidos-data-backup-v2` 和 schema v40/v41/v42。恢复会把 v40/v41 升级为 v42。目标目录必须不存在，不能与运行数据合并：
+离线恢复接受 `eidos-data-backup-v2` 和 schema v40/v41/v42/v43。恢复会逐级升级为 v43，并保留归档笔记和历史。目标目录必须不存在，不能与运行数据合并：
 
 ```bash
 uv run --locked python -m eidos_runtime.db.backup /absolute/path/backup.zip /absolute/path/new-eidos-data

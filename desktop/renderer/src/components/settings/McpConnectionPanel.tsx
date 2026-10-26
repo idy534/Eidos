@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { McpConnectionRequest, McpConnectionState } from "../../../../shared/mcp-connections.js";
 import type { McpServerRecord } from "../../contracts.js";
 import { Button } from "../Button.js";
-import { FieldError } from "../FieldError.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { githubIcon } from "./SettingsIcons.js";
 
 const states: Record<string, string> = {
@@ -225,8 +225,17 @@ export function McpConnectionPanel({
         </div>
       </div>
 
-      {error && <FieldError error={error} />}
-      {state?.errorCode && <FieldError error={errors[state.errorCode] || "连接未完成，请重新连接。"} />}
+      {error && (
+        <ToastContainer
+          toasts={[{ id: "mcp-connect-error", message: error, type: "error", duration: 3500 }]}
+          onDismiss={() => setError(undefined)}
+        />
+      )}
+      {state?.errorCode && (
+        <ToastContainer
+          toasts={[{ id: "mcp-connect-state-error", message: errors[state.errorCode] || "连接未完成，请重新连接。", type: "error", duration: 3500 }]}
+        />
+      )}
       {!enabled && <p className="mcp-connection-notice">请先启用插件，再连接账号。</p>}
 
       {connecting && (

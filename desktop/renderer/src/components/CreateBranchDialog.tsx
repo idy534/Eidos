@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "./Button.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface CreateBranchDialogProps {
@@ -80,6 +80,11 @@ export function CreateBranchDialog({
 
   return (
     <div className="modal-backdrop" onClick={busy ? undefined : onCancel} aria-hidden={!open}>
+      {error && (
+        <ToastContainer
+          toasts={[{ id: "create-branch-error", message: error, type: "error", duration: 3500 }]}
+        />
+      )}
       <div
         ref={dialogRef}
         className="modal-dialog"
@@ -115,7 +120,6 @@ export function CreateBranchDialog({
                 spellCheck={false}
               />
             </label>
-            <FieldError error={error} />
           </div>
           <div className="modal-footer">
             <Button ref={cancelButtonRef} variant="ghost" disabled={busy} onClick={onCancel}>

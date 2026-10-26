@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from "react";
 
 import { Button } from "../Button.js";
-import { FieldError } from "../FieldError.js";
+import { ToastContainer } from "../ToastContainer.js";
 import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 
 export interface ConfirmDialogProps {
@@ -117,12 +117,16 @@ export function ConfirmDialog({
         aria-describedby="confirm-dialog-desc"
         onClick={(e) => e.stopPropagation()}
       >
+        {error && (
+          <ToastContainer
+            toasts={[{ id: "confirm-dialog-error", message: error, type: "error", duration: 3500 }]}
+          />
+        )}
         <div className="modal-header">
           <h3 id="confirm-dialog-title">{title}</h3>
         </div>
         <div id="confirm-dialog-desc" className="modal-body">
           {typeof description === "string" ? <p>{description}</p> : description}
-          <FieldError error={error} />
         </div>
         <div className="modal-footer">
           <Button

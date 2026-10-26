@@ -93,6 +93,7 @@ MEMORY_AUTOMATIC_INSTRUCTIONS = (
 
 MEMORY_EXPLICIT_WRITE_INSTRUCTIONS = (
     "Use memory_edit for an explicit user save or correction request. When automatic memory is disabled, use it only for an explicit user request and follow the Run's approval flow. "
+    "When reading is disabled, an explicit replacement can be saved without loading the previous body; Runtime still checks its version before publication. "
     "An explicit instruction about future behavior is a save request; the user need not separately ask you to remember it. "
     "Preserve scope and report the successful tool result. Tool deletion archives with recoverable history; permanent forgetting is available in Memory settings. "
     "MEMORY.md is the index; read linked notes with pagination when relevant. Never store secrets or unverified outcomes."

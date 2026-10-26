@@ -64,9 +64,18 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
       if (!mounted.current) return;
       setAgents(result.agents ?? []);
       onCountChange?.(result.agents?.length ?? 0);
-      setError(result.error ?? undefined);
+      if (result.error) {
+        setError(result.error);
+        onShowToast(result.error, "error");
+      } else {
+        setError(undefined);
+      }
     } catch (cause) {
-      if (mounted.current) setError(userFacingError(cause));
+      if (mounted.current) {
+        const msg = userFacingError(cause);
+        setError(msg);
+        onShowToast(msg, "error");
+      }
     } finally {
       if (mounted.current) setLoading(false);
     }
@@ -133,7 +142,6 @@ export function AgentSettings({ ready, onCountChange, onShowToast }: {
         </div>
 
         {!ready && <FieldError>Runtime 尚未就绪。</FieldError>}
-        {error && <FieldError>{error}</FieldError>}
         {loading && <p role="status" className="agent-settings__loading">正在读取智能体…</p>}
 
         {/* 自定义智能体列表 */}

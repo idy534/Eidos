@@ -9,6 +9,12 @@ import { RuntimeClient } from "./runtime-client.js";
 import type { CustomProviderRequest } from "../shared/custom-models.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const localServerEnvironment = {
+  // Keep the local test server out of any machine-wide HTTP proxy.
+  NO_PROXY: "127.0.0.1,localhost",
+  no_proxy: "127.0.0.1,localhost",
+};
+
 test("custom provider discovery and configuration roundtrip through the real Runtime process", async () => {
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "eidos-custom-models-"));
   const received: { path: string; method: string; authorization: string | undefined }[] = [];
@@ -24,7 +30,7 @@ test("custom provider discovery and configuration roundtrip through the real Run
   assert.ok(address && typeof address === "object");
   const baseUrl = `http://127.0.0.1:${address.port}/v1`;
   const diagnostics: string[] = [];
-  const createClient = () => new RuntimeClient({ pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory, onStderr: line => diagnostics.push(line) });
+  const createClient = () => new RuntimeClient({ pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory, environment: localServerEnvironment, onStderr: line => diagnostics.push(line) });
   let client = createClient();
   try {
     await client.initialize();
@@ -96,7 +102,7 @@ test("pending custom discovery leaves health responsive and shuts down with its 
   await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
   const address = http.address();
   assert.ok(address && typeof address === "object");
-  const client = new RuntimeClient({ pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory });
+  const client = new RuntimeClient({ pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory, environment: localServerEnvironment });
   try {
     await client.initialize();
     const discovery = client.discoverCustomModels({ provider: "custom", baseUrl: `http://127.0.0.1:${address.port}`, apiKey: "" }).catch(() => null);

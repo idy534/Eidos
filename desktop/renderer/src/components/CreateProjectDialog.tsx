@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "./Button.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
 interface CreateProjectDialogProps {
@@ -73,6 +73,11 @@ export function CreateProjectDialog({
 
   return (
     <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
+      {error && (
+        <ToastContainer
+          toasts={[{ id: "create-project-error", message: error, type: "error", duration: 3500 }]}
+        />
+      )}
       <div
         ref={dialogRef}
         className="modal-dialog create-project-dialog"
@@ -111,7 +116,6 @@ export function CreateProjectDialog({
               <span>{sourceFolder || "添加 Eidos 可读写的文件夹"}</span>
             </button>
           </div>
-          <FieldError error={error} />
         </div>
         <div className="create-project-dialog-footer">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>取消</Button>

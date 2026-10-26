@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import unified_diff
 import hashlib
+import json
 import logging
 import threading
 from typing import ClassVar, Literal, TYPE_CHECKING
@@ -142,7 +144,9 @@ class MemoryToolRuntime(AdapterToolRuntime):
                         session_id,
                         {
                             scope.id: scope.privacy_epoch
-                            for scope in state.scopes
+                            for scope in service.repository.scopes(
+                                service.database.connection(), session_id, request.scope
+                            )
                             if scope.mode != "off"
                         },
                     )
@@ -153,36 +157,26 @@ class MemoryToolRuntime(AdapterToolRuntime):
                     epochs=epochs,
                 )
             else:
-                # A resumed Step can retain the former input schema. New calls
-                # cannot send these fields: their advertised schema forbids them.
-                request = MemoryToolEdit.model_validate(
-                    {
-                        key: value
-                        for key, value in call.arguments.items()
-                        if key
-                        not in {"sourceItemIds", "userRequested", "expectedRevision"}
-                    }
-                )
+                request = MemoryToolEdit.model_validate(call.arguments)
                 with service.database.transaction() as connection:
                     scope = service.repository.scopes(
                         connection, session_id, request.scope
                     )[0]
-                    automatic = (
-                        scope.mode == "auto"
-                        and call.arguments.get("userRequested") is not True
+                    pending = context.store.typed_runtime_repository().read_pending_approval(run_id)
+                    pending_request = (
+                        json.loads(pending.request_json)
+                        if pending is not None and pending.item_id == str(item["id"])
+                        else None
                     )
-                    if "expectedRevision" in call.arguments:
-                        revision = call.arguments["expectedRevision"]
-                        row = service.repository.row(connection, scope.id, request.path)
-                        kind = (
-                            service.repository.document(connection, row)[0].kind
-                            if row
-                            else "feedback"
-                        )
-                    else:
-                        revision, kind = service.edit_base(
-                            run_id, scope.id, request.path
-                        )
+                    automatic = scope.mode == "auto" and pending_request is None
+                    reading_enabled = (
+                        pending_request.get("memoryReadingEnabled") is True
+                        if pending_request is not None
+                        else scope.mode != "off"
+                    )
+                    revision, kind = service.edit_base(
+                        run_id, scope.id, request.path, item_id=str(item["id"])
+                    )
                     write = MemoryEditRequest(
                         session_id=session_id,
                         operation_id="memory-tool:" + str(item["id"]),
@@ -191,19 +185,39 @@ class MemoryToolRuntime(AdapterToolRuntime):
                         expected_revision=revision,
                         source_item_ids=service.audit_sources(run_id),
                     )
-                    service.validate_edit(write, automatic=automatic)
+                    old_body = service.validate_edit(write, automatic=automatic)
                     epochs = service.use_epochs(
                         connection, session_id, {scope.id: scope.privacy_epoch}
                     )
                 if cancel.is_set():
                     raise MemoryRejected("memory_canceled")
+                display_path = f"memory/{request.scope}/{request.path}"
+                diff = "" if automatic else "".join(
+                    line if line.endswith("\n")
+                    else line + "\n\\ No newline at end of file\n"
+                    for line in unified_diff(
+                        old_body.splitlines(keepends=True) if reading_enabled else [],
+                        (request.content or "").splitlines(keepends=True),
+                        fromfile="a/" + display_path,
+                        tofile="b/" + display_path,
+                    )
+                )
+                summary = (
+                    f"Archive memory note {display_path}; history is retained."
+                    if request.action == "delete"
+                    else f"Replace memory note {display_path}."
+                )
+                if not reading_enabled:
+                    summary += " Memory reading is off; the previous body is withheld."
                 prepared = PreparedToolExecution(
                     approval_description={
-                        "tool": call.name,
-                        "path": request.path,
-                        "action": request.action,
-                        "content": request.content,
+                        "kind": "file_change",
+                        "summary": summary,
+                        "diff": diff,
+                        "expectedRevision": write.expected_revision,
+                        "memoryReadingEnabled": reading_enabled,
                     },
+                    approval_diff=diff,
                     intent_preconditions={
                         "operationId": write.operation_id,
                         "expectedRevision": write.expected_revision,
@@ -263,6 +277,10 @@ class MemoryToolRuntime(AdapterToolRuntime):
             return HandlerOutcome(result, "completed", "completed")
         except MemoryRejected as error:
             code = str(error)
+            if context.controller.approval is not None:
+                context.controller.approval.invalidate_unstarted(
+                    run_id, item, code, cancel
+                )
             logger.info(
                 "Memory request rejected run_id=%s item_id=%s code=%s",
                 run_id,
@@ -270,7 +288,7 @@ class MemoryToolRuntime(AdapterToolRuntime):
                 code,
             )
             messages = {
-                "memory_revision_conflict": "The note changed. Read its current version before preparing another edit.",
+                "memory_revision_conflict": "The note changed. Prepare a new edit against its latest version; read it first when memory reading is enabled.",
                 "memory_read_required": "Read this note with memory_read before updating or archiving it. Runtime carries its revision automatically.",
                 "memory_forgotten_source": "This source was explicitly forgotten. Continue without saving it again; new information needs a new user statement.",
                 "memory_automatic_disabled": "Automatic memory is disabled for this scope. Continue the task or ask the user to enable it in Memory settings.",
@@ -310,7 +328,7 @@ def memory_entries(
         ),
         (
             "memory_edit",
-            "Create or replace a Markdown memory note immediately. Read existing notes before updating; Runtime carries revision and source records. Omitted title, kind and summary are handled automatically. Delete archives a note with recoverable history; read its path and write to restore it. Runtime updates MEMORY.md. Use Memory settings for permanent forgetting.",
+            "Create or replace a Markdown memory note immediately. When reading is enabled, read existing notes before updating; Runtime carries revision and source records. Omitted title, kind and summary are handled automatically. Delete archives a note with recoverable history; read its path and write to restore it. Runtime updates MEMORY.md. Use Memory settings for permanent forgetting.",
             MemoryToolEdit,
             "eidos_state",
         ),

@@ -169,7 +169,7 @@ const MCP_PRESETS: McpPreset[] = [
     name: "Playwright",
     category: "browser",
     executable: "npx",
-    argv: ["-y", "@modelcontextprotocol/server-playwright"],
+    argv: ["-y", "@playwright/mcp@latest"],
     permissionProfile: "connector",
     desc: "网页抓取、UI 交互测试与端到端自动化审查",
   },
@@ -422,7 +422,12 @@ export function McpSettings({
                     </div>
                     <div className="mcp-preset-info">
                       <span className="mcp-preset-name">{preset.name}</span>
-                      <span className="mcp-preset-cmd">{preset.executable} {preset.argv.join(" ")}</span>
+                      <span
+                        className="mcp-preset-cmd"
+                        title={`${preset.executable} ${preset.argv.join(" ")}`}
+                      >
+                        {preset.executable} {preset.argv.join(" ")}
+                      </span>
                       <span className="mcp-preset-desc">{preset.desc}</span>
                     </div>
                   </div>

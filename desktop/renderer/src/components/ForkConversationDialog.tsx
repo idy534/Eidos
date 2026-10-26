@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Session } from "../../../shared/domain-contracts.js";
 import { Button } from "./Button.js";
-import { FieldError } from "./FieldError.js";
+import { ToastContainer } from "./ToastContainer.js";
 import { ForkIcon } from "./ForkIcon.js";
 import { useDialogFocusLifecycle } from "./useDialogFocusLifecycle.js";
 
@@ -88,6 +88,11 @@ export function ForkConversationDialog({
       onClick={busy ? undefined : onCancel}
       aria-hidden={!open}
     >
+      {error && (
+        <ToastContainer
+          toasts={[{ id: "fork-conversation-error", message: error, type: "error", duration: 3500 }]}
+        />
+      )}
       <div
         ref={dialogRef}
         className="modal-dialog fork-dialog"
@@ -181,8 +186,6 @@ export function ForkConversationDialog({
               </label>
             </div>
           </fieldset>
-
-          <FieldError error={error} />
         </div>
 
         <div className="modal-footer fork-dialog-footer">
