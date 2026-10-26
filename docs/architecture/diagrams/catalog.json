@@ -5,7 +5,7 @@
   {"id":"04-compaction","title":"压缩算法与失败处理","page":"context-compaction.md","description":"本图展示早期压缩、超预算恢复、规则摘要、模型补充、独立验证和重新测量。"},
   {"id":"05-continuity","title":"连续压缩的证据保留","page":"context-compaction.md","description":"系统在下一轮压缩时重新读取原始证据，并保留已经接受的连续记录。"},
   {"id":"06-memory","title":"记忆读取与发布","page":"memory.md","description":"短索引进入上下文，主题正文按需读取。发布事务控制当前有效版本。"},
-  {"id":"07-memory-revocation","title":"记忆撤销与迟到结果","page":"memory.md","description":"来源和权限变化会撤销旧快照，取消在途请求，并拒绝失效结果。"},
+  {"id":"07-memory-revocation","title":"记忆撤销与迟到结果","page":"memory.md","description":"彻底遗忘和关闭记忆会撤销旧快照。普通更新、归档和聊天变化不会取消请求。"},
   {"id":"08-model-routing","title":"多提供商模型路由","page":"model-gateway.md","description":"模型配置固定到 Run 快照后，Gateway 按 wire_api 选择当前适配器。"},
   {"id":"09-model-retry","title":"模型断流、重试与重启","page":"model-gateway.md","description":"普通采样共享请求组与恢复预算。完整响应校验通过后，Runtime 才执行工具。"},
   {"id":"10-tool-pipeline","title":"工具执行与副作用记录","page":"tool-runtime.md","description":"工具沿校验、准备、权限、Intent、执行、核验和事务提交链路运行。"},

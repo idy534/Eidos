@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   Credentialchanges,
   DeepSeekSearchOptions,
+  DoubaoSearchOptions,
   LangSearchOptions,
   Provider,
   WebSearchConfig,
@@ -18,13 +19,15 @@ type KeyDraft = { value: string; visible: boolean };
 const emptyKeys = (): Record<Provider, KeyDraft> => ({
   deepseek: { value: "", visible: false },
   langsearch: { value: "", visible: false },
+  doubao: { value: "", visible: false },
 });
 const keysFromResponse = (value: WebSearchResponse): Record<Provider, KeyDraft> => ({
   deepseek: { value: value.credentialValues?.deepseek ?? "", visible: false },
   langsearch: { value: value.credentialValues?.langsearch ?? "", visible: false },
+  doubao: { value: value.credentialValues?.doubao ?? "", visible: false },
 });
-const providers = ["deepseek", "langsearch"] as const;
-const names = { deepseek: "DeepSeek Search", langsearch: "LangSearch" };
+const providers = ["deepseek", "langsearch", "doubao"] as const;
+const names = { deepseek: "DeepSeek Search", langsearch: "LangSearch", doubao: "豆包搜索" };
 
 export function WebSearchSettings({
   onShowToast,
@@ -243,7 +246,7 @@ export function WebSearchSettings({
 
   function handleOptionsChange(
     provider: Provider,
-    options: DeepSeekSearchOptions | LangSearchOptions,
+    options: DeepSeekSearchOptions | LangSearchOptions | DoubaoSearchOptions,
   ) {
     if (!draftRef.current) return;
     const nextConfig: WebSearchConfig = { ...draftRef.current, [provider]: options };
@@ -342,8 +345,15 @@ export function WebSearchSettings({
                         <p className="web-search-provider-desc">
                           {provider === "deepseek"
                             ? "DeepSeek 官方搜索 API"
+                            : provider === "doubao"
+                            ? "火山引擎豆包搜索 Custom 版 · 查询最多 100 字符"
                             : "LangSearch 官方网页搜索 API"}
                         </p>
+                        {provider === "doubao" && (
+                          <p className="web-search-provider-desc">
+                            用户可填写搜索专用 Key，或已开启豆包搜索抵扣的 Agent Plan 专属 Key。计费方式由 Key 决定。
+                          </p>
+                        )}
                       </div>
                     </div>
 

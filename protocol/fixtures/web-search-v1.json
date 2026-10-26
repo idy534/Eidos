@@ -24,6 +24,35 @@
           "value": "fixture-key"
         }
       ]
+    },
+    {
+      "expectedRevision": 2,
+      "config": {
+        "defaultProvider": "doubao",
+        "doubao": {
+          "freshness": "oneWeek",
+          "excludeDomains": [
+            "spam.org"
+          ]
+        }
+      },
+      "credentialChanges": [
+        {
+          "provider": "deepseek",
+          "action": "set",
+          "value": "fixture-deepseek-key"
+        },
+        {
+          "provider": "langsearch",
+          "action": "set",
+          "value": "fixture-langsearch-key"
+        },
+        {
+          "provider": "doubao",
+          "action": "set",
+          "value": "fixture-doubao-key"
+        }
+      ]
     }
   ],
   "invalidRequests": [
@@ -55,6 +84,21 @@
           "value": "forbidden"
         }
       ]
+    },
+    {
+      "expectedRevision": 0,
+      "config": {
+        "doubao": {
+          "excludeDomains": [
+            "site0.com",
+            "site1.com",
+            "site2.com",
+            "site3.com",
+            "site4.com",
+            "site5.com"
+          ]
+        }
+      }
     }
   ],
   "validResponses": [
@@ -78,6 +122,18 @@
       "credentialValues": {
         "deepseek": "sample-secret",
         "langsearch": ""
+      }
+    },
+    {
+      "revision": 3,
+      "config": {
+        "defaultProvider": "doubao"
+      },
+      "credentials": {
+        "doubao": "stored"
+      },
+      "credentialValues": {
+        "doubao": "fixture-doubao-key"
       }
     }
   ],
@@ -116,6 +172,13 @@
       "credentialValues": {
         "deepseek": "secret",
         "other": "unknown"
+      }
+    },
+    {
+      "revision": 0,
+      "config": {},
+      "credentials": {
+        "doubao": "connected"
       }
     }
   ]

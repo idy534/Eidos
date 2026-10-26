@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import threading
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import Field
 
@@ -36,6 +36,18 @@ class DeepSeekSearchInput(WebSearchInput):
     query: str = Field(min_length=1, max_length=128, pattern=r"\S")
 
 
+class DoubaoSearchInput(WebSearchInput):
+    query: str = Field(min_length=1, max_length=100, pattern=r"\S")
+
+
+def search_input_model(provider: SearchProvider) -> type[WebSearchInput]:
+    return {
+        "deepseek": DeepSeekSearchInput,
+        "langsearch": WebSearchInput,
+        "doubao": DoubaoSearchInput,
+    }[provider]
+
+
 class WebSearchResultData(EidosFrozenStrictModel):
     SUCCESS_REQUIRED: ClassVar[tuple[str, ...]] = (
         "provider",
@@ -45,13 +57,22 @@ class WebSearchResultData(EidosFrozenStrictModel):
         "retrieved_at",
         "truncated",
     )
-    provider: SearchProvider | None = None
+    provider: Literal["deepseek", "langsearch"] | None = None
     query: str | None = Field(default=None, max_length=2048)
     requested_count: int | None = Field(default=None, ge=1, le=50)
     results: list[SearchHit] | None = Field(default=None, max_length=50)
     retrieved_at: str | None = None
     truncated: bool | None = None
     usage: SearchUsage | None = None
+
+
+class DoubaoWebSearchResultData(WebSearchResultData):
+    provider: SearchProvider | None = None
+
+
+def search_result_model(provider: SearchProvider) -> type[WebSearchResultData]:
+    # Keep the original result model and hashes for existing Run recovery.
+    return DoubaoWebSearchResultData if provider == "doubao" else WebSearchResultData
 
 
 def search_error(code: str, message: str, *, sent: bool = False) -> dict[str, object]:
@@ -80,11 +101,7 @@ class WebSearchAdapter:
         raise RuntimeError("web_search requires the authorized Runtime path")
 
     async def search(self, arguments: dict[str, object]) -> dict[str, object]:
-        request = (
-            DeepSeekSearchInput
-            if self.snapshot.provider == "deepseek"
-            else WebSearchInput
-        ).model_validate(arguments)
+        request = search_input_model(self.snapshot.provider).model_validate(arguments)
         count = (
             request.count
             or self.snapshot.config.options(self.snapshot.provider).default_count
@@ -100,7 +117,8 @@ class WebSearchAdapter:
             page = await search(self.snapshot, key, request.query, count)
         except SearchFailure as error:
             return search_error(error.code, error.message, sent=error.sent)
-        data = WebSearchResultData(
+        data_model = search_result_model(self.snapshot.provider)
+        data = data_model(
             provider=self.snapshot.provider,
             query=request.query,
             requested_count=count,
@@ -116,7 +134,7 @@ class WebSearchAdapter:
                 "sideEffectsMayExist": True,
                 "reconciliationRequired": False,
             },
-            data_model=WebSearchResultData,
+            data_model=data_model,
         )
 
 
@@ -136,11 +154,10 @@ class WebSearchToolRuntime(AdapterToolRuntime):
 def web_search_entry(
     snapshot: RunWebSearchSnapshot, secrets: SecretFiles
 ) -> ToolRegistryEntry:
-    input_model = (
-        DeepSeekSearchInput if snapshot.provider == "deepseek" else WebSearchInput
-    )
+    input_model = search_input_model(snapshot.provider)
     inputs = input_model.model_json_schema(by_alias=True)
-    outputs = result_model(WebSearchResultData).model_json_schema(by_alias=True)
+    data_model = search_result_model(snapshot.provider)
+    outputs = result_model(data_model).model_json_schema(by_alias=True)
     spec = ToolSpec.model_validate(
         {
             "name": "web_search",
@@ -177,6 +194,6 @@ def web_search_entry(
         provenance=provenance,
         adapter=adapter,
         input_model=input_model,
-        result_data_model=WebSearchResultData,
+        result_data_model=data_model,
         runtime=WebSearchToolRuntime(adapter, spec, provenance),
     )

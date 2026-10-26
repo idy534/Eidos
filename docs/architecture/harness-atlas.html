@@ -61,12 +61,12 @@ section{margin:28px 0;padding:24px;background:white;border:1px solid #d5dfe6;bor
 </section>
 <section id="06-memory">
 <h2>记忆读取与发布</h2><p>短索引进入上下文，主题正文按需读取。发布事务控制当前有效版本。</p>
-<div class="diagram"><a href="diagrams/06-memory.svg" aria-label="打开记忆读取与发布原图"><img src="diagrams/06-memory.svg" style="--diagram-width:940px" alt="记忆读取与发布。短索引进入上下文，主题正文按需读取。发布事务控制当前有效版本。"></a></div>
+<div class="diagram"><a href="diagrams/06-memory.svg" aria-label="打开记忆读取与发布原图"><img src="diagrams/06-memory.svg" style="--diagram-width:964px" alt="记忆读取与发布。短索引进入上下文，主题正文按需读取。发布事务控制当前有效版本。"></a></div>
 <p class="links"><a href="memory.md">机制与源码</a><a href="diagrams/06-memory.mmd">Mermaid 源文件</a><a href="diagrams/06-memory.svg">SVG 原图</a><a href="#top">回到目录</a></p>
 </section>
 <section id="07-memory-revocation">
-<h2>记忆撤销与迟到结果</h2><p>来源和权限变化会撤销旧快照，取消在途请求，并拒绝失效结果。</p>
-<div class="diagram"><a href="diagrams/07-memory-revocation.svg" aria-label="打开记忆撤销与迟到结果原图"><img src="diagrams/07-memory-revocation.svg" style="--diagram-width:879px" alt="记忆撤销与迟到结果。来源和权限变化会撤销旧快照，取消在途请求，并拒绝失效结果。"></a></div>
+<h2>记忆撤销与迟到结果</h2><p>彻底遗忘和关闭记忆会撤销旧快照。普通更新、归档和聊天变化不会取消请求。</p>
+<div class="diagram"><a href="diagrams/07-memory-revocation.svg" aria-label="打开记忆撤销与迟到结果原图"><img src="diagrams/07-memory-revocation.svg" style="--diagram-width:879px" alt="记忆撤销与迟到结果。彻底遗忘和关闭记忆会撤销旧快照。普通更新、归档和聊天变化不会取消请求。"></a></div>
 <p class="links"><a href="memory.md">机制与源码</a><a href="diagrams/07-memory-revocation.mmd">Mermaid 源文件</a><a href="diagrams/07-memory-revocation.svg">SVG 原图</a><a href="#top">回到目录</a></p>
 </section>
 <section id="08-model-routing">

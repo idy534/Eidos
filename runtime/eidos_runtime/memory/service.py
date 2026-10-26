@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import logging
@@ -14,7 +14,7 @@ import time
 from urllib.parse import quote
 import uuid
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter, ValidationError
 
 from eidos_runtime.context.tokens import estimate_text_tokens
 from eidos_runtime.db.database import Database, now_ms
@@ -34,21 +34,28 @@ from eidos_runtime.memory.contracts import (
     MemoryReadResult,
     MemoryScope,
     MemoryState,
+    NonnegativeInt,
 )
 from eidos_runtime.memory.repository import MemoryRejected, MemoryRepository
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.sandbox.sensitive import SensitiveScanError, default_scanner
 
 logger = logging.getLogger("eidos.runtime.memory")
+_EPOCHS = TypeAdapter(dict[str, NonnegativeInt])
 
 
 class MemoryAccess(EidosFrozenStrictModel):
     scopes: tuple[MemoryScope, ...] = Field(min_length=1, max_length=2)
     writable: bool
+    available: bool = True
 
     @property
     def read_scopes(self) -> tuple[str, ...]:
-        return tuple(scope.kind for scope in self.scopes if scope.mode != "off")
+        return tuple(
+            scope.kind
+            for scope in self.scopes
+            if self.available and scope.mode != "off"
+        )
 
     @property
     def read_enabled(self) -> bool:
@@ -56,7 +63,7 @@ class MemoryAccess(EidosFrozenStrictModel):
 
     @property
     def generate_enabled(self) -> bool:
-        return self.writable and self.scopes[-1].mode == "auto"
+        return self.writable and any(scope.mode == "auto" for scope in self.scopes)
 
 
 class MemoryService:
@@ -115,22 +122,32 @@ class MemoryService:
             scopes = tuple(self.repository.scopes(connection, session_id))
             return MemoryAccess(
                 scopes=scopes,
-                writable=self.repository.root_session(connection, session_id) == session_id,
+                writable=self.repository.root_session(connection, session_id)
+                == session_id,
+                available=self.repository.root_session(connection, session_id)
+                == session_id,
             )
 
     def list(self, request: MemoryListRequest, *, for_use: bool = False) -> MemoryState:
         with self.database.transaction() as connection:
+            if (
+                for_use
+                and request.session_id
+                and not self.access(request.session_id).available
+            ):
+                raise MemoryRejected("memory_child_disabled")
             scopes = self.repository.scopes(connection, request.session_id)
             selected = self.repository.scopes(
                 connection, request.session_id, request.scope
             )
-            ids = [
-                scope.id
-                for scope in selected
-                if not for_use or scope.mode != "off"
-            ]
+            ids = [scope.id for scope in selected if not for_use or scope.mode != "off"]
             documents, cursor, limited = self.repository.list(
-                connection, ids, request.query, request.cursor, request.limit
+                connection,
+                ids,
+                request.query,
+                request.cursor,
+                request.limit,
+                include_archived=request.include_archived,
             )
             return MemoryState(
                 scopes=scopes,
@@ -172,7 +189,7 @@ class MemoryService:
     ) -> tuple[list[MemoryDocument], bool]:
         documents = []
         rows = connection.execute(
-            "SELECT * FROM memory_documents WHERE scope_id=? AND status='active' ORDER BY path LIMIT 201",
+            "SELECT * FROM memory_documents WHERE scope_id=? AND status='active' AND archived=0 ORDER BY path LIMIT 201",
             (scope_id,),
         ).fetchall()
         for row in rows[:200]:
@@ -186,6 +203,12 @@ class MemoryService:
         self, request: MemoryReadRequest, *, for_use: bool = False
     ) -> MemoryReadResult:
         with self.database.transaction() as connection:
+            if (
+                for_use
+                and request.session_id
+                and not self.access(request.session_id).available
+            ):
+                raise MemoryRejected("memory_child_disabled")
             scope = self.repository.scopes(
                 connection, request.session_id, request.scope
             )[0]
@@ -242,15 +265,19 @@ class MemoryService:
         connection: sqlite3.Connection,
         request: MemoryEditRequest,
         automatic: bool,
-        source_revisions: dict[str, int] | None,
     ) -> tuple[MemoryScope, list[MemoryEvidence], MemoryDocument | None, str]:
         self.repository.assert_writable(connection, request.session_id)
         scope = self.repository.scopes(connection, request.session_id, request.scope)[0]
-        current = self.repository.scopes(connection, request.session_id, "current")[0]
-        if automatic and (
-            scope.id != current.id or scope.mode != "auto" or request.action != "write"
-        ):
+        if automatic and scope.mode != "auto":
             raise MemoryRejected("memory_automatic_disabled")
+        if automatic and any(
+            connection.execute(
+                "SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=?",
+                (scope.id, item_id),
+            ).fetchone()
+            for item_id in request.source_item_ids
+        ):
+            raise MemoryRejected("memory_forgotten_source")
         evidence = self.repository.evidence(
             connection,
             request.session_id,
@@ -258,29 +285,19 @@ class MemoryService:
             scope.id,
             automatic=automatic,
         )
-        if automatic and not evidence:
-            raise MemoryRejected("memory_evidence_required")
-        if (
-            source_revisions is not None
-            and {value.item_id: value.item_revision for value in evidence}
-            != source_revisions
-        ):
-            raise MemoryRejected("memory_source_changed")
         row = self.repository.row(connection, scope.id, request.path)
         document, body = (
             self.repository.document(connection, row) if row else (None, "")
         )
         if (document.revision if document else 0) != request.expected_revision:
             raise MemoryRejected("memory_revision_conflict")
-        if automatic and document and document.user_owned:
-            raise MemoryRejected("memory_user_edit_protected")
         if request.action == "delete" and document is None:
             raise MemoryRejected("memory_document_not_found")
         return scope, evidence, document, body
 
     def validate_edit(
         self, request: MemoryEditRequest, *, automatic: bool = False
-    ) -> dict[str, int]:
+    ) -> None:
         try:
             value = request.model_dump(mode="json")
             if default_scanner().scan_json(value) != value:
@@ -288,8 +305,49 @@ class MemoryService:
         except SensitiveScanError:
             raise MemoryRejected("memory_sensitive_content") from None
         with self.database.transaction() as connection:
-            _, evidence, _, _ = self._state(connection, request, automatic, None)
-            return {value.item_id: value.item_revision for value in evidence}
+            self._state(connection, request, automatic)
+
+    def edit_base(self, run_id: str, scope_id: str, path: str) -> tuple[int, str]:
+        """Use a completed read/write from this Run as the edit's CAS base."""
+        with self.database.lock:
+            connection = self.database.connection()
+            current = self.repository.row(connection, scope_id, path)
+            if current is None:
+                return 0, "feedback"
+            read = connection.execute(
+                """SELECT COALESCE(json_extract(t.result_json,'$.data.read.revision'),
+                                   json_extract(t.result_json,'$.data.action.revision')) AS revision
+                   FROM tool_calls t JOIN items i ON i.id=t.item_id
+                   WHERE i.run_id=? AND t.status='completed'
+                     AND json_extract(t.result_json,'$.outcome')='success'
+                     AND ((t.tool_name='memory_read'
+                       AND json_extract(t.result_json,'$.data.read.path')=?
+                       AND json_extract(t.result_json,'$.data.read.scopeId')=?)
+                      OR (t.tool_name='memory_edit'
+                       AND json_extract(t.result_json,'$.data.action.documentId')=?))
+                   ORDER BY t.creation_seq DESC LIMIT 1""",
+                (run_id, path, scope_id, current["id"]),
+            ).fetchone()
+            if read is None:
+                raise MemoryRejected("memory_read_required")
+            document, _ = self.repository.document(connection, current)
+            return int(read["revision"]), document.kind
+
+    def audit_sources(self, run_id: str) -> list[str]:
+        with self.database.lock:
+            connection = self.database.connection()
+            user = connection.execute(
+                "SELECT id FROM items WHERE run_id=? AND kind='user_message' AND status='completed' AND incomplete=0 ORDER BY creation_seq DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            tools = connection.execute(
+                """SELECT i.id FROM items i JOIN tool_calls t ON t.item_id=i.id
+                   WHERE i.run_id=? AND i.incomplete=0 AND t.status IN ('completed','failed')
+                     AND t.tool_name NOT LIKE 'memory_%'
+                   ORDER BY t.creation_seq DESC LIMIT 15""",
+                (run_id,),
+            ).fetchall()
+            return ([user[0]] if user else []) + [row[0] for row in tools]
 
     @contextmanager
     def prepared(self, scope_id: str, body: str | None) -> Iterator[str]:
@@ -321,11 +379,14 @@ class MemoryService:
         request: MemoryEditRequest,
         *,
         automatic: bool = False,
-        source_revisions: dict[str, int] | None = None,
+        archive: bool = False,
         cancel: threading.Event | None = None,
         access_epochs: dict[str, int] | None = None,
     ) -> MemoryActionResult:
-        fingerprint = hashlib.sha256(request.model_dump_json().encode()).hexdigest()
+        archive = archive and request.action == "delete"
+        fingerprint = hashlib.sha256(
+            (request.model_dump_json() + (":archive" if archive else "")).encode()
+        ).hexdigest()
         with self.database.transaction() as connection:
             replay = connection.execute(
                 "SELECT request_hash,result_json FROM memory_actions WHERE operation_id=?",
@@ -335,66 +396,65 @@ class MemoryService:
                 if replay[0] != fingerprint:
                     raise MemoryRejected("memory_operation_conflict")
                 return MemoryActionResult.model_validate_json(replay[1])
-        captured = (
-            self.validate_edit(request, automatic=automatic)
-            if source_revisions is None
-            else source_revisions
-        )
+        self.validate_edit(request, automatic=automatic)
         with self.database.transaction() as connection:
-            scope, evidence, old, old_body = self._state(
-                connection, request, automatic, captured
+            scope, _, old, old_body = self._state(connection, request, automatic)
+            title = request.title.strip() or (
+                old.title if old else request.path.removesuffix(".md")
             )
-            documents, more = self._index_documents(connection, scope.id)
-            title = request.title.strip() or request.path.removesuffix(".md")
+            summary = request.summary.strip() or (
+                old.summary
+                if old
+                else next(
+                    (
+                        line.lstrip("# ").strip()[:240]
+                        for line in (request.content or "").splitlines()
+                        if line.strip()
+                    ),
+                    title[:240],
+                )
+            )
             unchanged = bool(
                 old
-                and old.user_owned == (not automatic)
+                and not old.archived
                 and request.action == "write"
                 and old_body == request.content
                 and old.title == title
-                and old.summary == request.summary
+                and old.summary == summary
                 and old.kind == request.kind
             )
+            if archive and old is not None and old.archived:
+                unchanged = True
             identifier = old.id if old else str(uuid.uuid4())
             revision = request.expected_revision + (0 if unchanged else 1)
+            code = (
+                "memory_unchanged"
+                if unchanged
+                else "memory_archived"
+                if archive
+                else "memory_deleted"
+                if request.action == "delete"
+                else "memory_saved"
+            )
             result = MemoryActionResult(
                 operation_id=request.operation_id,
                 document_id=identifier,
                 path=request.path,
                 revision=revision,
-                code="memory_unchanged"
-                if unchanged
-                else "memory_deleted"
-                if request.action == "delete"
-                else "memory_saved",
+                code=code,
             )
-            stamp = now_ms()
-            document = MemoryDocument(
-                id=identifier,
-                scope_id=scope.id,
-                path=request.path,
-                revision=revision,
-                title=title,
-                summary=request.summary,
-                kind=request.kind,
-                user_owned=not automatic,
-                created_at=old.created_at if old else stamp,
-                updated_at=stamp,
-                evidence=evidence,
+        # Only the note body is prepared before publication. The small derived
+        # index is rebuilt from the latest committed notes inside publication,
+        # so another note's write does not conflict or overwrite its index entry.
+        with ExitStack() as prepared:
+            reference = prepared.enter_context(
+                self.prepared(
+                    scope.id,
+                    request.content
+                    if request.action == "write" and not unchanged
+                    else None,
+                )
             )
-            documents = [value for value in documents if value.id != identifier]
-            if request.action == "write":
-                documents.append(document)
-            index = self._render_index(documents, more=more)
-        with (
-            self.prepared(
-                scope.id,
-                request.content
-                if request.action == "write" and not unchanged
-                else None,
-            ) as reference,
-            self.prepared(scope.id, index if not unchanged else None) as index_ref,
-        ):
             with self.database.transaction() as connection:
                 if cancel is not None and cancel.is_set():
                     raise MemoryRejected("memory_canceled")
@@ -402,26 +462,24 @@ class MemoryService:
                     connection, access_epochs
                 ):
                     raise MemoryRejected("memory_snapshot_revoked")
-                checked, _, _, _ = self._state(connection, request, automatic, captured)
-                if (
-                    checked.generation != scope.generation
-                    or checked.privacy_epoch != scope.privacy_epoch
-                ):
-                    raise MemoryRejected("memory_revision_conflict")
+                checked, evidence, current, _ = self._state(
+                    connection, request, automatic
+                )
+                stamp = now_ms()
                 if not unchanged:
-                    if request.action == "delete":
+                    if request.action == "delete" and not archive:
                         connection.execute(
                             "UPDATE memory_documents SET status='forgotten',updated_at=? WHERE id=?",
                             (stamp, identifier),
                         )
                         connection.execute(
                             "INSERT OR IGNORE INTO memory_suppressions(scope_id,item_id,privacy_epoch) SELECT ?,item_id,? FROM memory_evidence WHERE document_id=?",
-                            (scope.id, scope.privacy_epoch + 1, identifier),
+                            (scope.id, checked.privacy_epoch + 1, identifier),
                         )
                     else:
-                        if old is None:
+                        if current is None:
                             connection.execute(
-                                "INSERT INTO memory_documents(id,scope_id,path,current_revision,status,user_owned,created_at,updated_at) VALUES(?,?,?,?,'active',?,?,?)",
+                                "INSERT INTO memory_documents(id,scope_id,path,current_revision,status,user_owned,created_at,updated_at,archived) VALUES(?,?,?,?,'active',?,?,?,?)",
                                 (
                                     identifier,
                                     scope.id,
@@ -430,29 +488,59 @@ class MemoryService:
                                     int(not automatic),
                                     stamp,
                                     stamp,
+                                    int(archive),
                                 ),
                             )
                         else:
                             connection.execute(
-                                "UPDATE memory_documents SET current_revision=?,user_owned=?,updated_at=? WHERE id=?",
-                                (revision, int(not automatic), stamp, identifier),
+                                "UPDATE memory_documents SET current_revision=?,user_owned=?,updated_at=?,archived=? WHERE id=?",
+                                (
+                                    revision,
+                                    int(not automatic),
+                                    stamp,
+                                    int(archive),
+                                    identifier,
+                                ),
                             )
-                        size, mtime = self.repository.files.signature(reference)
-                        connection.execute(
-                            "INSERT INTO memory_revisions(document_id,revision,file_ref,file_size,file_mtime_ns,title,summary,kind,user_owned,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                            (
-                                identifier,
-                                revision,
-                                reference,
-                                size,
-                                mtime,
-                                title,
-                                request.summary,
-                                request.kind,
-                                int(not automatic),
-                                stamp,
-                            ),
-                        )
+                        if archive:
+                            # A normal tool deletion is reversible. Keep an exact
+                            # content version, and reserve its path for restoration.
+                            saved = connection.execute(
+                                "SELECT * FROM memory_revisions WHERE document_id=? AND revision=?",
+                                (identifier, request.expected_revision),
+                            ).fetchone()
+                            connection.execute(
+                                "INSERT INTO memory_revisions(document_id,revision,file_ref,file_size,file_mtime_ns,title,summary,kind,user_owned,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                                (
+                                    identifier,
+                                    revision,
+                                    saved["file_ref"],
+                                    saved["file_size"],
+                                    saved["file_mtime_ns"],
+                                    saved["title"],
+                                    saved["summary"],
+                                    saved["kind"],
+                                    int(not automatic),
+                                    stamp,
+                                ),
+                            )
+                        else:
+                            size, mtime = self.repository.files.signature(reference)
+                            connection.execute(
+                                "INSERT INTO memory_revisions(document_id,revision,file_ref,file_size,file_mtime_ns,title,summary,kind,user_owned,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                                (
+                                    identifier,
+                                    revision,
+                                    reference,
+                                    size,
+                                    mtime,
+                                    title,
+                                    summary,
+                                    request.kind,
+                                    int(not automatic),
+                                    stamp,
+                                ),
+                            )
                         for value in evidence:
                             connection.execute(
                                 "INSERT INTO memory_evidence(document_id,revision,item_id,session_id,run_id,item_revision,source_revision,evidence_class) VALUES(?,?,?,?,?,?,?,?)",
@@ -467,17 +555,28 @@ class MemoryService:
                                     value.evidence_class,
                                 ),
                             )
-                        self.repository.index(
-                            connection, document, request.content or ""
-                        )
-                    epoch = scope.privacy_epoch + int(old is not None)
+                        if not archive:
+                            row = self.repository.row(
+                                connection, scope.id, request.path
+                            )
+                            document, body = self.repository.document(connection, row)
+                            self.repository.index(connection, document, body)
+                    epoch = checked.privacy_epoch + int(
+                        request.action == "delete" and not archive
+                    )
                     connection.execute(
                         "UPDATE memory_scopes SET generation=generation+1,privacy_epoch=? WHERE id=?",
                         (epoch, scope.id),
                     )
+                    documents, more = self._index_documents(connection, scope.id)
+                    index_ref = prepared.enter_context(
+                        self.prepared(
+                            scope.id, self._render_index(documents, more=more)
+                        )
+                    )
                     connection.execute(
                         "INSERT OR REPLACE INTO memory_indexes(scope_id,generation,privacy_epoch,file_ref) VALUES(?,?,?,?)",
-                        (scope.id, scope.generation + 1, epoch, index_ref),
+                        (scope.id, checked.generation + 1, epoch, index_ref),
                     )
                 connection.execute(
                     "INSERT INTO memory_actions(operation_id,scope_id,document_id,request_hash,result_json,created_at) VALUES(?,?,?,?,?,?)",
@@ -502,8 +601,8 @@ class MemoryService:
             )[0]
             if scope.mode != request.mode:
                 connection.execute(
-                    "UPDATE memory_scopes SET mode=?,enabled_after=?,privacy_epoch=privacy_epoch+1,generation=generation+1 WHERE id=?",
-                    (request.mode, now_ms(), scope.id),
+                    "UPDATE memory_scopes SET mode=?,enabled_after=?,privacy_epoch=privacy_epoch+?,generation=generation+1 WHERE id=?",
+                    (request.mode, now_ms(), int(request.mode == "off"), scope.id),
                 )
                 self._cancel_revoked(connection)
         self.cleanup()
@@ -556,7 +655,7 @@ class MemoryService:
             scopes = [
                 scope
                 for scope in self.repository.scopes(connection, session_id)
-                if scope.mode != "off"
+                if self.access(session_id).available and scope.mode != "off"
             ]
             text, refs, generations, epochs = "", [], {}, {}
             for scope in reversed(scopes):
@@ -607,26 +706,16 @@ class MemoryService:
         session_id: str | None,
         epochs: dict[str, int],
     ) -> dict[str, int]:
-        if session_id is None:
-            return epochs
-        root = self.repository.root_session(connection, session_id)
-        connection.execute(
-            "INSERT OR IGNORE INTO memory_sources(session_id) VALUES(?)", (root,)
-        )
-        row = connection.execute(
-            "SELECT use_epoch,deleted FROM memory_sources WHERE session_id=?",
-            (root,),
-        ).fetchone()
-        if row[1]:
-            raise MemoryRejected("memory_source_unavailable")
-        return {**epochs, "session:" + root: row[0]}
+        return epochs
 
     @staticmethod
     def valid_epochs(connection: sqlite3.Connection, epochs: dict[str, int]) -> bool:
         for identifier, epoch in epochs.items():
             if identifier.startswith("session:"):
+                # Older snapshots retain use epochs. Ordinary chat deletion no
+                # longer withdraws notes; prior explicit epoch revocations stay invalid.
                 row = connection.execute(
-                    "SELECT use_epoch FROM memory_sources WHERE session_id=? AND deleted=0",
+                    "SELECT use_epoch FROM memory_sources WHERE session_id=?",
                     (identifier.removeprefix("session:"),),
                 ).fetchone()
             else:
@@ -659,6 +748,34 @@ class MemoryService:
                 "INSERT OR IGNORE INTO memory_tool_reads(item_id,run_id,epochs_json) VALUES(?,?,?)",
                 (item_id, run_id, json.dumps(epochs)),
             )
+
+    def tool_epochs(self, item_id: str, *, session_id: str) -> dict[str, int] | None:
+        """Get the durable retrieval guard without exposing it in tool text."""
+        with self.database.lock:
+            connection = self.database.connection()
+            row = connection.execute(
+                "SELECT epochs_json,revoked FROM memory_tool_reads WHERE item_id=?",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                from eidos_runtime.persistence.session_history import (
+                    SessionHistoryRepository,
+                )
+
+                history = SessionHistoryRepository(self.database).item_record(
+                    session_id, item_id
+                )
+                if history is not None:
+                    row = connection.execute(
+                        "SELECT epochs_json,revoked FROM memory_tool_reads WHERE item_id=?",
+                        (history.origin.item_id,),
+                    ).fetchone()
+            if row is None or row["revoked"]:
+                return None
+            try:
+                return _EPOCHS.validate_json(row["epochs_json"]) or None
+            except ValidationError:
+                return None
 
     @contextmanager
     def admit(
@@ -702,7 +819,7 @@ class MemoryService:
         with self.database.transaction() as connection:
             self._cancel_revoked(connection)
             rows = connection.execute(
-                "SELECT r.document_id,r.revision,r.file_ref FROM memory_revisions r JOIN memory_documents d ON d.id=r.document_id WHERE r.file_ref IS NOT NULL AND (d.status<>'active' OR (r.user_owned=0 AND EXISTS(SELECT 1 FROM memory_evidence e LEFT JOIN memory_source_items i ON i.item_id=e.item_id LEFT JOIN memory_sources s ON s.session_id=e.session_id WHERE e.document_id=r.document_id AND e.revision=r.revision AND (i.item_id IS NULL OR i.eligible=0 OR i.item_revision<>e.item_revision OR s.deleted=1)))) LIMIT 500"
+                "SELECT r.document_id,r.revision,r.file_ref FROM memory_revisions r JOIN memory_documents d ON d.id=r.document_id WHERE r.file_ref IS NOT NULL AND d.status<>'active' LIMIT 500"
             ).fetchall()
             for row in rows:
                 self.repository.files.remove(row["file_ref"])

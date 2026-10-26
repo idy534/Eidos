@@ -48,7 +48,10 @@
 }
 .session-menu-popover button:hover:not(:disabled),
 .task-context-menu button:hover:not(:disabled),
-.dropdown-menu button:hover:not(:disabled) {
+.dropdown-menu button:hover:not(:disabled),
+.session-menu-popover button.is-submenu-open,
+.task-context-menu button.is-submenu-open,
+.dropdown-menu button.is-submenu-open {
   background: rgba(0, 0, 0, 0.055);
   color: var(--text);
 }
@@ -91,7 +94,10 @@
 }
 .dropdown-menu button:hover:not(:disabled) .dropdown-menu-item__icon,
 .task-context-menu button:hover:not(:disabled) .dropdown-menu-item__icon,
-.session-menu-popover button:hover:not(:disabled) .dropdown-menu-item__icon {
+.session-menu-popover button:hover:not(:disabled) .dropdown-menu-item__icon,
+.dropdown-menu button.is-submenu-open .dropdown-menu-item__icon,
+.task-context-menu button.is-submenu-open .dropdown-menu-item__icon,
+.session-menu-popover button.is-submenu-open .dropdown-menu-item__icon {
   color: var(--text);
 }
 .danger-action .dropdown-menu-item__icon {
@@ -118,6 +124,34 @@
 .dropdown-menu-item__check .menu-item-icon-svg {
   width: 14px;
   height: 14px;
+}
+.dropdown-menu-item__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: color 80ms ease;
+}
+.dropdown-menu-item__chevron svg,
+.dropdown-menu-item__chevron .menu-item-icon-svg {
+  width: 12px;
+  height: 12px;
+}
+.dropdown-menu button:hover:not(:disabled) .dropdown-menu-item__chevron,
+.task-context-menu button:hover:not(:disabled) .dropdown-menu-item__chevron,
+.session-menu-popover button:hover:not(:disabled) .dropdown-menu-item__chevron,
+.dropdown-menu button.is-submenu-open .dropdown-menu-item__chevron,
+.task-context-menu button.is-submenu-open .dropdown-menu-item__chevron,
+.session-menu-popover button.is-submenu-open .dropdown-menu-item__chevron {
+  color: var(--text);
+}
+.dropdown-submenu {
+  animation: apple-popover-in 120ms var(--apple-spring);
 }
 .dropdown-menu-separator {
   height: 1px;

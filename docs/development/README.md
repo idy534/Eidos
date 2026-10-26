@@ -408,6 +408,12 @@ node --test dist/main/memory-contract.test.js dist/main/memory-export.test.js
 pnpm test:contracts
 ```
 
+模型工具结果另用 `protocol/fixtures/memory-tool-model-v1.json` 校验。该视图不改变 Desktop DTO，也不需要重新生成 Desktop 记忆契约。修改投影或私有读取保护时，开发者运行：
+
+```bash
+uv run --locked pytest runtime/tests/test_memory_tool_projection.py runtime/tests/test_memory_runtime.py runtime/tests/test_model_context_projection.py runtime/tests/test_tool_contract.py runtime/tests/test_model_attempt_context_snapshot.py runtime/tests/test_context_compaction_continuity.py
+```
+
 人工验收使用临时数据目录和已配置模型：
 
 1. 用户打开“设置 → 记忆”。新范围默认 auto。页面显示 `MEMORY.md` 索引，用户可以从索引打开主题笔记，也可以新建和直接编辑。

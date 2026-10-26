@@ -6,7 +6,10 @@
     {"method":"memory/edit","request":{"operationId":"save","path":"feedback_testing.md","expectedRevision":0,"summary":"测试约定","content":"用户只在要求时运行全量测试。"},"response":{"operationId":"save","documentId":"note","path":"feedback_testing.md","revision":1,"code":"memory_saved"}},
     {"method":"memory/policy","request":{"scope":"current","sessionId":"session","mode":"read"},"response":{"scopes":[],"documents":[]}},
     {"method":"memory/export","request":{"scope":"global","cursor":16},"response":{"files":[{"path":"note.md","content":"完整正文"}],"generation":1,"nextCursor":null}},
-    {"method":"data/backup","request":{"destination":"/tmp/backup.zip"},"response":{"saved":true,"encrypted":false}}
+    {"method":"data/backup","request":{"destination":"/tmp/backup.zip"},"response":{"saved":true,"encrypted":false}},
+    {"method":"memory/list","request":{"includeArchived":true},"response":{"scopes":[],"documents":[{"id":"archived-note","scopeId":"global","path":"old.md","revision":2,"title":"旧笔记","summary":"已经合并","kind":"feedback","userOwned":false,"archived":true,"createdAt":1,"updatedAt":2,"evidence":[]}]}},
+    {"method":"memory/edit","request":{"operationId":"save-without-summary","path":"short.md","content":"简短正文"},"response":{"operationId":"save-without-summary","documentId":"short","path":"short.md","revision":1,"code":"memory_saved"}},
+    {"method":"memory/edit","request":{"operationId":"archive-result","path":"old.md","action":"delete","expectedRevision":1},"response":{"operationId":"archive-result","documentId":"archived-note","path":"old.md","revision":2,"code":"memory_archived"}}
   ],
   "invalidRequests": [
     {"method":"memory/list","request":{"projectId":"other-project"}},

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "memory_edit",
+      "canonical": {
+        "schemaVersion": 1, "toolContractVersion": 1, "toolName": "memory_edit", "outcome": "success", "code": "memory_saved", "summary": "Memory note saved.",
+        "data": {"documents": [], "read": null, "action": {"operationId": "internal-operation", "documentId": "internal-document", "path": "feedback_testing.md", "revision": 2, "code": "memory_saved"}, "epochs": {"00000000-0000-4000-8000-000000000001": 3, "session:internal-session": 1}, "next_cursor": null, "search_limited": false},
+        "sideEffectsMayExist": false, "reconciliationRequired": false
+      },
+      "model": {"outcome": "success", "code": "memory_saved", "data": {"path": "feedback_testing.md", "revision": 2}}
+    },
+    {
+      "name": "memory_read",
+      "canonical": {
+        "schemaVersion": 1, "toolContractVersion": 1, "toolName": "memory_read", "outcome": "success", "code": "memory_retrieved", "summary": "Historical notes; apply their scope and verify changeable facts.",
+        "data": {
+          "documents": [], "action": null, "next_cursor": null, "search_limited": false, "epochs": {"00000000-0000-4000-8000-000000000001": 3, "session:internal-session": 1},
+          "read": {"path": "feedback_testing.md", "scopeId": "00000000-0000-4000-8000-000000000001", "revision": 2, "currentRevision": 3, "revisions": [3, 2, 1], "document": {"id": "internal-document", "scopeId": "00000000-0000-4000-8000-000000000001", "path": "feedback_testing.md", "revision": 2, "title": "测试规则", "summary": "全量测试需要明确要求", "kind": "feedback", "userOwned": true, "createdAt": 10, "updatedAt": 20, "evidence": [{"itemId": "internal-item", "sessionId": "internal-session", "runId": "internal-run", "itemRevision": 1, "sourceRevision": 2, "evidenceClass": "explicit_user"}]}, "content": "用户只在明确要求时运行全量测试。", "offset": 0, "nextOffset": null, "epochs": {"00000000-0000-4000-8000-000000000001": 3, "session:internal-session": 1}}
+        },
+        "sideEffectsMayExist": false, "reconciliationRequired": false
+      },
+      "model": {"outcome": "success", "data": {"scope": "global", "path": "feedback_testing.md", "revision": 2, "title": "测试规则", "summary": "全量测试需要明确要求", "kind": "feedback", "content": "用户只在明确要求时运行全量测试。"}}
+    },
+    {
+      "name": "memory_search",
+      "canonical": {
+        "schemaVersion": 1, "toolContractVersion": 1, "toolName": "memory_search", "outcome": "success", "code": "memory_retrieved", "summary": "Historical notes; apply their scope and verify changeable facts.",
+        "data": {"documents": [
+          {"id": "internal-global-document", "scopeId": "00000000-0000-4000-8000-000000000001", "path": "feedback_testing.md", "revision": 2, "title": "测试规则", "summary": "全量测试需要明确要求", "kind": "feedback", "userOwned": true, "createdAt": 10, "updatedAt": 20, "evidence": []},
+          {"id": "internal-project-document", "scopeId": "internal-project-scope", "path": "feedback_testing.md", "revision": 4, "title": "项目测试", "summary": "本项目使用定向测试", "kind": "project", "userOwned": false, "createdAt": 15, "updatedAt": 30, "evidence": []}
+        ], "read": null, "action": null, "epochs": {"00000000-0000-4000-8000-000000000001": 3, "internal-project-scope": 4, "session:internal-session": 1}, "next_cursor": 8, "search_limited": true},
+        "sideEffectsMayExist": false, "reconciliationRequired": false
+      },
+      "model": {"outcome": "success", "data": {"documents": [{"scope": "global", "path": "feedback_testing.md", "revision": 2, "summary": "全量测试需要明确要求"}, {"scope": "current", "path": "feedback_testing.md", "revision": 4, "summary": "本项目使用定向测试"}], "nextCursor": 8, "searchLimited": true}}
+    }
+  ]
+}

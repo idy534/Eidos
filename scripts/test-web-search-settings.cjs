@@ -28,6 +28,7 @@ app.whenReady().then(async () => {
     }
     assert.equal(await script("document.querySelectorAll('.web-search-settings input[type=checkbox]:checked').length"), 0);
     assert.equal(await script("document.querySelector('[aria-label=\"LangSearch API Key\"]').value"), "fixture-langsearch-key");
+    assert.equal(await script("document.querySelector('[aria-label=\"豆包搜索 API Key\"]').value"), "fixture-doubao-key");
     assert.equal(await script("document.body.textContent.includes('清除已保存的 Key')"), false);
     for (const width of [320, 768, 1024, 1440]) {
       win.setContentSize(width, 900);
@@ -42,6 +43,9 @@ app.whenReady().then(async () => {
       if (process.env.EIDOS_WEB_SEARCH_SCREENSHOT_DIR) {
         await mkdir(process.env.EIDOS_WEB_SEARCH_SCREENSHOT_DIR, { recursive: true });
         await writeFile(path.join(process.env.EIDOS_WEB_SEARCH_SCREENSHOT_DIR, `web-search-${width}.png`), (await win.webContents.capturePage()).toPNG());
+        await script("document.querySelector('[aria-label=\"豆包搜索 默认使用\"]').closest('section').scrollIntoView({ behavior: 'instant', block: 'start' })");
+        await settle();
+        await writeFile(path.join(process.env.EIDOS_WEB_SEARCH_SCREENSHOT_DIR, `doubao-search-${width}.png`), (await win.webContents.capturePage()).toPNG());
       }
     }
     await script("document.querySelector('[aria-label=\"DeepSeek Search 默认使用\"]').focus()");
@@ -57,6 +61,16 @@ app.whenReady().then(async () => {
     await script("document.querySelector('[aria-label=\"显示 LangSearch API Key\"]').click()");
     await settle();
     assert.equal(await script("document.querySelector('[aria-label=\"LangSearch API Key\"]').type"), "text");
+    await script("document.querySelector('[aria-label=\"豆包搜索 默认使用\"]').focus()");
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
+    await settle();
+    assert.equal(await script("document.querySelector('[aria-label=\"豆包搜索 默认使用\"]').checked"), true);
+    assert.equal(await script("document.querySelector('[aria-label=\"LangSearch 默认使用\"]').checked"), false);
+    assert.equal(await script("document.querySelector('[aria-label=\"豆包搜索 API Key\"]').type"), "password");
+    await script("document.querySelector('[aria-label=\"显示 豆包搜索 API Key\"]').click()");
+    await settle();
+    assert.equal(await script("document.querySelector('[aria-label=\"豆包搜索 API Key\"]').type"), "text");
     assert.deepEqual(errors, []);
     console.log("Web search settings fit 320/768/1024/1440px and support keyboard default selection and secret visibility.");
   } catch (error) { console.error(error); code = 1; }

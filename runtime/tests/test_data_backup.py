@@ -18,8 +18,46 @@ from eidos_runtime.memory.repository import MemoryRejected
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.parametrize("schema_version", [40, 41, SCHEMA_VERSION])
-def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_path, schema_version):
+def test_backup_preserves_archived_notes_and_shared_body_versions(tmp_path):
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    service = store.database.memory
+    service.edit(
+        MemoryEditRequest(
+            operation_id="save", scope="global", path="archived.md", content="归档正文"
+        )
+    )
+    service.edit(
+        MemoryEditRequest(
+            operation_id="archive",
+            scope="global",
+            path="archived.md",
+            action="delete",
+            expected_revision=1,
+        ),
+        automatic=True,
+        archive=True,
+    )
+    archive = tmp_path / "archive.zip"
+    backup(service, archive)
+    store.close()
+    restore(archive, tmp_path / "restored")
+    reopened = SessionStore(tmp_path / "restored")
+    reopened.initialize()
+    try:
+        for revision in (1, 2):
+            page = reopened.database.memory.read(
+                MemoryReadRequest(scope="global", path="archived.md", revision=revision)
+            )
+            assert page.content == "归档正文" and page.document.archived
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("schema_version", [40, 41, 42, SCHEMA_VERSION])
+def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(
+    tmp_path, schema_version
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     store = SessionStore(tmp_path / "data")
@@ -45,7 +83,11 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_pa
         state = tmp_path / "legacy.sqlite"
         state.write_bytes(entries["state.sqlite"])
         with sqlite3.connect(state) as connection:
-            connection.execute("ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0")
+            connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
+            if schema_version < 42:
+                connection.execute(
+                    "ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0"
+                )
             connection.execute(f"PRAGMA user_version={schema_version}")
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         entries["state.sqlite"] = state.read_bytes()
@@ -59,7 +101,10 @@ def test_data_backup_round_trip_preserves_chat_notes_and_reads_by_default(tmp_pa
     restored.initialize()
     try:
         assert restored.health()["state"] == "ready"
-        assert restored.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert (
+            restored.connection.execute("PRAGMA user_version").fetchone()[0]
+            == SCHEMA_VERSION
+        )
         assert restored.read_run(run["id"])["sessionId"] == session["id"]
         assert (
             restored.database.memory.read(

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EidosRuntimeAPI, RuntimeNotification } from "../contracts.js";
 import type { MemoryDocument, MemoryReadResult, MemoryState } from "../../../shared/memory.generated.js";
@@ -141,6 +141,70 @@ it("creates a note directly without a maintenance or candidate workflow", async 
   await user.type(screen.getByRole("textbox", { name: "笔记正文" }), "用户要求先检查本地依赖。");
   await user.click(screen.getByRole("button", { name: "保存笔记" }));
   await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/edit", expect.objectContaining({ path: "project_setup.md", expectedRevision: 0, action: "write" })));
+});
+
+it("shows archived notes and restores them with the visible revision using the keyboard", async () => {
+  let restored = false;
+  const { memory } = mount(async (method, request) => {
+    if (method === "memory/list") return { ...state, documents: [{ ...note, archived: !restored }] };
+    if (method === "memory/edit") { restored = true; return { operationId: request.operationId, documentId: note.id, path: note.path, revision: 4, code: "memory_saved" }; }
+    const page = read(request);
+    if (request.path === "MEMORY.md") return { ...page, content: restored ? page.content : "# Memory\n暂无生效笔记" };
+    return { ...page, revision: restored ? 4 : 3, currentRevision: restored ? 4 : 3,
+      revisions: restored ? [4, 3, 2] : [3, 2], document: { ...note, archived: !restored } };
+  });
+  const user = userEvent.setup();
+  await screen.findByText("已归档");
+  expect(memory).toHaveBeenCalledWith("memory/list", expect.objectContaining({ includeArchived: true }));
+  screen.getByRole("button", { name: /feedback_testing.md.*已归档/ }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("button", { name: "恢复笔记" }));
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/edit", expect.objectContaining({
+    path: note.path, expectedRevision: 3, action: "write", content: "用户只在明确要求时运行全量测试。",
+  })));
+  await screen.findByRole("button", { name: "编辑" });
+  expect(screen.queryByText("已归档")).not.toBeInTheDocument();
+});
+
+it("keeps an archived note visible when restoration conflicts", async () => {
+  mount(async (method, request) => {
+    if (method === "memory/list") return { ...state, documents: [{ ...note, archived: true }] };
+    if (method === "memory/edit") throw new Error("memory_revision_conflict");
+    const page = read(request);
+    return { ...page, document: request.path === "MEMORY.md" ? null : { ...note, archived: true } };
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /feedback_testing.md.*已归档/ }));
+  await user.click(await screen.findByRole("button", { name: "恢复笔记" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: "恢复笔记" })).toBeEnabled();
+  expect(screen.getByText("用户只在明确要求时运行全量测试。")).toBeInTheDocument();
+});
+
+it("can permanently forget an archived note after confirmation", async () => {
+  const { memory } = mount(async (method, request) => {
+    if (method === "memory/list") return { ...state, documents: [{ ...note, archived: true }] };
+    if (method === "memory/edit") return { operationId: request.operationId, documentId: note.id, path: note.path, revision: 4, code: "memory_deleted" };
+    return { ...read(request), document: request.path === "MEMORY.md" ? null : { ...note, archived: true } };
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: /feedback_testing.md.*已归档/ }));
+  await user.click(await screen.findByText("来源和版本"));
+  await user.click(screen.getByRole("button", { name: "删除笔记" }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(dialog).toHaveTextContent("正文和历史版本将被删除");
+  await user.click(within(dialog).getByRole("button", { name: "删除笔记" }));
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/edit", expect.objectContaining({ action: "delete", expectedRevision: 3, path: note.path })));
+});
+
+it("allows a new note without a separate summary", async () => {
+  const { memory } = mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "新建笔记" }));
+  await user.type(screen.getByRole("textbox", { name: "笔记文件名" }), "preference.md");
+  await user.type(screen.getByRole("textbox", { name: "笔记正文" }), "用户偏好简短回复。");
+  await user.click(screen.getByRole("button", { name: "保存笔记" }));
+  await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/edit", expect.objectContaining({ summary: "", content: "用户偏好简短回复。" })));
 });
 
 describe("memory refresh", () => {

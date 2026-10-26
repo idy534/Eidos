@@ -266,7 +266,10 @@ export function MemorySettings({
                   <DocumentTextIcon />
                 </div>
                 <div className="memory-file-text-box">
-                  <strong>{note.path}</strong>
+                  <div className="memory-file-title-row">
+                    <strong>{note.path}</strong>
+                    {note.archived && <span className="memory-file-pill">已归档</span>}
+                  </div>
                   <span>{note.summary}</span>
                 </div>
               </button>

@@ -132,6 +132,7 @@ export function MemoryNoteEditor({
       if (!mounted.current) return;
       setEditing(false);
       setDeleting(false);
+      setRevision(undefined);
       dirtyRef.current = false;
       onDirty(false);
       onSaved(action === "delete" ? "MEMORY.md" : path ?? draft.path);
@@ -175,6 +176,8 @@ export function MemoryNoteEditor({
           <p>
             {index
               ? "模型先读取这份索引，再按需打开笔记。"
+              : read?.document?.archived
+              ? "这份笔记已归档，后续对话不会自动使用。你可以恢复它或彻底删除。"
               : "笔记会保留适用条件，并在后续对话中使用。"}
           </p>
         </div>
@@ -182,12 +185,12 @@ export function MemoryNoteEditor({
         {!index && !editing && read && current && (
           <Button
             size="small"
-            variant="secondary"
-            icon={<EditPencilIcon />}
-            disabled={loading}
-            onClick={() => setEditing(true)}
+            variant={read.document?.archived ? "primary" : "secondary"}
+            icon={read.document?.archived ? undefined : <EditPencilIcon />}
+            disabled={loading || busy}
+            onClick={() => read.document?.archived ? void save("write") : setEditing(true)}
           >
-            编辑
+            {read.document?.archived ? (busy ? "正在恢复…" : "恢复笔记") : "编辑"}
           </Button>
         )}
       </header>
@@ -225,7 +228,7 @@ export function MemoryNoteEditor({
             <span className="memory-form-label">简短摘要</span>
             <input
               aria-label="笔记摘要"
-              placeholder="说明笔记的核心适用范围或偏好条件…"
+              placeholder="可选，留空时会自动补充摘要…"
               maxLength={240}
               value={draft.summary}
               disabled={busy}
@@ -274,7 +277,6 @@ export function MemoryNoteEditor({
               disabled={
                 busy ||
                 !draft.content.trim() ||
-                !draft.summary.trim() ||
                 (path === null && !draft.path.endsWith(".md"))
               }
             >

@@ -15,11 +15,13 @@ class WebSearchReadRequest(EidosFrozenStrictModel):
 class SearchCredentialState(EidosFrozenStrictModel):
     deepseek: Literal["missing", "stored", "unavailable"] = "missing"
     langsearch: Literal["missing", "stored", "unavailable"] = "missing"
+    doubao: Literal["missing", "stored", "unavailable"] = "missing"
 
 
 class SearchCredentialValues(EidosFrozenStrictModel):
     deepseek: str = Field(default="", max_length=1024, repr=False)
     langsearch: str = Field(default="", max_length=1024, repr=False)
+    doubao: str = Field(default="", max_length=1024, repr=False)
 
 
 class WebSearchResponse(EidosFrozenStrictModel):
@@ -59,7 +61,7 @@ class WebSearchSaveRequest(EidosFrozenStrictModel):
         Annotated[
             SetSearchCredential | ClearSearchCredential, Field(discriminator="action")
         ]
-    ] = Field(default_factory=list, max_length=2)
+    ] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def unique_providers(self) -> WebSearchSaveRequest:

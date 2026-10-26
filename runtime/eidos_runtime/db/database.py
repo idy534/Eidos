@@ -202,6 +202,7 @@ class Database:
                     39,
                     40,
                     41,
+                    42,
                     SCHEMA_VERSION,
                     4,
                 }
@@ -481,6 +482,12 @@ class Database:
                 from eidos_runtime.memory.remove_temporary_migration import migrate_remove_temporary_memory
                 try:
                     migrate_remove_temporary_memory(connection)
+                except sqlite3.Error as error:
+                    raise StorageError("schema_migration_failed") from error
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 42:
+                from eidos_runtime.memory.flow_migration import migrate_memory_flow
+                try:
+                    migrate_memory_flow(connection)
                 except sqlite3.Error as error:
                     raise StorageError("schema_migration_failed") from error
             _verify_integrity(connection)

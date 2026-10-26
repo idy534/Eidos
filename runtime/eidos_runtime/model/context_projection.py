@@ -5,6 +5,7 @@ import json
 import re
 
 from eidos_runtime.context.policy import CONTINUITY_CONTEXT_MAX_BYTES, CONTINUITY_SECTION_ID
+from eidos_runtime.memory.tool_projection import MEMORY_TOOL_NAMES, project_memory_tool_result
 
 
 def _protected_continuity(item: dict[str, object]) -> bool:
@@ -30,12 +31,22 @@ def without_verification_metadata(value: object) -> object:
     return value
 
 
-def model_result_json(raw: str) -> str:
+def model_result_json(raw: str, *, tool_name: str | None = None) -> str:
     try:
         value = json.loads(raw)
     except ValueError:
         return raw
-    projected = without_verification_metadata(value)
+    name = tool_name or (value.get("toolName") if isinstance(value, dict) else None)
+    if isinstance(name, str) and name in MEMORY_TOOL_NAMES and isinstance(value, dict) and "outcome" in value:
+        try:
+            projected = project_memory_tool_result(name, value)
+        except ValueError:
+            projected = project_memory_tool_result(name, {
+                "outcome": "error", "code": "memory_payload_invalid",
+                "summary": "Historical memory result unavailable. Read the current note again.",
+            })
+    else:
+        projected = without_verification_metadata(value)
     return raw if projected == value else json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -64,7 +75,7 @@ def project_context(context: tuple[dict[str, object], ...], *, text_bytes: int =
             projected.append(project_agent_evidence(item, text_bytes))
             continue
         if item.get("type") == "tool_result" and isinstance(item.get("result"), str):
-            item["result"] = model_result_json(str(item["result"]))
+            item["result"] = model_result_json(str(item["result"]), tool_name=str(item.get("name", "")))
         elif item.get("type") == "user" and item.get("sectionId") == "runtime-state":
             content = item.get("content")
             if isinstance(content, str):

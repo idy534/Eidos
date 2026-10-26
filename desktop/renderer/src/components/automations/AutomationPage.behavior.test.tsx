@@ -228,6 +228,16 @@ describe("local automation management", () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith({ mode: "update", id: task.id, expectedRevision: 2, changes: { name: "新名称" } }));
   });
 
+  it("shows floating toast instead of inline error when saving task without changes", async () => {
+    const save = vi.fn(async (_request: unknown) => {});
+    const onShowToast = vi.fn();
+    render(<AutomationForm task={task} projects={[]} sessions={[session]} models={[model]} busy={false} onSave={save} onShowToast={onShowToast} />);
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
+    expect(save).not.toHaveBeenCalled();
+    expect(onShowToast).toHaveBeenCalledWith("配置没有变化。", "info");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("preserves a saved Session that is outside the loaded sidebar page", async () => {
     const save = vi.fn(async (_request: unknown) => {});
     render(<AutomationForm task={task} projects={[]} sessions={[]} models={[model]} busy={false} onSave={save} />);

@@ -17,14 +17,15 @@ void test("web search fixtures match the generated Python DTOs", async () => {
   }
 });
 void test("official pages are a fixed allowlist", () => {
-  for (const provider of ["deepseek", "langsearch"] as const) {
+  for (const provider of ["deepseek", "langsearch", "doubao"] as const) {
     for (const target of ["keys", "docs", "pricing"] as const) assert.match(webSearchOfficialUrl({ provider, target }), /^https:\/\//);
   }
   assert.equal(webSearchOfficialUrl({ provider: "deepseek", target: "keys" }), "https://platform.deepseek.com/api_keys");
   assert.throws(() => webSearchOfficialUrl({ provider: "deepseek", target: "keys", url: "https://evil.invalid" }));
   assert.throws(() => webSearchOfficialUrl({ provider: "duckduckgo", target: "keys" }));
 });
-void test("settings return local keys, remain revision guarded and persist across Runtime restart", { timeout: 30000 }, async () => {
+for (const provider of ["langsearch", "doubao"] as const) {
+void test(`${provider} settings return local keys, remain revision guarded and persist across Runtime restart`, { timeout: 30000 }, async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "eidos-web-search-"));
   const options = { pythonExecutable: path.join(root, ".venv/bin/python"), runtimeRoot: path.join(root, "runtime"), dataDirectory: path.join(temporary, "data"),
     environment: { EIDOS_PROJECTLESS_ROOT: path.join(temporary, "workspaces") } };
@@ -32,22 +33,23 @@ void test("settings return local keys, remain revision guarded and persist acros
   try {
     await client.initialize();
     assert.equal((await client.readWebSearch()).config.defaultProvider ?? null, null);
-    const request = { expectedRevision: 0, config: { defaultProvider: "langsearch" as const },
-      credentialChanges: [{ provider: "langsearch" as const, action: "set" as const, value: "sample-search-secret" }] };
+    const request = { expectedRevision: 0, config: { defaultProvider: provider },
+      credentialChanges: [{ provider, action: "set" as const, value: "sample-search-secret" }] };
     const saved = await client.saveWebSearch(request);
-    assert.equal(saved.revision, 1); assert.equal(saved.credentials.langsearch, "stored");
-    assert.equal(saved.credentialValues?.langsearch, "sample-search-secret");
+    assert.equal(saved.revision, 1); assert.equal(saved.credentials[provider], "stored");
+    assert.equal(saved.credentialValues?.[provider], "sample-search-secret");
     await assert.rejects(client.saveWebSearch(request), (error: unknown) => error instanceof RuntimeRequestError && error.businessCode === "WEB_SEARCH_CONFIG_CONFLICT");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
     client = new RuntimeClient(options); await client.initialize();
     const restored = await client.readWebSearch();
-    assert.equal(restored.config.defaultProvider, "langsearch"); assert.equal(restored.credentials.langsearch, "stored");
-    assert.equal(restored.credentialValues?.langsearch, "sample-search-secret");
-    const cleared = await client.saveWebSearch({ expectedRevision: 1, config: restored.config, credentialChanges: [{ provider: "langsearch", action: "clear" }] });
-    assert.equal(cleared.credentialValues?.langsearch, "");
-    assert.equal(cleared.config.defaultProvider ?? null, null); assert.equal(cleared.credentials.langsearch, "missing");
+    assert.equal(restored.config.defaultProvider, provider); assert.equal(restored.credentials[provider], "stored");
+    assert.equal(restored.credentialValues?.[provider], "sample-search-secret");
+    const cleared = await client.saveWebSearch({ expectedRevision: 1, config: restored.config, credentialChanges: [{ provider, action: "clear" }] });
+    assert.equal(cleared.credentialValues?.[provider], "");
+    assert.equal(cleared.config.defaultProvider ?? null, null); assert.equal(cleared.credentials[provider], "missing");
     await client.shutdown(); assert.equal(await client.waitForExit(), 0);
   } finally {
     client.terminate(); await client.waitForExit().catch(() => undefined); await rm(temporary, { recursive: true, force: true });
   }
 });
+}

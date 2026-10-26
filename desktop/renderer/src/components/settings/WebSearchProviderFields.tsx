@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DeepSeekSearchOptions, LangSearchOptions, Provider } from "../../../../shared/web-search.generated.js";
+import type { DeepSeekSearchOptions, DoubaoSearchOptions, LangSearchOptions, Provider } from "../../../../shared/web-search.generated.js";
 
 export const searchOptionDefaults = {
   defaultCount: 5,
@@ -50,8 +50,8 @@ export function WebSearchProviderFields({
   onChange,
 }: {
   provider: Provider;
-  options: DeepSeekSearchOptions | LangSearchOptions;
-  onChange: (options: DeepSeekSearchOptions | LangSearchOptions) => void;
+  options: DeepSeekSearchOptions | LangSearchOptions | DoubaoSearchOptions;
+  onChange: (options: DeepSeekSearchOptions | LangSearchOptions | DoubaoSearchOptions) => void;
 }) {
   const values = { ...searchOptionDefaults, ...options };
   const lang = options as LangSearchOptions;
@@ -163,11 +163,13 @@ export function WebSearchProviderFields({
             />
             <span>返回网页正文</span>
           </label>
-          <span className="web-search-hint">提取完整正文有助于理解复杂页面，但会消耗更多上下文 Token。</span>
+          <span className="web-search-hint">{provider === "doubao"
+            ? "Eidos 会优先使用服务返回的正文；正文缺失时仍使用摘要。正文会占用更多上下文。"
+            : "提取完整正文有助于理解复杂页面，但会消耗更多上下文 Token。"}</span>
         </div>
       </div>
 
-      {provider === "langsearch" && (
+      {(provider === "langsearch" || provider === "doubao") && (
         <div className="web-search-options-section">
           <div className="web-search-options-title">高级控制</div>
           <div className="web-search-langsearch-fields">
@@ -210,7 +212,9 @@ export function WebSearchProviderFields({
                     </label>
                   </div>
                   <span className="web-search-hint">
-                    支持指定单个起始日期或起止区间（例如 2026-01-01 至 2026-10-21）。
+                    {provider === "doubao"
+                      ? "用户只填写起始日期时，系统搜索当天发布的内容。用户也可以填写起止日期范围。"
+                      : "支持指定单个起始日期或起止区间（例如 2026-01-01 至 2026-10-21）。"}
                   </span>
                 </div>
               )}
@@ -248,6 +252,7 @@ export function WebSearchProviderFields({
                   });
                 }}
               />
+              {provider === "doubao" && <span className="web-search-hint">豆包搜索最多支持排除 5 个域名。</span>}
             </label>
           </div>
         </div>

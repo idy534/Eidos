@@ -186,42 +186,44 @@ def test_cancel_before_publication_leaves_no_fact(store):
     assert not store.connection.execute("SELECT 1 FROM memory_revisions").fetchone()
 
 
-def test_source_revocation_and_user_owned_correction(store, tmp_path):
+def test_automatic_update_of_user_written_note_survives_source_change(store, tmp_path):
     session = store.create_session(str(tmp_path / "workspace"))
     run, _ = store.create_run(session["id"], "以后只运行相关测试")
-    source = store.connection.execute(
-        "SELECT id FROM items WHERE run_id=? AND kind='user_message'", (run["id"],)
-    ).fetchone()[0]
+    source = store.get_user_item(run["id"])["id"]
     service = store.database.memory
     request = note(session_id=session["id"], scope="current", source_item_ids=[source])
-    service.edit(request, automatic=True)
-    # An explicit same-content edit protects the user's version from later learning.
-    service.edit(
-        request.model_copy(update={"operation_id": "confirm", "expected_revision": 1})
+    service.edit(request)
+    changed = request.model_copy(
+        update={
+            "operation_id": "automatic",
+            "expected_revision": 1,
+            "content": "自动补充的新约定",
+        }
     )
-    with pytest.raises(MemoryRejected, match="user_edit_protected"):
-        service.edit(
-            request.model_copy(
-                update={"operation_id": "replace", "expected_revision": 2}
-            ),
-            automatic=True,
-        )
+    assert service.edit(changed, automatic=True).revision == 2
     with store.database.transaction() as connection:
         connection.execute(
             "UPDATE items SET content='修改原消息' WHERE id=?", (source,)
         )
+    service.cleanup()
     assert (
         service.read(
             MemoryReadRequest(session_id=session["id"], path=request.path)
+        ).content
+        == changed.content
+    )
+    assert (
+        service.read(
+            MemoryReadRequest(session_id=session["id"], path=request.path, revision=1)
         ).content
         == request.content
     )
 
 
-@pytest.mark.parametrize("change", ["edit", "delete", "rewrite", "rewind"])
-def test_historical_automatic_version_revokes_other_sessions_after_user_edit(
-    store, tmp_path, change
-):
+@pytest.mark.parametrize(
+    "change", ["edit", "delete", "rewrite", "rewind", "session_delete"]
+)
+def test_saved_versions_remain_independent_of_chat_changes(store, tmp_path, change):
     from eidos_runtime.memory.lifecycle import invalidate_source
 
     session = store.create_session(str(tmp_path / "workspace"))
@@ -229,39 +231,75 @@ def test_historical_automatic_version_revokes_other_sessions_after_user_edit(
     run, _ = store.create_run(session["id"], "旧规则来源")
     source = store.get_user_item(run["id"])["id"]
     service = store.database.memory
-    request = note(
-        session_id=session["id"], scope="current", source_item_ids=[source]
-    )
+    request = note(session_id=session["id"], scope="current", source_item_ids=[source])
     service.edit(request, automatic=True)
-    service.edit(request.model_copy(update={
-        "operation_id": "user-edit", "expected_revision": 1,
-        "summary": "用户独立修改后的规则", "content": "用户独立修改后的规则",
-    }))
-    historical = service.read(MemoryReadRequest(
-        session_id=reader["id"], path=request.path, revision=1,
-    ), for_use=True)
-    service.track_tool("reader-run", "historical-read", historical.epochs, {}, retrieval=True)
-    with pytest.raises(MemoryRejected, match="memory_snapshot_revoked"):
-        with service.admit(historical.epochs, threading.Event()) as cancel:
-            with store.database.transaction() as connection:
-                if change == "edit":
-                    connection.execute("UPDATE items SET content='来源已更正' WHERE id=?", (source,))
-                elif change == "delete":
-                    connection.execute("DELETE FROM items WHERE id=?", (source,))
-                else:
-                    invalidate_source(connection, session["id"], reason=change,
-                        run_id=run["id"],
-                        after_ordinal=-1 if change == "rewind" else None)
-            assert cancel.is_set()
+    service.edit(
+        request.model_copy(
+            update={
+                "operation_id": "user-edit",
+                "expected_revision": 1,
+                "summary": "用户独立修改后的规则",
+                "content": "用户独立修改后的规则",
+            }
+        )
+    )
+    historical = service.read(
+        MemoryReadRequest(
+            session_id=reader["id"],
+            path=request.path,
+            revision=1,
+        ),
+        for_use=True,
+    )
+    if change == "session_delete":
+        from eidos_runtime.model.client import ModelResponse, ScriptedModel
+        from eidos_runtime.runtime.engine import RuntimeEngine
+
+        RuntimeEngine(
+            store, ScriptedModel([ModelResponse(text="完成")]), lambda _: None
+        ).run(run["id"], threading.Event())
+    legacy_epochs = {**historical.epochs, "session:" + session["id"]: 0}
+    service.track_tool(
+        "reader-run", "historical-read", legacy_epochs, {}, retrieval=True
+    )
+    with service.admit(legacy_epochs, threading.Event()) as cancel:
+        with store.database.transaction() as connection:
+            if change == "edit":
+                connection.execute(
+                    "UPDATE items SET content='来源已更正' WHERE id=?", (source,)
+                )
+            elif change == "delete":
+                connection.execute("DELETE FROM items WHERE id=?", (source,))
+            elif change == "session_delete":
+                store.delete_session(session["id"])
+            else:
+                invalidate_source(
+                    connection,
+                    session["id"],
+                    reason=change,
+                    run_id=run["id"],
+                    after_ordinal=-1 if change == "rewind" else None,
+                )
+        assert not cancel.is_set()
     service.cleanup()
-    assert store.connection.execute(
-        "SELECT revoked FROM memory_tool_reads WHERE item_id='historical-read'"
-    ).fetchone()[0] == 1
-    with pytest.raises(MemoryRejected):
-        service.read(MemoryReadRequest(session_id=reader["id"], path=request.path, revision=1))
-    assert service.read(MemoryReadRequest(
-        session_id=reader["id"], path=request.path,
-    )).content == "用户独立修改后的规则"
+    assert (
+        store.connection.execute(
+            "SELECT revoked FROM memory_tool_reads WHERE item_id='historical-read'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        service.read(
+            MemoryReadRequest(session_id=reader["id"], path=request.path, revision=1)
+        ).content
+        == request.content
+    )
+    assert (
+        service.read(
+            MemoryReadRequest(session_id=reader["id"], path=request.path)
+        ).content
+        == "用户独立修改后的规则"
+    )
 
 
 def test_deleted_automatic_note_cannot_be_relearned_from_its_old_source(
@@ -285,7 +323,7 @@ def test_deleted_automatic_note_cannot_be_relearned_from_its_old_source(
             content=None,
         )
     )
-    with pytest.raises(MemoryRejected, match="evidence_invalid"):
+    with pytest.raises(MemoryRejected, match="forgotten_source"):
         service.edit(
             request.model_copy(update={"operation_id": "learn-again"}), automatic=True
         )
@@ -304,8 +342,8 @@ def test_mode_change_during_preparation_rejects_publication(store, monkeypatch):
         return prepare(*arguments)
 
     monkeypatch.setattr(service.repository.files, "prepare", change_mode)
-    with pytest.raises(MemoryRejected, match="revision_conflict"):
-        service.edit(note())
+    with pytest.raises(MemoryRejected, match="automatic_disabled"):
+        service.edit(note(), automatic=True)
     assert not service.list(MemoryListRequest()).documents
 
 
@@ -340,7 +378,7 @@ def test_reset_failure_rolls_back_schema_and_version(tmp_path, monkeypatch):
         ).fetchone()
 
 
-def test_source_changes_while_preparing_files_are_rejected(
+def test_source_changes_while_preparing_files_do_not_block_saved_notes(
     store, tmp_path, monkeypatch
 ):
     session = store.create_session(str(tmp_path / "workspace"))
@@ -350,7 +388,6 @@ def test_source_changes_while_preparing_files_are_rejected(
     ).fetchone()[0]
     service = store.database.memory
     request = note(session_id=session["id"], scope="current", source_item_ids=[source])
-    revisions = service.validate_edit(request, automatic=True)
     prepare = service.repository.files.prepare
 
     def edit_source(*args):
@@ -361,9 +398,8 @@ def test_source_changes_while_preparing_files_are_rejected(
         return prepare(*args)
 
     monkeypatch.setattr(service.repository.files, "prepare", edit_source)
-    with pytest.raises(MemoryRejected, match="source_changed"):
-        service.edit(request, automatic=True, source_revisions=revisions)
-    assert not service.list(MemoryListRequest()).documents
+    service.edit(request, automatic=True)
+    assert service.list(MemoryListRequest(session_id=session["id"])).documents
 
 
 def test_forget_revokes_requests_and_removes_bodies(store):
@@ -391,18 +427,32 @@ def test_forget_revokes_requests_and_removes_bodies(store):
 def test_scope_modes_control_memory_access(store, tmp_path):
     session = store.create_session(str(tmp_path / "workspace"))
     service = store.database.memory
-    service.policy(MemoryPolicyRequest(session_id=session["id"], scope="current", mode="read"))
+    service.policy(
+        MemoryPolicyRequest(session_id=session["id"], scope="current", mode="read")
+    )
     assert service.access(session["id"]).read_enabled
-    assert not service.access(session["id"]).generate_enabled
+    # Global auto memory remains available while the project is read-only.
+    assert service.access(session["id"]).generate_enabled
     service.edit(note(session_id=session["id"]))
     for scope in ("current", "global"):
-        service.policy(MemoryPolicyRequest(session_id=session["id"], scope=scope, mode="off"))
+        service.policy(
+            MemoryPolicyRequest(session_id=session["id"], scope=scope, mode="off")
+        )
     assert not service.access(session["id"]).read_enabled
     with pytest.raises(MemoryRejected, match="read_disabled"):
-        service.read(MemoryReadRequest(session_id=session["id"], scope="global", path=note().path), for_use=True)
+        service.read(
+            MemoryReadRequest(
+                session_id=session["id"], scope="global", path=note().path
+            ),
+            for_use=True,
+        )
     # Explicit user editing remains available even when model use is disabled.
-    service.edit(note(session_id=session["id"], operation_id="explicit", path="user_note.md"))
-    service.policy(MemoryPolicyRequest(session_id=session["id"], scope="current", mode="auto"))
+    service.edit(
+        note(session_id=session["id"], operation_id="explicit", path="user_note.md")
+    )
+    service.policy(
+        MemoryPolicyRequest(session_id=session["id"], scope="current", mode="auto")
+    )
     assert service.access(session["id"]).generate_enabled
 
 

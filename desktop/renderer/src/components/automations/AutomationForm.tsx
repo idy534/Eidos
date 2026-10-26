@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { Automation, AutomationDesktopRequest } from "../../../../shared/automation.js";
 import type { ApprovalMode, ModelOption, ModelReasoningSelection, Project, Session } from "../../contracts.js";
+import type { ToastType } from "../ToastContainer.js";
 import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
-import { FieldError } from "../FieldError.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { userFacingError } from "../../session-state.js";
 
@@ -26,9 +26,10 @@ interface Props {
   busy: boolean;
   onSave: (request: AutomationDesktopRequest, confirmation?: "full-access-v1") => Promise<void>;
   onCancel?: (() => void) | undefined;
+  onShowToast?: ((message: string, type?: ToastType) => void) | undefined;
 }
 
-export function AutomationForm({ task, initialValues, projects, sessions, models, currentSessionId, currentProjectId, busy, onSave, onCancel }: Props) {
+export function AutomationForm({ task, initialValues, projects, sessions, models, currentSessionId, currentProjectId, busy, onSave, onCancel, onShowToast }: Props) {
   const current = sessions.find((session) => session.id === currentSessionId);
   const [name, setName] = useState(task?.name ?? initialValues?.name ?? "");
   const [prompt, setPrompt] = useState(task?.prompt ?? initialValues?.prompt ?? "");
@@ -48,7 +49,6 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
   const [fullAccessConfirmed, setFullAccessConfirmed] = useState(false);
   const [status, setStatus] = useState<"ACTIVE" | "PAUSED">(task?.status ?? "ACTIVE");
   const [preview, setPreview] = useState<string[]>([]);
-  const [previewError, setPreviewError] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const schedule = () => kind === "cron"
     ? { expression, timezone }
@@ -59,8 +59,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (showFullAccessDialog) return;
-    setPreviewError("");
-    if (!modelId) { setPreviewError("请选择模型。"); return; }
+    if (!modelId) { onShowToast?.("请选择模型。", "error"); return; }
     try {
       const selectedModel = { modelId, ...(reasoning ? { reasoningSelection: reasoning } : {}) };
       const execution = { executionMode, ...(baseRef && executionMode === "worktree" ? { baseRef } : {}) };
@@ -80,19 +79,19 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
         if ((target === "session" && (!existingTarget || task.target.kind !== "existing_session"))
           || (target === "new" && (task.target.kind !== "new_session" || (task.target.projectId ?? "") !== projectId
             || task.target.execution?.executionMode !== executionMode || (task.target.execution?.baseRef ?? "") !== baseRef))) changes.target = binding;
-        if (!Object.keys(changes).length) { setPreviewError("配置没有变化。"); return; }
+        if (!Object.keys(changes).length) { onShowToast?.("配置没有变化。", "info"); return; }
         await save({ mode: "update", id: task.id, expectedRevision: task.revision, changes });
       } else {
         await save({ mode: "create", kind, name, prompt, schedule: schedule(), status, model: selectedModel, approvalMode, ...binding });
       }
-    } catch (error) { setPreviewError(error instanceof RangeError ? "请选择有效的执行时间。" : userFacingError(error)); }
+    } catch (error) { onShowToast?.(error instanceof RangeError ? "请选择有效的执行时间。" : userFacingError(error), "error"); }
   };
   const showPreview = async () => {
-    setPreviewing(true); setPreviewError("");
+    setPreviewing(true);
     try {
       const result = await window.eidosRuntime.automation({ command: { mode: "preview", kind, schedule: schedule() } });
       setPreview(result.nextRuns ?? []);
-    } catch (error) { setPreviewError(error instanceof RangeError ? "请选择有效的执行时间。" : userFacingError(error)); }
+    } catch (error) { onShowToast?.(error instanceof RangeError ? "请选择有效的执行时间。" : userFacingError(error), "error"); }
     finally { setPreviewing(false); }
   };
   return <form className="automation-form" onSubmit={(event) => void submit(event)}>
@@ -150,7 +149,6 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
           <label>状态<select value={status} onChange={(event) => setStatus(event.target.value as "ACTIVE" | "PAUSED")}><option value="ACTIVE">启用</option><option value="PAUSED">暂停</option></select></label></div>
       </div>
 
-      <FieldError error={previewError} />
       <div className="automation-form-actions">
         <Button type="submit" variant="primary" disabled={busy}>{busy ? "正在保存…" : "保存任务"}</Button>
         {onCancel && (

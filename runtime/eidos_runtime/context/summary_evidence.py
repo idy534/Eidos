@@ -22,7 +22,7 @@ from eidos_runtime.domain.tool_output import RECOVERABLE_RESULT_TOOLS
 def source_text(item: ContextItemFact) -> str:
     if item.provider_call_id is None:
         return item.content or ""
-    raw = model_result_json(item.model_result_json or item.result_json or "{}")
+    raw = model_result_json(item.model_result_json or item.result_json or "{}", tool_name=item.tool_name)
     try:
         result: JsonValue = json.loads(raw)
     except ValueError:

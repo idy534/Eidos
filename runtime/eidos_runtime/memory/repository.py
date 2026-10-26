@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 import uuid
@@ -8,11 +7,10 @@ import uuid
 from rapidfuzz.fuzz import WRatio
 
 from eidos_runtime.db.database import Database
-from eidos_runtime.memory.contracts import MemoryDocument, MemoryEvidence, MemoryScope
+from eidos_runtime.memory.contracts import GLOBAL_SCOPE_ID, MemoryDocument, MemoryEvidence, MemoryScope
 from eidos_runtime.memory.publication import MemoryFiles
 
 logger = logging.getLogger("eidos.runtime.memory")
-GLOBAL_SCOPE_ID = "00000000-0000-4000-8000-000000000001"
 
 
 class MemoryRejected(ValueError):
@@ -125,48 +123,38 @@ class MemoryRepository:
         if not item_ids:
             return []
         if not session_id:
-            raise MemoryRejected("memory_evidence_session_required")
-        after = connection.execute(
-            "SELECT enabled_after FROM memory_scopes WHERE id=?", (scope_id,)
-        ).fetchone()[0]
+            return []
         values = []
         for item_id in dict.fromkeys(item_ids):
             row = connection.execute(
-                "SELECT i.*,v.item_revision,v.eligible,s.revision AS source_revision,s.deleted FROM items i JOIN memory_source_items v ON v.item_id=i.id JOIN memory_sources s ON s.session_id=i.session_id WHERE i.id=? AND i.session_id=? AND NOT EXISTS(SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=i.id) AND NOT EXISTS(SELECT 1 FROM run_revisions WHERE source_run_id=i.run_id)",
-                (item_id, session_id, scope_id),
+                "SELECT i.*,v.item_revision,v.eligible,s.revision AS source_revision,s.deleted FROM items i JOIN memory_source_items v ON v.item_id=i.id JOIN memory_sources s ON s.session_id=i.session_id WHERE i.id=? AND NOT EXISTS(SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=i.id)",
+                (item_id, scope_id),
             ).fetchone()
             if (
                 row is None
                 or not row["eligible"]
                 or row["deleted"]
-                or row["status"] != "completed"
+                or row["status"] not in {"completed", "failed"}
                 or row["incomplete"]
             ):
-                raise MemoryRejected("memory_evidence_invalid")
-            if automatic and row["created_at"] < after:
-                raise MemoryRejected("memory_evidence_before_enablement")
+                continue
             if row["kind"] == "user_message":
                 evidence_class = "explicit_user"
             else:
                 tool = connection.execute(
-                    "SELECT tool_name,result_json FROM tool_calls WHERE item_id=? AND status='completed'",
+                    "SELECT tool_name FROM tool_calls WHERE item_id=? AND status IN ('completed','failed')",
                     (item_id,),
                 ).fetchone()
-                try:
-                    result = json.loads(tool["result_json"]) if tool else {}
-                except (ValueError, TypeError):
-                    result = {}
                 if (
                     not tool
                     or tool["tool_name"].startswith("memory_")
-                    or result.get("outcome") != "success"
                 ):
-                    raise MemoryRejected("memory_verified_tool_evidence_required")
+                    continue
                 evidence_class = "observed_verified"
             values.append(
                 MemoryEvidence(
                     item_id=item_id,
-                    session_id=session_id,
+                    session_id=row["session_id"],
                     run_id=row["run_id"],
                     item_revision=row["item_revision"],
                     source_revision=row["source_revision"],
@@ -204,21 +192,6 @@ class MemoryRepository:
                 (row["id"], revision),
             )
         ]
-        if not saved["user_owned"]:
-            if not evidence:
-                raise MemoryRejected("memory_evidence_required")
-            for value in evidence:
-                source = connection.execute(
-                    "SELECT v.item_revision,v.eligible,s.deleted FROM memory_source_items v JOIN memory_sources s ON s.session_id=v.session_id WHERE v.item_id=? AND NOT EXISTS(SELECT 1 FROM memory_suppressions WHERE scope_id=? AND item_id=v.item_id)",
-                    (value.item_id, row["scope_id"]),
-                ).fetchone()
-                if (
-                    source is None
-                    or source[0] != value.item_revision
-                    or not source[1]
-                    or source[2]
-                ):
-                    raise MemoryRejected("memory_evidence_revoked")
         try:
             expected = saved["file_size"], saved["file_mtime_ns"]
             if self.files.signature(saved["file_ref"]) != expected:
@@ -242,6 +215,7 @@ class MemoryRepository:
             summary=saved["summary"],
             kind=saved["kind"],
             user_owned=bool(saved["user_owned"]),
+            archived=bool(row["archived"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             evidence=evidence,
@@ -254,12 +228,14 @@ class MemoryRepository:
         query: str,
         cursor: int,
         limit: int,
+        *, include_archived: bool = False,
     ) -> tuple[list[MemoryDocument], int | None, bool]:
         if not scope_ids:
             return [], None, False
         placeholders = ",".join("?" for _ in scope_ids)
         ids: list[str] | None = None
         limited = False
+        visible = "document_id IN (SELECT id FROM memory_documents WHERE status='active' AND (? OR archived=0))"
         if query.strip():
             terms = " OR ".join(
                 '"' + word.replace('"', '""') + '"' for word in query.split()
@@ -272,8 +248,8 @@ class MemoryRepository:
             ranked: dict[str, float] = {}
             for table in tables:
                 rows = connection.execute(
-                    f"SELECT document_id,bm25({table}) AS rank FROM {table} WHERE {table} MATCH ? AND scope_id IN ({placeholders}) ORDER BY rank LIMIT 500",
-                    (terms, *scope_ids),
+                    f"SELECT document_id,bm25({table}) AS rank FROM {table} WHERE {table} MATCH ? AND scope_id IN ({placeholders}) AND {visible} ORDER BY rank LIMIT 500",
+                    (terms, *scope_ids, include_archived),
                 ).fetchall()
                 limited |= len(rows) == 500
                 for rank, value in enumerate(rows):
@@ -285,8 +261,8 @@ class MemoryRepository:
                 query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             )
             fallback = connection.execute(
-                f"SELECT document_id,path,title FROM memory_fts_word WHERE scope_id IN ({placeholders}) AND (path LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') LIMIT 500",
-                (*scope_ids, *([f"%{escaped}%"] * 4)),
+                f"SELECT document_id,path,title FROM memory_fts_word WHERE scope_id IN ({placeholders}) AND {visible} AND (path LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') LIMIT 500",
+                (*scope_ids, include_archived, *([f"%{escaped}%"] * 4)),
             ).fetchall()
             limited |= len(fallback) == 500
             for value in fallback:
@@ -306,8 +282,8 @@ class MemoryRepository:
             ]
         else:
             rows = connection.execute(
-                f"SELECT * FROM memory_documents WHERE status='active' AND scope_id IN ({placeholders}) ORDER BY path,id LIMIT ? OFFSET ?",
-                (*scope_ids, limit + 1, cursor),
+                f"SELECT * FROM memory_documents WHERE status='active' AND (? OR archived=0) AND scope_id IN ({placeholders}) ORDER BY path,id LIMIT ? OFFSET ?",
+                (include_archived, *scope_ids, limit + 1, cursor),
             ).fetchall()
         documents = []
         for row in rows[:limit]:

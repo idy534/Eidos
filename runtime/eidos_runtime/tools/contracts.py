@@ -32,6 +32,7 @@ from eidos_runtime.file_limits import (
 )
 from eidos_runtime.extensions.skill_manifest import skill_document
 from eidos_runtime.model.context_projection import without_verification_metadata
+from eidos_runtime.memory.tool_projection import MEMORY_TOOL_NAMES, project_memory_tool_result
 
 from eidos_runtime.sandbox.permissions import (
     AdditionalPermissionProfile,
@@ -1112,6 +1113,7 @@ SKILL_CHANGE_PROJECTOR = VersionedToolResultProjector("skill_change")
 TOOL_SEARCH_PROJECTOR = VersionedToolResultProjector("tool_search")
 VIEW_IMAGE_PROJECTOR = VersionedToolResultProjector("view_image")
 MCP_PROJECTOR = VersionedToolResultProjector("mcp")
+MEMORY_PROJECTOR = VersionedToolResultProjector("memory")
 GENERIC_PROJECTOR = VersionedToolResultProjector("generic")
 
 PROJECTORS: dict[str, VersionedToolResultProjector] = {
@@ -1129,6 +1131,7 @@ PROJECTORS: dict[str, VersionedToolResultProjector] = {
         TOOL_SEARCH_PROJECTOR,
         VIEW_IMAGE_PROJECTOR,
         MCP_PROJECTOR,
+        MEMORY_PROJECTOR,
         GENERIC_PROJECTOR,
     )
 }
@@ -1192,7 +1195,9 @@ def _project_tool_result(
     safe_data = dict(data) if isinstance(data, dict) else {}
     model_data = without_verification_metadata(safe_data)
     assert isinstance(model_data, dict)
-    if tool_name in {"run_shell", "write_stdin"}:
+    if tool_name in MEMORY_TOOL_NAMES:
+        model_result = project_memory_tool_result(tool_name, canonical_result, max_bytes=_MODEL_TOTAL_BYTES)
+    elif tool_name in {"run_shell", "write_stdin"}:
         (
             projected,
             model_projection_truncated,

@@ -75,24 +75,26 @@ MEMORY_LEARNING_INSTRUCTIONS = (
     "Retain information only when its reuse can improve future related work or spare the user repeated instructions or corrections. "
     "An explicit statement of an enduring way of working is sufficient; repetition is not required. "
     "Keep each note focused on a reusable topic with its expressed scope, conditions and evidence. "
-    "Write only new or corrected facts supported by original sources. Existing memory is for matching and use, not evidence to copy into a new record. "
+    "Use user statements and observed results to maintain notes; existing notes can be merged and corrected. "
     "Distinguish supported facts and adopted decisions from proposals and assumptions, regardless of the source Run mode. "
     "Do not turn a one-task request, hypothetical or third-party statement into an enduring user preference. "
     "Skip temporary, generic, duplicate or unsupported information. Do not save uncertain claims; clarify them in the conversation when needed."
 )
 
 MEMORY_AUTOMATIC_INSTRUCTIONS = (
-    "With automatic memory enabled, use memory_edit(scope=current) during this Run to save clear reusable "
+    "With automatic memory enabled for a scope, use memory_edit during this Run to save clear reusable "
     "user preferences, feedback, project decisions and references immediately as Markdown notes. "
-    "Read existing notes before updating; keep their conditions and a short useful summary. "
+    "Use global for personal preferences and current for project details, respecting each scope's mode. "
+    "Read existing notes before updating. You may update user-written notes and archive stale or duplicate notes; retain their useful conditions. "
+    "Runtime carries source IDs and edit revisions, and supplies omitted metadata. Never invent internal IDs. "
     "Do not save assumptions, temporary progress, duplicated project instructions or facts readily derived from code. "
     + MEMORY_LEARNING_INSTRUCTIONS
 )
 
 MEMORY_EXPLICIT_WRITE_INSTRUCTIONS = (
-    "Use memory_edit(userRequested=true) for an explicit user save, correction or deletion request. "
+    "Use memory_edit for an explicit user save or correction request. When automatic memory is disabled, use it only for an explicit user request and follow the Run's approval flow. "
     "An explicit instruction about future behavior is a save request; the user need not separately ask you to remember it. "
-    "Reference original source Item IDs, preserve scope, and report the successful tool result. "
+    "Preserve scope and report the successful tool result. Tool deletion archives with recoverable history; permanent forgetting is available in Memory settings. "
     "MEMORY.md is the index; read linked notes with pagination when relevant. Never store secrets or unverified outcomes."
 )
 

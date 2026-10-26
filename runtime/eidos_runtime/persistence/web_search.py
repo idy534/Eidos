@@ -92,6 +92,7 @@ class WebSearchRepository(Repository):
             if reference in {
                 current.credentials.deepseek,
                 current.credentials.langsearch,
+                current.credentials.doubao,
             }:
                 return True
             return (

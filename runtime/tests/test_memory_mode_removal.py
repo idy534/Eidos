@@ -17,7 +17,6 @@ from eidos_runtime.memory.contracts import (
     MemoryReadRequest,
     MemoryState,
 )
-from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.model.client import ModelResponse, ScriptedModel
 from eidos_runtime.runtime.engine import RuntimeEngine
 
@@ -58,9 +57,11 @@ def test_v41_upgrade_removes_mode_preserves_notes_and_keeps_old_sources_revoked(
         ),
         for_use=True,
     )
+    legacy_epochs = {**before.epochs, "session:" + session["id"]: 0}
     store.close()
     with sqlite3.connect(directory / "state.sqlite") as connection:
-        # v41 differs only by the removed column and schema version.
+        # Recreate the actual v41 columns before running all later migrations.
+        connection.execute("ALTER TABLE memory_documents DROP COLUMN archived")
         connection.execute(
             "ALTER TABLE memory_sources ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0"
         )
@@ -90,7 +91,7 @@ def test_v41_upgrade_removes_mode_preserves_notes_and_keeps_old_sources_revoked(
         service = reopened.database.memory
         assert service.access(session["id"]).read_enabled
         assert service.access(session["id"]).generate_enabled
-        assert not service.valid_epochs(reopened.connection, before.epochs)
+        assert not service.valid_epochs(reopened.connection, legacy_epochs)
         assert (
             service.read(MemoryReadRequest(scope="global", path="user_note.md")).content
             == before.content
@@ -117,13 +118,24 @@ def test_v41_upgrade_removes_mode_preserves_notes_and_keeps_old_sources_revoked(
             content="已有规则",
             source_item_ids=[source_ids[0]],
         )
-        with pytest.raises(MemoryRejected, match="evidence_invalid"):
-            service.edit(request, automatic=True)
+        saved = service.edit(request, automatic=True)
+        assert (
+            reopened.connection.execute(
+                "SELECT count(*) FROM memory_evidence WHERE document_id=?",
+                (saved.document_id,),
+            ).fetchone()[0]
+            == 0
+        )
         run, _ = reopened.create_run(session["id"], "以后遵循新的工作约定")
         fresh = reopened.get_user_item(run["id"])["id"]
         service.edit(
             request.model_copy(
-                update={"operation_id": "new-source", "source_item_ids": [fresh]}
+                update={
+                    "operation_id": "new-source",
+                    "source_item_ids": [fresh],
+                    "expected_revision": 1,
+                    "content": "新的工作约定",
+                }
             ),
             automatic=True,
         )
@@ -132,7 +144,7 @@ def test_v41_upgrade_removes_mode_preserves_notes_and_keeps_old_sources_revoked(
                 MemoryReadRequest(session_id=session["id"], path="project_note.md"),
                 for_use=True,
             ).content
-            == request.content
+            == "新的工作约定"
         )
     finally:
         reopened.close()

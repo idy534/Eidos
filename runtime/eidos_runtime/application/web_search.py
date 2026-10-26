@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from eidos_runtime.application.errors import ApplicationError
 from eidos_runtime.domain.web_search import (
+    SEARCH_PROVIDERS,
     SearchCredentialRefs,
     StoredWebSearchSettings,
     WebSearchError,
@@ -25,7 +26,7 @@ class WebSearchApplication:
         settings = self.repository.read()
         states: dict[str, str] = {}
         values: dict[str, str] = {}
-        for provider in ("deepseek", "langsearch"):
+        for provider in SEARCH_PROVIDERS:
             reference = settings.credentials.get(provider)
             states[provider] = "missing"
             values[provider] = ""

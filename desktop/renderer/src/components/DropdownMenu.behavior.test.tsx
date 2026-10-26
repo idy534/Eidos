@@ -322,4 +322,42 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     const triggerBtn = screen.getByRole("button", { name: "更多操作" });
     expect(triggerBtn).toHaveAttribute("title", "更多操作");
   });
+
+  it("DropdownMenu renders item with submenu children, expands on hover and activates submenu item", async () => {
+    const user = userEvent.setup();
+    const childAction = vi.fn();
+    render(
+      <DropdownMenu
+        trigger="Menu"
+        items={[
+          {
+            key: "copy",
+            label: "复制",
+            children: [
+              { key: "copy-name", label: "复制名称", onClick: childAction },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    // Open dropdown
+    await user.click(screen.getByRole("button", { name: "Menu" }));
+    const copyItem = screen.getByRole("menuitem", { name: "复制" });
+    expect(copyItem).toHaveAttribute("aria-haspopup", "menu");
+    expect(copyItem).toHaveAttribute("aria-expanded", "false");
+
+    // Hover copy item
+    fireEvent.pointerEnter(copyItem);
+    expect(copyItem).toHaveAttribute("aria-expanded", "true");
+    expect(copyItem).toHaveClass("is-submenu-open");
+
+    const childItem = screen.getByRole("menuitem", { name: "复制名称" });
+    expect(childItem).toBeInTheDocument();
+
+    // Click child item
+    await user.click(childItem);
+    expect(childAction).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
 });

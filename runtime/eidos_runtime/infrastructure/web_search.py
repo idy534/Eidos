@@ -10,6 +10,7 @@ import httpx2 as httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from eidos_runtime.domain.web_search import (
+    DoubaoSearchOptions,
     LangSearchOptions,
     RunWebSearchSnapshot,
     SearchProvider,
@@ -19,6 +20,12 @@ from eidos_runtime.models import EidosFrozenStrictModel
 PROVIDER_HOSTS: dict[SearchProvider, str] = {
     "deepseek": "api.deepseek.com",
     "langsearch": "api.langsearch.com",
+    "doubao": "open.feedcoopapi.com",
+}
+PROVIDER_URLS: dict[SearchProvider, str] = {
+    "deepseek": "https://api.deepseek.com/v1/tools/search",
+    "langsearch": "https://api.langsearch.com/v1/web-search",
+    "doubao": "https://open.feedcoopapi.com/search_api/web_search",
 }
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -83,10 +90,64 @@ class _LangResponse(BaseModel):
     usage: SearchUsage | None = None
 
 
+class _DoubaoHit(BaseModel):
+    Title: str = ""
+    Url: str | None = None
+    Summary: str | None = None
+    Snippet: str | None = None
+    Content: str | None = None
+    PublishTime: str | None = None
+
+
+class _DoubaoError(BaseModel):
+    Code: str | int
+    CodeN: int | None = None
+
+
+class _DoubaoMetadata(BaseModel):
+    Error: _DoubaoError | None = None
+
+
+class _DoubaoResult(BaseModel):
+    ResultCount: int = Field(ge=0)
+    WebResults: list[_DoubaoHit] | None = Field(default=None, max_length=50)
+
+
+class _DoubaoResponse(BaseModel):
+    ResponseMetadata: _DoubaoMetadata
+    Result: _DoubaoResult | None = None
+
+
 def request_payload(
     snapshot: RunWebSearchSnapshot, query: str, count: int
 ) -> dict[str, object]:
     options = snapshot.config.options(snapshot.provider)
+    if snapshot.provider == "doubao":
+        assert isinstance(options, DoubaoSearchOptions)
+        filters: dict[str, object] = {"NeedUrl": True}
+        if options.freshness != "noLimit":
+            freshness = options.freshness
+            filters["TimeRange"] = (
+                freshness[0].upper() + freshness[1:]
+                if freshness.startswith("one")
+                else freshness
+                if ".." in freshness
+                else f"{freshness}..{freshness}"
+            )
+        if options.include_domains:
+            filters["Sites"] = "|".join(options.include_domains)
+        if options.exclude_domains:
+            filters["BlockHosts"] = "|".join(options.exclude_domains)
+        # NeedContent filters out pages without full text. It is not the
+        # include_page_content switch, which only controls local projection.
+        return {
+            "Query": query,
+            "SearchType": "web",
+            "Count": count,
+            "Filter": filters,
+            "QueryControl": {"QueryRewrite": False},
+            "ContentFormats": "text",
+        }
     body: dict[str, object] = {"query": query, "count": count}
     if snapshot.provider == "deepseek":
         body["need_content"] = options.include_page_content
@@ -126,6 +187,30 @@ def _status_error(status: int) -> SearchFailure:
     return SearchFailure(code, message, sent=True)
 
 
+def _doubao_failure(error: _DoubaoError, status: int) -> SearchFailure:
+    code = str(error.CodeN if error.CodeN is not None else error.Code)
+    if code == "10401":
+        return _status_error(401)
+    if code in {"10402", "10403", "100013"}:
+        return _status_error(403)
+    if code == "700429":
+        return _status_error(429)
+    access_messages = {
+        "10406": "豆包搜索免费额度已用尽。请检查是否已开通付费调用。",
+        "10408": "豆包搜索尚未开通付费服务。请检查服务开通状态。",
+        "10409": "豆包搜索当前套餐 Key 不支持该搜索类型。请检查 API Key 类型。",
+        "10410": "豆包搜索没有可用订阅套餐。请检查套餐是否开通或已到期。",
+        "10412": "豆包搜索订阅套餐剩余额度不足。请检查套餐额度或更换 API Key。",
+    }
+    if code in access_messages:
+        return SearchFailure(
+            "web_search_access_denied",
+            access_messages[code],
+            sent=True,
+        )
+    return _status_error(503 if code == "10500" else status if status != 200 else 400)
+
+
 async def search(
     snapshot: RunWebSearchSnapshot,
     key: str,
@@ -135,11 +220,7 @@ async def search(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> SearchPage:
     options = snapshot.config.options(snapshot.provider)
-    url = (
-        "https://api.deepseek.com/v1/tools/search"
-        if snapshot.provider == "deepseek"
-        else "https://api.langsearch.com/v1/web-search"
-    )
+    url = PROVIDER_URLS[snapshot.provider]
     try:
         with anyio.fail_after(options.timeout_seconds):
             async with httpx.AsyncClient(
@@ -154,7 +235,8 @@ async def search(
                     headers={"Authorization": "Bearer " + key},
                     json=request_payload(snapshot, query, count),
                 ) as response:
-                    if response.status_code != 200:
+                    status = response.status_code
+                    if status != 200 and snapshot.provider != "doubao":
                         raise _status_error(response.status_code)
                     raw = bytearray()
                     async for chunk in response.aiter_bytes():
@@ -167,6 +249,33 @@ async def search(
                         raw.extend(chunk)
         if snapshot.provider == "deepseek":
             hits = _DeepSeekResponse.model_validate_json(raw).results
+            usage = None
+        elif snapshot.provider == "doubao":
+            try:
+                doubao = _DoubaoResponse.model_validate_json(raw)
+            except ValidationError:
+                if status != 200:
+                    raise _status_error(status) from None
+                raise
+            if doubao.ResponseMetadata.Error is not None:
+                raise _doubao_failure(doubao.ResponseMetadata.Error, status)
+            if status != 200:
+                raise _status_error(status)
+            if doubao.Result is None:
+                raise ValueError("missing search data")
+            if doubao.Result.WebResults is None and doubao.Result.ResultCount:
+                raise ValueError("missing web results")
+            hits = [
+                _Hit(
+                    title=hit.Title,
+                    url=hit.Url or "",
+                    summary=hit.Summary,
+                    snippet=hit.Snippet,
+                    content=hit.Content,
+                    date=hit.PublishTime,
+                )
+                for hit in doubao.Result.WebResults or []
+            ]
             usage = None
         else:
             parsed = _LangResponse.model_validate_json(raw)

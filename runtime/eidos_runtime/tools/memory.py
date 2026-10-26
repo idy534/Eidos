@@ -6,21 +6,26 @@ import logging
 import threading
 from typing import ClassVar, Literal, TYPE_CHECKING
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.memory.contracts import (
     MemoryActionResult,
     MemoryDocument,
-    MemoryEdit,
+    MemoryKind,
     MemoryEditRequest,
     MemoryListRequest,
     MemoryReadRequest,
     MemoryReadResult,
+    validate_path,
 )
 from eidos_runtime.memory.repository import MemoryRejected
 from eidos_runtime.models import EidosFrozenStrictModel
 from eidos_runtime.runtime.errors import tool_result
-from eidos_runtime.tools.contracts import StrictToolModel, result_model
+from eidos_runtime.tools.contracts import (
+    MEMORY_PROJECTOR,
+    StrictToolModel,
+    result_model,
+)
 from eidos_runtime.tools.registry import (
     AdapterToolRuntime,
     ToolProvenance,
@@ -37,10 +42,11 @@ logger = logging.getLogger("eidos.runtime.memory")
 
 
 class MemorySearch(EidosFrozenStrictModel):
-    query: str = Field(min_length=1, max_length=512)
+    query: str = Field(default="", max_length=512)
     scope: Literal["current", "global", "allowed"] = "allowed"
     cursor: int = Field(default=0, ge=0)
     limit: int = Field(default=8, ge=1, le=16)
+    include_archived: bool = False
 
 
 class MemoryRead(EidosFrozenStrictModel):
@@ -57,11 +63,25 @@ class MemoryRead(EidosFrozenStrictModel):
     limit: int = Field(default=8192, ge=1, le=16384)
 
 
-class MemoryToolEdit(MemoryEdit):
-    user_requested: bool = Field(
-        default=False,
-        description="True only when the user explicitly asks to save, correct or delete this note; an enduring future-behavior instruction also counts. Delete requires this flag. Otherwise writes require automatic memory for the current scope.",
-    )
+class MemoryToolEdit(EidosFrozenStrictModel):
+    scope: Literal["current", "global"] = "current"
+    path: str = Field(min_length=1, max_length=200)
+    action: Literal["write", "delete"] = "write"
+    title: str = Field(default="", max_length=160)
+    summary: str = Field(default="", max_length=240)
+    kind: MemoryKind | None = None
+    content: str | None = Field(default=None, max_length=65536)
+
+    @field_validator("path")
+    @classmethod
+    def valid_path(cls, value: str) -> str:
+        return validate_path(value)
+
+    @model_validator(mode="after")
+    def valid_content(self):
+        if self.action == "write" and (not self.content or not self.content.strip()):
+            raise ValueError("memory_content_required")
+        return self
 
 
 class MemoryResultData(StrictToolModel):
@@ -133,29 +153,45 @@ class MemoryToolRuntime(AdapterToolRuntime):
                     epochs=epochs,
                 )
             else:
-                request = MemoryToolEdit.model_validate(call.arguments)
-                automatic = not request.user_requested
-                if request.action == "delete" and automatic:
-                    raise MemoryRejected("memory_explicit_request_required")
+                # A resumed Step can retain the former input schema. New calls
+                # cannot send these fields: their advertised schema forbids them.
+                request = MemoryToolEdit.model_validate(
+                    {
+                        key: value
+                        for key, value in call.arguments.items()
+                        if key
+                        not in {"sourceItemIds", "userRequested", "expectedRevision"}
+                    }
+                )
                 with service.database.transaction() as connection:
-                    user = connection.execute(
-                        "SELECT id FROM items WHERE run_id=? AND kind='user_message' AND status='completed' AND incomplete=0 ORDER BY creation_seq DESC LIMIT 1",
-                        (run_id,),
-                    ).fetchone()
-                    if user is None:
-                        raise MemoryRejected("memory_evidence_required")
-                    write = MemoryEditRequest(
-                        session_id=session_id,
-                        operation_id="memory-tool:" + str(item["id"]),
-                        **request.model_dump(
-                            exclude={"user_requested", "source_item_ids"}
-                        ),
-                        source_item_ids=request.source_item_ids or [user[0]],
-                    )
-                    source_revisions = service.validate_edit(write, automatic=automatic)
                     scope = service.repository.scopes(
                         connection, session_id, request.scope
                     )[0]
+                    automatic = (
+                        scope.mode == "auto"
+                        and call.arguments.get("userRequested") is not True
+                    )
+                    if "expectedRevision" in call.arguments:
+                        revision = call.arguments["expectedRevision"]
+                        row = service.repository.row(connection, scope.id, request.path)
+                        kind = (
+                            service.repository.document(connection, row)[0].kind
+                            if row
+                            else "feedback"
+                        )
+                    else:
+                        revision, kind = service.edit_base(
+                            run_id, scope.id, request.path
+                        )
+                    write = MemoryEditRequest(
+                        session_id=session_id,
+                        operation_id="memory-tool:" + str(item["id"]),
+                        **request.model_dump(exclude={"kind"}),
+                        kind=request.kind or kind,
+                        expected_revision=revision,
+                        source_item_ids=service.audit_sources(run_id),
+                    )
+                    service.validate_edit(write, automatic=automatic)
                     epochs = service.use_epochs(
                         connection, session_id, {scope.id: scope.privacy_epoch}
                     )
@@ -170,7 +206,7 @@ class MemoryToolRuntime(AdapterToolRuntime):
                     },
                     intent_preconditions={
                         "operationId": write.operation_id,
-                        "expectedRevision": request.expected_revision,
+                        "expectedRevision": write.expected_revision,
                     },
                     transition_reason="memory_control",
                 )
@@ -187,7 +223,7 @@ class MemoryToolRuntime(AdapterToolRuntime):
                 action = service.edit(
                     write,
                     automatic=automatic,
-                    source_revisions=source_revisions,
+                    archive=request.action == "delete",
                     cancel=cancel,
                     access_epochs=epochs,
                 )
@@ -210,6 +246,7 @@ class MemoryToolRuntime(AdapterToolRuntime):
                     "memory_saved": "Memory note saved.",
                     "memory_unchanged": "Memory note unchanged.",
                     "memory_deleted": "Memory note deleted.",
+                    "memory_archived": "Memory note archived. History is retained; read the path to restore it. Use Memory settings for permanent forgetting.",
                 }[data.action.code]
                 if data.action
                 else "Historical notes; apply their scope and verify changeable facts.",
@@ -234,9 +271,9 @@ class MemoryToolRuntime(AdapterToolRuntime):
             )
             messages = {
                 "memory_revision_conflict": "The note changed. Read its current version before preparing another edit.",
-                "memory_source_changed": "The original evidence changed before publication. Select current original sources.",
-                "memory_automatic_disabled": "Automatic writes are unavailable here. Use userRequested only for the user's explicit save or correction request.",
-                "memory_user_edit_protected": "The user owns this note. Change it only for an explicit user correction request.",
+                "memory_read_required": "Read this note with memory_read before updating or archiving it. Runtime carries its revision automatically.",
+                "memory_forgotten_source": "This source was explicitly forgotten. Continue without saving it again; new information needs a new user statement.",
+                "memory_automatic_disabled": "Automatic memory is disabled for this scope. Continue the task or ask the user to enable it in Memory settings.",
             }
             result = tool_result(
                 call.name,
@@ -255,6 +292,8 @@ class MemoryToolRuntime(AdapterToolRuntime):
 def memory_entries(
     *, child: bool = False, read_enabled: bool = True, write_enabled: bool = True
 ) -> tuple[ToolRegistryEntry, ...]:
+    if child:
+        return ()
     entries = []
     for name, description, model, effect in (
         (
@@ -265,13 +304,13 @@ def memory_entries(
         ),
         (
             "memory_search",
-            "Find relevant Markdown memory notes by topic or wording; page with nextCursor.",
+            "Find Markdown memory notes by wording, or omit query to list notes. Page with nextCursor. Set includeArchived to recover previously archived notes.",
             MemorySearch,
             "none",
         ),
         (
             "memory_edit",
-            "Immediately create, replace or delete a source-grounded Markdown note. Read before updating and supply expectedRevision (0 for new notes). Keep its conditions and a short useful summary; Runtime updates MEMORY.md. sourceItemIds refer to original user messages or successful ordinary tool results, never assistant or memory output.",
+            "Create or replace a Markdown memory note immediately. Read existing notes before updating; Runtime carries revision and source records. Omitted title, kind and summary are handled automatically. Delete archives a note with recoverable history; read its path and write to restore it. Runtime updates MEMORY.md. Use Memory settings for permanent forgetting.",
             MemoryToolEdit,
             "eidos_state",
         ),
@@ -294,7 +333,7 @@ def memory_entries(
         provenance = ToolProvenance(
             kind="builtin",
             sourceId="eidos.memory",
-            sourceVersion="2",
+            sourceVersion="3",
             contentHash=hashlib.sha256(spec.model_dump_json().encode()).hexdigest(),
         )
         adapter = MemoryAdapter()
@@ -306,6 +345,7 @@ def memory_entries(
                 model,
                 MemoryResultData,
                 runtime=MemoryToolRuntime(adapter, spec, provenance),
+                projector=MEMORY_PROJECTOR,
             )
         )
     return tuple(entries)

@@ -22,6 +22,7 @@ from eidos_runtime.domain.web_search import (
     RunWebSearchSnapshot,
     WebSearchConfig,
     LangSearchOptions,
+    DoubaoSearchOptions,
 )
 from eidos_runtime.infrastructure.secret_files import SecretFiles
 from eidos_runtime.extensions.plugins import PluginCatalog
@@ -38,7 +39,12 @@ from eidos_runtime.protocol.server import RuntimeServer
 from eidos_runtime.protocol.web_search import WebSearchSaveRequest
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncKernel
 from eidos_runtime.runtime.run_resources import RunResources
-from eidos_runtime.tools.web_search import DeepSeekSearchInput, WebSearchInput
+from eidos_runtime.tools.web_search import (
+    DeepSeekSearchInput,
+    DoubaoSearchInput,
+    WebSearchInput,
+    web_search_entry,
+)
 
 
 @pytest.fixture
@@ -117,18 +123,19 @@ def test_default_is_explicit_and_local_key_display_never_enters_sqlite(
         )
 
 
+@pytest.mark.parametrize("provider", ["langsearch", "doubao"])
 def test_cas_rotation_clear_and_child_inherit_freeze_in_one_transaction(
-    configured, tmp_path
+    configured, tmp_path, provider
 ):
     store, repo, secrets, app = configured
-    save(app)
+    save(app, provider)
     run, _ = store.create_run(session(store, tmp_path), "first")
     original = repo.snapshot(run["id"])
     queued, _ = store.enqueue_run(run["sessionId"], "queued")
     with pytest.raises(ApplicationError) as conflict:
         save(app, "deepseek", revision=0)
     assert conflict.value.code == "WEB_SEARCH_CONFIG_CONFLICT"
-    save(app, key="rotated-search-key")
+    save(app, provider, key="rotated-search-key")
     assert secrets.read(original.credential_ref) == "fixture-search-key"
     assert repo.snapshot(queued["id"]) == original
     new, _ = store.create_run(session(store, tmp_path), "new")
@@ -140,7 +147,7 @@ def test_cas_rotation_clear_and_child_inherit_freeze_in_one_transaction(
         WebSearchSaveRequest(
             expected_revision=2,
             config=app.read().config,
-            credential_changes=[{"provider": "langsearch", "action": "clear"}],
+            credential_changes=[{"provider": provider, "action": "clear"}],
         )
     )
     assert app.read().config.default_provider is None
@@ -239,7 +246,7 @@ def test_query_contract_and_payload_match_provider():
     }
 
 
-@pytest.mark.parametrize("provider", ["deepseek", "langsearch"])
+@pytest.mark.parametrize("provider", ["deepseek", "langsearch", "doubao"])
 def test_official_request_parse_order_nullable_dates_text_and_bounds(provider):
     requests = []
 
@@ -260,6 +267,22 @@ def test_official_request_parse_order_nullable_dates_text_and_bounds(provider):
         body = (
             {"results": hits}
             if provider == "deepseek"
+            else {
+                "ResponseMetadata": {},
+                "Result": {
+                    "ResultCount": len(hits),
+                    "WebResults": [
+                        {
+                            "Title": hit.get("title", ""),
+                            "Url": hit["url"],
+                            "Summary": hit.get("summary"),
+                            "Content": hit.get("content"),
+                        }
+                        for hit in hits
+                    ],
+                },
+            }
+            if provider == "doubao"
             else {
                 "code": 200,
                 "data": {"webPages": {"value": hits}},
@@ -291,6 +314,8 @@ def test_official_request_parse_order_nullable_dates_text_and_bounds(provider):
     assert str(requests[0].url) == (
         "https://api.deepseek.com/v1/tools/search"
         if provider == "deepseek"
+        else "https://open.feedcoopapi.com/search_api/web_search"
+        if provider == "doubao"
         else "https://api.langsearch.com/v1/web-search"
     )
 
@@ -305,7 +330,8 @@ def test_official_request_parse_order_nullable_dates_text_and_bounds(provider):
         (302, "web_search_request_failed"),
     ],
 )
-def test_http_failure_never_retries_or_follows_redirects(status, code):
+@pytest.mark.parametrize("provider", ["deepseek", "langsearch", "doubao"])
+def test_http_failure_never_retries_or_follows_redirects(status, code, provider):
     calls = []
 
     def handle(request):
@@ -318,7 +344,7 @@ def test_http_failure_never_retries_or_follows_redirects(status, code):
 
     async def run():
         return await search(
-            snapshot(), "key", "query", 5, transport=httpx.MockTransport(handle)
+            snapshot(provider), "key", "query", 5, transport=httpx.MockTransport(handle)
         )
 
     with pytest.raises(SearchFailure) as raised:
@@ -430,8 +456,9 @@ def wait_for(predicate, output):
 
 
 @pytest.mark.parametrize("mode", ["manual", "auto_review", "full_access"])
+@pytest.mark.parametrize("provider", ["langsearch", "doubao"])
 def test_real_runtime_search_needs_no_approval_but_keeps_intent_and_shell_network_boundary(
-    tmp_path, monkeypatch, mode
+    tmp_path, monkeypatch, mode, provider
 ):
     from eidos_runtime.infrastructure.web_search import SearchPage, SearchHit
 
@@ -453,10 +480,13 @@ def test_real_runtime_search_needs_no_approval_but_keeps_intent_and_shell_networ
         )
 
     monkeypatch.setattr("eidos_runtime.tools.web_search.search", fake)
+
     def unexpected_review(*_args, **_kwargs):
         pytest.fail("Configured web search must not request model review")
 
-    monkeypatch.setattr("eidos_runtime.runtime.approval.review_approval", unexpected_review)
+    monkeypatch.setattr(
+        "eidos_runtime.runtime.approval.review_approval", unexpected_review
+    )
     model = ScriptedModel(
         [
             ModelResponse(
@@ -464,13 +494,19 @@ def test_real_runtime_search_needs_no_approval_but_keeps_intent_and_shell_networ
                     ModelToolCall("search-call", "web_search", {"query": "query"}),
                 )
             ),
-            ModelResponse(tool_calls=(ModelToolCall("search-again", "web_search", {"query": "next query"}),)),
+            ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        "search-again", "web_search", {"query": "next query"}
+                    ),
+                )
+            ),
             ModelResponse(text="已完成。"),
         ]
     )
     server, output = start_server(tmp_path, model)
     try:
-        save(server._web_search_application())
+        save(server._web_search_application(), provider)
         configured_model = server.model_config.create(
             provider_id="deepseek",
             model_id="deepseek-v4-flash",
@@ -498,21 +534,29 @@ def test_real_runtime_search_needs_no_approval_but_keeps_intent_and_shell_networ
         )
         assert server.store.read_run(run_id)["status"] == "succeeded", output.getvalue()
         assert calls == [
-            ("langsearch", "fixture-search-key", "query", 5),
-            ("langsearch", "fixture-search-key", "next query", 5),
+            (provider, "fixture-search-key", "query", 5),
+            (provider, "fixture-search-key", "next query", 5),
         ]
-        assert server.store.connection.execute(
-            "SELECT count(*) FROM durable_intents"
-        ).fetchone()[0] == 2
-        assert server.store.connection.execute(
-            "SELECT count(*) FROM approvals"
-        ).fetchone()[0] == 0
+        assert (
+            server.store.connection.execute(
+                "SELECT count(*) FROM durable_intents"
+            ).fetchone()[0]
+            == 2
+        )
+        assert (
+            server.store.connection.execute(
+                "SELECT count(*) FROM approvals"
+            ).fetchone()[0]
+            == 0
+        )
         assert '"method": "item/requestApproval"' not in output.getvalue()
         assert server.store.run_permission_grants(run_id).network is None
         rows = server.store.connection.execute(
             "SELECT result_json FROM tool_calls WHERE tool_name='web_search'"
         ).fetchall()
-        assert len(rows) == 2 and all(json.loads(row[0])["outcome"] == "success" for row in rows)
+        assert len(rows) == 2 and all(
+            json.loads(row[0])["outcome"] == "success" for row in rows
+        )
         assert "fixture-search-key" not in output.getvalue()
         assert "fixture-search-key" not in json.dumps(model.contexts, default=str)
     finally:
@@ -632,22 +676,25 @@ def test_timeouts_and_connect_errors_are_reported_without_retry():
         assert raised.value.code == code and len(calls) == 1
 
 
+@pytest.mark.parametrize("provider", ["langsearch", "doubao"])
 def test_secret_cleanup_retains_queued_runs_and_removes_unreferenced_versions(
-    configured, tmp_path
+    configured, tmp_path, provider
 ):
     store, repo, secrets, app = configured
-    save(app)
+    save(app, provider)
     run, _ = store.create_run(session(store, tmp_path), "retain")
     original = repo.snapshot(run["id"])
     orphan = secrets.write("orphan")
-    save(app, key="replacement")
+    save(app, provider, key="replacement")
+    replacement = repo.read().credentials.get(provider)
+    assert secrets.read(replacement) == "replacement"
     assert not (secrets.directory / orphan).exists()
     assert secrets.read(original.credential_ref) == "fixture-search-key"
     with store.database.transaction() as transaction:
         transaction.execute(
             "UPDATE runs SET status='canceled' WHERE id=?", (run["id"],)
         )
-    save(app, key=None)
+    save(app, provider, key=None)
     assert not (secrets.directory / original.credential_ref).exists()
 
 
@@ -721,8 +768,9 @@ def test_failed_search_returns_to_model_without_provider_switch(tmp_path, monkey
 
 
 @pytest.mark.parametrize("mode", ["manual", "auto_review", "full_access"])
+@pytest.mark.parametrize("provider", ["langsearch", "doubao"])
 def test_cancel_cleans_owned_network_task_and_late_result_cannot_replace_cancellation(
-    tmp_path, monkeypatch, mode
+    tmp_path, monkeypatch, mode, provider
 ):
     from eidos_runtime.infrastructure.web_search import SearchPage
     import threading
@@ -751,7 +799,7 @@ def test_cancel_cleans_owned_network_task_and_late_result_cannot_replace_cancell
     )
     server, output = start_server(tmp_path, model)
     try:
-        save(server._web_search_application())
+        save(server._web_search_application(), provider)
         profile = server.model_config.create(
             provider_id="deepseek",
             model_id="deepseek-v4-flash",
@@ -766,7 +814,9 @@ def test_cancel_cleans_owned_network_task_and_late_result_cannot_replace_cancell
                 userInput="搜索",
                 modelId=profile.id,
                 approvalMode=mode,
-                fullAccessConfirmation="full-access-v1" if mode == "full_access" else None,
+                fullAccessConfirmation="full-access-v1"
+                if mode == "full_access"
+                else None,
             )
         )
         outcome.release_after_commit()
@@ -875,3 +925,222 @@ def test_large_source_metadata_and_escaped_content_fit_canonical_budget(monkeypa
     assert result["data"]["truncated"]
     assert len(json.dumps(result, ensure_ascii=False).encode()) <= 256 * 1024
     assert len(result["data"]["results"]) < 50
+
+
+def test_doubao_query_schema_filters_and_legacy_contract_hashes(tmp_path):
+    assert DoubaoSearchInput(query="搜" * 100).query
+    with pytest.raises(ValidationError):
+        DoubaoSearchInput(query="搜" * 101)
+    with pytest.raises(ValidationError):
+        DoubaoSearchOptions(exclude_domains=[f"site{i}.com" for i in range(6)])
+    with pytest.raises(ValidationError):
+        DoubaoSearchOptions(freshness="2026-02-31")
+    with pytest.raises(ValidationError):
+        DoubaoSearchOptions(
+            include_domains=["example.com"], exclude_domains=["EXAMPLE.COM"]
+        )
+    body = request_payload(
+        snapshot(
+            "doubao",
+            freshness="oneWeek",
+            includeDomains=["Example.com"],
+            excludeDomains=["spam.org"],
+            includePageContent=True,
+        ),
+        "查询",
+        5,
+    )
+    assert body == {
+        "Query": "查询",
+        "SearchType": "web",
+        "Count": 5,
+        "Filter": {
+            "NeedUrl": True,
+            "TimeRange": "OneWeek",
+            "Sites": "example.com",
+            "BlockHosts": "spam.org",
+        },
+        "QueryControl": {"QueryRewrite": False},
+        "ContentFormats": "text",
+    }
+    assert "TimeRange" not in request_payload(snapshot("doubao"), "查询", 5)["Filter"]
+    for freshness, expected in [
+        ("2026-10-01", "2026-10-01..2026-10-01"),
+        ("2026-10-01..2026-10-20", "2026-10-01..2026-10-20"),
+    ]:
+        assert (
+            request_payload(snapshot("doubao", freshness=freshness), "查询", 5)[
+                "Filter"
+            ]["TimeRange"]
+            == expected
+        )
+    secrets = SecretFiles(tmp_path / "secrets")
+    # Captured before adding Doubao. Existing pending Runs must keep these contracts.
+    for provider, expected in {
+        "deepseek": "89ac96b4be6cd34989613f64f750ed1f3f65cb4bcca7f67723ec24a7ca91f79c",
+        "langsearch": "dc324dc44c1edaf05e377acd0861013cb4a5741ca9ece76742eb0d259e7ad52c",
+    }.items():
+        assert (
+            web_search_entry(snapshot(provider), secrets).provenance.content_hash
+            == expected
+        )
+    entry = web_search_entry(snapshot("doubao"), secrets)
+    assert entry.spec.input_schema["properties"]["query"]["maxLength"] == 100
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        (10400, "web_search_request_failed"),
+        (10401, "web_search_auth_failed"),
+        (10402, "web_search_access_denied"),
+        (10403, "web_search_access_denied"),
+        (10406, "web_search_access_denied"),
+        (10408, "web_search_access_denied"),
+        (10409, "web_search_access_denied"),
+        (10410, "web_search_access_denied"),
+        (10412, "web_search_access_denied"),
+        (10500, "web_search_unavailable"),
+        (700429, "web_search_rate_limited"),
+        (99999, "web_search_request_failed"),
+    ],
+)
+@pytest.mark.parametrize("status", [200, 400])
+def test_doubao_business_errors_never_leak_or_retry(code, expected, status):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(
+            status,
+            json={
+                "ResponseMetadata": {
+                    "Error": {
+                        "Code": str(code),
+                        "CodeN": code,
+                        "Message": "fixture-secret",
+                    }
+                },
+                "Result": None,
+            },
+        )
+
+    async def run():
+        return await search(
+            snapshot("doubao"), "key", "查询", 5, transport=httpx.MockTransport(handle)
+        )
+
+    with pytest.raises(SearchFailure) as raised:
+        anyio.run(run)
+    assert raised.value.code == expected and raised.value.sent
+    assert "fixture-secret" not in raised.value.message and len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        (
+            {"ResponseMetadata": {}, "Result": {"ResultCount": 0, "WebResults": None}},
+            None,
+        ),
+        (
+            {"ResponseMetadata": {}, "Result": {"ResultCount": 0, "WebResults": []}},
+            None,
+        ),
+        ({"ResponseMetadata": {}, "Result": None}, "web_search_invalid_response"),
+        (
+            {"ResponseMetadata": {}, "Result": {"ResultCount": 1}},
+            "web_search_invalid_response",
+        ),
+        (
+            {
+                "ResponseMetadata": {},
+                "Result": {
+                    "ResultCount": 1,
+                    "WebResults": [{"Url": "file:///etc/passwd"}],
+                },
+            },
+            "web_search_invalid_response",
+        ),
+    ],
+)
+def test_doubao_empty_and_invalid_responses(body, expected):
+    async def run():
+        return await search(
+            snapshot("doubao"),
+            "key",
+            "查询",
+            5,
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body)),
+        )
+
+    if expected:
+        with pytest.raises(SearchFailure) as raised:
+            anyio.run(run)
+        assert raised.value.code == expected
+    else:
+        assert anyio.run(run).results == []
+
+
+@pytest.mark.parametrize(
+    "include_content,excerpt,kind",
+    [(False, "摘要[redacted]", "summary"), (True, "正文", "text")],
+)
+def test_doubao_prefers_summary_or_content_and_preserves_publish_time(
+    include_content, excerpt, kind
+):
+    body = {
+        "ResponseMetadata": {},
+        "Result": {
+            "ResultCount": 1,
+            "WebResults": [
+                {
+                    "Title": "标题",
+                    "Url": "https://example.com",
+                    "Snippet": "片段",
+                    "Summary": "摘要fixture-key",
+                    "Content": "正文",
+                    "PublishTime": "2026-10-26T10:00:00+08:00",
+                }
+            ],
+        },
+    }
+
+    async def run():
+        return await search(
+            snapshot("doubao", includePageContent=include_content),
+            "fixture-key",
+            "查询",
+            5,
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body)),
+        )
+
+    page = anyio.run(run)
+    assert page.results[0].excerpt == excerpt and page.results[0].content_kind == kind
+    assert page.results[0].published_at == "2026-10-26T10:00:00+08:00"
+    assert page.usage is None
+
+
+def test_all_three_credentials_save_without_cleanup_deleting_current_key(configured):
+    _, repo, secrets, app = configured
+    result = app.save(
+        WebSearchSaveRequest(
+            expected_revision=0,
+            config=WebSearchConfig(default_provider="doubao"),
+            credential_changes=[
+                {
+                    "provider": provider,
+                    "action": "set",
+                    "value": f"fixture-{provider}-key",
+                }
+                for provider in ("deepseek", "langsearch", "doubao")
+            ],
+        )
+    )
+    assert result.credential_values.doubao == "fixture-doubao-key"
+    assert "fixture-doubao-key" not in repr(result)
+    for provider in ("deepseek", "langsearch", "doubao"):
+        assert (
+            secrets.read(repo.read().credentials.get(provider))
+            == f"fixture-{provider}-key"
+        )

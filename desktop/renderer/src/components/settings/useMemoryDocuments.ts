@@ -24,7 +24,7 @@ export function useMemoryDocuments(sessionId: string | undefined, scope: MemoryS
       if (document.visibilityState === "hidden") return;
       setLoading(true); setError("");
       void window.eidosRuntime.memory("memory/list", {
-        sessionId: sessionId ?? null, scope, query, cursor,
+        sessionId: sessionId ?? null, scope, query, cursor, includeArchived: true,
       }).then((value) => { if (active) setState(value); })
         .catch(() => { if (active) setError("记忆无法读取，请重试。"); })
         .finally(() => { if (active) setLoading(false); });

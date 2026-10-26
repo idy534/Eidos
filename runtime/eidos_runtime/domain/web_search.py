@@ -9,7 +9,13 @@ from pydantic import Field, field_validator, model_validator
 
 from eidos_runtime.models import EidosFrozenStrictModel
 
-SearchProvider = Literal["deepseek", "langsearch"]
+SearchProvider = Literal["deepseek", "langsearch", "doubao"]
+SEARCH_PROVIDERS: tuple[SearchProvider, ...] = ("deepseek", "langsearch", "doubao")
+PROVIDER_NAMES: dict[SearchProvider, str] = {
+    "deepseek": "DeepSeek Search",
+    "langsearch": "LangSearch",
+    "doubao": "豆包搜索",
+}
 
 
 class WebSearchError(ValueError):
@@ -36,7 +42,7 @@ class DeepSeekSearchOptions(SearchOptions):
         return value
 
 
-class LangSearchOptions(SearchOptions):
+class FilteredSearchOptions(SearchOptions):
     freshness: str = Field(default="noLimit", max_length=22)
     include_domains: list[str] = Field(default_factory=list, max_length=20)
     exclude_domains: list[str] = Field(default_factory=list, max_length=20)
@@ -76,29 +82,45 @@ class LangSearchOptions(SearchOptions):
         return result
 
     @model_validator(mode="after")
-    def validate_domain_sets(self) -> LangSearchOptions:
+    def validate_domain_sets(self) -> FilteredSearchOptions:
         if set(self.include_domains) & set(self.exclude_domains):
             raise ValueError("domain lists overlap")
         return self
+
+
+class LangSearchOptions(FilteredSearchOptions):
+    pass
+
+
+class DoubaoSearchOptions(FilteredSearchOptions):
+    exclude_domains: list[str] = Field(default_factory=list, max_length=5)
 
 
 class WebSearchConfig(EidosFrozenStrictModel):
     default_provider: SearchProvider | None = None
     deepseek: DeepSeekSearchOptions = Field(default_factory=DeepSeekSearchOptions)
     langsearch: LangSearchOptions = Field(default_factory=LangSearchOptions)
+    doubao: DoubaoSearchOptions = Field(default_factory=DoubaoSearchOptions)
 
-    def options(
-        self, provider: SearchProvider
-    ) -> DeepSeekSearchOptions | LangSearchOptions:
-        return self.deepseek if provider == "deepseek" else self.langsearch
+    def options(self, provider: SearchProvider) -> SearchOptions:
+        return {
+            "deepseek": self.deepseek,
+            "langsearch": self.langsearch,
+            "doubao": self.doubao,
+        }[provider]
 
 
 class SearchCredentialRefs(EidosFrozenStrictModel):
     deepseek: str | None = None
     langsearch: str | None = None
+    doubao: str | None = None
 
     def get(self, provider: SearchProvider) -> str | None:
-        return self.deepseek if provider == "deepseek" else self.langsearch
+        return {
+            "deepseek": self.deepseek,
+            "langsearch": self.langsearch,
+            "doubao": self.doubao,
+        }[provider]
 
 
 class StoredWebSearchSettings(EidosFrozenStrictModel):

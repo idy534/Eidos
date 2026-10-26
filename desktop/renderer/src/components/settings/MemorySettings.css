@@ -253,6 +253,7 @@
 
 .memory-file-title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
@@ -278,7 +279,7 @@
   overflow: hidden;
 }
 
-.memory-file-pill {
+.memory-file .memory-file-pill {
   display: inline-flex;
   align-items: center;
   padding: 1px 5px;

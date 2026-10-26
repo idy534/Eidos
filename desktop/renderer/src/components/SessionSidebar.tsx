@@ -5,7 +5,7 @@ import type { ProjectSessionGroup, RuntimePresentation } from "../session-state.
 import { groupSessionsByProject, projectSidebarGroups, sidebarTargetKey, taskStatusPresentation } from "../session-state.js";
 import type { SidebarTarget } from "../../../shared/sidebar.js";
 import { ContextMenu } from "./DropdownMenu.js";
-import { FinderIcon, EditIcon, TrashIcon, PinIcon, AutomationsIcon } from "./MenuIcons.js";
+import { FinderIcon, EditIcon, TrashIcon, PinIcon, AutomationsIcon, CopyIcon } from "./MenuIcons.js";
 import { SearchIcon } from "./FindBar.js";
 import { EidosMark } from "./EidosMark.js";
 import { ForkIcon } from "./ForkIcon.js";
@@ -665,8 +665,38 @@ export function SessionSidebar({
               },
             },
             {
+              key: "copy",
+              label: "复制",
+              icon: <CopyIcon />,
+              children: [
+                {
+                  key: "copy-name",
+                  label: "复制名称",
+                  icon: <CopyIcon />,
+                  onClick: () => {
+                    const sessionName = contextMenu.session.title?.trim() || "新任务";
+                    if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+                      void navigator.clipboard.writeText(sessionName);
+                    }
+                  },
+                },
+                {
+                  key: "copy-workspace",
+                  label: "复制项目目录",
+                  icon: <CopyIcon />,
+                  onClick: () => {
+                    const workspacePath = contextMenu.session.project?.workspaceRoot || contextMenu.session.workspaceRoot || "";
+                    if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+                      void navigator.clipboard.writeText(workspacePath);
+                    }
+                  },
+                },
+              ],
+            },
+            {
               key: "rename",
               label: "编辑标题",
+              separator: true,
               icon: <EditIcon />,
               onClick: () => {
                 setContextMenu(undefined);

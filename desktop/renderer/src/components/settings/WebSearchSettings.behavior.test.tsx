@@ -357,3 +357,46 @@ it("debounces clearing a saved key without requiring blur", async () => {
     credentialChanges: [{ provider: "langsearch", action: "clear" }],
   })), { timeout: 2500 });
 });
+
+it("saves Doubao credentials, switches default, masks the key and clears the selected service", async () => {
+  const user = userEvent.setup();
+  const api = setup();
+  const input = await screen.findByLabelText("豆包搜索 API Key", { selector: "input" });
+  expect(input).toHaveAttribute("type", "password");
+  await user.type(input, "doubao-key{Enter}");
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenCalledWith(expect.objectContaining({
+    credentialChanges: [{ provider: "doubao", action: "set", value: "doubao-key" }],
+  })));
+  const selected = screen.getByRole("checkbox", { name: "豆包搜索 默认使用" });
+  await user.click(selected);
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenLastCalledWith(expect.objectContaining({
+    config: expect.objectContaining({ defaultProvider: "doubao" }),
+  })));
+  expect(screen.getByRole("checkbox", { name: "LangSearch 默认使用" })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "显示 豆包搜索 API Key" }));
+  expect(input).toHaveAttribute("type", "text");
+  await user.clear(input);
+  fireEvent.blur(input);
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenLastCalledWith(expect.objectContaining({
+    config: expect.objectContaining({ defaultProvider: null }),
+    credentialChanges: [{ provider: "doubao", action: "clear" }],
+  })));
+  expect(selected).not.toBeChecked();
+});
+
+it("loads Doubao options and saves its time and domain filters through the shared controls", async () => {
+  const user = userEvent.setup();
+  const api = setup({ ...initial(), config: { doubao: { freshness: "oneWeek", includeDomains: ["example.com"] } }, credentialValues: { doubao: "saved-doubao-key" } });
+  const section = (await screen.findByRole("heading", { name: "豆包搜索", exact: true })).closest("section")!;
+  expect(within(section).getByLabelText("豆包搜索 API Key", { selector: "input" })).toHaveValue("saved-doubao-key");
+  await user.click(within(section).getByRole("button", { name: /其他设置/ }));
+  expect(within(section).getByLabelText("时间范围")).toHaveValue("oneWeek");
+  expect(within(section).getByLabelText("仅搜索这些域名（可选）")).toHaveValue("example.com");
+  await user.selectOptions(within(section).getByLabelText("时间范围"), "oneDay");
+  fireEvent.change(within(section).getByLabelText("排除这些域名（可选）"), { target: { value: "spam.org" } });
+  await waitFor(() => expect(api.saveWebSearch).toHaveBeenLastCalledWith(expect.objectContaining({
+    config: expect.objectContaining({ doubao: expect.objectContaining({ freshness: "oneDay", excludeDomains: ["spam.org"] }) }),
+  })));
+  await user.click(within(section).getByRole("button", { name: /获取 API Key/ }));
+  expect(api.openWebSearchOfficialPage).toHaveBeenCalledWith({ provider: "doubao", target: "keys" });
+});

@@ -4,12 +4,12 @@ flowchart TB
   index --> context[ContextBuilder 按预算注入]
   context --> search[memory_search / memory_read<br/>搜索与固定版本分页]
   search --> files[不可变私有 Markdown 正文]
-  context --> edit[memory_edit<br/>明确请求或当前范围 auto]
-  sources[真实用户 Item 或成功普通工具结果] --> capture[捕获来源版本并检查资格]
+  context --> edit[memory_edit<br/>自动范围内统一写入与归档]
+  sources[当前 Run 用户消息与普通工具结果] --> capture[自动记录来源<br/>绑定已读取的目标版本]
   edit --> capture
   capture --> intent[现有权限链与 Durable Intent]
   intent --> prepare[准备私有版本文件]
-  prepare --> publish[事务复核来源、目标 CAS、epoch 与取消]
+  prepare --> publish[事务复核目标 CAS、模式与隐私撤销<br/>从最新笔记生成索引]
   publish --> meta
   publish --> event[memory.changed 与 Outbox]
   prepare -.失败后回收孤立文件.-> maintenance[StorageMaintenance<br/>清理文件与撤销载荷]

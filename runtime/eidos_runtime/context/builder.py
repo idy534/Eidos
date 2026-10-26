@@ -307,6 +307,10 @@ class ContextBuilder:
                         {"toolContent": snapshot.model_dump(mode="json", by_alias=True)}
                         if snapshot is not None else {"toolContentOmitted": True}
                     )
+                if str(item.tool_name).startswith("memory_"):
+                    epochs = self.store.database.memory.tool_epochs(item.item_id, session_id=facts.session_id)
+                    if epochs:
+                        content_metadata["memoryEpochs"] = epochs
                 projected_result = result_json
                 payload_kind = item.payload_kind or "function"
                 custom_input = (
@@ -365,15 +369,14 @@ class ContextBuilder:
                     ))
                 if _tool_result_changes_workspace(result_json):
                     workspace_state += 1
-        # Tool bodies carry the exact epoch used at retrieval, including history.
-        # A revoked body is replaced before building a fresh request.
+        # Retrieval guards come from SQLite, including original items in forks.
+        # They remain private context metadata and never enter the tool text.
         revoked_memory_calls: set[str] = set()
         for projected in context:
             if str(projected.get("name", "")).startswith("memory_") and projected.get("type") == "tool_result":
                 try:
                     payload = json.loads(str(projected.get("result", "{}")))
-                    data = payload.get("data", {})
-                    epochs = data.get("epochs", {})
+                    epochs = projected.get("memoryEpochs", {})
                     with self.store.database.lock:
                         valid = bool(epochs) and self.store.database.memory.valid_epochs(self.store.database.connection(), epochs)
                     if valid:

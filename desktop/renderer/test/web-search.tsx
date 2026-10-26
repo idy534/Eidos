@@ -3,14 +3,14 @@ import { SettingsPage } from "../src/components/settings/SettingsPage.js";
 import type { WebSearchResponse } from "../../shared/web-search.generated.js";
 import "../src/styles.css";
 
-let saved: WebSearchResponse = { revision: 0, config: { defaultProvider: null }, credentials: { deepseek: "stored", langsearch: "stored" }, credentialValues: { deepseek: "fixture-deepseek-key", langsearch: "fixture-langsearch-key" } };
+let saved: WebSearchResponse = { revision: 0, config: { defaultProvider: null }, credentials: { deepseek: "stored", langsearch: "stored", doubao: "stored" }, credentialValues: { deepseek: "fixture-deepseek-key", langsearch: "fixture-langsearch-key", doubao: "fixture-doubao-key" } };
 const calls: unknown[] = [];
 Object.assign(window, { webSearchFixtureCalls: calls });
 window.eidosRuntime = {
   readWebSearch: async () => saved,
   saveWebSearch: async request => {
     calls.push(request);
-    saved = { revision: saved.revision + 1, config: request.config, credentials: { deepseek: "stored", langsearch: "stored" }, credentialValues: saved.credentialValues };
+    saved = { revision: saved.revision + 1, config: request.config, credentials: { deepseek: "stored", langsearch: "stored", doubao: "stored" }, credentialValues: saved.credentialValues };
     return saved;
   },
   openWebSearchOfficialPage: async request => { calls.push(request); },

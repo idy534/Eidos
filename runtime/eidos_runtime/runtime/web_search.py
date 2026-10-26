@@ -4,6 +4,7 @@ from concurrent.futures import CancelledError
 import threading
 from typing import TYPE_CHECKING, cast
 
+from eidos_runtime.domain.web_search import PROVIDER_NAMES
 from eidos_runtime.infrastructure.web_search import PROVIDER_HOSTS
 from eidos_runtime.runtime.contracts import RuntimeCancelled
 from eidos_runtime.runtime.async_kernel import RuntimeAsyncTask
@@ -34,9 +35,7 @@ def invoke_web_search(
         call.arguments.get("count")
         or snapshot.config.options(snapshot.provider).default_count
     )
-    provider_name = (
-        "DeepSeek Search" if snapshot.provider == "deepseek" else "LangSearch"
-    )
+    provider_name = PROVIDER_NAMES[snapshot.provider]
     prepared = runtime.prepare(context, call.arguments, cancel)
     execution = PreparedToolExecution(
         approval_description={

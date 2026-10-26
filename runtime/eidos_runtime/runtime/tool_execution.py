@@ -903,7 +903,7 @@ class ToolExecutionController:
                 projection = GENERIC_PROJECTOR.project(
                     plan.descriptor, outcome.result
                 )
-            if len(json.dumps(outcome.result, ensure_ascii=False).encode("utf-8")) > 16 * 1024:
+            if not call.name.startswith("memory_") and len(json.dumps(outcome.result, ensure_ascii=False).encode("utf-8")) > 16 * 1024:
                 projection = projection.model_copy(update={"model_result": {
                     **projection.model_result,
                     "readBack": {"tool": "read_tool_output", "callId": call.provider_call_id,

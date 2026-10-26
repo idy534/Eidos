@@ -36,10 +36,8 @@ def setup(tmp_path):
     store.close()
 
 
-@pytest.mark.parametrize(
-    "mode,user_requested", [("auto", False), ("read", True), ("off", True)]
-)
-def test_save_completes_in_current_run(setup, mode, user_requested):
+@pytest.mark.parametrize("mode", ["auto", "read", "off"])
+def test_save_completes_in_current_run(setup, mode):
     store, session = setup
     service = store.database.memory
     service.policy(
@@ -63,7 +61,6 @@ def test_save_completes_in_current_run(setup, mode, user_requested):
                             "path": "user_language.md",
                             "summary": "用户希望以后使用中文回答。",
                             "content": "用户希望以后使用中文回答。",
-                            "userRequested": user_requested,
                         },
                     ),
                 )
@@ -93,7 +90,7 @@ def test_save_completes_in_current_run(setup, mode, user_requested):
     )
 
 
-def test_read_only_mode_rejects_automatic_save_without_ending_run(setup):
+def test_read_only_mode_uses_normal_approval_instead_of_an_automatic_write(setup):
     store, session = setup
     service = store.database.memory
     service.policy(
@@ -121,7 +118,7 @@ def test_read_only_mode_rejects_automatic_save_without_ending_run(setup):
     RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
     assert not service.list(MemoryListRequest(session_id=session["id"])).documents
     assert store.read_run(run["id"])["status"] == "succeeded"
-    assert any("memory_automatic_disabled" in str(item) for item in model.contexts[-1])
+    assert any("memory_approval_rejected" in str(item) for item in model.contexts[-1])
 
 
 def test_context_uses_index_and_usage_survives_forgetting(setup, monkeypatch):
@@ -174,7 +171,7 @@ def test_context_uses_index_and_usage_survives_forgetting(setup, monkeypatch):
     )
 
 
-def test_assistant_prose_is_not_source_evidence(setup):
+def test_assistant_prose_is_not_recorded_as_verified_source_metadata(setup):
     store, session = setup
     run, _ = store.create_run(session["id"], "分析现状")
     RuntimeEngine(
@@ -183,18 +180,27 @@ def test_assistant_prose_is_not_source_evidence(setup):
     source = store.connection.execute(
         "SELECT id FROM items WHERE run_id=? AND kind='assistant_message'", (run["id"],)
     ).fetchone()[0]
-    with pytest.raises(MemoryRejected, match="verified_tool"):
-        store.database.memory.edit(
-            MemoryEditRequest(
-                session_id=session["id"],
-                operation_id="bad",
-                path="project.md",
-                summary="提议",
-                content="未经确认的假设",
-                source_item_ids=[source],
-            ),
-            automatic=True,
-        )
+    result = store.database.memory.edit(
+        MemoryEditRequest(
+            session_id=session["id"],
+            operation_id="audit-only",
+            path="project.md",
+            summary="提议",
+            content="未经确认的假设",
+            source_item_ids=[source],
+        ),
+        automatic=True,
+    )
+    assert result.code == "memory_saved"
+    # The source is not misrepresented as a verified observation. Note quality
+    # remains a model instruction; source IDs are audit metadata, not a judge.
+    assert (
+        store.connection.execute(
+            "SELECT count(*) FROM memory_evidence WHERE document_id=?",
+            (result.document_id,),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_forked_memory_results_are_redacted_and_scrubbed_after_forgetting(setup):
@@ -268,6 +274,9 @@ def test_explicit_memory_save_obeys_manual_approval(setup, decision):
     from eidos_runtime.runtime.approval import ApprovalDecision
 
     store, session = setup
+    store.database.memory.policy(
+        MemoryPolicyRequest(session_id=session["id"], scope="current", mode="read")
+    )
     seen = []
     run, _ = store.create_run(
         session["id"], "请记住以后使用中文", approval_mode="manual"
@@ -283,7 +292,6 @@ def test_explicit_memory_save_obeys_manual_approval(setup, decision):
                             "path": "user_language.md",
                             "summary": "语言",
                             "content": "用户希望使用中文。",
-                            "userRequested": True,
                         },
                     ),
                 )
@@ -347,23 +355,33 @@ def test_late_model_answer_is_discarded_when_its_memory_is_revoked(setup):
     assert store.read_run(run["id"])["status"] == "succeeded"
 
 
-def test_late_answer_from_a_historical_automatic_version_is_discarded(setup):
+def test_chat_source_change_does_not_discard_a_valid_note_snapshot(setup):
     store, session = setup
     service = store.database.memory
     source_run, _ = store.create_run(session["id"], "旧规则来源")
     source = store.get_user_item(source_run["id"])["id"]
     request = MemoryEditRequest(
-        session_id=session["id"], operation_id="automatic", path="feedback.md",
-        summary="旧规则", content="旧规则", source_item_ids=[source],
+        session_id=session["id"],
+        operation_id="automatic",
+        path="feedback.md",
+        summary="旧规则",
+        content="旧规则",
+        source_item_ids=[source],
     )
     service.edit(request, automatic=True)
-    service.edit(request.model_copy(update={
-        "operation_id": "user-edit", "expected_revision": 1,
-        "summary": "用户独立的新规则", "content": "用户独立的新规则",
-    }))
-    RuntimeEngine(store, ScriptedModel([ModelResponse(text="来源处理完成")]), lambda _: None).run(
-        source_run["id"], threading.Event()
+    service.edit(
+        request.model_copy(
+            update={
+                "operation_id": "user-edit",
+                "expected_revision": 1,
+                "summary": "用户独立的新规则",
+                "content": "用户独立的新规则",
+            }
+        )
     )
+    RuntimeEngine(
+        store, ScriptedModel([ModelResponse(text="来源处理完成")]), lambda _: None
+    ).run(source_run["id"], threading.Event())
     run, _ = store.create_run(session["id"], "检查历史规则")
 
     class LateHistoricalModel(ScriptedModel):
@@ -373,24 +391,39 @@ def test_late_answer_from_a_historical_automatic_version_is_discarded(setup):
             self.calls += 1
             if self.calls == 2:
                 with store.database.transaction() as connection:
-                    connection.execute("UPDATE items SET content='来源已更正' WHERE id=?", (source,))
+                    connection.execute(
+                        "UPDATE items SET content='来源已更正' WHERE id=?", (source,)
+                    )
                 service.cleanup()
                 # Simulate a Provider that ignores cancellation and returns late.
-                return super().complete(context, threading.Event(), on_text_delta, **kwargs)
+                return super().complete(
+                    context, threading.Event(), on_text_delta, **kwargs
+                )
             return super().complete(context, cancel, on_text_delta, **kwargs)
 
-    model = LateHistoricalModel([
-        ModelResponse(tool_calls=(ModelToolCall("historical", "memory_read", {
-            "path": request.path, "revision": 1,
-        }),)),
-        ModelResponse(text="不应发布的历史版本答案"),
-        ModelResponse(text="使用合法的新上下文完成任务"),
-    ])
+    model = LateHistoricalModel(
+        [
+            ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        "historical",
+                        "memory_read",
+                        {
+                            "path": request.path,
+                            "revision": 1,
+                        },
+                    ),
+                )
+            ),
+            ModelResponse(text="已保存笔记保持有效"),
+            ModelResponse(text="使用合法的新上下文完成任务"),
+        ]
+    )
     RuntimeEngine(store, model, lambda _: None).run(run["id"], threading.Event())
     items = store.read_session_snapshot(session["id"])["items"]
-    assert not any(item.get("content") == "不应发布的历史版本答案" for item in items)
-    assert any(item.get("content") == "使用合法的新上下文完成任务" for item in items)
-    assert "旧规则" not in str(model.contexts[-1])
+    assert any(item.get("content") == "已保存笔记保持有效" for item in items)
+    assert model.calls == 2
+    assert "旧规则" in str(model.contexts[-1])
     assert store.read_run(run["id"])["status"] == "succeeded"
 
 
@@ -406,15 +439,38 @@ def test_pending_approval_recovers_after_memory_revocation_and_restart(
 
     store, session = setup
     service = store.database.memory
-    service.edit(MemoryEditRequest(
-        session_id=session["id"], operation_id="seed", path="seed.md",
-        summary="必须撤销的旧规则", content="旧规则正文",
-    ))
-    run, _ = store.create_run(session["id"], "请记住以后都用中文", approval_mode="manual")
-    model = ScriptedModel([ModelResponse(tool_calls=(ModelToolCall("save", "memory_edit", {
-        "path": "language.md", "summary": "语言偏好", "content": "用户希望使用中文",
-        "userRequested": True,
-    }),))])
+    service.edit(
+        MemoryEditRequest(
+            session_id=session["id"],
+            operation_id="seed",
+            path="seed.md",
+            summary="必须撤销的旧规则",
+            content="旧规则正文",
+        )
+    )
+    service.policy(
+        MemoryPolicyRequest(session_id=session["id"], scope="current", mode="read")
+    )
+    run, _ = store.create_run(
+        session["id"], "请记住以后都用中文", approval_mode="manual"
+    )
+    model = ScriptedModel(
+        [
+            ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        "save",
+                        "memory_edit",
+                        {
+                            "path": "language.md",
+                            "summary": "语言偏好",
+                            "content": "用户希望使用中文",
+                        },
+                    ),
+                )
+            )
+        ]
+    )
 
     def crash(_request, _cancel):
         raise Crash()
@@ -423,15 +479,24 @@ def test_pending_approval_recovers_after_memory_revocation_and_restart(
         RuntimeEngine(store, model, lambda _: None, request_approval=crash).run(
             run["id"], threading.Event()
         )
-    original_permissions = store.read_run_resolution_snapshot(run["id"]).permission_profile_json
+    original_permissions = store.read_run_resolution_snapshot(
+        run["id"]
+    ).permission_profile_json
     original_tool = store.read_step_tool_snapshot(run["id"], 1)
     if revocation == "off":
-        service.policy(MemoryPolicyRequest(session_id=session["id"], scope="current", mode="off"))
+        service.policy(
+            MemoryPolicyRequest(session_id=session["id"], scope="current", mode="off")
+        )
     else:
-        service.edit(MemoryEditRequest(
-            session_id=session["id"], operation_id="forget", path="seed.md",
-            action="delete", expected_revision=1,
-        ))
+        service.edit(
+            MemoryEditRequest(
+                session_id=session["id"],
+                operation_id="forget",
+                path="seed.md",
+                action="delete",
+                expected_revision=1,
+            )
+        )
     assert store.read_step_resolution_snapshots(run["id"]) == ()
     store.collect_unreferenced_blobs()
     data = store.data_directory
@@ -441,7 +506,10 @@ def test_pending_approval_recovers_after_memory_revocation_and_restart(
     try:
         assert reopened.health()["state"] == "ready"
         assert reopened.read_run(run["id"])["status"] == "waiting_approval"
-        assert reopened.read_run_resolution_snapshot(run["id"]).permission_profile_json == original_permissions
+        assert (
+            reopened.read_run_resolution_snapshot(run["id"]).permission_profile_json
+            == original_permissions
+        )
         assert reopened.read_step_tool_snapshot(run["id"], 1) == original_tool
         confirmations = []
 
@@ -452,17 +520,19 @@ def test_pending_approval_recovers_after_memory_revocation_and_restart(
         def no_revoked_snapshot(_run_id):
             pytest.fail("Approval recovery must not read revoked model context")
 
-        monkeypatch.setattr(reopened, "read_step_resolution_snapshots", no_revoked_snapshot)
-        resumed_model = ScriptedModel([ModelResponse(text="恢复后完成任务")])
-        RuntimeEngine(reopened, resumed_model, lambda _: None, request_approval=confirm).run(
-            run["id"], threading.Event()
+        monkeypatch.setattr(
+            reopened, "read_step_resolution_snapshots", no_revoked_snapshot
         )
+        resumed_model = ScriptedModel([ModelResponse(text="恢复后完成任务")])
+        RuntimeEngine(
+            reopened, resumed_model, lambda _: None, request_approval=confirm
+        ).run(run["id"], threading.Event())
         assert len(confirmations) == 1
         assert reopened.read_run(run["id"])["status"] == "succeeded"
         assert "必须撤销的旧规则" not in str(resumed_model.contexts)
-        assert reopened.connection.execute("SELECT status FROM approvals").fetchone()[0] == (
-            "approved" if decision == "approve" else "rejected"
-        )
+        assert reopened.connection.execute("SELECT status FROM approvals").fetchone()[
+            0
+        ] == ("approved" if decision == "approve" else "rejected")
         assert reopened.connection.execute(
             "SELECT count(*) FROM memory_documents WHERE path='language.md' AND status='active'"
         ).fetchone()[0] == int(decision == "approve")

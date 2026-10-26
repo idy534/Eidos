@@ -149,6 +149,17 @@ export function CheckmarkIcon(props: IconProps) {
 }
 
 /**
+ * Chevron Right '>' icon for submenus
+ */
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} {...props}>
+      <path d="m6 3.5 4.5 4.5-4.5 4.5" />
+    </svg>
+  );
+}
+
+/**
  * Close Tab '×' icon
  */
 export function CloseIcon(props: IconProps) {

@@ -61,7 +61,8 @@ export const memorySchema = {
           "enum": [
             "memory_saved",
             "memory_unchanged",
-            "memory_deleted"
+            "memory_deleted",
+            "memory_archived"
           ],
           "title": "Code",
           "type": "string"
@@ -139,6 +140,11 @@ export const memorySchema = {
         },
         "userOwned": {
           "title": "Userowned",
+          "type": "boolean"
+        },
+        "archived": {
+          "default": false,
+          "title": "Archived",
           "type": "boolean"
         },
         "createdAt": {
@@ -459,6 +465,11 @@ export const memorySchema = {
           "minimum": 0,
           "title": "Cursor",
           "type": "integer"
+        },
+        "includeArchived": {
+          "default": false,
+          "title": "Includearchived",
+          "type": "boolean"
         }
       },
       "title": "MemoryListRequest",

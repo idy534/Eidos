@@ -45,3 +45,22 @@ void test("DropdownMenu renders items with icon, checked indicator and separator
   assert.match(html, /dropdown-menu-item__check/);
   assert.match(html, /dropdown-menu-separator/);
 });
+
+void test("ContextMenu renders items with submenu chevron indicator", () => {
+  const items = [
+    {
+      key: "copy",
+      label: "复制",
+      children: [
+        { key: "copy-name", label: "复制名称", onClick: () => {} },
+      ],
+    },
+  ];
+  const html = renderToStaticMarkup(
+    <ContextMenu items={items} x={100} y={100} onClose={() => {}} />
+  );
+
+  assert.match(html, /复制/);
+  assert.match(html, /aria-haspopup="menu"/);
+  assert.match(html, /dropdown-menu-item__chevron/);
+});

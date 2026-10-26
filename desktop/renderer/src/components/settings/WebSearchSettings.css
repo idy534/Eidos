@@ -145,6 +145,11 @@
   color: #1e874b;
 }
 
+.web-search-provider-icon--doubao {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .web-search-provider-titles {
   display: flex;
   flex-direction: column;

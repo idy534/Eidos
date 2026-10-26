@@ -5,6 +5,7 @@ export type Scope = "current" | "global" | "allowed";
 export type Query = string;
 export type Limit = number;
 export type Cursor = number;
+export type Includearchived = boolean;
 export type Id = string;
 export type Kind = "global" | "project";
 export type Projectid = string | null;
@@ -20,6 +21,7 @@ export type Title = string;
 export type Summary = string;
 export type Kind1 = "user" | "feedback" | "project" | "reference";
 export type Userowned = boolean;
+export type Archived = boolean;
 export type Createdat = number;
 export type Updatedat = number;
 export type Itemid = string;
@@ -64,7 +66,7 @@ export type Operationid1 = string;
 export type Documentid = string;
 export type Path4 = string;
 export type Revision3 = number;
-export type Code = "memory_saved" | "memory_unchanged" | "memory_deleted";
+export type Code = "memory_saved" | "memory_unchanged" | "memory_deleted" | "memory_archived";
 export type Sessionid4 = string | null;
 export type Scope3 = "current" | "global";
 export type Mode1 = "off" | "read" | "auto";
@@ -102,6 +104,7 @@ export interface MemoryListRequest {
   query?: Query;
   limit?: Limit;
   cursor?: Cursor;
+  includeArchived?: Includearchived;
 }
 export interface MemoryState {
   scopes: Scopes;
@@ -126,6 +129,7 @@ export interface MemoryDocument {
   summary: Summary;
   kind: Kind1;
   userOwned: Userowned;
+  archived?: Archived;
   createdAt: Createdat;
   updatedAt: Updatedat;
   evidence?: Evidence;

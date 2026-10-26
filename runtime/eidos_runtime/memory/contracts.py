@@ -13,6 +13,7 @@ NonnegativeInt = Annotated[JsonSafeInt, Field(ge=0)]
 PositiveRevision = Annotated[JsonSafeInt, Field(ge=1)]
 ScopeSelection = Literal["current", "global", "allowed"]
 MAX_CONTENT_CHARS = 65_536
+GLOBAL_SCOPE_ID = "00000000-0000-4000-8000-000000000001"
 
 
 def validate_path(value: str) -> str:
@@ -58,6 +59,7 @@ class MemoryDocument(EidosFrozenStrictModel):
     summary: str
     kind: MemoryKind
     user_owned: bool
+    archived: bool = False
     created_at: JsonSafeInt
     updated_at: JsonSafeInt
     evidence: list[MemoryEvidence] = Field(default_factory=list)
@@ -69,6 +71,7 @@ class MemoryListRequest(EidosFrozenStrictModel):
     query: str = Field(default="", max_length=512)
     limit: int = Field(default=50, ge=1, le=100)
     cursor: int = Field(default=0, ge=0)
+    include_archived: bool = False
 
 
 class MemoryState(EidosFrozenStrictModel):
@@ -122,7 +125,7 @@ class MemoryEdit(EidosFrozenStrictModel):
         if self.path == "MEMORY.md":
             raise ValueError("memory_index_generated")
         if self.action == "write" and (
-            not self.content or not self.content.strip() or not self.summary.strip()
+            not self.content or not self.content.strip()
         ):
             raise ValueError("memory_content_required")
         if self.action == "delete" and (
@@ -142,7 +145,7 @@ class MemoryActionResult(EidosFrozenStrictModel):
     document_id: str
     path: str
     revision: JsonSafeInt
-    code: Literal["memory_saved", "memory_unchanged", "memory_deleted"]
+    code: Literal["memory_saved", "memory_unchanged", "memory_deleted", "memory_archived"]
 
 
 class MemoryPolicyRequest(EidosFrozenStrictModel):

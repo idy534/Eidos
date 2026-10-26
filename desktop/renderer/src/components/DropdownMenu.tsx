@@ -11,7 +11,7 @@ import {
 import { createPortal } from "react-dom";
 
 
-import { CheckmarkIcon } from "./MenuIcons.js";
+import { CheckmarkIcon, ChevronRightIcon } from "./MenuIcons.js";
 import { Tooltip } from "./Tooltip.js";
 
 function renderPortal(children: ReactNode): ReactNode {
@@ -33,7 +33,9 @@ export interface DropdownMenuItem {
   /** If true, renders with danger styling */
   danger?: boolean;
   disabled?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
+  /** Optional submenu items */
+  children?: DropdownMenuItem[];
 }
 
 interface DropdownMenuProps {
@@ -72,10 +74,12 @@ export function DropdownMenu({
 }: DropdownMenuProps) {
   const [open, setOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [openSubmenuKey, setOpenSubmenuKey] = useState<string | undefined>(undefined);
   const [style, setStyle] = useState<CSSProperties>({});
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   const enabledIndices = items
     .map((item, index) => (!item.disabled ? index : -1))
@@ -113,9 +117,11 @@ export function DropdownMenu({
     if (!open) return;
 
     function handlePointerDown(event: PointerEvent) {
+      const isInsideSubmenu = Boolean((event.target as HTMLElement | null)?.closest?.(".dropdown-submenu"));
       if (
         menuRef.current && !menuRef.current.contains(event.target as Node)
         && triggerRef.current && !triggerRef.current.contains(event.target as Node)
+        && !isInsideSubmenu
       ) {
         setOpen(false);
       }
@@ -156,6 +162,7 @@ export function DropdownMenu({
       });
     }
     setFocusedIndex(initialIndex);
+    setOpenSubmenuKey(undefined);
     setOpen(true);
   }
 
@@ -178,31 +185,64 @@ export function DropdownMenu({
     if (enabledIndices.length === 0) return;
 
     const currentPos = enabledIndices.indexOf(focusedIndex);
+    const currentItem = items[focusedIndex];
+    const currentHasChildren = Boolean(currentItem?.children && currentItem.children.length > 0);
 
     if (event.key === "Escape") {
       event.preventDefault();
-      setOpen(false);
-      if (triggerRef.current && triggerRef.current.isConnected) {
-        triggerRef.current.focus();
+      if (openSubmenuKey) {
+        setOpenSubmenuKey(undefined);
+      } else {
+        setOpen(false);
+        if (triggerRef.current && triggerRef.current.isConnected) {
+          triggerRef.current.focus();
+        }
       }
+    } else if ((event.key === "ArrowRight" || event.key === "Enter" || event.key === " ") && currentHasChildren && currentItem) {
+      event.preventDefault();
+      setOpenSubmenuKey(currentItem.key);
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
       const nextPos = (currentPos + 1) % enabledIndices.length;
       const nextIdx = enabledIndices[nextPos];
-      if (nextIdx !== undefined) setFocusedIndex(nextIdx);
+      if (nextIdx !== undefined) {
+        setFocusedIndex(nextIdx);
+        const nextItem = items[nextIdx];
+        if (nextItem && nextItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       const prevPos = (currentPos - 1 + enabledIndices.length) % enabledIndices.length;
       const prevIdx = enabledIndices[prevPos];
-      if (prevIdx !== undefined) setFocusedIndex(prevIdx);
+      if (prevIdx !== undefined) {
+        setFocusedIndex(prevIdx);
+        const prevItem = items[prevIdx];
+        if (prevItem && prevItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "Home") {
       event.preventDefault();
       const firstIdx = enabledIndices[0];
-      if (firstIdx !== undefined) setFocusedIndex(firstIdx);
+      if (firstIdx !== undefined) {
+        setFocusedIndex(firstIdx);
+        const firstItem = items[firstIdx];
+        if (firstItem && firstItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "End") {
       event.preventDefault();
       const lastIdx = enabledIndices[enabledIndices.length - 1];
-      if (lastIdx !== undefined) setFocusedIndex(lastIdx);
+      if (lastIdx !== undefined) {
+        setFocusedIndex(lastIdx);
+        const lastItem = items[lastIdx];
+        if (lastItem && lastItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "Tab") {
       setOpen(false);
     }
@@ -241,36 +281,251 @@ export function DropdownMenu({
           style={style}
           onKeyDown={handleMenuKeyDown}
         >
-          {items.map((item, index) => (
-            <Fragment key={item.key}>
-              {item.separator && <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />}
-              <button
-                role="menuitem"
-                type="button"
-                className={`dropdown-menu-item ${item.danger ? "danger-action" : ""}${item.checked ? " is-checked" : ""}`.trim()}
-                disabled={item.disabled}
-                tabIndex={focusedIndex === index ? 0 : -1}
-                onClick={() => {
-                  setOpen(false);
-                  if (triggerRef.current && triggerRef.current.isConnected) {
-                    triggerRef.current.focus();
-                  }
-                  item.onClick();
+          {items.map((item, index) => {
+            const hasChildren = Boolean(item.children && item.children.length > 0);
+            const isSubmenuOpen = openSubmenuKey === item.key;
+            return (
+              <Fragment key={item.key}>
+                {item.separator && <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />}
+                <button
+                  ref={(el) => {
+                    if (el) itemRefs.current.set(item.key, el);
+                    else itemRefs.current.delete(item.key);
+                  }}
+                  role="menuitem"
+                  type="button"
+                  className={`dropdown-menu-item ${item.danger ? "danger-action" : ""}${item.checked ? " is-checked" : ""}${isSubmenuOpen ? " is-submenu-open" : ""}`.trim()}
+                  disabled={item.disabled}
+                  aria-haspopup={hasChildren ? "menu" : undefined}
+                  aria-expanded={hasChildren ? isSubmenuOpen : undefined}
+                  tabIndex={focusedIndex === index ? 0 : -1}
+                  onPointerEnter={() => {
+                    if (item.disabled) return;
+                    setFocusedIndex(index);
+                    if (hasChildren) {
+                      setOpenSubmenuKey(item.key);
+                    } else {
+                      setOpenSubmenuKey(undefined);
+                    }
+                  }}
+                  onClick={(event) => {
+                    if (hasChildren) {
+                      event.stopPropagation();
+                      setOpenSubmenuKey((prev) => (prev === item.key ? undefined : item.key));
+                      item.onClick?.();
+                      return;
+                    }
+                    setOpen(false);
+                    if (triggerRef.current && triggerRef.current.isConnected) {
+                      triggerRef.current.focus();
+                    }
+                    item.onClick?.();
+                  }}
+                >
+                  {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
+                  <span className="dropdown-menu-item__label">{item.label}</span>
+                  {hasChildren && (
+                    <span className="dropdown-menu-item__chevron" aria-hidden="true">
+                      <ChevronRightIcon />
+                    </span>
+                  )}
+                  {item.checked && (
+                    <span className="dropdown-menu-item__check" aria-hidden="true">
+                      <CheckmarkIcon />
+                    </span>
+                  )}
+                </button>
+              </Fragment>
+            );
+          })}
+          {(() => {
+            const activeItem = items.find((it) => it.key === openSubmenuKey);
+            if (!activeItem || !activeItem.children || activeItem.children.length === 0) return null;
+            const anchor = itemRefs.current.get(activeItem.key) ?? null;
+            return (
+              <Submenu
+                items={activeItem.children}
+                parentAnchor={anchor}
+                label={activeItem.label}
+                onCloseAll={() => setOpen(false)}
+                onCloseSubmenu={() => {
+                  setOpenSubmenuKey(undefined);
+                  anchor?.focus();
                 }}
-              >
-                {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
-                <span className="dropdown-menu-item__label">{item.label}</span>
-                {item.checked && (
-                  <span className="dropdown-menu-item__check" aria-hidden="true">
-                    <CheckmarkIcon />
-                  </span>
-                )}
-              </button>
-            </Fragment>
-          ))}
+                restoreFocusElement={triggerRef.current}
+              />
+            );
+          })()}
         </div>,
       )}
     </div>
+  );
+}
+
+interface SubmenuProps {
+  items: DropdownMenuItem[];
+  parentAnchor: HTMLElement | null;
+  label?: string;
+  onCloseAll: () => void;
+  onCloseSubmenu: () => void;
+  restoreFocusElement?: HTMLElement | null | undefined;
+}
+
+function Submenu({
+  items,
+  parentAnchor,
+  label,
+  onCloseAll,
+  onCloseSubmenu,
+  restoreFocusElement,
+}: SubmenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [style, setStyle] = useState<CSSProperties>({
+    position: "fixed",
+    left: "0px",
+    top: "0px",
+    zIndex: 10000,
+  });
+
+  const enabledIndices = items
+    .map((item, index) => (!item.disabled ? index : -1))
+    .filter((index) => index !== -1);
+
+  useEffect(() => {
+    const firstIdx = enabledIndices[0];
+    if (firstIdx !== undefined) {
+      setFocusedIndex(firstIdx);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!menuRef.current || !parentAnchor) return;
+    const parentRect = parentAnchor.getBoundingClientRect();
+    const menuRect = menuRef.current.getBoundingClientRect();
+
+    let left = parentRect.right - 2;
+    let top = parentRect.top - 4;
+
+    if (left + menuRect.width > window.innerWidth - 8) {
+      left = Math.max(8, parentRect.left - menuRect.width + 2);
+    }
+    if (top + menuRect.height > window.innerHeight - 8) {
+      top = Math.max(8, window.innerHeight - menuRect.height - 8);
+    }
+    if (top < 8) {
+      top = 8;
+    }
+
+    setStyle({
+      position: "fixed",
+      left: `${left}px`,
+      top: `${top}px`,
+      zIndex: 10000,
+    });
+  }, [parentAnchor]);
+
+  useEffect(() => {
+    function handleWindowClose() {
+      onCloseAll();
+    }
+    window.addEventListener("resize", handleWindowClose);
+    window.addEventListener("scroll", handleWindowClose, true);
+    return () => {
+      window.removeEventListener("resize", handleWindowClose);
+      window.removeEventListener("scroll", handleWindowClose, true);
+    };
+  }, [onCloseAll]);
+
+  useEffect(() => {
+    const buttons = menuRef.current?.querySelectorAll<HTMLElement>("[role=menuitem]");
+    if (buttons && buttons[focusedIndex]) {
+      buttons[focusedIndex].focus({ preventScroll: true });
+    }
+  }, [focusedIndex]);
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    event.stopPropagation();
+    if (enabledIndices.length === 0) return;
+    const currentPos = enabledIndices.indexOf(focusedIndex);
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      const nextPos = (currentPos + 1) % enabledIndices.length;
+      const nextIdx = enabledIndices[nextPos];
+      if (nextIdx !== undefined) setFocusedIndex(nextIdx);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      const prevPos = (currentPos - 1 + enabledIndices.length) % enabledIndices.length;
+      const prevIdx = enabledIndices[prevPos];
+      if (prevIdx !== undefined) setFocusedIndex(prevIdx);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      const firstIdx = enabledIndices[0];
+      if (firstIdx !== undefined) setFocusedIndex(firstIdx);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      const lastIdx = enabledIndices[enabledIndices.length - 1];
+      if (lastIdx !== undefined) setFocusedIndex(lastIdx);
+    } else if (event.key === "ArrowLeft" || event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseSubmenu();
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      const item = items[focusedIndex];
+      if (item && !item.disabled) {
+        onCloseAll();
+        if (restoreFocusElement && restoreFocusElement.isConnected) {
+          restoreFocusElement.focus();
+        }
+        item.onClick?.();
+      }
+    } else if (event.key === "Tab") {
+      onCloseAll();
+    }
+  }
+
+  return renderPortal(
+    <div
+      ref={menuRef}
+      className="task-context-menu dropdown-submenu"
+      role="menu"
+      aria-label={label}
+      style={style}
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={handleKeyDown}
+    >
+      {items.map((item, index) => (
+        <Fragment key={item.key}>
+          {item.separator && <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />}
+          <button
+            role="menuitem"
+            type="button"
+            className={`dropdown-menu-item ${item.danger ? "danger-action" : ""}${item.checked ? " is-checked" : ""}`.trim()}
+            disabled={item.disabled}
+            tabIndex={focusedIndex === index ? 0 : -1}
+            onPointerEnter={() => setFocusedIndex(index)}
+            onClick={() => {
+              onCloseAll();
+              if (restoreFocusElement && restoreFocusElement.isConnected) {
+                restoreFocusElement.focus();
+              }
+              item.onClick?.();
+            }}
+          >
+            {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
+            <span className="dropdown-menu-item__label">{item.label}</span>
+            {item.checked && (
+              <span className="dropdown-menu-item__check" aria-hidden="true">
+                <CheckmarkIcon />
+              </span>
+            )}
+          </button>
+        </Fragment>
+      ))}
+    </div>,
   );
 }
 
@@ -295,6 +550,8 @@ export function ContextMenu({
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const [openSubmenuKey, setOpenSubmenuKey] = useState<string | undefined>(undefined);
+  const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [style, setStyle] = useState<CSSProperties>({
     position: "fixed",
     left: `${x}px`,
@@ -341,7 +598,8 @@ export function ContextMenu({
   // Close on outside pointer, window resize, or scroll
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      const isInsideSubmenu = Boolean((event.target as HTMLElement | null)?.closest?.(".dropdown-submenu"));
+      if (menuRef.current && !menuRef.current.contains(event.target as Node) && !isInsideSubmenu) {
         onClose();
       }
     }
@@ -373,31 +631,64 @@ export function ContextMenu({
     if (enabledIndices.length === 0) return;
 
     const currentPos = enabledIndices.indexOf(focusedIndex);
+    const currentItem = items[focusedIndex];
+    const currentHasChildren = Boolean(currentItem?.children && currentItem.children.length > 0);
 
     if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
-      if (restoreFocusElement && restoreFocusElement.isConnected) {
-        restoreFocusElement.focus();
+      if (openSubmenuKey) {
+        setOpenSubmenuKey(undefined);
+      } else {
+        onClose();
+        if (restoreFocusElement && restoreFocusElement.isConnected) {
+          restoreFocusElement.focus();
+        }
       }
+    } else if ((event.key === "ArrowRight" || event.key === "Enter" || event.key === " ") && currentHasChildren && currentItem) {
+      event.preventDefault();
+      setOpenSubmenuKey(currentItem.key);
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
       const nextPos = (currentPos + 1) % enabledIndices.length;
       const nextIdx = enabledIndices[nextPos];
-      if (nextIdx !== undefined) setFocusedIndex(nextIdx);
+      if (nextIdx !== undefined) {
+        setFocusedIndex(nextIdx);
+        const nextItem = items[nextIdx];
+        if (nextItem && nextItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       const prevPos = (currentPos - 1 + enabledIndices.length) % enabledIndices.length;
       const prevIdx = enabledIndices[prevPos];
-      if (prevIdx !== undefined) setFocusedIndex(prevIdx);
+      if (prevIdx !== undefined) {
+        setFocusedIndex(prevIdx);
+        const prevItem = items[prevIdx];
+        if (prevItem && prevItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "Home") {
       event.preventDefault();
       const firstIdx = enabledIndices[0];
-      if (firstIdx !== undefined) setFocusedIndex(firstIdx);
+      if (firstIdx !== undefined) {
+        setFocusedIndex(firstIdx);
+        const firstItem = items[firstIdx];
+        if (firstItem && firstItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "End") {
       event.preventDefault();
       const lastIdx = enabledIndices[enabledIndices.length - 1];
-      if (lastIdx !== undefined) setFocusedIndex(lastIdx);
+      if (lastIdx !== undefined) {
+        setFocusedIndex(lastIdx);
+        const lastItem = items[lastIdx];
+        if (lastItem && lastItem.key !== openSubmenuKey) {
+          setOpenSubmenuKey(undefined);
+        }
+      }
     } else if (event.key === "Tab") {
       onClose();
     }
@@ -413,33 +704,81 @@ export function ContextMenu({
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={handleKeyDown}
     >
-      {items.map((item, index) => (
-        <Fragment key={item.key}>
-          {item.separator && <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />}
-          <button
-            role="menuitem"
-            type="button"
-            className={`dropdown-menu-item ${item.danger ? "danger-action" : ""}${item.checked ? " is-checked" : ""}`.trim()}
-            disabled={item.disabled}
-            tabIndex={focusedIndex === index ? 0 : -1}
-            onClick={() => {
-              onClose();
-              if (restoreFocusElement && restoreFocusElement.isConnected) {
-                restoreFocusElement.focus();
-              }
-              item.onClick();
+      {items.map((item, index) => {
+        const hasChildren = Boolean(item.children && item.children.length > 0);
+        const isSubmenuOpen = openSubmenuKey === item.key;
+        return (
+          <Fragment key={item.key}>
+            {item.separator && <div className="dropdown-menu-separator" role="separator" aria-hidden="true" />}
+            <button
+              ref={(el) => {
+                if (el) itemRefs.current.set(item.key, el);
+                else itemRefs.current.delete(item.key);
+              }}
+              role="menuitem"
+              type="button"
+              className={`dropdown-menu-item ${item.danger ? "danger-action" : ""}${item.checked ? " is-checked" : ""}${isSubmenuOpen ? " is-submenu-open" : ""}`.trim()}
+              disabled={item.disabled}
+              aria-haspopup={hasChildren ? "menu" : undefined}
+              aria-expanded={hasChildren ? isSubmenuOpen : undefined}
+              tabIndex={focusedIndex === index ? 0 : -1}
+              onPointerEnter={() => {
+                if (item.disabled) return;
+                setFocusedIndex(index);
+                if (hasChildren) {
+                  setOpenSubmenuKey(item.key);
+                } else {
+                  setOpenSubmenuKey(undefined);
+                }
+              }}
+              onClick={(event) => {
+                if (hasChildren) {
+                  event.stopPropagation();
+                  setOpenSubmenuKey((prev) => (prev === item.key ? undefined : item.key));
+                  item.onClick?.();
+                  return;
+                }
+                onClose();
+                if (restoreFocusElement && restoreFocusElement.isConnected) {
+                  restoreFocusElement.focus();
+                }
+                item.onClick?.();
+              }}
+            >
+              {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
+              <span className="dropdown-menu-item__label">{item.label}</span>
+              {hasChildren && (
+                <span className="dropdown-menu-item__chevron" aria-hidden="true">
+                  <ChevronRightIcon />
+                </span>
+              )}
+              {item.checked && (
+                <span className="dropdown-menu-item__check" aria-hidden="true">
+                  <CheckmarkIcon />
+                </span>
+              )}
+            </button>
+          </Fragment>
+        );
+      })}
+      {(() => {
+        const activeItem = items.find((it) => it.key === openSubmenuKey);
+        if (!activeItem || !activeItem.children || activeItem.children.length === 0) return null;
+        const anchor = itemRefs.current.get(activeItem.key) ?? null;
+        return (
+          <Submenu
+            items={activeItem.children}
+            parentAnchor={anchor}
+            label={activeItem.label}
+            onCloseAll={onClose}
+            onCloseSubmenu={() => {
+              setOpenSubmenuKey(undefined);
+              anchor?.focus();
             }}
-          >
-            {item.icon && <span className="dropdown-menu-item__icon" aria-hidden="true">{item.icon}</span>}
-            <span className="dropdown-menu-item__label">{item.label}</span>
-            {item.checked && (
-              <span className="dropdown-menu-item__check" aria-hidden="true">
-                <CheckmarkIcon />
-              </span>
-            )}
-          </button>
-        </Fragment>
-      ))}
+            restoreFocusElement={restoreFocusElement}
+          />
+        );
+      })()}
     </div>,
   );
 }

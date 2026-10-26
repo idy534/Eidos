@@ -1,6 +1,6 @@
 # Eidos 当前能力
 
-用户可以在“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch，并手动勾选默认服务。两家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
+用户可以在“设置 → 网页搜索”配置 DeepSeek Search、LangSearch 和豆包搜索 Custom 版，并手动勾选默认服务。三家可以同时保存，用户也可以全部取消。没有默认服务或可用本地 Key 时，新 Run 不发布 `web_search`。系统不会自动切换服务。Run 固定创建时的配置。用户选择默认服务后，搜索不再逐次审批，仍保留 Durable Intent、取消和有界结果投影；请求可能计费。实现已接入，真实账户 Key 验证仍未进行。配置、持久化和验证边界见[当前网页搜索](features/web-search.md)。
 
 Eidos 支持钉钉、飞书和企业微信文字消息。用户可以在“设置 → 助理”为各平台配置凭证、模型、项目和审批模式。各渠道按平台的群机器人提及规则接收消息，不设置额外用户和群白名单。渠道支持经 Desktop 确认并保存的完全访问模式。Runtime 使用普通 Session / Run 执行，并向原会话回复。现有记录包含钉钉真实收发验证；飞书、企业微信与长期重连仍需真实平台验收。配置和验证边界见 [当前渠道接入](features/channels.md)。
 
@@ -332,7 +332,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 ## Persistence
 
-- 当前 state schema 是 v41。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
+- 当前 state schema 是 v43。v42 移除临时记忆模式，v43 新增记忆归档并移除普通聊天来源的连带撤销。v40 重建文档记忆并清除旧记忆，v41 修复历史自动版本的来源撤销。v37 保存插件版本身份，v38 保存远程连接状态和凭据引用，v39 保存 Hook 配置来源和后台接收记录。v32 → v33 增加可重建的聊天搜索正文、FTS5 trigram、待处理队列和索引版本。v25 → v26 增加聊天分叉来源、历史清单、资源引用和 Worktree 操作请求校验值。旧 Session 默认没有继承历史。Runtime 包含旧版本逐级迁移代码。旧 `eidos.db` 会经过 WAL checkpoint 和完整性检查后改名。未知 revision 和未来 revision 会进入 `health_only`。
 - `state.sqlite` 保存 Session、Run、Item、ToolCall、Approval、Step、Model Attempt、Execution Segment、Durable Intent、Event、Outbox、Async Operation、Extension、Context lineage、Compaction、Checkpoint、Response Feedback、Run Revision、Project 和 Worktree。业务事实变化与 Event/Outbox 在同一 transaction 中提交。
 - `repository.sqlite` 保存可重建的 Repository generation、Index 和 FTS5，并只保留最新候选与最新完整 generation。`thread_history.sqlite` 索引 Session Event JSONL。`logs.sqlite` 使用独立 schema v2 索引有总量上限的日志 JSONL。Runtime 会兼容迁移使用 `content_sha256` 或 `chain_sha256` 的两种 v1 日志表。记忆正文使用私有 Markdown 文件，作用域、版本与撤销状态由 `state.sqlite` 管理；旧 `memories.sqlite` 在 v40 升级后删除。
 - ContextSnapshot 与 StepResolutionSnapshot 正文使用 gzip content-addressed Blob。新 ContextSnapshot 将重复的模型上下文项和工具定义保存为共享块，顶层清单保留顺序和快照元数据；旧版完整快照仍可读取。主库保存带 checksum 和大小的顶层引用。缺失、替换或损坏的 Blob 会按持久化损坏处理。
@@ -525,7 +525,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 - 父任务可以创建 `default` 通用任务、`explorer` 代码调查或 `worker` 实现与验证任务、发送消息、继续已结束的子任务、等待和停止子任务。省略角色时使用 `default`。用户可以通过数据目录下的 `agents/*.toml` 增加自定义类型，并用 `role` 指定该名称。
 - Runtime 复用现有 Session、Run、模型调用和 SQLite/Event/Outbox。子任务有独立上下文。父任务负责核对证据和最终汇总。
-- 每个父 Run 最多有 16 个子 Session，其中最多 8 个子 Run 同时执行。三个角色使用普通文件、Shell、Skill、图片、只读记忆、产物声明和已启用扩展工具，角色通过持久记录生成的独立指令表达分工。`explorer` 不提供强制只读保证。内置类型继承父模型；自定义类型可以通过 `model.provider_id`、`model.config_id` 和 `reasoning_selection` 选择已有模型配置。所有子 Run 继承父 Run 的审批模式、权限和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代、直接向用户提问或直接申请新 Grant。
+- 每个父 Run 最多有 16 个子 Session，其中最多 8 个子 Run 同时执行。三个角色使用普通文件、Shell、Skill、图片、产物声明和已启用扩展工具，角色通过持久记录生成的独立指令表达分工。`explorer` 不提供强制只读保证。内置类型继承父模型；自定义类型可以通过 `model.provider_id`、`model.config_id` 和 `reasoning_selection` 选择已有模型配置。子 Run 暂不获得记忆工具或自动索引。所有子 Run 继承父 Run 的审批模式、权限和扩展快照；父 Run 有效时可使用其已批准的 Run 范围 Grant，但不能派生后代、直接向用户提问或直接申请新 Grant。
 - 父任务等待在没有活动 Shell 且没有剩余批次时使用持久 `waiting_agents` 状态。混合批次或活动 Shell 下保留 Worker，满足条件后顺序继续。忙碌子任务的 `followup_task` 作为消息送达；空闲子任务才创建新 Run。任务和消息正文支持 64 KiB UTF-8。模型优先读取最早 32 条未读消息，只有完整正文进入成功请求后才保存投递回执；失败、取消和截断预览不消费消息，已读消息不重复注入。可选子任务通过 `required_for_completion=false` 声明，收尾时停止并清理；必需任务仍需完成。
 - 主 Agent 默认读取子任务最终结果和简要状态，不加载子任务的过程工具和中间回答。每份结果默认最多提供 8,192 个估算 token、64 KiB 的预览；总量按模型预算控制。长结果保留头尾、原始长度和固定 Item ID，主 Agent 可通过 `read_agent_result` 分页读取完整回答。被裁剪的明确消息可通过 `read_agent_message` 读取。过程记录仍保存在子会话，Desktop 可以查看。
 - Desktop 在环境信息中展示子 Agent 列表和待审批数量；右侧工作区关闭时，环境信息入口仍提示待审批数。点击可在右侧工作区查看状态、记录、审批和停止操作。父任务取消会同时发起子任务取消；父任务异常结束后，正常调度也会取消其孤立子任务。
@@ -569,7 +569,7 @@ Plan 工具已补充经过真实 Dispatcher、ToolExecutionController、Reposito
 
 ## 记忆
 
-Eidos 使用全局/项目范围的 `MEMORY.md` 索引和主题 Markdown 笔记。模型在当前 Run 中通过 `memory_read`、`memory_search`、`memory_edit` 即时读取和保存，正文支持分页与版本 CAS。系统保留来源校验、撤销和用户控制版本保护。v42 已移除会话级临时记忆模式，所有会话按所属范围的记忆模式工作。记忆页只保留范围、模式、笔记编辑、来源/版本及整个范围的 Markdown 导出，完整备份移至运行时的本地数据区。v40 按用户要求清除旧记忆，不转换旧内容；后台模型整理、候选确认、历史回填和预算任务已移除。详见 [docs/current/features/memory.md](features/memory.md)。
+Eidos 使用全局/项目范围的 `MEMORY.md` 索引和主题 Markdown 笔记。模型在当前 Run 中通过 `memory_read`、`memory_search`、`memory_edit` 即时读取和保存，正文支持分页与版本 CAS。Runtime 自动记录来源和更新版本，自动模式允许更正用户笔记。普通整理采用可恢复归档；彻底遗忘和关闭记忆继续执行隐私撤销。聊天来源变化不再连带撤销笔记。v42 已移除会话级临时记忆模式，所有会话按所属范围的记忆模式工作。记忆页只保留范围、模式、笔记编辑、来源/版本及整个范围的 Markdown 导出，完整备份移至运行时的本地数据区。v40 按用户要求清除旧记忆，不转换旧内容；后台模型整理、候选确认、历史回填和预算任务已移除。详见 [docs/current/features/memory.md](features/memory.md)。
 
 审批支持高危人工确认。manual 与 auto_review 遇到受保护数据、Runtime、系统 Skill、非专用 Git 路径扩权或显式取消沙盒保护时，展示 danger 样式和具体范围，由用户决定。批准后系统执行对应操作；相邻路径、身份和版本核验继续生效。full_access 不请求或记录逐项审批，模型使用默认工具参数直接执行。
 

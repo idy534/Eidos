@@ -1,14 +1,14 @@
 # Eidos 当前网页搜索
 
-更新日期：2026-10-22。
+更新日期：2026-10-26。
 
 ## 用户入口
 
-用户通过“设置 → 网页搜索”配置 DeepSeek Search 和 LangSearch。页面沿用现有 SettingSection、SettingRow、Button 和 StatusBadge。两家配置可以同时保存。用户通过每家旁的“默认使用”勾选项选择一家。用户也可以取消全部勾选。
+用户通过“设置 → 网页搜索”配置 DeepSeek Search、LangSearch 和豆包搜索 Custom 版。页面沿用现有 SettingSection、SettingRow、Button 和 StatusBadge。三家配置可以同时保存。用户通过每家旁的“默认使用”勾选项选择一家。用户也可以取消全部勾选。
 
 系统没有自动选择、自动切换、结果合并和备用服务。用户没有选择默认服务，或所选服务没有可读取的本地 Key 时，新 Run 不发布 `web_search`。配置保存本身不触发搜索，也不验证远端账号和额度。
 
-页面读取配置时回显本机保存的真实 Key。输入框默认使用密码掩码，用户点击眼睛按钮后才能查看明文。页面不再提供“清除已保存的 Key”按钮，也不再使用留空保留原值的逻辑。页面按输入框当前值自动保存；用户清空输入框后，页面删除对应 Key，并同时取消该服务的默认选择。页面保存成功后保留当前值，保存失败或旧响应返回时保留后续编辑。刷新配置后，输入框重新显示保存值并恢复掩码。页面保留官方 Key、文档、价格入口。用户可以配置结果条数、超时、正文和摘录长度。LangSearch 另有时间范围（支持不限、一天内、一周、一月、一年等常用预设与自定义日期区间）、包含域名和排除域名。DeepSeek 不暴露本地化 IP 设置入口。
+页面读取配置时回显本机保存的真实 Key。输入框默认使用密码掩码，用户点击眼睛按钮后才能查看明文。页面不再提供“清除已保存的 Key”按钮，也不再使用留空保留原值的逻辑。页面按输入框当前值自动保存；用户清空输入框后，页面删除对应 Key，并同时取消该服务的默认选择。页面保存成功后保留当前值，保存失败或旧响应返回时保留后续编辑。刷新配置后，输入框重新显示保存值并恢复掩码。页面保留官方 Key、文档、价格入口。用户可以配置结果条数、超时、正文和摘录长度。LangSearch 和豆包搜索另有时间范围（支持不限、一天内、一周、一月、一年等常用预设与自定义日期区间）、包含域名和排除域名。DeepSeek 不暴露本地化 IP 设置入口。
 
 ## 调用链
 
@@ -47,8 +47,9 @@ Schema v34 增加 `web_search_settings` 和 `run_web_search_snapshots`。前者�
 | --- | --- | --- |
 | DeepSeek | `https://api.deepseek.com/v1/tools/search` | `query`、`count`、`need_content`、可选 `localization` |
 | LangSearch | `https://api.langsearch.com/v1/web-search` | `query`、`count`、`freshness`、可选 `contents.text.maxCharacters`、`includeDomains`、`excludeDomains` |
+| 豆包搜索 Custom 版 | `https://open.feedcoopapi.com/search_api/web_search` | `Query`、`SearchType: web`、`Count`、`Filter.NeedUrl`、可选 `Filter.TimeRange/Sites/BlockHosts`、`QueryControl.QueryRewrite: false`、`ContentFormats: text` |
 
-两个请求都是带 Bearer Key 的 POST。DeepSeek 查询最多 128 个字符。LangSearch 查询使用 Eidos 的 2048 字符上限。两家都只允许 1–50 条结果。LangSearch 的新字段统一使用 `maxCharacters`。系统不传旧的 `summary` 或 `max_characters`，也不自动发送用户的完整原始问题。协议来源分别是 [DeepSeek 官方指南](https://api-docs.deepseek.com/zh-cn/guides/search/)和 [LangSearch 官方指南](https://docs.langsearch.com/reference/search-api-guide)。
+三个请求都是带 Bearer Key 的 POST。DeepSeek 查询最多 128 个字符。LangSearch 查询使用 Eidos 的 2048 字符上限。三家都只允许 1–50 条结果。豆包查询最多 100 个字符。LangSearch 的新字段统一使用 `maxCharacters`。系统不传旧的 `summary` 或 `max_characters`，也不自动发送用户的完整原始问题。协议来源分别是 [DeepSeek 官方指南](https://api-docs.deepseek.com/zh-cn/guides/search/)和 [LangSearch 官方指南](https://docs.langsearch.com/reference/search-api-guide)。
 
 HTTP Client 使用已有 `httpx2` 和 AnyIO。系统关闭重定向和环境代理继承，并保持 TLS 校验。系统没有隐藏 POST 重试。401、403、429、5xx、超时、网络失败、业务失败和非法响应映射到稳定工具错误。429 不被直接判断为“当日额度耗尽”。这些错误返回模型，不自动结束 Run，也不触发另一家搜索。
 
@@ -56,13 +57,29 @@ HTTP Client 使用已有 `httpx2` 和 AnyIO。系统关闭重定向和环境代�
 
 ## 工具契约与结果
 
-工具只有 `query` 和可选 `count`。模型不能填写 provider、URL、Key 或 Header。DeepSeek 使用独立的 128 字符输入 Schema。Schema 进入现有工具内容 Hash 和参数校验。
+工具只有 `query` 和可选 `count`。模型不能填写 provider、URL、Key 或 Header。DeepSeek 使用独立的 128 字符输入 Schema，豆包使用 100 字符输入 Schema。Schema 进入现有工具内容 Hash 和参数校验。
 
 成功结果包含 `provider`、`query`、`requestedCount`、`retrievedAt`、`results` 和 `truncated`。每条来源包含 `title`、`url`、`excerpt`、`contentKind`、可选 `publishedAt` 和 `truncated`。LangSearch 的搜索用量单列在 `usage`，不计入聊天模型用量。
 
 系统保留服务排序。系统只接受有主机、没有用户信息和控制字符的 HTTP/HTTPS 来源 URL。无效 URL 被丢弃。非空响应的来源全部无效时，工具返回 `web_search_invalid_response`。正常空数组返回成功的 `no_results`。系统不补造发布时间，不抓取图标，也不执行结果中的 HTML。
 
 系统最多读取 2 MiB 解压后响应，并最多接受 50 条结果。摘录合计最多 100 KiB UTF-8，单条摘录按配置截断。来源元数据和摘录另受 240 KiB 总预算约束；工具 envelope 留有余量，使 canonical 结果保持在 256 KiB 内。模型首轮使用现有 16 KiB 通用投影，超长结果通过 `read_tool_output` 分页读取。网页内容在工具说明中明确属于不可信材料。
+
+## 豆包搜索接入（2026-10-26）
+
+用户可以在设置页保存豆包搜索专用 Key，或填写已开启豆包搜索抵扣的 Agent Plan 专属 Key。用户选择豆包作为默认服务后，新 Run 使用该配置。服务端根据 Key 决定计费方式。Eidos 不读取余额、不计算 AFP，也不在保存时发起真实搜索。[Agent Plan 官方文档](https://docs.volcengine.com/docs/ark/agent-plan-personal-search?lang=zh)说明了 Key 和抵扣开关；[搜索 API 文档](https://docs.volcengine.com/docs/Networkedsearch/Networkedsearch-2?lang=zh)定义了请求和响应。
+
+豆包只接入 Custom 版网页搜索。系统固定 `SearchType: web`、`Filter.NeedUrl: true`、`QueryControl.QueryRewrite: false` 和 `ContentFormats: text`。系统不接入图片、行业卡片、Global 版或独立 Fetch。模型仍只提交 query 和可选 count，不能选择服务或传入地址、Key 和 Header。
+
+设置沿用现有结果条数、超时、正文和摘录长度。豆包支持最多 20 个包含域名、5 个排除域名。系统把域名数组转换成 `|` 分隔的字符串。时间预设映射为 `OneDay/OneWeek/OneMonth/OneYear`；单个日期映射为当天的闭区间；日期范围按原范围发送。不限时间时，系统不发送 TimeRange。
+
+豆包的 `Filter.NeedContent` 表示仅保留有正文的结果。Eidos 不发送这个字段。用户开启正文选项时，系统优先使用返回的 Content；正文缺失时仍使用 Summary，然后使用 Snippet。用户关闭正文选项时，系统优先使用 Summary。系统把 Title、Url、PublishTime 映射到现有来源字段，并保留排序、URL 校验、凭证脱敏和现有大小上限。
+
+系统同时检查 HTTP 状态和 `ResponseMetadata.Error`，并映射参数、鉴权、访问、额度、套餐、限流和服务错误。系统不回传服务端原始错误消息，也不自动重试或切换服务。取消、Durable Intent、结果验证和未知结果记录继续使用现有执行链。
+
+本次没有新增依赖、表或 SQL 字段。旧配置和旧 Run 快照通过新增字段的默认值读取。DeepSeek 和 LangSearch 沿用原结果模型和工具内容 Hash，待审批恢复继续使用原契约。豆包使用扩展结果模型。新版本保存的配置和快照可能包含旧版本不认识的字段；回退应用版本前，用户应恢复升级前的数据备份。
+
+本次 Runtime 网页搜索定向测试通过 90 项，Main 协议与真实 Runtime 重启测试通过 4 项，Renderer 行为测试通过 16 项。测试覆盖豆包请求、100 字符上限、摘要与正文、发布时间、HTTP 与业务错误、不重试、凭证保留、快照继承、三种审批模式、取消和旧契约恢复。Electron 隔离页面在 320、768、1024、1440px 下通过布局、键盘默认选择和 Key 显隐检查。Main 与 Renderer 构建、Ruff、Deptry、两组 Python 依赖审计和 git diff --check 通过。Renderer 构建保留大 Chunk 提示。本次没有执行真实账户请求、Full Suite、打包或正式窗口人工验收。
 
 ## Desktop 与验证边界
 
@@ -72,7 +89,7 @@ Python DTO 通过 `scripts/generate-web-search-contracts.mjs` 生成 TypeScript 
 
 首版定向测试覆盖配置、CAS、凭证权限、清理、快照、子任务、幂等、迁移、官方请求、结果边界、失败、审批、取消和模型继续执行。首版真实 Electron 隔离页面覆盖 320、768、1024、1440px，以及键盘默认选择和 Key 显隐。测试使用模拟 API 和临时数据。
 
-本轮没有使用真实账户 Key 请求两家服务。保存成功不能视作在线认证通过。完整测试套件、正式应用人工验收和打包验证没有执行。具体执行结果见本次交付说明。仓库现有 Python 生产依赖审计发现 certifi 和 Pillow 的已知漏洞；本次没有修改依赖或锁文件。
+本次没有使用真实账户 Key 请求三家服务。保存成功不能视作在线认证通过。Full Suite、正式应用人工验收和打包验证没有执行。2026-10-26 的生产 Python 依赖和独立 Runtime Python 依赖审计均通过。本次没有修改依赖或锁文件。旧审计结果保留在下方历史验证记录中。
 
 ## Key 回显修订验证（2026-10-22）
 

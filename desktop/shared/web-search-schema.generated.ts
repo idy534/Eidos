@@ -7,7 +7,8 @@ export const webSearchSchema = {
         "provider": {
           "enum": [
             "deepseek",
-            "langsearch"
+            "langsearch",
+            "doubao"
           ],
           "title": "Provider",
           "type": "string"
@@ -69,6 +70,61 @@ export const webSearchSchema = {
         }
       },
       "title": "DeepSeekSearchOptions",
+      "type": "object"
+    },
+    "DoubaoSearchOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "defaultCount": {
+          "default": 5,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Defaultcount",
+          "type": "integer"
+        },
+        "timeoutSeconds": {
+          "default": 30,
+          "maximum": 120,
+          "minimum": 5,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        },
+        "includePageContent": {
+          "default": false,
+          "title": "Includepagecontent",
+          "type": "boolean"
+        },
+        "maxExcerptCharacters": {
+          "default": 3000,
+          "maximum": 10000,
+          "minimum": 100,
+          "title": "Maxexcerptcharacters",
+          "type": "integer"
+        },
+        "freshness": {
+          "default": "noLimit",
+          "maxLength": 22,
+          "title": "Freshness",
+          "type": "string"
+        },
+        "includeDomains": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Includedomains",
+          "type": "array"
+        },
+        "excludeDomains": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Excludedomains",
+          "type": "array"
+        }
+      },
+      "title": "DoubaoSearchOptions",
       "type": "object"
     },
     "LangSearchOptions": {
@@ -148,6 +204,16 @@ export const webSearchSchema = {
           ],
           "title": "Langsearch",
           "type": "string"
+        },
+        "doubao": {
+          "default": "missing",
+          "enum": [
+            "missing",
+            "stored",
+            "unavailable"
+          ],
+          "title": "Doubao",
+          "type": "string"
         }
       },
       "title": "SearchCredentialState",
@@ -167,6 +233,12 @@ export const webSearchSchema = {
           "maxLength": 1024,
           "title": "Langsearch",
           "type": "string"
+        },
+        "doubao": {
+          "default": "",
+          "maxLength": 1024,
+          "title": "Doubao",
+          "type": "string"
         }
       },
       "title": "SearchCredentialValues",
@@ -178,7 +250,8 @@ export const webSearchSchema = {
         "provider": {
           "enum": [
             "deepseek",
-            "langsearch"
+            "langsearch",
+            "doubao"
           ],
           "title": "Provider",
           "type": "string"
@@ -211,7 +284,8 @@ export const webSearchSchema = {
             {
               "enum": [
                 "deepseek",
-                "langsearch"
+                "langsearch",
+                "doubao"
               ],
               "type": "string"
             },
@@ -227,6 +301,9 @@ export const webSearchSchema = {
         },
         "langsearch": {
           "$ref": "#/$defs/LangSearchOptions"
+        },
+        "doubao": {
+          "$ref": "#/$defs/DoubaoSearchOptions"
         }
       },
       "title": "WebSearchConfig",
@@ -238,7 +315,8 @@ export const webSearchSchema = {
         "provider": {
           "enum": [
             "deepseek",
-            "langsearch"
+            "langsearch",
+            "doubao"
           ],
           "title": "Provider",
           "type": "string"
@@ -323,7 +401,7 @@ export const webSearchSchema = {
               }
             ]
           },
-          "maxItems": 2,
+          "maxItems": 3,
           "title": "Credentialchanges",
           "type": "array"
         }

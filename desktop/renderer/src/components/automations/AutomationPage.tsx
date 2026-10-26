@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Automation, AutomationOccurrence, AutomationDesktopRequest, AutomationSummary } from "../../../../shared/automation.js";
 import type { ModelOption, Project, Session } from "../../contracts.js";
 import { Button } from "../Button.js";
-import { ToastContainer } from "../ToastContainer.js";
+import { ToastContainer, type ToastItem, type ToastType } from "../ToastContainer.js";
 import { AutomationForm, type InitialAutomationValues } from "./AutomationForm.js";
 import { AutomationTaskList } from "./AutomationTaskList.js";
 import { userFacingError } from "../../session-state.js";
@@ -159,13 +159,29 @@ export function AutomationPage({
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
 
   const selection = useRef(0);
   const listVersion = useRef(0);
   const mounted = useRef(true);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const showToast = useCallback((message: string, type: ToastType = "info", duration = 3500) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts((prev) => [
+      ...prev.filter((t) => !(t.type === type && t.message === message)),
+      { id, type, message, duration },
+    ]);
+  }, []);
+
+  const clearErrors = useCallback(() => {
+    setToasts((prev) => prev.filter((t) => t.type !== "error"));
+  }, []);
 
   // Close with Escape key matching SettingsPage
   useEffect(() => {
@@ -191,11 +207,11 @@ export function AutomationPage({
       setItems((current) => (after ? [...current, ...(result.items ?? [])] : result.items ?? []));
       setCursor(result.nextCursor ?? null);
     } catch (failure) {
-      if (mounted.current && version === listVersion.current) setError(userFacingError(failure));
+      if (mounted.current && version === listVersion.current) showToast(userFacingError(failure), "error");
     } finally {
       if (mounted.current && version === listVersion.current) setLoading(false);
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     mounted.current = true;
@@ -237,7 +253,7 @@ export function AutomationPage({
             if (detail?.automation) setSelected(detail.automation);
           })
           .catch((failure) => {
-            if (!disposed) setError(userFacingError(failure));
+            if (!disposed) showToast(userFacingError(failure), "error");
           });
       }, 50);
     });
@@ -246,11 +262,11 @@ export function AutomationPage({
       clearTimeout(timer);
       unsubscribe();
     };
-  }, [selected?.id, editing]);
+  }, [selected?.id, editing, showToast]);
 
   const read = useCallback(async (id: string) => {
     const version = ++selection.current;
-    setError("");
+    clearErrors();
     setCreating(false);
     setEditing(false);
     setTemplateValues(undefined);
@@ -265,11 +281,11 @@ export function AutomationPage({
       setHistory(records.occurrences ?? []);
       setHistoryCursor(records.nextCursor ?? null);
     } catch (failure) {
-      if (version === selection.current) setError(userFacingError(failure));
+      if (version === selection.current) showToast(userFacingError(failure), "error");
     } finally {
       if (version === selection.current) setBusy(false);
     }
-  }, []);
+  }, [clearErrors, showToast]);
 
   useEffect(() => {
     if (initialAutomationId) void read(initialAutomationId);
@@ -277,7 +293,7 @@ export function AutomationPage({
 
   const save = async (command: AutomationDesktopRequest, confirmation?: "full-access-v1") => {
     setBusy(true);
-    setError("");
+    clearErrors();
     try {
       const result = await window.eidosRuntime.automation({
         operationId: crypto.randomUUID(),
@@ -291,7 +307,7 @@ export function AutomationPage({
       setTemplateValues(undefined);
       await refresh();
     } catch (failure) {
-      setError(userFacingError(failure));
+      showToast(userFacingError(failure), "error");
       throw failure;
     } finally {
       setBusy(false);
@@ -315,12 +331,12 @@ export function AutomationPage({
   const runNow = async () => {
     if (!selected) return;
     setBusy(true);
-    setError("");
+    clearErrors();
     try {
       await window.eidosRuntime.automationRunNow({ id: selected.id, operationId: crypto.randomUUID() });
       await read(selected.id);
     } catch (failure) {
-      setError(userFacingError(failure));
+      showToast(userFacingError(failure), "error");
     } finally {
       setBusy(false);
     }
@@ -336,7 +352,7 @@ export function AutomationPage({
       setHistory((current) => [...current, ...(result.occurrences ?? [])]);
       setHistoryCursor(result.nextCursor ?? null);
     } catch (failure) {
-      setError(userFacingError(failure));
+      showToast(userFacingError(failure), "error");
     }
   };
 
@@ -359,8 +375,8 @@ export function AutomationPage({
   return (
     <div className="automation-page-wrapper">
       <ToastContainer
-        toasts={error ? [{ id: "automation-error", message: error, type: "error", duration: 3500 }] : []}
-        onDismiss={() => setError("")}
+        toasts={toasts}
+        onDismiss={dismissToast}
       />
       <header className="automation-page-header">
         <div className="header-left">
@@ -469,6 +485,7 @@ export function AutomationPage({
                     setEditing(false);
                     setTemplateValues(undefined);
                   }}
+                  onShowToast={showToast}
                 />
               </div>
             ) : selected ? (

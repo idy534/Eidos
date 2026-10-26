@@ -225,13 +225,14 @@ class InstructionResolver:
             if memory_access is not None and memory_access.generate_enabled:
                 memory_content.append(MEMORY_AUTOMATIC_INSTRUCTIONS)
             else:
-                memory_content.append("Automatic writes are disabled. Explicit user saves remain available through memory_edit(userRequested=true).")
+                memory_content.append("Automatic writes are disabled. Use memory_edit only for the user's explicit save or correction request; the normal Run approval flow applies.")
             memory_content.append(MEMORY_EXPLICIT_WRITE_INSTRUCTIONS)
         if memory_access is not None:
             state = json.dumps({
                 "currentScope": memory_access.scopes[-1].kind,
                 "readScopes": memory_access.read_scopes,
                 "automaticLearning": memory_access.generate_enabled,
+                "automaticScopes": [scope.kind for scope in memory_access.scopes if memory_access.available and scope.mode == "auto"],
             }, separators=(",", ":"))
             memory_content.append(f"<memory_state>\n{state}\n</memory_state>")
         if memory_content:
