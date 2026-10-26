@@ -1,5 +1,16 @@
 import { highlightText, clearHighlights } from "./find-text.js";
-import { InputReferenceCards, isInlineReference, isShelfReference, useInlineTokenMetrics } from "./InputContext.js";
+import {
+  formatInlineReferencesAsPlainText,
+  removeInlineReferenceTokenById,
+} from "../../../shared/inline-references.js";
+import {
+  InlineReferenceProse,
+  InputReferenceCards,
+  isInlineReference,
+  isShelfReference,
+  useReferenceActivation,
+} from "./InputContext.js";
+import { InlineRichEditor } from "./InlineRichEditor.js";
 import { ToolTextView } from "./ToolTextView.js";
 import { toolFilePaths } from "./ResultFiles.js";
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -554,10 +565,14 @@ function UserMessage({
   const activeReferences = (editing ? draftReferences : item.references) ?? [];
   const shelfReferences = activeReferences.filter(isShelfReference);
   const inlineReferences = activeReferences.filter(isInlineReference);
-  const inlineEditorRef = useRef<HTMLDivElement>(null);
-  useInlineTokenMetrics(inlineEditorRef, editing ? inlineReferences : []);
-  const removeDraftReference = (id: string) =>
+  const {
+    activateReference: activateInlineReference,
+    dialogs: inlineActivationDialogs,
+  } = useReferenceActivation();
+  const removeDraftReference = (id: string) => {
+    setDraft((previous) => removeInlineReferenceTokenById(previous, id));
     setDraftReferences((previous) => previous.filter((reference) => reference.id !== id));
+  };
 
   return (
     <div id={`item-${item.id}`} className="feed-item feed-item--user">
@@ -574,44 +589,30 @@ function UserMessage({
         ) : null}
         {editing ? (
           <div className="user-message-editor">
-            <div
-              ref={inlineEditorRef}
-              className={`composer-inline-editor${inlineReferences.length > 0 ? " composer-inline-editor--has-inline" : ""}`}
-            >
-              {inlineReferences.length > 0 && (
-                <InputReferenceCards
-                  references={inlineReferences}
-                  variant="composer"
-                  placement="inline"
-                  onRemove={removeDraftReference}
+            {inlineReferences.length > 0 ? (
+              <>
+                <InlineRichEditor
+                  autoFocus
+                  value={draft}
+                  inlineReferences={inlineReferences}
+                  disabled={revisionSubmitting}
+                  ariaLabel="编辑最近一次提问"
+                  onChange={(nextValue) => setDraft(nextValue)}
+                  onRemoveReference={removeDraftReference}
+                  onActivateReference={(reference) => void activateInlineReference(reference)}
+                  onSubmit={() => void submitEdit()}
+                  onEscape={() => setEditing(false)}
                 />
-              )}
+                {inlineActivationDialogs}
+              </>
+            ) : (
               <textarea
                 autoFocus
                 value={draft}
                 disabled={revisionSubmitting}
                 aria-label="编辑最近一次提问"
-                onScroll={(event) => {
-                  if (inlineReferences.length > 0) {
-                    inlineEditorRef.current?.style.setProperty(
-                      "--composer-inline-scroll-top",
-                      `${event.currentTarget.scrollTop}px`,
-                    );
-                  }
-                }}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (
-                    event.key === "Backspace"
-                    && !event.nativeEvent.isComposing
-                    && event.currentTarget.selectionStart === 0
-                    && event.currentTarget.selectionEnd === 0
-                    && inlineReferences.length > 0
-                  ) {
-                    event.preventDefault();
-                    removeDraftReference(inlineReferences.at(-1)!.id);
-                    return;
-                  }
                   if (event.key === "Escape") setEditing(false);
                   if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
@@ -619,7 +620,7 @@ function UserMessage({
                   }
                 }}
               />
-            </div>
+            )}
             <div className="user-message-editor-actions">
               <button type="button" disabled={revisionSubmitting} onClick={() => setEditing(false)}>取消</button>
               <button
@@ -632,25 +633,20 @@ function UserMessage({
               </button>
             </div>
           </div>
-        ) : (
-          <>
-            {inlineReferences.length > 0 ? (
-              <InputReferenceCards
-                references={inlineReferences}
-                variant="bubble"
-                placement="inline"
-              />
-            ) : null}
-            {item.content ? (
-              <p className="eidos-chat-prose">{item.content}</p>
-            ) : null}
-          </>
-        )}
+        ) : inlineReferences.length > 0 ? (
+          <InlineReferenceProse
+            content={item.content ?? ""}
+            references={inlineReferences}
+            variant="bubble"
+          />
+        ) : item.content ? (
+          <p className="eidos-chat-prose">{item.content}</p>
+        ) : null}
       </div>
       {!editing && (
         <div className="feed-item-footer response-footer">
           <div className="response-actions-left">
-            {item.content && <CopyButton content={item.content} />}
+            {item.content && <CopyButton content={formatInlineReferencesAsPlainText(item.content)} />}
             {canEdit && (item.content || item.references?.length) && (
               <ActionButton
                 label="编辑并重新发送"
@@ -983,13 +979,14 @@ function ProcessItem({
             />
           ) : null}
           {steeringInline.length > 0 ? (
-            <InputReferenceCards
+            <InlineReferenceProse
+              content={item.content ?? ""}
               references={steeringInline}
               variant="bubble"
-              placement="inline"
             />
+          ) : item.content ? (
+            <MarkdownContent className="eidos-chat-prose" content={item.content} />
           ) : null}
-          {item.content && <MarkdownContent className="eidos-chat-prose" content={item.content} />}
         </div>
       </div>
     );

@@ -7,6 +7,7 @@ import { StatusBadge } from "../StatusBadge.js";
 import { McpReviewDialog } from "./McpReviewDialog";
 import { McpCreateDialog } from "./McpCreateDialog";
 import { McpDetailDialog } from "./McpDetailDialog.js";
+import { GitHubIcon } from "./SettingsIcons.js";
 
 interface McpSettingsProps {
   servers: McpServerRecord[];
@@ -143,7 +144,10 @@ function getCategoryInfo(serverId: string, executable: string) {
   if (s.includes("fetch") || s.includes("http") || s.includes("api") || s.includes("curl") || s.includes("web")) {
     return { type: "network", label: "Network API", icon: NetworkIcon };
   }
-  if (s.includes("git") || s.includes("github") || s.includes("gitlab")) {
+  if (s.includes("github")) {
+    return { type: "github", label: "GitHub", icon: GitHubIcon };
+  }
+  if (s.includes("git") || s.includes("gitlab")) {
     return { type: "git", label: "Git VCS", icon: GitIcon };
   }
   return { type: "default", label: "CLI Tool", icon: TerminalIcon };

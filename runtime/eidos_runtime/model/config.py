@@ -365,7 +365,7 @@ MODEL_PROVIDERS = (
             CatalogModel(
                 id="deepseek-v4.1-flash",
                 name="DeepSeek V4.1 Flash",
-                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                url="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
                 supportsReasoning=True,
@@ -379,7 +379,7 @@ MODEL_PROVIDERS = (
             CatalogModel(
                 id="deepseek-v4-pro-ga-260813",
                 name="DeepSeek V4 Pro GA",
-                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                url="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
                 supportsReasoning=True,
@@ -393,7 +393,7 @@ MODEL_PROVIDERS = (
             CatalogModel(
                 id="deepseek-v4-flash-ga-260731",
                 name="DeepSeek V4 Flash GA",
-                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                url="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
                 supportsReasoning=True,
@@ -407,7 +407,7 @@ MODEL_PROVIDERS = (
             CatalogModel(
                 id="glm-5.3",
                 name="GLM 5.3",
-                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                url="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=False,
                 supportsReasoning=True,
@@ -417,7 +417,7 @@ MODEL_PROVIDERS = (
             CatalogModel(
                 id="glm-5.3-flash",
                 name="GLM 5.3 Flash",
-                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                url="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
                 supportsReasoning=True,
@@ -431,7 +431,7 @@ MODEL_PROVIDERS = (
             CatalogModel(
                 id="minimax-m3",
                 name="MiniMax M3",
-                url="https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                url="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
                 supportsToolCall=True,
                 supportsImages=True,
                 supportsReasoning=False,

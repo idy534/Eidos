@@ -1,7 +1,9 @@
 import type { InputReference, InputPrepareRequest } from "../../../shared/input-context.js";
-import { InputReferenceCards, isInlineReference, isShelfReference, useInlineTokenMetrics, useInputContext } from "./InputContext.js";
+import { canonicalizeInlineText } from "../../../shared/inline-references.js";
+import { InputReferenceCards, isInlineReference, isShelfReference, useInputContext, useReferenceActivation } from "./InputContext.js";
+import { InlineRichEditor } from "./InlineRichEditor.js";
 import { InputPicker, type InputPickerMode, LightbulbIcon } from "./InputPicker.js";
-import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useState, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { ApprovalMode, ContextUsage, ModelId, ModelReasoningSelection, Run, Session } from "../contracts.js";
 import type { ComposerMode } from "../session-state.js";
 import { formatContextUsage } from "../context-usage.js";
@@ -98,31 +100,115 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   onExecutionModeChange,
 }, forwardedRef) {
   const context = useInputContext();
-  const [picker, setPicker] = useState<{ mode: InputPickerMode; query: string; start?: number; end?: number }>();
-  const [agentCreator, setAgentCreator] = useState<{ owner: string; add(request: InputPrepareRequest): Promise<void> }>();
+  const {
+    activateReference: activateInlineReference,
+    error: inlineActivationError,
+    dialogs: inlineActivationDialogs,
+  } = useReferenceActivation();
+  const [picker, setPicker] = useState<{
+    mode: InputPickerMode;
+    query: string;
+    start?: number;
+    end?: number;
+    insertRange?: { start: number; end: number };
+  }>();
+  const [agentCreator, setAgentCreator] = useState<{
+    owner: string;
+    add(request: InputPrepareRequest, range?: { start: number; end: number }): Promise<void>;
+    insertRange?: { start: number; end: number };
+  }>();
   const [list, setList] = useState<{ id: string; active: string | undefined }>();
   const [showStatus, setShowStatus] = useState(false);
+  const [pendingCaretOffset, setPendingCaretOffset] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const richEditorRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
+  const selectionRangeRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+  const userSelectedRef = useRef(false);
+
+  const shelfReferences = references.filter(isShelfReference);
+  const inlineReferences = references.filter(isInlineReference);
+  const hasInlineReferences = inlineReferences.length > 0;
+  const activeCanonicalInput = hasInlineReferences
+    ? canonicalizeInlineText(input, inlineReferences)
+    : input;
+
+  const focusActiveEditor = useCallback(() => {
+    (richEditorRef.current ?? textareaRef.current)?.focus();
+  }, []);
+
+  const getEffectiveSelectionRange = useCallback((): { start: number; end: number } => {
+    if (!hasInlineReferences && textareaRef.current && document.activeElement === textareaRef.current) {
+      return {
+        start: textareaRef.current.selectionStart,
+        end: textareaRef.current.selectionEnd,
+      };
+    }
+    if (userSelectedRef.current) {
+      const clampedStart = Math.max(0, Math.min(activeCanonicalInput.length, selectionRangeRef.current.start));
+      const clampedEnd = Math.max(clampedStart, Math.min(activeCanonicalInput.length, selectionRangeRef.current.end));
+      return { start: clampedStart, end: clampedEnd };
+    }
+    return { start: activeCanonicalInput.length, end: activeCanonicalInput.length };
+  }, [activeCanonicalInput.length, hasInlineReferences]);
+
   const pickerList = useCallback((id: string, active: string | undefined) => setList((previous) => previous?.id === id && previous.active === active ? previous : { id, active }), []);
-  const closePicker = useCallback(() => { setPicker(undefined); textareaRef.current?.focus(); }, []);
-  useEffect(() => { setPicker(undefined); setShowStatus(false); setAgentCreator(undefined); }, [context?.sessionId]);
+  const closePicker = useCallback(() => { setPicker(undefined); focusActiveEditor(); }, [focusActiveEditor]);
+
+  useEffect(() => {
+    setPicker(undefined);
+    setShowStatus(false);
+    setAgentCreator(undefined);
+    setPendingCaretOffset(null);
+    selectionRangeRef.current = { start: 0, end: 0 };
+    userSelectedRef.current = false;
+  }, [context?.sessionId]);
+
+  useEffect(() => context?.registerEditor?.({
+    getSelectionRange: () => getEffectiveSelectionRange(),
+    onInsertedCaret: (offset) => {
+      userSelectedRef.current = true;
+      selectionRangeRef.current = { start: offset, end: offset };
+      setPendingCaretOffset(offset);
+    },
+  }), [context, getEffectiveSelectionRange]);
+
   function updateMention(value: string, position: number) {
-    const match = /(?:^|\s)([@$/])([^\s]*)$/.exec(value.slice(0, position));
+    const prefix = value.slice(0, position);
+    const slashMatch = /(?:^|\s|\(ref:[A-Za-z0-9_-]{1,64}\))(\/)([^\s[\]]*)$/.exec(prefix);
+    const match =
+      slashMatch
+      ?? /(?:^|\s|\(ref:[A-Za-z0-9_-]{1,64}\)|[\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF])([@$])([^\s[\]]*)$/.exec(prefix);
     if (!match) { setPicker(undefined); return; }
     const symbol = match[1]!;
     const query = match[2]!;
-    setPicker({ mode: symbol === "$" ? "skill" : symbol === "/" ? "commands" : "all", query, start: position - query.length - 1, end: position });
+    const start = position - query.length - 1;
+    setPicker({
+      mode: symbol === "$" ? "skill" : symbol === "/" ? "commands" : "all",
+      query,
+      start,
+      end: position,
+      insertRange: { start, end: start },
+    });
   }
-  function consumeMention() {
+
+  function consumeMention(): { start: number; end: number } | undefined {
     if (picker?.start !== undefined && picker.end !== undefined) {
       const position = picker.start;
-      onInputChange(input.slice(0, position) + input.slice(picker.end));
-      requestAnimationFrame(() => { textareaRef.current?.focus(); textareaRef.current?.setSelectionRange(position, position); });
+      const stripped = activeCanonicalInput.slice(0, position) + activeCanonicalInput.slice(picker.end);
+      userSelectedRef.current = true;
+      selectionRangeRef.current = { start: position, end: position };
+      onInputChange(stripped);
+      setPendingCaretOffset(position);
+      setPicker(undefined);
+      return { start: position, end: position };
     }
+    const fallbackRange = picker?.insertRange ?? getEffectiveSelectionRange();
     closePicker();
+    return fallbackRange;
   }
-  useImperativeHandle(forwardedRef, () => textareaRef.current as HTMLTextAreaElement);
+
+  useImperativeHandle(forwardedRef, () => (richEditorRef.current ?? textareaRef.current) as HTMLTextAreaElement);
 
   const [showBusyHint, setShowBusyHint] = useState(false);
   useEffect(() => {
@@ -148,10 +234,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 
   useEffect(() => {
     let frameHandle: number | undefined;
-    // Focus textarea when transition from disabled -> enabled occurs
+    // Focus active editor when transition from disabled -> enabled occurs
     if (prevDisabledRef.current && !inputDisabled) {
       frameHandle = requestAnimationFrame(() => {
-        textareaRef.current?.focus();
+        focusActiveEditor();
       });
     }
     prevDisabledRef.current = inputDisabled;
@@ -161,7 +247,48 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
         cancelAnimationFrame(frameHandle);
       }
     };
-  }, [inputDisabled]);
+  }, [inputDisabled, focusActiveEditor]);
+
+  const prevHasInlineRef = useRef<boolean>(hasInlineReferences);
+
+  useLayoutEffect(() => {
+    if (prevHasInlineRef.current && !hasInlineReferences && !inputDisabled) {
+      const el = textareaRef.current;
+      if (el) {
+        el.focus();
+        const pos = Math.max(0, Math.min(el.value.length, selectionRangeRef.current.start));
+        el.setSelectionRange(pos, pos);
+      }
+    }
+    prevHasInlineRef.current = hasInlineReferences;
+  }, [hasInlineReferences, inputDisabled]);
+
+  useLayoutEffect(() => {
+    if (!hasInlineReferences && pendingCaretOffset !== null && !inputDisabled) {
+      const el = textareaRef.current;
+      if (el) {
+        el.focus();
+        const pos = Math.max(0, Math.min(el.value.length, pendingCaretOffset));
+        el.setSelectionRange(pos, pos);
+        selectionRangeRef.current = { start: pos, end: pos };
+      }
+      setPendingCaretOffset(null);
+    }
+  }, [hasInlineReferences, inputDisabled, pendingCaretOffset, input]);
+
+  const handlePasteFiles = useCallback((files: File[]): boolean => {
+    if (!files.length) return false;
+    const paths = files.map((file) => window.eidosRuntime.inputPathForFile(file)).filter(Boolean);
+    if (paths.length) {
+      void context?.paths(paths);
+      return true;
+    }
+    if (files.some((file) => file.type.startsWith("image/"))) {
+      void context?.paste();
+      return true;
+    }
+    return false;
+  }, [context]);
 
   const placeholder = modelLoading
     ? "正在加载模型配置…"
@@ -208,10 +335,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   const modelReasoning = selectedModel?.reasoning ?? undefined;
   const selectedReasoning = reasoningSelection ?? modelReasoning?.defaultSelection ?? undefined;
   const projectName = project?.name?.trim() || (project ? basename(project.workspaceRoot) : undefined);
-  const shelfReferences = references.filter(isShelfReference);
-  const inlineReferences = references.filter(isInlineReference);
-  const inlineEditorRef = useRef<HTMLDivElement>(null);
-  useInlineTokenMetrics(inlineEditorRef, inlineReferences);
 
   return (
     <form
@@ -308,46 +431,73 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       )}
       {unsupportedImage && <FieldError error="当前模型不支持图片。请选择支持图片的模型，或移除图片引用。" className="input-reference-error" />}
       {showBusyHint && <p className="input-reference-hint" role="status">正在准备引用…</p>}
-      <FieldError error={context?.error} className="input-reference-error" />
+      <FieldError error={context?.error ?? inlineActivationError} className="input-reference-error" />
       {showStatus && <p className="input-reference-hint">{context?.sessionId} · {contextUsage ? formatContextUsage(contextUsage) : "暂无上下文统计"}</p>}
       {picker && <InputPicker mode={picker.mode} query={picker.query} inline={picker.start !== undefined}
         anchor={composerRef}
-        onCreateAgent={context ? () => { setAgentCreator({ owner: context.sessionId, add: context.add }); closePicker(); } : undefined}
+        onCreateAgent={context ? () => {
+          const insertRange = picker.insertRange ?? getEffectiveSelectionRange();
+          setAgentCreator({ owner: context.sessionId, add: context.add, insertRange });
+          closePicker();
+        } : undefined}
         onQuery={(query) => setPicker((previous) => previous ? { ...previous, query } : previous)}
         onListId={pickerList} onClose={closePicker}
-        onChoose={(request) => { void context?.add(request); consumeMention(); }}
+        onChoose={(request) => {
+          const insertRange = consumeMention();
+          void context?.add(request, insertRange);
+        }}
         onCommand={(command) => {
           consumeMention();
           if (command === "plan") onWorkModeChange?.("plan");
           else if (command === "status") setShowStatus((value) => !value);
           else if (command === "model") {
-            textareaRef.current?.closest(".composer")?.querySelector<HTMLButtonElement>(".model-selector > button")?.click();
+            composerRef.current?.querySelector<HTMLButtonElement>(".model-selector > button")?.click();
           } else context?.settings(command);
         }}
         onSelectPlanMode={() => onWorkModeChange?.("plan")} />}
-      {agentCreator && <AgentEditorDialog referenceAfterSave onClose={() => { setAgentCreator(undefined); textareaRef.current?.focus(); }}
+      {agentCreator && <AgentEditorDialog referenceAfterSave onClose={() => { setAgentCreator(undefined); focusActiveEditor(); }}
         onSaved={(saved) => {
-          void agentCreator.add({ kind: "agent", source: saved.definition.name });
-          setAgentCreator(undefined); textareaRef.current?.focus();
+          void agentCreator.add({ kind: "agent", source: saved.definition.name }, agentCreator.insertRange);
+          setAgentCreator(undefined); focusActiveEditor();
         }} />}
-      <label className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
-      <div
-        ref={inlineEditorRef}
-        className={`composer-inline-editor${inlineReferences.length > 0 ? " composer-inline-editor--has-inline" : ""}`}
-        onClick={(event) => {
-          if (event.target === event.currentTarget && !inputDisabled) {
-            textareaRef.current?.focus();
-          }
-        }}
-      >
-        {inlineReferences.length > 0 && (
-          <InputReferenceCards
-            references={inlineReferences}
-            variant="composer"
-            placement="inline"
-            {...(onRemoveReference ? { onRemove: onRemoveReference } : {})}
+      <label id="task-input-label" className="sr-only" htmlFor="task-input">告诉 Eidos 要做什么</label>
+      {hasInlineReferences ? (
+        <>
+          <InlineRichEditor
+            ref={richEditorRef}
+            id="task-input"
+            value={input}
+            inlineReferences={inlineReferences}
+            placeholder={placeholder}
+            disabled={inputDisabled}
+            maxLength={65536}
+            role={picker ? "combobox" : "textbox"}
+            ariaLabelledBy="task-input-label"
+            ariaExpanded={Boolean(picker)}
+            ariaControls={picker ? list?.id : undefined}
+            ariaActiveDescendant={picker ? list?.active : undefined}
+            pendingCaretOffset={pendingCaretOffset}
+            onPendingCaretConsumed={() => setPendingCaretOffset(null)}
+            onSelectionChange={(range) => {
+              userSelectedRef.current = true;
+              selectionRangeRef.current = range;
+            }}
+            onChange={(nextValue, caretOffset) => {
+              userSelectedRef.current = true;
+              selectionRangeRef.current = { start: caretOffset, end: caretOffset };
+              onInputChange(nextValue);
+              updateMention(nextValue, caretOffset);
+            }}
+            onRemoveReference={onRemoveReference}
+            onActivateReference={(reference) => void activateInlineReference(reference)}
+            onSubmit={() => {
+              if (!isSubmitDisabled) onSubmit();
+            }}
+            onPasteFiles={handlePasteFiles}
           />
-        )}
+          {inlineActivationDialogs}
+        </>
+      ) : (
         <textarea
           ref={textareaRef}
           id="task-input"
@@ -361,51 +511,68 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           placeholder={placeholder}
           value={input}
           disabled={inputDisabled}
-          onScroll={(event) => {
-            if (inlineReferences.length > 0) {
-              inlineEditorRef.current?.style.setProperty(
-                "--composer-inline-scroll-top",
-                `${event.currentTarget.scrollTop}px`,
-              );
-            }
+          onSelect={(event) => {
+            userSelectedRef.current = true;
+            selectionRangeRef.current = {
+              start: event.currentTarget.selectionStart,
+              end: event.currentTarget.selectionEnd,
+            };
           }}
-          onChange={(e) => { onInputChange(e.target.value); if (!(e.nativeEvent as InputEvent).isComposing) updateMention(e.target.value, e.target.selectionStart); }}
-          onCompositionEnd={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-          onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onChange={(e) => {
+            userSelectedRef.current = true;
+            selectionRangeRef.current = {
+              start: e.target.selectionStart,
+              end: e.target.selectionEnd,
+            };
+            onInputChange(e.target.value);
+            if (!(e.nativeEvent as InputEvent).isComposing) updateMention(e.target.value, e.target.selectionStart);
+          }}
+          onCompositionEnd={(event) => {
+            userSelectedRef.current = true;
+            selectionRangeRef.current = {
+              start: event.currentTarget.selectionStart,
+              end: event.currentTarget.selectionEnd,
+            };
+            updateMention(event.currentTarget.value, event.currentTarget.selectionStart);
+          }}
+          onClick={(event) => {
+            userSelectedRef.current = true;
+            selectionRangeRef.current = {
+              start: event.currentTarget.selectionStart,
+              end: event.currentTarget.selectionEnd,
+            };
+            updateMention(event.currentTarget.value, event.currentTarget.selectionStart);
+          }}
+          onKeyUp={(event) => {
+            userSelectedRef.current = true;
+            selectionRangeRef.current = {
+              start: event.currentTarget.selectionStart,
+              end: event.currentTarget.selectionEnd,
+            };
+          }}
           onPaste={(event) => {
             const files = Array.from(event.clipboardData.files);
-            if (!files.length) return;
-            event.preventDefault();
-            const paths = files.map((file) => window.eidosRuntime.inputPathForFile(file)).filter(Boolean);
-            if (paths.length) void context?.paths(paths);
-            else if (files.some((file) => file.type.startsWith("image/"))) void context?.paste();
+            if (handlePasteFiles(files)) {
+              event.preventDefault();
+            }
           }}
           onKeyDown={(e) => {
-            if (
-              e.key === "Backspace"
-              && !e.nativeEvent.isComposing
-              && e.currentTarget.selectionStart === 0
-              && e.currentTarget.selectionEnd === 0
-              && inlineReferences.length > 0
-              && onRemoveReference
-            ) {
-              e.preventDefault();
-              onRemoveReference(inlineReferences.at(-1)!.id);
-              return;
-            }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               if (!isSubmitDisabled) onSubmit();
             }
           }}
         />
-      </div>
+      )}
       <div className="composer-actions">
         <div className="composer-meta">
           <Tooltip content="添加文件、扩展或历史对话">
             <button type="button" className="composer-add" aria-label="添加引用" aria-expanded={Boolean(picker)}
               disabled={!draftReady || isSubmitting || !context}
-              onClick={() => setPicker((previous) => previous ? undefined : { mode: "all", query: "" })}>＋</button>
+              onClick={() => {
+                const insertRange = getEffectiveSelectionRange();
+                setPicker((previous) => previous ? undefined : { mode: "all", query: "", insertRange });
+              }}>＋</button>
           </Tooltip>
           {onApprovalModeChange && (
             <ApprovalModeSelector

@@ -1,6 +1,32 @@
 import type { SVGProps } from "react";
 import type { SettingsCategory } from "./settings-types.js";
 import { AgentIcon, SkillIcon, MemoryIcon } from "../InputPicker.js";
+export const githubIcon =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGIAAABgCAYAAADmbacFAAAHw0lEQVR4AezcCZbbNhAE0EkuFudkSU4W+2SJPmfAB4obQDa4SOOnNkigl+oqgNLIy+8f1//14wGR/f0Y/32y/x73ueXr/JOJf7he93VFIZCWCEVyuv7rQaO13B5Tg1e+xj+ZHClXEmcQePbNFYRI5OVkpblofuRN4uTCRNepznemEEhBfjL31Q3sDFCTMEQ59aScIYSGNU4AROzkMiycIAw2GMMSlyQ6UgjNaVKzJdjO9IERVpgPwXGEEJrRlOYOaSqwCMyw6yEw7ThVSyE8djx+NDOufK8ZPTQVo5UQQBOBGPeifB4tMZqdjmghEE8AoOdbuveK3my00C4ihUgiGENBflwvGzGcjrBeo4SwQ5yE61HWFpGe9b67SoQQgNghu8HcNIHecbAL/l4hAABkF4gXCMYBLja3skcIhQHYXPzFAnGBk01tbRVCQYU3FX3hIJzgprrFLUIopGB1sTcJwA2OqtqtFUIBhaqKvKEzjnBV3HqNEBIrUJz8zR1xVfxzRo0QEr85t9XtF3NWKoTTUI3izQKm2nUi/NA3tTaYKxGCCMXKDrJ/3vzzGH7L7M/HtTn2uLzU6+cDDXwsx2z+sbTpRQwcLgaXCLFHhKnimgKMafZsQeCBARYCuGc5duv5fe01DgkyG7cmBLJmgwsX1nJYR0Jps0jKTVyyfL4Enjjkw1Div8eHGLPxS0IAtxg8m3XbgnqIyaMRiyhGLOY6N3HJ8nm+zJy8TD75jebFuV8z/ms+a+tOBJv0WxIiQoTaBhCTyEujHGyygYJJsfIy5Od5C8JDXWY5nRMC6FAElcmQVxnS3D0CkxPBRmDnhJhVbpThe6KWgUlup4Q4+zTUNnY3fyeCDXBPCTGp2CDqPW9G5O2gYcTxsxDfp2EHuxWhRGV9yLMQ/ULQRV8sKN8rpRmcimchBotBXb+CGC2eFANeciFaFKPloKCJG1rER9eptntuciH+mPIMmGslcAC04hSEYMUBhY79EygXolenMEmJm68VSvzu4NOil57zJESLXQt4i7xnieZEsOj6nRhJiOjk8r2SCPphNpcx0rrHUxIi+v2hBeDI5rfmciLY1vjZuCREdzxmvb4XcgaiN1nHPSG6i7xSwPUrPpYSLS1OxI8WQkTvmETAAWNxiXAxCFFc/duxZyB6s3Unos8edBG+W4JwXTnNH05E9CemdxAivEdCXHmnvA22byEuIjUhWnx8vUh7t4HR5M36Nt1fCagTEY3nHU5YeI8thIgW9i3yESL8o9gbMBd9In4SopS3Ur/ua91S52+/TwZaCBG9Wz6RXuv38M1GiF8NenxlMVp8s/yLEA10+AjfMS1AXilnKyGcCHalXiOw6KnJJiNEq09NTQBHsLkjByF2hM+Gdp+aWgkBNJutfrMF7w2tNlcnBD5aidEKOMxHW6teOu49mjTU4pOTvE5E0b8z5nxha9lDx30SolOlERHEcKwbpW+eFnY9NC10hBAacKw15LqtxWaHGfbYrMNsanwkISy1PBXya6gr6uYG5nEEc0uoPee5EC0Lptwau7oYHkNEMCbcrcbu/UHyXIjovyIi/5QRw3/VeUVBYDpKBNyoZxw9mvqj0q22/Y0gmu7BtC23mB0GmwOmRcfAxcHGz0+EGoNFEwtGNP+SP5lYthAyWnL8NX+GIGqre7QAIxJMPAuBXGZtyRBOAL7J7Crmv1iwvhT/vIYUgiBFDmbu2W/PvXwM+cnc78m5J1aPffyzEBZKSFz7S2mKlORR79kIwpBFGOMewsSmPCmXuee6R96PuJkSwg5fA6URTSF8ztfaqOCc88K8TxYlmOZSiI3AMZd/yzxuBnFTQnAoAU4MO9duGyWW5GHmEfG43PSCQ45NwVmQHB6l2dRpl3oaFZ8TAvCR88IEQQgz5bKVAIBrcUzVT3M2BEv3Z416GtWeE4JjLYHEEDdltbmiRUiYanGkuKhRX5O5loSwe9hk4MSkE8Emlj7kmQXxMfyFrMldM3TbfAfL5uAdgerO9rUkhJql5PFlS6cCCCTP5QTUulGuVjZXv1W9lNeHjnQ9GteEQEoNcCeCjQp9TciXCyI38pNZ/3JtNqjBmhWYSKxPfU8sfU6tCcFLghrgS6dCPiafvMw1M/+qps/F3kqEkICixhJzIliJ71k+i4+JYFBO+2rKUiHs2KKEXxX9sHdlMfTzBbXpYAMX1SoVAloJJXZdYlcXo6SHPT64Wn0kpQI1QoiRWAHXJVbyflGS524+OMJVMe5aISRWwOlwvWYeT0tfgazF33EdNziqwr5FCAW8X1DddYk5GcCxNf8faw4XXicCbqohbhVCIaTWikEQJ8T7h/jczFnjI//dbLMIGt0jhHhE1oghhnlkITw3c9buaDjYdBJSs3uFkGerGGJfwYiAg129RAgBACAAuX4n07Ped/ccJQQgAG3582qxd7P0fqDnEOyRQiRAwNkp6f7VRr15PyBGWG8thACOGK92OhBPAL3pMdRaCZFAAm0HpfuS8cgv5Erw8NEDEYjhPtxaCwEwMdLp0JC5sw2hbA0HvLDrYc131/oRQiSAmmGaY2k+H5HDJ59rdT138mCw+1cEiIV1pBAJOaKZRgmi8WQISH6tRxjUZ3l9GNy3rj/If4YQOQBkaDxZvnbEtfos1T9cgNTk/wAAAP//oweBRwAAAAZJREFUAwBL0U/Qhw5qSwAAAABJRU5ErkJggg==";
+
+export function GitHubIcon({
+  className,
+  width = 18,
+  height = 18,
+  alt = "GitHub",
+  ...props
+}: {
+  className?: string;
+  width?: number | string;
+  height?: number | string;
+  alt?: string;
+} & React.ImgHTMLAttributes<HTMLImageElement>) {
+  return (
+    <img
+      src={githubIcon}
+      alt={alt}
+      width={width}
+      height={height}
+      className={className}
+      {...props}
+    />
+  );
+}
 
 type IconProps = SVGProps<SVGSVGElement>;
 

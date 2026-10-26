@@ -182,7 +182,7 @@
 - 当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - Schema v22 以前已经丢弃的思考正文无法从 token 数恢复。思考模式下，这些历史模型响应会作为标注来源的历史资料回传；新响应使用原始思考记录。各 Provider 的生产端点仍需分别联调，mock wire 验证不代表真实端点已通过。轨迹界面尚未实现。
-- 思考强度选项和默认值按模型配置。火山引擎 `deepseek-v4.1-flash` 已在 Runtime 映射关闭、低、中、高、最高五档到顶层 `reasoning_effort`，默认高。Coding Plan `/api/coding/v3` 对该模型是否接受这些值尚未通过受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
+- 思考强度选项和默认值按模型配置。火山引擎 `deepseek-v4.1-flash` 已在 Runtime 映射关闭、低、中、高、最高五档到顶层 `reasoning_effort`，默认高。Coding Plan `/api/plan/v3` 对该模型是否接受这些值尚未通过受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
 - Chat Completions 的多工具图片结果编码已调整为同批次共享一个 `ModelRequest`，并增加调用 ID、工具名和回复完整性检查。定向测试覆盖图片结果位置、多图批次、MockTransport 请求顺序、完整性错误、思考回放和日志脱敏。MockTransport 不代表真实 Provider endpoint 已通过。
 - 旧图片工具结果只保留路径等元数据，缺失的历史图片正文无法补回。当前回放会明确说明缺失，不重读当前文件。新工具内容快照保存已取得的文字或二进制内容，不保存全部生成文件。单个工具内容原始字节总量最多 10 MiB；工具内容与用户图片引用共用 16 MiB 编码内容预算，超出时优先保留最近的工具内容，并保留省略说明。音频等二进制内容可以使用同一内部保存边界，但当前 MCP 内容支持和模型音频能力没有扩展。不支持的媒体只提供说明。
 - Provider 请求拒绝诊断只记录固定原因和有界 request ID。未知错误继续显示通用拒绝原因；日志不保留原始错误正文。原始失败 Run 的缺失正文不会因本次代码修改而补齐。

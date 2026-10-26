@@ -15,6 +15,7 @@ import { PluginDetailDialog } from "./PluginDetailDialog.js";
 import { HookSourceSettings } from "./HookSourceSettings.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
 import { BuiltinPlugins } from "./BuiltinPlugins.js";
+import { githubIcon } from "./SettingsIcons.js";
 
 interface PluginSettingsProps {
   sessionId?: string | undefined;
@@ -197,6 +198,8 @@ export function PluginSettings({
               pendingAction?.type === "remove_plugin" &&
               pendingAction.pluginId === plugin.id;
             const isRowPending = isToggling || isRemoving;
+            const isGitHub = plugin.id === "eidos-github" || plugin.name.toLowerCase() === "github";
+            const iconSrc = plugin.presentation?.icon || (isGitHub ? githubIcon : undefined);
 
             return (
               <SettingRow
@@ -204,7 +207,7 @@ export function PluginSettings({
                 disabled={isRowPending}
                 title={
                   <div className="plugin-row-header">
-                    {plugin.presentation?.icon && <img className="plugin-icon" src={plugin.presentation.icon} alt="" />}
+                    {iconSrc && <img className="plugin-icon" src={iconSrc} alt={plugin.name} />}
                     <button type="button" className="plugin-name plugin-name-button" aria-label={`查看 ${plugin.name} 的资源`} disabled={isRowPending} onClick={() => setSelectedId(plugin.id)}>{plugin.name}</button>
                     <span className="plugin-version">{plugin.compatibility && !plugin.compatibility.declaredVersion ? "未声明版本" : `v${plugin.version}`}</span>
                     {plugin.enabled ? (

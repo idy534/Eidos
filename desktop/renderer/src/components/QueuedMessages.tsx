@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { formatInlineReferencesAsPlainText } from "../../../shared/inline-references.js";
 import type { QueuedMessage as QueuedMessageData, QueuedRunChange } from "../../../shared/queued-runs.js";
 import { userFacingError } from "../session-state.js";
 import { useQueuedMessages } from "../app/useQueuedMessages.js";
@@ -49,7 +50,8 @@ function QueuedMessage({ message, position, ready, activeRunId, onChanged, onRef
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const lock = useRef(false);
-  const preview = text.trim() || references.map((reference) => reference.label).join("、") || "引用消息";
+  const plainPreview = formatInlineReferencesAsPlainText(text).trim();
+  const preview = plainPreview || references.map((reference) => reference.label).join("、") || "引用消息";
 
   async function change(kind: "updated" | "deleted" | "steered") {
     if (lock.current || !ready) return;

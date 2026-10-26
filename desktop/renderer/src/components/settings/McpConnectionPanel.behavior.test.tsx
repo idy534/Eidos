@@ -90,4 +90,16 @@ describe("Remote MCP accounts", () => {
     expect(onInstall).toHaveBeenCalledWith("eidos-github");
     expect(await screen.findByRole("button", { name: "已安装" })).toBeDisabled();
   });
+
+  it("triggers floating toast notification instead of inline error when installation fails", async () => {
+    const plugin = { id: "eidos-github", name: "GitHub", description: "GitHub tools", version: "1.0.0", installed: false };
+    api({ builtinPlugins: vi.fn().mockResolvedValue({ plugins: [plugin] }) });
+    const onInstall = vi.fn().mockRejectedValue(new Error("install failed"));
+    const onShowToast = vi.fn();
+    render(<BuiltinPlugins onInstall={onInstall} onShowToast={onShowToast} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "安装" }));
+    expect(onInstall).toHaveBeenCalledWith("eidos-github");
+    expect(onShowToast).toHaveBeenCalledWith("安装 GitHub 插件失败，请稍后重试。", "error");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

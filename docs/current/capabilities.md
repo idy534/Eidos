@@ -97,7 +97,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 
 - `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的十个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
 - 内置多模态支持模型包括 `deepseek-v4.1-flash`（火山引擎 Coding Plan 原生图像理解）、`glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码目录项包括 `glm-5.3` 和 `deepseek-flash`。
-- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/coding/v3`，包含 `deepseek-v4.1-flash`、`deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。V4.1 Flash 使用 Coding Plan 的 OpenAI-compatible Chat Completions 接口，目录声明 1M 上下文和图像输入。
+- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/plan/v3`，包含 `deepseek-v4.1-flash`、`deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。V4.1 Flash 使用 Coding Plan 的 OpenAI-compatible Chat Completions 接口，目录声明 1M 上下文和图像输入。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Runtime 在模型列表、创建和编辑响应中返回本机保存的 Key，供设置表单回显。Python 响应 DTO 与 Main 严格校验均接受字符串 `apiKey`。Key 不进入 SQLite、Event/Feed 或正常日志，配置对象的文本表示隐藏 Key。
 - Runtime 同时支持 OpenAI-compatible Chat Completions 和 OpenAI Responses。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。
@@ -109,7 +109,7 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 和火山 Coding Plan `deepseek-v4.1-flash` 的选择会映射到 Provider 请求。V4.1 Flash 使用顶层 `reasoning_effort`；Coding Plan 端点对该模型的实际接受情况尚未经过受控请求验证。
 - 设置中的已保存模型列表会把提供商名称显示在模型名称后面。添加、编辑模型对话框会在提供商选择器旁显示 Logo 和提供商名称。用户点击窗口外空白时，窗口和未保存输入会保留；用户可以通过取消、Escape 或保存成功结束编辑。Logo 作为 Renderer 静态资源打包。删除已保存模型时通过破坏性确认对话框（ConfirmDialog）进行二次确认，避免误删。
 - `run/start` 会按所选模型校验可选的思考设置。请求省略该设置时，Runtime 使用该模型的默认值。Runtime 把解析后的值固化到 Run 的 `ModelProfileSnapshot`，并保存在现有 `runs.model_profile_json` 中；SQLite 不新增列。
-- Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/coding/v3` 对 V4.1 Flash 思考参数的实际接受情况尚未经过受控请求验证；代码已发送顶层 `reasoning_effort`，但这不代表 Provider 已验证接受该参数。
+- Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/plan/v3` 对 V4.1 Flash 思考参数的实际接受情况尚未经过受控请求验证；代码已发送顶层 `reasoning_effort`，但这不代表 Provider 已验证接受该参数。
 
 ### 自定义模型提供商
 
@@ -497,7 +497,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 
 引用采用双区域分层展示：
 - **顶部附件架（Attachment Shelf，位于输入框上方与已发送消息气泡上方）**：承载 `image`（正方形缩略图卡片，点击打开全屏预览）、`file`（近正方形文档微缩预览卡片，顶部展示真实文本微缩页或类型扩展名角标，底部展示分类色彩图标与文件名，点击在 Finder 中定位）、`directory`（双行文件夹卡片，展示文件夹名称与“文件夹”副标题，点击在 Finder 中定位）和 `excerpt`（引用文本微缩卡片，点击弹出只读全文预览弹窗）。
-- **行内提及标签（Inline Mention Tokens，内嵌于输入框文本流首部与已发送消息气泡正文内）**：承载 `skill`（琥珀色，点击打开只读 `SkillDetailDialog`）、`agent`（青绿色，点击打开只读 `AgentDefinitionDialog`）、`mcp`（翠绿色，点击打开 `McpDetailDialog` 或快照预览）、`plugin`（紫罗兰色，点击打开只读详情预览弹窗）和 `history`（群青色，点击跳转到原会话）。行内标签以纯文本同字号样式与普通正文流式共排（第 1 行紧随行内标签之后，自动换行时从第 2 行起回到最左侧边缘），不展示悬停 `×` 移除按钮；在输入框及编辑重发态中，光标位于文本起始位置（`selectionStart === 0`）或聚焦标签按 `Backspace` 可快速移除。
+- **行内提及标签（Inline Mention Tokens，在光标位置插入并内嵌于输入框与已发送消息气泡正文任意位置）**：承载 `skill`（琥珀色，点击打开只读 `SkillDetailDialog`）、`agent`（青绿色，点击打开只读 `AgentDefinitionDialog`）、`mcp`（翠绿色，点击打开 `McpDetailDialog` 或快照预览）、`plugin`（紫罗兰色，点击打开只读详情预览弹窗）和 `history`（群青色，点击跳转到原会话）。通过 `@` / `$` / `/` 或左下角 `+` 选择器添加时，标签直接插入当前光标处并将光标置于新标签右侧，与前后普通文字流式共排（不展示悬停 `×` 移除按钮）；光标紧贴标签前后时按 `Backspace` / `Delete` 可将整个标签作为原子文本删除，方向键整块跳过标签。草稿与提交正文通过内联引用标记持久化精确位置，旧消息未带位置标记时兼容回退至句首展示。
 - 工作区文件树提供引用按钮。历史选择器可以选择具体消息；消息区域也提供单条引用。非编辑区域的选中文字可以通过原生右键菜单加入草稿。
 
 Runtime 保存每个 Session 的草稿。界面恢复完成前不允许覆盖草稿。提交时，界面只清除已经成功提交且没有继续修改的那一版输入。用户可以只发送附件。界面和 Runtime 都会拒绝向不支持图片的模型提交新的图片引用。消息流展示已发送引用，编辑重发保留引用并允许移除。

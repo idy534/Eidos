@@ -1,11 +1,17 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "eidos-github",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "连接 GitHub，读取仓库、Issue 和 Pull Request，并在授权后执行操作。",
   "extensions": {
     "com.openai": {
-      "interface": {"displayName": "GitHub", "developerName": "Eidos", "websiteURL": "https://github.com/github/github-mcp-server"},
+      "interface": {
+        "displayName": "GitHub",
+        "developerName": "Eidos",
+        "websiteURL": "https://github.com/github/github-mcp-server",
+        "composerIcon": "./icon.png",
+        "logo": "./icon.png"
+      },
       "onboardingSkill": "./skills/github/SKILL.md"
     }
   }

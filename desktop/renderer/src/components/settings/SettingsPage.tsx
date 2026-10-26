@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   ModelListResult,
   McpServerRecord,
@@ -104,10 +104,10 @@ export function SettingsPage({
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
 
-  function showToast(message: string, type: "success" | "info" | "error" = "info") {
+  const showToast = useCallback((message: string, type: "success" | "info" | "error" = "info") => {
     const id = `${Date.now()}-${Math.random()}`;
     setToasts((prev) => [...prev, { id, type, message, duration: 3500 }]);
-  }
+  }, []);
 
   useEffect(() => {
     if (extensionError) {

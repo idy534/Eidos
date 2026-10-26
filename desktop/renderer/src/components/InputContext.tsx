@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject, type DragEvent } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import type { InputPrepareRequest, InputPreview, InputReference } from "../../../shared/input-context.js";
+import { isInlineReference, isShelfReference, parseInlineSegments } from "../../../shared/inline-references.js";
 import type { McpServerRecord } from "../contracts.js";
 import { userFacingError } from "../session-state.js";
 import { CloseIcon as ImageCloseIcon } from "./MenuIcons.js";
@@ -10,68 +11,16 @@ import { AgentDefinitionDialog } from "./AgentDefinitionDialog.js";
 import { McpDetailDialog } from "./settings/McpDetailDialog.js";
 import { SkillDetailDialog } from "./settings/SkillDetailDialog.js";
 
-export function isShelfReference(reference: InputReference): boolean {
-  return (
-    reference.kind === "image"
-    || reference.kind === "file"
-    || reference.kind === "directory"
-    || reference.kind === "excerpt"
-  );
-}
-
-export function isInlineReference(reference: InputReference): boolean {
-  return !isShelfReference(reference);
-}
+export { isInlineReference, isShelfReference };
 
 export function useInlineTokenMetrics(
-  editorRef: RefObject<HTMLElement | null>,
-  inlineReferences: readonly InputReference[],
-): void {
-  useLayoutEffect(() => {
-    const editorEl = editorRef.current;
-    if (!editorEl) return;
-    if (inlineReferences.length === 0) {
-      editorEl.style.removeProperty("--composer-inline-indent");
-      editorEl.style.removeProperty("--composer-inline-offset-top");
-      editorEl.style.removeProperty("--composer-inline-scroll-top");
-      return;
-    }
-    const updateInlineMetrics = () => {
-      const listEl = editorEl.querySelector<HTMLElement>(".input-reference-list--inline");
-      const lastToken = listEl?.lastElementChild as HTMLElement | null;
-      if (!listEl || !lastToken) {
-        editorEl.style.removeProperty("--composer-inline-indent");
-        editorEl.style.removeProperty("--composer-inline-offset-top");
-        return;
-      }
-      const listWidth = listEl.clientWidth;
-      const tokenRight = lastToken.offsetLeft + lastToken.offsetWidth;
-      const tokenTop = lastToken.offsetTop;
-      if (listWidth === 0 && tokenRight === 0) {
-        editorEl.style.setProperty("--composer-inline-indent", "0px");
-        editorEl.style.setProperty("--composer-inline-offset-top", "0px");
-        return;
-      }
-      const gap = 6;
-      if (listWidth > 0 && listWidth - (tokenRight + gap) < 64) {
-        editorEl.style.setProperty("--composer-inline-indent", "0px");
-        editorEl.style.setProperty(
-          "--composer-inline-offset-top",
-          `${tokenTop + (lastToken.offsetHeight || 23)}px`,
-        );
-      } else {
-        editorEl.style.setProperty("--composer-inline-indent", `${tokenRight + gap}px`);
-        editorEl.style.setProperty("--composer-inline-offset-top", `${tokenTop}px`);
-      }
-    };
-    updateInlineMetrics();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(updateInlineMetrics);
-    observer.observe(editorEl);
-    const listEl = editorEl.querySelector<HTMLElement>(".input-reference-list--inline");
-    if (listEl) observer.observe(listEl);
-    return () => observer.disconnect();
-  }, [editorRef, inlineReferences]);
+  _editorRef: { current: HTMLElement | null },
+  _inlineReferences: readonly InputReference[],
+): void {}
+
+export interface InputEditorSelectionBridge {
+  getSelectionRange(): { start: number; end: number } | undefined;
+  onInsertedCaret(offset: number): void;
 }
 
 interface InputContextValue {
@@ -79,12 +28,13 @@ interface InputContextValue {
   workspaceRoot: string;
   busy: boolean;
   error: string | undefined;
-  add(request: InputPrepareRequest): Promise<void>;
+  add(request: InputPrepareRequest, range?: { start: number; end: number }): Promise<void>;
   paths(paths: string[]): Promise<void>;
   paste(): Promise<void>;
   settings(section?: string): void;
   reuse(reference: InputReference): void;
   navigateToSession?: ((sessionId: string) => void) | undefined;
+  registerEditor?: ((bridge: InputEditorSelectionBridge) => () => void) | undefined;
 }
 const Context = createContext<InputContextValue | null>(null);
 export const useInputContext = () => useContext(Context);
@@ -94,6 +44,7 @@ export function InputContextProvider({
   workspaceRoot,
   ready,
   onAdd,
+  onInsert,
   onSettings,
   onNavigateToSession,
   children,
@@ -102,6 +53,7 @@ export function InputContextProvider({
   workspaceRoot: string | undefined;
   ready: boolean;
   onAdd(id: string, reference: InputReference): void;
+  onInsert?: ((id: string, reference: InputReference, range?: { start: number; end: number }) => number | undefined) | undefined;
   onSettings(section?: string): void;
   onNavigateToSession?: ((sessionId: string) => void) | undefined;
   children: ReactNode;
@@ -110,7 +62,35 @@ export function InputContextProvider({
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const addRef = useRef(onAdd);
   addRef.current = onAdd;
-  const work = useCallback(async (run: () => Promise<InputReference | null>, clearError = true) => {
+  const insertRef = useRef(onInsert);
+  insertRef.current = onInsert;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const editorBridgeRef = useRef<InputEditorSelectionBridge | null>(null);
+
+  const commitReference = useCallback((
+    owner: string,
+    reference: InputReference,
+    explicitRange?: { start: number; end: number },
+  ) => {
+    if (insertRef.current && isInlineReference(reference)) {
+      const range =
+        explicitRange
+        ?? (owner === sessionIdRef.current ? editorBridgeRef.current?.getSelectionRange() : undefined);
+      const caretOffset = insertRef.current(owner, reference, range);
+      if (caretOffset !== undefined && owner === sessionIdRef.current) {
+        editorBridgeRef.current?.onInsertedCaret(caretOffset);
+      }
+      return;
+    }
+    addRef.current(owner, reference);
+  }, []);
+
+  const work = useCallback(async (
+    run: () => Promise<InputReference | null>,
+    clearError = true,
+    explicitRange?: { start: number; end: number },
+  ) => {
     if (!sessionId) return;
     if (!ready) { setErrors((previous) => ({ ...previous, [sessionId]: "草稿尚未恢复，请稍后再添加引用。" })); return; }
     const owner = sessionId;
@@ -118,14 +98,20 @@ export function InputContextProvider({
     if (clearError) setErrors((previous) => ({ ...previous, [owner]: undefined }));
     try {
       const reference = await run();
-      if (reference) addRef.current(owner, reference);
+      if (reference) commitReference(owner, reference, explicitRange);
     } catch (error) {
       setErrors((previous) => ({ ...previous, [owner]: userFacingError(error) }));
     } finally {
       setCounts((previous) => ({ ...previous, [owner]: Math.max(0, (previous[owner] ?? 1) - 1) }));
     }
-  }, [sessionId, ready]);
-  const add = useCallback((request: InputPrepareRequest) => work(() => window.eidosRuntime.prepareInput({ ...request, ...(sessionId && !sessionId.startsWith("draft-") ? { sessionId } : {}) })), [work, sessionId]);
+  }, [sessionId, ready, commitReference]);
+
+  const add = useCallback((request: InputPrepareRequest, range?: { start: number; end: number }) => work(
+    () => window.eidosRuntime.prepareInput({ ...request, ...(sessionId && !sessionId.startsWith("draft-") ? { sessionId } : {}) }),
+    true,
+    range,
+  ), [work, sessionId]);
+
   const paths = useCallback(async (paths: string[]) => {
     if (paths.length > 20) {
       if (sessionId) setErrors((previous) => ({ ...previous, [sessionId]: "一次最多添加 20 个引用。" }));
@@ -135,14 +121,26 @@ export function InputContextProvider({
     if (sessionId) setErrors((previous) => ({ ...previous, [sessionId]: undefined }));
     for (const source of paths) await work(() => window.eidosRuntime.prepareInput({ kind: "file", source, ...(sessionId && !sessionId.startsWith("draft-") ? { sessionId } : {}) }), false);
   }, [work, sessionId]);
+
+  const registerEditor = useCallback((bridge: InputEditorSelectionBridge) => {
+    editorBridgeRef.current = bridge;
+    return () => {
+      if (editorBridgeRef.current === bridge) {
+        editorBridgeRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => window.eidosRuntime?.onInputQuote?.((text) => {
     void add({ kind: "excerpt", source: `session:${sessionId ?? ""}:selection`, label: "选中内容", text });
   }), [sessionId, add]);
+
   return <Context.Provider value={sessionId ? {
     sessionId, workspaceRoot: workspaceRoot ?? "", busy: Boolean(counts[sessionId]), error: errors[sessionId], add, paths,
     paste: () => work(() => window.eidosRuntime.pasteInputImage()), settings: onSettings,
-    reuse: (reference) => { if (ready) addRef.current(sessionId, reference); },
+    reuse: (reference) => { if (ready) commitReference(sessionId, reference); },
     navigateToSession: onNavigateToSession,
+    registerEditor,
   } : null}>{children}</Context.Provider>;
 }
 
@@ -166,6 +164,174 @@ export function InputDropZone({ children }: { children: ReactNode }) {
   </div>;
 }
 
+export function getReferenceButtonTitle(reference: InputReference): string {
+  switch (reference.kind) {
+    case "history":
+      return "跳转到该对话";
+    case "file":
+    case "directory":
+      return `在 Finder 中显示：${reference.source}`;
+    case "skill":
+      return `查看技能详情：${reference.label}`;
+    case "agent":
+      return `查看智能体详情：${reference.label}`;
+    case "mcp":
+      return `查看 MCP 详情：${reference.label}`;
+    case "plugin":
+      return `查看插件详情：${reference.label}`;
+    case "excerpt":
+      return `查看引用文本：${reference.label}`;
+    default:
+      return reference.source;
+  }
+}
+
+export function useReferenceActivation() {
+  const context = useInputContext();
+  const [preview, setPreview] = useState<InputPreview>();
+  const [mcpServer, setMcpServer] = useState<McpServerRecord | null>(null);
+  const [error, setError] = useState<string>();
+  const request = useRef(0);
+
+  const activateReference = useCallback(async (reference: InputReference) => {
+    if (reference.kind === "history") {
+      context?.navigateToSession?.(reference.source);
+      return;
+    }
+    if (reference.kind === "file" || reference.kind === "directory") {
+      try {
+        await window.eidosRuntime.showItemInFolder(reference.source);
+      } catch (cause) {
+        setError(userFacingError(cause));
+      }
+      return;
+    }
+    const token = ++request.current;
+    setError(undefined);
+    if (
+      reference.kind === "mcp"
+      && typeof window.eidosRuntime?.listMcpServers === "function"
+    ) {
+      try {
+        const result = await window.eidosRuntime.listMcpServers();
+        if (token !== request.current) return;
+        const matched = result.servers.find(
+          (server) => server.serverId === reference.source || server.serverId === reference.label,
+        );
+        if (matched) {
+          setMcpServer(matched);
+          return;
+        }
+      } catch {
+        // Fall back to snapshot preview below
+      }
+    }
+    void window.eidosRuntime.readInput(reference.id).then((value) => {
+      if (token === request.current) setPreview(value);
+    }, (cause) => {
+      if (token === request.current) setError(userFacingError(cause));
+    });
+  }, [context]);
+
+  const dialogs = (
+    <>
+      {mcpServer && (
+        <McpDetailDialog
+          server={mcpServer}
+          icon={<ServerIcon />}
+          onClose={() => setMcpServer(null)}
+        />
+      )}
+      {preview && (
+        preview.reference.kind === "image" ? (
+          <ImageLightboxModal
+            preview={preview}
+            onClose={() => setPreview(undefined)}
+          />
+        ) : preview.reference.kind === "agent" ? (
+          <AgentDefinitionDialog preview={preview} onClose={() => setPreview(undefined)} />
+        ) : preview.reference.kind === "skill" ? (
+          <SkillDetailDialog
+            skill={{
+              qualifiedId: preview.reference.source,
+              name: preview.reference.label,
+              description: preview.text,
+              sourceKind: "user",
+              enabled: true,
+              available: true,
+              schemaVersion: 1,
+              pluginId: "",
+              pluginVersion: "",
+              pluginHash: "",
+              contentHash: preview.reference.sha256 || "",
+            }}
+            readOnly
+            onClose={() => setPreview(undefined)}
+          />
+        ) : (
+          <ReferenceTextPreviewDialog
+            preview={preview}
+            onClose={() => setPreview(undefined)}
+          />
+        )
+      )}
+    </>
+  );
+
+  return { activateReference, error, dialogs };
+}
+
+export function InlineReferenceProse({
+  content,
+  references,
+  variant = "bubble",
+}: {
+  content: string;
+  references: readonly InputReference[];
+  variant?: "composer" | "bubble";
+}) {
+  const { activateReference, error, dialogs } = useReferenceActivation();
+  const inlineRefs = references.filter(isInlineReference);
+  const segments = parseInlineSegments(content, inlineRefs);
+  if (segments.length === 0) return null;
+
+  return (
+    <>
+      <p className="eidos-chat-prose eidos-inline-reference-prose">
+        {segments.map((segment, index) => {
+          if (segment.type === "text") {
+            return <Fragment key={`text-${index}`}>{segment.text}</Fragment>;
+          }
+          const reference = segment.reference;
+          const cat = getReferenceCategory(reference);
+          return (
+            <span
+              key={`ref-${reference.id}-${index}`}
+              className={`input-reference input-reference--${variant} input-reference--kind-${reference.kind} input-reference--inline-token`}
+            >
+              <button
+                type="button"
+                className="input-reference__btn"
+                title={getReferenceButtonTitle(reference)}
+                onClick={() => void activateReference(reference)}
+              >
+                <span
+                  className={`input-reference__icon input-reference__icon--${reference.kind} input-reference__icon--cat-${cat}`}
+                >
+                  {renderReferenceIcon(reference, cat)}
+                </span>
+                <span className="input-reference__label">{reference.label}</span>
+              </button>
+            </span>
+          );
+        })}
+      </p>
+      <FieldError className="input-reference-error" error={error} />
+      {dialogs}
+    </>
+  );
+}
+
 export function InputReferenceCards({
   references,
   onRemove,
@@ -177,11 +343,7 @@ export function InputReferenceCards({
   variant?: "composer" | "bubble";
   placement?: "all" | "shelf" | "inline";
 }) {
-  const context = useInputContext();
-  const [preview, setPreview] = useState<InputPreview>();
-  const [mcpServer, setMcpServer] = useState<McpServerRecord | null>(null);
-  const [error, setError] = useState<string>();
-  const request = useRef(0);
+  const { activateReference, error, dialogs } = useReferenceActivation();
 
   const visibleReferences =
     placement === "shelf"
@@ -212,23 +374,7 @@ export function InputReferenceCards({
               <button
                 type="button"
                 className="input-reference__btn"
-                title={
-                  reference.kind === "history"
-                    ? "跳转到该对话"
-                    : reference.kind === "file" || reference.kind === "directory"
-                      ? `在 Finder 中显示：${reference.source}`
-                      : reference.kind === "skill"
-                        ? `查看技能详情：${reference.label}`
-                        : reference.kind === "agent"
-                          ? `查看智能体详情：${reference.label}`
-                          : reference.kind === "mcp"
-                            ? `查看 MCP 详情：${reference.label}`
-                            : reference.kind === "plugin"
-                              ? `查看插件详情：${reference.label}`
-                              : reference.kind === "excerpt"
-                                ? `查看引用文本：${reference.label}`
-                                : reference.source
-                }
+                title={getReferenceButtonTitle(reference)}
                 onKeyDown={(event) => {
                   if (
                     !shelf
@@ -239,45 +385,7 @@ export function InputReferenceCards({
                     onRemove(reference.id);
                   }
                 }}
-                onClick={async () => {
-                  if (reference.kind === "history") {
-                    context?.navigateToSession?.(reference.source);
-                    return;
-                  }
-                  if (reference.kind === "file" || reference.kind === "directory") {
-                    try {
-                      await window.eidosRuntime.showItemInFolder(reference.source);
-                    } catch (cause) {
-                      setError(userFacingError(cause));
-                    }
-                    return;
-                  }
-                  const token = ++request.current;
-                  setError(undefined);
-                  if (
-                    reference.kind === "mcp"
-                    && typeof window.eidosRuntime?.listMcpServers === "function"
-                  ) {
-                    try {
-                      const result = await window.eidosRuntime.listMcpServers();
-                      if (token !== request.current) return;
-                      const matched = result.servers.find(
-                        (server) => server.serverId === reference.source || server.serverId === reference.label,
-                      );
-                      if (matched) {
-                        setMcpServer(matched);
-                        return;
-                      }
-                    } catch {
-                      // Fall back to snapshot preview below
-                    }
-                  }
-                  void window.eidosRuntime.readInput(reference.id).then((value) => {
-                    if (token === request.current) setPreview(value);
-                  }, (cause) => {
-                    if (token === request.current) setError(userFacingError(cause));
-                  });
-                }}
+                onClick={() => void activateReference(reference)}
               >
                 {reference.kind === "image" ? (
                   <>
@@ -347,46 +455,7 @@ export function InputReferenceCards({
         })}
       </div>
       <FieldError className="input-reference-error" error={error} />
-      {mcpServer && (
-        <McpDetailDialog
-          server={mcpServer}
-          icon={<ServerIcon />}
-          onClose={() => setMcpServer(null)}
-        />
-      )}
-      {preview && (
-        preview.reference.kind === "image" ? (
-          <ImageLightboxModal
-            preview={preview}
-            onClose={() => setPreview(undefined)}
-          />
-        ) : preview.reference.kind === "agent" ? (
-          <AgentDefinitionDialog preview={preview} onClose={() => setPreview(undefined)} />
-        ) : preview.reference.kind === "skill" ? (
-          <SkillDetailDialog
-            skill={{
-              qualifiedId: preview.reference.source,
-              name: preview.reference.label,
-              description: preview.text,
-              sourceKind: "user",
-              enabled: true,
-              available: true,
-              schemaVersion: 1,
-              pluginId: "",
-              pluginVersion: "",
-              pluginHash: "",
-              contentHash: preview.reference.sha256 || "",
-            }}
-            readOnly
-            onClose={() => setPreview(undefined)}
-          />
-        ) : (
-          <ReferenceTextPreviewDialog
-            preview={preview}
-            onClose={() => setPreview(undefined)}
-          />
-        )
-      )}
+      {dialogs}
     </>
   );
 }

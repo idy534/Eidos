@@ -60,9 +60,11 @@ Runtime 只在启动时恢复中断的登录，将其标为需要重新连接。
 
 GitHub 授权范围、组织审批、SSO 和账号权限仍由 GitHub 控制。Eidos 不复用其他应用的登录，不在聊天中索取令牌。断开 Eidos 连接只移除本机凭据；用户可以在 GitHub 设置中另外撤销应用或 PAT。
 
-Runtime 读取 `interface.displayName`、`shortDescription`、`developerName`、`websiteURL`、`composerIcon` / `logo`，以及作者、主页和 License。图标只读取包内不超过 64 KiB 的 PNG/JPEG。可选的 `onboardingSkill` 必须指向本包声明的 Skill。详情页的“查看设置说明”只打开 Skill 内容，不执行设置脚本，也不授予权限。展示信息通过 Python 生成的 TypeScript 类型和 JSON Schema 进入 Desktop。
+Runtime 读取 `interface.displayName`、`shortDescription`、`developerName`、`websiteURL`、`composerIcon` / `logo`，以及作者、主页和 License。图标只读取包内不超过 64 KiB 的 PNG/JPEG。可选的 `onboardingSkill` 必须指向本包声明的 Skill。详情页中查看 Skill 只展示 Skill 内容，不执行设置脚本，也不授予权限。展示信息通过 Python 生成的 TypeScript 类型和 JSON Schema 进入 Desktop。
 
 ## 更新、重装与旧任务
+
+内置 GitHub 的图标包版本为 `1.0.1`。旧 `1.0.0` 安装可以通过“更新”切换到新版本。包内容变化必须同时更新版本，图标和展示清单也属于包内容。内置安装入口会将同版本内容冲突返回为 `PLUGIN_VERSION_CONFLICT`，其他包不可用错误仍返回 `PLUGIN_UNAVAILABLE`。升级继续撤销旧账号连接和 MCP 授权，用户需要重新连接账号。
 
 用户可以通过现有“导入本地 Plugin”入口导入同 ID 的另一个版本。Runtime 也允许用户显式导入已知旧版本进行回退。安装路径继续是 `<data>/extensions/plugins/<id>/<version>/`，路径不加入 Hash。
 

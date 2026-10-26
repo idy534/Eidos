@@ -17,7 +17,7 @@ const list: ModelListResult = {
     reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
   }, {
     id: "glm-5.3-flash", name: "GLM 5.3 Flash", vendor: "Volcengine", provider: "volcengine",
-    url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+    url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
     supportsToolCall: true, supportsImages: false, supportsReasoning: true,
     reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
   }],

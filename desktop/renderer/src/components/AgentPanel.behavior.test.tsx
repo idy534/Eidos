@@ -636,6 +636,15 @@ describe("AgentWorkspacePanel", () => {
     expect(screen.queryByText("运行时中断")).not.toBeInTheDocument();
   });
 
+  it("does not render deliverable pill in card footer even when result exists", () => {
+    const child = {
+      ...historyAgent(),
+      result: "Done",
+    };
+    render(<AgentList agents={[child]} onOpen={() => undefined} />);
+    expect(screen.queryByText("成果已交付")).not.toBeInTheDocument();
+  });
+
   it("enforces fixed height, flex-shrink 0, and scrollbar styles on agent cards to prevent compression", () => {
     const agentsCss = readFileSync(
       path.resolve(process.cwd(), "desktop/renderer/src/components/agents.css"),

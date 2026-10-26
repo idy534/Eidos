@@ -193,7 +193,7 @@ def test_removed_volcengine_glm_52_config_migrates_to_glm_53(tmp_path: Path) -> 
                 "id": "glm-5-2-260617",
                 "name": "GLM 5.2",
                 "vendor": "Volcengine",
-                "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+                "url": "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
                 "apiKey": "volcengine-secret-value",
                 "supportsToolCall": True,
                 "supportsImages": False,
@@ -217,7 +217,7 @@ def test_glm_52_migration_conflict_preserves_both_saved_models(tmp_path: Path) -
     store = _store(tmp_path)
     common = {
         "vendor": "Volcengine",
-        "url": "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+        "url": "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
         "apiKey": "volcengine-secret-value",
         "supportsToolCall": True,
         "supportsImages": False,
@@ -249,7 +249,7 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         "minimax-m3",
     ]
     assert all(
-        model["url"] == "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
+        model["url"] == "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions"
         for model in provider["models"]
     )
 

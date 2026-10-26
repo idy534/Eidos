@@ -84,9 +84,13 @@ def _repository(parent: Path) -> Path:
 class RuntimeProtocolTests(unittest.TestCase):
     def test_generated_session_title_is_single_line_and_bounded(self) -> None:
         title = clean_session_title('  “分析\nCodex\u202e 架构”  ')
+        inline_title = clean_session_title(
+            "[@luna-work](ref:111122223333) 用这个对比 [$docx](ref:aabbccddeeff) 输出文档"
+        )
         long_title = clean_session_title("任务" * 100)
 
         self.assertEqual(title, "分析 Codex 架构")
+        self.assertEqual(inline_title, "luna-work 用这个对比 docx 输出文档")
         self.assertLessEqual(len(long_title), 60)
         self.assertLessEqual(len(long_title.encode("utf-8")), 120)
 

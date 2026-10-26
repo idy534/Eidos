@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import logging
+import re
 import sqlite3
 from pathlib import Path
 import unicodedata
@@ -518,12 +519,18 @@ class DeferredGitPush:
         self._application._cancel_git_external_before_start(self)
 
 
+_INLINE_REFERENCE_TOKEN_RE = re.compile(
+    r"\[(?:[$@])?([^\[\]\r\n]+)\]\(ref:[A-Za-z0-9_-]{1,64}\)"
+)
+
+
 def clean_session_title(value: str) -> str:
     """Apply the established title canonicalization before durable storage."""
 
+    normalized = _INLINE_REFERENCE_TOKEN_RE.sub(r"\1", value)
     title = "".join(
         " " if unicodedata.category(character).startswith("C") else character
-        for character in value
+        for character in normalized
     )
     title = " ".join(title.split()).strip("\"'`“”‘’ ")[:60]
     return title.encode("utf-8")[:MAX_SESSION_TITLE_BYTES].decode(

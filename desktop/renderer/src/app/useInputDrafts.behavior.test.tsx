@@ -76,4 +76,35 @@ describe("useInputDrafts behavior", () => {
       references: [],
     });
   });
+
+  it("inserts inline references at the requested cursor selection and persists token offsets", async () => {
+    const skillReference: InputReference = {
+      ...reference,
+      id: "1234567890ab" + "e".repeat(52),
+      kind: "skill",
+      label: "docx",
+      source: "skills/docx",
+    };
+    const api = setupRuntime({
+      readInputDraft: vi.fn().mockResolvedValue({ text: "对比结果。并且输出文档。", references: [] }),
+    });
+    const { result } = renderHook(() => useInputDrafts("session-1", true));
+
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    let caret: number | undefined;
+    act(() => {
+      caret = result.current.insert("session-1", skillReference, { start: 5, end: 5 });
+    });
+
+    expect(result.current.drafts["session-1"]?.text).toBe(
+      "对比结果。[$docx](ref:1234567890ab)并且输出文档。",
+    );
+    expect(caret).toBe("对比结果。[$docx](ref:1234567890ab)".length);
+    expect(result.current.drafts["session-1"]?.references).toEqual([skillReference]);
+    await waitFor(() => expect(api.writeInputDraft).toHaveBeenCalledWith("session-1", {
+      text: "对比结果。[$docx](ref:1234567890ab)并且输出文档。",
+      references: [skillReference],
+    }));
+  });
 });

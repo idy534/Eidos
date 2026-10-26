@@ -311,7 +311,7 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 
 直连 Provider 的公开文档分别说明了不同能力。DeepSeek 使用 `thinking` 开关和 `reasoning_effort`；Low、High、Max 是有效档位，`minimal`、`medium`、`xhigh`、`ultra` 会映射到重复的实际档位。Kimi K3 使用顶层 `reasoning_effort`，可选 Low、High、Max，默认 Max，并且不能关闭思考。Kimi K2.7 Code HighSpeed 固定开启思考，没有公开的强度档位。MiniMax M3 使用 `thinking.type` 开关，`adaptive` 表示启用，`disabled` 表示关闭，省略时默认启用；没有离散 effort 档位。MiniMax 的 `reasoning_split` 只控制思考内容的返回格式，不控制思考开关。参考：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)、[Kimi Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort)、[Kimi K2.7 Code](https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart)、[MiniMax OpenAI SDK](https://platform.minimax.io/docs/api-reference/text-openai-api)。
 
-火山引擎 `deepseek-v4.1-flash` 会通过 OpenAI-compatible Chat Completions 的顶层 `reasoning_effort` 发送 `none`、`low`、`medium`、`high` 或 `max`；Catalog 默认值为 `high`。方舟公开 [Chat API 文档](https://docs.volcengine.com/docs/ark/chat-api?lang=zh&redirect=1)说明了该字段和这些取值。Coding Plan `/api/coding/v3` 对此模型的实际接受情况还没有受控请求验证。其他 Coding Plan 模型的思考设置仍未映射。
+火山引擎 `deepseek-v4.1-flash` 会通过 OpenAI-compatible Chat Completions 的顶层 `reasoning_effort` 发送 `none`、`low`、`medium`、`high` 或 `max`；Catalog 默认值为 `high`。方舟公开 [Chat API 文档](https://docs.volcengine.com/docs/ark/chat-api?lang=zh&redirect=1)说明了该字段和这些取值。Coding Plan `/api/plan/v3` 对此模型的实际接受情况还没有受控请求验证。其他 Coding Plan 模型的思考设置仍未映射。
 
 `run/start` 接受所选模型允许的思考设置。Runtime 会拒绝该模型未声明的设置；请求没有设置时，Runtime 使用 Catalog 默认值。Runtime 将解析后的设置放入 Run 的不可变 `ModelProfileSnapshot`，并写入现有 `runs.model_profile_json`。这项改动不增加 SQLite 列，也不改变 schema 版本。
 

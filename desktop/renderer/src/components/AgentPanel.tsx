@@ -260,14 +260,6 @@ export function AgentList({
               <span className="agent-card__timestamp">
                 {formatItemTime(agent.createdAt)}
               </span>
-              {agent.result && (
-                <span className="agent-card__pill agent-card__pill--success">
-                  <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <polyline points="2.5 6 4.5 8 9.5 3" />
-                  </svg>
-                  成果已交付
-                </span>
-              )}
             </div>
           </button>
         );

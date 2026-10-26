@@ -37,7 +37,7 @@ from eidos_runtime.model.pydantic_factory import build_model, build_provider
             "volcengine",
             "deepseek-v4-flash-ga-260731",
             OpenAIProvider,
-            "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "https://ark.cn-beijing.volces.com/api/plan/v3",
         ),
     ],
 )

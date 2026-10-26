@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { InputDraft, InputReference } from "../../../shared/input-context.js";
+import {
+  canonicalizeInlineText,
+  insertInlineReferenceAtSelection,
+  isInlineReference,
+  replaceInlineReferenceTokenId,
+} from "../../../shared/inline-references.js";
 
 const EMPTY: InputDraft = { text: "", references: [] };
 const storageKey = (id: string): string => id.startsWith("draft-") ? "new-conversation" : id;
@@ -65,9 +71,50 @@ export function useInputDrafts(sessionId: string | undefined, storageReady: bool
     references: [...draft.references.filter((value) => value.id !== reference.id && !(value.kind === reference.kind && value.source === reference.source && value.label === reference.label)), reference],
   })), [update]);
 
+  const insert = useCallback((
+    id: string,
+    reference: InputReference,
+    range?: { start: number; end: number },
+  ): number | undefined => {
+    if (!isInlineReference(reference)) {
+      add(id, reference);
+      return undefined;
+    }
+    let caretOffset: number | undefined;
+    update(id, (draft) => {
+      const duplicate = draft.references.find(
+        (value) =>
+          value.id === reference.id
+          || (
+            value.kind === reference.kind
+            && value.source === reference.source
+            && value.label === reference.label
+          ),
+      );
+      const nextReferences = [
+        ...draft.references.filter((value) => value !== duplicate && value.id !== reference.id),
+        reference,
+      ];
+      if (nextReferences.length > 20) {
+        return { ...draft, references: nextReferences };
+      }
+      let baseText = canonicalizeInlineText(draft.text, draft.references);
+      if (duplicate && duplicate.id !== reference.id) {
+        baseText = replaceInlineReferenceTokenId(baseText, duplicate.id, reference);
+      }
+      const inserted = insertInlineReferenceAtSelection(baseText, reference, range);
+      caretOffset = inserted.caretOffset;
+      return {
+        text: inserted.text,
+        references: nextReferences,
+      };
+    });
+    return caretOffset;
+  }, [add, update]);
+
   const flush = useCallback(async (id: string) => {
     await write(id, values.current[id] ?? EMPTY);
   }, [write]);
 
-  return { drafts, values, update, add, flush, error: sessionId ? errors[sessionId] : undefined, ready: !sessionId || loaded[sessionId] === true };
+  return { drafts, values, update, add, insert, flush, error: sessionId ? errors[sessionId] : undefined, ready: !sessionId || loaded[sessionId] === true };
 }

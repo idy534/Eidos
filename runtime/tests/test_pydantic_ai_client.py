@@ -1000,7 +1000,7 @@ class PydanticAIModelClientTests(unittest.TestCase):
             "deepseek": "https://api.deepseek.com",
             "minimax": "https://api.minimaxi.com/v1",
             "kimi": "https://api.moonshot.cn/v1",
-            "volcengine": "https://ark.cn-beijing.volces.com/api/coding/v3",
+            "volcengine": "https://ark.cn-beijing.volces.com/api/plan/v3",
         }
 
         for provider_id, model_id, selection, expected_thinking, expected_effort in scenarios:

@@ -51,22 +51,22 @@ const presets: ModelPresetsResult = {
       id: "volcengine", name: "火山引擎 / Volcengine", models: [
         {
           id: "deepseek-v4-pro-ga-260813", name: "DeepSeek V4 Pro GA",
-          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
           supportsToolCall: true, supportsImages: false, supportsReasoning: false,
         },
         {
           id: "glm-5.3", name: "GLM 5.3",
-          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
           supportsToolCall: true, supportsImages: false, supportsReasoning: false,
         },
         {
           id: "glm-5.3-flash", name: "GLM 5.3 Flash",
-          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
           supportsToolCall: true, supportsImages: false, supportsReasoning: false,
         },
         {
           id: "minimax-m3", name: "MiniMax M3",
-          url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
           supportsToolCall: true, supportsImages: true, supportsReasoning: false,
         },
       ],

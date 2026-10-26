@@ -111,7 +111,8 @@
 }
 /* Zone B: Inline Mention Tokens (skill, agent, mcp, plugin, history) */
 .input-reference--inline-token {
-  height: var(--line-height-body, 23px);
+  display: inline-block;
+  height: auto;
   border-radius: 6px;
   background: transparent;
   border: 0;
@@ -119,6 +120,7 @@
   padding: 0;
   overflow: visible;
   vertical-align: baseline;
+  line-height: inherit;
   --inline-ref-color: #1d4ed8;
   --inline-ref-bg-hover: rgba(29, 78, 216, 0.08);
 }
@@ -196,11 +198,13 @@
   box-sizing: border-box;
 }
 .input-reference--inline-token .input-reference__btn {
+  display: inline;
+  height: auto;
   padding: 0 2px;
-  gap: 3px;
   font-size: var(--font-size-body, 14px);
-  line-height: var(--line-height-body, 23px);
+  line-height: inherit;
   color: var(--inline-ref-color);
+  vertical-align: baseline;
 }
 /* Pure icon presentation without inner badge box or border */
 .input-reference__icon {
@@ -237,6 +241,8 @@
 }
 .input-reference--inline-token .input-reference__icon {
   color: var(--inline-ref-color);
+  vertical-align: -0.15em;
+  margin-right: 3px;
 }
 /* Semantic Icon Colors (pure icon strokes/fills, no background box) */
 .input-reference__icon--skill {
@@ -379,11 +385,13 @@
   max-width: 150px;
 }
 .input-reference--inline-token .input-reference__label {
+  display: inline;
   color: var(--inline-ref-color);
   font-size: var(--font-size-body, 14px);
   font-weight: 400;
-  line-height: var(--line-height-body, 23px);
+  line-height: inherit;
   letter-spacing: normal;
+  vertical-align: baseline;
   max-width: 28rem;
 }
 .input-reference-remove {

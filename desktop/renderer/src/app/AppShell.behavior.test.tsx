@@ -29,7 +29,9 @@ vi.mock("./useApprovalController.js", () => ({
 vi.mock("./useModelController.js", () => ({
   useModelController: () => [{}, { load: vi.fn() }],
 }));
-vi.mock("./useExtensionController.js", () => ({ useExtensionController: () => [{}, {}] }));
+vi.mock("./useExtensionController.js", () => ({
+  useExtensionController: () => [{ plugins: [], skills: [], mcpServers: [], pendingAction: {} }, { load: vi.fn() }],
+}));
 vi.mock("./useGitReviewController.js", () => ({ useGitReviewController: () => [{}, {}] }));
 vi.mock("./useResponseActionController.js", () => ({
   useResponseActionController: () => [{}, { load: vi.fn() }],
@@ -37,7 +39,9 @@ vi.mock("./useResponseActionController.js", () => ({
 vi.mock("./useContextUsageController.js", () => ({ useContextUsageController: () => [{}, {}] }));
 vi.mock("./usePlanningState.js", () => ({ usePlanningState: () => ({}) }));
 vi.mock("../components/AgentPanel.js", () => ({ useAgentState: () => ({}) }));
-vi.mock("../components/SessionSidebar.js", () => ({ SessionSidebar: () => null }));
+vi.mock("../components/SessionSidebar.js", () => ({
+  SessionSidebar: ({ onOpenSettings }: { onOpenSettings: () => void }) => <button onClick={onOpenSettings}>打开设置</button>,
+}));
 vi.mock("../components/Composer.js", async () => {
   const { ApprovalModeSelector } = await import("../components/ApprovalModeSelector.js");
   return { Composer: ({ approvalMode, onApprovalModeChange }: {
@@ -172,6 +176,55 @@ function shell() {
 }
 
 function renderShell() { return render(shell()); }
+
+describe("AppShell memory settings Session identity", () => {
+  it.each(["empty", "projectless draft", "project draft", "persisted"] as const)(
+    "opens memory with a persisted Session or global scope for %s",
+    async (kind) => {
+      const persisted = fixture.snapshot!;
+      if (kind !== "persisted") {
+        fixture.snapshot = undefined;
+        if (kind !== "empty") {
+          fixture.draft = { ...persisted, session: { ...persisted.session, id: "draft-unsaved" } };
+          if (kind === "projectless draft") {
+            delete fixture.draft.session.project;
+            fixture.draft.session.projectless = true;
+          }
+        }
+      }
+      const sessionId = kind === "persisted" ? persisted.session.id : null;
+      const scope = kind === "persisted" ? "current" : "global";
+      const memory = vi.fn(async (method: string, request: Record<string, unknown>) => {
+        if (request.sessionId !== null && request.sessionId !== persisted.session.id) {
+          throw new Error("EIDOS_RUNTIME_ERROR:MEMORY_SESSION_NOT_FOUND");
+        }
+        if (method === "memory/read") return {
+          path: "MEMORY.md", scopeId: "global", revision: 0, currentRevision: 0,
+          revisions: [], document: null, content: "# Memory", offset: 0, nextOffset: null,
+        };
+        return {
+          scopes: [{ id: "global", kind: "global", mode: "auto", privacyEpoch: 0, generation: 0 }],
+          documents: [], temporary: false,
+        };
+      });
+      window.eidosRuntime.memory = memory as typeof window.eidosRuntime.memory;
+      window.eidosRuntime.exportMemoryNotes = vi.fn(async () => {});
+      window.eidosRuntime.listModelPresets = vi.fn(async () => ({ providers: [] }));
+      renderShell();
+      fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+      fireEvent.click(screen.getByRole("tab", { name: "记忆" }));
+      await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/read", expect.objectContaining({
+        sessionId, scope, path: "MEMORY.md",
+      })));
+      expect(screen.queryByText("记忆无法读取，请重试。")).not.toBeInTheDocument();
+      fireEvent.change(screen.getByRole("combobox", { name: "记忆模式" }), { target: { value: "read" } });
+      await waitFor(() => expect(memory).toHaveBeenCalledWith("memory/policy", { sessionId, scope, mode: "read" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "导出 Markdown" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "导出 Markdown" }));
+      expect(window.eidosRuntime.exportMemoryNotes).toHaveBeenCalledWith(scope, sessionId ?? undefined);
+    },
+  );
+});
 
 describe("AppShell revision approval modes", () => {
   const cases = (["manual", "auto_review", "full_access"] as const).flatMap((mode) => (

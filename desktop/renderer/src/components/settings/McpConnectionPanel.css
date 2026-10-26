@@ -1,8 +1,196 @@
-.mcp-connection-panel { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius); }
-.mcp-connection-heading, .mcp-connection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3, 12px); }
-.mcp-connection-panel p, .mcp-connection-heading span { margin: 0; font-size: var(--font-size-sm, 13px); color: var(--text-secondary); }
-.mcp-connection-panel form { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2, 8px); }
-.mcp-connection-panel input { box-sizing: border-box; width: 100%; min-width: 0; padding: 0.5rem; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); border-radius: var(--radius-sm); }
-.mcp-connection-panel summary { cursor: pointer; font-size: var(--font-size-sm, 13px); }
-.mcp-connection-panel details[open] form { margin-top: var(--space-3, 12px); }
-.mcp-device-code { align-self: flex-start; padding: 0.5rem 0.75rem; font-size: 1.25rem; letter-spacing: 0.12em; background: var(--surface-muted); border-radius: var(--radius-sm); }
+/* ==========================================================================
+   MCP Connection Panel - Compact Horizontal Row Layout
+   ========================================================================== */
+
+.mcp-connection-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.85rem 1.15rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+}
+
+/* Main single-line bar */
+.mcp-connection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.mcp-connection-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.mcp-connection-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.mcp-connection-title {
+  font-size: 0.875rem;
+  font-weight: 650;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.mcp-remote-url {
+  font-family: var(--font-code);
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-xs);
+  word-break: break-all;
+}
+
+.mcp-connection-status-action {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.mcp-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.18rem 0.55rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+}
+
+.mcp-status--connected {
+  background: var(--status-success-bg);
+  color: var(--status-success);
+  border-color: rgba(36, 104, 69, 0.15);
+}
+
+.mcp-status--connecting {
+  background: var(--status-warning-bg);
+  color: var(--status-warning);
+  border-color: rgba(138, 103, 35, 0.15);
+}
+
+.mcp-status--idle {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  border-color: var(--line);
+}
+
+.mcp-connection-notice,
+.mcp-connection-hint {
+  margin: 0;
+  font-size: 0.78125rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* Connecting Details */
+.mcp-connecting-details {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--line);
+}
+
+.mcp-connecting-details p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.mcp-device-code {
+  padding: 0.35rem 0.75rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-family: var(--font-code);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+}
+
+/* Token Form */
+.mcp-token-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--line);
+}
+
+.mcp-token-details summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  transition: color 120ms ease;
+  user-select: none;
+}
+
+.mcp-token-details summary:hover {
+  color: var(--text);
+}
+
+.mcp-token-details form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
+.mcp-token-details label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.mcp-token-details input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-family: var(--font-code);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.mcp-token-details input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.mcp-token-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

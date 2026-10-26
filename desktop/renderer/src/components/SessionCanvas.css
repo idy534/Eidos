@@ -44,7 +44,8 @@
 }
 
 .session-canvas--welcome .session-canvas__composer { align-self: start; }
-.session-canvas--welcome .composer textarea { max-height: var(--welcome-input-max-height, 10.5rem); }
+.session-canvas--welcome .composer textarea,
+.session-canvas--welcome .composer .composer-rich-editor { max-height: var(--welcome-input-max-height, 10.5rem); }
 .session-canvas--welcome .composer { margin-bottom: 0; }
 
 .workspace-body .session-header--draft {

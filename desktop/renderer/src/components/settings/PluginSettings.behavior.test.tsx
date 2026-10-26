@@ -95,8 +95,7 @@ describe("Plugin resources", () => {
     const user = userEvent.setup();
     expect(screen.getByText("Example Team")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "查看 Demo 的资源" }));
-    expect(screen.getByText("Example Team · MIT")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "查看设置说明" }));
+    await user.click(screen.getByRole("button", { name: /Review/ }));
     expect(await screen.findByText("Setup guide")).toBeInTheDocument();
     expect(props.onTogglePlugin).not.toHaveBeenCalled();
     expect(props.onTrustPluginHooks).not.toHaveBeenCalled();

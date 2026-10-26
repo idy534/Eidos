@@ -298,7 +298,7 @@ test("accepts saved model API keys and legacy responses without API keys or reas
     path.join(packageRoot, "__main__.py"),
     [
       "import json, sys",
-      "model = {'id': 'deepseek-v4-flash-ga-260731', 'name': 'DeepSeek V4 Flash GA', 'vendor': 'Volcengine', 'provider': 'volcengine', 'url': 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions', 'supportsToolCall': True, 'supportsImages': False, 'supportsReasoning': False, 'reasoning': None}",
+      "model = {'id': 'deepseek-v4-flash-ga-260731', 'name': 'DeepSeek V4 Flash GA', 'vendor': 'Volcengine', 'provider': 'volcengine', 'url': 'https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions', 'supportsToolCall': True, 'supportsImages': False, 'supportsReasoning': False, 'reasoning': None}",
       "preset_model = {key: value for key, value in model.items() if key not in ('vendor', 'provider')}",
       "presets = {'providers': [{'id': 'volcengine', 'name': '火山引擎 / Volcengine', 'models': [preset_model]}]}",
       "listed_model = dict(model)",

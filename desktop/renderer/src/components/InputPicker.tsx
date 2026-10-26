@@ -242,7 +242,14 @@ export function InputPicker({ mode, query, inline, onQuery, onChoose, onClose, o
   useEffect(() => {
     function key(event: KeyboardEvent) {
       if (event.isComposing) return;
-      if (inline && !(event.target instanceof HTMLTextAreaElement)) return;
+      const isInlineEditorTarget =
+        event.target instanceof HTMLTextAreaElement
+        || (
+          event.target instanceof HTMLElement
+          && (event.target.isContentEditable || event.target.getAttribute("contenteditable") === "true")
+          && Boolean(event.target.closest(".composer"))
+        );
+      if (inline && !isInlineEditorTarget) return;
       if (!inline && (!root.current?.contains(event.target as Node) || (!(event.target instanceof HTMLInputElement) && (event.target as HTMLElement).getAttribute("role") !== "option" && !(event.target instanceof HTMLButtonElement)))) return;
       if (event.key === "Escape") {
         event.preventDefault();

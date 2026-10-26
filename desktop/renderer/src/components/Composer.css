@@ -1,4 +1,5 @@
-.composer textarea::-webkit-scrollbar-thumb:hover {
+.composer textarea::-webkit-scrollbar-thumb:hover,
+.composer .composer-rich-editor::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
 
@@ -31,43 +32,45 @@
 
 .composer textarea:focus-visible { outline: none; box-shadow: none; }
 
-.composer-inline-editor {
-  display: contents;
-}
-
-.composer-inline-editor--has-inline {
-  position: relative;
-  display: block;
-  overflow: hidden;
+.composer .composer-rich-editor {
+  width: 100%;
+  min-height: 3.5rem;
+  max-height: 10.5rem;
+  border: 0;
+  padding: 0.875rem 1rem 0.375rem;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow-y: auto;
+  box-sizing: border-box;
+  outline: none;
   cursor: text;
 }
 
-.composer-inline-editor--has-inline > .input-reference-list--inline {
-  position: absolute;
-  top: 0.875rem;
-  left: 1rem;
-  right: 1rem;
-  z-index: 2;
-  display: block;
-  max-height: none;
-  overflow: visible;
+.composer .composer-rich-editor:focus,
+.composer .composer-rich-editor:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.composer .composer-rich-editor[aria-disabled="true"] {
+  cursor: default;
+  opacity: var(--control-disabled-opacity, 0.55);
+}
+
+.composer .composer-rich-editor[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
   pointer-events: none;
-  line-height: var(--line-height-body);
-  transform: translateY(calc(-1 * var(--composer-inline-scroll-top, 0px)));
 }
 
-.composer-inline-editor--has-inline > .input-reference-list--inline .input-reference--inline-token {
-  display: inline-flex;
-  vertical-align: top;
-  margin-right: 0.375rem;
-  pointer-events: auto;
-}
-
-.composer .composer-inline-editor--has-inline textarea {
-  display: block;
-  width: 100%;
-  padding-top: calc(0.875rem + var(--composer-inline-offset-top, 0px));
-  text-indent: var(--composer-inline-indent, 0px);
+.composer .composer-rich-editor .input-reference--inline-token {
+  margin: 0 2px;
 }
 
 .composer-context {

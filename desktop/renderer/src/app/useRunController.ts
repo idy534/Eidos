@@ -1,5 +1,11 @@
 import type { RunPlanningOptions } from "../../../shared/planning.generated.js";
 import type { InputReference } from "../../../shared/input-context.js";
+import {
+  containsInlineReferenceToken,
+  hasAnyInlineReferenceToken,
+  isInlineReference,
+  removeInlineReferenceTokenById,
+} from "../../../shared/inline-references.js";
 import { useInputDrafts } from "./useInputDrafts.js";
 import { useCallback, useRef, useState } from "react";
 import type { ApprovalMode, ModelId, ModelReasoningSelection, Run, RunRevisionResult, SessionSnapshot } from "../contracts.js";
@@ -32,6 +38,7 @@ export interface RunControllerState {
 
 export interface RunControllerActions {
   addReference: (sessionId: string, reference: InputReference) => void;
+  insertReference: (sessionId: string, reference: InputReference, range?: { start: number; end: number }) => number | undefined;
   removeReference: (id: string) => void;
   clearDraftIfUnchanged: (sessionId: string, text: string, references: InputReference[]) => void;
   setInput: (value: string) => void;
@@ -110,7 +117,19 @@ export function useRunController(
   }, []);
 
   const setInputForSession = useCallback((sessionId: string, value: string): void => {
-    draftStore.update(sessionId, (draft) => ({ ...draft, text: value }));
+    draftStore.update(sessionId, (draft) => {
+      const hadInlineTokens = hasAnyInlineReferenceToken(draft.text);
+      const nextReferences = hadInlineTokens
+        ? draft.references.filter(
+            (ref) => !isInlineReference(ref) || containsInlineReferenceToken(value, ref.id),
+          )
+        : draft.references;
+      return {
+        ...draft,
+        text: value,
+        references: nextReferences,
+      };
+    });
     clearSessionError(sessionId);
   }, [clearSessionError, draftStore.update]);
 
@@ -321,8 +340,15 @@ export function useRunController(
 
   const actions: RunControllerActions = {
     addReference: draftStore.add,
+    insertReference: draftStore.insert,
     removeReference: (id) => {
-      if (currentSessionId) draftStore.update(currentSessionId, (draft) => ({ ...draft, references: draft.references.filter((value) => value.id !== id) }));
+      if (currentSessionId) {
+        draftStore.update(currentSessionId, (draft) => ({
+          ...draft,
+          text: removeInlineReferenceTokenById(draft.text, id),
+          references: draft.references.filter((value) => value.id !== id),
+        }));
+      }
     },
     clearDraftIfUnchanged,
     setInput,

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 from threading import Event, Thread
 import time
@@ -15,6 +16,7 @@ from mcp.shared.auth import OAuthToken
 
 from eidos_runtime.application.builtin_plugins import builtin_plugins
 from eidos_runtime.application.errors import ApplicationError
+from eidos_runtime.application.extensions import ExtensionApplication
 from eidos_runtime.db.schema import V37_SCHEMA_SQL
 from eidos_runtime.db.mcp_connections_migration import migrate_mcp_connections
 from eidos_runtime.db.storage import SessionStore
@@ -252,6 +254,58 @@ def test_builtin_github_is_available_and_installation_is_idempotent(tmp_path, mo
         assert not plugins.connections.read("eidos-github", "github").browser_available
         with pytest.raises(ApplicationError, match="GITHUB_CLIENT_ID_REQUIRED"):
             plugins.connections.execute(McpConnectionRequest(plugin_id="eidos-github", server_id="github", action="connect", operation_id="attempt"), None)
+    finally:
+        store.close()
+
+
+def test_builtin_github_updates_existing_release_and_preserves_old_package(tmp_path):
+    bundled = Path(__file__).parents[1] / "eidos_runtime/resources/plugins/github"
+    previous = tmp_path / "previous"
+    shutil.copytree(bundled, previous)
+    manifest = json.loads((previous / "plugin.json").read_text())
+    manifest["version"] = "1.0.0"
+    interface = manifest["extensions"]["com.openai"]["interface"]
+    interface.pop("composerIcon", None)
+    interface.pop("logo", None)
+    (previous / "icon.png").unlink(missing_ok=True)
+    (previous / "plugin.json").write_text(json.dumps(manifest))
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        plugins = PluginCatalog(store)
+        old = plugins.import_directory(previous)
+        plugins.set_enabled("eidos-github", True)
+        plugins.set_mcp_enabled("eidos-github", "github", True)
+        application = ExtensionApplication(store=store, plugins=plugins)
+        assert application.builtin_plugins(BuiltinPluginRequest()).plugins[0].update_available
+        updated = application.builtin_plugins(BuiltinPluginRequest(action="install")).plugins[0]
+        assert updated.installed and not updated.update_available
+        assert updated.version != "1.0.0"
+        assert plugins.store.plugin_record("eidos-github")["enabled"]
+        assert not plugins.list_mcp_servers()[0]["consented"]
+        assert plugins.package("eidos-github", expected_hash=old["contentHash"]).manifest.version == "1.0.0"
+        assert application.builtin_plugins(BuiltinPluginRequest(action="install")).plugins[0] == updated
+    finally:
+        store.close()
+
+
+def test_builtin_same_version_conflict_keeps_specific_error_and_installed_package(tmp_path):
+    bundled = Path(__file__).parents[1] / "eidos_runtime/resources/plugins/github"
+    previous = tmp_path / "previous"
+    shutil.copytree(bundled, previous)
+    (previous / "skills/github/SKILL.md").write_text(
+        (previous / "skills/github/SKILL.md").read_text() + "\nPrevious contents.\n"
+    )
+    store = SessionStore(tmp_path / "data")
+    store.initialize()
+    try:
+        plugins = PluginCatalog(store)
+        old = plugins.import_directory(previous)
+        application = ExtensionApplication(store=store, plugins=plugins)
+        with pytest.raises(ApplicationError, match="^PLUGIN_VERSION_CONFLICT$"):
+            application.builtin_plugins(BuiltinPluginRequest(action="install"))
+        assert plugins.store.plugin_record("eidos-github")["contentHash"] == old["contentHash"]
+        assert plugins.package("eidos-github").manifest.version == old["version"]
     finally:
         store.close()
 

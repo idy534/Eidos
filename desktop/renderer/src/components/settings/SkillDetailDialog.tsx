@@ -11,6 +11,7 @@ import { useDialogFocusLifecycle } from "../useDialogFocusLifecycle.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { Toggle } from "../Toggle.js";
 import type { SettingsPendingAction } from "./settings-types.js";
+import { githubIcon } from "./SettingsIcons.js";
 
 export function SkillInitial({ name }: { name: string }) {
   return <span className="skill-initial" aria-hidden="true">{Array.from(name.trim())[0]?.toLocaleUpperCase() ?? "S"}</span>;
@@ -21,10 +22,12 @@ export function SkillIcon({ name, icon }: { name: string; icon?: string | null |
   useEffect(() => {
     setFailed(false);
   }, [icon]);
-  if (icon && !failed) {
+  const isGitHub = name.trim().toLowerCase() === "github";
+  const effectiveIcon = !failed && icon ? icon : isGitHub ? githubIcon : undefined;
+  if (effectiveIcon) {
     return (
       <span className="skill-icon" aria-hidden="true">
-        <img src={icon} alt="" onError={() => setFailed(true)} />
+        <img src={effectiveIcon} alt={name} onError={() => setFailed(true)} />
       </span>
     );
   }

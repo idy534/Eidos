@@ -1777,4 +1777,59 @@ describe("saved output projection", () => {
       else delete (window as Partial<Window>).eidosRuntime;
     }
   });
+
+  it("renders user message inline reference tokens at their exact mid-sentence positions and copies clean plain text", async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: writeTextMock,
+      },
+    });
+    const lunaRef = {
+      id: "111122223333" + "0".repeat(52),
+      kind: "agent" as const,
+      label: "luna-work",
+      source: "luna-work",
+      sha256: "a".repeat(64),
+      status: "selection" as const,
+      size: 16,
+    };
+    const docxRef = {
+      id: "aabbccddeeff" + "9".repeat(52),
+      kind: "skill" as const,
+      label: "docx",
+      source: "skills/docx",
+      sha256: "b".repeat(64),
+      status: "content" as const,
+      size: 24,
+    };
+    const userItem = shellItem({
+      id: "user-msg-inline",
+      kind: "user_message",
+      status: "completed",
+      toolCall: undefined,
+      content:
+        "[@luna-work](ref:111122223333) 用这个帮我调研对比。[$docx](ref:aabbccddeeff) 并且输出文档。",
+      references: [lunaRef, docxRef],
+    });
+
+    const { container } = renderFeed(userItem, { ...baseRun, status: "succeeded" });
+    const prose = container.querySelector(".user-message-bubble > p.eidos-inline-reference-prose");
+    expect(prose).not.toBeNull();
+    expect(prose?.textContent).toBe("luna-work 用这个帮我调研对比。docx 并且输出文档。");
+
+    const buttons = prose?.querySelectorAll("button.input-reference__btn");
+    expect(buttons).toHaveLength(2);
+    expect(buttons?.[0]?.textContent).toBe("luna-work");
+    expect(buttons?.[1]?.textContent).toBe("docx");
+
+    const copyBtn = screen.getByRole("button", { name: "复制内容" });
+    fireEvent.click(copyBtn);
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledWith(
+        "@luna-work 用这个帮我调研对比。$docx 并且输出文档。",
+      );
+      expect(screen.getByRole("button", { name: "已复制" })).toBeInTheDocument();
+    });
+  });
 });

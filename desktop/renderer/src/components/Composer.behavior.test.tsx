@@ -2,7 +2,14 @@ import { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Composer, type ComposerProps } from "./Composer.js";
+import { setInlineEditorSelectionOffsets } from "./InlineRichEditor.js";
 import { InputContextProvider } from "./InputContext.js";
+import {
+  canonicalizeInlineText,
+  insertInlineReferenceAtSelection,
+  isInlineReference,
+  removeInlineReferenceTokenById,
+} from "../../../shared/inline-references.js";
 import type { ModelListResult, Run } from "../contracts.js";
 import type { InputReference } from "../../../shared/input-context.js";
 
@@ -112,7 +119,7 @@ describe("Composer DOM interaction & state behavior", () => {
         ...mockModelList.models,
         {
           id: "glm-5.3-flash", name: "GLM 5.3 Flash", vendor: "Volcengine",
-          provider: "volcengine", url: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
+          provider: "volcengine", url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
           supportsToolCall: true, supportsImages: false, supportsReasoning: true,
           reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
         },
@@ -644,8 +651,9 @@ describe("Composer DOM interaction & state behavior", () => {
     expect(textarea).toHaveValue("");
   });
 
-  it("splits shelf attachments above input and inline tokens inside editor, and removes last inline token on Backspace at caret 0", () => {
+  it("splits shelf attachments above input and renders inline tokens inside rich editor with atomic Backspace deletion", () => {
     const onRemoveReference = vi.fn();
+    const onInputChange = vi.fn();
     Object.defineProperty(window, "eidosRuntime", {
       configurable: true,
       writable: true,
@@ -668,6 +676,7 @@ describe("Composer DOM interaction & state behavior", () => {
       source: "session-prev",
     };
 
+    const inlineDraft = "先参考 [$frontend-design](ref:skill-ref-1) 再结合 [@上次对话](ref:history-ref-2) 请继续优化";
     const { container, rerender } = render(
       <InputContextProvider
         sessionId="session-1"
@@ -678,37 +687,34 @@ describe("Composer DOM interaction & state behavior", () => {
       >
         <Composer
           {...defaultProps}
-          input="请继续优化"
+          input={inlineDraft}
           references={[composerReference, skillRef, historyRef]}
+          onInputChange={onInputChange}
           onRemoveReference={onRemoveReference}
         />
       </InputContextProvider>,
     );
 
     const shelfList = container.querySelector(".composer > .input-reference-list--shelf");
-    const inlineEditor = container.querySelector(".composer-inline-editor--has-inline");
-    const inlineList = inlineEditor?.querySelector(".input-reference-list--inline");
+    const richEditor = container.querySelector(".composer .composer-rich-editor") as HTMLDivElement | null;
 
     expect(shelfList).not.toBeNull();
     expect(shelfList?.textContent).toContain("notes.txt");
     expect(shelfList?.textContent).not.toContain("frontend-design");
 
-    expect(inlineList).not.toBeNull();
-    expect(inlineList?.textContent).toContain("frontend-design");
-    expect(inlineList?.textContent).toContain("上次对话");
+    expect(richEditor).not.toBeNull();
+    expect(richEditor?.textContent).toBe("先参考 frontend-design 再结合 上次对话 请继续优化");
 
-    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
-    // Caret not at start -> Backspace does not remove inline token
-    textarea.setSelectionRange(2, 2);
-    fireEvent.keyDown(textarea, { key: "Backspace" });
-    expect(onRemoveReference).not.toHaveBeenCalled();
+    // Caret right after "history-ref-2" -> Backspace atomically removes that inline token
+    const historyEndOffset = inlineDraft.indexOf("[@上次对话](ref:history-ref-2)") + "[@上次对话](ref:history-ref-2)".length;
+    richEditor!.focus();
+    setInlineEditorSelectionOffsets(richEditor!, historyEndOffset, historyEndOffset);
+    fireEvent.keyDown(richEditor!, { key: "Backspace" });
 
-    // Caret at 0 -> Backspace removes the last inline token ("history-ref-2")
-    textarea.setSelectionRange(0, 0);
-    fireEvent.keyDown(textarea, { key: "Backspace" });
     expect(onRemoveReference).toHaveBeenCalledWith("history-ref-2");
+    expect(onInputChange).toHaveBeenCalledWith("先参考 [$frontend-design](ref:skill-ref-1) 再结合  请继续优化");
 
-    // When only shelf references remain, Backspace at caret 0 does not remove shelf cards
+    // When only shelf references remain, native <textarea> renders and Backspace at 0 does not remove shelf cards
     onRemoveReference.mockClear();
     rerender(
       <InputContextProvider
@@ -727,8 +733,155 @@ describe("Composer DOM interaction & state behavior", () => {
       </InputContextProvider>,
     );
     const updatedTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(updatedTextarea.tagName).toBe("TEXTAREA");
     updatedTextarea.setSelectionRange(0, 0);
     fireEvent.keyDown(updatedTextarea, { key: "Backspace" });
     expect(onRemoveReference).not.toHaveBeenCalled();
+  });
+
+  it("inserts inline references at the active cursor position mid-sentence and opens preview on click", async () => {
+    const lunaAgentRef: InputReference = {
+      ...composerReference,
+      id: "111122223333" + "0".repeat(52),
+      kind: "agent",
+      label: "luna-work",
+      source: "luna-work",
+      status: "selection",
+    };
+    const docxSkillRef: InputReference = {
+      ...composerReference,
+      id: "aabbccddeeff" + "9".repeat(52),
+      kind: "skill",
+      label: "docx",
+      source: "skills/docx",
+      status: "content",
+    };
+
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      writable: true,
+      value: {
+        listSkills: vi.fn().mockResolvedValue({
+          skills: [{
+            qualifiedId: "skills/docx",
+            name: "docx",
+            description: "输出 Word 文档",
+            sourceKind: "user",
+            available: true,
+            enabled: true,
+          }],
+        }),
+        listPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+        listMcpServers: vi.fn().mockResolvedValue({ servers: [] }),
+        listSessions: vi.fn().mockResolvedValue({ items: [] }),
+        listAgentTypes: vi.fn().mockResolvedValue({
+          agents: [{
+            name: "luna-work",
+            source: "/workspace/.eidos/agents/luna-work.toml",
+            description: "美食调研子智能体",
+            sourceKind: "user",
+            available: true,
+            enabled: true,
+          }],
+        }),
+        listWorkspaceDirectory: vi.fn().mockResolvedValue({ path: ".", entries: [], truncated: false }),
+        prepareInput: vi.fn().mockImplementation(async (req: { kind: string }) =>
+          req.kind === "agent" ? lunaAgentRef : docxSkillRef,
+        ),
+        readInput: vi.fn().mockResolvedValue({
+          reference: docxSkillRef,
+          text: "---\nname: docx\ndescription: 输出 Word 文档\n---\nGenerate structured docx files.",
+        }),
+        onInputQuote: vi.fn().mockReturnValue(vi.fn()),
+      },
+    });
+
+    let latestText = "";
+    function StatefulHarness() {
+      const [text, setText] = useState("用这个帮我对比。并且输出文档。");
+      const [refs, setRefs] = useState<InputReference[]>([]);
+      const textRef = { current: text };
+      const refsRef = { current: refs };
+      latestText = text;
+      const updateText = (next: string) => {
+        textRef.current = next;
+        setText(next);
+      };
+      const updateRefs = (next: InputReference[]) => {
+        refsRef.current = next;
+        setRefs(next);
+      };
+      return (
+        <InputContextProvider
+          sessionId="session-1"
+          workspaceRoot="/workspace"
+          ready
+          onAdd={(_sid, ref) => updateRefs([...refsRef.current, ref])}
+          onInsert={(_sid, ref, range) => {
+            if (!isInlineReference(ref)) {
+              updateRefs([...refsRef.current, ref]);
+              return undefined;
+            }
+            const base = canonicalizeInlineText(textRef.current, refsRef.current);
+            const inserted = insertInlineReferenceAtSelection(base, ref, range);
+            updateText(inserted.text);
+            updateRefs([...refsRef.current.filter((r) => r.id !== ref.id), ref]);
+            return inserted.caretOffset;
+          }}
+          onSettings={vi.fn()}
+        >
+          <Composer
+            {...defaultProps}
+            input={text}
+            references={refs}
+            onInputChange={updateText}
+            onRemoveReference={(id) => {
+              updateText(removeInlineReferenceTokenById(textRef.current, id));
+              updateRefs(refsRef.current.filter((r) => r.id !== id));
+            }}
+          />
+        </InputContextProvider>
+      );
+    }
+
+    const { container } = render(<StatefulHarness />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+
+    // 1. Place cursor at index 0 (start of sentence) and insert luna-work via "+" picker
+    textarea.focus();
+    textarea.setSelectionRange(0, 0);
+    fireEvent.select(textarea);
+    fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "智能体" }));
+    fireEvent.click(await screen.findByRole("option", { name: /luna-work/ }));
+
+    await waitFor(() => {
+      expect(latestText).toBe("[@luna-work](ref:111122223333)用这个帮我对比。并且输出文档。");
+    });
+
+    // 2. Move cursor right after "对比。" inside InlineRichEditor and insert docx via "+" picker
+    const richEditor = container.querySelector(".composer .composer-rich-editor") as HTMLDivElement;
+    expect(richEditor).not.toBeNull();
+    const midSentenceOffset = "[@luna-work](ref:111122223333)用这个帮我对比。".length;
+    richEditor.focus();
+    setInlineEditorSelectionOffsets(richEditor, midSentenceOffset, midSentenceOffset);
+    fireEvent.click(richEditor);
+
+    fireEvent.click(screen.getByRole("button", { name: "添加引用" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Skill" }));
+    fireEvent.click(await screen.findByRole("option", { name: /docx/ }));
+
+    await waitFor(() => {
+      expect(latestText).toBe(
+        "[@luna-work](ref:111122223333)用这个帮我对比。[$docx](ref:aabbccddeeff)并且输出文档。",
+      );
+    });
+    expect(richEditor.textContent).toBe("luna-work用这个帮我对比。docx并且输出文档。");
+
+    // 3. Clicking the inline docx token opens SkillDetailDialog
+    fireEvent.click(screen.getByRole("button", { name: "docx" }));
+    const dialog = await screen.findByRole("dialog", { name: "docx" });
+    expect(dialog).toHaveTextContent("Generate structured docx files.");
+    fireEvent.click(screen.getByRole("button", { name: "关闭技能详情" }));
   });
 });

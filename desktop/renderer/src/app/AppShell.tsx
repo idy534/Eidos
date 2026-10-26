@@ -320,7 +320,7 @@ export function AppShell({ runtime }: AppShellProps) {
   const modelSessionInitializedRef = useRef<string | undefined>(undefined);
   const getDialogFallbackFocus = useCallback((): HTMLElement | null => {
     const composer = composerRef.current;
-    return composer?.isConnected && !composer.disabled
+    return composer?.isConnected && !composer.disabled && composer.getAttribute("aria-disabled") !== "true"
       ? composer
       : workspaceRef.current;
   }, []);
@@ -1407,7 +1407,7 @@ export function AppShell({ runtime }: AppShellProps) {
       showToast,
     } : undefined}>
     <InputContextProvider ready={runState.draftReady && isStorageReady} sessionId={currentSnapshot?.session.id} workspaceRoot={currentSnapshot?.session.worktree?.worktreeRoot ?? currentSnapshot?.session.workspaceRoot}
-      onAdd={runActions.addReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
+      onAdd={runActions.addReference} onInsert={runActions.insertReference} onSettings={(section) => { setSettingsCategory(section === "agents" ? "agents" : section === "mcp" ? "mcp" : section === "skills" ? "skills" : "plugins"); setSettingsOpen(true); setDockOpen(false); }}
       onNavigateToSession={(target) => {
         if (settingsOpen) setSettingsOpen(false);
         navHistoryActions.navigateTo(target);
@@ -1494,7 +1494,7 @@ export function AppShell({ runtime }: AppShellProps) {
         ) : settingsOpen ? (
           <SettingsPage
             initialCategory={settingsCategory}
-            sessionId={activeSnapshot?.session.id}
+            sessionId={sessionState.snapshot?.session.id}
             onOpenMemorySource={(id) => {
               const source = sessionState.sessions.find((session) => session.id === id);
               if (source) {setSettingsOpen(false); void handleSelectSession(source);}

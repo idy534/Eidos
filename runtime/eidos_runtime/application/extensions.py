@@ -325,7 +325,8 @@ class ExtensionApplication:
         try:
             return builtin_plugins(self._plugins_or_error(), request)
         except PluginImportError as error:
-            raise ApplicationError("PLUGIN_UNAVAILABLE") from error
+            code = "PLUGIN_VERSION_CONFLICT" if str(error) == "plugin_version_conflict" else "PLUGIN_UNAVAILABLE"
+            raise ApplicationError(code) from error
 
     def mcp_connection(self, request: McpConnectionRequest, kernel: RuntimeAsyncKernel) -> McpConnectionState:
         return self._plugins_or_error().connections.execute(request, kernel)
