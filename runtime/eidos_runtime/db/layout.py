@@ -659,10 +659,22 @@ def _externalize_state_snapshots(
         connection = state.connection()
         if table not in _table_names(connection):
             continue
+        # Revoked snapshots deliberately contain an inline redaction. Turning
+        # that value back into a blob makes memory cleanup rewrite it on every
+        # restart and needlessly schedules both compaction and blob collection.
+        # Older schemas reach this migration before adding memory_revoked.
+        has_revocation = any(
+            row[1] == "memory_revoked"
+            for row in connection.execute(f"PRAGMA table_info({table})")
+        )
+        active_only = "memory_revoked = 0" if has_revocation else ""
         # Keep reference validation on restart, but avoid an ID-sized allocation
         # and one extra SELECT per historical snapshot. Updates only replace the
         # payload; they do not change the key used by this cursor.
-        cursor = connection.execute(f"SELECT id, snapshot_json FROM {table}")
+        cursor = connection.execute(
+            f"SELECT id, snapshot_json FROM {table}"
+            + (f" WHERE {active_only}" if active_only else "")
+        )
         try:
             while rows := cursor.fetchmany(256):
                 for row in rows:
@@ -679,7 +691,8 @@ def _externalize_state_snapshots(
                     with state.transaction() as write_connection:
                         updated = write_connection.execute(
                             f"UPDATE {table} SET snapshot_json = ? "
-                            "WHERE id = ? AND snapshot_json = ?",
+                            "WHERE id = ? AND snapshot_json = ?"
+                            + (f" AND {active_only}" if active_only else ""),
                             (replacement, identifier, stored),
                         )
                         if updated.rowcount == 1:

@@ -872,6 +872,114 @@ def test_restart_defers_orphan_blob_collection_until_maintenance(tmp_path: Path)
         reopened.close()
 
 
+@pytest.mark.parametrize("already_redacted", [True, False])
+def test_revoked_snapshots_do_not_restart_externalization_or_compaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, already_redacted: bool,
+) -> None:
+    from eidos_runtime.db import layout
+    from eidos_runtime.memory.repository import MemoryRejected
+
+    data = tmp_path / "data"
+    store = SessionStore(data)
+    store.initialize()
+    session = store.create_session(str(_workspace(tmp_path)))
+    run, _ = store.create_run(session["id"], "inspect")
+    RuntimeEngine(
+        store, ScriptedModel([ModelResponse(text="done")]), lambda _message: None,
+    ).run(run["id"], threading.Event())
+    tables = ("context_snapshots", "step_resolution_snapshots")
+    with store.database.transaction() as connection:
+        for table in tables:
+            if already_redacted:
+                connection.execute(
+                    f"UPDATE {table} SET memory_revoked=1, snapshot_json='{{}}'"
+                )
+            else:
+                connection.execute(f"UPDATE {table} SET memory_revoked=1")
+            assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 1
+    store.close()
+
+    markers: list[bool] = []
+    original_compaction = layout._retry_state_compaction
+
+    def record_compaction(state: layout.StateDatabase) -> None:
+        assert state.data_directory is not None
+        markers.append((state.data_directory / layout.STATE_COMPACTION_MARKER_NAME).exists())
+        original_compaction(state)
+
+    monkeypatch.setattr(layout, "_retry_state_compaction", record_compaction)
+    for restart in range(2):
+        reopened = SessionStore(data)
+        try:
+            reopened.initialize()
+            assert reopened.health_state == "ready"
+            snapshot_id = reopened.database.connection().execute(
+                "SELECT id FROM context_snapshots WHERE memory_revoked=1"
+            ).fetchone()[0]
+            with pytest.raises(MemoryRejected, match="memory_snapshot_revoked"):
+                reopened.context_snapshot_repository().read(snapshot_id)
+            assert reopened.read_step_resolution_snapshots(run["id"]) == ()
+            for table in tables:
+                stored = reopened.database.connection().execute(
+                    f"SELECT snapshot_json FROM {table} WHERE memory_revoked=1"
+                ).fetchone()[0]
+                if already_redacted or restart:
+                    assert stored == "{}"
+                else:
+                    assert JsonBlobReference.from_json(stored) is not None
+
+            collections: list[bool] = []
+
+            def collect() -> None:
+                collections.append(True)
+                reopened.collect_unreferenced_blobs()
+
+            reopened.database.memory.on_cleanup = collect
+            reopened.database.memory.cleanup()
+            assert len(collections) == (1 if not already_redacted and restart == 0 else 0)
+            for table in tables:
+                assert reopened.database.connection().execute(
+                    f"SELECT snapshot_json FROM {table} WHERE memory_revoked=1"
+                ).fetchone()[0] == "{}"
+        finally:
+            reopened.close()
+    assert markers == [False, False]
+
+
+def test_snapshot_externalization_supports_legacy_tables_without_revocation(
+    tmp_path: Path,
+) -> None:
+    from eidos_runtime.db.layout import _externalize_state_snapshots
+
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    connection = sqlite3.connect(":memory:")
+    for table in ("context_snapshots", "step_resolution_snapshots"):
+        connection.execute(f"CREATE TABLE {table} (id TEXT PRIMARY KEY, snapshot_json TEXT)")
+        connection.execute(f"INSERT INTO {table} VALUES ('legacy', '{{}}')")
+    connection.commit()
+    blobs = JsonBlobStore(data)
+
+    class LegacyState:
+        data_directory = data
+        json_blobs = blobs
+        lock = threading.RLock()
+
+        def connection(self) -> sqlite3.Connection:
+            return connection
+
+        def transaction(self) -> sqlite3.Connection:
+            return connection
+
+    try:
+        _externalize_state_snapshots(LegacyState(), blobs)
+        for table in ("context_snapshots", "step_resolution_snapshots"):
+            stored = connection.execute(f"SELECT snapshot_json FROM {table}").fetchone()[0]
+            assert JsonBlobReference.from_json(stored) is not None
+    finally:
+        connection.close()
+
+
 def test_snapshot_externalization_batches_queries_and_resumes_after_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
