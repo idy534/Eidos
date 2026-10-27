@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -112,6 +113,75 @@ class EventOutboxTests(unittest.TestCase):
 
         self.assertEqual(delivered, ["title-blocked", "title-later"])
         self.assertEqual(self.store.pending_outbox_count(), 0)
+
+    def test_pending_batch_projects_history_once_and_preserves_order(self) -> None:
+        self._title_mutation("first")
+        self._title_mutation("second")
+        delivered: list[str] = []
+        events = RuntimeEvents(
+            lambda message: delivered.append(str(message["params"]["title"])),
+            store=self.store,
+        )
+
+        with patch.object(
+            self.store, "project_thread_history", wraps=self.store.project_thread_history,
+        ) as project:
+            result = events.deliver_pending()
+
+        self.assertFalse(result.failures)
+        self.assertEqual(delivered, ["title-first", "title-second"])
+        self.assertEqual(self.store.pending_outbox_count(), 0)
+        self.assertEqual(project.call_count, 1)
+        self.assertEqual(self.store.project_thread_history(), 0)
+
+    def test_partial_batch_failure_projects_history_and_retries_pending_events(self) -> None:
+        self._title_mutation("first")
+        self._title_mutation("second")
+        delivered: list[str] = []
+        blocked = True
+
+        def notify(message):
+            title = str(message["params"]["title"])
+            if title == "title-second" and blocked:
+                raise BrokenPipeError("closed")
+            delivered.append(title)
+
+        events = RuntimeEvents(notify, store=self.store)
+        with patch.object(
+            self.store, "project_thread_history", wraps=self.store.project_thread_history,
+        ) as project:
+            failed = events.deliver_pending()
+
+        self.assertTrue(failed.failures)
+        self.assertEqual(delivered, ["title-first"])
+        self.assertGreater(self.store.pending_outbox_count(), 0)
+        self.assertEqual(project.call_count, 1)
+        self.assertEqual(self.store.project_thread_history(), 0)
+        blocked = False
+        self.assertFalse(events.deliver_pending().failures)
+        self.assertEqual(delivered, ["title-first", "title-second"])
+        self.assertEqual(self.store.pending_outbox_count(), 0)
+
+    def test_history_projection_failure_retries_even_without_pending_events(self) -> None:
+        self._title_mutation("first")
+        events = RuntimeEvents(lambda _message: None, store=self.store)
+        original_project = self.store.project_thread_history
+        calls = 0
+
+        def project():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("temporary projection failure")
+            return original_project()
+
+        with patch.object(self.store, "project_thread_history", side_effect=project):
+            self.assertFalse(events.deliver_pending().failures)
+            self.assertEqual(self.store.pending_outbox_count(), 0)
+            self.assertFalse(events.deliver_pending().failures)
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(self.store.project_thread_history(), 0)
 
     def test_transaction_rollback_creates_no_outbox_record(self) -> None:
         assert self.store.connection is not None

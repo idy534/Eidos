@@ -45,6 +45,7 @@ class EventDelivery:
         self.notify = notify
         self.projector = projector or EventProjector()
         self._lock = threading.RLock()
+        self._history_projection_pending = False
 
     def deliver(
         self,
@@ -69,91 +70,102 @@ class EventDelivery:
     ) -> DeliveryResult:
         attempted = 0
         delivered = 0
+        processed = 0
         failures: list[DeliveryFailure] = []
-        for event in self.store.pending_outbox_events(
-            through_event_id=through_event_id
-        ):
-            event_id = event.get("eventId")
-            if not isinstance(event_id, int):
-                raise EventOutboxError("event id is invalid")
-            try:
-                run = runs.get(event_id) if runs is not None else None
-                item = items.get(event_id) if items is not None else None
-                run, item = self._context(event, run=run, item=item)
-                notifications = self.projector.project(
-                    event, run=run, item=item
-                )
-            except Exception as error:
-                self.store.record_outbox_failure(
-                    event_id, "EVENT_PROJECTION_FAILED"
-                )
-                logger.warning(
-                    "Event projection failed: %s",
-                    type(error).__name__,
-                )
-                return DeliveryResult(
-                    failures=(
-                        DeliveryFailure(
-                            event_id,
-                            None,
-                            type(error).__name__,
-                        ),
-                    )
-                )
-            event_delivered = 0
-            for notification in notifications:
-                attempted += 1
+        try:
+            for event in self.store.pending_outbox_events(
+                through_event_id=through_event_id
+            ):
+                event_id = event.get("eventId")
+                if not isinstance(event_id, int):
+                    raise EventOutboxError("event id is invalid")
                 try:
-                    self.notify(notification)
-                    event_delivered += 1
-                except (
-                    BrokenPipeError,
-                    ConnectionError,
-                    RuntimeOutputClosedError,
-                    OSError,
-                ) as error:
-                    failure = DeliveryFailure(
-                        event_id=event_id,
-                        method=(
-                            str(notification["method"])
-                            if isinstance(
-                                notification.get("method"), str
-                            )
-                            else None
-                        ),
-                        error_type=type(error).__name__,
+                    run = runs.get(event_id) if runs is not None else None
+                    item = items.get(event_id) if items is not None else None
+                    run, item = self._context(event, run=run, item=item)
+                    notifications = self.projector.project(
+                        event, run=run, item=item
                     )
-                    failures.append(failure)
+                except Exception as error:
                     self.store.record_outbox_failure(
-                        event_id, "EVENT_DELIVERY_FAILED"
+                        event_id, "EVENT_PROJECTION_FAILED"
                     )
                     logger.warning(
-                        "Notification delivery failed",
-                        extra={
-                            "event_id": event_id,
-                            "notification_method": failure.method,
-                            "delivery_error_type": failure.error_type,
-                        },
+                        "Event projection failed: %s",
+                        type(error).__name__,
                     )
                     return DeliveryResult(
-                        attempted=attempted,
-                        delivered=delivered + event_delivered,
-                        failures=tuple(failures),
+                        failures=(
+                            DeliveryFailure(
+                                event_id,
+                                None,
+                                type(error).__name__,
+                            ),
+                        )
                     )
-            self.store.mark_outbox_delivered(event_id)
-            try:
-                self.store.project_thread_history()
-            except Exception as error:
-                logger.warning(
-                    "Thread history projection failed: %s",
-                    type(error).__name__,
-                )
-            delivered += event_delivered
-        return DeliveryResult(
-            attempted=attempted,
-            delivered=delivered,
-            failures=tuple(failures),
-        )
+                event_delivered = 0
+                for notification in notifications:
+                    attempted += 1
+                    try:
+                        self.notify(notification)
+                        event_delivered += 1
+                    except (
+                        BrokenPipeError,
+                        ConnectionError,
+                        RuntimeOutputClosedError,
+                        OSError,
+                    ) as error:
+                        failure = DeliveryFailure(
+                            event_id=event_id,
+                            method=(
+                                str(notification["method"])
+                                if isinstance(
+                                    notification.get("method"), str
+                                )
+                                else None
+                            ),
+                            error_type=type(error).__name__,
+                        )
+                        failures.append(failure)
+                        self.store.record_outbox_failure(
+                            event_id, "EVENT_DELIVERY_FAILED"
+                        )
+                        logger.warning(
+                            "Notification delivery failed",
+                            extra={
+                                "event_id": event_id,
+                                "notification_method": failure.method,
+                                "delivery_error_type": failure.error_type,
+                            },
+                        )
+                        return DeliveryResult(
+                            attempted=attempted,
+                            delivered=delivered + event_delivered,
+                            failures=tuple(failures),
+                        )
+                self.store.mark_outbox_delivered(event_id)
+                processed += 1
+                delivered += event_delivered
+            return DeliveryResult(
+                attempted=attempted,
+                delivered=delivered,
+                failures=tuple(failures),
+            )
+        finally:
+            if processed or self._history_projection_pending:
+                try:
+                    # catch_up projects all committed events, not just the
+                    # delivered event. Repeating its filesystem repair and
+                    # directory fsync for each pending event is unnecessary.
+                    self.store.project_thread_history()
+                except Exception as error:
+                    self._history_projection_pending = True
+                    logger.warning(
+                        "Thread history projection failed: %s",
+                        type(error).__name__,
+                    )
+                else:
+                    self._history_projection_pending = False
 
     def _context(
         self,
