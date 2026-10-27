@@ -39,6 +39,12 @@ from eidos_runtime.model.pydantic_factory import build_model, build_provider
             OpenAIProvider,
             "https://ark.cn-beijing.volces.com/api/plan/v3",
         ),
+        (
+            "volcengine",
+            "kimi-k3.1-pro",
+            OpenAIProvider,
+            "https://ark.cn-beijing.volces.com/api/plan/v3",
+        ),
     ],
 )
 async def test_all_catalog_providers_use_openai_chat_completions(

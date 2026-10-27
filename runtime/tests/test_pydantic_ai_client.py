@@ -41,7 +41,7 @@ from eidos_runtime.model.client import (  # noqa: E402
     ModelRequestError,
     ModelToolDefinition,
 )
-from eidos_runtime.model.config import ModelProfileSpec  # noqa: E402
+from eidos_runtime.model.config import MODEL_CATALOG, ModelProfileSpec  # noqa: E402
 from eidos_runtime.model.prompts import (  # noqa: E402
     BASE_AGENT_INSTRUCTIONS,
     RUNTIME_POLICY_INSTRUCTIONS,
@@ -993,7 +993,10 @@ class PydanticAIModelClientTests(unittest.TestCase):
             ("minimax", "MiniMax-M3", "thinking", {"type": "adaptive"}, None),
             ("kimi", "kimi-k3", "low", None, "low"),
             ("kimi", "kimi-k3", "max", None, "max"),
-            # The Coding Plan endpoint is intentionally left without guessed fields.
+            ("volcengine", "kimi-k3.1-pro", "low", None, "low"),
+            ("volcengine", "kimi-k3.1-pro", "high", None, "high"),
+            ("volcengine", "kimi-k3.1-pro", "max", None, "max"),
+            # Other Volcengine models remain without model-specific fields.
             ("volcengine", "glm-5.3-flash", "max", None, None),
         ]
         base_urls = {
@@ -1039,22 +1042,35 @@ class PydanticAIModelClientTests(unittest.TestCase):
                     provider = OpenAIProvider(openai_client=openai_client)
                 kernel = RuntimeAsyncKernel()
                 kernel.start()
-                client = PydanticAIModelClient(
-                    OpenAIChatModel(model_id, provider=provider),
-                    ModelProfileSpec(
+                if model_id == "kimi-k3.1-pro":
+                    spec = MODEL_CATALOG.profile(model_id)
+                    config = MODEL_CATALOG.materialize(provider_id, model_id, "sk-example-key-for-tests")
+                    snapshot = spec.snapshot(config, reasoning_selection=selection)
+                    context = ({
+                        "type": "user", "content": "Inspect this image.",
+                        "inputImage": "cG5n", "mime": "image/png",
+                    },)
+                else:
+                    spec = ModelProfileSpec(
                         provider_id=provider_id,
                         model_id=model_id,
                         context_window_tokens=4_096,
                         max_output_tokens=512,
                         request_timeout_seconds=5.0,
-                    ),
+                    )
+                    snapshot = None
+                    context = ({"type": "user", "content": "Reply with OK."},)
+                client = PydanticAIModelClient(
+                    OpenAIChatModel(model_id, provider=provider),
+                    spec,
                     openai_client=openai_client,
+                    profile_snapshot=snapshot,
                     reasoning_selection=selection,
                     async_kernel=kernel,
                 )
                 try:
                     response = client.complete(
-                        ({"type": "user", "content": "Reply with OK."},),
+                        context,
                         threading.Event(),
                         lambda _delta: None,
                         instructions=TEST_INSTRUCTIONS,
@@ -1070,6 +1086,11 @@ class PydanticAIModelClientTests(unittest.TestCase):
                         self.assertNotIn("reasoning_effort", payload)
                     else:
                         self.assertEqual(payload.get("reasoning_effort"), expected_effort)
+                    if model_id == "kimi-k3.1-pro":
+                        self.assertEqual(payload["model"], model_id)
+                        image = payload["messages"][-1]["content"][-1]
+                        self.assertEqual(image["type"], "image_url")
+                        self.assertEqual(image["image_url"]["url"], "data:image/png;base64,cG5n")
                 finally:
                     client.close()
                     kernel.close()

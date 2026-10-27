@@ -45,6 +45,7 @@ def test_model_presets_only_expose_the_supported_catalog() -> None:
         "deepseek-v4-flash-ga-260731",
         "glm-5.3",
         "glm-5.3-flash",
+        "kimi-k3.1-pro",
         "minimax-m3",
     ]
     assert all(
@@ -71,6 +72,7 @@ def test_model_catalog_declares_each_model_reasoning_choices_and_default() -> No
         "deepseek-v4-flash-ga-260731": (True, "high", ["none", "low", "high", "max"]),
         "glm-5.3": (True, None, None),
         "glm-5.3-flash": (True, "max", ["low", "high", "max"]),
+        "kimi-k3.1-pro": (True, "max", ["low", "high", "max"]),
         "minimax-m3": (False, None, None),
     }
 
@@ -236,7 +238,7 @@ def test_glm_52_migration_conflict_preserves_both_saved_models(tmp_path: Path) -
     assert store.path.read_text(encoding="utf-8") == payload
 
 
-def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits() -> None:
+def test_volcengine_agent_plan_catalog_uses_the_documented_endpoint_and_limits() -> None:
     presets = model_presets()
     provider = next(item for item in presets["providers"] if item["id"] == "volcengine")
     assert provider["name"] == "火山引擎 / Volcengine"
@@ -246,6 +248,7 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         "deepseek-v4-flash-ga-260731",
         "glm-5.3",
         "glm-5.3-flash",
+        "kimi-k3.1-pro",
         "minimax-m3",
     ]
     assert all(
@@ -259,6 +262,7 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
         "deepseek-v4-flash-ga-260731": (1_048_576, 393_216),
         "glm-5.3": (1_048_576, 131_072),
         "glm-5.3-flash": (1_048_576, 131_072),
+        "kimi-k3.1-pro": (1_024_000, 131_072),
         "minimax-m3": (524_288, 131_072),
     }
     for model_id, (context_window, max_output) in expected_limits.items():
@@ -271,10 +275,13 @@ def test_volcengine_coding_plan_catalog_uses_the_documented_endpoint_and_limits(
     glm_flash = next(
         model for model in provider["models"] if model["id"] == "glm-5.3-flash"
     )
+    kimi = next(model for model in provider["models"] if model["id"] == "kimi-k3.1-pro")
     minimax = next(model for model in provider["models"] if model["id"] == "minimax-m3")
     assert v4_1_flash["supportsImages"] is True
     assert glm["supportsImages"] is False
     assert glm_flash["supportsImages"] is True
+    assert kimi["supportsImages"] is True
+    assert kimi["supportsToolCall"] is True
     assert minimax["supportsImages"] is True
 
 

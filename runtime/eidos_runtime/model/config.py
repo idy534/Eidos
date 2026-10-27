@@ -359,7 +359,7 @@ MODEL_PROVIDERS = (
         id="volcengine",
         name="火山引擎 / Volcengine",
         vendor="Volcengine",
-        # Coding Plan uses a separate endpoint; model-specific request fields
+        # Agent Plan uses a separate endpoint; model-specific request fields
         # still need provider verification.
         models=(
             CatalogModel(
@@ -426,6 +426,20 @@ MODEL_PROVIDERS = (
                     selections=("low", "high", "max"),
                 ),
                 contextWindowTokens=1_048_576,
+                maxOutputTokens=131_072,
+            ),
+            CatalogModel(
+                id="kimi-k3.1-pro",
+                name="Kimi K3.1 Pro",
+                url="https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
+                supportsToolCall=True,
+                supportsImages=True,
+                supportsReasoning=True,
+                reasoning=ModelReasoningConfig(
+                    defaultSelection="max",
+                    selections=("low", "high", "max"),
+                ),
+                contextWindowTokens=1_024_000,
                 maxOutputTokens=131_072,
             ),
             CatalogModel(

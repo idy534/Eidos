@@ -12,6 +12,65 @@ from eidos_runtime.sandbox.sensitive import SensitiveScanner
 
 
 class ModelGatewayProtocolTests(unittest.TestCase):
+    def test_volcengine_kimi_preset_creates_a_model_and_freezes_reasoning(self) -> None:
+        with (
+            tempfile.TemporaryDirectory(prefix="eidos-kimi-rpc-") as data,
+            tempfile.TemporaryDirectory(prefix="eidos-kimi-workspace-") as workspace,
+            ExitStack() as resources,
+        ):
+            output = io.StringIO()
+            server = RuntimeServer(output, Path(data))
+            resources.callback(server.close)
+            server.store.initialize()
+            server.model_config.initialize()
+            server.initialized = True
+            server.sensitive = SensitiveScanner()
+            server.supervisor.prepare_next = lambda: None  # type: ignore[method-assign]
+            server._schedule_title_generation = lambda *_args: None  # type: ignore[method-assign]
+
+            server.handle(request("model/presets", {}, "presets"))
+            server.handle(request("model/create", {
+                "provider": "volcengine", "modelId": "kimi-k3.1-pro", "apiKey": "fixture-key",
+            }, "create"))
+            server.handle(request("model/list", {}, "list"))
+            results = messages(output)
+            provider = next(p for p in results["presets"]["result"]["providers"] if p["id"] == "volcengine")
+            preset = next(m for m in provider["models"] if m["id"] == "kimi-k3.1-pro")
+            self.assertEqual(preset["name"], "Kimi K3.1 Pro")
+            self.assertTrue(preset["supportsImages"])
+            self.assertTrue(preset["supportsToolCall"])
+            self.assertEqual(results["create"]["result"]["id"], "kimi-k3.1-pro")
+            self.assertEqual(results["list"]["result"]["models"][0]["reasoning"], {
+                "defaultSelection": "max", "selections": ["low", "high", "max"],
+            })
+
+            session = server.store.create_session(workspace)
+            server.handle(request("run/start", {
+                "sessionId": session["id"], "userInput": "default", "modelId": "kimi-k3.1-pro",
+            }, "default"))
+            run_id = messages(output)["default"]["result"]["id"]
+            profile = server.store.read_model_profile(run_id)
+            self.assertEqual(profile.reasoning_selection, "max")
+            self.assertEqual(profile.context_window_tokens, 1_024_000)
+            self.assertEqual(profile.max_output_tokens, 131_072)
+            self.assertTrue(profile.supports_images)
+            self.assertTrue(profile.supports_tools)
+            server.store.cancel_run(run_id)
+
+            server.handle(request("run/start", {
+                "sessionId": session["id"], "userInput": "low", "modelId": "kimi-k3.1-pro",
+                "reasoningSelection": "low",
+            }, "low"))
+            low_run_id = messages(output)["low"]["result"]["id"]
+            self.assertEqual(server.store.read_model_profile(low_run_id).reasoning_selection, "low")
+            server.store.cancel_run(low_run_id)
+
+            server.handle(request("run/start", {
+                "sessionId": session["id"], "userInput": "off", "modelId": "kimi-k3.1-pro",
+                "reasoningSelection": "none",
+            }, "off"))
+            self.assertEqual(messages(output)["off"]["error"]["data"]["code"], "INVALID_PARAMS")
+
     def test_model_crud_and_turn_level_switch_use_the_closed_rpc_contract(self) -> None:
         with (
             tempfile.TemporaryDirectory(prefix="eidos-model-rpc-") as data,

@@ -184,6 +184,10 @@ class PydanticAIModelClient:
             profile_spec.provider_id == "volcengine"
             and profile_spec.model_id == "deepseek-v4.1-flash"
             and reasoning_selection in ("none", "low", "medium", "high", "max")
+        ) or (
+            profile_spec.provider_id == "volcengine"
+            and profile_spec.model_id == "kimi-k3.1-pro"
+            and reasoning_selection in ("low", "high", "max")
         ):
             self._reasoning_effort = reasoning_selection
         elif (

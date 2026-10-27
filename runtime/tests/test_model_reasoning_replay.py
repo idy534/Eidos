@@ -536,6 +536,7 @@ def test_multi_tool_reasoning_is_not_counted_once_per_tool_in_projection(tmp_pat
         ("kimi", "kimi-k3"),
         ("minimax", "MiniMax-M3"),
         ("volcengine", "glm-5.3-flash"),
+        ("volcengine", "kimi-k3.1-pro"),
     ],
 )
 def test_provider_wire_replays_reasoning_and_grouped_tool_calls(provider, model_name):
