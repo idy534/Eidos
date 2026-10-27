@@ -95,21 +95,22 @@ Runtime 按实际执行事实记录结果。准备失败和未启动命令不会
 - 普通采样和无工具收尾调用会把敏感扫描已释放的文本写入同一个 `in_progress` Assistant Item，并通过 SQLite Event/Outbox 和 JSON-RPC `item/delta` 更新界面。完整响应校验成功后，Runtime 才确认该 Item。失败草稿使用现有 incomplete 状态，并从模型上下文排除。
 - 新 `item/delta` Event 包含 UTF-16 文本偏移 `offset`。Renderer 只在本地内容长度与偏移一致时追加，避免重复投递和已含增量的快照造成重复文字。旧 Event 没有 offset 时仍按原协议读取。Run 结束后，现有 Session 快照刷新负责校正缺失内容。Desktop 和 Runtime 应一起更新。
 
-- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan 的十个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
-- 内置多模态支持模型包括 `deepseek-v4.1-flash`（火山引擎 Coding Plan 原生图像理解）、`glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码目录项包括 `glm-5.3` 和 `deepseek-flash`。
-- 火山引擎 Coding Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/plan/v3`，包含 `deepseek-v4.1-flash`、`deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash` 和 `minimax-m3`。V4.1 Flash 使用 Coding Plan 的 OpenAI-compatible Chat Completions 接口，目录声明 1M 上下文和图像输入。
+- `models.json` 是模型配置的事实来源（遵循“用户配置 > Pydantic AI Model Profile > Eidos Provider Preset > 保守默认值”原则）。内置 Catalog 提供 DeepSeek、MiniMax、Kimi 和火山引擎 Agent Plan 的十一个推荐模型预设模板，不再强制全等校验。已有模型配置缺少思考档位时，`model/list` 会回退到对应 Catalog 档位，不会改写 `models.json`；已有非空档位仍优先。
+- 内置多模态支持模型包括 `deepseek-v4.1-flash` 和 `kimi-k3.1-pro`（火山引擎 Agent Plan 图像理解）、`glm-5.3-flash`（智谱原生多模态）、`minimax-m3` / `MiniMax-M3`（MiniMax 原生多模态）、`kimi-k3` 与 `kimi-k2.7-code-highspeed`（Kimi 原生多模态）。纯文本/代码目录项包括 `glm-5.3` 和 `deepseek-flash`。
+- 火山引擎 Agent Plan 的内置 Catalog 指向 `https://ark.cn-beijing.volces.com/api/plan/v3`，包含 `deepseek-v4.1-flash`、`deepseek-v4-pro-ga-260813`、`deepseek-v4-flash-ga-260731`、`glm-5.3`、`glm-5.3-flash`、`kimi-k3.1-pro` 和 `minimax-m3`。Kimi K3.1 Pro 使用 OpenAI-compatible Chat Completions，目录声明 1,024,000 上下文、131,072 最大输出、图片输入与工具调用；该端点需要 Agent Plan 专属 Key。
 - Model 配置保存在 `models.json`。默认位置是 `~/.eidos/models.json`。本地文件使用 owner-only 权限。
 - API Key 通过本地 Model 配置写请求链路传到 Runtime：Renderer typed IPC → Electron Main → `model/create` / `model/update` JSON-RPC request → ModelConfigStore。Runtime 在模型列表、创建和编辑响应中返回本机保存的 Key，供设置表单回显。Python 响应 DTO 与 Main 严格校验均接受字符串 `apiKey`。Key 不进入 SQLite、Event/Feed 或正常日志，配置对象的文本表示隐藏 Key。
 - Runtime 同时支持 OpenAI-compatible Chat Completions 和 OpenAI Responses。Chat Completions 是兼容路径，不是废弃路径。Responses profile 只有在同时声明 `supports_custom_tools=true` 和 `supports_tool_grammar=true` 时才使用 native Custom `apply_patch`；其他 Responses profile 和所有 Chat Completions profile 使用 Function Tool。
 - Runtime 使用 Pydantic AI Model API 处理 Chat Completions 的 Provider 构造、流式 Model Response、Usage 和 ToolCall 归一化。Responses adapter 只有在收到 `response.completed` 后才返回可执行 response。`response.failed`、`response.incomplete`、`error` 和意外 EOF 都会失败。Runtime 的模型取消会关闭 Responses stream，取消等待中的 `anext` task，并把结果映射为 `sampling_canceled`。
 - 每个 Run 固化 Model Profile、Model capability declaration 和 Extension Snapshot。活动 Run 不会被后续 Model 配置编辑或删除改变。
+- 回复中的模型优先显示当前配置的名称。配置不存在时，界面显示 Run 的 Model Profile 中保存的远端模型 ID；旧快照没有远端 ID 时仍显示内部模型 ID。新分叉会保留远端模型 ID。旧分叉在来源 Run 仍存在时可以读取该 ID；来源 Run 已删除且旧分叉没有保存 ID 时，界面继续显示内部 ID。现有 Run 快照不保存自定义展示名。
 - Runtime 记录 Model Attempt、usage、response metadata、transport retry 诊断和稳定错误码。
 - Runtime 可以声明和保存 reasoning capability，但不会把 Provider reasoning 或 chain-of-thought 当作普通 Feed 内容展示。
 - Runtime 保存 Provider 返回的思考内容及回放元数据。记录绑定 ModelAttempt/Step，重启后仍可重建。Chat Completions 使用 SDK 回传同一响应的思考、正文和全部工具调用；Responses 保留原生 reasoning item。Session 对话只显示正文和工具结果，当前不增加轨迹 UI。
-- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 和火山 Coding Plan `deepseek-v4.1-flash` 的选择会映射到 Provider 请求。V4.1 Flash 使用顶层 `reasoning_effort`；Coding Plan 端点对该模型的实际接受情况尚未经过受控请求验证。
+- Composer 使用一个模型与思考强度入口。可调档模型先显示强度滑块，点击模型名称后显示模型列表；选中另一个可调档模型后回到该模型的默认或已保存档位。没有多个可选档位的模型直接显示模型列表，不显示滑块。入口复用 Catalog 的选项和默认值。模型名称和列表只显示提供商 Logo，不显示提供商名称。直连 DeepSeek、MiniMax M3、Kimi K3 和火山 Agent Plan `deepseek-v4.1-flash`、`kimi-k3.1-pro` 的选择会映射到 Provider 请求。两个火山模型使用顶层 `reasoning_effort`；实际端点的接受情况尚未经过受控请求验证。
 - 设置中的已保存模型列表会把提供商名称显示在模型名称后面。添加、编辑模型对话框会在提供商选择器旁显示 Logo 和提供商名称。用户点击窗口外空白时，窗口和未保存输入会保留；用户可以通过取消、Escape 或保存成功结束编辑。Logo 作为 Renderer 静态资源打包。删除已保存模型时通过破坏性确认对话框（ConfirmDialog）进行二次确认，避免误删。
 - `run/start` 会按所选模型校验可选的思考设置。请求省略该设置时，Runtime 使用该模型的默认值。Runtime 把解析后的值固化到 Run 的 `ModelProfileSnapshot`，并保存在现有 `runs.model_profile_json` 中；SQLite 不新增列。
-- Catalog 的 Provider 参数映射仍需按端点分别核验。特别是 Volcengine Coding Plan 的 `/api/plan/v3` 对 V4.1 Flash 思考参数的实际接受情况尚未经过受控请求验证；代码已发送顶层 `reasoning_effort`，但这不代表 Provider 已验证接受该参数。
+- Catalog 的 Provider 参数映射仍需按端点分别核验。Volcengine Agent Plan 的 `/api/plan/v3` 对 V4.1 Flash 与 Kimi K3.1 Pro 思考参数的实际接受情况尚未经过受控请求验证；代码已发送顶层 `reasoning_effort`，但这不代表 Provider 已验证接受该参数。
 
 ### 自定义模型提供商
 
@@ -257,8 +258,8 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - Desktop 在现有 Runtime 页面内提供“沙盒环境设置”区块。区块只有继承方式和重新读取两个设置。用户修改继承方式后自动保存，说明通过小问号悬停和键盘焦点展示。页面没有变量过滤、变量覆盖或保存按钮。审批窗口和 Shell 卡片没有变化。
 - Shell 环境可以继承全部、仅基础环境或不继承。系统默认继承宿主机变量，不按 KEY、TOKEN、SECRET 名称统一排除，仍排除 Eidos 内部变量。SQLite 只保存继承方式与版本，不保存实际变量。并发保存使用 revision 检查。保存影响后续启动的命令；重新读取环境清除快照，后续命令重新捕获。配置不增加文件或网络权限。
 
-- Runtime 在每一步的提示中写出 Shell 默认启动目录的实际路径，并说明进程在执行命令前已经位于该目录。模型省略 `cwd` 或传入 `.` 就使用当前 Run 的工作区。有项目、无项目和完全访问 Run 都使用这条规则。提示使用 `{"command":"pwd"}` 展示默认目录下的直接调用。
-- `run_shell` 的工具和字段说明要求模型直接提交当前目录的命令，并通过 `cwd` 指定其他启动目录。每次调用创建新的 Shell，上次命令中的 `cd` 不会影响下次调用。命令执行过程中仍可按需切换目录。Runtime 不解析或改写原命令片段；Agent zsh 只在原命令前执行固定的 `NOMATCH` 初始化。提示对冗余 `cd` 的实际改善效果尚未通过真实模型调用验证。
+- Runtime 在每一步的提示中说明三个目录事实：命令默认在当前 Run 的工作区绝对路径中执行，调用方可以通过 `cwd` 指定其他启动目录，每次调用使用独立的 Shell 进程。有项目、无项目和完全访问 Run 都使用这条规则。
+- `run_shell` 的工具和字段说明使用相同的目录事实。模型省略 `cwd` 或传入 `.` 就使用当前 Run 的工作区。目录说明不再要求模型避免或限制 `cd`。每次调用创建新的 Shell，上次命令中的目录切换不会影响下次调用。Runtime 不解析或改写原命令片段；Agent zsh 只在原命令前执行固定的 `NOMATCH` 初始化。目录说明的实际模型调用效果尚未验证。
 - Agent zsh 在用户启动脚本加载后关闭 `NOMATCH`，避免 `--include=*.tsx` 等没有文件匹配的参数被 Shell 提前拒绝。正常匹配的通配符继续展开，程序仍返回自己的真实退出码。该行为适用于各审批模式和环境继承方式，不改变 Desktop Terminal。
 - 当 `search_text` 可用时，每步 Runtime 提示用两句话引导模型优先使用该工具搜索工作区文本，并通过 `includeGlobs` 传递文件过滤条件。提示不列举具体后缀。真实模型选择比例的变化尚未验证。
 - Shell 结果提供 `outputComplete`、`outputCaptureError` 和 `outputCallId`。模型可以区分不完整输出与原始输出截断，并使用原命令 ID 读取保留的终态输出。普通读取失败只有在进程已明确退出时才不单独触发对账；持久化失败仍保留未知结果记录。
@@ -445,7 +446,7 @@ Non-Git Project 不提供 Git status、Git diff、Managed Worktree 或 Git-based
 - 内置工具 `declare_outputs` 始终随 Run 注册，系统提示要求模型仅对用户期望接收的独立终态交付文件在终版就绪后、最终答复前调用，不依赖系统或第三方 Skill。文件被创建或修改不等于交付物；项目内普通源码、文档、配置等修改仍是工作区变更，除非用户明确要求作为独立文件接收；依赖、缓存、构建产物、源码引用、QA 中间输出默认不声明；拿不准时默认不声明，交付物修订后需再次声明。每次接收 1–20 个 `outputs`，每项包含 `path` 和可选 `title`。路径允许 Workspace 相对路径或当前 Run Workspace 内的绝对路径。工具只核验普通文件的路径、身份、大小和版本，不创建、不修改、不校验文件内容，也不证明作者、内容质量或测试通过；操作是原子的，任一文件失败则整批不声明，重复声明更新同一文件的声明。
 - Runtime 对整个声明批次核验后，通过现有 ToolResult、Item 和 Event/Outbox 事务保存结果，不新建产物表。同一批次有任一文件失败时，该批次不声明任何产物；同一路径重复出现时采用最后一项标题。每次调用只新增或更新指定文件，省略的文件保持原记录，文件修改后需要再次声明。
 - 产物卡只读取内置 `declare_outputs` 的成功结果。后缀、Shell 文件变化、普通 Markdown 链接和 `purpose="output"` 文本均不再自动产生卡片。系统对明确交付的任意文件格式提供卡片，PPTX、XLSX、ZIP 和 Markdown 不受原后缀白名单限制。声明过的 HTML 或 Markdown 有文本修改证据时仍可同时进入文本卡。
-- 产物卡的专属分类覆盖文档（DOC、DOCX）、PDF、演示文稿（PPT、PPTX）、表格（CSV、TSV、XLS、XLSX、XLSM）、图片（PNG、JPG、JPEG、GIF、WEBP、SVG）和网页（HTML、HTM），后缀匹配不区分大小写；其他格式仍使用通用文件卡。卡片显示分类和实际格式，演示文稿及表格复用文件树的对应图标。DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM 提供系统应用打开与在 Finder 中显示，CSV/TSV 提供文本预览、系统应用打开与在 Finder 中显示。CSV/TSV 有修改证据时仍可进入文本审查，分类不会将它们当作二进制而丢弃。
+- 产物卡支持文档（DOC、DOCX）、PDF、演示文稿（PPT、PPTX）、表格（CSV、TSV、XLS、XLSX、XLSM）、图片（PNG、JPG、JPEG、GIF、WEBP、SVG）和网页（HTML、HTM），后缀匹配不区分大小写；其他格式仍使用通用文件卡。卡片双行显示，首行展示标题或文件名，次行浅色展示文件实际格式及文件名（如“JSON · hooks.json”或“DOCX”），不再显示“文件/文档/表格”等分类前缀；多产物卡默认展示 1 个，其余通过展开按钮一次性展开。演示文稿及表格复用文件树对应图标。DOC/DOCX、PPT/PPTX、XLS/XLSX/XLSM 提供系统应用打开与在 Finder 中显示，CSV/TSV 提供文本预览、系统应用打开与在 Finder 中显示。CSV/TSV 有修改证据时仍可进入文本审查，分类不会将它们当作二进制而丢弃。
 - 用户点击卡片时，系统通过已有受控文件预览读取当前文件信息。图片使用全屏预览，HTML 使用隔离网页，PDF、文本和 Markdown 进入 Files；不支持内置预览的文件使用受控系统应用打开。卡片标题使用声明标题或文件名，不再读取当前 HTML 的 `<title>`。系统显示打开失败或版本变化提示；声明文件所属执行目录与当前目录不同时，卡片禁止打开，避免读取另一个同名文件。
 - 环境信息浮层提供“输出内容”。它跨当前 Session 分页读取声明，按执行目录和相对路径保留最新声明。已声明文件的删除不抹除历史交付记录；用户打开已删除文件时会收到失败提示。Run 后续失败或取消不会移除此前已经成功提交的声明。Projectless Session 同样支持声明和输出入口。Files 继续提供文件树和预览。
 - 旧会话没有交付声明时，不再凭后缀生成历史产物卡；原始工具记录、回复链接和 Files 入口保留。系统不会补造旧交付事实。

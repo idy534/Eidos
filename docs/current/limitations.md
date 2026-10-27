@@ -160,7 +160,7 @@
 
 ## 启动维护
 
-- 启动已取消 Blob 全量清理，历史快照检查已改为分批读取。未引用 Blob 会保留到启动宽限期后的空闲清理；清理检查发现的目录或 Context 清单错误也会延后报告，执行读取仍保留原有 fail-closed 校验。Bundle 完整文件 Hash 只在构建与发布执行。仓库索引库的全库检查和有界空闲页回收在空闲维护阶段执行；主库、其他辅助库、Worktree 与 Seatbelt 检查仍在启动等待链内。存储样本对照不代表整个 Desktop 的冷启动耗时。
+- 普通启动不会把已撤销快照重新外置，也不会仅因这类快照重复触发 Blob 清理。未引用 Blob 通常保留到启动宽限期后的空闲清理；真实隐私撤销或 Session 删除仍会执行即时清理。Blob 清理在解析引用和回收期间仍持有主库与 Blob 锁，大型数据目录中的真实清理可能暂时影响其他操作。清理检查发现的目录或 Context 清单错误可能延后报告，执行读取仍保留原有 fail-closed 校验。Bundle 完整文件 Hash 只在构建与发布执行。仓库索引库的全库检查和有界空闲页回收在空闲维护阶段执行；主库、其他辅助库、Worktree 与 Seatbelt 检查仍在启动等待链内。存储样本对照不代表整个 Desktop 的冷启动耗时。
 - 隔离样本包含 2,001 条 ContextSnapshot 和 200 个未引用 Blob。三次存储初始化的中位数从 203.64 ms 降至 13.29 ms；本测量不包含模块导入、Bundle 校验或 Desktop 首屏。持久化、Memory 和计时定向测试通过 62 项，Context 与回放通过 22 项，协议初始化与关闭通过 5 项。本机 Electron smoke 通过。两个原有审批测试曾在受限环境中失败，并在未修改的 HEAD 源码中复现；这两项随后在本机原生环境通过。本轮没有执行 Full Suite 或真实 Desktop 冷启动计时。
 
 - 日常 Runtime 不再检测依赖文件内容与发布清单之间的 Hash 差异。清单与绑定 Hash 标识构建声明及路径，不能当作当前磁盘文件的内容证明。仓库缓存损坏检查可能延后；SQLite 损坏或必要表缺失会停用缓存并重建。未知版本、权限异常和 Busy 不触发破坏性重建。隔离文件保留在数据目录内，本轮不自动删除这些诊断文件。旧缓存不会自动执行全量 VACUUM 转换；它仍可复用空闲页。
@@ -178,11 +178,11 @@
 
 ### Model Provider
 
-- ModelConfigStore 以 `models.json` 为事实来源。内置 Catalog 覆盖 DeepSeek、MiniMax、Kimi 和火山引擎 Coding Plan，共十个推荐 Model ID。设置页支持添加、编辑和删除自定义 OpenAI 兼容模型。连接测试只获取自定义接口的模型列表，不能证明生成、工具、图像或思考档位可用。部分接口只返回模型 ID，用户需要手动补全元数据。自定义连接目前按模型配置保存，尚未增加独立的提供商批量管理或共享凭据实体。
+- ModelConfigStore 以 `models.json` 为事实来源。内置 Catalog 覆盖 DeepSeek、MiniMax、Kimi 和火山引擎 Agent Plan，共十一个推荐 Model ID。设置页支持添加、编辑和删除自定义 OpenAI 兼容模型。连接测试只获取自定义接口的模型列表，不能证明生成、工具、图像或思考档位可用。部分接口只返回模型 ID，用户需要手动补全元数据。自定义连接目前按模型配置保存，尚未增加独立的提供商批量管理或共享凭据实体。
 - 当前内置 Model Catalog 没有启用 Responses API 或 native Custom Tool capability。
 - 当前内置模型的 wire API 固定为 OpenAI-compatible Chat Completions/SSE。Runtime 已有按 ModelProfile capability 路由的 Responses native adapter，但没有未经验证地为内置模型打开该路径。
 - Schema v22 以前已经丢弃的思考正文无法从 token 数恢复。思考模式下，这些历史模型响应会作为标注来源的历史资料回传；新响应使用原始思考记录。各 Provider 的生产端点仍需分别联调，mock wire 验证不代表真实端点已通过。轨迹界面尚未实现。
-- 思考强度选项和默认值按模型配置。火山引擎 `deepseek-v4.1-flash` 已在 Runtime 映射关闭、低、中、高、最高五档到顶层 `reasoning_effort`，默认高。Coding Plan `/api/plan/v3` 对该模型是否接受这些值尚未通过受控请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
+- 思考强度选项和默认值按模型配置。火山引擎 `deepseek-v4.1-flash` 已在 Runtime 映射关闭、低、中、高、最高五档到顶层 `reasoning_effort`，默认高。火山引擎 `kimi-k3.1-pro` 映射低、高、最高三档，默认最高，不提供关闭选项。Agent Plan `/api/plan/v3` 对这两个模型的思考参数是否接受，以及 Kimi K3.1 Pro 的图片和工具调用，尚未通过真实请求验证。MiniMax M3 直连 API 只确认支持思考开关，没有已确认的离散 effort 档位；Kimi K2.7 Code HighSpeed 固定开启思考，没有已确认的 effort 档位。
 - Chat Completions 的多工具图片结果编码已调整为同批次共享一个 `ModelRequest`，并增加调用 ID、工具名和回复完整性检查。定向测试覆盖图片结果位置、多图批次、MockTransport 请求顺序、完整性错误、思考回放和日志脱敏。MockTransport 不代表真实 Provider endpoint 已通过。
 - 旧图片工具结果只保留路径等元数据，缺失的历史图片正文无法补回。当前回放会明确说明缺失，不重读当前文件。新工具内容快照保存已取得的文字或二进制内容，不保存全部生成文件。单个工具内容原始字节总量最多 10 MiB；工具内容与用户图片引用共用 16 MiB 编码内容预算，超出时优先保留最近的工具内容，并保留省略说明。音频等二进制内容可以使用同一内部保存边界，但当前 MCP 内容支持和模型音频能力没有扩展。不支持的媒体只提供说明。
 - Provider 请求拒绝诊断只记录固定原因和有界 request ID。未知错误继续显示通用拒绝原因；日志不保留原始错误正文。原始失败 Run 的缺失正文不会因本次代码修改而补齐。

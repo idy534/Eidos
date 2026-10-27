@@ -291,7 +291,7 @@ minimax:  MiniMax-M3
 kimi:    kimi-k3, kimi-k2.7-code-highspeed
 volcengine: deepseek-v4.1-flash,
             deepseek-v4-pro-ga-260813, deepseek-v4-flash-ga-260731,
-            glm-5.3, glm-5.3-flash, minimax-m3
+            glm-5.3, glm-5.3-flash, kimi-k3.1-pro, minimax-m3
 ```
 
 Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启用 thinking；`思考`表示启用 thinking，但不提供强度档位。表中的档位是 Eidos 的选择项，不代表不同 Provider 使用相同的请求字段。
@@ -302,16 +302,17 @@ Catalog 为每款模型声明思考控制项和默认值。`关闭`表示不启�
 | MiniMax | `MiniMax-M3` | 关闭、思考 | 思考 |
 | Kimi | `kimi-k3` | Low、High、Max | Max |
 | Kimi | `kimi-k2.7-code-highspeed` | 固定思考，无强度选择 | 思考 |
-| Volcengine Coding Plan | `deepseek-v4.1-flash` | 关闭、Low、Medium、High、Max | High |
-| Volcengine Coding Plan | `deepseek-v4-pro-ga-260813` | 关闭、Low、High、Max | High |
-| Volcengine Coding Plan | `deepseek-v4-flash-ga-260731` | 关闭、Low、High、Max | High |
-| Volcengine Coding Plan | `glm-5.3-flash` | Low、High、Max；thinking 固定开启 | Max |
-| Volcengine Coding Plan | `glm-5.3` | 固定思考，无强度选择 | 思考 |
-| Volcengine Coding Plan | `minimax-m3` | 不提供 Eidos 控制 | Provider 默认值 |
+| Volcengine Agent Plan | `deepseek-v4.1-flash` | 关闭、Low、Medium、High、Max | High |
+| Volcengine Agent Plan | `deepseek-v4-pro-ga-260813` | 关闭、Low、High、Max | High |
+| Volcengine Agent Plan | `deepseek-v4-flash-ga-260731` | 关闭、Low、High、Max | High |
+| Volcengine Agent Plan | `glm-5.3-flash` | Low、High、Max；thinking 固定开启 | Max |
+| Volcengine Agent Plan | `glm-5.3` | 固定思考，无强度选择 | 思考 |
+| Volcengine Agent Plan | `kimi-k3.1-pro` | Low、High、Max；固定思考 | Max |
+| Volcengine Agent Plan | `minimax-m3` | 不提供 Eidos 控制 | Provider 默认值 |
 
 直连 Provider 的公开文档分别说明了不同能力。DeepSeek 使用 `thinking` 开关和 `reasoning_effort`；Low、High、Max 是有效档位，`minimal`、`medium`、`xhigh`、`ultra` 会映射到重复的实际档位。Kimi K3 使用顶层 `reasoning_effort`，可选 Low、High、Max，默认 Max，并且不能关闭思考。Kimi K2.7 Code HighSpeed 固定开启思考，没有公开的强度档位。MiniMax M3 使用 `thinking.type` 开关，`adaptive` 表示启用，`disabled` 表示关闭，省略时默认启用；没有离散 effort 档位。MiniMax 的 `reasoning_split` 只控制思考内容的返回格式，不控制思考开关。参考：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)、[Kimi Reasoning Effort](https://platform.kimi.ai/docs/guide/use-reasoning-effort)、[Kimi K2.7 Code](https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart)、[MiniMax OpenAI SDK](https://platform.minimax.io/docs/api-reference/text-openai-api)。
 
-火山引擎 `deepseek-v4.1-flash` 会通过 OpenAI-compatible Chat Completions 的顶层 `reasoning_effort` 发送 `none`、`low`、`medium`、`high` 或 `max`；Catalog 默认值为 `high`。方舟公开 [Chat API 文档](https://docs.volcengine.com/docs/ark/chat-api?lang=zh&redirect=1)说明了该字段和这些取值。Coding Plan `/api/plan/v3` 对此模型的实际接受情况还没有受控请求验证。其他 Coding Plan 模型的思考设置仍未映射。
+火山引擎 `deepseek-v4.1-flash` 会通过 OpenAI-compatible Chat Completions 的顶层 `reasoning_effort` 发送 `none`、`low`、`medium`、`high` 或 `max`；Catalog 默认值为 `high`。`kimi-k3.1-pro` 使用同一字段发送 `low`、`high` 或 `max`，默认 `max`，不会发送 `thinking` 开关。方舟的[深度思考文档](https://console.volcengine.com/ark/region:cn-beijing/docs/deep-thinking)列出了模型的思考强度和默认值。`/api/plan/v3` 属于 [Agent Plan](https://console.volcengine.com/ark/region:cn-beijing/docs/agent-plan-personal-practice-education)，使用该套餐专属 Key。Kimi K3.1 Pro 的 Catalog 保守采用方舟[配置示例](https://docs.volcengine.com/docs/ark/coding-plan-personal-ai-zcode?lang=zh)中的 1,024,000 上下文与 131,072 最大输出，并启用图片和工具调用。V4.1 Flash 和 Kimi K3.1 Pro 在 Agent Plan 端点的思考参数、图片输入和工具调用尚未通过真实请求验证。其他火山模型的思考设置仍未映射。
 
 `run/start` 接受所选模型允许的思考设置。Runtime 会拒绝该模型未声明的设置；请求没有设置时，Runtime 使用 Catalog 默认值。Runtime 将解析后的设置放入 Run 的不可变 `ModelProfileSnapshot`，并写入现有 `runs.model_profile_json`。这项改动不增加 SQLite 列，也不改变 schema 版本。
 
@@ -350,11 +351,11 @@ Validate → Prepare → Permission Decision → Durable Intent
 
 ToolExecutionController 负责 ToolCall 的生命周期、deadline、cancel 与迟到结果仲裁、结果校验、敏感扫描、Projection 和事务提交。`apply_patch` 不执行敏感内容扫描，但仍执行输入类型、Patch 语法、Workspace 边界、权限、版本、受控写入和最终内容校验。Workspace mutation 会在 Prepare 阶段读取当前文件，并生成 Base Hash 和完整 Diff。Workspace Permission 会直接授权普通文件变更。Runtime 会先提交 Durable Intent，再复检版本并受控提交已有文件的原地写入或新文件的排他创建。Runtime 会保留并展示已应用的完整 Diff。未知副作用会保留 `sideEffectsMayExist` 和 `reconciliationRequired`。Shell process manager 在 Run 内保留进程和有界输出读取任务。`run_shell` 可以先返回运行状态，模型随后使用 `write_stdin` 继续等待。Run 取消或收尾会清理原进程组。
 
-Runtime 在每个 Step 的 `runtime-permissions` 指令中投影 Shell 默认启动目录。该路径来自 Run 已固定的 `workspace_identity.path`，与 Shell 执行器使用的工作区一致。提示明确说明：Runtime 在执行 `command` 前已经设置目录；模型省略 `cwd` 或传入 `.` 就使用这个目录。有项目、无项目和完全访问 Run 都使用这条规则。该提示不依赖只在有项目会话中出现的 `workspace-environment` 消息。
+Runtime 在每个 Step 的 `runtime-permissions` 指令中写出 Shell 默认工作目录。该路径来自 Run 已固定的 `workspace_identity.path`，与 Shell 执行器使用的工作区一致。提示只说明三个目录事实：命令默认在当前 Run 的工作区绝对路径中执行，调用方可以通过 `cwd` 指定其他启动目录，每次调用使用独立的 Shell 进程。有项目、无项目和完全访问 Run 都使用这条规则。该提示不依赖只在有项目会话中出现的 `workspace-environment` 消息。
 
-`run_shell` 的主描述说明 Shell 启动时已经位于 `cwd`。`command` 字段说明相对路径以 `cwd` 为起点；`cwd` 字段说明默认目录、相对路径和绝对路径的规则。Runtime 提示要求模型在当前工作区直接执行命令，并用 `{"command":"pwd"}` 展示无需 `cd` 的调用。模型需要其他启动目录时使用 `cwd`；命令执行过程中确实需要切换目录时仍可以使用 `cd`。每次调用创建新的 Shell，上次调用中的目录切换不会改变下次调用的默认目录。
+`run_shell` 的主描述使用相同的目录事实。`command` 字段说明相对路径以 `cwd` 为起点；`cwd` 字段说明省略参数或传入 `.` 时使用当前 Run 的工作区，并保留相对路径和绝对路径的规则。目录说明不再要求模型避免或限制 `cd`。每次调用创建新的 Shell，上次调用中的目录切换不会改变下次调用的默认目录。
 
-这次调整只改变模型收到的目录事实和调用说明。Runtime 不解析、删除或追加命令中的 `cd`。参数默认值、路径身份核验、权限判断、进程启动和持久化行为保持不变。工具说明参与既有 Tool Contract Hash，新构建的 Step 上下文使用当前说明，历史快照保持原样。提示不能保证所有模型都省略冗余 `cd`，实际效果仍需真实模型调用验证。
+这次调整只简化模型收到的目录说明。Runtime 不解析、删除或追加命令中的 `cd`。参数默认值、路径身份核验、权限判断、进程启动和持久化行为保持不变。工具说明参与既有 Tool Contract Hash，新构建的 Step 上下文使用当前说明，历史快照保持原样。目录说明的实际模型调用效果尚未验证。
 
 Shell 参数通过 Pydantic `AliasChoices` 兼容 Codex 拼写。`run_shell` 接受 `cmd`、`workdir` 和 `yield_time_ms`，并归一化为 `command`、`cwd` 和 `yieldTimeMs`；两个名称同时出现时，原有字段名优先。`write_stdin` 接受 `session_id` 和 `yield_time_ms`，并归一化为原有字段。模型可见 Schema 仍使用 Eidos 名称，原始参数继续单独保存。参数归一化后，调用继续经过现有目录身份校验、权限判断、Durable Intent 和结果提交。非负整数等待值会被限制到有效范围，负数和错误类型不被转换成有效等待值。`write_stdin` 在未指定等待值且输入非空时默认等待 250 毫秒；空输入轮询仍默认等待 30 秒。两种调用都继续使用已有进程、输出限额和清理流程。
 
@@ -492,13 +493,13 @@ Workspace Explorer 复用 `RepositoryWatchController`。Watcher 事件只产生 
 
 ## 11. Persistence & Events
 
-`ThreadHistoryStore` 在读取主库和历史库时，分别持有对应连接所有者的数据库锁，锁覆盖查询执行和结果读取。投影文件锁只负责串行处理历史 JSONL，不能替代数据库锁。系统在释放数据库锁后执行 JSONL 写入、校验、截断和 fsync，避免文件 IO 长时间占用主库。队列查询继续使用已有主库锁，系统不增加跨 Run 执行门或全局并发配额。历史投影保留原有事件顺序、提交偏移、启动恢复和已删除会话清理。
+`ThreadHistoryStore` 在读取主库和历史库时，分别持有对应连接所有者的数据库锁，锁覆盖查询执行和结果读取。投影文件锁只负责串行处理历史 JSONL，不能替代数据库锁。系统在释放数据库锁后执行 JSONL 写入、校验、截断和 fsync，避免文件 IO 长时间占用主库。Outbox 每批处理已提交事件后只推进一次历史投影；批次中途失败时，已经处理的部分仍会推进投影，未投递事件保留并按原顺序重试。历史投影失败后，下一次投递会重试，Runtime 重启时也会补齐。队列查询继续使用已有主库锁，系统不增加跨 Run 执行门或全局并发配额。历史投影保留原有事件顺序、提交偏移、启动恢复和已删除会话清理。
 
-Runtime 启动仍执行主库及历史、日志辅助库完整性检查、Schema 迁移、历史投影和业务恢复。v40 已移除旧记忆辅助库；启动清理标记负责删除旧文件，当前记忆元数据归主库管理。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表；Runtime 仍验证已有 Blob 引用，并保留逐记录提交和中断后重试。
+Runtime 启动仍执行主库及历史、日志辅助库完整性检查、Schema 迁移、历史投影和业务恢复。v40 已移除旧记忆辅助库；启动清理标记负责删除旧文件，当前记忆元数据归主库管理。仓库索引库只在启动检查路径、权限、版本和必要表，不执行全库扫描或旧库 auto-vacuum 转换。历史快照外置检查按每批 256 条读取 ID 与 payload，取消逐条 SELECT 和全量 ID 列表。Runtime 会跳过已撤销快照，不再把已清空的内容重新保存为 Blob；未撤销快照仍检查 Blob 引用，并保留逐记录提交和中断后重试。旧 Schema 尚无撤销列时，Runtime 继续执行原有迁移路径。
 
-启动不再执行 Blob 全量 GC。Runtime 通过 Supervisor 管理的 `StorageMaintenance` 执行存储清理：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 从 SQLite 流式读取引用，持有原有 State/Blob 锁，在删除前完整解析 Context 清单并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和隐私撤销仍执行原有即时清理。
+普通启动不主动执行 Blob 全量 GC。Runtime 通过 Supervisor 管理的 `StorageMaintenance` 执行存储清理：任务创建至少 60 秒后，且 Runtime 已初始化、控制状态为 running、没有活动 Run 时，执行一次定期 GC；后续间隔为一小时。该受管任务通过独立只读连接执行仓库库完整性和外键检查，不长时间占用索引查询锁。支持 incremental auto-vacuum 的缓存每次回收最多 1024 个空闲页。旧缓存不自动执行整库 VACUUM 转换。SQLite progress handler 响应取消。GC 从 SQLite 流式读取引用，持有原有 State/Blob 锁，在删除前完整解析 Context 清单并保留共享块、输入引用、手工 MCP 环境和 ModelAttempt 回放。GC 在取消时停止；引用扫描未完成时不删除文件。清理失败会记录本地日志，并按一小时间隔重试。Session 删除和真实隐私撤销仍执行原有即时清理；启动时若存在尚未清理的真实撤销，也会触发该清理。
 
-Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶段、依赖校验、Worktree 恢复与保留、Skill、模型配置、异步内核、重启核验、Handoff、Seatbelt 和待投递事件的 `phase`、`duration_ms` 与完成状态。计时不写业务 Event，也不修改协议或 SQLite Schema；初始化前的记录写 stderr，日志存储接入后的记录同时写本地 JSONL。
+Runtime 使用标准库计时和现有 OpenTelemetry Span，记录各存储阶段、依赖校验、Worktree 恢复与保留、Skill、模型配置、异步内核、重启核验、Handoff、Seatbelt 和待投递事件的 `phase`、`duration_ms` 与完成状态。Seatbelt 自检在有界的受控线程池中并行执行相互独立的检查，并在返回 Shell 能力前等待全部检查完成。网络基线与沙盒联网检查仍按顺序执行；任一检查失败时 Shell 保持不可用。计时不写业务 Event，也不修改协议或 SQLite Schema；初始化前的记录写 stderr，日志存储接入后的记录同时写本地 JSONL。
 
 日志路径保留创建时保存的日期目录。Runtime 校验日期格式、两层相对路径和对应的 Segment 文件名，不按当前时区重新计算历史日期。系统时区变化后，旧日志仍能通过启动校验；目录穿越、绝对路径和文件身份检查继续生效。
 
