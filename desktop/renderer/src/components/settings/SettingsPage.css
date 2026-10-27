@@ -103,12 +103,16 @@
   max-width: none;
   height: 100%;
   margin: 0 auto;
-  padding: 2rem 1.75rem 2.5rem;
+  padding: 0 0 0 1.75rem;
 }
 
 .settings-sidebar-col {
   width: var(--settings-nav-width);
   flex-shrink: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding: 2rem 0 2.5rem;
+  box-sizing: border-box;
 }
 
 .settings-content-col {
@@ -116,9 +120,10 @@
   min-width: 0;
   height: 100%;
   overflow-y: auto;
-  padding-right: 0.5rem;
+  padding: 2rem 1.75rem 2.5rem 0;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
+  box-sizing: border-box;
 }
 
 /* Settings Navigation */
@@ -880,11 +885,14 @@
   .settings-container {
     flex-direction: column;
     gap: 1rem;
-    padding: 1rem;
+    padding: 0;
   }
 
   .settings-sidebar-col {
     width: 100%;
+    height: auto;
+    padding: 1rem 1rem 0;
+    overflow-y: visible;
   }
 
   .settings-nav-list {
@@ -904,7 +912,7 @@
   }
 
   .settings-content-col {
-    padding-right: 0;
+    padding: 0.5rem 1rem 1.5rem;
   }
 
   .mcp-details-grid,

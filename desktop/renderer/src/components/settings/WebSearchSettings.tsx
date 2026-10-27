@@ -455,48 +455,47 @@ export function WebSearchSettings({
                             )}
                           </button>
                         </div>
+
+                        <button
+                          type="button"
+                          className="web-search-expand-btn"
+                          aria-expanded={expanded[provider] ?? false}
+                          onClick={() => setExpanded((old) => ({ ...old, [provider]: !old[provider] }))}
+                        >
+                          <span className="web-search-expand-title">
+                            <svg
+                              className={`web-search-chevron ${
+                                expanded[provider] ? "web-search-chevron--open" : ""
+                              }`}
+                              width="12"
+                              height="12"
+                              viewBox="0 0 12 12"
+                              fill="none"
+                            >
+                              <path
+                                d="M2.5 4.5L6 8L9.5 4.5"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                            其他设置
+                          </span>
+                        </button>
                       </div>
                     </div>
                   </div>
 
-                  <div className="web-search-card-footer">
-                    <button
-                      type="button"
-                      className="web-search-expand-btn"
-                      aria-expanded={expanded[provider] ?? false}
-                      onClick={() => setExpanded((old) => ({ ...old, [provider]: !old[provider] }))}
-                    >
-                      <span className="web-search-expand-title">
-                        <svg
-                          className={`web-search-chevron ${
-                            expanded[provider] ? "web-search-chevron--open" : ""
-                          }`}
-                          width="12"
-                          height="12"
-                          viewBox="0 0 12 12"
-                          fill="none"
-                        >
-                          <path
-                            d="M2.5 4.5L6 8L9.5 4.5"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                        其他设置
-                      </span>
-                    </button>
-                    {expanded[provider] && (
-                      <div className="web-search-expand-content">
-                        <WebSearchProviderFields
-                          provider={provider}
-                          options={draft[provider] ?? {}}
-                          onChange={(options) => handleOptionsChange(provider, options)}
-                        />
-                      </div>
-                    )}
-                  </div>
+                  {expanded[provider] && (
+                    <div className="web-search-expand-content">
+                      <WebSearchProviderFields
+                        provider={provider}
+                        options={draft[provider] ?? {}}
+                        onChange={(options) => handleOptionsChange(provider, options)}
+                      />
+                    </div>
+                  )}
                 </section>
               );
             })}

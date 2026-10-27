@@ -157,6 +157,11 @@ describe("interactive color tokens", () => {
     expect(styles).toMatch(/\.sidebar nav\s*\{[^}]*margin-right:\s*-0\.875rem;[^}]*padding-right:\s*0\.875rem;/s);
   });
 
+  it("places the settings content scrollbar flush against the window edge", () => {
+    expect(styles).toMatch(/\.settings-container\s*\{[^}]*padding:\s*0\s+0\s+0\s+1\.75rem;/s);
+    expect(styles).toMatch(/\.settings-content-col\s*\{[^}]*overflow-y:\s*auto;[^}]*padding:\s*2rem\s+1\.75rem\s+2\.5rem\s+0;/s);
+  });
+
   it("maintains typography consistency between session and workspace", () => {
     expect(styles).toMatch(/--font-code:[^;]*"PingFang SC"[^;]*monospace;/);
     expect(styles).toMatch(/--diff-font-family:\s*var\(--font-code\);/);
