@@ -1,0 +1,332 @@
+/* ==========================================================================
+   Plugin Marketplace Dialog - macOS Modern Desktop Extension Store
+   ========================================================================== */
+
+.plugin-marketplace-dialog.modal-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(50rem, calc(100vw - 2.5rem));
+  max-width: none;
+  max-height: calc(100dvh - 4rem);
+  height: min(44rem, calc(100dvh - 4rem));
+  border-radius: var(--radius-lg, 16px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--apple-shadow-lg);
+  overflow: hidden;
+  padding: 0;
+}
+
+.plugin-marketplace-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.35rem 1.6rem 1.15rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-raised);
+  flex-shrink: 0;
+}
+
+.plugin-marketplace-header-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.plugin-marketplace-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.25rem;
+}
+
+.plugin-marketplace-title-row h2 {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 1.25rem;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: -0.015em;
+}
+
+.plugin-marketplace-header-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.plugin-marketplace-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.plugin-marketplace-close {
+  flex-shrink: 0;
+}
+
+.plugin-marketplace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.6rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.plugin-marketplace-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.plugin-marketplace-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-pill, 9999px);
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.plugin-marketplace-tab:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.plugin-marketplace-tab.is-active {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--line);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-weight: 600;
+}
+
+.plugin-marketplace-search input {
+  height: 30px;
+  padding: 0 0.75rem;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+  font-size: 0.8125rem;
+  color: var(--text);
+  outline: none;
+  width: 14rem;
+  transition: border-color 150ms ease;
+}
+
+.plugin-marketplace-search input:focus {
+  border-color: var(--accent);
+}
+
+.plugin-marketplace-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.6rem;
+  background: var(--surface-muted);
+}
+
+.plugin-marketplace-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.plugin-marketplace-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 10px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.plugin-marketplace-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+.plugin-marketplace-card-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.plugin-marketplace-card-icon-wrap {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+}
+
+.plugin-marketplace-card-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.plugin-marketplace-card-avatar {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.plugin-marketplace-card-title-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-marketplace-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.plugin-marketplace-card-name {
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.plugin-marketplace-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-pill, 9999px);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.plugin-marketplace-version {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.plugin-marketplace-card-desc {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary, var(--text));
+  line-height: 1.45;
+}
+
+.plugin-marketplace-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.plugin-marketplace-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.6rem;
+  border-top: 1px solid var(--line);
+  background: var(--surface-raised);
+  flex-shrink: 0;
+}
+
+.plugin-marketplace-footer-tip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.plugin-marketplace-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+}
+
+.plugin-marketplace-link-btn:hover {
+  text-decoration: underline;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.plugin-marketplace-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 520px) {
+  .plugin-marketplace-dialog.modal-dialog {
+    width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 2rem);
+    height: min(44rem, calc(100dvh - 2rem));
+  }
+
+  .plugin-marketplace-header,
+  .plugin-marketplace-toolbar,
+  .plugin-marketplace-body,
+  .plugin-marketplace-dialog-footer {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .plugin-marketplace-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plugin-marketplace-search input {
+    box-sizing: border-box;
+    width: 100%;
+  }
+
+  .plugin-marketplace-card {
+    align-items: flex-start;
+    padding: 0.85rem;
+  }
+
+  .plugin-marketplace-card-main {
+    gap: 0.6rem;
+  }
+
+  .plugin-marketplace-dialog-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plugin-marketplace-footer-tip {
+    flex-wrap: wrap;
+  }
+
+  .plugin-marketplace-dialog-footer > .btn {
+    align-self: flex-end;
+  }
+}

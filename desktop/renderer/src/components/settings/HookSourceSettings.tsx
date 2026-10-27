@@ -78,7 +78,7 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
     <>
       <div inert={Boolean(review || history)}>
         <SettingSection
-          title="个人与项目 Hook"
+          title="Hook"
           description="个人目录中的 hooks.json、config.toml，以及当前项目 .eidos 下的同名文件可以提供 Hook。配置变更后需要重新审阅。"
           headerAction={
             <Button
@@ -129,7 +129,6 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
               : source.trusted
               ? "当前配置已信任。"
               : "当前配置尚未信任，不会执行。";
-            const hookCount = source.definitions?.length ?? 0;
 
             return (
               <SettingRow
@@ -155,7 +154,6 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
                     <StatusBadge tone={statusTone} dot>
                       {statusLabel}
                     </StatusBadge>
-                    {hookCount > 0 && <span className="hook-count-tag">{hookCount} 个处理器</span>}
                   </div>
                 }
                 description={
@@ -227,9 +225,9 @@ export function HookSourceSettings({ sessionId }: { sessionId?: string | undefin
                 <div key={hook.key} className="hook-definition-card">
                   <div className="hook-definition-header">
                     <span className="hook-event-tag">{hook.event}</span>
+                    <span className="hook-handler-type">{hook.handlerType}</span>
                     {hook.matcher && <span className="hook-matcher-tag">{hook.matcher}</span>}
                     {hook.background && <span className="hook-bg-tag">后台</span>}
-                    <span className="hook-handler-type">处理器：{hook.handlerType}</span>
                   </div>
                   <pre className="plugin-hook-command">
                     {hook.handlerType === "mcp_tool"

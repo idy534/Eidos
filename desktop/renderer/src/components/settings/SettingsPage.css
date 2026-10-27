@@ -605,6 +605,132 @@
   gap: 0.65rem;
 }
 
+/* Split Button Group for Plugins Header (Light Green Accent Action) */
+.plugin-header-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.split-button-group {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--primary-action-border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--primary-action-bg);
+  box-shadow: var(--primary-action-shadow);
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  overflow: hidden;
+}
+
+.split-button-group:hover {
+  border-color: var(--primary-action-border-hover);
+  box-shadow: var(--primary-action-shadow-hover);
+}
+
+.split-button-main.btn {
+  background: transparent;
+  color: var(--primary-action-text);
+  border: none;
+  border-radius: 0;
+  box-shadow: none !important;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  font-size: var(--font-size-sidebar);
+  height: 32px;
+  padding: 0 10px 0 12px;
+  gap: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.split-button-main.btn:hover:not(:disabled) {
+  background: var(--primary-action-bg-hover);
+  color: var(--primary-action-text);
+}
+
+.split-button-main.btn:active:not(:disabled) {
+  background: var(--primary-action-bg-active);
+}
+
+.split-button-main .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-action-icon);
+  line-height: 1;
+}
+
+.split-button-main .btn-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.split-button-main .btn-label {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  color: var(--primary-action-text);
+}
+
+.split-button-dropdown {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.split-button-caret.dropdown-trigger {
+  background: transparent;
+  color: var(--primary-action-icon);
+  border: none;
+  border-left: 1px solid rgba(46, 98, 76, 0.16);
+  border-radius: 0;
+  padding: 0 8px;
+  min-width: 26px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: none !important;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.split-button-caret.dropdown-trigger:hover:not(:disabled) {
+  background: var(--primary-action-bg-hover);
+  color: var(--primary-action-text);
+}
+
+.split-button-caret.dropdown-trigger:active:not(:disabled),
+.split-button-caret.dropdown-trigger[aria-expanded="true"] {
+  background: var(--primary-action-bg-active);
+  color: var(--primary-action-text);
+}
+
+.split-button-caret-icon {
+  display: block;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--primary-action-icon);
+}
+
+.split-button-caret.dropdown-trigger:hover:not(:disabled) .split-button-caret-icon,
+.split-button-caret.dropdown-trigger[aria-expanded="true"] .split-button-caret-icon {
+  color: var(--primary-action-text);
+}
+
+.empty-state-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 /* MCP Grid Details */
 
 .mcp-details-grid {

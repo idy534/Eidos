@@ -276,14 +276,8 @@ export function McpConnectionPanel({
               {tokenForm}
             </details>
           ) : (
-            <>
-              {server.remote?.authType === "github-device" && (
-                <p className="mcp-connection-hint">当前版本尚未配置 GitHub 浏览器登录。你可以使用个人访问令牌连接。</p>
-              )}
-              {tokenForm}
-            </>
+            tokenForm
           )}
-          <p className="mcp-connection-hint">账号连接后，任务可以使用此服务。写入操作遵循当前的审批模式。</p>
         </div>
       )}
     </section>

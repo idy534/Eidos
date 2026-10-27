@@ -103,7 +103,9 @@ describe("Plugin resources", () => {
 
   it("identifies a version update and reminds the user to review authorization", async () => {
     const props = setup(plugin, { onImportPlugin: vi.fn().mockResolvedValue({ ...plugin, version: "2.0.0" }) });
-    await userEvent.setup().click(screen.getByRole("button", { name: "导入本地 Plugin" }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "更多插件选项" }));
+    await user.click(screen.getByRole("menuitem", { name: "导入本地 Plugin" }));
     await waitFor(() => expect(props.onShowToast).toHaveBeenCalledWith("Plugin 已更新至 v2.0.0，请重新启用并审阅授权。", "success"));
     expect(props.onTogglePlugin).not.toHaveBeenCalled();
   });
@@ -210,6 +212,49 @@ describe("Plugin resources", () => {
     await user.click(screen.getByRole("button", { name: "查看 Demo 的资源" }));
     view.rerender(<PluginSettings {...props} plugins={[]} />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "导入本地 Plugin" })[0]).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole("button", { name: "插件市场" })).toHaveFocus());
+  });
+
+  it("opens plugin marketplace dialog, lists available builtin plugins, and handles install", async () => {
+    const builtinPlugin = { id: "eidos-github", name: "GitHub", description: "GitHub tools", version: "1.0.0", installed: false };
+    const onInstallBuiltinPlugin = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        builtinPlugins: vi.fn().mockResolvedValue({ plugins: [builtinPlugin] }),
+      },
+    });
+    setup(plugin, { onInstallBuiltinPlugin });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "插件市场" }));
+    const dialog = await screen.findByRole("dialog", { name: "插件市场" });
+    expect(dialog).toBeInTheDocument();
+    const closeIcon = within(dialog).getByRole("button", { name: "关闭插件市场" });
+    await waitFor(() => expect(closeIcon).toHaveFocus());
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "关闭" })).toHaveFocus();
+    await user.tab();
+    expect(closeIcon).toHaveFocus();
+    expect(within(dialog).getByText("GitHub")).toBeInTheDocument();
+    expect(within(dialog).getByText("v1.0.0")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "安装" }));
+    expect(onInstallBuiltinPlugin).toHaveBeenCalledWith("eidos-github");
+    await user.click(within(dialog).getByRole("button", { name: "关闭插件市场" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens marketplace from empty state when no plugins are installed", async () => {
+    Object.defineProperty(window, "eidosRuntime", {
+      configurable: true,
+      value: {
+        builtinPlugins: vi.fn().mockResolvedValue({ plugins: [] }),
+      },
+    });
+    const props = { plugins: [], pendingAction: undefined, onImportPlugin: vi.fn(), onTogglePlugin: vi.fn(), onRemovePlugin: vi.fn(), onShowToast: vi.fn() };
+    render(<PluginSettings {...props} />);
+    const user = userEvent.setup();
+    expect(screen.getByText("尚未导入任何 Plugin")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "浏览插件市场" }));
+    expect(await screen.findByRole("dialog", { name: "插件市场" })).toBeInTheDocument();
   });
 });

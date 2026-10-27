@@ -128,16 +128,6 @@
   color: var(--text);
 }
 
-.hook-count-tag {
-  font-size: 0.75rem;
-  font-weight: 500;
-  padding: 0.15rem 0.45rem;
-  border-radius: var(--radius-pill);
-  background: var(--surface-muted);
-  color: var(--muted);
-  border: 1px solid var(--line);
-}
-
 .hook-source-paths-wrapper {
   margin-top: 0.25rem;
 }
@@ -213,13 +203,6 @@
   overflow-wrap: anywhere;
 }
 
-.hook-review-lead {
-  margin: 0 0 1rem;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
 .hook-review-list {
   display: flex;
   flex-direction: column;
@@ -227,6 +210,13 @@
   max-height: 24rem;
   overflow-y: auto;
   padding-right: 0.25rem;
+}
+
+.hook-review-lead {
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .hook-definition-card {
@@ -277,7 +267,6 @@
 .hook-handler-type {
   font-size: 0.75rem;
   color: var(--muted);
-  margin-left: auto;
 }
 
 /* Hook History Dialog */

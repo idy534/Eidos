@@ -323,6 +323,56 @@ describe("DropdownMenu & ContextMenu DOM interaction behavior", () => {
     expect(triggerBtn).toHaveAttribute("title", "更多操作");
   });
 
+  it("DropdownMenu supports right alignment positioning", async () => {
+    const user = userEvent.setup();
+    render(
+      <DropdownMenu
+        trigger="Menu Trigger"
+        items={mockItems}
+        align="right"
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Menu Trigger" });
+    const nativeGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+      if (this === trigger) {
+        return {
+          bottom: 100,
+          left: 200,
+          right: 300,
+          top: 70,
+          width: 100,
+          height: 30,
+          x: 200,
+          y: 70,
+          toJSON: () => ({}),
+        };
+      }
+      if (this.getAttribute("role") === "menu") {
+        return {
+          bottom: 124,
+          left: 0,
+          right: 80,
+          top: 104,
+          width: 80,
+          height: 20,
+          x: 0,
+          y: 104,
+          toJSON: () => ({}),
+        };
+      }
+      return nativeGetBoundingClientRect.call(this);
+    });
+    try {
+      await user.click(trigger);
+      const menu = screen.getByRole("menu");
+      expect(menu).toBeInTheDocument();
+      expect(menu).toHaveStyle({ left: "220px" });
+    } finally {
+      boundsSpy.mockRestore();
+    }
+  });
+
   it("DropdownMenu renders item with submenu children, expands on hover and activates submenu item", async () => {
     const user = userEvent.setup();
     const childAction = vi.fn();

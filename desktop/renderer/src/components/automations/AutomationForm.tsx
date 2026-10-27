@@ -6,7 +6,7 @@ import { ModelSelector } from "../ModelSelector.js";
 import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { userFacingError } from "../../session-state.js";
-import { AutomationTimeError, automationDateInput, formatAutomationTime, initialOneTimeChoice, oneTimeOptions } from "./automation-time.js";
+import { AutomationTimeError, COMMON_TIMEZONE_GROUPS, isCommonTimezone, automationDateInput, formatAutomationTime, initialOneTimeChoice, oneTimeOptions } from "./automation-time.js";
 
 export interface InitialAutomationValues {
   name?: string | undefined;
@@ -59,6 +59,7 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
   const [status, setStatus] = useState<"ACTIVE" | "PAUSED">(task?.status ?? "ACTIVE");
   const [preview, setPreview] = useState<string[]>([]);
   const [previewing, setPreviewing] = useState(false);
+  const isCustomTimezone = Boolean(timezone && !isCommonTimezone(timezone));
   const timeResolution = useMemo(() => {
     if (kind !== "at" || !runAt) return { options: [], error: "" };
     try { return { options: oneTimeOptions(runAt, timezone), error: "" }; }
@@ -133,7 +134,22 @@ export function AutomationForm({ task, initialValues, projects, sessions, models
         <h3 className="automation-card-title">执行计划</h3>
         <div className="automation-fields">
           <label>时间类型<select value={kind} onChange={(event) => { setKind(event.target.value as "at" | "cron"); setPreview([]); }}><option value="cron">周期执行</option><option value="at">执行一次</option></select></label>
-          <label>时区<input required value={timezone} onChange={(event) => { setTimezone(event.target.value); setTimeChoice(""); setPreview([]); }} /></label>
+          <label>时区<select required value={timezone} onChange={(event) => { setTimezone(event.target.value); setTimeChoice(""); setPreview([]); }}>
+            {isCustomTimezone && (
+              <optgroup label="当前设置">
+                <option value={timezone}>{timezone}</option>
+              </optgroup>
+            )}
+            {COMMON_TIMEZONE_GROUPS.map((group) => (
+              <optgroup key={group.region} label={group.region}>
+                {group.zones.map((zone) => (
+                  <option key={zone.value} value={zone.value}>
+                    {zone.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select></label>
         </div>
         {kind === "cron" ? <label>执行规则<select value={["*/10 * * * *", "*/30 * * * *", "0 * * * *", "0 9 * * *", "0 9 * * 1-5"].includes(expression) ? expression : "custom"} onChange={(event) => { setExpression(event.target.value === "custom" ? "0 9 * * 1" : event.target.value); setPreview([]); }}>
           <option value="*/10 * * * *">每 10 分钟</option><option value="*/30 * * * *">每 30 分钟</option><option value="0 * * * *">每 1 小时</option><option value="0 9 * * *">每天 09:00</option><option value="0 9 * * 1-5">周一至周五 09:00</option><option value="custom">自定义日历时间</option>

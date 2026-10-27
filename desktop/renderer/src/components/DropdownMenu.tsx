@@ -49,6 +49,8 @@ interface DropdownMenuProps {
   title?: string;
   triggerAriaLabel?: string;
   triggerClassName?: string;
+  /** Alignment of menu relative to trigger, defaults to "left" */
+  align?: "left" | "right";
 }
 
 /**
@@ -71,6 +73,7 @@ export function DropdownMenu({
   title,
   triggerAriaLabel,
   triggerClassName = "",
+  align = "left",
 }: DropdownMenuProps) {
   const [open, setOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -93,7 +96,9 @@ export function DropdownMenu({
     const menuRect = menuRef.current.getBoundingClientRect();
 
     let top = triggerRect.bottom + 4;
-    let left = triggerRect.left;
+    let left = align === "right"
+      ? triggerRect.right - menuRect.width
+      : triggerRect.left;
 
     // Collision check bottom edge
     if (top + menuRect.height > window.innerHeight - 8) {
@@ -102,6 +107,10 @@ export function DropdownMenu({
     // Collision check right edge
     if (left + menuRect.width > window.innerWidth - 8) {
       left = Math.max(8, window.innerWidth - menuRect.width - 8);
+    }
+    // Collision check left edge
+    if (left < 8) {
+      left = 8;
     }
 
     setStyle({

@@ -2,8 +2,8 @@ import { useRef, useState } from "react";
 import type { McpServerRecord, PluginRecord, SkillMetadata } from "../../contracts";
 import type { SettingsPendingAction } from "./settings-types";
 import { Button } from "../Button.js";
-import { DropdownMenu } from "../DropdownMenu.js";
-import { TrashIcon } from "../MenuIcons.js";
+import { DropdownMenu, type DropdownMenuItem } from "../DropdownMenu.js";
+import { FinderIcon, TrashIcon } from "../MenuIcons.js";
 import { SettingSection } from "../SettingSection.js";
 import { SettingRow } from "../SettingRow.js";
 import { Toggle } from "../Toggle.js";
@@ -13,8 +13,9 @@ import { StatusBadge } from "../StatusBadge.js";
 import { PluginDetailDialog } from "./PluginDetailDialog.js";
 import { HookSourceSettings } from "./HookSourceSettings.js";
 import { compatibilityIssue } from "./plugin-compatibility.js";
-import { BuiltinPlugins } from "./BuiltinPlugins.js";
-import { githubIcon } from "./SettingsIcons.js";
+import { PluginMarketplaceDialog } from "./PluginMarketplaceDialog.js";
+import { PluginsSettingsIcon, githubIcon } from "./SettingsIcons.js";
+import { ChevronDownIcon } from "./MemoryIcons.js";
 
 interface PluginSettingsProps {
   sessionId?: string | undefined;
@@ -58,11 +59,22 @@ export function PluginSettings({
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const importRef = useRef<HTMLButtonElement>(null);
   const selected = plugins.find((plugin) => plugin.id === selectedId);
 
   const isImporting = pendingAction?.type === "import_plugin";
   const enabledCount = plugins.filter((p) => p.enabled).length;
+
+  const importMenuItems: DropdownMenuItem[] = [
+    {
+      key: "import-local",
+      label: "导入本地 Plugin",
+      icon: <FinderIcon width={14} height={14} />,
+      disabled: isImporting,
+      onClick: () => void handleImport(),
+    },
+  ];
 
   async function handleImport() {
     try {
@@ -138,7 +150,7 @@ export function PluginSettings({
 
   return (
     <div className="settings-panel plugin-settings">
-      <div className="plugin-settings-content" inert={Boolean(selected || review || pluginToRemove)}>
+      <div className="plugin-settings-content" inert={Boolean(selected || review || pluginToRemove || marketplaceOpen)}>
       <div className="settings-panel-header">
         <div className="header-title-with-stats">
           <div>
@@ -147,16 +159,29 @@ export function PluginSettings({
               导入本地 Eidos 或 Codex 插件，也可以导入新版本完成更新。Hook 和 MCP 服务分别审阅授权。
             </p>
           </div>
-          <Button
-            ref={importRef}
-            variant="primary"
-            size="medium"
-            disabled={isImporting}
-            loading={isImporting}
-            onClick={() => void handleImport()}
-          >
-            导入本地 Plugin
-          </Button>
+          <div className="plugin-header-actions">
+            <div className="split-button-group">
+              <Button
+                ref={importRef}
+                size="medium"
+                className="split-button-main"
+                icon={<PluginsSettingsIcon width={14} height={14} className="split-button-icon" />}
+                disabled={isImporting}
+                loading={isImporting}
+                onClick={() => setMarketplaceOpen(true)}
+              >
+                插件市场
+              </Button>
+              <DropdownMenu
+                className="split-button-dropdown"
+                triggerClassName="split-button-caret"
+                triggerAriaLabel="更多插件选项"
+                align="right"
+                trigger={<ChevronDownIcon width={13} height={13} className="split-button-caret-icon" />}
+                items={importMenuItems}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -165,24 +190,30 @@ export function PluginSettings({
         <div className="stat-badge stat-badge--active">已启用 {enabledCount} 项</div>
       </div>
 
-      {onInstallBuiltinPlugin && <BuiltinPlugins onInstall={onInstallBuiltinPlugin} onShowToast={onShowToast}
-        catalogRevision={plugins.map(plugin => `${plugin.id}:${plugin.version}:${plugin.contentHash}`).join("|")} />}
-      {storageReady && <HookSourceSettings sessionId={sessionId} />}
       <SettingSection title="已安装的 Plugins">
         {plugins.length === 0 ? (
           <EmptyState
             title="尚未导入任何 Plugin"
-            description="导入 Plugin 后，您可以点击插件名称，查看和管理它的资源。"
+            description="您可以在插件市场查看随应用提供的官方内置插件，也可以导入本地开发的插件包。"
             action={
-              <Button
-                variant="secondary"
-                size="medium"
-                disabled={isImporting}
-                loading={isImporting}
-                onClick={() => void handleImport()}
-              >
-                导入本地 Plugin
-              </Button>
+              <div className="empty-state-actions">
+                <Button
+                  variant="primary"
+                  size="medium"
+                  onClick={() => setMarketplaceOpen(true)}
+                >
+                  浏览插件市场
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="medium"
+                  disabled={isImporting}
+                  loading={isImporting}
+                  onClick={() => void handleImport()}
+                >
+                  导入本地 Plugin
+                </Button>
+              </div>
             }
           />
         ) : (
@@ -261,7 +292,18 @@ export function PluginSettings({
           })
         )}
       </SettingSection>
+      {storageReady && <HookSourceSettings sessionId={sessionId} />}
       </div>
+
+      <PluginMarketplaceDialog
+        open={marketplaceOpen}
+        onClose={() => setMarketplaceOpen(false)}
+        onInstall={onInstallBuiltinPlugin}
+        onImportLocal={() => void handleImport()}
+        onShowToast={onShowToast}
+        catalogRevision={plugins.map(plugin => `${plugin.id}:${plugin.version}:${plugin.contentHash}`).join("|")}
+        getFallbackFocus={() => importRef.current}
+      />
 
       <PluginDetailDialog
         plugin={selected}

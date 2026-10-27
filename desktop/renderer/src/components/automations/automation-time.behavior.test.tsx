@@ -115,4 +115,24 @@ describe("automation timezone boundaries", () => {
     expect(screen.getByRole("button")).toHaveTextContent("10/27");
     expect(screen.getByRole("button")).toHaveTextContent("America/New_York");
   });
+
+  it("renders timezone selector grouped by continents and preserves custom timezone", () => {
+    form(task);
+    const timezoneSelect = screen.getByLabelText("时区");
+    expect(timezoneSelect.tagName.toLowerCase()).toBe("select");
+    const optgroups = Array.from(timezoneSelect.querySelectorAll("optgroup")).map((group) => group.getAttribute("label"));
+    expect(optgroups).toEqual(expect.arrayContaining(["亚洲", "美洲", "欧洲", "大洋洲", "非洲"]));
+
+    const shanghaiOption = screen.getByRole("option", { name: /Asia\/Shanghai/i });
+    expect(shanghaiOption).toBeInTheDocument();
+  });
+
+  it("retains unknown or custom timezone under a dedicated optgroup", () => {
+    form({ ...task, schedule: { ...task.schedule, timezone: "Antarctica/Troll" } });
+    const timezoneSelect = screen.getByLabelText("时区");
+    expect(timezoneSelect).toHaveValue("Antarctica/Troll");
+    const customGroup = timezoneSelect.querySelector('optgroup[label="当前设置"]');
+    expect(customGroup).toBeInTheDocument();
+    expect(customGroup?.querySelector('option[value="Antarctica/Troll"]')).toBeInTheDocument();
+  });
 });
