@@ -14,7 +14,7 @@
   min-height: 0;
 }
 
-.session-canvas__composer { flex: none; width: 100%; }
+.session-canvas__composer { flex: none; width: 100%; min-width: 0; }
 
 .session-welcome {
   position: absolute;
@@ -29,7 +29,9 @@
 
 .session-canvas--welcome {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(min-content, calc(50vh - 2.75rem)) auto minmax(0, 1fr);
+  overflow-x: hidden;
   overflow-y: auto;
   padding-bottom: 1rem;
 }

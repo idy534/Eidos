@@ -128,6 +128,17 @@ app.whenReady().then(async () => {
     const cleared = await sizing();
     assert.equal(cleared.height, empty.height, "Clearing a long draft must restore the normal Composer height");
     assert.equal(cleared.top, empty.top, "Clearing a long draft must preserve its top edge");
+    await evaluate("document.querySelector('textarea').select()");
+    await win.webContents.insertText("{\"hash\":\"" + "72fa7bf510eb2a779dd920675938de7df265143435e4466939968ca29ec856a".repeat(10) + "\"}");
+    await frame();
+    const unbrokenCanvasScrollWidth = await evaluate("document.querySelector('.session-canvas--welcome').scrollWidth");
+    const unbrokenCanvasClientWidth = await evaluate("document.querySelector('.session-canvas--welcome').clientWidth");
+    assert.ok(unbrokenCanvasScrollWidth <= unbrokenCanvasClientWidth, "Unbroken long draft text must wrap without expanding welcome canvas");
+    assert.ok(await evaluate("document.documentElement.scrollWidth <= innerWidth"), "Unbroken long draft must not cause window horizontal overflow");
+    await evaluate("document.querySelector('textarea').select()");
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Backspace" });
+    await frame();
     await evaluate(`window.welcomeInput = document.querySelector('textarea'); welcomeInput.focus();
       window.originalCreate = eidosRuntime.createSession;
       eidosRuntime.createSession = () => new Promise(resolve => { window.finishCreate = async () => resolve(await originalCreate(null)); }); void 0;`);
