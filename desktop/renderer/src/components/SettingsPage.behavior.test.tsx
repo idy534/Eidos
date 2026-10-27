@@ -65,6 +65,12 @@ const presets: ModelPresetsResult = {
           supportsToolCall: true, supportsImages: false, supportsReasoning: false,
         },
         {
+          id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro",
+          url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
+          supportsToolCall: true, supportsImages: true, supportsReasoning: true,
+          reasoning: { defaultSelection: "max", selections: ["low", "high", "max"] },
+        },
+        {
           id: "minimax-m3", name: "MiniMax M3",
           url: "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
           supportsToolCall: true, supportsImages: true, supportsReasoning: false,
@@ -172,7 +178,7 @@ describe("Model settings", () => {
     });
   });
 
-  it("creates a Volcengine Coding Plan model from the catalog", async () => {
+  it("creates a Volcengine Agent Plan model from the catalog", async () => {
     const user = userEvent.setup();
     const createModel = vi.fn().mockResolvedValue(modelList.models[0]);
     const onModelsChanged = vi.fn().mockResolvedValue(undefined);
@@ -199,6 +205,26 @@ describe("Model settings", () => {
       provider: "volcengine", modelId: "glm-5.3-flash", apiKey: "volcengine-secret",
     });
     expect(onModelsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Kimi K3.1 Pro under Volcengine and saves its model ID", async () => {
+    const user = userEvent.setup();
+    const createModel = vi.fn().mockResolvedValue(modelList.models[0]);
+    (window as unknown as { eidosRuntime: EidosRuntimeAPI }).eidosRuntime = {
+      listModelPresets: vi.fn().mockResolvedValue(presets), createModel,
+    } as EidosRuntimeAPI;
+    render(<SettingsPage {...props({ modelList: { models: [], defaultModelId: null } })} />);
+
+    await user.click(await screen.findByRole("button", { name: "添加模型" }));
+    await user.selectOptions(screen.getByLabelText("提供商"), "volcengine");
+    expect(screen.getByRole("option", { name: "Kimi K3.1 Pro" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("模型名称"), "kimi-k3.1-pro");
+    await user.type(screen.getByLabelText("API Key"), "volcengine-secret");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(createModel).toHaveBeenCalledWith({
+      provider: "volcengine", modelId: "kimi-k3.1-pro", apiKey: "volcengine-secret",
+    });
   });
 
   it("creates a manual stdio MCP from the settings page", async () => {
