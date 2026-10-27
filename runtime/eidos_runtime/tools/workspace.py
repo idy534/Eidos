@@ -201,8 +201,9 @@ _APPLY_PATCH_DESCRIPTION = (
 
 
 _RUN_SHELL_DESCRIPTION = (
-    "Run a command in a new shell with its working directory already set to cwd. "
-    "The default is the current workspace, including projectless and full_access Runs. "
+    "Run a command in a separate shell process. "
+    "The working directory defaults to the current Run's workspace. "
+    "Set cwd to start in another directory. "
     "Return output or a sessionId for ongoing interaction."
 )
 

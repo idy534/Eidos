@@ -442,8 +442,9 @@ class ToolContractTests(unittest.TestCase):
 
         self.assertEqual(
             description,
-            "Run a command in a new shell with its working directory already set to cwd. "
-            "The default is the current workspace, including projectless and full_access Runs. "
+            "Run a command in a separate shell process. "
+            "The working directory defaults to the current Run's workspace. "
+            "Set cwd to start in another directory. "
             "Return output or a sessionId for ongoing interaction.",
         )
         for fragment in (
@@ -468,9 +469,8 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(properties["cwd"]["default"], ".")
         self.assertEqual(
             properties["cwd"]["description"],
-            "Starting directory, set before command runs. Omit this field or use '.' "
-            "for the current workspace shown in Runtime context. Relative paths start "
-            "at that workspace root; canonical absolute paths follow the current Run permissions.",
+            "Starting directory. Defaults to the current Run's workspace when omitted or set to '.'. "
+            "Relative paths start at that workspace root; canonical absolute paths follow the current Run permissions.",
         )
         model_shell = next(
             definition["function"] for definition in model_tool_definitions()
