@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import logging
 import os
@@ -520,120 +521,95 @@ def run_seatbelt_self_test() -> SeatbeltSelfTestResult:
             outside = outside.resolve()
             sentinel = outside / "sentinel.txt"
 
-            record("system_execute", _succeeded(profile, ["/usr/bin/true"]))
             workspace_file = workspace / "created.txt"
-            record("workspace_write", _create_modify_delete(profile, workspace_file))
-            record(
-                "external_read_allowed",
-                _read_allowed(profile, sentinel, "outside-sentinel"),
-            )
-            record(
-                "home_read_allowed",
-                _read_allowed(profile, sandbox_home / ".gitconfig", "[user]\n"),
-            )
             home_file = sandbox_home / "home.txt"
-            record(
-                "home_write_denied",
-                not _succeeded(profile, ["/usr/bin/touch", str(home_file)])
-                and not home_file.exists(),
-            )
             tmp_file = sandbox_tmp / "tmp.txt"
-            record("sandbox_tmp_write", _create_modify_delete(profile, tmp_file))
             system_tmp_file = Path("/tmp") / (
                 f"eidos-seatbelt-{os.getpid()}-{time.monotonic_ns()}"
             )
-            record(
-                "system_tmp_write",
-                _create_modify_delete(profile, system_tmp_file),
-            )
-
             outside_write = outside / "blocked.txt"
-            record(
-                "external_write_denied",
-                not _succeeded(profile, ["/usr/bin/touch", str(outside_write)])
-                and not outside_write.exists(),
-            )
-            record(
-                "data_models_read_denied",
-                _read_denied(profile, data / "models.json", "models"),
-            )
-            record(
-                "data_private_token_read_denied",
-                _read_denied(profile, data / "private-token", "token"),
-            )
-            record(
-                "sensitive_read_allowed",
-                _read_allowed(
-                    profile,
-                    workspace / ".env",
-                    "self-test-workspace-env",
-                ),
-            )
-            record("git_read_allowed", _succeeded(profile, ["/bin/cat", str(git_directory / "HEAD")]))
             git_write = git_directory / "blocked"
-            record(
-                "git_write_denied",
-                not _succeeded(profile, ["/usr/bin/touch", str(git_write)])
-                and not git_write.exists(),
-            )
             symlink_write = workspace / "escape" / "blocked"
-            record(
-                "symlink_escape_denied",
-                not _succeeded(profile, ["/usr/bin/touch", str(symlink_write)])
-                and not symlink_write.exists(),
-            )
             child_write = outside / "child-blocked"
-            record(
-                "child_inherits_policy",
-                not _succeeded(
+
+            def write_denied(path: Path) -> bool:
+                return (
+                    not _succeeded(profile, ["/usr/bin/touch", str(path)])
+                    and not path.exists()
+                )
+
+            def child_policy_enforced() -> bool:
+                return not _succeeded(
                     profile,
                     [
-                        "/bin/sh",
-                        "-c",
-                        '/usr/bin/touch "$1"',
-                        "eidos-self-test",
-                        str(child_write),
+                        "/bin/sh", "-c", '/usr/bin/touch "$1"',
+                        "eidos-self-test", str(child_write),
                     ],
-                )
-                and not child_write.exists(),
-            )
+                ) and not child_write.exists()
 
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-                listener.bind(("127.0.0.1", 0))
-                listener.listen(1)
-                port = listener.getsockname()[1]
-                network_command = [
-                    "/usr/bin/nc",
-                    "-z",
-                    "-w",
-                    "1",
-                    "127.0.0.1",
-                    str(port),
-                ]
-                baseline = subprocess.run(
-                    network_command,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=2,
-                    check=False,
+            def timeout_enforced() -> bool:
+                result = run_sandboxed(
+                    profile, ["/bin/sh", "-c", "/bin/sleep 5"], timeout_seconds=0.1,
                 )
-                record("loopback_baseline", baseline.returncode == 0)
-                record(
-                    "loopback_denied",
-                    not _succeeded(profile, network_command),
-                )
+                return result.timed_out and result.duration_seconds < 2.0
 
-            timeout_result = run_sandboxed(
-                profile,
-                ["/bin/sh", "-c", "/bin/sleep 5"],
-                timeout_seconds=0.1,
-            )
-            record(
-                "timeout_enforced",
-                timeout_result.timed_out and timeout_result.duration_seconds < 2.0,
-            )
-            system_tmp_file.unlink(missing_ok=True)
+            checks: list[tuple[str, Callable[[], bool]]] = [
+                ("system_execute", lambda: _succeeded(profile, ["/usr/bin/true"])),
+                ("workspace_write", lambda: _create_modify_delete(profile, workspace_file)),
+                ("external_read_allowed", lambda: _read_allowed(
+                    profile, sentinel, "outside-sentinel",
+                )),
+                ("home_read_allowed", lambda: _read_allowed(
+                    profile, sandbox_home / ".gitconfig", "[user]\n",
+                )),
+                ("home_write_denied", lambda: write_denied(home_file)),
+                ("sandbox_tmp_write", lambda: _create_modify_delete(profile, tmp_file)),
+                ("system_tmp_write", lambda: _create_modify_delete(profile, system_tmp_file)),
+                ("external_write_denied", lambda: write_denied(outside_write)),
+                ("data_models_read_denied", lambda: _read_denied(
+                    profile, data / "models.json", "models",
+                )),
+                ("data_private_token_read_denied", lambda: _read_denied(
+                    profile, data / "private-token", "token",
+                )),
+                ("sensitive_read_allowed", lambda: _read_allowed(
+                    profile, workspace / ".env", "self-test-workspace-env",
+                )),
+                ("git_read_allowed", lambda: _succeeded(
+                    profile, ["/bin/cat", str(git_directory / "HEAD")],
+                )),
+                ("git_write_denied", lambda: write_denied(git_write)),
+                ("symlink_escape_denied", lambda: write_denied(symlink_write)),
+                ("child_inherits_policy", child_policy_enforced),
+            ]
+            try:
+                # Each check owns its paths. Keep the network baseline and
+                # denial sequential, and join all workers before removing them.
+                with ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="eidos-seatbelt-test",
+                ) as executor:
+                    futures = [(name, executor.submit(check)) for name, check in checks]
+                    timeout = executor.submit(timeout_enforced)
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+                        listener.bind(("127.0.0.1", 0))
+                        listener.listen(1)
+                        network_command = [
+                            "/usr/bin/nc", "-z", "-w", "1", "127.0.0.1",
+                            str(listener.getsockname()[1]),
+                        ]
+                        baseline = subprocess.run(
+                            network_command, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=2, check=False,
+                        )
+                        network_denied = not _succeeded(profile, network_command)
+                    for name, future in futures:
+                        record(name, future.result())
+                    record("loopback_baseline", baseline.returncode == 0)
+                    record("loopback_denied", network_denied)
+                    record("timeout_enforced", timeout.result())
+            finally:
+                system_tmp_file.unlink(missing_ok=True)
     except Exception:
         failures.append("self_test_error")
 

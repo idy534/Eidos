@@ -476,6 +476,39 @@ class SeatbeltSmokeTests(unittest.TestCase):
         self.assertIn("loopback_denied", result.passed_checks)
         self.assertIn("timeout_enforced", result.passed_checks)
 
+    def test_self_test_runs_independent_checks_concurrently(self) -> None:
+        from eidos_runtime.sandbox import seatbelt
+
+        barrier = threading.Barrier(2)
+        read_allowed = seatbelt._read_allowed
+
+        def concurrent_read(profile, path, expected):
+            if path.name in {"sentinel.txt", ".gitconfig"}:
+                barrier.wait(timeout=10)
+            return read_allowed(profile, path, expected)
+
+        with patch.object(seatbelt, "_read_allowed", side_effect=concurrent_read):
+            result = run_seatbelt_self_test()
+
+        self.assertTrue(result.available, result.failures)
+        self.assertEqual(len(result.passed_checks), 18)
+
+    def test_self_test_fails_closed_when_a_parallel_check_fails(self) -> None:
+        from eidos_runtime.sandbox import seatbelt
+
+        succeeded = seatbelt._succeeded
+
+        def unexpectedly_allowed(profile, command):
+            if command[0] == "/usr/bin/touch" and command[-1].endswith("/outside/blocked.txt"):
+                return True
+            return succeeded(profile, command)
+
+        with patch.object(seatbelt, "_succeeded", side_effect=unexpectedly_allowed):
+            result = run_seatbelt_self_test()
+
+        self.assertFalse(result.available)
+        self.assertIn("external_write_denied", result.failures)
+
     def test_git_worktree_pointer_is_supported_but_not_writable(self) -> None:
         with tempfile.TemporaryDirectory(prefix="eidos-worktree-") as temporary:
             root = Path(temporary)
