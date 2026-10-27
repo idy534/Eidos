@@ -160,6 +160,17 @@ export function ChevronRightIcon(props: IconProps) {
 }
 
 /**
+ * Chevron Down 'v' icon for collapsing/expanding
+ */
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <svg {...defaultIconProps} strokeWidth={1.6} {...props}>
+      <path d="m3.5 6 4.5 4.5 4.5-4.5" />
+    </svg>
+  );
+}
+
+/**
  * Close Tab '×' icon
  */
 export function CloseIcon(props: IconProps) {

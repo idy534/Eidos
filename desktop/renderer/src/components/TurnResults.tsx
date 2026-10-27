@@ -6,7 +6,7 @@ import { committedFileDiff, projectNetFileDiff, type ParsedFileDiff } from "../p
 import { displayFilePath, useArtifacts, usePreviewUrl } from "./ArtifactContext.js";
 import { Button } from "./Button.js";
 import { DropdownMenu, type DropdownMenuItem } from "./DropdownMenu.js";
-import { PreviewIcon, ExternalLinkIcon, FinderIcon, CloseIcon } from "./MenuIcons.js";
+import { PreviewIcon, ExternalLinkIcon, FinderIcon, CloseIcon, ChevronDownIcon } from "./MenuIcons.js";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon.js";
 import { Tooltip } from "./Tooltip.js";
 
@@ -342,17 +342,13 @@ export function useCompleteSessionItems(
   return { items, loading, ...(error ? { error } : {}) };
 }
 
-function ArtifactLabel({ artifact }: { artifact: TurnArtifact }): string {
-  const format = fileExtension(artifact.path).toUpperCase();
-  switch (artifact.kind) {
-    case "document": return `文档 · ${format}`;
-    case "pdf": return "文档 · PDF";
-    case "presentation": return `演示文稿 · ${format}`;
-    case "spreadsheet": return `表格 · ${format}`;
-    case "image": return `图片 · ${format}`;
-    case "html": return `网页 · ${format}`;
-    case "file": return `文件${format ? ` · ${format}` : ""}`;
-  }
+function artifactSubtitle(artifact: TurnArtifact): string {
+  const format = (fileExtension(artifact.path) || (artifact.kind === "pdf" ? "pdf" : "")).toUpperCase();
+  const name = fileName(artifact.path);
+  const parts: string[] = [];
+  if (format) parts.push(format);
+  if (artifact.title) parts.push(name);
+  return parts.join(" · ");
 }
 
 function artifactOpenItems(
@@ -490,6 +486,7 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
     () => { void revealInFinder(); },
   );
   const displayPath = displayFilePath(artifact.path, artifact.executionRoot || actions?.executionRoot);
+  const subtitle = artifactSubtitle(artifact);
   return (
     <>
       <article className={`artifact-result-card${compact ? " artifact-result-card--compact" : ""}`}>
@@ -498,7 +495,7 @@ function ArtifactCard({ artifact, compact = false }: { artifact: TurnArtifact; c
             <span className="artifact-result-card__icon" aria-hidden="true"><WorkspaceFileIcon name={artifact.path} /></span>
             <span className="artifact-result-card__copy">
               <strong>{displayName}</strong>
-              <small>{ArtifactLabel({ artifact })}{artifact.title ? ` · ${fileName(artifact.path)}` : ""}</small>
+              {subtitle && <small>{subtitle}</small>}
             </span>
           </button>
         </Tooltip>
@@ -625,6 +622,8 @@ function TextChangeCard({ projection }: { projection: TurnResultProjection }) {
   );
 }
 
+const ARTIFACT_COLLAPSE_THRESHOLD = 1;
+
 export function TurnResults({
   run,
   items,
@@ -637,10 +636,40 @@ export function TurnResults({
   className?: string;
 }) {
   const projection = useMemo(() => projectTurnResults(items, run.id), [items, run.id]);
+  const [artifactsExpanded, setArtifactsExpanded] = useState(false);
+
   if (!projection.artifacts.length && (!showTextChanges || !projection.textChanges.length)) return null;
+
+  const hasMoreArtifacts = projection.artifacts.length > ARTIFACT_COLLAPSE_THRESHOLD;
+  const displayedArtifacts = artifactsExpanded || !hasMoreArtifacts
+    ? projection.artifacts
+    : projection.artifacts.slice(0, ARTIFACT_COLLAPSE_THRESHOLD);
+  const hiddenArtifactsCount = projection.artifacts.length - displayedArtifacts.length;
+
   return (
     <section className={`turn-results${className ? ` ${className}` : ""}`} aria-label="本轮结果">
-      {projection.artifacts.map((artifact) => <ArtifactCard artifact={artifact} key={artifactKey(artifact)} />)}
+      {projection.artifacts.length > 0 && (
+        <div
+          className={`turn-results__artifacts${
+            hasMoreArtifacts && !artifactsExpanded ? " turn-results__artifacts--collapsible" : ""
+          }`}
+        >
+          {displayedArtifacts.map((artifact) => <ArtifactCard artifact={artifact} key={artifactKey(artifact)} />)}
+          {hasMoreArtifacts && !artifactsExpanded && (
+            <button
+              type="button"
+              className="turn-results__more-artifacts"
+              onClick={() => setArtifactsExpanded(true)}
+            >
+              <span>{`展开其余 ${hiddenArtifactsCount} 个产物`}</span>
+              <ChevronDownIcon
+                className="turn-results__more-artifacts-icon"
+                aria-hidden="true"
+              />
+            </button>
+          )}
+        </div>
+      )}
       {showTextChanges && projection.textChanges.length > 0 && <TextChangeCard projection={projection} />}
     </section>
   );

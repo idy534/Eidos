@@ -190,6 +190,7 @@ describe("TurnResults", () => {
       expect(await screen.findByRole("dialog", { name: "diagram.png 图片预览" })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "关闭图片预览" }));
 
+      fireEvent.click(screen.getByRole("button", { name: "展开其余 1 个产物" }));
       const htmlButton = await screen.findByRole("button", { name: "打开 page.html" });
       fireEvent.click(htmlButton);
       await waitFor(() => expect(openBrowser).toHaveBeenCalledWith("eidos-preview://preview/page.html"));
@@ -392,8 +393,11 @@ describe("TurnResults", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "打开 report.docx" }));
       await waitFor(() => expect(openExternal).toHaveBeenCalledWith("docs/report.docx"));
-      expect(screen.getByText("文档 · DOCX")).toBeInTheDocument();
-      expect(screen.getByText("网页 · HTML")).toBeInTheDocument();
+      expect(screen.getByText("DOCX")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "打开 index.html" })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "展开其余 1 个产物" }));
+      expect(screen.getByText("HTML")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "审核 index.html" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "打开 index.html" })).toBeInTheDocument();
     } finally {
@@ -440,7 +444,9 @@ describe("TurnResults", () => {
     await waitFor(() => expect(showInFinder).toHaveBeenCalledWith("docs/slides.pptx"));
 
     // Normal artifact (logo.png): preview, external and finder options
-    fireEvent.click(dropdowns[1]!);
+    fireEvent.click(screen.getByRole("button", { name: "展开其余 1 个产物" }));
+    const expandedDropdowns = screen.getAllByRole("button", { name: "打开方式" });
+    fireEvent.click(expandedDropdowns[1]!);
     expect(screen.getByRole("menuitem", { name: "内置预览" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "系统应用打开" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "在 Finder 中显示" })).toBeInTheDocument();
@@ -554,5 +560,100 @@ describe("TurnResults", () => {
     });
 
     expect(collectOutputArtifacts([invalid])).toEqual([]);
+  });
+
+  it("collapses artifacts beyond threshold of 1 and expands once on user action without collapse button", () => {
+    const item = declaredItem("item-many", [
+      { path: "artifacts/a.txt" },
+      { path: "artifacts/b.txt" },
+      { path: "artifacts/c.txt" },
+    ]);
+
+    render(
+      <ArtifactProvider
+        value={{
+          sessionId: "session-1",
+          executionRoot: "/workspace",
+          openFile: vi.fn(),
+          openBrowser: vi.fn(),
+          openExternal: vi.fn(),
+          showInFinder: vi.fn(),
+        }}
+      >
+        <TurnResults run={run} items={[item]} />
+      </ArtifactProvider>,
+    );
+
+    // Initial state: only first 1 artifact is visible
+    expect(screen.getByRole("button", { name: "打开 a.txt" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开 b.txt" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开 c.txt" })).not.toBeInTheDocument();
+
+    const expandButton = screen.getByRole("button", { name: "展开其余 2 个产物" });
+    expect(expandButton).toBeInTheDocument();
+
+    // Click to expand: all 3 artifacts should now be visible and expand button is removed
+    fireEvent.click(expandButton);
+    expect(screen.getByRole("button", { name: "打开 a.txt" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开 b.txt" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开 c.txt" })).toBeInTheDocument();
+
+    // The expand/collapse button is now completely removed (no collapse button)
+    expect(screen.queryByRole("button", { name: /展开|收起/ })).not.toBeInTheDocument();
+  });
+
+  it("renders custom title on first line and file type with name on second line", () => {
+    const item = declaredItem("item-titles", [
+      { path: "hooks.json", title: "hooks.json — 用户级 Hook 注册片段" },
+      { path: "standalone.json" },
+    ]);
+
+    render(
+      <ArtifactProvider
+        value={{
+          sessionId: "session-1",
+          executionRoot: "/workspace",
+          openFile: vi.fn(),
+          openBrowser: vi.fn(),
+          openExternal: vi.fn(),
+          showInFinder: vi.fn(),
+        }}
+      >
+        <TurnResults run={run} items={[item]} />
+      </ArtifactProvider>,
+    );
+
+    // Card 1: custom title on first line, type and filename on second line
+    expect(screen.getByText("hooks.json — 用户级 Hook 注册片段")).toBeInTheDocument();
+    expect(screen.getByText("JSON · hooks.json")).toBeInTheDocument();
+
+    // Expand to see card 2
+    fireEvent.click(screen.getByRole("button", { name: "展开其余 1 个产物" }));
+    expect(screen.getByText("standalone.json")).toBeInTheDocument();
+    expect(screen.getByText("JSON")).toBeInTheDocument();
+  });
+
+  it("does not render collapse button when artifact count is 1", () => {
+    const item = declaredItem("item-one", [
+      { path: "artifacts/1.txt" },
+    ]);
+
+    render(
+      <ArtifactProvider
+        value={{
+          sessionId: "session-1",
+          executionRoot: "/workspace",
+          openFile: vi.fn(),
+          openBrowser: vi.fn(),
+          openExternal: vi.fn(),
+          showInFinder: vi.fn(),
+        }}
+      >
+        <TurnResults run={run} items={[item]} />
+      </ArtifactProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "打开 1.txt" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /展开|收起/ })).not.toBeInTheDocument();
   });
 });

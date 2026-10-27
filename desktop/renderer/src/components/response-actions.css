@@ -1,5 +1,6 @@
 .response-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -11,6 +12,14 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+.response-actions-left {
+  flex: 0 0 auto;
+}
+
+.response-meta {
+  max-width: 100%;
 }
 
 .response-action-button {
@@ -171,6 +180,23 @@
   white-space: nowrap;
   color: var(--muted);
   font-size: var(--font-size-caption);
+}
+
+.eidos-tooltip.response-model-tooltip {
+  max-width: min(420px, calc(100vw - 24px));
+  white-space: normal;
+}
+
+.eidos-tooltip.response-model-tooltip .eidos-tooltip__content {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.response-meta .feed-item-timestamp {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .response-meta .feed-item-timestamp::before {
