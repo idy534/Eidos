@@ -41,6 +41,30 @@ def answer(store: SessionStore, session: str, text: str) -> tuple[str, str]:
     return str(run["id"]), item_id
 
 
+def custom_model_answer(store: SessionStore, session: str) -> str:
+    from eidos_runtime.model.client import ModelProfileSnapshot
+
+    profile = ModelProfileSnapshot(
+        provider_id="custom", model_id="custom-deleted", remote_model_id="company/model-v1",
+        context_window_tokens=4096, max_output_tokens=512, request_timeout_seconds=120,
+        supports_tools=True, supports_json_schema_output=False, supports_reasoning=False,
+    )
+    run, _ = store.enqueue_run(
+        session, "question", model_id=profile.model_id, model_profile=profile,
+    )
+    item_id = str(uuid4())
+    with store.database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO items (id,session_id,run_id,ordinal,kind,status,content,created_at,completed_at) "
+            "VALUES (?,?,?,2,'assistant_message','completed','answer',2,2)",
+            (item_id, session, run["id"]),
+        )
+        connection.execute(
+            "UPDATE runs SET status='succeeded',completed_at=2 WHERE id=?", (run["id"],)
+        )
+    return item_id
+
+
 def request(
     session: str, item: str, operation: str | None = None
 ) -> SessionForkRequest:
@@ -66,6 +90,7 @@ def test_protocol_uses_the_shared_strict_fixture():
     import json
     from pydantic import ValidationError
     from eidos_runtime.protocol.session_fork import SessionForkResponse
+    from eidos_runtime.protocol.schemas import InheritedHistoryEntry
 
     fixture = json.loads(
         (
@@ -75,6 +100,7 @@ def test_protocol_uses_the_shared_strict_fixture():
     for name, model in (
         ("Requests", SessionForkRequest),
         ("Responses", SessionForkResponse),
+        ("HistoryEntries", InheritedHistoryEntry),
     ):
         for value in fixture["valid" + name]:
             model.model_validate(value)
@@ -232,6 +258,48 @@ def test_prefix_is_independent_and_never_creates_an_executable_run(store):
         "second",
         "continue",
     ]
+
+
+def test_custom_model_remote_id_survives_fork_and_source_deletion(store):
+    value, source = store
+    item = custom_model_answer(value, source)
+    target = fork(value, request(source, item))
+    value.delete_session(source)
+
+    history = value.read_session_snapshot(target)["inheritedHistory"]
+    assert all(entry["run"]["modelId"] == "custom-deleted" for entry in history)
+    assert all(entry["run"]["remoteModelId"] == "company/model-v1" for entry in history)
+
+
+def test_legacy_fork_recovers_remote_id_from_source_without_rewriting_it(store, monkeypatch):
+    import eidos_runtime.db.mappers as mappers
+
+    value, source = store
+    item = custom_model_answer(value, source)
+    with monkeypatch.context() as patch:
+        patch.setattr(mappers, "_remote_model_id_from_profile", lambda _profile: None)
+        legacy = fork(value, request(source, item))
+
+    stored = value.connection.execute(
+        "SELECT record_json FROM session_history_entries WHERE session_id=? ORDER BY sequence DESC LIMIT 1",
+        (legacy,),
+    ).fetchone()[0]
+    assert '"remoteModelId"' not in value.database.json_blobs.read_json(
+        stored, expected_kind="session-history-record",
+    )
+    history = value.read_session_snapshot(legacy)["inheritedHistory"]
+    assert all(entry["run"]["remoteModelId"] == "company/model-v1" for entry in history)
+
+    nested = fork(value, request(legacy, history[-1]["item"]["id"]))
+    value.delete_session(source)
+    assert all(
+        "remoteModelId" not in entry["run"]
+        for entry in value.read_session_snapshot(legacy)["inheritedHistory"]
+    )
+    assert all(
+        entry["run"]["remoteModelId"] == "company/model-v1"
+        for entry in value.read_session_snapshot(nested)["inheritedHistory"]
+    )
 
 
 def test_replay_conflict_and_deleted_target_do_not_create_another_session(store):

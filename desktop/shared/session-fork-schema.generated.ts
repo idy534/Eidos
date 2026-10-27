@@ -64,6 +64,456 @@ export const sessionForkSchema = {
       "title": "ChannelOrigin",
       "type": "object"
     },
+    "HookActivity": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "runId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Runid",
+          "type": "string"
+        },
+        "sessionId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Sessionid",
+          "type": "string"
+        },
+        "sourceId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Sourceid",
+          "type": "string"
+        },
+        "event": {
+          "enum": [
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStart",
+            "SubagentStop",
+            "Stop",
+            "Interrupt"
+          ],
+          "title": "Event",
+          "type": "string"
+        },
+        "handlerType": {
+          "enum": [
+            "command",
+            "mcp_tool",
+            "prompt",
+            "agent"
+          ],
+          "title": "Handlertype",
+          "type": "string"
+        },
+        "background": {
+          "default": false,
+          "title": "Background",
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "intent",
+            "running",
+            "completed",
+            "failed",
+            "unknown",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "statusMessage": {
+          "default": "",
+          "maxLength": 1024,
+          "title": "Statusmessage",
+          "type": "string"
+        },
+        "createdAt": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "title": "Createdat",
+          "type": "integer"
+        },
+        "completedAt": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completedat"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HookResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stdoutPreview": {
+          "default": "",
+          "maxLength": 4096,
+          "title": "Stdoutpreview",
+          "type": "string"
+        },
+        "stderrPreview": {
+          "default": "",
+          "maxLength": 4096,
+          "title": "Stderrpreview",
+          "type": "string"
+        },
+        "previewTruncated": {
+          "default": false,
+          "title": "Previewtruncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "runId",
+        "sessionId",
+        "sourceId",
+        "event",
+        "handlerType",
+        "status",
+        "createdAt"
+      ],
+      "title": "HookActivity",
+      "type": "object"
+    },
+    "HookBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "pluginId": {
+          "title": "Pluginid",
+          "type": "string"
+        },
+        "pluginHash": {
+          "title": "Pluginhash",
+          "type": "string"
+        },
+        "definition": {
+          "$ref": "#/$defs/HookDefinition"
+        },
+        "sourceKind": {
+          "default": "plugin",
+          "enum": [
+            "plugin",
+            "user",
+            "project"
+          ],
+          "title": "Sourcekind",
+          "type": "string"
+        },
+        "sourcePaths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Sourcepaths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "pluginId",
+        "pluginHash",
+        "definition"
+      ],
+      "title": "HookBinding",
+      "type": "object"
+    },
+    "HookDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "event": {
+          "enum": [
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStart",
+            "SubagentStop",
+            "Stop",
+            "Interrupt"
+          ],
+          "title": "Event",
+          "type": "string"
+        },
+        "matcher": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Matcher"
+        },
+        "handlerType": {
+          "default": "command",
+          "enum": [
+            "command",
+            "mcp_tool",
+            "prompt",
+            "agent"
+          ],
+          "title": "Handlertype",
+          "type": "string"
+        },
+        "command": {
+          "default": "",
+          "maxLength": 32768,
+          "title": "Command",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "default": 600,
+          "maximum": 600,
+          "minimum": 1,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        },
+        "background": {
+          "default": false,
+          "title": "Background",
+          "type": "boolean"
+        },
+        "statusMessage": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statusmessage"
+        },
+        "additionalContextLimit": {
+          "default": 2500,
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Additionalcontextlimit",
+          "type": "integer"
+        },
+        "mcpServer": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcpserver"
+        },
+        "mcpTool": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcptool"
+        },
+        "mcpInput": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Mcpinput",
+          "type": "object"
+        }
+      },
+      "required": [
+        "key",
+        "event"
+      ],
+      "title": "HookDefinition",
+      "type": "object"
+    },
+    "HookResult": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "default": "completed",
+          "enum": [
+            "completed",
+            "failed",
+            "unknown",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "action": {
+          "default": "pass",
+          "enum": [
+            "pass",
+            "deny",
+            "feedback",
+            "continue",
+            "stop"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "maxLength": 8192,
+          "title": "Message",
+          "type": "string"
+        },
+        "additionalContext": {
+          "default": "",
+          "maxLength": 65536,
+          "title": "Additionalcontext",
+          "type": "string"
+        },
+        "updatedInput": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Updatedinput"
+        },
+        "errorCode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Errorcode"
+        },
+        "systemMessage": {
+          "default": "",
+          "maxLength": 8192,
+          "title": "Systemmessage",
+          "type": "string"
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exitcode"
+        },
+        "durationMs": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Durationms",
+          "type": "integer"
+        },
+        "workspaceChanged": {
+          "default": false,
+          "title": "Workspacechanged",
+          "type": "boolean"
+        },
+        "workspaceChanges": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Workspacechanges",
+          "type": "array"
+        },
+        "outputCallId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outputcallid"
+        },
+        "contextTruncated": {
+          "default": false,
+          "title": "Contexttruncated",
+          "type": "boolean"
+        },
+        "permissionDecision": {
+          "anyOf": [
+            {
+              "enum": [
+                "allow",
+                "deny"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Permissiondecision"
+        }
+      },
+      "title": "HookResult",
+      "type": "object"
+    },
     "InheritedHistoryEntry": {
       "additionalProperties": false,
       "properties": {
@@ -321,6 +771,14 @@ export const sessionForkSchema = {
     "RunDto": {
       "additionalProperties": false,
       "properties": {
+        "hookActivity": {
+          "items": {
+            "$ref": "#/$defs/HookActivity"
+          },
+          "maxItems": 8,
+          "title": "Hookactivity",
+          "type": "array"
+        },
         "channelOrigin": {
           "anyOf": [
             {
@@ -387,6 +845,20 @@ export const sessionForkSchema = {
           "minLength": 1,
           "title": "Modelid",
           "type": "string"
+        },
+        "remoteModelId": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remotemodelid"
         },
         "status": {
           "enum": [
@@ -604,6 +1076,13 @@ export const sessionForkSchema = {
             "$ref": "#/$defs/RunPluginSnapshotDto"
           },
           "title": "Plugins",
+          "type": "array"
+        },
+        "hooks": {
+          "items": {
+            "$ref": "#/$defs/HookBinding"
+          },
+          "title": "Hooks",
           "type": "array"
         },
         "skillCatalogHash": {

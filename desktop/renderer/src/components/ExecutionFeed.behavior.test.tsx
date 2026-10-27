@@ -51,6 +51,30 @@ function renderFeed(item: Item, run: Run = baseRun) {
   );
 }
 
+describe("response model label", () => {
+  it("uses the configured name, then the saved remote ID, then the legacy ID", () => {
+    const run: Run = {
+      ...baseRun, status: "succeeded", modelId: "custom-deleted", remoteModelId: "company/model-v1",
+    };
+    const item = shellItem({
+      id: "answer", kind: "assistant_message", status: "completed", content: "回答", toolCall: undefined,
+    });
+    const model = {
+      id: run.modelId, name: "公司模型", vendor: "公司", provider: "custom", url: "https://example.com",
+      supportsToolCall: true, supportsImages: false, supportsReasoning: false,
+    };
+    const { rerender } = render(<ExecutionFeed items={[item]} runs={[run]} models={[model]} approvals={[]} />);
+    expect(screen.getByTitle("本次回复模型：公司模型")).toHaveTextContent("公司模型");
+
+    rerender(<ExecutionFeed items={[item]} runs={[run]} models={[]} approvals={[]} />);
+    expect(screen.getByTitle("本次回复模型：company/model-v1")).toHaveTextContent("company/model-v1");
+
+    const { remoteModelId: _remoteModelId, ...legacyRun } = run;
+    rerender(<ExecutionFeed items={[item]} runs={[legacyRun]} models={[]} approvals={[]} />);
+    expect(screen.getByTitle("本次回复模型：custom-deleted")).toHaveTextContent("custom-deleted");
+  });
+});
+
 describe("automation source and tool results", () => {
   it("keeps steering input inside the running process and updates its receipt in place", () => {
     const initial = shellItem({ id: "user", kind: "user_message", ordinal: 1, content: "原任务", status: "completed", toolCall: undefined });

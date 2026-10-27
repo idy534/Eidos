@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import tempfile
 import threading
 import unittest
@@ -85,6 +86,40 @@ class ModelPersistenceTests(unittest.TestCase):
             self.store.read_model_profile(second["id"]).context_window_tokens,
             9_000,
         )
+
+    def test_historical_custom_model_projects_remote_id_from_the_saved_profile(self) -> None:
+        profile = self.profile().model_copy(update={
+            "provider_id": "custom",
+            "model_id": "custom-deleted",
+            "remote_model_id": "company/model-v1",
+        })
+        run, _ = self.store.create_run(
+            self.session["id"], "question", model_id=profile.model_id, model_profile=profile,
+        )
+        self.assertEqual(run["modelId"], "custom-deleted")
+        self.assertEqual(run["remoteModelId"], "company/model-v1")
+        event = self.store.connection.execute(
+            "SELECT payload_json FROM events WHERE run_id=? AND event_type='run.created'",
+            (run["id"],),
+        ).fetchone()
+        self.assertNotIn("remoteModelId", json.loads(event[0])["run"])
+
+        self.store.close()
+        self.store = SessionStore(self.data)
+        self.store.initialize()
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        restored = next(value for value in snapshot["runs"] if value["id"] == run["id"])
+        self.assertEqual(restored["modelId"], "custom-deleted")
+        self.assertEqual(restored["remoteModelId"], "company/model-v1")
+        self.assertNotIn("apiKey", restored)
+
+    def test_legacy_model_profile_without_remote_id_still_loads(self) -> None:
+        run, _ = self.store.create_run(
+            self.session["id"], "legacy", model_profile=self.profile(),
+        )
+        self.assertNotIn("remoteModelId", run)
+        snapshot = self.store.read_session_snapshot(self.session["id"])
+        self.assertNotIn("remoteModelId", snapshot["runs"][0])
 
     def test_successful_attempt_persists_usage_and_response_metadata(self) -> None:
         run, _ = self.store.create_run(self.session["id"], "sample")

@@ -302,6 +302,7 @@ export interface Run {
     | "finalizing"
     | "terminal";
   modelId: ModelId;
+  remoteModelId?: string;
   allowedActions?: Array<"cancel" | "approve" | "reject">;
   modelStepCount: number;
   createdAt: number;

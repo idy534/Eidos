@@ -217,7 +217,7 @@ export const ExecutionFeed = memo(function ExecutionFeed({
               && TERMINAL_RUN_STATUSES.has(run.status)
               && !hasActiveRun
               && !revisionSubmitting;
-            const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.modelId;
+            const modelName = models.find((model) => model.id === run.modelId)?.name ?? run.remoteModelId ?? run.modelId;
             return (
               <Fragment key={runId}>
                 {segments.map((segment, index) => (
@@ -789,7 +789,7 @@ function AssistantMessage({
             />}
           </div>
           <div className="response-meta">
-            <Tooltip content={`本次回复模型：${modelName}`}>
+            <Tooltip className="response-model-tooltip" content={`本次回复模型：${modelName}`}>
               <span className="response-model" title={`本次回复模型：${modelName}`}>{modelName}</span>
             </Tooltip>
             {formattedTime && <span className="feed-item-timestamp">{formattedTime}</span>}

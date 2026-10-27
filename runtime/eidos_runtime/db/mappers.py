@@ -47,6 +47,15 @@ def _load_json_object(value: object) -> dict[str, object] | None:
         return None
     return parsed if isinstance(parsed, dict) else None
 
+
+def _remote_model_id_from_profile(value: object) -> str | None:
+    profile = _load_json_object(value)
+    remote_model_id = profile.get("remote_model_id") if profile is not None else None
+    if isinstance(remote_model_id, str) and 1 <= len(remote_model_id) <= 256:
+        return remote_model_id
+    return None
+
+
 def _snapshot_item(
     row: sqlite3.Row, tool_row: sqlite3.Row | None
 ) -> dict[str, object]:
@@ -214,6 +223,10 @@ def _run_from_row(
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
+    if "model_profile_json" in row.keys():
+        remote_model_id = _remote_model_id_from_profile(row["model_profile_json"])
+        if remote_model_id is not None:
+            run["remoteModelId"] = remote_model_id
     if channel_origin is not None:
         run["channelOrigin"] = channel_origin.to_wire_dict()
     if automation_origin is not None:

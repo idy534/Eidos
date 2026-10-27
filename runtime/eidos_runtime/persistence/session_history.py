@@ -25,6 +25,7 @@ from eidos_runtime.db.errors import (
 from eidos_runtime.db.mappers import (
     _item_from_row,
     _run_from_row,
+    _remote_model_id_from_profile,
     project_tool_text,
     _truncate_snapshot_text,
     _snapshot_display_arguments,
@@ -152,6 +153,25 @@ class PreparedHistory(EidosFrozenStrictModel):
 
 
 class SessionHistoryRepository(Repository):
+
+    def _with_legacy_remote_model_id(
+        self, record: HistoryRecord, cache: dict[tuple[str, str, str], str | None]
+    ) -> HistoryRecord:
+        if record.run.remote_model_id is not None or not record.run.model_id.startswith("custom-"):
+            return record
+        key = (record.origin.session_id, record.origin.run_id, record.run.model_id)
+        if key not in cache:
+            row = self._connection().execute(
+                "SELECT model_profile_json FROM runs WHERE session_id=? AND id=? AND model_id=?",
+                key,
+            ).fetchone()
+            cache[key] = _remote_model_id_from_profile(row[0]) if row is not None else None
+        remote_model_id = cache[key]
+        if remote_model_id is None:
+            return record
+        return record.model_copy(update={
+            "run": record.run.model_copy(update={"remote_model_id": remote_model_id}),
+        })
 
     def source(self, session_id: str) -> SessionForkSource | None:
         with self.lock:
@@ -411,8 +431,9 @@ class SessionHistoryRepository(Repository):
                 inherited_anchor[0] if inherited_anchor else MAX_HISTORY_ITEMS,
             ),
         )
+        model_ids: dict[tuple[str, str, str], str | None] = {}
         for row in rows:
-            yield self._record(row)
+            yield self._with_legacy_remote_model_id(self._record(row), model_ids)
         if inherited_anchor:
             return
         end = connection.execute(
@@ -703,8 +724,9 @@ class SessionHistoryRepository(Repository):
                 (session_id, before, limit + 1),
             )
             selected, used, more = [], 0, False
+            model_ids: dict[tuple[str, str, str], str | None] = {}
             for row in rows:
-                record = self._record(row)
+                record = self._with_legacy_remote_model_id(self._record(row), model_ids)
                 size = len(json.dumps(self.view(record), ensure_ascii=False).encode())
                 if len(selected) >= limit or used + size > byte_budget:
                     more = True

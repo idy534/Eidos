@@ -2178,6 +2178,7 @@ function isRun(value: unknown): value is Run {
       "status",
       "runtimeState",
       "modelId",
+      "remoteModelId",
       "approvalMode",
       "workMode",
       "modelStepCount",
@@ -2224,6 +2225,11 @@ function isRun(value: unknown): value is Run {
     && (value.automationOrigin === undefined || isAutomationOrigin(value.automationOrigin))
     && (value.hookActivity === undefined || Array.isArray(value.hookActivity) && value.hookActivity.length <= 8 && value.hookActivity.every(item => isHookActivity(item)))
     && isModelId(value.modelId)
+    && (value.remoteModelId === undefined || (
+      typeof value.remoteModelId === "string"
+      && Array.from(value.remoteModelId).length > 0
+      && Array.from(value.remoteModelId).length <= 256
+    ))
     && isNonNegativeInteger(value.modelStepCount)
     && (value.allowedActions === undefined || (
       Array.isArray(value.allowedActions)

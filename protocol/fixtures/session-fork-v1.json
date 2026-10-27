@@ -17,5 +17,13 @@
   "invalidResponses": [
     {"session":{"id":"target","workspaceRoot":"/workspace","taskStatus":"new","createdAt":1,"updatedAt":1,"forkedFrom":{"sessionId":"source","runId":"run","itemId":"answer","itemCount":0,"createdAt":1}}},
     {"session":{"id":"target","workspaceRoot":"/workspace","taskStatus":"new","createdAt":1,"updatedAt":1},"run":{"status":"running"}}
+  ],
+  "validHistoryEntries": [
+    {"item":{"id":"item","sessionId":"target","runId":"run","ordinal":1,"kind":"assistant_message","status":"completed","createdAt":1},"run":{"id":"run","sessionId":"target","modelId":"custom-123","remoteModelId":"company/model-v1","status":"succeeded","modelStepCount":1,"createdAt":1,"updatedAt":1},"origin":{"sessionId":"source","runId":"source-run","itemId":"source-item"}},
+    {"item":{"id":"item","sessionId":"target","runId":"run","ordinal":1,"kind":"assistant_message","status":"completed","createdAt":1},"run":{"id":"run","sessionId":"target","modelId":"custom-123","status":"succeeded","modelStepCount":1,"createdAt":1,"updatedAt":1},"origin":{"sessionId":"source","runId":"source-run","itemId":"source-item"}}
+  ],
+  "invalidHistoryEntries": [
+    {"item":{"id":"item","sessionId":"target","runId":"run","ordinal":1,"kind":"assistant_message","status":"completed","createdAt":1},"run":{"id":"run","sessionId":"target","modelId":"custom-123","remoteModelId":"","status":"succeeded","modelStepCount":1,"createdAt":1,"updatedAt":1},"origin":{"sessionId":"source","runId":"source-run","itemId":"source-item"}},
+    {"item":{"id":"item","sessionId":"target","runId":"run","ordinal":1,"kind":"assistant_message","status":"completed","createdAt":1},"run":{"id":"run","sessionId":"target","modelId":"custom-123","remoteModelId":123,"status":"succeeded","modelStepCount":1,"createdAt":1,"updatedAt":1},"origin":{"sessionId":"source","runId":"source-run","itemId":"source-item"}}
   ]
 }

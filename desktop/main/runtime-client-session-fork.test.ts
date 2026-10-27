@@ -29,10 +29,12 @@ test("conversation fork crosses Main and Runtime, survives deletion and restart,
 import sys, uuid
 from pathlib import Path
 from eidos_runtime.db.storage import SessionStore
+from eidos_runtime.model.client import ModelProfileSnapshot
 store = SessionStore(Path(sys.argv[1]))
 store.initialize()
 for index, text in enumerate(("selected answer", "later answer")):
-    run, _ = store.enqueue_run(sys.argv[2], "question " + text)
+    profile = ModelProfileSnapshot(provider_id="custom", model_id="custom-deleted", remote_model_id="company/model-v1", context_window_tokens=4096, max_output_tokens=512, request_timeout_seconds=120, supports_tools=True, supports_json_schema_output=False, supports_reasoning=False) if index == 0 else None
+    run, _ = store.enqueue_run(sys.argv[2], "question " + text, **({"model_id": profile.model_id, "model_profile": profile} if profile else {}))
     identifier = sys.argv[3] if index == 0 else str(uuid.uuid4())
     with store.database.transaction() as connection:
         connection.execute("INSERT INTO items(id,session_id,run_id,ordinal,kind,status,content,created_at,completed_at) VALUES(?,?,?,2,'assistant_message','completed',?,2,2)", (identifier, sys.argv[2], run['id'], text))
@@ -43,6 +45,8 @@ store.close()
     });
     client = new RuntimeClient(options);
     await client.initialize();
+    const sourceSnapshot = await client.readSession(source.id);
+    assert.equal(sourceSnapshot.runs.find((run) => run.modelId === "custom-deleted")?.remoteModelId, "company/model-v1");
     const request = { operationId: randomUUID(), sourceSessionId: source.id, sourceItemId: itemId, target: { kind: "same_workspace" } } as const;
     const target = await client.forkSession(request);
     assert.notEqual(target.id, source.id);
@@ -55,6 +59,7 @@ store.close()
     const snapshot = await client.readSession(target.id);
     assert.equal(snapshot.runs.length, 1);
     assert.equal(snapshot.runs[0]?.inherited, true);
+    assert.equal(snapshot.runs[0]?.remoteModelId, "company/model-v1");
     assert.deepEqual(snapshot.runs[0]?.allowedActions ?? [], []);
     assert.deepEqual(snapshot.items.map((item) => item.content), ["question selected answer", "selected answer"]);
     assert.ok(snapshot.items.every((item) => item.inherited && item.sessionId === target.id));
@@ -66,7 +71,9 @@ store.close()
     assert.equal(await client.waitForExit(), 0);
     client = new RuntimeClient(options);
     await client.initialize();
-    assert.deepEqual((await client.readSession(target.id)).items, snapshot.items);
+    const restored = await client.readSession(target.id);
+    assert.deepEqual(restored.items, snapshot.items);
+    assert.equal(restored.runs[0]?.remoteModelId, "company/model-v1");
     assert.equal((await client.forkSession(request)).id, target.id);
     await client.shutdown();
     assert.equal(await client.waitForExit(), 0);

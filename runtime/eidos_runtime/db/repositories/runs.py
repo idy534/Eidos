@@ -315,7 +315,7 @@ class RunRepository(Repository):
                 connection,
                 EventType.RUN_CREATED,
                 now,
-                {"run": run},
+                {"run": {key: value for key, value in run.items() if key != "remoteModelId"}},
                 session_id=session_id,
                 run_id=run_id,
             )
